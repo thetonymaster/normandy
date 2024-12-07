@@ -1,5 +1,5 @@
 defmodule Normandy.Components.SystemPromptGenerator do
-  alias Normandy.Components.SystemPromptSpecification
+  alias Normandy.Schemas.SystemPromptSpecification
 
   @background "IDENTITY and PURPOSE"
   @steps "INTERNAL ASSISTANT STEPS"

@@ -1,10 +1,10 @@
 defmodule Components.SystemPromptGeneratorTest do
   use ExUnit.Case
   doctest Normandy.Components.SystemPromptGenerator
-  doctest Normandy.Components.SystemPromptSpecification
+  doctest Normandy.Schemas.SystemPromptSpecification
 
-  alias Normandy.Components.SystemPromptSpecification
   alias Normandy.Components.SystemPromptGenerator
+  alias Normandy.Schemas.SystemPromptSpecification
 
 
   test "with empty specification" do

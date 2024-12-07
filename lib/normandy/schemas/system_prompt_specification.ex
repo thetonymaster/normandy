@@ -1,4 +1,4 @@
-defmodule Normandy.Components.SystemPromptSpecification do
+defmodule Normandy.Schemas.SystemPromptSpecification do
   use TypedStruct
 
   typedstruct do
