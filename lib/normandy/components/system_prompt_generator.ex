@@ -5,6 +5,21 @@ defmodule Normandy.Components.SystemPromptGenerator do
   @steps "INTERNAL ASSISTANT STEPS"
   @output "OUTPUT INSTRUCTIONS"
 
+
+  @doc """
+    Uses an instance Normandy.Components.SystemPromptSpecification to
+    generate a system prompt for the agent.
+
+    ## Example
+    spec = %Normandy.Components.SystemPromptSpecification{
+      backgroud: ["you are a helpful assistant", "you assist me in assisting"],
+      steps: ["step 1", "step 2", "step 3"],
+      output_instructions: ["print the result", "as a result"]
+    }
+
+    Normandy.Components.generate_prompt(spec)
+  """
+
   @spec generate_prompt(SystemPromptSpecification.t()) :: String.t()
   def generate_prompt(%SystemPromptSpecification{
         backgroud: [],
