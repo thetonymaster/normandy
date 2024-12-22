@@ -79,7 +79,7 @@ defmodule Normandy.Schema do
   end
 
   @doc false
-  def __after_verify__(module) do
+  def __after_verify__(_module) do
     # If we are compiling code, we can validate associations now,
     # as the Elixir compiler will solve dependencies.
 
