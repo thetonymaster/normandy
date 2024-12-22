@@ -1,4 +1,4 @@
-defmodule Normandy.Tools.ParameterizedType do
+defmodule Normandy.ParameterizedType do
   @moduledoc """
   Parameterized types are Ecto types that can be customized per field.
 
@@ -139,7 +139,7 @@ defmodule Normandy.Tools.ParameterizedType do
 
   For more information on schema types, see `c:Ecto.Type.type/0`
   """
-  @callback type(params()) :: Normandy.Tools.Type.t()
+  @callback type(params()) :: Normandy.Type.t()
 
   @doc """
   Checks if two terms are semantically equal.
@@ -170,7 +170,7 @@ defmodule Normandy.Tools.ParameterizedType do
   @doc false
   defmacro __using__(_) do
     quote location: :keep do
-      @behaviour Normandy.Tools.ParameterizedType
+      @behaviour Normandy.ParameterizedType
 
       @doc false
       def embed_as(_, _), do: :self

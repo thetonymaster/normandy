@@ -1,4 +1,4 @@
-defmodule Normandy.Tools.Metadata do
+defmodule Normandy.Metadata do
   defstruct [:state, :source, :context, :schema]
 
   @type state :: :built | :loaded | :deleted

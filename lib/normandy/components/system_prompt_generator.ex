@@ -1,28 +1,25 @@
 defmodule Normandy.Components.SystemPromptGenerator do
-  alias Normandy.Schemas.SystemPromptSpecification
+  alias Normandy.Components.PromptSpecification
 
   @background "IDENTITY and PURPOSE"
   @steps "INTERNAL ASSISTANT STEPS"
   @output "OUTPUT INSTRUCTIONS"
-
 
   @doc """
     Uses an instance Normandy.Components.SystemPromptSpecification to
     generate a system prompt for the agent.
 
     ## Example
-    spec = %Normandy.Components.SystemPromptSpecification{
-      backgroud: ["you are a helpful assistant", "you assist me in assisting"],
+    spec = %{
+      background: ["you are a helpful assistant", "you assist me in assisting"],
       steps: ["step 1", "step 2", "step 3"],
       output_instructions: ["print the result", "as a result"]
     }
 
     Normandy.Components.generate_prompt(spec)
   """
-
-  @spec generate_prompt(SystemPromptSpecification.t()) :: String.t()
-  def generate_prompt(%SystemPromptSpecification{
-        backgroud: [],
+  def generate_prompt(%PromptSpecification{
+        background: [],
         steps: steps,
         output_instructions: output,
         additional_information: additional_info
@@ -34,8 +31,8 @@ defmodule Normandy.Components.SystemPromptGenerator do
     |> Enum.join("\n")
   end
 
-  def generate_prompt(%SystemPromptSpecification{
-        backgroud: background,
+  def generate_prompt(%PromptSpecification{
+        background: background,
         steps: steps,
         output_instructions: output,
         additional_information: additional_info
@@ -44,7 +41,6 @@ defmodule Normandy.Components.SystemPromptGenerator do
     |> additional_information(additional_info)
     |> Enum.join("\n")
   end
-
   defp build_prompt(background, steps, output) do
     output = output ++ extend_output()
 

@@ -1,4 +1,4 @@
-defmodule Normandy.Tools.Type do
+defmodule Normandy.Type do
   @moduledoc """
   Defines functions and the `Ecto.Type` behaviour for implementing
   basic custom types.
@@ -187,7 +187,7 @@ defmodule Normandy.Tools.Type do
   @doc false
   defmacro __using__(_opts) do
     quote location: :keep do
-      @behaviour Normandy.Tools.Type
+      @behaviour Normandy.Type
       def embed_as(_), do: :self
       def equal?(term1, term2), do: term1 == term2
       defoverridable embed_as: 1, equal?: 2
@@ -322,7 +322,6 @@ defmodule Normandy.Tools.Type do
   def primitive?(base) when base in @base, do: true
   def primitive?(_), do: false
 
-
   @spec parameterized?(t, module) :: boolean
   def parameterized?({:parameterized, {module, _}}, module), do: true
   def parameterized?(_, _), do: false
@@ -361,6 +360,7 @@ defmodule Normandy.Tools.Type do
   def embed_as({:parameterized, {module, params}}, format), do: module.embed_as(format, params)
   def embed_as({composite, type}, format) when composite in @composite, do: embed_as(type, format)
   def embed_as(base, _format) when base in @base, do: :self
+
   def embed_as(mod, format) do
     mod.embed_as(format)
   end
@@ -370,7 +370,7 @@ defmodule Normandy.Tools.Type do
 
   ## Examples
 
-      iex> Normandy.Tools.Type.embedded_dump(:string, "1", :json)
+      iex> Normandy.Type.embedded_dump(:string, "1", :json)
       {:ok, "1"}
 
   """
@@ -386,7 +386,7 @@ defmodule Normandy.Tools.Type do
 
   ## Examples
 
-      iex> Normandy.Tools.Type.embedded_load(:string, "1", :json)
+      iex> Normandy.Type.embedded_load(:string, "1", :json)
       {:ok, "1"}
 
   """
@@ -592,8 +592,6 @@ defmodule Normandy.Tools.Type do
   defp load_time(%Time{} = time), do: {:ok, truncate_usec(time)}
   defp load_time(_), do: :error
 
-
-
   @doc """
   Casts a value to the given type.
 
@@ -787,18 +785,18 @@ defmodule Normandy.Tools.Type do
 
   ## Examples
 
-      iex> Normandy.Tools.Type.cast!(:integer, "1")
+      iex> Normandy.Type.cast!(:integer, "1")
       1
-      iex> Normandy.Tools.Type.cast!(:integer, 1)
+      iex> Normandy.Type.cast!(:integer, 1)
       1
-      iex> Normandy.Tools.Type.cast!(:integer, nil)
+      iex> Normandy.Type.cast!(:integer, nil)
       nil
 
-      iex> Normandy.Tools.Type.cast!(:integer, 1.0)
+      iex> Normandy.Type.cast!(:integer, 1.0)
       ** (Normandy.CastError) cannot cast 1.0 to :integer
   """
   def cast!(type, value) do
-    case Normandy.Tools.Type.cast(type, value) do
+    case Normandy.Type.cast(type, value) do
       {:ok, value} ->
         value
 
@@ -821,7 +819,6 @@ defmodule Normandy.Tools.Type do
 
   defp same_binary(term) when is_binary(term), do: {:ok, term}
   defp same_binary(_), do: :error
-
 
   defp same_map(term) when is_map(term), do: {:ok, term}
   defp same_map(_), do: :error
@@ -1177,7 +1174,6 @@ defmodule Normandy.Tools.Type do
 
   defp equal_fun(mod) when is_atom(mod), do: &mod.equal?/2
 
-
   defp equal_time?(%Time{} = a, %Time{} = b), do: Time.compare(a, b) == :eq
   defp equal_time?(_, _), do: false
 
@@ -1380,7 +1376,6 @@ defmodule Normandy.Tools.Type do
 
   defp pad_usec(%{microsecond: {microsecond, _}} = struct),
     do: %{struct | microsecond: {microsecond, 6}}
-
 
   defp check_no_usec!(%{microsecond: {0, 0}} = datetime, _kind), do: datetime
 

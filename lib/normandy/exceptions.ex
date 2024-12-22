@@ -1,4 +1,3 @@
-
 defmodule Normandy.CastError do
   @moduledoc """
   Raised when a changeset can't cast a value.
@@ -8,7 +7,7 @@ defmodule Normandy.CastError do
   def exception(opts) do
     type = Keyword.fetch!(opts, :type)
     value = Keyword.fetch!(opts, :value)
-    msg = opts[:message] || "cannot cast #{inspect(value)} to #{Normandy.Tools.Type.format(type)}"
+    msg = opts[:message] || "cannot cast #{inspect(value)} to #{Normandy.Type.format(type)}"
     %__MODULE__{message: msg, type: type, value: value}
   end
 end

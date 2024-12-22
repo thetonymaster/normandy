@@ -1,29 +1,22 @@
-defmodule Normandy.Tools.Schema do
+defmodule Normandy.Schema do
+  alias Normandy.Metadata
 
-  alias Normandy.Tools.Metadata
   @field_opts [
     :default,
-    :source,
-    :autogenerate,
-    :read_after_writes,
-    :virtual,
-    :primary_key,
-    :load_in_query,
     :redact,
-    :foreign_key,
-    :on_replace,
     :defaults,
     :type,
     :where,
     :references,
     :skip_default_validation,
-    :writable
+    :description,
+    :required,
   ]
 
   @doc false
   defmacro __using__(_) do
     quote do
-      import Normandy.Tools.Schema, only: [schema: 1]
+      import Normandy.Schema, only: [schema: 1]
 
       Module.register_attribute(__MODULE__, :tool_fields, accumulate: true)
       Module.register_attribute(__MODULE__, :tool_raw, accumulate: true)
@@ -31,21 +24,28 @@ defmodule Normandy.Tools.Schema do
     end
   end
 
+  @doc false
   defmacro schema(do: block) do
     prelude =
       quote do
-        Normandy.Tools.Schema.__schema__(__MODULE__, __ENV__.line)
+        Normandy.Schema.__schema__(__MODULE__, __ENV__.line)
+
         try do
-          import Normandy.Tools.Schema
+          import Normandy.Schema
           unquote(block)
         after
           :ok
         end
       end
+
     postlude =
       quote unquote: false do
-        {struct_fields, bags_of_clauses} = Normandy.Tools.Schema.__schema__(__MODULE__)
+        {struct_fields, bags_of_clauses} = Normandy.Schema.__schema__(__MODULE__)
         defstruct struct_fields
+
+        def __specification__ do
+          %{unquote_splicing(Macro.escape(@tool_specification_fields))}
+        end
 
         for clauses <- bags_of_clauses, {args, body} <- clauses do
           def __schema__(unquote_splicing(args)), do: unquote(body)
@@ -54,15 +54,15 @@ defmodule Normandy.Tools.Schema do
         :ok
       end
 
-      quote do
-        unquote(prelude)
-        unquote(postlude)
-      end
+    quote do
+      unquote(prelude)
+      unquote(postlude)
+    end
   end
 
- defmacro field(name, type \\ :string, opts \\ []) do
+  defmacro field(name, type \\ :string, opts \\ []) do
     quote do
-      Normandy.Tools.Schema.__field__(__MODULE__, unquote(name), unquote(type), unquote(opts))
+      Normandy.Schema.__field__(__MODULE__, unquote(name), unquote(type), unquote(opts))
     end
   end
 
@@ -73,12 +73,20 @@ defmodule Normandy.Tools.Schema do
     type = check_field_type!(mod, name, type, opts)
 
     check_options!(type, opts, @field_opts, "field/3")
-    Module.put_attribute(mod, :tool_changeset_fields, {name, type})
+    Module.put_attribute(mod, :tool_specification_fields, {name, type})
     validate_default!(type, opts[:default], opts[:skip_default_validation])
     define_field(mod, name, type, opts)
   end
 
-    @doc false
+  @doc false
+  def __after_verify__(module) do
+    # If we are compiling code, we can validate associations now,
+    # as the Elixir compiler will solve dependencies.
+
+    :ok
+  end
+
+  @doc false
   def __schema__(module, line) do
     if previous_line = Module.get_attribute(module, :tool_schema_defined) do
       raise "schema already defined for #{inspect(module)} on line #{previous_line}"
@@ -87,9 +95,10 @@ defmodule Normandy.Tools.Schema do
     Module.put_attribute(module, :tool_schema_defined, line)
 
     if Code.can_await_module_compilation?() do
-      Module.put_attribute(module, :after_verify, Normandy.Tools.Schema)
+      Module.put_attribute(module, :after_verify, Normandy.Schema)
     end
 
+    Module.register_attribute(module, :tool_specification_fields, accumulate: true)
     Module.register_attribute(module, :tool_struct_fields, accumulate: true)
 
     context = Module.get_attribute(module, :schema_context)
@@ -114,41 +123,53 @@ defmodule Normandy.Tools.Schema do
          derive_inspect?(module) do
       Module.put_attribute(module, :derive, {Inspect, except: redacted_fields})
     end
+
     loaded =
       case Map.new([{:__struct__, module} | struct_fields]) do
         %{__meta__: meta} = struct -> %{struct | __meta__: Map.put(meta, :state, :loaded)}
         struct -> struct
       end
-    dump =
-      for {name, {type, writable}} <- fields do
-        {name, { name, type, writable}}
-      end
 
-    field_sources_quoted =
-      for {name, {_type, _writable}} <- fields do
-        {[:field_source, name], name}
+    dump =
+      for {name, {type, _description}} <- fields do
+        {name, {name, type}}
       end
 
     types_quoted =
-      for {name, {type, _writable}} <- fields do
+      for {name, {type, _description}} <- fields do
         {[:type, name], Macro.escape(type)}
       end
 
-   single_arg = [
+    specification = %{
+      title: module |> to_string() |> String.split(".") |> List.last(),
+      type: "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+    }
+    properties=
+      for {name, opts} <- fields do
+        check_specification_type(name, opts)
+      end
+
+    specification =
+      Map.put(specification, :properties, Map.new(properties))
+
+
+
+    single_arg = [
       {[:dump], dump |> Map.new() |> Macro.escape()},
       {[:redact_fields], redacted_fields},
       {[:fields], Enum.map(fields, &elem(&1, 0))},
-      {[:loaded], Macro.escape(loaded)}
+      {[:loaded], Macro.escape(loaded)},
+      {[:specification], Macro.escape(specification)}
     ]
 
     catch_all = [
-      {[:type, quote(do: _)], nil},
+      {[:type, quote(do: _)], nil}
     ]
 
     bags_of_clauses =
       [
         single_arg,
-        field_sources_quoted,
         types_quoted,
         catch_all
       ]
@@ -159,7 +180,17 @@ defmodule Normandy.Tools.Schema do
   defp derive_inspect?(module) do
     Module.get_attribute(module, :derive_inspect_for_redacted_fields, true)
   end
-defp check_field_type!(_mod, name, :datetime, _opts) do
+
+  defp check_specification_type(name, {{:array, type}, description}) do
+    {name, %{type: :array, description: description, items: %{type: type}}}
+  end
+  defp check_specification_type(name, {{:map, _type}, description}) do
+    {name, %{type: :object, description: description}}
+  end
+  defp check_specification_type(name, {:float, description}), do: {name, %{type: :number, description: description}}
+  defp check_specification_type(name, {type, description}), do: {name, %{type: type, description: description}}
+
+  defp check_field_type!(_mod, name, :datetime, _opts) do
     raise ArgumentError,
           "invalid type :datetime for field #{inspect(name)}. " <>
             "You probably meant to choose one between :naive_datetime " <>
@@ -173,9 +204,10 @@ defp check_field_type!(_mod, name, :datetime, _opts) do
         {outer_type, check_field_type!(mod, name, inner_type, opts)}
 
       not is_atom(type) ->
-        raise ArgumentError, "invalid type #{Normandy.Tools.Type.format(type)} for field #{inspect(name)}"
+        raise ArgumentError,
+              "invalid type #{Normandy.Type.format(type)} for field #{inspect(name)}"
 
-      Normandy.Tools.Type.base?(type) ->
+      Normandy.Type.base?(type) ->
         type
 
       Code.ensure_compiled(type) == {:module, type} ->
@@ -184,7 +216,10 @@ defp check_field_type!(_mod, name, :datetime, _opts) do
             type
 
           function_exported?(type, :type, 1) ->
-            Normandy.Tools.ParameterizedType.init(type, Keyword.merge(opts, field: name, schema: mod))
+            Normandy.ParameterizedType.init(
+              type,
+              Keyword.merge(opts, field: name, schema: mod)
+            )
 
           function_exported?(type, :__schema__, 1) ->
             raise ArgumentError,
@@ -193,15 +228,16 @@ defp check_field_type!(_mod, name, :datetime, _opts) do
 
           true ->
             raise ArgumentError,
-                  "module #{inspect(type)} given as type for field #{inspect(name)} is not an Normandy.Tools.Type/Normandy.Tools.ParameterizedType"
+                  "module #{inspect(type)} given as type for field #{inspect(name)} is not an Normandy.Type/Normandy.ParameterizedType"
         end
 
       true ->
         raise ArgumentError, "unknown type #{inspect(type)} for field #{inspect(name)}"
     end
   end
+
   defp composite?({composite, _} = type, name) do
-    if Normandy.Tools.Type.composite?(composite) do
+    if Normandy.Type.composite?(composite) do
       true
     else
       raise ArgumentError,
@@ -230,16 +266,17 @@ defp check_field_type!(_mod, name, :datetime, _opts) do
   defp check_options!(_type, opts, valid, fun_arity) do
     check_options!(opts, valid, fun_arity)
   end
+
   defp validate_default!(_type, _value, true), do: :ok
 
   defp validate_default!(type, value, _skip) do
-    case Normandy.Tools.Type.dump(type, value) do
+    case Normandy.Type.dump(type, value) do
       {:ok, _} ->
         :ok
 
       _ ->
         raise ArgumentError,
-              "value #{inspect(value)} is invalid for type #{Normandy.Tools.Type.format(type)}, can't set default"
+              "value #{inspect(value)} is invalid for type #{Normandy.Type.format(type)}, can't set default"
     end
   end
 
@@ -250,11 +287,14 @@ defp check_field_type!(_mod, name, :datetime, _opts) do
       Module.put_attribute(mod, :tool_redact_fields, name)
     end
 
-    Module.put_attribute(mod, :tool_fields, {name, {type}})
+    description = Keyword.get(opts, :description, "")
+
+    Module.put_attribute(mod, :tool_fields, {name, {type, description}})
   end
 
   defp put_struct_field(mod, name, assoc) do
     fields = Module.get_attribute(mod, :tool_struct_fields)
+
     if List.keyfind(fields, name, 0) do
       raise ArgumentError,
             "field/association #{inspect(name)} already exists on schema, you must either remove the duplication or choose a different name"

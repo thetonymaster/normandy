@@ -1,11 +1,9 @@
 defmodule Components.SystemPromptGeneratorTest do
   use ExUnit.Case
   doctest Normandy.Components.SystemPromptGenerator
-  doctest Normandy.Schemas.SystemPromptSpecification
 
   alias Normandy.Components.SystemPromptGenerator
-  alias Normandy.Schemas.SystemPromptSpecification
-
+  alias Normandy.Components.PromptSpecification
 
   test "with empty specification" do
     prompt = """
@@ -16,7 +14,7 @@ defmodule Components.SystemPromptGeneratorTest do
     - Always use the available additional information and context to enhance the response.
     """
 
-    spec = %SystemPromptSpecification{}
+    spec = %PromptSpecification{}
 
     result = SystemPromptGenerator.generate_prompt(spec)
 
@@ -24,8 +22,8 @@ defmodule Components.SystemPromptGeneratorTest do
   end
 
   test "write a specification" do
-    spec = %SystemPromptSpecification{
-      backgroud: ["you are a helpful assistant", "you assist me in assisting"],
+    spec = %PromptSpecification{
+      background: ["you are a helpful assistant", "you assist me in assisting"],
       steps: ["step 1", "step 2", "step 3"],
       output_instructions: ["print the result", "as a result"]
     }
