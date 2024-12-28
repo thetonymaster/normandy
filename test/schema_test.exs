@@ -47,31 +47,31 @@ defmodule Normandy.SchemaTest do
              title: "Schema",
              "$schema": "https://json-schema.org/draft/2020-12/schema",
              properties: %{
-              name: %{
-                description: "name of the user",
-                type: :string,
-              },
-              password: %{
-                description: "",
-                type: :string,
-              },
-              count: %{
-                description: "",
-                type: :integer,
-              },
-              map: %{
-                description: "",
-                type: :object,
-              },
-              array: %{
-                description: "",
-                type: :array,
-                items: %{
-                  type: :string
-                }
-              }
+               name: %{
+                 description: "name of the user",
+                 type: :string
+               },
+               password: %{
+                 description: "",
+                 type: :string
+               },
+               count: %{
+                 description: "",
+                 type: :integer
+               },
+               map: %{
+                 description: "",
+                 type: :object
+               },
+               array: %{
+                 description: "",
+                 type: :array,
+                 items: %{
+                   type: :string
+                 }
+               }
              },
-             required: [:name, :password],
+             required: [:name, :password]
            }
   end
 end

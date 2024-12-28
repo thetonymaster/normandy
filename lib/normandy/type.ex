@@ -214,6 +214,8 @@ defmodule Normandy.Type do
           | :date
           | :time
           | :binary
+          | :any
+          | :struct
 
   @type composite :: {:array, t} | {:map, t} | private_composite
 
@@ -221,7 +223,7 @@ defmodule Normandy.Type do
 
   @base ~w(
     integer float boolean string bitstring map binary any
-    date time duration any
+    date time duration any struct
   )a
   @composite ~w(array map try in param)a
   @variadic ~w(in splice)a

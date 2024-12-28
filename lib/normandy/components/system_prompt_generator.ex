@@ -41,6 +41,7 @@ defmodule Normandy.Components.SystemPromptGenerator do
     |> additional_information(additional_info)
     |> Enum.join("\n")
   end
+
   defp build_prompt(background, steps, output) do
     output = output ++ extend_output()
 

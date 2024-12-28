@@ -416,9 +416,7 @@ defmodule Normandy.TypeTest do
     test "parameterized type with format/1 defined" do
       params = %{}
 
-      assert Normandy.Type.format(
-               {:parameterized, {CustomParameterizedTypeWithFormat, params}}
-             ) ==
+      assert Normandy.Type.format({:parameterized, {CustomParameterizedTypeWithFormat, params}}) ==
                "#CustomParameterizedTypeWithFormat<:custom>"
     end
 

@@ -10,7 +10,7 @@ defmodule Normandy.Schema do
     :references,
     :skip_default_validation,
     :description,
-    :required,
+    :required
   ]
 
   @doc false
@@ -145,9 +145,10 @@ defmodule Normandy.Schema do
     specification = %{
       title: module |> to_string() |> String.split(".") |> List.last(),
       type: "object",
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
     }
-    properties=
+
+    properties =
       for {name, opts} <- fields do
         check_specification_type(name, opts)
       end
@@ -190,11 +191,16 @@ defmodule Normandy.Schema do
   defp check_specification_type(name, {{:array, type}, description}) do
     {name, %{type: :array, description: description, items: %{type: type}}}
   end
+
   defp check_specification_type(name, {{:map, _type}, description}) do
     {name, %{type: :object, description: description}}
   end
-  defp check_specification_type(name, {:float, description}), do: {name, %{type: :number, description: description}}
-  defp check_specification_type(name, {type, description}), do: {name, %{type: type, description: description}}
+
+  defp check_specification_type(name, {:float, description}),
+    do: {name, %{type: :number, description: description}}
+
+  defp check_specification_type(name, {type, description}),
+    do: {name, %{type: type, description: description}}
 
   defp check_field_type!(_mod, name, :datetime, _opts) do
     raise ArgumentError,

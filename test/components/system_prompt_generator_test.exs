@@ -1,5 +1,5 @@
 defmodule Components.SystemPromptGeneratorTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   doctest Normandy.Components.SystemPromptGenerator
 
   alias Normandy.Components.SystemPromptGenerator
