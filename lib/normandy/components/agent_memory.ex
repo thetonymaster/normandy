@@ -33,11 +33,13 @@ defmodule Normandy.Components.AgentMemory do
 
   defp create_history(history), do: create_history(history, [])
   defp create_history([], history), do: history
+
   defp create_history([%{role: role, content: content} | tail], history) do
     message = process_message(role, content)
-    history = history++[message]
+    history = history ++ [message]
     create_history(tail, history)
   end
+
   defp process_message(role, content) do
     %{role: role, content: BaseIOSchema.to_json(content)}
   end

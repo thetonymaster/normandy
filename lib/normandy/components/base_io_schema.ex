@@ -7,7 +7,7 @@ defprotocol Normandy.Components.BaseIOSchema do
   def __rich__(struct)
   @spec schema(struct()) :: String.t()
   def schema(struct)
-  @spec to_json(struct()):: String.t()
+  @spec to_json(struct()) :: String.t()
   def to_json(struct)
 end
 

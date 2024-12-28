@@ -9,7 +9,7 @@ defmodule Normandy.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       consolidate_protocols: Mix.env() != :test,
-      elixirc_paths: elixirc_paths(Mix.env()),
+      elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
 
@@ -24,7 +24,7 @@ defmodule Normandy.MixProject do
   defp deps do
     [
       {:elixir_uuid, "~> 1.2"},
-      {:jason, "~> 1.4", only: [:test]},
+      {:jason, "~> 1.4", only: [:test]}
     ]
   end
 

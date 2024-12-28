@@ -56,7 +56,6 @@ defmodule Components.AgentMemoryTest do
       |> Map.get(:history)
 
     assert history == result
-
   end
 
   test "memory overflow" do
@@ -80,13 +79,20 @@ defmodule Components.AgentMemoryTest do
   end
 
   test "get history" do
-
     content_a = %Normandy.IOTest{}
+    content_b = %Normandy.IOTest{test_field: "hello there"}
+
     history =
       AgentMemory.new_memory()
-      |> AgentMemory.add_message("main", content_a)
+      |> AgentMemory.add_message("user", content_a)
+      |> AgentMemory.add_message("system", content_b)
       |> AgentMemory.history()
 
-    assert history == [%{role: "main", content: "{\"test_field\":\"test_value\"}"}]
+    assert length(history) == 2
+
+    assert history == [
+             %{role: "user", content: "{\"test_field\":\"test_value\"}"},
+             %{role: "system", content: "{\"test_field\":\"hello there\"}"}
+           ]
   end
 end
