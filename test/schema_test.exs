@@ -5,8 +5,8 @@ defmodule Normandy.SchemaTest do
     use Normandy.Schema
 
     schema do
-      field(:name, :string, default: "eric", description: "name of the user")
-      field(:password, :string, redact: true)
+      field(:name, :string, default: "eric", description: "name of the user", required: true)
+      field(:password, :string, redact: true, required: true)
       field(:count, :integer)
       field(:map, {:map, :string}, default: nil)
       field(:array, {:array, :string})
@@ -35,6 +35,10 @@ defmodule Normandy.SchemaTest do
   test "default" do
     assert %Schema{}.name == "eric"
     assert %Schema{}.map == nil
+  end
+
+  test "required" do
+    assert Schema.__schema__(:required) == [:name, :password]
   end
 
   test "specification" do
@@ -66,7 +70,8 @@ defmodule Normandy.SchemaTest do
                   type: :string
                 }
               }
-             }
+             },
+             required: [:name, :password],
            }
   end
 end

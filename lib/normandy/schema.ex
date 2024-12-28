@@ -100,6 +100,7 @@ defmodule Normandy.Schema do
 
     Module.register_attribute(module, :tool_specification_fields, accumulate: true)
     Module.register_attribute(module, :tool_struct_fields, accumulate: true)
+    Module.register_attribute(module, :tool_required_fields, accumulate: true)
 
     context = Module.get_attribute(module, :schema_context)
 
@@ -118,6 +119,7 @@ defmodule Normandy.Schema do
     struct_fields = Module.get_attribute(module, :tool_struct_fields) |> Enum.reverse()
     redacted_fields = Module.get_attribute(module, :tool_redact_fields)
     derive = Module.get_attribute(module, :derive)
+    required_fields = Module.get_attribute(module, :tool_required_fields, []) |> Enum.reverse()
 
     if redacted_fields != [] and not List.keymember?(derive, Inspect, 0) and
          derive_inspect?(module) do
@@ -151,13 +153,14 @@ defmodule Normandy.Schema do
       end
 
     specification =
-      Map.put(specification, :properties, Map.new(properties))
-
-
+      specification
+      |> Map.put(:properties, Map.new(properties))
+      |> set_required(required_fields)
 
     single_arg = [
       {[:dump], dump |> Map.new() |> Macro.escape()},
       {[:redact_fields], redacted_fields},
+      {[:required], required_fields},
       {[:fields], Enum.map(fields, &elem(&1, 0))},
       {[:loaded], Macro.escape(loaded)},
       {[:specification], Macro.escape(specification)}
@@ -176,6 +179,9 @@ defmodule Normandy.Schema do
 
     {struct_fields, bags_of_clauses}
   end
+
+  defp set_required(specification, []), do: specification
+  defp set_required(specification, required), do: Map.put(specification, :required, required)
 
   defp derive_inspect?(module) do
     Module.get_attribute(module, :derive_inspect_for_redacted_fields, true)
@@ -288,6 +294,10 @@ defmodule Normandy.Schema do
     end
 
     description = Keyword.get(opts, :description, "")
+
+    if Keyword.get(opts, :required, false) do
+      Module.put_attribute(mod, :tool_required_fields, name)
+    end
 
     Module.put_attribute(mod, :tool_fields, {name, {type, description}})
   end
