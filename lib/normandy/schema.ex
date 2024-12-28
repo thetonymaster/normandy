@@ -18,9 +18,9 @@ defmodule Normandy.Schema do
     quote do
       import Normandy.Schema, only: [schema: 1]
 
-      Module.register_attribute(__MODULE__, :tool_fields, accumulate: true)
-      Module.register_attribute(__MODULE__, :tool_raw, accumulate: true)
-      Module.register_attribute(__MODULE__, :tool_redact_fields, accumulate: true)
+      Module.register_attribute(__MODULE__, :schema_fields, accumulate: true)
+      Module.register_attribute(__MODULE__, :schema_raw, accumulate: true)
+      Module.register_attribute(__MODULE__, :schema_redact_fields, accumulate: true)
     end
   end
 
@@ -44,7 +44,7 @@ defmodule Normandy.Schema do
         defstruct struct_fields
 
         def __specification__ do
-          %{unquote_splicing(Macro.escape(@tool_specification_fields))}
+          %{unquote_splicing(Macro.escape(@schema_specification_fields))}
         end
 
         for clauses <- bags_of_clauses, {args, body} <- clauses do
@@ -73,7 +73,7 @@ defmodule Normandy.Schema do
     type = check_field_type!(mod, name, type, opts)
 
     check_options!(type, opts, @field_opts, "field/3")
-    Module.put_attribute(mod, :tool_specification_fields, {name, type})
+    Module.put_attribute(mod, :schema_specification_fields, {name, type})
     validate_default!(type, opts[:default], opts[:skip_default_validation])
     define_field(mod, name, type, opts)
   end
@@ -88,19 +88,19 @@ defmodule Normandy.Schema do
 
   @doc false
   def __schema__(module, line) do
-    if previous_line = Module.get_attribute(module, :tool_schema_defined) do
+    if previous_line = Module.get_attribute(module, :schema_schema_defined) do
       raise "schema already defined for #{inspect(module)} on line #{previous_line}"
     end
 
-    Module.put_attribute(module, :tool_schema_defined, line)
+    Module.put_attribute(module, :schema_schema_defined, line)
 
     if Code.can_await_module_compilation?() do
       Module.put_attribute(module, :after_verify, Normandy.Schema)
     end
 
-    Module.register_attribute(module, :tool_specification_fields, accumulate: true)
-    Module.register_attribute(module, :tool_struct_fields, accumulate: true)
-    Module.register_attribute(module, :tool_required_fields, accumulate: true)
+    Module.register_attribute(module, :schema_specification_fields, accumulate: true)
+    Module.register_attribute(module, :schema_struct_fields, accumulate: true)
+    Module.register_attribute(module, :schema_required_fields, accumulate: true)
 
     context = Module.get_attribute(module, :schema_context)
 
@@ -110,16 +110,16 @@ defmodule Normandy.Schema do
       schema: module
     }
 
-    Module.put_attribute(module, :tool_struct_fields, {:__meta__, meta})
+    Module.put_attribute(module, :schema_struct_fields, {:__meta__, meta})
   end
 
   @doc false
   def __schema__(module) do
-    fields = Module.get_attribute(module, :tool_fields) |> Enum.reverse()
-    struct_fields = Module.get_attribute(module, :tool_struct_fields) |> Enum.reverse()
-    redacted_fields = Module.get_attribute(module, :tool_redact_fields)
+    fields = Module.get_attribute(module, :schema_fields) |> Enum.reverse()
+    struct_fields = Module.get_attribute(module, :schema_struct_fields) |> Enum.reverse()
+    redacted_fields = Module.get_attribute(module, :schema_redact_fields)
     derive = Module.get_attribute(module, :derive)
-    required_fields = Module.get_attribute(module, :tool_required_fields, []) |> Enum.reverse()
+    required_fields = Module.get_attribute(module, :schema_required_fields, []) |> Enum.reverse()
 
     if redacted_fields != [] and not List.keymember?(derive, Inspect, 0) and
          derive_inspect?(module) do
@@ -290,26 +290,26 @@ defmodule Normandy.Schema do
     put_struct_field(mod, name, Keyword.get(opts, :default))
 
     if Keyword.get(opts, :redact, false) do
-      Module.put_attribute(mod, :tool_redact_fields, name)
+      Module.put_attribute(mod, :schema_redact_fields, name)
     end
 
     description = Keyword.get(opts, :description, "")
 
     if Keyword.get(opts, :required, false) do
-      Module.put_attribute(mod, :tool_required_fields, name)
+      Module.put_attribute(mod, :schema_required_fields, name)
     end
 
-    Module.put_attribute(mod, :tool_fields, {name, {type, description}})
+    Module.put_attribute(mod, :schema_fields, {name, {type, description}})
   end
 
   defp put_struct_field(mod, name, assoc) do
-    fields = Module.get_attribute(mod, :tool_struct_fields)
+    fields = Module.get_attribute(mod, :schema_struct_fields)
 
     if List.keyfind(fields, name, 0) do
       raise ArgumentError,
             "field/association #{inspect(name)} already exists on schema, you must either remove the duplication or choose a different name"
     end
 
-    Module.put_attribute(mod, :tool_struct_fields, {name, assoc})
+    Module.put_attribute(mod, :schema_struct_fields, {name, assoc})
   end
 end
