@@ -1,5 +1,6 @@
 defmodule Normandy.Components.AgentMemory do
   alias Normandy.Components.Message
+  alias Normandy.Components.BaseIOSchema
 
   def new_memory(max_messages \\ 10) do
     %{max_messages: max_messages, history: [], current_turn_id: nil}
@@ -24,5 +25,20 @@ defmodule Normandy.Components.AgentMemory do
       |> Enum.take(-max_messages)
 
     Map.put(memory, :history, history)
+  end
+
+  def history(%{history: history}) do
+    create_history(history)
+  end
+
+  defp create_history(history), do: create_history(history, [])
+  defp create_history([], history), do: history
+  defp create_history([%{role: role, content: content} | tail], history) do
+    message = process_message(role, content)
+    history = history++[message]
+    create_history(tail, history)
+  end
+  defp process_message(role, content) do
+    %{role: role, content: BaseIOSchema.to_json(content)}
   end
 end

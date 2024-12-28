@@ -1,2 +1,0 @@
-defmodule Normandy.Schemas.SystemPromptSpecification do
-end

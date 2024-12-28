@@ -46,7 +46,7 @@ defmodule Components.AgentMemoryTest do
     history = Map.get(memory, :history)
 
     result = [%Message{role: "main", content: content_a, turn_id: turn_id}]
-    assert history = result
+    assert history == result
 
     content_b = %{goodbye: "hello"}
     result = result ++ [%Message{role: "secondary", content: content_b, turn_id: turn_id}]
@@ -55,7 +55,7 @@ defmodule Components.AgentMemoryTest do
       AgentMemory.add_message(memory, "secondary", content_b)
       |> Map.get(:history)
 
-    assert history = result
+    assert history == result
 
   end
 
@@ -67,7 +67,7 @@ defmodule Components.AgentMemoryTest do
     history = Map.get(memory, :history)
 
     result = [%Message{role: "main", content: content_a, turn_id: turn_id}]
-    assert history = result
+    assert history == result
 
     content_b = %{goodbye: "hello"}
     result = [%Message{role: "secondary", content: content_b, turn_id: turn_id}]
@@ -76,6 +76,17 @@ defmodule Components.AgentMemoryTest do
       AgentMemory.add_message(memory, "secondary", content_b)
       |> Map.get(:history)
 
-    assert history = result
+    assert history == result
+  end
+
+  test "get history" do
+
+    content_a = %Normandy.IOTest{}
+    history =
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("main", content_a)
+      |> AgentMemory.history()
+
+    assert history == [%{role: "main", content: "{\"test_field\":\"test_value\"}"}]
   end
 end

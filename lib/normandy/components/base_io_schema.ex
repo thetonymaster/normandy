@@ -7,10 +7,13 @@ defprotocol Normandy.Components.BaseIOSchema do
   def __rich__(struct)
   @spec schema(struct()) :: String.t()
   def schema(struct)
+  @spec to_json(struct()):: String.t()
+  def to_json(struct)
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: Any do
   def __str__(_), do: ""
   def __rich__(_), do: ""
   def schema(_), do: ""
+  def to_json(_), do: ""
 end
