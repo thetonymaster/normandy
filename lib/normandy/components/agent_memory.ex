@@ -116,4 +116,9 @@ defmodule Normandy.Components.AgentMemory do
     history = history ++ [loaded_message]
     load_messages(tail, history)
   end
+
+  def delete_turn(memory, turn_id) do
+    history = Enum.reject(memory.history, fn x -> x.turn_id == turn_id end)
+    Map.put(memory, :history, history)
+  end
 end

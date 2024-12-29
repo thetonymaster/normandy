@@ -154,6 +154,7 @@ defmodule Components.AgentMemoryTest do
         result = AgentMemory.add_message(memory, "user", %IOTest{test_field: "hello #{x}"})
         {memory, result}
       end)
+
     size = AgentMemory.count_messages(result)
 
     assert size == 100
@@ -197,5 +198,40 @@ defmodule Components.AgentMemoryTest do
 
     assert new_turn_id != turn_id
     assert Enum.at(history, 2).turn_id == new_turn_id
+  end
+
+  test "delete turn" do
+    initial_turn_id = "14c35357-c5cc-4f76-920f-b5ed17d3e832"
+    other_turn_id = "d1cf623c-61b7-4478-b74c-8bae84ca73ac"
+
+    test_message_a = %IOTest{test_field: "hello"}
+    test_message_b = %IOTest{test_field: "goodbye"}
+    memory =
+      %{
+        history: [
+          %Message{
+            turn_id: initial_turn_id,
+            content: test_message_a,
+            role: "user"
+          },
+          %Message{
+            turn_id: other_turn_id,
+            content: test_message_b,
+            role: "user"
+          }
+        ]
+      }
+
+    assert AgentMemory.count_messages(memory) == 2
+
+    memory = memory |> AgentMemory.delete_turn(initial_turn_id)
+
+    assert AgentMemory.count_messages(memory) == 1
+    assert Enum.at(memory.history, 0).turn_id == other_turn_id
+
+    memory = memory |> AgentMemory.delete_turn(other_turn_id)
+
+    assert AgentMemory.count_messages(memory) == 0
+
   end
 end
