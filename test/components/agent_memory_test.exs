@@ -168,4 +168,34 @@ defmodule Components.AgentMemoryTest do
 
     assert size == 0
   end
+
+  test "turn consistency" do
+    memory = AgentMemory.new_memory()
+    memory = memory |> AgentMemory.initialize_turn()
+    turn_id = memory |> AgentMemory.get_current_turn_id()
+
+    assert turn_id != nil
+
+    memory =
+      memory
+      |> AgentMemory.add_message("user", %IOTest{test_field: "hello 1"})
+      |> AgentMemory.add_message("user", %IOTest{test_field: "hello 2"})
+
+    history = memory.history
+
+    assert Enum.at(history, 0).turn_id == turn_id
+    assert Enum.at(history, 1).turn_id == turn_id
+
+    memory = memory |> AgentMemory.initialize_turn()
+    new_turn_id = memory |> AgentMemory.get_current_turn_id()
+
+    memory =
+      memory
+      |> AgentMemory.add_message("user", %IOTest{test_field: "hello 3"})
+
+    history = memory.history
+
+    assert new_turn_id != turn_id
+    assert Enum.at(history, 2).turn_id == new_turn_id
+  end
 end
