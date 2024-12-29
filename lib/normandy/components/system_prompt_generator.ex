@@ -1,5 +1,6 @@
 defmodule Normandy.Components.SystemPromptGenerator do
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Components.ContextProvider
 
   @background "IDENTITY and PURPOSE"
   @steps "INTERNAL ASSISTANT STEPS"
@@ -18,27 +19,34 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
     Normandy.Components.generate_prompt(spec)
   """
-  def generate_prompt(%PromptSpecification{
-        background: [],
-        steps: steps,
-        output_instructions: output,
-        additional_information: additional_info
-      }) do
+  def generate_prompt(
+        prompt_specification = %PromptSpecification{
+          background: []
+        }
+      ) do
     background = ["This is a conversation with a helpful and friendly AI assistant."]
 
+    %PromptSpecification{
+      steps: steps,
+      output_instructions: output,
+      context_providers: context_providers
+    } = prompt_specification
+
     build_prompt(background, steps, output)
-    |> additional_information(additional_info)
+    |> build_context(context_providers)
     |> Enum.join("\n")
   end
 
-  def generate_prompt(%PromptSpecification{
-        background: background,
-        steps: steps,
-        output_instructions: output,
-        additional_information: additional_info
-      }) do
+  def generate_prompt(prompt_specification) do
+    %PromptSpecification{
+      background: background,
+      steps: steps,
+      output_instructions: output,
+      context_providers: context_providers
+    } = prompt_specification
+
     build_prompt(background, steps, output)
-    |> additional_information(additional_info)
+    |> build_context(context_providers)
     |> Enum.join("\n")
   end
 
@@ -54,8 +62,19 @@ defmodule Normandy.Components.SystemPromptGenerator do
     process_sections(sections, [])
   end
 
-  defp additional_information(prompt_parts, _additional_info) do
+  defp build_context(prompt_parts, context_providers) when context_providers == %{}  do
     prompt_parts
+  end
+  defp build_context(prompt_parts, context_providers) do
+    {_, result} = Enum.map_reduce(context_providers, [],
+      fn {_, provider}, acc ->
+        context = ["## #{ContextProvider.title(provider)}", ContextProvider.get_info(provider)]
+        {context, acc ++ context}
+      end)
+
+    prompt_parts ++
+    ["# EXTRA INFORMATION AND CONTEXT"]
+    ++ result
   end
 
   defp process_sections([], prompt_parts), do: prompt_parts
