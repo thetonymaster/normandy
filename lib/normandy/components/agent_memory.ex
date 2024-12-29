@@ -124,10 +124,9 @@ defmodule Normandy.Components.AgentMemory do
     after_len = length(history)
 
     if before_len == after_len do
-      raise Normandy.NonExistantTurn, [value: turn_id]
+      raise Normandy.NonExistantTurn, value: turn_id
     end
 
     Map.put(memory, :history, history)
-
   end
 end

@@ -206,6 +206,7 @@ defmodule Components.AgentMemoryTest do
 
     test_message_a = %IOTest{test_field: "hello"}
     test_message_b = %IOTest{test_field: "goodbye"}
+
     memory =
       %{
         history: [
@@ -234,9 +235,9 @@ defmodule Components.AgentMemoryTest do
     assert AgentMemory.count_messages(memory) == 0
 
     assert_raise Normandy.NonExistantTurn,
-    "turn \"d1cf623c-61b7-4478-b74c-8bae84ca73ac\" does not exist",
-    fn ->
-      AgentMemory.delete_turn(memory, other_turn_id)
-    end
+                 "turn \"d1cf623c-61b7-4478-b74c-8bae84ca73ac\" does not exist",
+                 fn ->
+                   AgentMemory.delete_turn(memory, other_turn_id)
+                 end
   end
 end
