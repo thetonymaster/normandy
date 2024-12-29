@@ -24,7 +24,7 @@ defmodule Normandy.MixProject do
   defp deps do
     [
       {:elixir_uuid, "~> 1.2"},
-      {:jason, "~> 1.4", only: [:test]}
+      {:poison, "~> 6.0", only: [:test]}
     ]
   end
 

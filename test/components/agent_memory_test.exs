@@ -95,4 +95,50 @@ defmodule Components.AgentMemoryTest do
              %{role: "system", content: "{\"test_field\":\"hello there\"}"}
            ]
   end
+
+  test "get current turn" do
+    memory = AgentMemory.new_memory()
+    assert AgentMemory.get_current_turn_id(memory) == nil
+
+    memory = AgentMemory.initialize_turn(memory)
+    assert AgentMemory.get_current_turn_id(memory) != nil
+  end
+
+  test "get count" do
+    memory = AgentMemory.new_memory()
+
+    assert AgentMemory.count_messages(memory) == 0
+
+    content_a = %Normandy.IOTest{}
+    memory = AgentMemory.add_message(memory, "user", content_a)
+
+    assert AgentMemory.count_messages(memory) == 1
+  end
+
+  test "dump and load" do
+    content_a = %Normandy.IOTest{}
+    content_b = %Normandy.IOTest{test_field: "hello there"}
+
+    memory =
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", content_a)
+      |> AgentMemory.add_message("system", content_b)
+
+    dump = AgentMemory.dump(memory)
+    loaded_memory = AgentMemory.load(dump)
+
+    assert AgentMemory.count_messages(loaded_memory) == 2
+
+    history = AgentMemory.history(loaded_memory)
+
+    assert AgentMemory.get_current_turn_id(memory) ==
+             AgentMemory.get_current_turn_id(loaded_memory)
+
+    assert Map.get(memory, :max_messages) == Map.get(loaded_memory, :max_messages)
+
+    assert history == [
+             %{role: "user", content: "{\"test_field\":\"test_value\"}"},
+             %{role: "system", content: "{\"test_field\":\"hello there\"}"}
+           ]
+  end
 end
