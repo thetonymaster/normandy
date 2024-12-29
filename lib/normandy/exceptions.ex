@@ -11,3 +11,14 @@ defmodule Normandy.CastError do
     %__MODULE__{message: msg, type: type, value: value}
   end
 end
+
+defmodule Normandy.NonExistantTurn do
+  defexception [:message, :value]
+
+  def exception(opts) do
+    value = Keyword.fetch!(opts, :value)
+
+    msg = opts[:message] || "turn #{inspect(value)} does not exist"
+    %__MODULE__{message: msg, value: value}
+  end
+end

@@ -118,7 +118,16 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   def delete_turn(memory, turn_id) do
+    before_len = length(memory.history)
     history = Enum.reject(memory.history, fn x -> x.turn_id == turn_id end)
+
+    after_len = length(history)
+
+    if before_len == after_len do
+      raise Normandy.NonExistantTurn, [value: turn_id]
+    end
+
     Map.put(memory, :history, history)
+
   end
 end
