@@ -2,29 +2,42 @@ defmodule Normandy.Components.AgentMemory do
   alias Normandy.Components.Message
   alias Normandy.Components.BaseIOSchema
 
-  def new_memory(max_messages \\ 10) do
+  def new_memory(max_messages \\ nil) do
     %{max_messages: max_messages, history: [], current_turn_id: nil}
   end
 
-  def initialize_turn(memory = %{current_turn_id: nil}) do
-    memory
-    |> Map.replace(:current_turn_id, UUID.uuid4())
-  end
-
-  def initialize_turn(memory), do: memory
+  def initialize_turn(memory), do: memory |> Map.replace(:current_turn_id, UUID.uuid4())
 
   def add_message(memory, role, content) do
-    memory = initialize_turn(memory)
+    memory =
+      if Map.get(memory, :current_turn_id) == nil do
+        initialize_turn(memory)
+      else
+        memory
+      end
+
     message = %Message{turn_id: memory.current_turn_id, role: role, content: content}
 
-    max_messages = Map.get(memory, :max_messages, 10)
+    max_messages = Map.get(memory, :max_messages)
 
     history =
       Map.get(memory, :history, [])
       |> Enum.concat([message])
-      |> Enum.take(-max_messages)
+      |> manage_overflow(max_messages)
 
     Map.put(memory, :history, history)
+  end
+
+  defp manage_overflow(history, nil) do
+    history
+  end
+
+  defp manage_overflow(_, 0) do
+    []
+  end
+
+  defp manage_overflow(history, max_messages) do
+    Enum.take(history, -max_messages)
   end
 
   def history(%{history: history}) do
@@ -90,15 +103,17 @@ defmodule Normandy.Components.AgentMemory do
     %{
       content: %{type: type, data: data}
     } = message
+
     mod = String.to_existing_atom(type)
     content = struct(mod, data)
+
     loaded_message = %Message{
       turn_id: message.turn_id,
       role: message.role,
       content: content
-
     }
-    history = history++[loaded_message]
+
+    history = history ++ [loaded_message]
     load_messages(tail, history)
   end
 end
