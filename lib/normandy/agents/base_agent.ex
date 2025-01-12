@@ -46,7 +46,7 @@ defmodule Normandy.Agents.BaseAgent do
         }
       ] ++ AgentMemory.history(config.memory)
 
-    response = Normandy.Agents.Model.converse(
+    Normandy.Agents.Model.converse(
       config.client,
       config.model,
       config.temperature,
@@ -54,31 +54,33 @@ defmodule Normandy.Agents.BaseAgent do
       messages,
       response_model
     )
-    {config, response}
   end
 
   def run(
         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
         user_input \\ nil
       ) do
-    if user_input != nil do
-      memory =
+
+    memory =
+      if user_input != nil do
         memory
         |> AgentMemory.initialize_turn()
         |> AgentMemory.add_message("user", user_input)
+      end
 
-      ^config =
+    config =
+      if user_input != nil do
         config
-        |> Map.put(:memory, memory)
         |> Map.put(:current_user_input, user_input)
-    end
+        |> Map.put(:memory, memory)
+      end
 
     response = get_response(config, output_schema)
     memory = AgentMemory.add_message(memory, "assistant", response)
 
     config = Map.put(config, :memory, memory)
 
-    {config, memory}
+    {config, response}
   end
 
   def get_context_provider(

@@ -24,7 +24,8 @@ defmodule Normandy.MixProject do
   defp deps do
     [
       {:elixir_uuid, "~> 1.2"},
-      {:poison, "~> 6.0"}
+      {:poison, "~> 6.0"},
+      {:claudio, git: "git@github.com:thetonymaster/claudio.git", ref: "0b26552"}
     ]
   end
 

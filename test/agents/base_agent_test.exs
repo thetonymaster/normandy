@@ -46,7 +46,7 @@ defmodule Normandy.BaseAgentsTest do
 
     agent = Map.put(agent, :memory, mock_memory)
 
-    {_agent, response} = BaseAgent.get_response(agent)
+    response = BaseAgent.get_response(agent)
 
     assert response == %Normandy.Agents.BaseAgentOutputSchema{}
   end
@@ -110,7 +110,9 @@ defmodule Normandy.BaseAgentsTest do
     mock_input = %BaseAgentInputSchema{chat_message: "hello"}
     mock_output = %BaseAgentOutputSchema{}
 
-    BaseAgent.run(config, mock_input)
+    {agent, response} = BaseAgent.run(agent, mock_input)
+    assert response == mock_output
+    assert Map.get(agent, :current_user_input) == mock_input
   end
 
   test "rich base agent io str and rich" do
