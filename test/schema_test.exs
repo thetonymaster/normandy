@@ -13,6 +13,18 @@ defmodule Normandy.SchemaTest do
     end
   end
 
+  defmodule SchemaTestWithDesc do
+    use Normandy.Schema
+
+    io_schema "tool with desc" do
+      field(:name, :string, default: "eric", description: "name of the user", required: true)
+      field(:password, :string, redact: true, required: true)
+      field(:count, :integer)
+      field(:map, {:map, :string}, default: nil)
+      field(:array, {:array, :string})
+    end
+  end
+
   test "schema fields" do
     assert Schema.__schema__(:fields) == [:name, :password, :count, :map, :array]
   end
@@ -45,6 +57,41 @@ defmodule Normandy.SchemaTest do
     assert Schema.__schema__(:specification) == %{
              type: "object",
              title: "Schema",
+             "$schema": "https://json-schema.org/draft/2020-12/schema",
+             properties: %{
+               name: %{
+                 description: "name of the user",
+                 type: :string
+               },
+               password: %{
+                 description: "",
+                 type: :string
+               },
+               count: %{
+                 description: "",
+                 type: :integer
+               },
+               map: %{
+                 description: "",
+                 type: :object
+               },
+               array: %{
+                 description: "",
+                 type: :array,
+                 items: %{
+                   type: :string
+                 }
+               }
+             },
+             required: [:name, :password]
+           }
+  end
+
+  test "specification with description" do
+    assert SchemaTestWithDesc.__schema__(:specification) == %{
+             type: "object",
+             title: "SchemaTestWithDesc",
+             description: "tool with desc",
              "$schema": "https://json-schema.org/draft/2020-12/schema",
              properties: %{
                name: %{

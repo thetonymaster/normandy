@@ -62,19 +62,20 @@ defmodule Normandy.Components.SystemPromptGenerator do
     process_sections(sections, [])
   end
 
-  defp build_context(prompt_parts, context_providers) when context_providers == %{}  do
+  defp build_context(prompt_parts, context_providers) when context_providers == %{} do
     prompt_parts
   end
+
   defp build_context(prompt_parts, context_providers) do
-    {_, result} = Enum.map_reduce(context_providers, [],
-      fn {_, provider}, acc ->
+    {_, result} =
+      Enum.map_reduce(context_providers, [], fn {_, provider}, acc ->
         context = ["## #{ContextProvider.title(provider)}", ContextProvider.get_info(provider)]
         {context, acc ++ context}
       end)
 
     prompt_parts ++
-    ["# EXTRA INFORMATION AND CONTEXT"]
-    ++ result
+      ["# EXTRA INFORMATION AND CONTEXT"] ++
+      result
   end
 
   defp process_sections([], prompt_parts), do: prompt_parts

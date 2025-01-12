@@ -85,6 +85,4 @@ defmodule Components.SystemPromptGeneratorTest do
     result = SystemPromptGenerator.generate_prompt(spec)
     assert String.trim(prompt) == result
   end
-
-
 end

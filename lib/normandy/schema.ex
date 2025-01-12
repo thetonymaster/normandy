@@ -16,7 +16,7 @@ defmodule Normandy.Schema do
   @doc false
   defmacro __using__(_) do
     quote do
-      import Normandy.Schema, only: [schema: 1]
+      import Normandy.Schema, only: [schema: 1, io_schema: 2]
 
       Module.register_attribute(__MODULE__, :schema_fields, accumulate: true)
       Module.register_attribute(__MODULE__, :schema_raw, accumulate: true)
@@ -52,6 +52,58 @@ defmodule Normandy.Schema do
         end
 
         :ok
+      end
+
+    quote do
+      unquote(prelude)
+      unquote(postlude)
+    end
+  end
+
+    @doc false
+  defmacro io_schema(source, do: block) do
+    prelude =
+      quote do
+        Normandy.Schema.__schema__(__MODULE__, __ENV__.line)
+        source = unquote(source)
+
+        try do
+           @description source
+          import Normandy.Schema
+          unquote(block)
+        after
+          :ok
+        end
+      end
+
+    postlude =
+      quote unquote: false do
+        {struct_fields, bags_of_clauses} = Normandy.Schema.__schema__(__MODULE__)
+        defstruct struct_fields
+
+        def __specification__ do
+          %{unquote_splicing(Macro.escape(@schema_specification_fields))}
+        end
+
+        for clauses <- bags_of_clauses, {args, body} <- clauses do
+          def __schema__(unquote_splicing(args)), do: unquote(body)
+        end
+
+        try do
+          defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
+            @adapter Application.compile_env(:normandy, :adapter)
+            def __str__(str), do: @adapter.encode!(str)
+            def __rich__(str), do: @adapter.encode!(str, pretty: true)
+            def to_json(str), do: @adapter.encode!(str)
+            def get_schema(str), do: str.__struct__.get_json_schema()
+          end
+
+          def get_json_schema() do
+            __MODULE__.__schema__(:specification)
+          end
+        after
+          :ok
+        end
       end
 
     quote do
@@ -120,6 +172,7 @@ defmodule Normandy.Schema do
     redacted_fields = Module.get_attribute(module, :schema_redact_fields)
     derive = Module.get_attribute(module, :derive)
     required_fields = Module.get_attribute(module, :schema_required_fields, []) |> Enum.reverse()
+    description = Module.get_attribute(module, :description, nil)
 
     if redacted_fields != [] and not List.keymember?(derive, Inspect, 0) and
          derive_inspect?(module) do
@@ -148,6 +201,12 @@ defmodule Normandy.Schema do
       "$schema": "https://json-schema.org/draft/2020-12/schema"
     }
 
+    specification =
+      if description != nil do
+        Map.put(specification, :description, description)
+      else
+        specification
+      end
     properties =
       for {name, opts} <- fields do
         check_specification_type(name, opts)

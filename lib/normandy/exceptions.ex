@@ -22,3 +22,14 @@ defmodule Normandy.NonExistantTurn do
     %__MODULE__{message: msg, value: value}
   end
 end
+
+defmodule Normandy.NotExistantContexProvider do
+  defexception [:message, :value]
+
+  def exception(opts) do
+    value = Keyword.fetch!(opts, :value)
+
+    msg = opts[:message] || "context provider #{inspect(value)} does not exist"
+    %__MODULE__{message: msg, value: value}
+  end
+end
