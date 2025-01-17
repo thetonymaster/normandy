@@ -1,4 +1,4 @@
-defmodule Normandy.Support.ContextProvider do
+defmodule NormandyTest.Support.ContextProvider do
   use Normandy.Schema
 
   schema do

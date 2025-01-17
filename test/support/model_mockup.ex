@@ -1,4 +1,4 @@
-defmodule Normandy.Support.ModelMockup do
+defmodule NormandyTest.Support.ModelMockup do
   use Normandy.Schema
 
   schema do

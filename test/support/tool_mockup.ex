@@ -1,6 +1,6 @@
-defmodule Normandy.Support.Tool do
+defmodule NormandyTest.Support.Tool do
   use Normandy.Schema
-  alias Normandy.IOTest
+  alias NormandyTest.IOTest
 
   defimpl Normandy.Tools.BaseTool, for: __MODULE__ do
     def tool_name(_config), do: __MODULE__ |> to_string()

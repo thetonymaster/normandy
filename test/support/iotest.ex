@@ -1,4 +1,4 @@
-defmodule Normandy.IOTest do
+defmodule NormandyTest.IOTest do
   use Normandy.Schema
   @derive {Poison.Encoder, only: [:test_field]}
 
@@ -9,7 +9,7 @@ defmodule Normandy.IOTest do
   defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
     def __str__(str), do: Poison.encode!(str)
     def __rich__(str), do: Poison.encode!(str, pretty: true)
-    def get_schema(_), do: Normandy.IOTest.__schema__(:specification)
+    def get_schema(_), do: NormandyTest.IOTest.__schema__(:specification)
     def to_json(str), do: Poison.encode!(str)
   end
 end

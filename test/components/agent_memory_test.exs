@@ -1,8 +1,7 @@
-defmodule Components.AgentMemoryTest do
+defmodule NormandyTest.Components.AgentMemoryTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.IOTest
-  alias IOTest
+  alias NormandyTest.IOTest
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
   doctest Normandy.Components.AgentMemory

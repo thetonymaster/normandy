@@ -1,8 +1,8 @@
-defmodule Normandy.BaseAgentsTest do
+defmodule NormandyTest.BaseAgentsTest do
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentConfig
-  alias Normandy.Support.ContextProvider
+  alias NormandyTest.Support.ContextProvider
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.AgentMemory
@@ -11,9 +11,9 @@ defmodule Normandy.BaseAgentsTest do
 
   setup do
     config = %{
-      client: %Normandy.Support.ModelMockup{},
+      client: %NormandyTest.Support.ModelMockup{},
       model: "claude-3-5-sonnet-20241022",
-      temperature: 0.9,
+      temperature: 0.9
     }
 
     agent = BaseAgent.init(config)
@@ -26,7 +26,7 @@ defmodule Normandy.BaseAgentsTest do
     assert Map.get(agent, :memory) == AgentMemory.new_memory()
     assert Map.get(agent, :initial_memory) == Map.get(agent, :memory)
     assert Map.get(agent, :prompt_specification) == %PromptSpecification{}
-    assert Map.get(agent, :client) == %Normandy.Support.ModelMockup{}
+    assert Map.get(agent, :client) == %NormandyTest.Support.ModelMockup{}
     assert Map.get(agent, :model) == "claude-3-5-sonnet-20241022"
     assert Map.get(agent, :temperature) == 0.9
     assert Map.get(agent, :max_tokens) == nil
@@ -51,7 +51,7 @@ defmodule Normandy.BaseAgentsTest do
     assert response == %Normandy.Agents.BaseAgentOutputSchema{}
   end
 
-  test "get context provider", %{agent: agent =  %BaseAgentConfig{prompt_specification: prompt}} do
+  test "get context provider", %{agent: agent = %BaseAgentConfig{prompt_specification: prompt}} do
     mock_provider = %ContextProvider{}
 
     context_providers =
@@ -73,7 +73,6 @@ defmodule Normandy.BaseAgentsTest do
   end
 
   test "register context provider", %{agent: agent} do
-
     ctx = %ContextProvider{}
     agent = BaseAgent.register_context_provider(agent, :ctx, ctx)
 
@@ -86,7 +85,6 @@ defmodule Normandy.BaseAgentsTest do
   end
 
   test "delete a context provider", %{agent: agent} do
-
     ctx = %ContextProvider{}
     agent = BaseAgent.register_context_provider(agent, :ctx, ctx)
 
@@ -98,6 +96,7 @@ defmodule Normandy.BaseAgentsTest do
     assert ctx == context_provider
 
     agent = BaseAgent.delete_context_provider(agent, :ctx)
+
     context_provider =
       Map.get(agent, :prompt_specification)
       |> Map.get(:context_providers)
@@ -118,9 +117,9 @@ defmodule Normandy.BaseAgentsTest do
   test "rich base agent io str and rich" do
     test_io = %Normandy.Agents.BaseAgentInputSchema{chat_message: "chat message"}
 
-    assert Normandy.Components.BaseIOSchema.__str__(test_io) == "{\"chat_message\":\"chat message\"}"
+    assert Normandy.Components.BaseIOSchema.__str__(test_io) ==
+             "{\"chat_message\":\"chat message\"}"
+
     assert Normandy.Components.BaseIOSchema.__rich__(test_io) != nil
   end
-
-
 end

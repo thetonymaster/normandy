@@ -13,6 +13,9 @@ defmodule Normandy.Schema do
     :required
   ]
 
+  @type schema :: %{optional(atom) => any, __struct__: atom, __meta__: Metadata.t()}
+  @type t :: schema
+
   @doc false
   defmacro __using__(_) do
     quote do
@@ -60,7 +63,7 @@ defmodule Normandy.Schema do
     end
   end
 
-    @doc false
+  @doc false
   defmacro io_schema(source, do: block) do
     prelude =
       quote do
@@ -68,7 +71,7 @@ defmodule Normandy.Schema do
         source = unquote(source)
 
         try do
-           @description source
+          @description source
           import Normandy.Schema
           unquote(block)
         after
@@ -207,6 +210,7 @@ defmodule Normandy.Schema do
       else
         specification
       end
+
     properties =
       for {name, opts} <- fields do
         check_specification_type(name, opts)

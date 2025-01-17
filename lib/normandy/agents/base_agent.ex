@@ -11,8 +11,8 @@ defmodule Normandy.Agents.BaseAgent do
     %BaseAgentConfig{
       input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
       output_schema: Map.get(config, :output_schema, nil) || %BaseAgentOutputSchema{},
-      memory: Map.get(config, :memory, nil) ||  AgentMemory.new_memory(),
-      initial_memory: Map.get(config, :memory, nil) ||  AgentMemory.new_memory(),
+      memory: Map.get(config, :memory, nil) || AgentMemory.new_memory(),
+      initial_memory: Map.get(config, :memory, nil) || AgentMemory.new_memory(),
       prompt_specification: Map.get(config, :prompt_specification) || %PromptSpecification{},
       client: config.client,
       model: config.model,
@@ -37,7 +37,6 @@ defmodule Normandy.Agents.BaseAgent do
         Map.get(config, :output_schema)
       end
 
-
     messages =
       [
         %Message{
@@ -60,7 +59,6 @@ defmodule Normandy.Agents.BaseAgent do
         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
         user_input \\ nil
       ) do
-
     memory =
       if user_input != nil do
         memory
@@ -90,8 +88,6 @@ defmodule Normandy.Agents.BaseAgent do
     context_provider =
       Map.get(prompt_specification, :context_providers, nil)
       |> Map.get(provider_name, nil)
-
-
 
     if context_provider == nil do
       raise Normandy.NotExistantContexProvider, value: provider_name
