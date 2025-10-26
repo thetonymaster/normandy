@@ -24,7 +24,7 @@ defmodule Normandy.Metadata do
             entry != nil,
             do: to_doc(entry, opts)
 
-      concat(["#Normandy.Tools.Metadata<"] ++ Enum.intersperse(entries, ", ") ++ [">"])
+      concat(["#Normandy.Metadata<"] ++ Enum.intersperse(entries, ", ") ++ [">"])
     end
   end
 end

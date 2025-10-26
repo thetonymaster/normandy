@@ -20,9 +20,9 @@ defmodule Normandy.Components.AgentMemory do
 
     max_messages = Map.get(memory, :max_messages)
 
+    # Prepend message for O(1) operation, reversed when reading history
     history =
-      Map.get(memory, :history, [])
-      |> Enum.concat([message])
+      [message | Map.get(memory, :history, [])]
       |> manage_overflow(max_messages)
 
     Map.put(memory, :history, history)
@@ -37,20 +37,16 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   defp manage_overflow(history, max_messages) do
-    Enum.take(history, -max_messages)
+    # Take from front since we prepend messages
+    Enum.take(history, max_messages)
   end
 
   def history(%{history: history}) do
-    create_history(history)
-  end
-
-  defp create_history(history), do: create_history(history, [])
-  defp create_history([], history), do: history
-
-  defp create_history([%{role: role, content: content} | tail], history) do
-    message = process_message(role, content)
-    history = history ++ [message]
-    create_history(tail, history)
+    # Reverse since messages are stored in reverse order (newest first)
+    # Then map to create the history format
+    history
+    |> Enum.reverse()
+    |> Enum.map(&process_message(&1.role, &1.content))
   end
 
   defp process_message(role, content) do
@@ -124,7 +120,7 @@ defmodule Normandy.Components.AgentMemory do
     after_len = length(history)
 
     if before_len == after_len do
-      raise Normandy.NonExistantTurn, value: turn_id
+      raise Normandy.NonExistentTurn, value: turn_id
     end
 
     Map.put(memory, :history, history)

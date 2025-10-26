@@ -65,7 +65,7 @@ defmodule NormandyTest.BaseAgentsTest do
     ctx = BaseAgent.get_context_provider(agent, :ctx)
     assert ctx == mock_provider
 
-    assert_raise Normandy.NotExistantContexProvider,
+    assert_raise Normandy.NonExistentContextProvider,
                  "context provider :not_exists does not exist",
                  fn ->
                    BaseAgent.get_context_provider(agent, :not_exists)

@@ -48,11 +48,13 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     assert turn_id != nil
 
+    # History is stored in reverse order (newest first)
     result = [%Message{role: "main", content: content_a, turn_id: turn_id}]
     assert history == result
 
     content_b = %{goodbye: "hello"}
-    result = result ++ [%Message{role: "secondary", content: content_b, turn_id: turn_id}]
+    # When stored, newest message is first in the list
+    result = [%Message{role: "secondary", content: content_b, turn_id: turn_id} | result]
 
     history =
       AgentMemory.add_message(memory, "secondary", content_b)
@@ -72,6 +74,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert history == result
 
     content_b = %{goodbye: "hello"}
+    # With max_messages=1, only the newest message is kept
     result = [%Message{role: "secondary", content: content_b, turn_id: turn_id}]
 
     history =
@@ -183,6 +186,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     history = memory.history
 
+    # History stored in reverse, so index 0 is newest (hello 2), index 1 is older (hello 1)
     assert Enum.at(history, 0).turn_id == turn_id
     assert Enum.at(history, 1).turn_id == turn_id
 
@@ -196,7 +200,8 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     history = memory.history
 
     assert new_turn_id != turn_id
-    assert Enum.at(history, 2).turn_id == new_turn_id
+    # Index 0 is newest (hello 3) with new_turn_id
+    assert Enum.at(history, 0).turn_id == new_turn_id
   end
 
   test "delete turn" do
@@ -233,7 +238,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     assert AgentMemory.count_messages(memory) == 0
 
-    assert_raise Normandy.NonExistantTurn,
+    assert_raise Normandy.NonExistentTurn,
                  "turn \"d1cf623c-61b7-4478-b74c-8bae84ca73ac\" does not exist",
                  fn ->
                    AgentMemory.delete_turn(memory, other_turn_id)

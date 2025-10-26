@@ -90,7 +90,7 @@ defmodule Normandy.Agents.BaseAgent do
       |> Map.get(provider_name, nil)
 
     if context_provider == nil do
-      raise Normandy.NotExistantContexProvider, value: provider_name
+      raise Normandy.NonExistentContextProvider, value: provider_name
     else
       context_provider
     end

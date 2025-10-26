@@ -12,7 +12,7 @@ defmodule Normandy.CastError do
   end
 end
 
-defmodule Normandy.NonExistantTurn do
+defmodule Normandy.NonExistentTurn do
   defexception [:message, :value]
 
   def exception(opts) do
@@ -23,7 +23,7 @@ defmodule Normandy.NonExistantTurn do
   end
 end
 
-defmodule Normandy.NotExistantContexProvider do
+defmodule Normandy.NonExistentContextProvider do
   defexception [:message, :value]
 
   def exception(opts) do

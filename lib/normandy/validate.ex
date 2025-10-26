@@ -75,27 +75,9 @@ defmodule Normandy.Validate do
       message: "expected params to be a :map, got: `#{inspect(params)}`"
   end
 
-  # def cast({data, types}, params, permitted, opts) when is_map(data) do
-  #   cast(data, types, %{}, params, permitted, opts)
-  # end
-
-  # def cast(%Validate{} = changeset, params, permitted, opts) do
-  #   %{changes: changes, data: data, types: types} = changeset
-
-  #   opts =
-  #     cond do
-  #       opts[:empty_values] ->
-  #         opts
-  #       true ->
-  #         [empty_values: empty_values()] ++ opts
-  #     end
-
-  #   new_changeset = cast(data, types, changes, params, permitted, opts)
-  #   cast_merge(changeset, new_changeset)
-  # end
-
   def cast(%{__struct__: module} = data, params, permitted, opts) do
-    cast(data, module.__specification__(), %{}, params, permitted, opts)
+    types = module.__specification__()
+    cast(data, types, %{}, params, permitted, opts)
   end
 
   defp cast(%{} = data, %{} = types, %{} = changes, :invalid, permitted, _opts)
@@ -297,25 +279,6 @@ defmodule Normandy.Validate do
         params
     end
   end
-
-  # defp cast_merge(cs1, cs2) do
-  #   new_params = (cs1.params || cs2.params) && Map.merge(cs1.params || %{}, cs2.params || %{})
-  #   new_types = Map.merge(cs1.types, cs2.types)
-  #   new_changes = Map.merge(cs1.changes, cs2.changes)
-  #   new_errors = Enum.uniq(cs1.errors ++ cs2.errors)
-  #   new_required = Enum.uniq(cs1.required ++ cs2.required)
-  #   new_valid? = cs1.valid? and cs2.valid?
-
-  #   %{
-  #     cs1
-  #     | params: new_params,
-  #       valid?: new_valid?,
-  #       errors: new_errors,
-  #       types: new_types,
-  #       changes: new_changes,
-  #       required: new_required
-  #   }
-  # end
 
   @spec validations(t) :: [{atom, term}]
   def validations(%Validate{validations: validations}) do
