@@ -11,10 +11,11 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 💰 **Prompt Caching** - Up to 90% cost reduction with automatic caching support
 - 🔄 **Resilience** - Built-in retry and circuit breaker patterns for production reliability
 - 📦 **Batch Processing** - Concurrent processing of multiple inputs with progress tracking
+- 📏 **Context Management** - Token counting and automatic truncation for context window limits
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 270+ tests including property-based testing
+- 🧪 **Well Tested** - 291+ tests including property-based testing
 
 ## Installation
 
@@ -558,6 +559,95 @@ inputs = [
 {:ok, stats} = Normandy.Agents.BaseAgent.process_batch_with_stats(agent, inputs)
 ```
 
+### Context Window Management
+
+Normandy provides utilities for managing context window limits with automatic truncation to prevent token limit errors.
+
+```elixir
+alias Normandy.Context.WindowManager
+
+# Create a window manager for a specific model
+manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
+
+# Check if conversation is within limits
+{:ok, within_limit?} = WindowManager.within_limit?(manager, agent)
+
+# Automatically truncate if needed
+{:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
+
+# Estimate token usage
+tokens = WindowManager.estimate_conversation_tokens(agent.memory)
+IO.puts("Current conversation uses ~#{tokens} tokens")
+```
+
+**Token Estimation:**
+
+```elixir
+# Estimate tokens for text
+tokens = WindowManager.estimate_tokens("Hello, world!")
+#=> ~4 tokens (rough estimate: 1 token ≈ 4 characters)
+
+# Estimate tokens for entire conversation
+total = WindowManager.estimate_conversation_tokens(agent.memory)
+```
+
+**Truncation Strategies:**
+
+```elixir
+# Oldest-first strategy (default) - removes oldest messages
+manager = WindowManager.new(
+  max_tokens: 100_000,
+  reserved_tokens: 4096,
+  strategy: :oldest_first
+)
+
+# Sliding window - keeps most recent messages
+manager = WindowManager.new(strategy: :sliding_window)
+
+# Ensure conversation stays within limit
+{:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
+```
+
+**Token Counting API:**
+
+For accurate token counts, use the Anthropic API:
+
+```elixir
+alias Normandy.Context.TokenCounter
+
+# Count tokens for a message
+{:ok, count} = TokenCounter.count_message(client, "Hello, world!")
+#=> {:ok, %{"input_tokens" => 4}}
+
+# Count tokens for entire conversation
+{:ok, count} = TokenCounter.count_conversation(client, agent)
+#=> {:ok, %{"input_tokens" => 1234}}
+
+# Get detailed breakdown
+{:ok, details} = TokenCounter.count_detailed(client, agent)
+#=> {:ok, %{
+  total_tokens: 1234,
+  system_tokens: 100,
+  message_tokens: 1134,
+  messages: [...]
+}}
+```
+
+**Model Context Limits:**
+
+```elixir
+# Automatically configured for known models
+manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
+#=> 200,000 token limit
+
+# Supported models:
+# - claude-3-5-sonnet-20241022: 200K tokens
+# - claude-3-5-haiku-20241022: 200K tokens
+# - claude-3-opus-20240229: 200K tokens
+# - claude-3-sonnet-20240229: 200K tokens
+# - claude-3-haiku-20240307: 200K tokens
+```
+
 ### Validation
 
 ```elixir
@@ -613,6 +703,11 @@ end
 ### Batch Processing System
 
 - **Normandy.Batch.Processor** - Concurrent batch processing with Task.async_stream
+
+### Context Management System
+
+- **Normandy.Context.WindowManager** - Token limit management and automatic truncation
+- **Normandy.Context.TokenCounter** - Accurate token counting via Anthropic API
 
 ### Tool System
 
