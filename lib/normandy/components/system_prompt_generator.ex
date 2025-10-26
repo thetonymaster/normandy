@@ -24,12 +24,19 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
       Normandy.Components.generate_prompt(spec)
 
+  ## Parameters
+    - prompt_specification: The prompt specification
+    - tool_registry: Optional tool registry for including tool information
+
   """
-  @spec generate_prompt(PromptSpecification.t()) :: String.t()
+  @spec generate_prompt(PromptSpecification.t(), any()) :: String.t()
+  def generate_prompt(prompt_specification, tool_registry \\ nil)
+
   def generate_prompt(
         prompt_specification = %PromptSpecification{
           background: []
-        }
+        },
+        tool_registry
       ) do
     background = ["This is a conversation with a helpful and friendly AI assistant."]
 
@@ -41,10 +48,11 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
     build_prompt(background, steps, output)
     |> build_context(context_providers)
+    |> build_tools(tool_registry)
     |> Enum.join("\n")
   end
 
-  def generate_prompt(prompt_specification) do
+  def generate_prompt(prompt_specification, tool_registry) do
     %PromptSpecification{
       background: background,
       steps: steps,
@@ -54,6 +62,7 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
     build_prompt(background, steps, output)
     |> build_context(context_providers)
+    |> build_tools(tool_registry)
     |> Enum.join("\n")
   end
 
@@ -83,6 +92,30 @@ defmodule Normandy.Components.SystemPromptGenerator do
     prompt_parts ++
       ["# EXTRA INFORMATION AND CONTEXT"] ++
       result
+  end
+
+  defp build_tools(prompt_parts, nil), do: prompt_parts
+
+  defp build_tools(prompt_parts, tool_registry) do
+    alias Normandy.Tools.Registry
+    alias Normandy.Tools.BaseTool
+
+    case Registry.count(tool_registry) do
+      0 ->
+        prompt_parts
+
+      _ ->
+        tools = Registry.list(tool_registry)
+
+        tool_descriptions =
+          Enum.map(tools, fn tool ->
+            "## #{BaseTool.tool_name(tool)}\n#{BaseTool.tool_description(tool)}"
+          end)
+
+        prompt_parts ++
+          ["# AVAILABLE TOOLS", "You have access to the following tools:"] ++
+          tool_descriptions
+    end
   end
 
   defp process_sections([], prompt_parts), do: prompt_parts

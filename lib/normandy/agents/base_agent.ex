@@ -68,9 +68,19 @@ defmodule Normandy.Agents.BaseAgent do
       [
         %Message{
           role: "system",
-          content: SystemPromptGenerator.generate_prompt(prompt_specification)
+          content:
+            SystemPromptGenerator.generate_prompt(prompt_specification, config.tool_registry)
         }
       ] ++ AgentMemory.history(config.memory)
+
+    # Prepare tool schemas if tools are available
+    opts =
+      if has_tools?(config) do
+        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
+        [tools: tool_schemas]
+      else
+        []
+      end
 
     Normandy.Agents.Model.converse(
       config.client,
@@ -78,7 +88,8 @@ defmodule Normandy.Agents.BaseAgent do
       config.temperature,
       config.max_tokens,
       messages,
-      response_model
+      response_model,
+      opts
     )
   end
 

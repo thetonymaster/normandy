@@ -10,7 +10,15 @@ defmodule NormandyTest.Support.ModelMockup do
       response_model
     end
 
-    def converse(_config, _model, _temperature, _max_tokens, _messages, response_model) do
+    def converse(
+          _config,
+          _model,
+          _temperature,
+          _max_tokens,
+          _messages,
+          response_model,
+          _opts \\ []
+        ) do
       response_model
     end
   end

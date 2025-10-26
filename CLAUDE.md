@@ -143,3 +143,4 @@ end
 - Protocol consolidation disabled in test env (`consolidate_protocols: Mix.env() != :test`)
 - Test support files in `test/support/` (included via `elixirc_paths/1` in mix.exs)
 - Metadata tracking via `Normandy.Metadata` struct in schemas
+- Before running tests run `mix format`
