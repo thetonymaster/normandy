@@ -235,6 +235,296 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  @doc """
+  Stream a response from the LLM with real-time callbacks.
+
+  This method enables streaming mode, allowing you to process LLM responses
+  as they're generated. Callbacks are invoked for each event type.
+
+  ## Parameters
+    - config: Agent configuration
+    - user_input: Optional user input (can be nil to continue conversation)
+    - callback: Function `(event_type, data) -> :ok` called for each event
+
+  ## Event Types
+    - `:text_delta` - Incremental text content
+    - `:tool_use_start` - Tool call beginning
+    - `:thinking_delta` - Extended thinking content
+    - `:message_start` - Stream beginning
+    - `:message_stop` - Stream complete
+
+  ## Returns
+    `{config, final_response}` - Updated config and accumulated response
+
+  ## Example
+
+      callback = fn
+        :text_delta, text -> IO.write(text)
+        :tool_use_start, tool -> IO.puts("\\nCalling tool: \#{tool["name"]}")
+        _, _ -> :ok
+      end
+
+      {agent, response} = BaseAgent.stream_response(agent, input, callback)
+  """
+  @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
+          {BaseAgentConfig.t(), map()}
+  def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
+    # Add user input to memory if provided
+    {config, memory} =
+      if user_input != nil do
+        updated_memory =
+          config.memory
+          |> AgentMemory.initialize_turn()
+          |> AgentMemory.add_message("user", user_input)
+
+        updated_config =
+          config
+          |> Map.put(:current_user_input, user_input)
+          |> Map.put(:memory, updated_memory)
+
+        {updated_config, updated_memory}
+      else
+        {config, config.memory}
+      end
+
+    # Build messages for LLM
+    messages =
+      [
+        %Message{
+          role: "system",
+          content:
+            SystemPromptGenerator.generate_prompt(
+              config.prompt_specification,
+              config.tool_registry
+            )
+        }
+      ] ++ AgentMemory.history(memory)
+
+    # Prepare options with tools and callback
+    opts =
+      if has_tools?(config) do
+        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
+        [tools: tool_schemas, callback: callback]
+      else
+        [callback: callback]
+      end
+
+    # Stream response from LLM
+    case stream_response_from_llm(config, messages, opts) do
+      {:ok, final_response} ->
+        # Add response to memory
+        updated_memory = AgentMemory.add_message(memory, "assistant", final_response)
+        updated_config = Map.put(config, :memory, updated_memory)
+        {updated_config, final_response}
+
+      {:error, error} ->
+        # Handle error - return config unchanged
+        IO.warn("Streaming error: #{inspect(error)}")
+        {config, %{error: error}}
+    end
+  end
+
+  @doc """
+  Stream responses with tool calling support.
+
+  Combines streaming and tool execution - as the LLM streams its response,
+  tool calls are detected and executed, with results fed back into the stream.
+
+  ## Parameters
+    - config: Agent configuration
+    - user_input: Optional user input to start the conversation
+    - callback: Function `(event_type, data) -> :ok` called for each event
+
+  ## Event Types
+    - `:text_delta` - Incremental text content
+    - `:tool_use_start` - Tool call beginning
+    - `:tool_result` - Tool execution result (custom event)
+    - `:thinking_delta` - Extended thinking content
+    - `:message_start` - Stream beginning
+    - `:message_stop` - Stream complete
+
+  ## Returns
+    `{config, final_response}` - Updated config and accumulated response
+
+  ## Example
+
+      callback = fn
+        :text_delta, text -> IO.write(text)
+        :tool_use_start, tool -> IO.puts("\\nCalling tool: \#{tool["name"]}")
+        :tool_result, result -> IO.puts("Tool result: \#{inspect(result)}")
+        _, _ -> :ok
+      end
+
+      {agent, response} = BaseAgent.stream_with_tools(agent, input, callback)
+
+  """
+  @spec stream_with_tools(BaseAgentConfig.t(), struct() | nil, function()) ::
+          {BaseAgentConfig.t(), struct()}
+  def stream_with_tools(
+        config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
+        user_input \\ nil,
+        callback
+      )
+      when is_function(callback, 2) do
+    # Initialize turn with user input if provided
+    memory =
+      if user_input != nil do
+        memory
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", user_input)
+      else
+        memory
+      end
+
+    config =
+      if user_input != nil do
+        config
+        |> Map.put(:current_user_input, user_input)
+        |> Map.put(:memory, memory)
+      else
+        config
+      end
+
+    # Execute streaming tool loop
+    execute_streaming_tool_loop(config, max_iterations, callback)
+  end
+
+  # Private function to handle the streaming tool execution loop
+  defp execute_streaming_tool_loop(config, iterations_left, callback)
+       when iterations_left <= 0 do
+    # Max iterations reached, get final streaming response
+    stream_response(config, nil, callback)
+  end
+
+  defp execute_streaming_tool_loop(config, iterations_left, callback) do
+    alias Normandy.Components.ToolResult
+    alias Normandy.Tools.Executor
+
+    # Build messages for LLM
+    messages =
+      [
+        %Message{
+          role: "system",
+          content:
+            SystemPromptGenerator.generate_prompt(
+              config.prompt_specification,
+              config.tool_registry
+            )
+        }
+      ] ++ AgentMemory.history(config.memory)
+
+    # Prepare options with tools and callback
+    opts =
+      if has_tools?(config) do
+        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
+        [tools: tool_schemas, callback: callback]
+      else
+        [callback: callback]
+      end
+
+    # Stream response from LLM
+    case stream_response_from_llm(config, messages, opts) do
+      {:ok, final_response} ->
+        # Check if response contains tool calls
+        tool_calls = extract_tool_calls(final_response)
+
+        cond do
+          # No tool calls - final response
+          is_nil(tool_calls) or length(tool_calls) == 0 ->
+            memory = AgentMemory.add_message(config.memory, "assistant", final_response)
+            config = Map.put(config, :memory, memory)
+            {config, final_response}
+
+          # Has tool calls - execute them
+          true ->
+            # Add assistant message with tool calls to memory
+            memory = AgentMemory.add_message(config.memory, "assistant", final_response)
+
+            # Execute each tool call
+            tool_results =
+              Enum.map(tool_calls, fn tool_call ->
+                result =
+                  case Executor.execute(config.tool_registry, tool_call["name"]) do
+                    {:ok, result} ->
+                      %ToolResult{
+                        tool_call_id: tool_call["id"],
+                        output: result,
+                        is_error: false
+                      }
+
+                    {:error, error} ->
+                      %ToolResult{
+                        tool_call_id: tool_call["id"],
+                        output: %{error: error},
+                        is_error: true
+                      }
+                  end
+
+                # Notify callback about tool result
+                callback.(:tool_result, result)
+                result
+              end)
+
+            # Add tool results to memory
+            memory =
+              Enum.reduce(tool_results, memory, fn result, mem ->
+                AgentMemory.add_message(mem, "tool", result)
+              end)
+
+            config = Map.put(config, :memory, memory)
+
+            # Continue the loop with decremented iterations
+            execute_streaming_tool_loop(config, iterations_left - 1, callback)
+        end
+
+      {:error, error} ->
+        # Handle error
+        IO.warn("Streaming error: #{inspect(error)}")
+        {config, %{error: error}}
+    end
+  end
+
+  # Extract tool calls from streaming response
+  defp extract_tool_calls(%{content: content}) when is_list(content) do
+    content
+    |> Enum.filter(&(&1["type"] == "tool_use"))
+    |> case do
+      [] -> nil
+      tool_calls -> tool_calls
+    end
+  end
+
+  defp extract_tool_calls(_response), do: nil
+
+  # Private helper to stream from LLM
+  defp stream_response_from_llm(config, messages, opts) do
+    # Check if client protocol implements stream_converse
+    impl = Normandy.Agents.Model.impl_for(config.client)
+
+    if impl && function_exported?(impl, :stream_converse, 7) do
+      case impl.stream_converse(
+             config.client,
+             config.model,
+             config.temperature,
+             config.max_tokens,
+             messages,
+             config.output_schema,
+             opts
+           ) do
+        {:ok, stream} ->
+          # Process the stream and build final message
+          events = Enum.to_list(stream)
+          final_message = Normandy.Components.StreamProcessor.build_final_message(events)
+          {:ok, final_message}
+
+        {:error, _} = error ->
+          error
+      end
+    else
+      {:error, "Client does not support streaming"}
+    end
+  end
+
   @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
   def get_context_provider(
         %BaseAgentConfig{prompt_specification: prompt_specification},

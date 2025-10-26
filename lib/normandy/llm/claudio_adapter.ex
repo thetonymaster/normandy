@@ -109,6 +109,136 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
+    @doc """
+    Stream responses from Claude via Claudio library.
+
+    Enables streaming mode and returns a raw stream of SSE events
+    that can be processed with StreamProcessor.
+
+    ## Options
+
+    - `:tools` - List of tool schemas
+    - `:callback` - Function called for each event: `(event_type, data) -> :ok`
+
+    ## Returns
+
+    `{:ok, stream}` - Enumerable stream of events
+    `{:error, reason}` - Error occurred
+
+    ## Example
+
+        {:ok, stream} = Model.stream_converse(client, model, temp, max_tokens, messages, schema, callback: fn
+          :text_delta, text -> IO.write(text)
+          _, _ -> :ok
+        end)
+
+        # Process stream
+        Enum.each(stream, fn event -> process_event(event) end)
+    """
+    @spec stream_converse(
+            struct(),
+            String.t(),
+            float() | nil,
+            integer() | nil,
+            list(),
+            struct(),
+            keyword()
+          ) :: {:ok, Enumerable.t()} | {:error, term()}
+    def stream_converse(
+          client,
+          model,
+          temperature,
+          max_tokens,
+          messages,
+          _response_model,
+          opts \\ []
+        ) do
+      # Extract options
+      tools = Keyword.get(opts, :tools, [])
+      callback = Keyword.get(opts, :callback)
+
+      # Initialize Claudio client
+      claudio_client = build_claudio_client(client)
+
+      # Build streaming request
+      request =
+        Claudio.Messages.Request.new(model)
+        |> add_temperature(temperature)
+        |> add_max_tokens(max_tokens)
+        |> add_messages(messages)
+        |> add_tools(tools)
+        |> add_client_options(client.options)
+        |> Claudio.Messages.Request.enable_streaming()
+
+      # Execute streaming request
+      case Claudio.Messages.create(claudio_client, request) do
+        {:ok, %Tesla.Env{body: stream}} ->
+          # Parse events and optionally invoke callback
+          event_stream =
+            stream
+            |> Claudio.Messages.Stream.parse_events()
+
+          final_stream =
+            if callback do
+              Stream.map(event_stream, fn event ->
+                case event do
+                  {:ok, parsed_event} ->
+                    invoke_stream_callback(parsed_event, callback)
+                    parsed_event
+
+                  {:error, _} = error ->
+                    error
+                end
+              end)
+            else
+              Stream.map(event_stream, fn
+                {:ok, event} -> event
+                error -> error
+              end)
+            end
+
+          {:ok, final_stream}
+
+        {:error, error} ->
+          {:error, error}
+      end
+    end
+
+    # Private streaming helpers
+
+    defp invoke_stream_callback(
+           %{
+             event: "content_block_delta",
+             data: %{"delta" => %{"type" => "text_delta", "text" => text}}
+           },
+           callback
+         ) do
+      callback.(:text_delta, text)
+    end
+
+    defp invoke_stream_callback(
+           %{
+             event: "content_block_start",
+             data: %{"content_block" => %{"type" => "tool_use"} = tool}
+           },
+           callback
+         ) do
+      callback.(:tool_use_start, tool)
+    end
+
+    defp invoke_stream_callback(
+           %{event: "message_start", data: %{"message" => message}},
+           callback
+         ) do
+      callback.(:message_start, message)
+    end
+
+    defp invoke_stream_callback(%{event: "message_stop"}, callback) do
+      callback.(:message_stop, %{})
+    end
+
+    defp invoke_stream_callback(_, _callback), do: :ok
+
     # Private functions
 
     defp build_claudio_client(client) do

@@ -7,10 +7,11 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 🧠 **Agent System** - Build conversational AI agents with memory and state management
 - 📋 **Schema DSL** - Define typed, validated data structures with ease
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
+- 🌊 **Streaming** - Real-time response streaming with callback-based event processing
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 227+ tests including property-based testing
+- 🧪 **Well Tested** - 250+ tests including property-based testing
 
 ## Installation
 
@@ -163,6 +164,87 @@ dump = Normandy.Components.AgentMemory.dump(agent.memory)
 loaded_memory = Normandy.Components.AgentMemory.load(dump)
 ```
 
+### Streaming Responses
+
+Normandy supports real-time streaming of LLM responses with callbacks for processing events as they arrive:
+
+```elixir
+# Stream a response with real-time processing
+callback = fn
+  :text_delta, text ->
+    IO.write(text)  # Display text as it arrives
+
+  :tool_use_start, tool ->
+    IO.puts("\nCalling tool: #{tool["name"]}")
+
+  :message_start, message ->
+    IO.puts("Starting response from #{message["model"]}")
+
+  :message_stop, _ ->
+    IO.puts("\nResponse complete")
+
+  _, _ ->
+    :ok  # Ignore other events
+end
+
+{updated_agent, response} = Normandy.Agents.BaseAgent.stream_response(
+  agent,
+  %{chat_message: "Hello!"},
+  callback
+)
+
+# Stream with tool calling support
+{updated_agent, response} = Normandy.Agents.BaseAgent.stream_with_tools(
+  agent,
+  %{chat_message: "What is 15 + 27?"},
+  callback
+)
+```
+
+#### Streaming Event Types
+
+- `:text_delta` - Incremental text content as it's generated
+- `:tool_use_start` - Tool call beginning with tool metadata
+- `:tool_result` - Tool execution result (custom event in stream_with_tools)
+- `:thinking_delta` - Extended thinking content (if enabled)
+- `:message_start` - Stream beginning with message metadata
+- `:message_stop` - Stream complete
+
+#### Implementing Streaming for Custom Clients
+
+To add streaming support to a custom LLM client, implement the `stream_converse/7` function in your Model protocol implementation:
+
+```elixir
+defimpl Normandy.Agents.Model do
+  def converse(client, model, temperature, max_tokens, messages, response_schema, opts \\ []) do
+    # Non-streaming implementation
+  end
+
+  def stream_converse(client, model, temperature, max_tokens, messages, _response_model, opts \\ []) do
+    callback = Keyword.get(opts, :callback)
+
+    # Return a stream of Server-Sent Events
+    {:ok, stream} = your_llm_client.stream(...)
+
+    # Parse events and invoke callback for each
+    event_stream = Stream.map(stream, fn event ->
+      # Invoke callback based on event type
+      case event do
+        %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
+          if callback, do: callback.(:text_delta, text)
+        %{type: "message_start", message: message} ->
+          if callback, do: callback.(:message_start, message)
+        _ -> :ok
+      end
+
+      event
+    end)
+
+    {:ok, event_stream}
+  end
+end
+```
+
 ### Validation
 
 ```elixir
@@ -199,10 +281,16 @@ end
 
 ### Agent System
 
-- **Normandy.Agents.BaseAgent** - Core agent implementation
+- **Normandy.Agents.BaseAgent** - Core agent implementation with streaming support
 - **Normandy.Components.AgentMemory** - Conversation memory management
 - **Normandy.Components.Message** - Message structure for conversations
 - **Normandy.Components.SystemPromptGenerator** - Dynamic prompt generation
+
+### Streaming System
+
+- **Normandy.Components.StreamEvent** - Server-Sent Event schema
+- **Normandy.Components.StreamProcessor** - Stream processing utilities
+- **Normandy.LLM.ClaudioAdapter** - Built-in Claudio adapter with streaming
 
 ### Tool System
 
