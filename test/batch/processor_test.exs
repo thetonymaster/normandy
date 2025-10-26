@@ -127,7 +127,8 @@ defmodule Normandy.Batch.ProcessorTest do
         Agent.update(progress_ref, fn list -> [{completed, total} | list] end)
       end
 
-      {:ok, _results} = Processor.process_batch(agent, inputs, on_progress: on_progress, ordered: true)
+      {:ok, _results} =
+        Processor.process_batch(agent, inputs, on_progress: on_progress, ordered: true)
 
       progress = Agent.get(progress_ref, & &1) |> Enum.reverse()
 
@@ -193,9 +194,8 @@ defmodule Normandy.Batch.ProcessorTest do
       assert stats.success_count + stats.error_count == 20
     end
 
-    @tag :skip
     test "respects timeout option", %{client: client} do
-      # Client with long delay
+      # Client with long delay (1 second)
       client = %{client | delay: 1000}
 
       agent =
@@ -205,15 +205,15 @@ defmodule Normandy.Batch.ProcessorTest do
           temperature: 0.7
         })
 
-      inputs = [%{chat_message: "Message 1"}]
+      inputs = [
+        %{chat_message: "Message 1"},
+        %{chat_message: "Message 2"}
+      ]
 
-      # Short timeout should cause timeout errors
-      # Note: Task.async_stream timeout causes the entire stream to fail
-      # This is expected behavior
-      assert_raise ExUnit.AssertionError, fn ->
-        {:ok, results} = Processor.process_batch(agent, inputs, timeout: 100)
-        assert length(results) == 1
-      end
+      # Short timeout (100ms) should cause the stream to exit with timeout error
+      # This is the expected behavior of Task.async_stream when timeout occurs
+      assert catch_exit(Processor.process_batch(agent, inputs, timeout: 100)) ==
+               {:timeout, {Task.Supervised, :stream, [100]}}
     end
   end
 
