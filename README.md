@@ -8,10 +8,11 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 📋 **Schema DSL** - Define typed, validated data structures with ease
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
 - 🌊 **Streaming** - Real-time response streaming with callback-based event processing
+- 🔄 **Resilience** - Built-in retry and circuit breaker patterns for production reliability
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 250+ tests including property-based testing
+- 🧪 **Well Tested** - 295+ tests including property-based testing
 
 ## Installation
 
@@ -245,6 +246,200 @@ defimpl Normandy.Agents.Model do
 end
 ```
 
+### Resilience & Error Handling
+
+Normandy includes built-in resilience patterns to handle transient failures and prevent cascading errors in production systems.
+
+#### Retry Mechanism
+
+Automatically retry failed LLM calls with exponential backoff and jitter:
+
+```elixir
+# Use a preset retry configuration
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7,
+  retry_options: Normandy.Resilience.Retry.preset(:standard)
+})
+
+# Custom retry configuration
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7,
+  retry_options: [
+    max_attempts: 5,
+    base_delay: 1000,      # 1 second
+    max_delay: 30_000,     # 30 seconds
+    backoff_factor: 2.0,   # Exponential backoff
+    jitter: true           # Add randomness to delays
+  ]
+})
+
+# Now agent calls will automatically retry on transient failures
+{updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, %{chat_message: "Hello!"})
+```
+
+**Available Retry Presets:**
+
+- `:quick` - Fast retries (2 attempts, 100ms base delay)
+- `:standard` - Default config (3 attempts, 1s base delay)
+- `:persistent` - Aggressive retries (5 attempts, 1s base delay)
+- `:patient` - Long-running retries (10 attempts, 2s base delay)
+
+**Retry Features:**
+
+- Exponential backoff with configurable factor
+- Jitter to prevent thundering herd
+- Automatic retry on network errors, timeouts, rate limits
+- Custom retry conditions via `:retry_if` function
+- Detailed error tracking across attempts
+
+#### Circuit Breaker
+
+Prevent cascading failures by failing fast when a threshold is reached:
+
+```elixir
+# Enable circuit breaker with defaults
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7,
+  enable_circuit_breaker: true
+})
+
+# Custom circuit breaker configuration
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7,
+  enable_circuit_breaker: true,
+  circuit_breaker_options: [
+    failure_threshold: 5,      # Open after 5 failures
+    success_threshold: 2,      # Close after 2 successes in half-open
+    timeout: 60_000,           # Try half-open after 60 seconds
+    half_open_max_calls: 1     # Allow 1 test call in half-open state
+  ]
+})
+
+# Circuit breaker will automatically manage state
+{updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, %{chat_message: "Hello!"})
+```
+
+**Circuit Breaker States:**
+
+- **Closed** - Normal operation, requests pass through
+- **Open** - Threshold exceeded, requests fail fast without calling LLM
+- **Half-Open** - Testing recovery, limited requests allowed
+
+**State Transitions:**
+
+```
+Closed ──(failures > threshold)──> Open
+  ↑                                   │
+  │                                   │
+  └──(success)── Half-Open ←─(timeout)┘
+```
+
+#### Combining Retry and Circuit Breaker
+
+Both patterns work together for comprehensive protection:
+
+```elixir
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7,
+  # Retry handles transient errors
+  retry_options: [
+    max_attempts: 3,
+    base_delay: 1000
+  ],
+  # Circuit breaker prevents cascading failures
+  enable_circuit_breaker: true,
+  circuit_breaker_options: [
+    failure_threshold: 5,
+    timeout: 60_000
+  ]
+})
+```
+
+**How They Work Together:**
+
+1. **Retry** wraps the LLM call and attempts to recover from transient failures
+2. **Circuit Breaker** wraps the retry logic and sees the aggregate result
+3. Transient errors are handled by retry without affecting circuit breaker
+4. Persistent failures eventually open the circuit to prevent cascading issues
+
+#### Using Retry Directly
+
+You can also use the retry mechanism for any function:
+
+```elixir
+alias Normandy.Resilience.Retry
+
+# Basic retry
+{:ok, result} = Retry.with_retry(fn ->
+  {:ok, perform_risky_operation()}
+end)
+
+# With custom configuration
+{:ok, result} = Retry.with_retry(
+  fn -> {:ok, api_call()} end,
+  max_attempts: 5,
+  base_delay: 500,
+  retry_if: fn
+    {:error, %{status: status}} when status >= 500 -> true
+    {:error, :network_error} -> true
+    _ -> false
+  end
+)
+
+# Using presets
+Retry.with_retry(fn -> {:ok, slow_operation()} end, Retry.preset(:patient))
+```
+
+#### Using Circuit Breaker Directly
+
+You can also use circuit breaker as a standalone GenServer:
+
+```elixir
+alias Normandy.Resilience.CircuitBreaker
+
+# Start a circuit breaker
+{:ok, cb} = CircuitBreaker.start_link(
+  name: :api_breaker,
+  failure_threshold: 5,
+  timeout: 60_000
+)
+
+# Execute protected calls
+case CircuitBreaker.call(cb, fn ->
+  {:ok, MyAPI.risky_operation()}
+end) do
+  {:ok, result} -> handle_success(result)
+  {:error, :open} -> handle_circuit_open()
+  {:error, reason} -> handle_failure(reason)
+end
+
+# Check state
+CircuitBreaker.state(cb)  #=> :closed | :open | :half_open
+
+# Get metrics
+CircuitBreaker.metrics(cb)
+#=> %{
+  state: :closed,
+  failure_count: 2,
+  success_count: 100,
+  opened_at: nil
+}
+
+# Manual control
+CircuitBreaker.reset(cb)  # Force close
+CircuitBreaker.trip(cb)   # Force open
+```
+
 ### Validation
 
 ```elixir
@@ -291,6 +486,11 @@ end
 - **Normandy.Components.StreamEvent** - Server-Sent Event schema
 - **Normandy.Components.StreamProcessor** - Stream processing utilities
 - **Normandy.LLM.ClaudioAdapter** - Built-in Claudio adapter with streaming
+
+### Resilience System
+
+- **Normandy.Resilience.Retry** - Exponential backoff retry with jitter
+- **Normandy.Resilience.CircuitBreaker** - Three-state circuit breaker pattern
 
 ### Tool System
 

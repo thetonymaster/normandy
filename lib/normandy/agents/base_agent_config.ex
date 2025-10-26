@@ -23,7 +23,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           temperature: float(),
           max_tokens: pos_integer() | nil,
           tool_registry: Registry.t() | nil,
-          max_tool_iterations: pos_integer()
+          max_tool_iterations: pos_integer(),
+          retry_options: keyword() | nil,
+          circuit_breaker: pid() | nil
         }
 
   schema do
@@ -39,5 +41,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:max_tokens, :integer, default: nil)
     field(:tool_registry, :struct, default: nil)
     field(:max_tool_iterations, :integer, default: 5)
+    field(:retry_options, :map, default: nil)
+    field(:circuit_breaker, :any, default: nil)
   end
 end

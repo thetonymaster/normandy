@@ -26,11 +26,24 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:prompt_specification) => PromptSpecification.t(),
           optional(:max_tokens) => pos_integer() | nil,
           optional(:tool_registry) => Registry.t(),
-          optional(:max_tool_iterations) => pos_integer()
+          optional(:max_tool_iterations) => pos_integer(),
+          optional(:retry_options) => keyword(),
+          optional(:enable_circuit_breaker) => boolean(),
+          optional(:circuit_breaker_options) => keyword()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
   def init(config) do
+    # Initialize circuit breaker if enabled
+    circuit_breaker =
+      if Map.get(config, :enable_circuit_breaker, false) do
+        cb_opts = Map.get(config, :circuit_breaker_options, [])
+        {:ok, cb} = Normandy.Resilience.CircuitBreaker.start_link(cb_opts)
+        cb
+      else
+        nil
+      end
+
     %BaseAgentConfig{
       input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
       output_schema: Map.get(config, :output_schema, nil) || %BaseAgentOutputSchema{},
@@ -43,7 +56,9 @@ defmodule Normandy.Agents.BaseAgent do
       temperature: config.temperature,
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
-      max_tool_iterations: Map.get(config, :max_tool_iterations, 5)
+      max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
+      retry_options: Map.get(config, :retry_options, nil),
+      circuit_breaker: circuit_breaker
     }
   end
 
@@ -82,15 +97,71 @@ defmodule Normandy.Agents.BaseAgent do
         []
       end
 
-    Normandy.Agents.Model.converse(
-      config.client,
-      config.model,
-      config.temperature,
-      config.max_tokens,
-      messages,
-      response_model,
-      opts
-    )
+    # Wrap LLM call with resilience patterns
+    call_llm_with_resilience(config, messages, response_model, opts)
+  end
+
+  # Private helper to call LLM with retry and circuit breaker protection
+  defp call_llm_with_resilience(config, messages, response_model, opts) do
+    llm_call = fn ->
+      result =
+        Normandy.Agents.Model.converse(
+          config.client,
+          config.model,
+          config.temperature,
+          config.max_tokens,
+          messages,
+          response_model,
+          opts
+        )
+
+      # Wrap in {:ok, result} for retry/circuit breaker compatibility
+      {:ok, result}
+    end
+
+    # Apply retry first if configured, then circuit breaker wraps the whole thing
+    retryable_call =
+      if config.retry_options do
+        fn ->
+          # Add default retry_if for exceptions if not provided
+          retry_opts =
+            if !Keyword.has_key?(config.retry_options, :retry_if) do
+              Keyword.put(config.retry_options, :retry_if, fn
+                {:error, {:exception, _, _}} -> true
+                {:error, :open} -> false
+                {:error, error} when is_atom(error) -> true
+                _ -> false
+              end)
+            else
+              config.retry_options
+            end
+
+          Normandy.Resilience.Retry.with_retry(llm_call, retry_opts)
+        end
+      else
+        llm_call
+      end
+
+    # Apply circuit breaker if configured (wraps the retry logic)
+    protected_call =
+      if config.circuit_breaker do
+        fn ->
+          Normandy.Resilience.CircuitBreaker.call(config.circuit_breaker, retryable_call)
+        end
+      else
+        retryable_call
+      end
+
+    # Execute and unwrap result
+    result =
+      case protected_call.() do
+        {:ok, {:ok, response}} -> response
+        {:ok, response} -> response
+        {:error, {_reason, _attempts, _errors}} -> response_model
+        {:error, _reason} -> response_model
+      end
+
+    result
   end
 
   @spec run(BaseAgentConfig.t(), struct() | nil) :: {BaseAgentConfig.t(), struct()}
