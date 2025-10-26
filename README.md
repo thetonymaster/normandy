@@ -11,11 +11,11 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 💰 **Prompt Caching** - Up to 90% cost reduction with automatic caching support
 - 🔄 **Resilience** - Built-in retry and circuit breaker patterns for production reliability
 - 📦 **Batch Processing** - Concurrent processing of multiple inputs with progress tracking
-- 📏 **Context Management** - Token counting and automatic truncation for context window limits
+- 📏 **Context Management** - Token counting, automatic truncation, and conversation summarization
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 291+ tests including property-based testing
+- 🧪 **Well Tested** - 304+ tests including property-based testing
 
 ## Installation
 
@@ -648,6 +648,94 @@ manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
 # - claude-3-haiku-20240307: 200K tokens
 ```
 
+### Conversation Summarization
+
+When conversations grow too long, Normandy can automatically summarize old messages using an LLM to preserve context while reducing token usage.
+
+```elixir
+alias Normandy.Context.Summarizer
+
+# Summarize specific messages
+messages = AgentMemory.history(agent.memory)
+{:ok, summary} = Summarizer.summarize_messages(client, agent, messages)
+#=> "User discussed project requirements, assistant provided implementation suggestions"
+
+# Compress conversation by replacing old messages with summary
+{:ok, updated_agent} = Summarizer.compress_conversation(
+  client,
+  agent,
+  keep_recent: 10  # Keep 10 most recent messages
+)
+
+# The updated agent now has:
+# - A summary message replacing old messages
+# - 10 most recent messages preserved
+# - Significantly reduced token count
+```
+
+**Summarization Options:**
+
+```elixir
+{:ok, updated_agent} = Summarizer.compress_conversation(
+  client,
+  agent,
+  keep_recent: 10,              # Messages to keep (default: 10)
+  summary_role: "system",       # Role for summary message (default: "system")
+  max_tokens: 500,              # Max tokens for summary (default: 500)
+  prompt: "Custom prompt..."    # Custom summarization prompt
+)
+```
+
+**Automatic Summarization with WindowManager:**
+
+The `:summarize` strategy automatically summarizes old messages when approaching token limits:
+
+```elixir
+# Use summarization strategy
+manager = WindowManager.new(
+  max_tokens: 100_000,
+  strategy: :summarize
+)
+
+# Automatically summarizes when needed
+{:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
+
+# The agent now has:
+# - Old messages summarized into a single system message
+# - Recent messages preserved for context
+# - Token count reduced to stay within limits
+```
+
+**Estimate Token Savings:**
+
+```elixir
+# Estimate how many tokens you'll save
+messages = AgentMemory.history(agent.memory)
+{:ok, savings} = Summarizer.estimate_savings(messages, summary_tokens: 200)
+#=> %{
+  original: 1500,
+  summary: 200,
+  savings: 1300,
+  savings_percent: 86.7
+}
+
+IO.puts("Summarization will save ~#{savings.savings_percent}% tokens")
+```
+
+**How It Works:**
+
+1. **Split Conversation** - Splits history into old (to summarize) and recent (to keep)
+2. **Generate Summary** - Uses LLM to create concise summary of old messages
+3. **Replace Messages** - Replaces old messages with single summary message
+4. **Preserve Context** - Keeps recent messages intact for immediate context
+
+**Benefits:**
+
+- Preserve conversation context while reducing tokens
+- Stay within model context limits for long conversations
+- Lower costs by reducing input tokens
+- Automatic integration with WindowManager
+
 ### Validation
 
 ```elixir
@@ -708,6 +796,7 @@ end
 
 - **Normandy.Context.WindowManager** - Token limit management and automatic truncation
 - **Normandy.Context.TokenCounter** - Accurate token counting via Anthropic API
+- **Normandy.Context.Summarizer** - LLM-based conversation summarization for context compression
 
 ### Tool System
 
