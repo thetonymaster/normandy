@@ -31,7 +31,6 @@ defmodule Normandy.Context.WindowManager do
   """
 
   alias Normandy.Components.AgentMemory
-  alias Normandy.Components.Message
 
   @type strategy :: :oldest_first | :sliding_window | :summarize
   @type t :: %__MODULE__{
@@ -238,10 +237,52 @@ defmodule Normandy.Context.WindowManager do
     truncate_oldest_first(agent, manager)
   end
 
-  defp truncate_with_summary(_agent, _manager) do
-    # TODO: Implement summarization strategy
-    # This would require calling the LLM to summarize old messages
-    {:error, :not_implemented}
+  defp truncate_with_summary(agent, manager) do
+    # Calculate how many recent messages to keep
+    target_tokens = manager.max_tokens - manager.reserved_tokens
+    current_tokens = estimate_conversation_tokens(agent.memory)
+
+    if current_tokens <= target_tokens do
+      {:ok, agent}
+    else
+      # Keep approximately half the target tokens worth of recent messages
+      # and summarize the rest
+      keep_messages = estimate_messages_for_tokens(agent.memory, div(target_tokens, 2))
+
+      # Get client from agent
+      client = Map.get(agent, :client)
+
+      if client do
+        # Use summarizer to compress conversation
+        Normandy.Context.Summarizer.compress_conversation(
+          client,
+          agent,
+          keep_recent: keep_messages
+        )
+      else
+        # Fall back to oldest-first if no client available
+        truncate_oldest_first(agent, manager)
+      end
+    end
+  end
+
+  defp estimate_messages_for_tokens(memory, target_tokens) do
+    history = AgentMemory.history(memory)
+
+    # Count from newest to oldest
+    history
+    |> Enum.reverse()
+    |> Enum.reduce_while({0, 0}, fn msg, {count, tokens} ->
+      msg_tokens = estimate_message_content_tokens(msg.content) + 10
+
+      if tokens + msg_tokens <= target_tokens do
+        {:cont, {count + 1, tokens + msg_tokens}}
+      else
+        {:halt, {count, tokens}}
+      end
+    end)
+    |> elem(0)
+    |> max(5)  # Keep at least 5 messages
   end
 
   defp split_to_fit(messages, target_tokens) do
@@ -267,22 +308,18 @@ defmodule Normandy.Context.WindowManager do
     max_messages = Map.get(original_memory, :max_messages)
     turn_id = Map.get(original_memory, :current_turn_id)
 
-    # Convert history format back to Message structs
-    history =
-      messages
-      |> Enum.reverse()
-      |> Enum.map(fn msg ->
-        %Message{
-          turn_id: turn_id,
-          role: msg.role,
-          content: msg.content
-        }
-      end)
-
-    %{
+    # Start with empty memory and properly add messages using AgentMemory.add_message
+    memory = %{
       max_messages: max_messages,
-      history: history,
+      history: [],
       current_turn_id: turn_id
     }
+
+    # Add messages in chronological order
+    # (add_message prepends, and history() will reverse, so this gives correct final order)
+    messages
+    |> Enum.reduce(memory, fn msg, mem ->
+      AgentMemory.add_message(mem, msg.role, msg.content)
+    end)
   end
 end

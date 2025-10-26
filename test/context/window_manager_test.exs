@@ -224,16 +224,46 @@ defmodule Normandy.Context.WindowManagerTest do
   end
 
   describe "truncate_conversation/2 with :summarize strategy" do
-    test "returns not implemented error" do
-      manager = WindowManager.new(strategy: :summarize)
+    test "summarizes old messages when client is available" do
+      # Create a mock client
+      client = %Normandy.Test.MockSummarizerClient{
+        summary_response: "Summary of old messages"
+      }
+
+      manager = WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :summarize)
 
       memory =
-        AgentMemory.new_memory()
-        |> AgentMemory.add_message("user", "Hello")
+        Enum.reduce(1..15, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message number #{i} with content here")
+        end)
+
+      agent = %{memory: memory, config: %{client: client, model: "test-model"}}
+
+      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
+
+      history = AgentMemory.history(truncated_agent.memory)
+
+      # Should have fewer messages than original
+      assert length(history) < 15
+      # Should have at least one summary message
+      assert length(history) > 0
+    end
+
+    test "falls back to oldest_first when no client available" do
+      manager = WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :summarize)
+
+      memory =
+        Enum.reduce(1..10, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i} with lots of content here")
+        end)
 
       agent = %{memory: memory, config: %{}}
 
-      assert {:error, :not_implemented} = WindowManager.truncate_conversation(agent, manager)
+      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
+
+      # Should still truncate, just using oldest_first strategy
+      assert AgentMemory.count_messages(truncated_agent.memory) <
+               AgentMemory.count_messages(memory)
     end
   end
 end

@@ -26,6 +26,13 @@ defprotocol Normandy.Components.BaseIOSchema do
   def get_schema(struct)
 end
 
+defimpl Normandy.Components.BaseIOSchema, for: BitString do
+  def __str__(str), do: str
+  def __rich__(str), do: str
+  def to_json(str), do: str
+  def get_schema(_), do: %{}
+end
+
 defimpl Normandy.Components.BaseIOSchema, for: Any do
   def __str__(_), do: ""
   def __rich__(_), do: ""
