@@ -9,10 +9,11 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
 - 🌊 **Streaming** - Real-time response streaming with callback-based event processing
 - 🔄 **Resilience** - Built-in retry and circuit breaker patterns for production reliability
+- 📦 **Batch Processing** - Concurrent processing of multiple inputs with progress tracking
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 295+ tests including property-based testing
+- 🧪 **Well Tested** - 262+ tests including property-based testing
 
 ## Installation
 
@@ -440,6 +441,81 @@ CircuitBreaker.reset(cb)  # Force close
 CircuitBreaker.trip(cb)   # Force open
 ```
 
+### Batch Processing
+
+Process multiple inputs concurrently with configurable concurrency, progress tracking, and error handling:
+
+```elixir
+alias Normandy.Batch.Processor
+
+# Simple batch processing
+inputs = [
+  %{chat_message: "Hello"},
+  %{chat_message: "How are you?"},
+  %{chat_message: "Goodbye"}
+]
+
+{:ok, results} = Processor.process_batch(agent, inputs)
+
+# With concurrency control and progress tracking
+{:ok, results} = Processor.process_batch(
+  agent,
+  inputs,
+  max_concurrency: 5,
+  on_progress: fn completed, total ->
+    IO.puts("Progress: #{completed}/#{total}")
+  end
+)
+
+# Get detailed statistics
+{:ok, stats} = Processor.process_batch_with_stats(agent, inputs)
+#=> %{
+  success: [result1, result2],
+  errors: [{error1, input1}],
+  total: 3,
+  success_count: 2,
+  error_count: 1
+}
+
+# Process large batches in chunks
+{:ok, results} = Processor.process_batch_chunked(
+  agent,
+  large_input_list,
+  chunk_size: 50,
+  chunk_delay: 1000,  # 1 second between chunks
+  max_concurrency: 5
+)
+
+# Error handling with callbacks
+{:ok, results} = Processor.process_batch(
+  agent,
+  inputs,
+  on_error: fn input, error ->
+    Logger.error("Failed to process #{inspect(input)}: #{inspect(error)}")
+  end
+)
+```
+
+**Batch Processing Options:**
+
+- `:max_concurrency` - Maximum concurrent tasks (default: 10)
+- `:ordered` - Preserve input order in results (default: true)
+- `:timeout` - Timeout per task in milliseconds (default: 300,000ms)
+- `:on_progress` - Callback function: `(completed, total -> any)`
+- `:on_error` - Callback function: `(input, error -> any)`
+- `:chunk_size` - Items per chunk for chunked processing (default: 100)
+- `:chunk_delay` - Delay between chunks in milliseconds (default: 0)
+
+**Using Batch Processing with BaseAgent:**
+
+```elixir
+# Directly on agent
+{:ok, results} = Normandy.Agents.BaseAgent.process_batch(agent, inputs)
+
+# With statistics
+{:ok, stats} = Normandy.Agents.BaseAgent.process_batch_with_stats(agent, inputs)
+```
+
 ### Validation
 
 ```elixir
@@ -491,6 +567,10 @@ end
 
 - **Normandy.Resilience.Retry** - Exponential backoff retry with jitter
 - **Normandy.Resilience.CircuitBreaker** - Three-state circuit breaker pattern
+
+### Batch Processing System
+
+- **Normandy.Batch.Processor** - Concurrent batch processing with Task.async_stream
 
 ### Tool System
 

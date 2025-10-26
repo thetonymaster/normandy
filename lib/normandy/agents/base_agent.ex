@@ -710,4 +710,66 @@ defmodule Normandy.Agents.BaseAgent do
   @spec has_tools?(BaseAgentConfig.t()) :: boolean()
   def has_tools?(%BaseAgentConfig{tool_registry: nil}), do: false
   def has_tools?(%BaseAgentConfig{tool_registry: registry}), do: Registry.count(registry) > 0
+
+  ## Batch Processing
+
+  @doc """
+  Process multiple inputs through the agent concurrently.
+
+  Provides efficient batch processing with configurable concurrency.
+  Delegates to `Normandy.Batch.Processor.process_batch/3`.
+
+  ## Options
+
+  - `:max_concurrency` - Maximum concurrent tasks (default: 10)
+  - `:ordered` - Preserve input order in results (default: true)
+  - `:timeout` - Timeout per task in milliseconds (default: 300_000ms)
+  - `:on_progress` - Callback function called after each completion
+  - `:on_error` - Callback function called on each error
+
+  ## Examples
+
+      # Simple batch
+      inputs = [
+        %{chat_message: "Hello"},
+        %{chat_message: "How are you?"}
+      ]
+      {:ok, results} = BaseAgent.process_batch(agent, inputs)
+
+      # With options
+      {:ok, results} = BaseAgent.process_batch(
+        agent,
+        inputs,
+        max_concurrency: 5
+      )
+
+  """
+  @spec process_batch(BaseAgentConfig.t(), [term()], keyword()) ::
+          {:ok, [term()]} | {:error, term()}
+  def process_batch(agent, inputs, opts \\ []) do
+    Normandy.Batch.Processor.process_batch(agent, inputs, opts)
+  end
+
+  @doc """
+  Process a batch and return detailed statistics.
+
+  Returns success/error breakdown with counts.
+
+  ## Examples
+
+      {:ok, stats} = BaseAgent.process_batch_with_stats(agent, inputs)
+      #=> %{
+        success: [result1, result2],
+        errors: [{input3, error}],
+        total: 3,
+        success_count: 2,
+        error_count: 1
+      }
+
+  """
+  @spec process_batch_with_stats(BaseAgentConfig.t(), [term()], keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def process_batch_with_stats(agent, inputs, opts \\ []) do
+    Normandy.Batch.Processor.process_batch_with_stats(agent, inputs, opts)
+  end
 end
