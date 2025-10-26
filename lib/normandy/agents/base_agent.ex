@@ -120,6 +120,118 @@ defmodule Normandy.Agents.BaseAgent do
     {config, response}
   end
 
+  @doc """
+  Run the agent with tool calling support.
+
+  This method handles the full tool execution loop:
+  1. Send user input to LLM
+  2. If LLM requests tool calls, execute them
+  3. Send tool results back to LLM
+  4. Repeat until LLM provides final response or max iterations reached
+
+  ## Parameters
+    - config: Agent configuration
+    - user_input: Optional user input to start the conversation
+
+  ## Returns
+    Tuple of {updated_config, final_response}
+
+  ## Examples
+
+      iex> {config, response} = BaseAgent.run_with_tools(agent, user_input)
+
+  """
+  @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
+          {BaseAgentConfig.t(), struct()}
+  def run_with_tools(
+        config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
+        user_input \\ nil
+      ) do
+    # Initialize turn with user input if provided
+    memory =
+      if user_input != nil do
+        memory
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", user_input)
+      else
+        memory
+      end
+
+    config =
+      if user_input != nil do
+        config
+        |> Map.put(:current_user_input, user_input)
+        |> Map.put(:memory, memory)
+      else
+        config
+      end
+
+    # Execute tool loop
+    execute_tool_loop(config, max_iterations)
+  end
+
+  # Private function to handle the tool execution loop
+  defp execute_tool_loop(config, iterations_left) when iterations_left <= 0 do
+    # Max iterations reached, return current state
+    response = get_response(config, config.output_schema)
+    memory = AgentMemory.add_message(config.memory, "assistant", response)
+    config = Map.put(config, :memory, memory)
+    {config, response}
+  end
+
+  defp execute_tool_loop(config, iterations_left) do
+    alias Normandy.Agents.ToolCallResponse
+    alias Normandy.Components.ToolResult
+    alias Normandy.Tools.Executor
+
+    # Get response from LLM (may include tool calls)
+    response = get_response(config, %ToolCallResponse{})
+
+    cond do
+      # No tool calls - final response
+      is_nil(response.tool_calls) or length(response.tool_calls) == 0 ->
+        memory = AgentMemory.add_message(config.memory, "assistant", response)
+        config = Map.put(config, :memory, memory)
+        {config, response}
+
+      # Has tool calls - execute them
+      true ->
+        # Add assistant message with tool calls to memory
+        memory = AgentMemory.add_message(config.memory, "assistant", response)
+
+        # Execute each tool call
+        tool_results =
+          Enum.map(response.tool_calls, fn tool_call ->
+            case Executor.execute(config.tool_registry, tool_call.name) do
+              {:ok, result} ->
+                %ToolResult{
+                  tool_call_id: tool_call.id,
+                  output: result,
+                  is_error: false
+                }
+
+              {:error, error} ->
+                %ToolResult{
+                  tool_call_id: tool_call.id,
+                  output: %{error: error},
+                  is_error: true
+                }
+            end
+          end)
+
+        # Add tool results to memory
+        memory =
+          Enum.reduce(tool_results, memory, fn result, mem ->
+            AgentMemory.add_message(mem, "tool", result)
+          end)
+
+        config = Map.put(config, :memory, memory)
+
+        # Continue the loop with decremented iterations
+        execute_tool_loop(config, iterations_left - 1)
+    end
+  end
+
   @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
   def get_context_provider(
         %BaseAgentConfig{prompt_specification: prompt_specification},
