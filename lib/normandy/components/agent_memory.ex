@@ -1,13 +1,27 @@
 defmodule Normandy.Components.AgentMemory do
+  @moduledoc """
+  Manages conversation memory for agents with support for turn-based tracking
+  and optional message limits.
+  """
+
   alias Normandy.Components.Message
   alias Normandy.Components.BaseIOSchema
 
+  @type t :: %{
+          max_messages: pos_integer() | nil,
+          history: [Message.t()],
+          current_turn_id: String.t() | nil
+        }
+
+  @spec new_memory(pos_integer() | nil) :: t()
   def new_memory(max_messages \\ nil) do
     %{max_messages: max_messages, history: [], current_turn_id: nil}
   end
 
+  @spec initialize_turn(t()) :: t()
   def initialize_turn(memory), do: memory |> Map.replace(:current_turn_id, UUID.uuid4())
 
+  @spec add_message(t(), String.t(), struct()) :: t()
   def add_message(memory, role, content) do
     memory =
       if Map.get(memory, :current_turn_id) == nil do
@@ -41,6 +55,7 @@ defmodule Normandy.Components.AgentMemory do
     Enum.take(history, max_messages)
   end
 
+  @spec history(t()) :: [%{role: String.t(), content: String.t()}]
   def history(%{history: history}) do
     # Reverse since messages are stored in reverse order (newest first)
     # Then map to create the history format
@@ -53,10 +68,13 @@ defmodule Normandy.Components.AgentMemory do
     %{role: role, content: BaseIOSchema.to_json(content)}
   end
 
+  @spec get_current_turn_id(t()) :: String.t() | nil
   def get_current_turn_id(memory), do: Map.get(memory, :current_turn_id)
 
+  @spec count_messages(t()) :: non_neg_integer()
   def count_messages(memory), do: Map.get(memory, :history) |> length()
 
+  @spec dump(t()) :: String.t()
   def dump(memory) do
     max_messages = Map.get(memory, :max_messages)
     history = Map.get(memory, :history)
@@ -80,6 +98,7 @@ defmodule Normandy.Components.AgentMemory do
     })
   end
 
+  @spec load(String.t()) :: t()
   def load(dump) do
     adapter = Application.get_env(:normandy, :adapter)
     loaded_memory = adapter.decode!(dump, keys: :atoms)
@@ -113,6 +132,7 @@ defmodule Normandy.Components.AgentMemory do
     load_messages(tail, history)
   end
 
+  @spec delete_turn(t(), String.t()) :: t()
   def delete_turn(memory, turn_id) do
     before_len = length(memory.history)
     history = Enum.reject(memory.history, fn x -> x.turn_id == turn_id end)

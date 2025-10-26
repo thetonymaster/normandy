@@ -9,7 +9,8 @@ defmodule Normandy.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       consolidate_protocols: Mix.env() != :test,
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+      dialyzer: dialyzer()
     ]
   end
 
@@ -25,10 +26,19 @@ defmodule Normandy.MixProject do
     [
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
-      {:claudio, git: "git@github.com:thetonymaster/claudio.git", ref: "0b26552"}
+      {:claudio, git: "git@github.com:thetonymaster/claudio.git", ref: "0b26552"},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
+
+  defp dialyzer do
+    [
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      plt_add_apps: [:ex_unit],
+      flags: [:unmatched_returns, :error_handling, :underspecs]
+    ]
+  end
 end

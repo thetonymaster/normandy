@@ -1,4 +1,8 @@
 defmodule Normandy.Components.SystemPromptGenerator do
+  @moduledoc """
+  Generates structured system prompts for agents from prompt specifications.
+  """
+
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.ContextProvider
 
@@ -7,18 +11,21 @@ defmodule Normandy.Components.SystemPromptGenerator do
   @output "OUTPUT INSTRUCTIONS"
 
   @doc """
-    Uses an instance Normandy.Components.SystemPromptSpecification to
-    generate a system prompt for the agent.
+  Uses an instance Normandy.Components.SystemPromptSpecification to
+  generate a system prompt for the agent.
 
-    ## Example
-    spec = %{
-      background: ["you are a helpful assistant", "you assist me in assisting"],
-      steps: ["step 1", "step 2", "step 3"],
-      output_instructions: ["print the result", "as a result"]
-    }
+  ## Example
 
-    Normandy.Components.generate_prompt(spec)
+      spec = %{
+        background: ["you are a helpful assistant", "you assist me in assisting"],
+        steps: ["step 1", "step 2", "step 3"],
+        output_instructions: ["print the result", "as a result"]
+      }
+
+      Normandy.Components.generate_prompt(spec)
+
   """
+  @spec generate_prompt(PromptSpecification.t()) :: String.t()
   def generate_prompt(
         prompt_specification = %PromptSpecification{
           background: []

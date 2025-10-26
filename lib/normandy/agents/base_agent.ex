@@ -1,4 +1,11 @@
 defmodule Normandy.Agents.BaseAgent do
+  @moduledoc """
+  Core agent implementation providing conversational AI capabilities.
+
+  BaseAgent manages agent state, memory, and LLM interactions through a
+  stateful configuration approach.
+  """
+
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
@@ -7,6 +14,18 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentConfig
 
+  @type config_input :: %{
+          required(:client) => struct(),
+          required(:model) => String.t(),
+          required(:temperature) => float(),
+          optional(:input_schema) => struct(),
+          optional(:output_schema) => struct(),
+          optional(:memory) => map(),
+          optional(:prompt_specification) => PromptSpecification.t(),
+          optional(:max_tokens) => pos_integer() | nil
+        }
+
+  @spec init(config_input()) :: BaseAgentConfig.t()
   def init(config) do
     %BaseAgentConfig{
       input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
@@ -22,10 +41,12 @@ defmodule Normandy.Agents.BaseAgent do
     }
   end
 
+  @spec reset_memory(BaseAgentConfig.t()) :: BaseAgentConfig.t()
   def reset_memory(config = %BaseAgentConfig{initial_memory: memory}) do
     Map.put(config, :memory, memory)
   end
 
+  @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
   def get_response(
         config = %BaseAgentConfig{prompt_specification: prompt_specification},
         response_model \\ nil
@@ -55,6 +76,7 @@ defmodule Normandy.Agents.BaseAgent do
     )
   end
 
+  @spec run(BaseAgentConfig.t(), struct() | nil) :: {BaseAgentConfig.t(), struct()}
   def run(
         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
         user_input \\ nil
@@ -81,6 +103,7 @@ defmodule Normandy.Agents.BaseAgent do
     {config, response}
   end
 
+  @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
   def get_context_provider(
         %BaseAgentConfig{prompt_specification: prompt_specification},
         provider_name
@@ -96,6 +119,8 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  @spec register_context_provider(BaseAgentConfig.t(), atom(), struct()) ::
+          BaseAgentConfig.t()
   def register_context_provider(
         config = %BaseAgentConfig{prompt_specification: prompt_specification},
         provider_name,
@@ -109,6 +134,7 @@ defmodule Normandy.Agents.BaseAgent do
     Map.put(config, :prompt_specification, prompt_specification)
   end
 
+  @spec delete_context_provider(BaseAgentConfig.t(), atom()) :: BaseAgentConfig.t()
   def delete_context_provider(
         config = %BaseAgentConfig{prompt_specification: prompt_specification},
         provider_name

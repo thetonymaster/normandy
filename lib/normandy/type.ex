@@ -812,7 +812,18 @@ defmodule Normandy.Type do
 
   ## Shared helpers
 
-  @compile {:inline, same_integer: 1, same_boolean: 1, same_map: 1, same_date: 1}
+  @compile {:inline,
+            same_integer: 1,
+            same_boolean: 1,
+            same_map: 1,
+            same_binary: 1,
+            same_date: 1,
+            same_duration: 1,
+            of_base_type?: 2,
+            primitive?: 1,
+            composite?: 1,
+            base?: 1}
+
   defp same_integer(term) when is_integer(term), do: {:ok, term}
   defp same_integer(_), do: :error
 
