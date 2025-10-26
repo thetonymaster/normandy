@@ -132,7 +132,7 @@ defmodule Normandy.Tools.Executor do
       {:ok, result} ->
         {:ok, result}
 
-      {:error, reason} when retries_left > 0 ->
+      {:error, _reason} when retries_left > 0 ->
         execute_with_retries(tool, retries_left - 1, timeout)
 
       {:error, _reason} = error ->

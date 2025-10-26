@@ -34,7 +34,6 @@ defmodule Normandy.NonExistentContextProvider do
   end
 end
 
-
 defmodule Normandy.InvalidChangesetError do
   @moduledoc """
   Raised when we cannot perform an action because the

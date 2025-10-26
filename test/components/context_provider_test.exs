@@ -112,6 +112,7 @@ defmodule NormandyTest.Components.ContextProviderTest do
   describe "Multiple context providers" do
     test "different providers can coexist" do
       date_provider = %DateTimeProvider{format: :short}
+
       user_provider = %UserContextProvider{
         user_id: 456,
         user_name: "Bob Jones",

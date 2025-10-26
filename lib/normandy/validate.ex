@@ -847,6 +847,7 @@ defmodule Normandy.Validate do
         raise Normandy.InvalidChangesetError, action: action, changeset: changeset
     end
   end
+
   @spec traverse_errors(t, (error -> String.t()) | (Validate.t(), atom, error -> String.t())) ::
           traverse_result
   def traverse_errors(
@@ -858,6 +859,7 @@ defmodule Normandy.Validate do
     |> Enum.reverse()
     |> merge_keyword_keys(msg_func, changeset)
   end
+
   defp merge_keyword_keys(keyword_list, msg_func, _) when is_function(msg_func, 1) do
     Enum.reduce(keyword_list, %{}, fn {key, val}, acc ->
       val = msg_func.(val)

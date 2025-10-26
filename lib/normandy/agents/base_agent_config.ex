@@ -9,6 +9,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
   use Normandy.Schema
 
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Tools.Registry
 
   @type t :: %__MODULE__{
           input_schema: struct(),
@@ -20,7 +21,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           initial_memory: map(),
           current_user_input: String.t() | nil,
           temperature: float(),
-          max_tokens: pos_integer() | nil
+          max_tokens: pos_integer() | nil,
+          tool_registry: Registry.t() | nil,
+          max_tool_iterations: pos_integer()
         }
 
   schema do
@@ -34,5 +37,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:current_user_input, :string, default: nil)
     field(:temperature, :float, default: 0.9)
     field(:max_tokens, :integer, default: nil)
+    field(:tool_registry, :struct, default: nil)
+    field(:max_tool_iterations, :integer, default: 5)
   end
 end

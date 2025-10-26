@@ -14,6 +14,8 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentConfig
 
+  alias Normandy.Tools.Registry
+
   @type config_input :: %{
           required(:client) => struct(),
           required(:model) => String.t(),
@@ -22,7 +24,9 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:output_schema) => struct(),
           optional(:memory) => map(),
           optional(:prompt_specification) => PromptSpecification.t(),
-          optional(:max_tokens) => pos_integer() | nil
+          optional(:max_tokens) => pos_integer() | nil,
+          optional(:tool_registry) => Registry.t(),
+          optional(:max_tool_iterations) => pos_integer()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -37,7 +41,9 @@ defmodule Normandy.Agents.BaseAgent do
       model: config.model,
       current_user_input: nil,
       temperature: config.temperature,
-      max_tokens: Map.get(config, :max_tokens, nil)
+      max_tokens: Map.get(config, :max_tokens, nil),
+      tool_registry: Map.get(config, :tool_registry, nil),
+      max_tool_iterations: Map.get(config, :max_tool_iterations, 5)
     }
   end
 
@@ -146,4 +152,75 @@ defmodule Normandy.Agents.BaseAgent do
     prompt_specification = Map.put(prompt_specification, :context_providers, context_providers)
     Map.put(config, :prompt_specification, prompt_specification)
   end
+
+  # Tool management functions
+
+  @doc """
+  Registers a tool in the agent's tool registry.
+
+  Creates a new registry if one doesn't exist.
+
+  ## Examples
+
+      iex> agent = BaseAgent.init(config)
+      iex> tool = %Normandy.Tools.Examples.Calculator{}
+      iex> agent = BaseAgent.register_tool(agent, tool)
+
+  """
+  @spec register_tool(BaseAgentConfig.t(), struct()) :: BaseAgentConfig.t()
+  def register_tool(%BaseAgentConfig{tool_registry: nil} = config, tool) do
+    registry = Registry.new([tool])
+    %{config | tool_registry: registry}
+  end
+
+  def register_tool(%BaseAgentConfig{tool_registry: registry} = config, tool) do
+    updated_registry = Registry.register(registry, tool)
+    %{config | tool_registry: updated_registry}
+  end
+
+  @doc """
+  Gets a tool from the agent's tool registry by name.
+
+  ## Examples
+
+      iex> agent = BaseAgent.register_tool(agent, %Calculator{})
+      iex> BaseAgent.get_tool(agent, "calculator")
+      {:ok, %Calculator{}}
+
+  """
+  @spec get_tool(BaseAgentConfig.t(), String.t()) :: {:ok, struct()} | :error
+  def get_tool(%BaseAgentConfig{tool_registry: nil}, _tool_name), do: :error
+
+  def get_tool(%BaseAgentConfig{tool_registry: registry}, tool_name) do
+    Registry.get(registry, tool_name)
+  end
+
+  @doc """
+  Lists all tools available to the agent.
+
+  ## Examples
+
+      iex> BaseAgent.list_tools(agent)
+      [%Calculator{}, %StringManipulator{}]
+
+  """
+  @spec list_tools(BaseAgentConfig.t()) :: [struct()]
+  def list_tools(%BaseAgentConfig{tool_registry: nil}), do: []
+
+  def list_tools(%BaseAgentConfig{tool_registry: registry}) do
+    Registry.list(registry)
+  end
+
+  @doc """
+  Checks if the agent has any tools registered.
+
+  ## Examples
+
+      iex> BaseAgent.has_tools?(agent)
+      true
+
+  """
+  @spec has_tools?(BaseAgentConfig.t()) :: boolean()
+  def has_tools?(%BaseAgentConfig{tool_registry: nil}), do: false
+  def has_tools?(%BaseAgentConfig{tool_registry: registry}), do: Registry.count(registry) > 0
 end
