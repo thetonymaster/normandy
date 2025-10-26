@@ -9,6 +9,17 @@ defmodule NormandyTest.Tools.BaseToolTest do
     defimpl Normandy.Tools.BaseTool do
       def tool_name(_), do: "test_tool"
       def tool_description(_), do: "A test tool for unit testing"
+
+      def input_schema(_) do
+        %{
+          type: "object",
+          properties: %{
+            config: %{type: "string", description: "Configuration string"}
+          },
+          required: ["config"]
+        }
+      end
+
       def run(%{config: config}), do: {:ok, "Result: #{config}"}
     end
   end
@@ -20,10 +31,26 @@ defmodule NormandyTest.Tools.BaseToolTest do
       def tool_name(_), do: "calculator"
       def tool_description(_), do: "Performs basic arithmetic operations"
 
+      def input_schema(_) do
+        %{
+          type: "object",
+          properties: %{
+            operation: %{
+              type: "string",
+              enum: ["add", "subtract", "multiply", "divide"],
+              description: "The arithmetic operation to perform"
+            },
+            a: %{type: "number", description: "First operand"},
+            b: %{type: "number", description: "Second operand"}
+          },
+          required: ["operation", "a", "b"]
+        }
+      end
+
       def run(%{operation: :add, a: a, b: b}), do: {:ok, a + b}
       def run(%{operation: :subtract, a: a, b: b}), do: {:ok, a - b}
       def run(%{operation: :multiply, a: a, b: b}), do: {:ok, a * b}
-      def run(%{operation: :divide, a: a, b: 0}), do: {:error, "Division by zero"}
+      def run(%{operation: :divide, a: _a, b: 0}), do: {:error, "Division by zero"}
       def run(%{operation: :divide, a: a, b: b}), do: {:ok, a / b}
       def run(_), do: {:error, "Unknown operation"}
     end
