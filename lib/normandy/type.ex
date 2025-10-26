@@ -1152,7 +1152,7 @@ defmodule Normandy.Type do
       true
 
   """
-  @spec include?(t, term, Enum.t()) :: boolean
+  @spec include?(t(), term(), Enum.t()) :: boolean()
   def include?(type, term, collection) do
     if fun = equal_fun(type) do
       Enum.any?(collection, &fun.(term, &1))
