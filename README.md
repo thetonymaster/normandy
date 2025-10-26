@@ -8,12 +8,13 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 📋 **Schema DSL** - Define typed, validated data structures with ease
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
 - 🌊 **Streaming** - Real-time response streaming with callback-based event processing
+- 💰 **Prompt Caching** - Up to 90% cost reduction with automatic caching support
 - 🔄 **Resilience** - Built-in retry and circuit breaker patterns for production reliability
 - 📦 **Batch Processing** - Concurrent processing of multiple inputs with progress tracking
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 262+ tests including property-based testing
+- 🧪 **Well Tested** - 270+ tests including property-based testing
 
 ## Installation
 
@@ -246,6 +247,47 @@ defimpl Normandy.Agents.Model do
   end
 end
 ```
+
+### Prompt Caching
+
+Normandy supports Anthropic's prompt caching feature, which can reduce costs by up to 90% for repeated prompts. When caching is enabled, system prompts and tool definitions are automatically cached.
+
+```elixir
+# Enable caching in the Claudio adapter
+client = %Normandy.LLM.ClaudioAdapter{
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  options: %{
+    enable_caching: true  # Enable prompt caching
+  }
+}
+
+agent = Normandy.Agents.BaseAgent.init(%{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7
+})
+
+# System prompts and tools are now automatically cached
+{updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, %{chat_message: "Hello!"})
+```
+
+**What Gets Cached:**
+- **System prompts** - Automatically cached using `set_system_with_cache`
+- **Tool definitions** - Last tool in list is cached using `add_tool_with_cache`
+- Cache is ephemeral with ~5 minute TTL on inactivity
+
+**Cache Benefits:**
+- Up to 90% cost reduction on cached content
+- Faster response times for repeated contexts
+- Automatic cache management by Anthropic API
+
+**When to Use Caching:**
+- Long system prompts that remain constant
+- Multiple requests with same tool definitions
+- Repeated conversations with consistent context
+- Batch processing with shared instructions
+
+**Note:** Caching requires minimum content length (1024 tokens for system prompts). Shorter content won't benefit from caching.
 
 ### Resilience & Error Handling
 

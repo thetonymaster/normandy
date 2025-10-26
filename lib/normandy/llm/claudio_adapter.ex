@@ -90,13 +90,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Initialize Claudio client
       claudio_client = build_claudio_client(client)
 
+      # Check if caching is enabled
+      enable_caching = Map.get(client.options, :enable_caching, false)
+
       # Build Claudio request
       request =
         Claudio.Messages.Request.new(model)
         |> add_temperature(temperature)
         |> add_max_tokens(max_tokens)
-        |> add_messages(messages)
-        |> add_tools(tools)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
         |> add_client_options(client.options)
 
       # Execute request
@@ -160,13 +163,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Initialize Claudio client
       claudio_client = build_claudio_client(client)
 
+      # Check if caching is enabled
+      enable_caching = Map.get(client.options, :enable_caching, false)
+
       # Build streaming request
       request =
         Claudio.Messages.Request.new(model)
         |> add_temperature(temperature)
         |> add_max_tokens(max_tokens)
-        |> add_messages(messages)
-        |> add_tools(tools)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
         |> add_client_options(client.options)
         |> Claudio.Messages.Request.enable_streaming()
 
@@ -262,29 +268,34 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp add_max_tokens(request, max_tokens),
       do: Claudio.Messages.Request.set_max_tokens(request, max_tokens)
 
-    defp add_messages(request, messages) do
+    defp add_messages(request, messages, enable_caching) do
       Enum.reduce(messages, request, fn msg, req ->
-        add_single_message(req, msg)
+        add_single_message(req, msg, enable_caching)
       end)
     end
 
-    defp add_single_message(request, %Message{role: "system", content: content}) do
-      Claudio.Messages.Request.set_system(request, content)
+    defp add_single_message(request, %Message{role: "system", content: content}, enable_caching) do
+      if enable_caching do
+        # Use caching for system prompts (up to 90% cost reduction)
+        Claudio.Messages.Request.set_system_with_cache(request, content)
+      else
+        Claudio.Messages.Request.set_system(request, content)
+      end
     end
 
-    defp add_single_message(request, %Message{role: role, content: content})
+    defp add_single_message(request, %Message{role: role, content: content}, _enable_caching)
          when role in ["user", "assistant"] do
       role_atom = String.to_existing_atom(role)
       Claudio.Messages.Request.add_message(request, role_atom, content)
     end
 
-    defp add_single_message(request, %Message{role: "tool", content: tool_result}) do
+    defp add_single_message(request, %Message{role: "tool", content: tool_result}, _enable_caching) do
       # Tool results should be formatted as tool_result content blocks
       # This is handled by the tool execution loop in BaseAgent
       Claudio.Messages.Request.add_message(request, :user, format_tool_result(tool_result))
     end
 
-    defp add_single_message(request, _msg), do: request
+    defp add_single_message(request, _msg, _enable_caching), do: request
 
     defp format_tool_result(result) when is_map(result) do
       # Format tool result for Claude API
@@ -293,14 +304,31 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp format_tool_result(result), do: "Tool result: #{result}"
 
-    defp add_tools(request, []), do: request
+    defp add_tools(request, [], _enable_caching), do: request
 
-    defp add_tools(request, tools) when is_list(tools) do
-      # Add each tool individually using add_tool (Claudio API)
-      Enum.reduce(tools, request, fn tool, req ->
-        claudio_tool = convert_tool_schema(tool)
-        Claudio.Messages.Request.add_tool(req, claudio_tool)
-      end)
+    defp add_tools(request, tools, enable_caching) when is_list(tools) do
+      # Add tools with caching if enabled
+      # Cache all tools except the last one, then cache the last one
+      # This provides optimal caching for tool definitions
+      if enable_caching and length(tools) > 0 do
+        # Add all tools except last without cache
+        {last_tool, other_tools} = List.pop_at(tools, -1)
+
+        request_with_tools = Enum.reduce(other_tools, request, fn tool, req ->
+          claudio_tool = convert_tool_schema(tool)
+          Claudio.Messages.Request.add_tool(req, claudio_tool)
+        end)
+
+        # Add last tool with cache control
+        last_claudio_tool = convert_tool_schema(last_tool)
+        Claudio.Messages.Request.add_tool_with_cache(request_with_tools, last_claudio_tool)
+      else
+        # Add tools normally without caching
+        Enum.reduce(tools, request, fn tool, req ->
+          claudio_tool = convert_tool_schema(tool)
+          Claudio.Messages.Request.add_tool(req, claudio_tool)
+        end)
+      end
     end
 
     defp convert_tool_schema(%{name: name, description: description, input_schema: schema}) do
@@ -313,16 +341,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp add_client_options(request, options) do
       request
-      |> maybe_enable_caching(Map.get(options, :enable_caching, false))
       |> maybe_set_thinking(Map.get(options, :thinking_budget))
-    end
-
-    defp maybe_enable_caching(request, false), do: request
-
-    defp maybe_enable_caching(request, true) do
-      # Enable ephemeral caching on system prompt
-      # This is set automatically by Claudio when using set_system
-      request
     end
 
     defp maybe_set_thinking(request, nil), do: request
