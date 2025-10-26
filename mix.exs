@@ -26,7 +26,7 @@ defmodule Normandy.MixProject do
     [
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
-      {:claudio, git: "git@github.com:thetonymaster/claudio.git", ref: "0b26552"},
+      {:claudio, git: "git@github.com:thetonymaster/claudio.git", ref: "591ec36"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]}
     ]

@@ -42,10 +42,38 @@ end
 user = %User{name: "Alice", email: "alice@example.com"}
 ```
 
-### Creating an Agent
+### Creating an Agent with Claudio (Recommended)
+
+Normandy includes a ready-to-use adapter for [Claudio](https://github.com/anthropics/claudio), the official Anthropic API client:
 
 ```elixir
-# Define your LLM client (implement Normandy.Agents.Model protocol)
+# Use the built-in Claudio adapter
+client = %Normandy.LLM.ClaudioAdapter{
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  options: %{
+    timeout: 60_000,
+    enable_caching: true  # 90% cost reduction on repeated prompts!
+  }
+}
+
+# Initialize an agent
+config = %{
+  client: client,
+  model: "claude-3-5-sonnet-20241022",
+  temperature: 0.7
+}
+
+agent = Normandy.Agents.BaseAgent.init(config)
+
+# Run a conversation
+{updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, %{chat_message: "Hello!"})
+```
+
+### Creating a Custom Agent
+
+You can also implement the `Normandy.Agents.Model` protocol for any LLM provider:
+
+```elixir
 defmodule MyLLMClient do
   use Normandy.Schema
 
@@ -54,6 +82,11 @@ defmodule MyLLMClient do
   end
 
   defimpl Normandy.Agents.Model do
+    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
+      # Legacy API - return response_model
+      response_model
+    end
+
     def converse(client, model, temperature, max_tokens, messages, response_schema, opts \\ []) do
       # Your LLM API call here
       # Return structured response matching response_schema
@@ -64,14 +97,11 @@ end
 # Initialize an agent
 config = %{
   client: %MyLLMClient{api_key: "..."},
-  model: "gpt-4",
+  model: "your-model",
   temperature: 0.7
 }
 
 agent = Normandy.Agents.BaseAgent.init(config)
-
-# Run a conversation
-{updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, %{chat_message: "Hello!"})
 ```
 
 ### Using Tools
