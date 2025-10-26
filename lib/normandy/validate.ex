@@ -1,4 +1,29 @@
 defmodule Normandy.Validate do
+  @moduledoc """
+  Provides changeset-style validation for schemas.
+
+  This module implements validation logic similar to Ecto changesets,
+  allowing you to validate data before creating or updating structs.
+
+  ## Features
+
+  - Required field validation
+  - Type casting and validation
+  - Custom validation functions
+  - Error accumulation
+  - Change tracking
+
+  ## Example
+
+      changeset = Validate.validate(data, params, types, required: [:name, :email])
+
+      if changeset.valid? do
+        apply_changes(changeset)
+      else
+        handle_errors(changeset.errors)
+      end
+  """
+
   require Logger
   alias __MODULE__
 

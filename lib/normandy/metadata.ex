@@ -1,4 +1,11 @@
 defmodule Normandy.Metadata do
+  @moduledoc """
+  Metadata attached to schema structs.
+
+  Tracks the state, source, and context information for schema instances.
+  Used internally by the Schema system to manage struct lifecycle.
+  """
+
   defstruct [:state, :source, :context, :schema]
 
   @type state :: :built | :loaded | :deleted

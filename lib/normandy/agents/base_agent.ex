@@ -98,18 +98,21 @@ defmodule Normandy.Agents.BaseAgent do
         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
         user_input \\ nil
       ) do
-    memory =
+    {config, memory} =
       if user_input != nil do
-        memory
-        |> AgentMemory.initialize_turn()
-        |> AgentMemory.add_message("user", user_input)
-      end
+        updated_memory =
+          memory
+          |> AgentMemory.initialize_turn()
+          |> AgentMemory.add_message("user", user_input)
 
-    config =
-      if user_input != nil do
-        config
-        |> Map.put(:current_user_input, user_input)
-        |> Map.put(:memory, memory)
+        updated_config =
+          config
+          |> Map.put(:current_user_input, user_input)
+          |> Map.put(:memory, updated_memory)
+
+        {updated_config, updated_memory}
+      else
+        {config, memory}
       end
 
     response = get_response(config, output_schema)

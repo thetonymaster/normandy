@@ -1,4 +1,35 @@
 defmodule Normandy.Schema do
+  @moduledoc """
+  Provides a macro-based DSL for defining structured data schemas.
+
+  This module allows you to define structs with typed fields, default values,
+  validation rules, and metadata. It's the foundation for defining agents,
+  messages, and other structured data in Normandy.
+
+  ## Features
+
+  - Type-safe field definitions
+  - Default value support
+  - Field-level validation
+  - Automatic struct generation
+  - Metadata tracking
+  - Field redaction support
+
+  ## Example
+
+      defmodule User do
+        use Normandy.Schema
+
+        schema do
+          field(:name, :string, required: true)
+          field(:age, :integer, default: 0)
+          field(:email, :string, required: true)
+        end
+      end
+
+      user = %User{name: "Alice", email: "alice@example.com"}
+  """
+
   alias Normandy.Metadata
 
   @field_opts [

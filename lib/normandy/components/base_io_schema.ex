@@ -1,12 +1,28 @@
 defprotocol Normandy.Components.BaseIOSchema do
+  @moduledoc """
+  Protocol for schema serialization and representation.
+
+  Provides functions for converting schemas to various string formats
+  including plain text, rich text, and JSON.
+  """
+
   @dialyzer {:nowarn_function, __protocol__: 1}
   @fallback_to_any ""
+
+  @doc "Converts the struct to a plain string representation"
   @spec __str__(struct()) :: String.t()
   def __str__(struct)
+
+  @doc "Converts the struct to a rich/formatted string representation"
   @spec __rich__(struct()) :: String.t()
   def __rich__(struct)
+
+  @doc "Converts the struct to a JSON string"
   @spec to_json(struct()) :: String.t()
   def to_json(struct)
+
+  @doc "Returns the schema definition for the struct"
+  @spec get_schema(struct()) :: term()
   def get_schema(struct)
 end
 

@@ -1,4 +1,10 @@
 defmodule Normandy.Agents.BaseAgentInputSchema do
+  @moduledoc """
+  Default input schema for agent interactions.
+
+  Provides a simple chat message input format.
+  """
+
   use Normandy.Schema
   @derive {Poison.Encoder, only: [:chat_message]}
 
@@ -8,6 +14,12 @@ defmodule Normandy.Agents.BaseAgentInputSchema do
 end
 
 defmodule Normandy.Agents.BaseAgentOutputSchema do
+  @moduledoc """
+  Default output schema for agent responses.
+
+  Provides a simple chat message output format.
+  """
+
   use Normandy.Schema
   @derive {Poison.Encoder, only: [:chat_message]}
 
