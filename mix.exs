@@ -19,7 +19,7 @@ defmodule Normandy.MixProject do
       homepage_url: "https://github.com/thetonymaster/normandy",
       docs: [
         main: "readme",
-        extras: ["README.md", "ROADMAP.md"]
+        extras: ["README.md", "CHANGELOG.md", "ROADMAP.md"]
       ]
     ]
   end
