@@ -56,10 +56,9 @@ defmodule Normandy.MixProject do
 
   defp description do
     """
-    Normandy is an Elixir library for building AI agents with structured schemas,
-    validation, and LLM integration. It provides a type-safe approach to defining
-    agent inputs/outputs using JSON schemas and supports conversational memory
-    management, multi-agent coordination, batch processing, and resilience patterns.
+    Build AI agents with structured schemas, validation, and LLM integration.
+    Supports multi-agent coordination, conversational memory, batch processing,
+    and resilience patterns for production-ready AI applications.
     """
   end
 
