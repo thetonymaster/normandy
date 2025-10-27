@@ -5,6 +5,7 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 ## Features
 
 - 🧠 **Agent System** - Build conversational AI agents with memory and state management
+- 🤝 **Multi-Agent Coordination** - Reactive patterns (race/all/some) and agent pooling for concurrent workflows
 - 📋 **Schema DSL** - Define typed, validated data structures with ease
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
 - 🌊 **Streaming** - Real-time response streaming with callback-based event processing
@@ -15,7 +16,7 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Changeset-style validation similar to Ecto
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 304+ tests including property-based testing
+- 🧪 **Well Tested** - 490+ tests including property-based testing
 
 ## Installation
 
@@ -648,6 +649,200 @@ manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
 # - claude-3-haiku-20240307: 200K tokens
 ```
 
+### Multi-Agent Coordination
+
+Normandy provides powerful patterns for coordinating multiple agents concurrently with different execution strategies.
+
+#### Reactive Patterns
+
+Execute multiple agents with different completion strategies:
+
+```elixir
+alias Normandy.Coordination.Reactive
+
+# Race: Return first successful result (fastest response)
+agents = [research_agent, cached_agent, search_agent]
+{:ok, fastest_result} = Reactive.race(agents, "What is the capital of France?")
+
+# All: Wait for all agents to complete (ensemble)
+{:ok, all_results} = Reactive.all(agents, "Analyze this data")
+#=> {:ok, %{
+  "agent_0" => {:ok, result1},
+  "agent_1" => {:ok, result2},
+  "agent_2" => {:ok, result3}
+}}
+
+# Some: Wait for N successful results (quorum)
+{:ok, quorum_results} = Reactive.some(agents, "Is this safe?", count: 2)
+#=> {:ok, %{"agent_0" => result1, "agent_2" => result3}}
+```
+
+**Reactive Pattern Options:**
+
+```elixir
+# Race with timeout and callbacks
+Reactive.race(agents, input,
+  timeout: 5000,
+  on_complete: fn agent_id, result ->
+    Logger.info("Agent #{agent_id} completed: #{inspect(result)}")
+  end
+)
+
+# All with concurrency control and fail-fast
+Reactive.all(agents, input,
+  max_concurrency: 5,
+  fail_fast: true,
+  timeout: 10_000,
+  on_complete: fn agent_id, result ->
+    update_progress(agent_id, result)
+  end
+)
+
+# Some with callbacks
+Reactive.some(agents, input,
+  count: 3,
+  timeout: 15_000,
+  on_complete: fn agent_id, result ->
+    Logger.debug("Got result from #{agent_id}")
+  end
+)
+```
+
+**Transform Agent Results:**
+
+```elixir
+# Map: Transform successful results
+result = Reactive.map(agent, input, fn
+  {:ok, %{confidence: c}} when c > 0.8 -> {:ok, :high_confidence}
+  {:ok, %{confidence: c}} when c < 0.5 -> {:ok, :low_confidence}
+  {:ok, _} -> {:ok, :medium_confidence}
+  error -> error
+end)
+
+# when_result: Conditional execution based on results
+Reactive.when_result(agent, input) do
+  {:ok, %{needs_review: true}} ->
+    AgentProcess.run(review_agent, "Please review")
+
+  {:ok, %{confidence: c}} when c < 0.5 ->
+    AgentProcess.run(fallback_agent, "Use fallback")
+
+  {:ok, result} ->
+    {:ok, result}
+
+  error ->
+    error
+end
+```
+
+#### Agent Pooling
+
+Efficiently manage pools of identical agents with automatic lifecycle management:
+
+```elixir
+alias Normandy.Coordination.AgentPool
+
+# Start a pool of agents
+{:ok, pool} = AgentPool.start_link(
+  name: :research_pool,
+  agent_config: %{
+    client: client,
+    model: "claude-3-5-sonnet-20241022",
+    temperature: 0.7
+  },
+  size: 10,              # Fixed pool size
+  max_overflow: 5,       # Allow 5 overflow agents
+  strategy: :fifo        # :fifo or :lifo checkout
+)
+
+# Use transaction for automatic checkout/checkin
+{:ok, result} = AgentPool.transaction(pool, fn agent_pid ->
+  AgentProcess.run(agent_pid, "Analyze this data")
+end)
+
+# Manual checkout/checkin for more control
+{:ok, agent_pid} = AgentPool.checkout(pool)
+result = AgentProcess.run(agent_pid, input)
+:ok = AgentPool.checkin(pool, agent_pid)
+
+# Get pool statistics
+stats = AgentPool.stats(pool)
+#=> %{
+  size: 10,
+  available: 7,
+  in_use: 3,
+  overflow: 0,
+  max_overflow: 5,
+  waiting: 0
+}
+```
+
+**Pool Configuration Options:**
+
+```elixir
+AgentPool.start_link(
+  name: :my_pool,
+  agent_config: agent_config,
+  size: 10,              # Base pool size
+  max_overflow: 5,       # Max overflow agents when pool exhausted
+  strategy: :lifo        # :lifo (stack) or :fifo (queue)
+)
+
+# Non-blocking checkout
+case AgentPool.checkout(pool, block: false) do
+  {:ok, agent_pid} -> use_agent(agent_pid)
+  {:error, :no_agents} -> handle_pool_exhausted()
+end
+
+# Checkout with timeout
+{:ok, agent_pid} = AgentPool.checkout(pool, timeout: 10_000)
+```
+
+**Pool Features:**
+
+- **Fault Tolerance** - Automatic agent replacement on failure
+- **Overflow Handling** - Temporary agents when pool exhausted
+- **Waiting Queue** - Block and queue checkout requests
+- **Statistics** - Monitor pool health and usage
+- **Supervision** - Built on AgentSupervisor for resilience
+
+#### Agent Processes
+
+Long-running agent processes with GenServer lifecycle:
+
+```elixir
+alias Normandy.Coordination.{AgentProcess, AgentSupervisor}
+
+# Start a supervised agent process
+{:ok, supervisor} = AgentSupervisor.start_link()
+{:ok, agent_pid} = AgentSupervisor.start_agent(supervisor, agent: agent)
+
+# Or start standalone
+{:ok, agent_pid} = AgentProcess.start_link(agent: agent)
+
+# Run agent
+{:ok, response} = AgentProcess.run(agent_pid, "Hello!")
+
+# Get agent state
+agent = AgentProcess.get_agent(agent_pid)
+
+# Update agent configuration
+:ok = AgentProcess.update_agent(agent_pid, fn agent ->
+  %{agent | temperature: 0.9}
+end)
+
+# Stop gracefully
+:ok = AgentProcess.stop(agent_pid)
+```
+
+**Use Cases:**
+
+- **Race Pattern** - Get fastest response for time-sensitive operations
+- **All Pattern** - Ensemble methods, need all perspectives
+- **Some Pattern** - Quorum-based decisions, majority agreement
+- **Agent Pools** - Reuse agents efficiently, handle high concurrency
+- **Agent Processes** - Long-lived agents with state management
+
 ### Conversation Summarization
 
 When conversations grow too long, Normandy can automatically summarize old messages using an LLM to preserve context while reducing token usage.
@@ -797,6 +992,13 @@ end
 - **Normandy.Context.WindowManager** - Token limit management and automatic truncation
 - **Normandy.Context.TokenCounter** - Accurate token counting via Anthropic API
 - **Normandy.Context.Summarizer** - LLM-based conversation summarization for context compression
+
+### Multi-Agent Coordination System
+
+- **Normandy.Coordination.Reactive** - Reactive patterns for concurrent agent execution (race, all, some)
+- **Normandy.Coordination.AgentPool** - Pool manager with overflow handling and fault tolerance
+- **Normandy.Coordination.AgentProcess** - GenServer-based agent processes
+- **Normandy.Coordination.AgentSupervisor** - DynamicSupervisor for agent fault tolerance
 
 ### Tool System
 
