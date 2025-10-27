@@ -42,6 +42,10 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   @doc """
   Executes agents sequentially in a pipeline.
 
+  Can be called in two ways:
+  1. With agent_specs and options: `execute(agent_specs, input, opts)`
+  2. With agents list and input: `execute(agents, input)` - returns final result directly
+
   ## Options
 
   - `:shared_context` - SharedContext to use (default: new context)
@@ -60,8 +64,48 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
         end
       )
   """
-  @spec execute([agent_spec()], term(), keyword()) :: {:ok, execution_result()} | {:error, term()}
-  def execute(agent_specs, initial_input, opts \\ []) when is_list(agent_specs) do
+  @spec execute([agent_spec()] | [struct()], term(), keyword()) ::
+          {:ok, execution_result()} | {:ok, term()} | {:error, term()}
+  def execute(agents, initial_input, opts \\ [])
+
+  # Simple API: execute(agents, input) -> {:ok, final_result}
+  def execute(agents, input, [])
+      when is_list(agents) and (is_map(input) or is_binary(input)) do
+    # Check if first element looks like an agent_spec (has :id key)
+    case List.first(agents) do
+      %{id: _id} ->
+        # Already agent_specs, use advanced API
+        execute_with_specs(agents, input, [])
+
+      _agent ->
+        # Plain agent list, convert to agent_specs
+        agent_specs =
+          agents
+          |> Enum.with_index()
+          |> Enum.map(fn {agent, idx} ->
+            %{
+              id: "agent_#{idx}",
+              agent: agent
+            }
+          end)
+
+        # Execute and return just the final result
+        case execute_with_specs(agent_specs, input, []) do
+          {:ok, %{results: results}} ->
+            {:ok, List.last(results)}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  # Advanced API: execute(agent_specs, input, opts) -> {:ok, execution_result}
+  def execute(agent_specs, initial_input, opts) when is_list(agent_specs) and is_list(opts) do
+    execute_with_specs(agent_specs, initial_input, opts)
+  end
+
+  defp execute_with_specs(agent_specs, initial_input, opts) when is_list(agent_specs) do
     context = Keyword.get(opts, :shared_context, SharedContext.new())
     on_complete = Keyword.get(opts, :on_agent_complete)
     on_error_strategy = Keyword.get(opts, :on_error, :stop)
@@ -212,10 +256,8 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   defp prepare_input(input), do: input
 
   defp extract_result(response) when is_map(response) do
-    # Try to extract the relevant result
-    Map.get(response, :chat_message) ||
-      Map.get(response, "chat_message") ||
-      response
+    # Return the full response map - don't extract just chat_message
+    response
   end
 
   defp extract_result(response), do: response

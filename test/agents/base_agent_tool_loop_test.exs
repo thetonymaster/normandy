@@ -1,7 +1,7 @@
 defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.{BaseAgent, ToolCallResponse}
+  alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, ToolCallResponse}
   alias Normandy.Components.{ToolCall, AgentMemory}
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
@@ -87,10 +87,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       user_input = %{text: "What is 5 + 3?"}
       {updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
 
-      # Should have tool call response
-      assert %ToolCallResponse{} = response
-      assert response.content == "Task completed"
-      assert response.tool_calls == []
+      # Should return the final output schema (BaseAgentOutputSchema)
+      assert %BaseAgentOutputSchema{} = response
+      assert response.chat_message == "Task completed"
 
       # Memory should contain user message, assistant tool call, tool result, and final response
       history = AgentMemory.history(updated_agent.memory)
@@ -179,7 +178,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
 
       assert response != nil
-      assert response.content == "Handled error"
+      assert response.chat_message == "Handled error"
     end
   end
 end

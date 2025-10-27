@@ -149,6 +149,7 @@ defmodule Normandy.Coordination.StatefulContext do
   @spec keys(GenServer.server()) :: [String.t()]
   def keys(server) do
     table = get_table(server)
+
     :ets.tab2list(table)
     |> Enum.map(fn {key, _value} -> key end)
   end
@@ -178,6 +179,7 @@ defmodule Normandy.Coordination.StatefulContext do
   @spec to_map(GenServer.server()) :: map()
   def to_map(server) do
     table = get_table(server)
+
     :ets.tab2list(table)
     |> Map.new()
   end
@@ -231,12 +233,13 @@ defmodule Normandy.Coordination.StatefulContext do
     notify_on_change = Keyword.get(opts, :notify_on_change, true)
 
     # Create ETS table for data storage
-    table = :ets.new(:stateful_context, [
-      :set,
-      :public,
-      read_concurrency: true,
-      write_concurrency: false
-    ])
+    table =
+      :ets.new(:stateful_context, [
+        :set,
+        :public,
+        read_concurrency: true,
+        write_concurrency: false
+      ])
 
     state = %{
       table: table,
@@ -254,10 +257,11 @@ defmodule Normandy.Coordination.StatefulContext do
     normalized_key = normalize_key(key)
 
     # Get old value for notifications
-    old_value = case :ets.lookup(state.table, normalized_key) do
-      [{^normalized_key, val}] -> {:ok, val}
-      [] -> {:error, :not_found}
-    end
+    old_value =
+      case :ets.lookup(state.table, normalized_key) do
+        [{^normalized_key, val}] -> {:ok, val}
+        [] -> {:error, :not_found}
+      end
 
     # Write to ETS
     :ets.insert(state.table, {normalized_key, value})
@@ -276,10 +280,11 @@ defmodule Normandy.Coordination.StatefulContext do
     normalized_key = normalize_key(key)
 
     # Get old value for notifications
-    old_value = case :ets.lookup(state.table, normalized_key) do
-      [{^normalized_key, val}] -> {:ok, val}
-      [] -> {:error, :not_found}
-    end
+    old_value =
+      case :ets.lookup(state.table, normalized_key) do
+        [{^normalized_key, val}] -> {:ok, val}
+        [] -> {:error, :not_found}
+      end
 
     # Delete from ETS
     :ets.delete(state.table, normalized_key)
@@ -298,10 +303,11 @@ defmodule Normandy.Coordination.StatefulContext do
     normalized_key = normalize_key(key)
 
     # Get current value or use initial
-    current_value = case :ets.lookup(state.table, normalized_key) do
-      [{^normalized_key, val}] -> val
-      [] -> initial
-    end
+    current_value =
+      case :ets.lookup(state.table, normalized_key) do
+        [{^normalized_key, val}] -> val
+        [] -> initial
+      end
 
     # Apply update function
     new_value = fun.(current_value)

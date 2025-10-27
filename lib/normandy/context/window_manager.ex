@@ -282,7 +282,8 @@ defmodule Normandy.Context.WindowManager do
       end
     end)
     |> elem(0)
-    |> max(5)  # Keep at least 5 messages
+    # Keep at least 5 messages
+    |> max(5)
   end
 
   defp split_to_fit(messages, target_tokens) do

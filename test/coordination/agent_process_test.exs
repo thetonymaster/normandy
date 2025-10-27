@@ -35,7 +35,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
       agent_id = AgentProcess.get_id(pid)
       assert is_binary(agent_id)
-      assert String.length(agent_id) == 36  # UUID format
+      # UUID format
+      assert String.length(agent_id) == 36
     end
   end
 
@@ -67,7 +68,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
 
       stats = AgentProcess.get_stats(pid)
       assert stats.run_count == 2
-      assert stats.total_runtime_ms >= 0  # Mock is very fast, may be 0
+      # Mock is very fast, may be 0
+      assert stats.total_runtime_ms >= 0
       assert stats.last_run != nil
     end
 
@@ -103,7 +105,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       AgentProcess.cast(pid, "Test 1")
       AgentProcess.cast(pid, "Test 2")
 
-      Process.sleep(50)  # Give tasks time to complete
+      # Give tasks time to complete
+      Process.sleep(50)
 
       stats = AgentProcess.get_stats(pid)
       assert stats.run_count == 2
@@ -160,7 +163,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       stats = AgentProcess.get_stats(pid)
 
       assert stats.run_count == 2
-      assert stats.total_runtime_ms >= 0  # Mock is very fast, may be 0
+      # Mock is very fast, may be 0
+      assert stats.total_runtime_ms >= 0
       assert %DateTime{} = stats.last_run
     end
   end
@@ -169,9 +173,10 @@ defmodule Normandy.Coordination.AgentProcessTest do
     test "updates agent temperature", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
-      :ok = AgentProcess.update_agent(pid, fn a ->
-        %{a | temperature: 0.5}
-      end)
+      :ok =
+        AgentProcess.update_agent(pid, fn a ->
+          %{a | temperature: 0.5}
+        end)
 
       updated = AgentProcess.get_agent(pid)
       assert updated.temperature == 0.5
@@ -180,9 +185,10 @@ defmodule Normandy.Coordination.AgentProcessTest do
     test "allows modifying agent model", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
-      :ok = AgentProcess.update_agent(pid, fn a ->
-        %{a | model: "claude-3-haiku-20240307"}
-      end)
+      :ok =
+        AgentProcess.update_agent(pid, fn a ->
+          %{a | model: "claude-3-haiku-20240307"}
+        end)
 
       updated = AgentProcess.get_agent(pid)
       assert updated.model == "claude-3-haiku-20240307"
@@ -240,5 +246,4 @@ defmodule Normandy.Coordination.AgentProcessTest do
       assert stats.agent_id == "nonblocking"
     end
   end
-
 end

@@ -13,11 +13,12 @@ defmodule Normandy.Context.SummarizerTest do
     }
 
     # Create an agent with the mock client
-    agent = BaseAgent.init(%{
-      client: client,
-      model: "test-model",
-      temperature: 0.7
-    })
+    agent =
+      BaseAgent.init(%{
+        client: client,
+        model: "test-model",
+        temperature: 0.7
+      })
 
     {:ok, agent: agent, client: client}
   end
@@ -57,11 +58,12 @@ defmodule Normandy.Context.SummarizerTest do
     test "handles client errors gracefully" do
       failing_client = %MockSummarizerClient{should_fail: true}
 
-      agent = BaseAgent.init(%{
-        client: failing_client,
-        model: "test-model",
-        temperature: 0.7
-      })
+      agent =
+        BaseAgent.init(%{
+          client: failing_client,
+          model: "test-model",
+          temperature: 0.7
+        })
 
       messages = [%{role: "user", content: "Test"}]
 
@@ -89,7 +91,8 @@ defmodule Normandy.Context.SummarizerTest do
 
       # Should have fewer messages now (summary + 5 recent)
       history = AgentMemory.history(compressed_agent.memory)
-      assert length(history) == 6  # 1 summary + 5 recent messages
+      # 1 summary + 5 recent messages
+      assert length(history) == 6
 
       # First message should be the summary
       summary_msg = List.first(history)

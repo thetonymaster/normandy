@@ -103,7 +103,8 @@ defmodule Normandy.Context.TokenCounter do
 
         message_details =
           Enum.map(history, fn msg ->
-            estimated = Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
+            estimated =
+              Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
 
             %{
               role: msg.role,

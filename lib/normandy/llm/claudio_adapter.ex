@@ -176,9 +176,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_client_options(client.options)
         |> Claudio.Messages.Request.enable_streaming()
 
-      # Execute streaming request
+      # Execute streaming request - Req returns Req.Response with streaming body
       case Claudio.Messages.create(claudio_client, request) do
-        {:ok, %Tesla.Env{body: stream}} ->
+        {:ok, %Req.Response{body: stream}} ->
           # Parse events and optionally invoke callback
           event_stream =
             stream
@@ -248,15 +248,20 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # Private functions
 
     defp build_claudio_client(client) do
-      opts =
-        [api_key: client.api_key]
-        |> maybe_add_base_url(client.base_url)
+      # Build Claudio client with token (not api_key) and version
+      # Claudio.Client.new now expects a single map parameter
+      config = %{
+        token: client.api_key,
+        version: "2023-06-01"
+      }
 
-      Claudio.Client.new(opts)
+      # base_url is a second parameter, not part of config
+      if client.base_url do
+        Claudio.Client.new(config, client.base_url)
+      else
+        Claudio.Client.new(config)
+      end
     end
-
-    defp maybe_add_base_url(opts, nil), do: opts
-    defp maybe_add_base_url(opts, base_url), do: Keyword.put(opts, :base_url, base_url)
 
     defp add_temperature(request, nil), do: request
 
@@ -289,20 +294,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
       Claudio.Messages.Request.add_message(request, role_atom, content)
     end
 
-    defp add_single_message(request, %Message{role: "tool", content: tool_result}, _enable_caching) do
-      # Tool results should be formatted as tool_result content blocks
-      # This is handled by the tool execution loop in BaseAgent
-      Claudio.Messages.Request.add_message(request, :user, format_tool_result(tool_result))
+    defp add_single_message(
+           request,
+           %Message{role: "tool", content: content},
+           _enable_caching
+         ) do
+      # Tool results are serialized via BaseIOSchema protocol
+      # They come as content blocks, send as user message
+      Claudio.Messages.Request.add_message(request, :user, content)
     end
 
     defp add_single_message(request, _msg, _enable_caching), do: request
-
-    defp format_tool_result(result) when is_map(result) do
-      # Format tool result for Claude API
-      "Tool result: #{inspect(result)}"
-    end
-
-    defp format_tool_result(result), do: "Tool result: #{result}"
 
     defp add_tools(request, [], _enable_caching), do: request
 
@@ -314,10 +316,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
         # Add all tools except last without cache
         {last_tool, other_tools} = List.pop_at(tools, -1)
 
-        request_with_tools = Enum.reduce(other_tools, request, fn tool, req ->
-          claudio_tool = convert_tool_schema(tool)
-          Claudio.Messages.Request.add_tool(req, claudio_tool)
-        end)
+        request_with_tools =
+          Enum.reduce(other_tools, request, fn tool, req ->
+            claudio_tool = convert_tool_schema(tool)
+            Claudio.Messages.Request.add_tool(req, claudio_tool)
+          end)
 
         # Add last tool with cache control
         last_claudio_tool = convert_tool_schema(last_tool)
@@ -371,22 +374,118 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp extract_content(%{content: content_blocks}) when is_list(content_blocks) do
       # Combine all text blocks
+      # Note: Claudio.Messages.Response uses atom keys (:type, :text) not string keys
       content_blocks
-      |> Enum.filter(&(&1["type"] == "text"))
-      |> Enum.map(& &1["text"])
+      |> Enum.filter(fn block ->
+        Map.get(block, :type) == :text || Map.get(block, "type") == "text"
+      end)
+      |> Enum.map(fn block ->
+        Map.get(block, :text) || Map.get(block, "text") || ""
+      end)
       |> Enum.join("\n")
     end
 
     defp extract_content(_response), do: ""
 
-    defp populate_schema(schema, content, _claudio_response) do
+    defp populate_schema(schema, content, claudio_response) do
+      # Handle ToolCallResponse specially
+      case schema do
+        %Normandy.Agents.ToolCallResponse{} ->
+          populate_tool_call_response(schema, content, claudio_response)
+
+        _ ->
+          populate_standard_schema(schema, content)
+      end
+    end
+
+    defp populate_tool_call_response(schema, content, claudio_response) do
+      # Extract tool_use blocks from Claudio response
+      tool_calls = extract_tool_uses(claudio_response)
+
+      schema
+      |> Map.put(:content, content)
+      |> Map.put(:tool_calls, tool_calls)
+    end
+
+    defp extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
+      content_blocks
+      |> Enum.filter(fn block ->
+        Map.get(block, :type) == :tool_use || Map.get(block, "type") == "tool_use"
+      end)
+      |> Enum.map(fn tool_use ->
+        %Normandy.Components.ToolCall{
+          id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
+          name: Map.get(tool_use, :name) || Map.get(tool_use, "name"),
+          input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
+        }
+      end)
+    end
+
+    defp extract_tool_uses(_), do: []
+
+    defp populate_standard_schema(schema, content) do
       # Try to populate the schema with the response content
-      # For simple schemas with a chat_message field, use that
-      if Map.has_key?(schema, :chat_message) do
-        Map.put(schema, :chat_message, content)
-      else
-        # For other schemas, try to parse as JSON and populate fields
-        schema
+      # First, strip markdown code fences if present
+      cleaned_content =
+        content
+        |> String.trim()
+        |> String.replace(~r/^```json\n/, "")
+        |> String.replace(~r/^```\n/, "")
+        |> String.replace(~r/\n```$/, "")
+        |> String.trim()
+
+      # Try to parse as JSON if it looks like JSON
+      parsed_content =
+        if String.starts_with?(cleaned_content, "{") or
+             String.starts_with?(cleaned_content, "[") do
+          case Poison.decode(cleaned_content) do
+            {:ok, parsed} -> parsed
+            {:error, _err} -> content
+          end
+        else
+          content
+        end
+
+      # Populate schema fields
+      case {schema, parsed_content} do
+        {%{chat_message: _}, content_str} when is_binary(content_str) ->
+          # Simple string response
+          Map.put(schema, :chat_message, content_str)
+
+        {schema, parsed_map} when is_map(parsed_map) ->
+          # JSON object response - merge fields into schema
+          # Map common field name variations to schema fields
+          # Claude sometimes uses "response" instead of "chat_message"
+          normalized_map =
+            Enum.reduce(parsed_map, %{}, fn {key, value}, acc ->
+              normalized_key =
+                case key do
+                  "response" -> "chat_message"
+                  "message" -> "chat_message"
+                  "text" -> "chat_message"
+                  other -> other
+                end
+
+              Map.put(acc, normalized_key, value)
+            end)
+
+          Enum.reduce(normalized_map, schema, fn {key, value}, acc ->
+            try do
+              key_atom = if is_binary(key), do: String.to_existing_atom(key), else: key
+
+              if Map.has_key?(acc, key_atom) do
+                Map.put(acc, key_atom, value)
+              else
+                acc
+              end
+            rescue
+              # Atom doesn't exist, skip this field
+              ArgumentError -> acc
+            end
+          end)
+
+        _ ->
+          schema
       end
     end
 

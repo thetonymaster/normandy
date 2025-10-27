@@ -79,14 +79,42 @@ defmodule Normandy.Agents.BaseAgent do
         Map.get(config, :output_schema)
       end
 
+    history = AgentMemory.history(config.memory)
+
+    # Generate system prompt and add output schema specification
+    system_prompt =
+      SystemPromptGenerator.generate_prompt(prompt_specification, config.tool_registry)
+
+    # Add output schema if available
+    system_prompt_with_schema =
+      if response_model do
+        try do
+          schema_json =
+            Poison.encode!(response_model.__struct__.__specification__(), pretty: true)
+
+          system_prompt <>
+            "\n\n# OUTPUT SCHEMA\nYou MUST respond with valid JSON that exactly matches this schema. Use these exact field names:\n```json\n#{schema_json}\n```\nIMPORTANT: The response must be valid JSON with the field names shown above. Do not add extra fields or change field names."
+        rescue
+          _ ->
+            system_prompt
+        end
+      else
+        system_prompt
+      end
+
+    # Convert history plain maps to Message structs
+    history_messages =
+      Enum.map(history, fn %{role: role, content: content} ->
+        %Message{role: role, content: content}
+      end)
+
     messages =
       [
         %Message{
           role: "system",
-          content:
-            SystemPromptGenerator.generate_prompt(prompt_specification, config.tool_registry)
+          content: system_prompt_with_schema
         }
-      ] ++ AgentMemory.history(config.memory)
+      ] ++ history_messages
 
     # Prepare tool schemas if tools are available
     opts =
@@ -166,28 +194,75 @@ defmodule Normandy.Agents.BaseAgent do
 
   @spec run(BaseAgentConfig.t(), struct() | nil) :: {BaseAgentConfig.t(), struct()}
   def run(
-        config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
+        config = %BaseAgentConfig{tool_registry: tool_registry},
         user_input \\ nil
       ) do
-    {config, memory} =
+    # If tools are registered, automatically use the tool execution loop
+    if tool_registry != nil && Registry.count(tool_registry) > 0 do
+      run_with_tools(config, user_input)
+    else
+      # No tools registered, use simple response
+      run_without_tools(config, user_input)
+    end
+  end
+
+  @doc """
+  Run the agent with optional streaming support.
+
+  Accepts a keyword list as the third argument with options:
+  - `:stream` - Boolean, enables streaming mode
+  - `:on_chunk` - Callback function for streaming chunks
+
+  ## Example
+
+      BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: fn chunk ->
+        IO.write(chunk)
+      end)
+  """
+  def run(config, user_input, opts) when is_list(opts) do
+    stream = Keyword.get(opts, :stream, false)
+    on_chunk = Keyword.get(opts, :on_chunk)
+
+    if stream and on_chunk do
+      # Convert arity-1 callback to arity-2 if needed
+      callback =
+        if is_function(on_chunk, 1) do
+          fn
+            :text_delta, text -> on_chunk.(text)
+            _, _ -> :ok
+          end
+        else
+          on_chunk
+        end
+
+      stream_response(config, user_input, callback)
+    else
+      # Fall back to regular run
+      run(config, user_input)
+    end
+  end
+
+  # Private function for simple runs without tool support
+  defp run_without_tools(
+         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
+         user_input
+       ) do
+    config =
       if user_input != nil do
         updated_memory =
           memory
           |> AgentMemory.initialize_turn()
           |> AgentMemory.add_message("user", user_input)
 
-        updated_config =
-          config
-          |> Map.put(:current_user_input, user_input)
-          |> Map.put(:memory, updated_memory)
-
-        {updated_config, updated_memory}
+        config
+        |> Map.put(:current_user_input, user_input)
+        |> Map.put(:memory, updated_memory)
       else
-        {config, memory}
+        config
       end
 
     response = get_response(config, output_schema)
-    memory = AgentMemory.add_message(memory, "assistant", response)
+    memory = AgentMemory.add_message(config.memory, "assistant", response)
 
     config = Map.put(config, :memory, memory)
 
@@ -262,11 +337,28 @@ defmodule Normandy.Agents.BaseAgent do
     response = get_response(config, %ToolCallResponse{})
 
     cond do
-      # No tool calls - final response
+      # No tool calls - this IS the final text response, just in ToolCallResponse format
+      # We need to convert it to the actual output schema
       is_nil(response.tool_calls) or length(response.tool_calls) == 0 ->
-        memory = AgentMemory.add_message(config.memory, "assistant", response)
+        # Convert ToolCallResponse to actual output schema
+        # The response.content contains the final text
+        final_response =
+          if response.content && response.content != "" do
+            # We have content in the ToolCallResponse, convert to output schema
+            case config.output_schema do
+              %{chat_message: _} ->
+                Map.put(config.output_schema, :chat_message, response.content)
+
+              _ ->
+                config.output_schema
+            end
+          else
+            config.output_schema
+          end
+
+        memory = AgentMemory.add_message(config.memory, "assistant", final_response)
         config = Map.put(config, :memory, memory)
-        {config, response}
+        {config, final_response}
 
       # Has tool calls - execute them
       true ->
@@ -276,18 +368,40 @@ defmodule Normandy.Agents.BaseAgent do
         # Execute each tool call
         tool_results =
           Enum.map(response.tool_calls, fn tool_call ->
-            case Executor.execute(config.tool_registry, tool_call.name) do
-              {:ok, result} ->
-                %ToolResult{
-                  tool_call_id: tool_call.id,
-                  output: result,
-                  is_error: false
-                }
+            # Get the tool from registry and update it with input parameters
+            case Registry.get(config.tool_registry, tool_call.name) do
+              {:ok, tool} ->
+                # Update tool struct with input parameters from LLM
+                # Convert string keys to atoms for struct update
+                input_with_atom_keys =
+                  Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
+                    atom_key = if is_binary(key), do: String.to_existing_atom(key), else: key
+                    Map.put(acc, atom_key, value)
+                  end)
 
-              {:error, error} ->
+                updated_tool = struct(tool, input_with_atom_keys)
+
+                # Execute the updated tool
+                case Executor.execute_tool(updated_tool) do
+                  {:ok, result} ->
+                    %ToolResult{
+                      tool_call_id: tool_call.id,
+                      output: result,
+                      is_error: false
+                    }
+
+                  {:error, error} ->
+                    %ToolResult{
+                      tool_call_id: tool_call.id,
+                      output: %{error: error},
+                      is_error: true
+                    }
+                end
+
+              :error ->
                 %ToolResult{
                   tool_call_id: tool_call.id,
-                  output: %{error: error},
+                  output: %{error: "Tool '#{tool_call.name}' not found in registry"},
                   is_error: true
                 }
             end

@@ -27,10 +27,12 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     end
 
     test "accepts supervision options" do
-      assert {:ok, pid} = AgentSupervisor.start_link(
-        max_restarts: 5,
-        max_seconds: 10
-      )
+      assert {:ok, pid} =
+               AgentSupervisor.start_link(
+                 max_restarts: 5,
+                 max_seconds: 10
+               )
+
       assert Process.alive?(pid)
     end
   end
@@ -46,10 +48,11 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "starts agent with custom agent_id", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "custom_agent"
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "custom_agent"
+        )
 
       assert AgentProcess.get_id(pid) == "custom_agent"
     end
@@ -69,22 +72,25 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       {:ok, sup} = AgentSupervisor.start_link()
 
       # Permanent - always restart
-      {:ok, _pid1} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        restart: :permanent
-      )
+      {:ok, _pid1} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          restart: :permanent
+        )
 
       # Temporary - never restart
-      {:ok, _pid2} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        restart: :temporary
-      )
+      {:ok, _pid2} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          restart: :temporary
+        )
 
       # Transient - restart only on abnormal exit (default)
-      {:ok, _pid3} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        restart: :transient
-      )
+      {:ok, _pid3} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          restart: :transient
+        )
 
       assert AgentSupervisor.count_agents(sup) == 3
     end
@@ -213,11 +219,12 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "restarts transient agents on abnormal exit", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "restartable",
-        restart: :transient
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "restartable",
+          restart: :transient
+        )
 
       # Kill the process abnormally
       Process.exit(pid, :kill)
@@ -232,11 +239,12 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "does not restart temporary agents", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "temporary",
-        restart: :temporary
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "temporary",
+          restart: :temporary
+        )
 
       # Kill the process
       Process.exit(pid, :kill)
@@ -249,11 +257,12 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "restarts permanent agents even on normal exit", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "permanent",
-        restart: :permanent
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "permanent",
+          restart: :permanent
+        )
 
       # Stop normally
       AgentProcess.stop(pid)
@@ -270,10 +279,11 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "supervised agents can execute work", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "worker"
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "worker"
+        )
 
       # Agent should work normally
       assert {:ok, result} = AgentProcess.run(pid, "Test input")
@@ -283,10 +293,11 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     test "supervised agents maintain state across runs", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
-      {:ok, pid} = AgentSupervisor.start_agent(sup,
-        agent: agent,
-        agent_id: "stateful"
-      )
+      {:ok, pid} =
+        AgentSupervisor.start_agent(sup,
+          agent: agent,
+          agent_id: "stateful"
+        )
 
       AgentProcess.run(pid, "First run")
       AgentProcess.run(pid, "Second run")

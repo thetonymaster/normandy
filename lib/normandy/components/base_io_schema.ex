@@ -33,6 +33,19 @@ defimpl Normandy.Components.BaseIOSchema, for: BitString do
   def get_schema(_), do: %{}
 end
 
+defimpl Normandy.Components.BaseIOSchema, for: Map do
+  def __str__(map), do: inspect(map)
+  def __rich__(map), do: inspect(map)
+
+  def to_json(map) do
+    # Convert map to JSON string using the configured JSON adapter
+    adapter = Application.get_env(:normandy, :adapter, Poison)
+    adapter.encode!(map)
+  end
+
+  def get_schema(_map), do: %{}
+end
+
 defimpl Normandy.Components.BaseIOSchema, for: Any do
   def __str__(_), do: ""
   def __rich__(_), do: ""

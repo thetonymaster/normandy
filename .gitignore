@@ -27,3 +27,5 @@ normandy-*.tar
 
 # Dialyzer PLT files
 /priv/plts/
+
+.envrc

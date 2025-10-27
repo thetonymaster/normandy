@@ -55,7 +55,8 @@ defmodule Normandy.Context.Summarizer do
 
     # Build summarization request
     model = get_model(agent, opts)
-    temperature = 0.3  # Lower temperature for more focused summaries
+    # Lower temperature for more focused summaries
+    temperature = 0.3
 
     # Create a temporary message list for summarization
     summarization_messages = [
@@ -108,12 +109,13 @@ defmodule Normandy.Context.Summarizer do
       case summarize_messages(client, agent, old_messages, opts) do
         {:ok, summary} ->
           # Create new memory with summary + recent messages
-          new_memory = rebuild_memory_with_summary(
-            agent.memory,
-            summary,
-            summary_role,
-            recent_messages
-          )
+          new_memory =
+            rebuild_memory_with_summary(
+              agent.memory,
+              summary,
+              summary_role,
+              recent_messages
+            )
 
           {:ok, %{agent | memory: new_memory}}
 
@@ -139,12 +141,15 @@ defmodule Normandy.Context.Summarizer do
     original_tokens =
       Enum.reduce(messages, 0, fn msg, acc ->
         tokens = Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
-        acc + tokens + 10  # Add overhead per message
+        # Add overhead per message
+        acc + tokens + 10
       end)
 
     savings = original_tokens - summary_tokens
-    savings_percent_raw = if original_tokens > 0, do: (savings / original_tokens) * 100, else: 0.0
-    savings_percent = if is_float(savings_percent_raw), do: Float.round(savings_percent_raw, 1), else: 0.0
+    savings_percent_raw = if original_tokens > 0, do: savings / original_tokens * 100, else: 0.0
+
+    savings_percent =
+      if is_float(savings_percent_raw), do: Float.round(savings_percent_raw, 1), else: 0.0
 
     {:ok,
      %{
@@ -228,7 +233,8 @@ defmodule Normandy.Context.Summarizer do
     }
 
     # Add summary message first
-    memory = AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
+    memory =
+      AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
 
     # Add recent messages in chronological order
     # (add_message prepends, and history() will reverse, so this gives correct final order)

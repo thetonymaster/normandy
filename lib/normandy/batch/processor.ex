@@ -285,5 +285,4 @@ defmodule Normandy.Batch.Processor do
       error_count: length(errors)
     }
   end
-
 end

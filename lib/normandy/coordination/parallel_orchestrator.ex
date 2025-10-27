@@ -44,6 +44,10 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   @doc """
   Executes agents in parallel.
 
+  Can be called in two ways:
+  1. With agent_specs and options: `execute(agent_specs, opts)`
+  2. With agents list and input: `execute(agents, input)` - returns list of results
+
   ## Options
 
   - `:shared_context` - SharedContext to use (default: new context)
@@ -64,8 +68,47 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         end
       )
   """
-  @spec execute([agent_spec()], keyword()) :: {:ok, execution_result()}
-  def execute(agent_specs, opts \\ []) when is_list(agent_specs) do
+  @spec execute([agent_spec()] | [struct()], keyword() | map()) ::
+          {:ok, execution_result()} | {:ok, list()}
+  def execute(agents, input_or_opts \\ [])
+
+  # Simple API: execute(agents, input) -> {:ok, [results]}
+  def execute(agents, input)
+      when is_list(agents) and (is_map(input) or is_binary(input)) and not is_struct(input) do
+    # Generate agent specs with unique IDs
+    agent_specs =
+      agents
+      |> Enum.with_index()
+      |> Enum.map(fn {agent, idx} ->
+        %{
+          id: "agent_#{idx}",
+          agent: agent,
+          input: input
+        }
+      end)
+
+    # Execute with specs
+    case execute_with_specs(agent_specs, []) do
+      {:ok, %{results: results}} ->
+        # Convert map of results to ordered list
+        result_list =
+          agent_specs
+          |> Enum.map(fn %{id: id} -> Map.get(results, id) end)
+          |> Enum.filter(&(&1 != nil))
+
+        {:ok, result_list}
+
+      error ->
+        error
+    end
+  end
+
+  # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
+  def execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
+    execute_with_specs(agent_specs, opts)
+  end
+
+  defp execute_with_specs(agent_specs, opts) when is_list(agent_specs) do
     context = Keyword.get(opts, :shared_context, SharedContext.new())
     max_concurrency = Keyword.get(opts, :max_concurrency, 10)
     timeout = Keyword.get(opts, :timeout, 300_000)
@@ -247,10 +290,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   defp prepare_input(input), do: input
 
   defp extract_result(response) when is_map(response) do
-    # Try to extract the relevant result
-    Map.get(response, :chat_message) ||
-      Map.get(response, "chat_message") ||
-      response
+    # Return the full response map - don't extract just chat_message
+    response
   end
 
   defp extract_result(response), do: response
