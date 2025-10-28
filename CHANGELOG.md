@@ -7,9 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-10-28
+
 ### Added
+
+#### CI/CD Infrastructure
+- **GitHub Actions Workflow**: Comprehensive CI pipeline for automated testing
+  - Matrix testing across Elixir 1.15, 1.16, 1.17 and OTP 26, 27
+  - Separate jobs for unit tests, integration tests, Dialyzer, and dependency audits
+  - Smart caching for dependencies and PLT files
+  - Conditional integration test execution with API key support
+  - Documentation in `.github/workflows/README.md`
+
+#### Examples and Documentation
+- **Comprehensive Examples**: Three runnable examples demonstrating key features
+  - Customer support agent with custom tools and conversational memory
+  - Multi-agent research workflow with parallel execution
+  - Structured data extraction with validated output schemas
+  - Complete examples README with setup instructions and key concepts
+
+- **Customer Support Example Application**: Production-ready multi-agent system
+  - Four specialized agents (Greeter, Technical, Billing, Order Support)
+  - Custom tools for knowledge base, order lookup, refunds, and ticket creation
+  - Interactive CLI interface with session management
+  - Data stores for orders, tickets, and knowledge base
+  - Full application architecture documentation
+
+#### Context Management Improvements
+- **TokenCounter Test Coverage**: Comprehensive unit tests for token counting
+  - 15 tests covering all TokenCounter functionality
+  - Mock-based testing for unit tests
+  - Integration tests for real API calls
+  - Error handling and edge case coverage
+
+- **Date/Time Context Provider**: Dynamic timestamp injection for prompts
+  - `Normandy.Components.DateTimeProvider` for temporal context
+  - Configurable timezone support
+  - Test coverage for provider functionality
+
+#### Development Tools
+- **JSON Deserializer**: Improved JSON parsing with error handling
+  - `Normandy.LLM.JsonDeserializer` for robust JSON parsing
+  - Fallback mechanisms for malformed JSON
+  - Integration tests for retry scenarios
+
+### Fixed
+- **TokenCounter Implementation**: Critical bug fixes for production use
+  - Fixed Claudio client initialization (map format instead of keyword list)
+  - Fixed agent structure access patterns (direct field access)
+  - Fixed system prompt extraction (pattern matching instead of get_in/2)
+  - Added comprehensive error handling for malformed agents
+
+- **Access Protocol Issues**: Resolved struct field access errors
+  - Replaced get_in/2 with pattern matching for BaseAgentConfig
+  - Improved error messages for malformed agent structures
+
+### Documentation
 - Enhanced ExDoc configuration with organized module groups
-- Guides directory structure for comprehensive documentation
+- Examples directory with comprehensive usage documentation
+- CI/CD workflow documentation with local testing commands
+- Customer support application architecture guide
+
+### Test Coverage
+- 443 unit tests (29 doctests + 21 properties + 393 tests)
+- 62 integration tests (56 API + 6 comprehensive DSL tests)
+- 15 new TokenCounter unit tests
+- Total: 505+ tests, all passing
 
 ## [0.1.0] - 2025-10-26
 
@@ -164,4 +227,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.2.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.1.0
