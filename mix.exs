@@ -1,10 +1,12 @@
 defmodule Normandy.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+
   def project do
     [
       app: :normandy,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -19,7 +21,85 @@ defmodule Normandy.MixProject do
       homepage_url: "https://github.com/thetonymaster/normandy",
       docs: [
         main: "readme",
-        extras: ["README.md", "CHANGELOG.md", "ROADMAP.md"]
+        # logo: "assets/logo.png",  # TODO: Add logo
+        extras: [
+          "README.md",
+          "CHANGELOG.md",
+          "ROADMAP.md"
+          # TODO: Add guides
+          # "guides/getting_started.md",
+          # "guides/multi_agent_coordination.md",
+          # "guides/dsl_guide.md"
+        ],
+        # groups_for_extras: [
+        #   "Guides": ~r/guides\/.*/
+        # ],
+        groups_for_modules: [
+          Core: [
+            Normandy.Schema,
+            Normandy.Type,
+            Normandy.Validate,
+            Normandy.ParameterizedType
+          ],
+          Agents: [
+            Normandy.Agents.BaseAgent,
+            Normandy.Agents.BaseAgentConfig,
+            Normandy.Agents.Model,
+            Normandy.Agents.IOModel,
+            Normandy.Agents.ToolCallResponse
+          ],
+          DSL: [
+            Normandy.DSL.Agent,
+            Normandy.DSL.Workflow
+          ],
+          Coordination: [
+            Normandy.Coordination.Pattern,
+            Normandy.Coordination.Reactive,
+            Normandy.Coordination.AgentPool,
+            Normandy.Coordination.SequentialOrchestrator,
+            Normandy.Coordination.ParallelOrchestrator,
+            Normandy.Coordination.HierarchicalCoordinator,
+            Normandy.Coordination.AgentProcess,
+            Normandy.Coordination.AgentSupervisor,
+            Normandy.Coordination.AgentMessage,
+            Normandy.Coordination.SharedContext,
+            Normandy.Coordination.StatefulContext
+          ],
+          Components: [
+            Normandy.Components.AgentMemory,
+            Normandy.Components.Message,
+            Normandy.Components.PromptSpecification,
+            Normandy.Components.SystemPromptGenerator,
+            Normandy.Components.BaseIOSchema,
+            Normandy.Components.ContextProvider,
+            Normandy.Components.StreamEvent,
+            Normandy.Components.StreamProcessor,
+            Normandy.Components.ToolCall,
+            Normandy.Components.ToolResult
+          ],
+          Tools: [
+            Normandy.Tools.BaseTool,
+            Normandy.Tools.Registry,
+            Normandy.Tools.Executor
+          ],
+          "Context Management": [
+            Normandy.Context.TokenCounter,
+            Normandy.Context.WindowManager,
+            Normandy.Context.Summarizer
+          ],
+          Resilience: [
+            Normandy.Resilience.Retry,
+            Normandy.Resilience.CircuitBreaker
+          ],
+          "Batch Processing": [
+            Normandy.Batch.Processor
+          ],
+          "LLM Adapters": [
+            Normandy.LLM.ClaudioAdapter
+          ]
+        ],
+        source_ref: "v#{@version}",
+        formatters: ["html"]
       ]
     ]
   end

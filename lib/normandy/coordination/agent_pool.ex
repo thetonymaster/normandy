@@ -44,7 +44,7 @@ defmodule Normandy.Coordination.AgentPool do
   require Logger
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{AgentSupervisor, AgentProcess}
+  alias Normandy.Coordination.AgentSupervisor
 
   @type strategy :: :lifo | :fifo
   @type pool_stat :: %{
@@ -411,7 +411,7 @@ defmodule Normandy.Coordination.AgentPool do
 
       # Overflow agent, terminate it
       true ->
-        AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
+        _ = AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
         %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
     end
   end
@@ -431,7 +431,7 @@ defmodule Normandy.Coordination.AgentPool do
       # Start replacement agent
       case start_agent(state) do
         nil ->
-          Logger.warn("Failed to start replacement agent")
+          Logger.warning("Failed to start replacement agent")
           state
 
         new_pid ->

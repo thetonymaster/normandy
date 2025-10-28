@@ -105,7 +105,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Execute request
       case Claudio.Messages.create(claudio_client, request) do
         {:ok, response} ->
-          convert_response_to_normandy(response, response_model)
+          # Pass context for JSON retry
+          context = %{
+            client: client,
+            model: model,
+            temperature: temperature,
+            max_tokens: max_tokens,
+            messages: messages,
+            tools: tools
+          }
+
+          convert_response_to_normandy(response, response_model, context)
 
         {:error, error} ->
           handle_error(error, response_model)
@@ -356,7 +366,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
       })
     end
 
-    defp convert_response_to_normandy(claudio_response, response_model) do
+    defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
       content = extract_content(claudio_response)
 
@@ -364,7 +374,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
       case response_model do
         %{__struct__: _module} = schema ->
           # Populate schema with response content
-          populate_schema(schema, content, claudio_response)
+          populate_schema(schema, content, claudio_response, context)
 
         _ ->
           # Return raw content
@@ -387,14 +397,14 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp extract_content(_response), do: ""
 
-    defp populate_schema(schema, content, claudio_response) do
+    defp populate_schema(schema, content, claudio_response, context) do
       # Handle ToolCallResponse specially
       case schema do
         %Normandy.Agents.ToolCallResponse{} ->
           populate_tool_call_response(schema, content, claudio_response)
 
         _ ->
-          populate_standard_schema(schema, content)
+          populate_standard_schema(schema, content, context)
       end
     end
 
@@ -423,68 +433,41 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp extract_tool_uses(_), do: []
 
-    defp populate_standard_schema(schema, content) do
-      # Try to populate the schema with the response content
-      # First, strip markdown code fences if present
-      cleaned_content =
-        content
-        |> String.trim()
-        |> String.replace(~r/^```json\n/, "")
-        |> String.replace(~r/^```\n/, "")
-        |> String.replace(~r/\n```$/, "")
-        |> String.trim()
+    defp populate_standard_schema(schema, content, context) do
+      # Use JsonDeserializer with retry for robust parsing and validation
+      # Extract context parameters
+      %{
+        client: client,
+        model: model,
+        temperature: temperature,
+        max_tokens: max_tokens,
+        messages: messages,
+        tools: tools
+      } = context
 
-      # Try to parse as JSON if it looks like JSON
-      parsed_content =
-        if String.starts_with?(cleaned_content, "{") or
-             String.starts_with?(cleaned_content, "[") do
-          case Poison.decode(cleaned_content) do
-            {:ok, parsed} -> parsed
-            {:error, _err} -> content
-          end
-        else
-          content
-        end
+      # Build opts with tools if present
+      opts = if tools != [], do: [tools: tools, max_retries: 2], else: [max_retries: 2]
 
-      # Populate schema fields
-      case {schema, parsed_content} do
-        {%{chat_message: _}, content_str} when is_binary(content_str) ->
-          # Simple string response
-          Map.put(schema, :chat_message, content_str)
+      case Normandy.LLM.JsonDeserializer.deserialize_with_retry(
+             content,
+             schema,
+             client,
+             model,
+             temperature,
+             max_tokens,
+             messages,
+             opts
+           ) do
+        {:ok, validated_schema} ->
+          validated_schema
 
-        {schema, parsed_map} when is_map(parsed_map) ->
-          # JSON object response - merge fields into schema
-          # Map common field name variations to schema fields
-          # Claude sometimes uses "response" instead of "chat_message"
-          normalized_map =
-            Enum.reduce(parsed_map, %{}, fn {key, value}, acc ->
-              normalized_key =
-                case key do
-                  "response" -> "chat_message"
-                  "message" -> "chat_message"
-                  "text" -> "chat_message"
-                  other -> other
-                end
+        {:error, _reason} when is_binary(content) ->
+          # Fallback: treat as plain text if JSON parsing/validation fails after retries
+          # This handles cases where the LLM returns plain text instead of JSON
+          Map.put(schema, :chat_message, content)
 
-              Map.put(acc, normalized_key, value)
-            end)
-
-          Enum.reduce(normalized_map, schema, fn {key, value}, acc ->
-            try do
-              key_atom = if is_binary(key), do: String.to_existing_atom(key), else: key
-
-              if Map.has_key?(acc, key_atom) do
-                Map.put(acc, key_atom, value)
-              else
-                acc
-              end
-            rescue
-              # Atom doesn't exist, skip this field
-              ArgumentError -> acc
-            end
-          end)
-
-        _ ->
+        {:error, _reason} ->
+          # Unknown error, return schema unchanged
           schema
       end
     end

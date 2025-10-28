@@ -25,7 +25,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           tool_registry: Registry.t() | nil,
           max_tool_iterations: pos_integer(),
           retry_options: keyword() | nil,
-          circuit_breaker: pid() | nil
+          circuit_breaker: pid() | nil,
+          enable_json_retry: boolean(),
+          json_retry_max_attempts: pos_integer()
         }
 
   schema do
@@ -43,5 +45,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:max_tool_iterations, :integer, default: 5)
     field(:retry_options, :map, default: nil)
     field(:circuit_breaker, :any, default: nil)
+    field(:enable_json_retry, :boolean, default: false)
+    field(:json_retry_max_attempts, :integer, default: 2)
   end
 end

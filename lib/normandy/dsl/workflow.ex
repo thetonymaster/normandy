@@ -102,7 +102,7 @@ defmodule Normandy.DSL.Workflow do
   - Compile-time workflow validation
   """
 
-  alias Normandy.Coordination.{Reactive, SequentialOrchestrator, ParallelOrchestrator}
+  alias Normandy.Coordination.Reactive
 
   defmacro __using__(_opts) do
     quote do

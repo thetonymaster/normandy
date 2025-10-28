@@ -60,7 +60,8 @@ defmodule Normandy.Coordination.AgentProcess do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    agent = Keyword.fetch!(opts, :agent)
+    # Validate that :agent key exists (will raise if missing)
+    _agent = Keyword.fetch!(opts, :agent)
     name = Keyword.get(opts, :name)
 
     if name do
@@ -275,13 +276,14 @@ defmodule Normandy.Coordination.AgentProcess do
   @impl true
   def handle_cast({:run_async, input, reply_to}, state) do
     # Spawn task to run agent without blocking GenServer
-    Task.start(fn ->
-      result = handle_async_run(state.agent, input, state.agent_id)
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        result = handle_async_run(state.agent, input, state.agent_id)
 
-      if reply_to do
-        send(reply_to, {:agent_result, state.agent_id, result})
-      end
-    end)
+        if reply_to do
+          send(reply_to, {:agent_result, state.agent_id, result})
+        end
+      end)
 
     # Update run count
     updated_state = %{
@@ -310,8 +312,6 @@ defmodule Normandy.Coordination.AgentProcess do
       Map.get(response, "chat_message") ||
       response
   end
-
-  defp extract_result(response), do: response
 
   defp handle_async_run(agent, input, agent_id) do
     try do

@@ -90,13 +90,8 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
           end)
 
         # Execute and return just the final result
-        case execute_with_specs(agent_specs, input, []) do
-          {:ok, %{results: results}} ->
-            {:ok, List.last(results)}
-
-          error ->
-            error
-        end
+        {:ok, %{results: results}} = execute_with_specs(agent_specs, input, [])
+        {:ok, List.last(results)}
     end
   end
 
@@ -191,9 +186,9 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
       )
   """
   @spec execute_with_messages([agent_spec()], AgentMessage.t(), keyword()) ::
-          {:ok, [AgentMessage.t()]} | {:error, term()}
+          {:ok, [AgentMessage.t()]}
   def execute_with_messages(agent_specs, initial_message, opts \\ []) do
-    context = Keyword.get(opts, :shared_context, SharedContext.new())
+    _context = Keyword.get(opts, :shared_context, SharedContext.new())
 
     messages =
       Enum.reduce(agent_specs, [initial_message], fn spec, [current_msg | _] = acc ->
@@ -201,7 +196,10 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
         agent = Map.fetch!(spec, :agent)
 
         # Create request message for this agent
-        request_msg = %AgentMessage{
+        # Pattern match to validate struct type
+        %AgentMessage{} = current_msg
+
+        request_msg = %{
           current_msg
           | to: agent_id,
             type: "request"
@@ -232,7 +230,7 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
       agent_input = prepare_input(input)
 
       # Run agent
-      {updated_agent, response} = BaseAgent.run(agent, agent_input)
+      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
 
       # Extract result from response
       result = extract_result(response)
@@ -259,6 +257,4 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
     # Return the full response map - don't extract just chat_message
     response
   end
-
-  defp extract_result(response), do: response
 end

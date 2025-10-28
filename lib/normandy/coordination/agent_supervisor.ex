@@ -95,7 +95,8 @@ defmodule Normandy.Coordination.AgentSupervisor do
   @spec start_agent(Supervisor.supervisor(), keyword()) ::
           DynamicSupervisor.on_start_child()
   def start_agent(supervisor, opts) do
-    agent = Keyword.fetch!(opts, :agent)
+    # Validate that :agent key exists (will raise if missing)
+    _agent = Keyword.fetch!(opts, :agent)
     restart = Keyword.get(opts, :restart, :transient)
 
     child_spec = %{

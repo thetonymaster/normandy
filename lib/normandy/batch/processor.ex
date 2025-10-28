@@ -95,7 +95,7 @@ defmodule Normandy.Batch.Processor do
       )
   """
   @spec process_batch(agent :: struct(), inputs :: [term()], batch_options()) ::
-          {:ok, [term()] | batch_result()} | {:error, term()}
+          {:ok, [term()] | batch_result()}
   def process_batch(agent, inputs, opts \\ []) when is_list(inputs) do
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
     ordered = Keyword.get(opts, :ordered, true)
@@ -158,14 +158,13 @@ defmodule Normandy.Batch.Processor do
       }
   """
   @spec process_batch_with_stats(agent :: struct(), inputs :: [term()], batch_options()) ::
-          {:ok, batch_result()} | {:error, term()}
+          {:ok, batch_result()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
     opts = Keyword.put(opts, :ordered, false)
 
     case process_batch(agent, inputs, opts) do
       {:ok, result} when is_map(result) -> {:ok, result}
       {:ok, results} when is_list(results) -> {:ok, results_to_stats(results)}
-      error -> error
     end
   end
 
@@ -191,7 +190,7 @@ defmodule Normandy.Batch.Processor do
       )
   """
   @spec process_batch_chunked(agent :: struct(), inputs :: [term()], batch_options()) ::
-          {:ok, [term()]} | {:error, term()}
+          {:ok, [term()]}
   def process_batch_chunked(agent, inputs, opts \\ []) do
     chunk_size = Keyword.get(opts, :chunk_size, 100)
     chunk_delay = Keyword.get(opts, :chunk_delay, 0)

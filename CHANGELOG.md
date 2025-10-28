@@ -5,9 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Enhanced ExDoc configuration with organized module groups
+- Guides directory structure for comprehensive documentation
+
 ## [0.1.0] - 2025-10-26
 
 ### Added
+
+#### Declarative DSLs (Phase 8.6)
+- **Agent DSL**: Define agents with declarative syntax
+  - `Normandy.DSL.Agent` - `agent do ...end` blocks for agent configuration
+  - Macro-based configuration for model, temperature, prompts, tools
+  - Automatic initialization with `new/1` and agent execution
+  - Background, steps, and output_instructions directives
+
+- **Workflow DSL**: Compose multi-agent workflows
+  - `Normandy.DSL.Workflow` - `workflow do ... end` blocks
+  - Sequential execution: `step :name do ... end`
+  - Parallel execution: `parallel :name do ... end`
+  - Race patterns: `race :name do ... end`
+  - Data flow: `input(from: :step_name)` or static values
+  - Result transformation: `transform fn ... end`
+  - Conditional execution: `when_result do ... end`
+  - Automatic step orchestration and error handling
+
+- **Pattern Matching Helpers**: Utilities for result tuples
+  - `Normandy.Coordination.Pattern` - Ergonomic {:ok, value} | {:error, reason} handling
+  - Type checking: `ok?/1`, `error?/1`
+  - Value extraction: `ok!/2`, `error!/2`, `unwrap!/1`
+  - Filtering lists: `filter_ok/1`, `filter_errors/1`
+  - Transformations: `map_ok/2`, `map_error/2`
+  - Composition: `then/2`, `find_ok/1`, `collect_ok/1`, `all_ok/1`, `all_ok_map/1`
+  - Wrapping utilities: `wrap/1`, `try_wrap/1`
+
+- **Reactive Coordination Patterns**
+  - `Normandy.Coordination.Reactive` - Concurrent agent execution primitives
+  - `race/3` - Return first successful result from multiple agents
+  - `all/3` - Wait for all agents with optional fail-fast mode
+  - `some/4` - Quorum pattern (wait for N successful results)
+  - `map/3` - Transform agent results
+  - `when_result/3` - Conditional execution based on results
+
+- **Agent Pool Management**
+  - `Normandy.Coordination.AgentPool` - Connection pool pattern for agents
+  - Transaction-based API with automatic checkout/checkin
+  - Manual checkout/checkin for advanced use cases
+  - Configurable pool size with overflow support
+  - LIFO/FIFO checkout strategies
+  - Automatic agent replacement on failure
+  - Pool statistics and monitoring
+  - Non-blocking checkout with timeout support
 
 #### Core Foundation (Phases 1-7)
 - **Schema System**: Macro-based DSL for defining agent I/O schemas with JSON Schema generation
@@ -102,8 +152,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ex_doc` ~> 0.34 (dev) - Documentation generation
 
 ### Test Coverage
-- 380 unit tests (29 doctests + 21 properties + 380 tests)
-- 56 integration tests (excluded by default)
-- Total: 436 tests, all passing
+- 443 unit tests (29 doctests + 21 properties + 393 tests)
+- 62 integration tests (56 API + 6 comprehensive DSL tests, excluded by default)
+- Total: 505 tests, all passing
+- New test files:
+  - `test/coordination/pattern_test.exs` (13 tests)
+  - `test/coordination/reactive_test.exs` (33 tests)
+  - `test/coordination/agent_pool_test.exs` (30 tests)
+  - `test/dsl/agent_test.exs` (8 tests)
+  - `test/dsl/workflow_test.exs` (14 tests)
+  - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
+  - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
 [0.1.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.1.0

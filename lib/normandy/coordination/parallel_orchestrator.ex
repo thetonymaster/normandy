@@ -24,7 +24,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   """
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{AgentMessage, SharedContext}
+  alias Normandy.Coordination.SharedContext
 
   @type agent_spec :: %{
           required(:id) => String.t(),
@@ -88,19 +88,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       end)
 
     # Execute with specs
-    case execute_with_specs(agent_specs, []) do
-      {:ok, %{results: results}} ->
-        # Convert map of results to ordered list
-        result_list =
-          agent_specs
-          |> Enum.map(fn %{id: id} -> Map.get(results, id) end)
-          |> Enum.filter(&(&1 != nil))
+    {:ok, %{results: results}} = execute_with_specs(agent_specs, [])
 
-        {:ok, result_list}
+    # Convert map of results to ordered list
+    result_list =
+      agent_specs
+      |> Enum.map(fn %{id: id} -> Map.get(results, id) end)
+      |> Enum.filter(&(&1 != nil))
 
-      error ->
-        error
-    end
+    {:ok, result_list}
   end
 
   # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
@@ -266,7 +262,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       agent_input = prepare_input(input)
 
       # Run agent
-      {updated_agent, response} = BaseAgent.run(agent, agent_input)
+      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
 
       # Extract result from response
       result = extract_result(response)
@@ -293,6 +289,4 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     # Return the full response map - don't extract just chat_message
     response
   end
-
-  defp extract_result(response), do: response
 end

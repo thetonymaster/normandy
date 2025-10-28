@@ -56,23 +56,27 @@ defmodule Normandy.Context.TokenCounter do
   @spec count_conversation(ClaudioAdapter.t(), struct()) ::
           {:ok, map()} | {:error, term()}
   def count_conversation(client, agent) do
-    model = Map.get(agent.config, :model, "claude-3-5-sonnet-20241022")
-    messages = build_messages_payload(agent.memory)
+    try do
+      model = Map.get(agent, :model, "claude-3-5-sonnet-20241022")
+      messages = build_messages_payload(agent.memory)
 
-    payload = %{
-      "model" => model,
-      "messages" => messages,
-      "max_tokens" => 1
-    }
+      payload = %{
+        "model" => model,
+        "messages" => messages,
+        "max_tokens" => 1
+      }
 
-    # Add system prompt if present
-    payload =
-      case get_system_prompt(agent) do
-        nil -> payload
-        system -> Map.put(payload, "system", system)
-      end
+      # Add system prompt if present
+      payload =
+        case get_system_prompt(agent) do
+          nil -> payload
+          system -> Map.put(payload, "system", system)
+        end
 
-    count_tokens(client, payload)
+      count_tokens(client, payload)
+    rescue
+      e -> {:error, {:malformed_agent, e}}
+    end
   end
 
   @doc """
@@ -135,8 +139,13 @@ defmodule Normandy.Context.TokenCounter do
   # Private helpers
 
   defp count_tokens(%ClaudioAdapter{} = client, payload) do
-    # Build Claudio client
-    claudio_client = Claudio.Client.new(api_key: client.api_key)
+    # Build Claudio client - use same format as ClaudioAdapter
+    # Claudio.Client.new expects a map with :token and :version keys
+    claudio_client =
+      Claudio.Client.new(%{
+        token: client.api_key,
+        version: "2023-06-01"
+      })
 
     # Use Claudio's count_tokens function
     Claudio.Messages.count_tokens(claudio_client, payload)
@@ -164,10 +173,18 @@ defmodule Normandy.Context.TokenCounter do
   defp format_content(_), do: ""
 
   defp get_system_prompt(agent) do
-    # Try to extract system prompt from agent config or memory
-    case Map.get(agent.config, :system_prompt) do
+    # Try to extract system prompt from agent's prompt_specification or memory
+    background =
+      case agent do
+        %{prompt_specification: %{background: bg}} -> bg
+        _ -> nil
+      end
+
+    case background do
       nil -> find_system_in_memory(agent.memory)
-      prompt -> prompt
+      [] -> find_system_in_memory(agent.memory)
+      bg when is_list(bg) -> Enum.join(bg, "\n")
+      bg -> bg
     end
   end
 

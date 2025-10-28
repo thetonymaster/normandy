@@ -87,7 +87,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         manager_prompt: "Break down this task for worker agents"
       )
   """
-  @spec execute(t(), term(), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec execute(t(), term(), keyword()) :: {:error, term()}
   def execute(%__MODULE__{} = coordinator, input, opts \\ []) do
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
     max_concurrency = Keyword.get(opts, :max_concurrency, 5)
@@ -135,7 +135,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       )
   """
   @spec execute_with_tasks(t(), [%{worker_id: String.t(), task: term()}], keyword()) ::
-          {:ok, term()} | {:error, term()}
+          {:error, term()}
   def execute_with_tasks(%__MODULE__{} = coordinator, tasks, opts \\ []) do
     max_concurrency = Keyword.get(opts, :max_concurrency, 5)
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
@@ -221,8 +221,6 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       Map.get(response, :chat_message) ||
       response
   end
-
-  defp extract_delegation_plan(response), do: response
 
   defp create_worker_specs(coordinator, delegation_plan, original_input) do
     case coordinator.delegation_strategy do

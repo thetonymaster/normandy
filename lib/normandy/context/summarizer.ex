@@ -64,10 +64,7 @@ defmodule Normandy.Context.Summarizer do
     ]
 
     # Call LLM to generate summary
-    case call_llm_for_summary(client, model, temperature, max_tokens, summarization_messages) do
-      {:ok, summary} -> {:ok, summary}
-      {:error, reason} -> {:error, reason}
-    end
+    call_llm_for_summary(client, model, temperature, max_tokens, summarization_messages)
   end
 
   @doc """
@@ -192,7 +189,7 @@ defmodule Normandy.Context.Summarizer do
     # Create a minimal response model for text output
     response_model = %{chat_message: ""}
 
-    # Check if client implements the Model protocol
+    # Check if client implements the Model protocol for future extensibility
     if implements_model_protocol?(client) do
       case Normandy.Agents.Model.converse(
              client,

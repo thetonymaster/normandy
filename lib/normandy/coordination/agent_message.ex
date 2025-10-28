@@ -19,6 +19,17 @@ defmodule Normandy.Coordination.AgentMessage do
 
   use Normandy.Schema
 
+  @type t :: %__MODULE__{
+          __meta__: Normandy.Metadata.t(),
+          id: String.t(),
+          from: String.t(),
+          to: String.t(),
+          type: String.t(),
+          payload: map(),
+          metadata: map(),
+          timestamp: integer()
+        }
+
   schema do
     field(:id, :string, default: "")
     field(:from, :string, description: "Source agent identifier", required: true)

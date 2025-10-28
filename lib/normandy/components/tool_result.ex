@@ -29,7 +29,7 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
 
   def to_json(%Normandy.Components.ToolResult{} = result) do
     # Format tool result as Claude API content block
-    [
+    blocks = [
       %{
         type: "tool_result",
         tool_use_id: result.tool_call_id,
@@ -37,6 +37,10 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
         is_error: result.is_error
       }
     ]
+
+    # Encode to JSON string
+    adapter = Application.get_env(:normandy, :adapter, Poison)
+    adapter.encode!(blocks)
   end
 
   defp format_tool_output(output) when is_binary(output), do: output

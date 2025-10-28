@@ -29,7 +29,9 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:max_tool_iterations) => pos_integer(),
           optional(:retry_options) => keyword(),
           optional(:enable_circuit_breaker) => boolean(),
-          optional(:circuit_breaker_options) => keyword()
+          optional(:circuit_breaker_options) => keyword(),
+          optional(:enable_json_retry) => boolean(),
+          optional(:json_retry_max_attempts) => pos_integer()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -58,7 +60,9 @@ defmodule Normandy.Agents.BaseAgent do
       tool_registry: Map.get(config, :tool_registry, nil),
       max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
       retry_options: Map.get(config, :retry_options, nil),
-      circuit_breaker: circuit_breaker
+      circuit_breaker: circuit_breaker,
+      enable_json_retry: Map.get(config, :enable_json_retry, false),
+      json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2)
     }
   end
 
@@ -192,7 +196,7 @@ defmodule Normandy.Agents.BaseAgent do
     result
   end
 
-  @spec run(BaseAgentConfig.t(), struct() | nil) :: {BaseAgentConfig.t(), struct()}
+  @spec run(BaseAgentConfig.t(), struct() | map() | nil) :: {BaseAgentConfig.t(), struct()}
   def run(
         config = %BaseAgentConfig{tool_registry: tool_registry},
         user_input \\ nil
@@ -859,7 +863,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec process_batch(BaseAgentConfig.t(), [term()], keyword()) ::
-          {:ok, [term()]} | {:error, term()}
+          {:ok, [term()] | map()}
   def process_batch(agent, inputs, opts \\ []) do
     Normandy.Batch.Processor.process_batch(agent, inputs, opts)
   end
@@ -882,7 +886,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec process_batch_with_stats(BaseAgentConfig.t(), [term()], keyword()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, map()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
     Normandy.Batch.Processor.process_batch_with_stats(agent, inputs, opts)
   end
