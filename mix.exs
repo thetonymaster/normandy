@@ -149,7 +149,12 @@ defmodule Normandy.MixProject do
       links: %{
         "GitHub" => "https://github.com/thetonymaster/normandy"
       },
-      maintainers: ["Antonio Cabrera"]
+      maintainers: ["Antonio Cabrera"],
+      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE CHANGELOG.md),
+      exclude_patterns: [
+        "priv/plts",
+        "priv/plts/*"
+      ]
     ]
   end
 end
