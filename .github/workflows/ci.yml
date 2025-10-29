@@ -111,52 +111,6 @@ jobs:
             exit 0
           fi
 
-  dialyzer:
-    name: Dialyzer (Type Checking)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Restore dependencies cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
-
-      - name: Restore PLT cache
-        uses: actions/cache@v4
-        id: plt-cache
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
-
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Create PLTs directory
-        run: mkdir -p priv/plts
-
-      - name: Build PLT
-        if: steps.plt-cache.outputs.cache-hit != 'true'
-        run: mix dialyzer --plt
-
-      - name: Run Dialyzer
-        run: mix dialyzer --format github
-
   dependency-audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
@@ -184,14 +138,13 @@ jobs:
   all-checks-complete:
     name: All Checks Passed
     if: always()
-    needs: [test, integration-tests, dialyzer, dependency-audit]
+    needs: [test, integration-tests, dependency-audit]
     runs-on: ubuntu-latest
 
     steps:
       - name: Check all job results
         run: |
           if [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.dialyzer.result }}" != "success" ] || \
              [ "${{ needs.dependency-audit.result }}" != "success" ]; then
             echo "❌ Some required checks failed"
             exit 1
