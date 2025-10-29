@@ -13,6 +13,7 @@ defmodule Normandy.MixProject do
       consolidate_protocols: Mix.env() != :test,
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
+      test_coverage: [summary: [threshold: 60]],
 
       # Hex.pm metadata
       description: description(),
