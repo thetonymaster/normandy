@@ -6,7 +6,12 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 
 - 🧠 **Agent System** - Build conversational AI agents with memory and state management
 - 🤝 **Multi-Agent Coordination** - Reactive patterns (race/all/some) and agent pooling for concurrent workflows
-- 📋 **Schema DSL** - Define typed, validated data structures with ease
+- 📋 **Schema DSL** - Define typed, validated data structures with JSON Schema generation
+  - Virtual/computed fields with custom transformations
+  - Composition (anyOf, oneOf, allOf) for polymorphic types
+  - Conditional schemas (if/then/else) for context-dependent validation
+  - Runtime validation with comprehensive constraint checking
+  - Schema introspection for metadata queries
 - 🔧 **Tool Calling** - Integrate LLM tool calling with automatic execution loops
 - 🌊 **Streaming** - Real-time response streaming with callback-based event processing
 - 💰 **Prompt Caching** - Up to 90% cost reduction with automatic caching support
@@ -14,7 +19,7 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 📦 **Batch Processing** - Concurrent processing of multiple inputs with progress tracking
 - 📏 **Context Management** - Token counting, automatic truncation, and conversation summarization
 - 💾 **Memory Management** - Track conversation history with turn-based organization
-- ✅ **Validation** - Changeset-style validation similar to Ecto
+- ✅ **Validation** - Runtime data validation with format checking (email, UUID, etc.)
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
 - 🧪 **Well Tested** - 490+ tests including property-based testing
 
@@ -46,6 +51,49 @@ defmodule User do
 end
 
 user = %User{name: "Alice", email: "alice@example.com"}
+```
+
+### Nested Schemas
+
+Normandy supports nested schemas with full JSON Schema generation:
+
+```elixir
+defmodule Address do
+  use Normandy.Schema
+
+  io_schema "Address information" do
+    field(:street, :string, description: "Street address", required: true)
+    field(:city, :string, description: "City name", required: true)
+    field(:postal_code, :string, description: "Postal code", pattern: "^[0-9]{5}$")
+  end
+end
+
+defmodule User do
+  use Normandy.Schema
+
+  io_schema "User profile" do
+    field(:name, :string, description: "Full name", required: true)
+    field(:age, :integer, description: "Age", minimum: 0, maximum: 150)
+    # Single nested schema
+    field(:address, Address, description: "Primary address", required: true)
+    # Array of nested schemas
+    field(:previous_addresses, {:array, Address}, description: "Previous addresses")
+  end
+end
+
+# Create instances
+user = %User{
+  name: "Alice",
+  age: 30,
+  address: %Address{street: "123 Main St", city: "Portland"},
+  previous_addresses: [
+    %Address{street: "456 Oak Ave", city: "Seattle"}
+  ]
+}
+
+# Export as JSON Schema for LLM prompts
+schema = User.get_json_schema()
+# Nested schemas are inlined with all constraints preserved
 ```
 
 ### Creating an Agent with Claudio (Recommended)

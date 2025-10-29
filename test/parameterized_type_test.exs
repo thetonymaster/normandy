@@ -6,7 +6,6 @@ defmodule NormandyTest.ParameterizedTypeTest do
   defmodule EnumType do
     @moduledoc """
     A parameterized type that validates values against a list of allowed values.
-    Similar to Ecto.Enum.
     """
     use Normandy.ParameterizedType
 

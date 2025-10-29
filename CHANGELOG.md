@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Schema Enhancements
+- **Schema-Based Tool Definition**: New `SchemaBaseTool` mixin for streamlined tool creation
+  - `tool_schema` macro providing single source of truth for tool definitions
+  - Automatic JSON schema generation and validation
+  - ~60% reduction in boilerplate code compared to manual approach
+  - Comprehensive test coverage (38 tests)
+
+- **Tool Registry Metadata Methods**: Enhanced introspection capabilities
+  - `get_metadata/2` - retrieve detailed metadata for specific tools
+  - `list_metadata/1` - get metadata for all registered tools
+  - `filter_by_required_params/2` - filter tools by required parameter presence
+  - `filter_by_param_type/2` - filter tools by parameter types
+  - `tools_with_constraint/2` - find tools with specific constraints
+  - `introspect_schema/2` - access schema introspection data
+  - 25 tests covering all metadata operations
+
+- **Validation Middleware**: Automatic validation for agent inputs and outputs
+  - `Normandy.Agents.ValidationMiddleware` for type-safe agent execution
+  - Input validation (fail-fast on invalid inputs)
+  - Output validation (warn & continue for LLM outputs)
+  - Backward compatible with agents without schemas
+  - Clear, path-based error messages
+
+- **Enhanced System Prompt Generator**: Automatic tool documentation
+  - Schema introspection for rich parameter information
+  - Automatic extraction of types, descriptions, and constraints
+  - Clear formatting of required vs optional parameters
+  - Support for enum values, min/max constraints, and string formats
+
+### Changed
+
+- **Calculator Tool Migration**: Migrated to schema-based approach
+  - Now uses `tool_schema` macro for cleaner definition
+  - Returns floats for all operations (previously mixed integer/float)
+  - Added catch-all clause for unknown operations
+  - Maintains all original functionality
+
+- **JSON Schema Type Format**: Schema types now use atoms (`:object`) instead of strings (`"object"`)
+  - More idiomatic Elixir approach
+  - Better compile-time checking
+  - Updated tests to reflect new format
+
+### Fixed
+
+- **Tool Validation**: Added comprehensive validation to all schema-based tools
+- **Error Handling**: Improved error messages with field paths for validation failures
+
 ## [0.2.0] - 2025-10-28
 
 ### Added

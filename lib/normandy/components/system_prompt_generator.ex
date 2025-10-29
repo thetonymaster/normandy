@@ -109,12 +109,140 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
         tool_descriptions =
           Enum.map(tools, fn tool ->
-            "## #{BaseTool.tool_name(tool)}\n#{BaseTool.tool_description(tool)}"
+            build_tool_documentation(tool)
           end)
 
         prompt_parts ++
           ["# AVAILABLE TOOLS", "You have access to the following tools:"] ++
           tool_descriptions
+    end
+  end
+
+  defp build_tool_documentation(tool) do
+    alias Normandy.Tools.BaseTool
+
+    name = BaseTool.tool_name(tool)
+    description = BaseTool.tool_description(tool)
+    schema = BaseTool.input_schema(tool)
+
+    header = "## #{name}\n#{description}"
+
+    # Build parameter documentation from schema
+    params_doc = build_parameters_documentation(schema)
+
+    if params_doc do
+      "#{header}\n\n#{params_doc}"
+    else
+      header
+    end
+  end
+
+  defp build_parameters_documentation(%{properties: properties, required: required})
+       when is_map(properties) do
+    # Build documentation for each parameter
+    param_docs =
+      Enum.map(properties, fn {field_name, field_spec} ->
+        build_field_documentation(field_name, field_spec, required || [])
+      end)
+
+    "**Parameters:**\n" <> Enum.join(param_docs, "\n")
+  end
+
+  defp build_parameters_documentation(_schema), do: nil
+
+  defp build_field_documentation(field_name, field_spec, required_fields) do
+    is_required = field_name in required_fields
+    type = field_spec[:type] || "any"
+    description = field_spec[:description] || ""
+
+    # Build constraint information
+    constraints = build_constraints_documentation(field_spec)
+
+    required_marker = if is_required, do: " (required)", else: " (optional)"
+
+    base = "- `#{field_name}` (#{type})#{required_marker}: #{description}"
+
+    if constraints != "" do
+      "#{base} #{constraints}"
+    else
+      base
+    end
+  end
+
+  defp build_constraints_documentation(field_spec) do
+    constraints = []
+
+    # Enum constraint
+    constraints =
+      if enum = field_spec[:enum] do
+        constraints ++ ["allowed values: #{inspect(enum)}"]
+      else
+        constraints
+      end
+
+    # Numeric constraints
+    constraints =
+      if min = field_spec[:minimum] do
+        constraints ++ ["min: #{min}"]
+      else
+        constraints
+      end
+
+    constraints =
+      if max = field_spec[:maximum] do
+        constraints ++ ["max: #{max}"]
+      else
+        constraints
+      end
+
+    # String constraints
+    constraints =
+      if min_length = field_spec[:minLength] do
+        constraints ++ ["min length: #{min_length}"]
+      else
+        constraints
+      end
+
+    constraints =
+      if max_length = field_spec[:maxLength] do
+        constraints ++ ["max length: #{max_length}"]
+      else
+        constraints
+      end
+
+    constraints =
+      if pattern = field_spec[:pattern] do
+        constraints ++ ["pattern: #{pattern}"]
+      else
+        constraints
+      end
+
+    constraints =
+      if format = field_spec[:format] do
+        constraints ++ ["format: #{format}"]
+      else
+        constraints
+      end
+
+    # Array constraints
+    constraints =
+      if min_items = field_spec[:minItems] do
+        constraints ++ ["min items: #{min_items}"]
+      else
+        constraints
+      end
+
+    constraints =
+      if max_items = field_spec[:maxItems] do
+        constraints ++ ["max items: #{max_items}"]
+      else
+        constraints
+      end
+
+    if length(constraints) > 0 do
+      "[#{Enum.join(constraints, ", ")}]"
+    else
+      ""
     end
   end
 

@@ -251,26 +251,59 @@ defmodule Normandy.Agents.BaseAgent do
          config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
          user_input
        ) do
+    alias Normandy.Agents.ValidationMiddleware
+
+    # Validate input if provided
     config =
       if user_input != nil do
-        updated_memory =
-          memory
-          |> AgentMemory.initialize_turn()
-          |> AgentMemory.add_message("user", user_input)
+        # Validate user input against input schema
+        case ValidationMiddleware.validate_input(config, user_input) do
+          {:ok, validated_input} ->
+            updated_memory =
+              memory
+              |> AgentMemory.initialize_turn()
+              |> AgentMemory.add_message("user", validated_input || user_input)
 
-        config
-        |> Map.put(:current_user_input, user_input)
-        |> Map.put(:memory, updated_memory)
+            config
+            |> Map.put(:current_user_input, validated_input || user_input)
+            |> Map.put(:memory, updated_memory)
+
+          {:error, errors} ->
+            # Input validation failed - raise error with details
+            error_msg = ValidationMiddleware.error_message(errors)
+
+            raise Normandy.Schema.ValidationError,
+              message: "Agent input validation failed",
+              errors: errors,
+              details: error_msg
+        end
       else
         config
       end
 
+    # Get response from LLM
     response = get_response(config, output_schema)
-    memory = AgentMemory.add_message(config.memory, "assistant", response)
 
+    # Validate output
+    validated_response =
+      case ValidationMiddleware.validate_output(config, response) do
+        {:ok, validated} ->
+          validated || response
+
+        {:error, errors} ->
+          # Output validation failed - log warning but continue
+          # (we don't want to break on LLM output issues)
+          error_msg = ValidationMiddleware.error_message(errors)
+
+          IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(response)}")
+
+          response
+      end
+
+    memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
     config = Map.put(config, :memory, memory)
 
-    {config, response}
+    {config, validated_response}
   end
 
   @doc """
@@ -300,23 +333,39 @@ defmodule Normandy.Agents.BaseAgent do
         config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
         user_input \\ nil
       ) do
-    # Initialize turn with user input if provided
-    memory =
-      if user_input != nil do
-        memory
-        |> AgentMemory.initialize_turn()
-        |> AgentMemory.add_message("user", user_input)
-      else
-        memory
-      end
+    alias Normandy.Agents.ValidationMiddleware
 
-    config =
+    # Validate and initialize turn with user input if provided
+    {config, _memory} =
       if user_input != nil do
-        config
-        |> Map.put(:current_user_input, user_input)
-        |> Map.put(:memory, memory)
+        # Validate user input
+        validated_input =
+          case ValidationMiddleware.validate_input(config, user_input) do
+            {:ok, validated} ->
+              validated || user_input
+
+            {:error, errors} ->
+              error_msg = ValidationMiddleware.error_message(errors)
+
+              raise Normandy.Schema.ValidationError,
+                message: "Agent input validation failed",
+                errors: errors,
+                details: error_msg
+          end
+
+        updated_memory =
+          memory
+          |> AgentMemory.initialize_turn()
+          |> AgentMemory.add_message("user", validated_input)
+
+        updated_config =
+          config
+          |> Map.put(:current_user_input, validated_input)
+          |> Map.put(:memory, updated_memory)
+
+        {updated_config, updated_memory}
       else
-        config
+        {config, memory}
       end
 
     # Execute tool loop
@@ -344,6 +393,8 @@ defmodule Normandy.Agents.BaseAgent do
       # No tool calls - this IS the final text response, just in ToolCallResponse format
       # We need to convert it to the actual output schema
       is_nil(response.tool_calls) or length(response.tool_calls) == 0 ->
+        alias Normandy.Agents.ValidationMiddleware
+
         # Convert ToolCallResponse to actual output schema
         # The response.content contains the final text
         final_response =
@@ -360,9 +411,26 @@ defmodule Normandy.Agents.BaseAgent do
             config.output_schema
           end
 
-        memory = AgentMemory.add_message(config.memory, "assistant", final_response)
+        # Validate output
+        validated_response =
+          case ValidationMiddleware.validate_output(config, final_response) do
+            {:ok, validated} ->
+              validated || final_response
+
+            {:error, errors} ->
+              # Output validation failed - log warning but continue
+              error_msg = ValidationMiddleware.error_message(errors)
+
+              IO.warn(
+                "Agent output validation failed: #{error_msg}\nReceived: #{inspect(final_response)}"
+              )
+
+              final_response
+          end
+
+        memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
         config = Map.put(config, :memory, memory)
-        {config, final_response}
+        {config, validated_response}
 
       # Has tool calls - execute them
       true ->

@@ -7,17 +7,17 @@ defmodule NormandyTest.Tools.ExamplesTest do
   describe "Calculator tool" do
     test "performs addition" do
       tool = %Calculator{operation: "add", a: 10, b: 5}
-      assert {:ok, 15} = BaseTool.run(tool)
+      assert {:ok, 15.0} = BaseTool.run(tool)
     end
 
     test "performs subtraction" do
       tool = %Calculator{operation: "subtract", a: 10, b: 3}
-      assert {:ok, 7} = BaseTool.run(tool)
+      assert {:ok, 7.0} = BaseTool.run(tool)
     end
 
     test "performs multiplication" do
       tool = %Calculator{operation: "multiply", a: 6, b: 7}
-      assert {:ok, 42} = BaseTool.run(tool)
+      assert {:ok, 42.0} = BaseTool.run(tool)
     end
 
     test "performs division" do
@@ -42,7 +42,7 @@ defmodule NormandyTest.Tools.ExamplesTest do
       assert BaseTool.tool_description(tool) =~ "arithmetic"
 
       schema = BaseTool.input_schema(tool)
-      assert schema.type == "object"
+      assert schema.type == :object
       assert Map.has_key?(schema.properties, :operation)
     end
   end

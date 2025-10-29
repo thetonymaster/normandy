@@ -2,7 +2,7 @@ defmodule Normandy.Validate do
   @moduledoc """
   Provides changeset-style validation for schemas.
 
-  This module implements validation logic similar to Ecto changesets,
+  This module implements validation logic for Normandy schemas,
   allowing you to validate data before creating or updating structs.
 
   ## Features
@@ -369,13 +369,6 @@ defmodule Normandy.Validate do
 
   defp missing?(changeset, field) when is_atom(field) do
     case get_field(changeset, field) do
-      %{__struct__: Ecto.Association.NotLoaded} ->
-        raise ArgumentError,
-              "attempting to determine the presence of association `#{field}` " <>
-                "that was not loaded. Please preload your associations " <>
-                "before calling validate_required/3 or field_missing?/2. " <>
-                "You may also consider passing the :required option to Ecto.Changeset.cast_assoc/3"
-
       value when is_binary(value) ->
         value == ""
 

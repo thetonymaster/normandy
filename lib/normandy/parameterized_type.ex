@@ -1,14 +1,15 @@
 defmodule Normandy.ParameterizedType do
   @moduledoc """
-  Parameterized types are Ecto types that can be customized per field.
+  Parameterized types are Normandy types that can be customized per field.
 
   Parameterized types allow a set of options to be specified in the schema
   which are initialized on compilation and passed to the callback functions
   as the last argument.
 
   For example, `field :foo, :string` behaves the same for every field.
-  On the other hand, `field :foo, Ecto.Enum, values: [:foo, :bar, :baz]`
-  will likely have a different set of values per field.
+  On the other hand, a parameterized enum type like
+  `field :foo, MyEnum, values: [:foo, :bar, :baz]` will have a different
+  set of values per field.
 
   Note that options are specified as a keyword, but it is idiomatic to
   convert them to maps inside `c:init/1` for easier pattern matching in
@@ -29,7 +30,7 @@ defmodule Normandy.ParameterizedType do
   To create a parameterized type, create a module as shown below:
 
       defmodule MyApp.MyType do
-        use Ecto.ParameterizedType
+        use Normandy.ParameterizedType
 
         def type(_params), do: :string
 
@@ -60,17 +61,17 @@ defmodule Normandy.ParameterizedType do
 
   To use this type in a schema field, specify the type and parameters like this:
 
-      schema "foo" do
+      schema do
         field :bar, MyApp.MyType, opt1: :baz, opt2: :boo
       end
 
-  To use this type in places where you need it to be initialized (for example,
-  schemaless changesets), you can use `init/2`.
+  To use this type in places where you need it to be initialized manually,
+  you can use `init/2`.
 
-  > #### `use Ecto.ParameterizedType` {: .info}
+  > #### `use Normandy.ParameterizedType` {: .info}
   >
-  > When you `use Ecto.ParameterizedType`, it will set
-  > `@behaviour Ecto.ParameterizedType` and define default, overridable
+  > When you `use Normandy.ParameterizedType`, it will set
+  > `@behaviour Normandy.ParameterizedType` and define default, overridable
   > implementations for `c:embed_as/2` and `c:equal?/3`.
   """
 
@@ -97,13 +98,13 @@ defmodule Normandy.ParameterizedType do
 
   For example, this schema specification
 
-      schema "my_table" do
+      schema do
         field :my_field, MyParameterizedType, opt1: :foo, opt2: nil
       end
 
   will result in the call:
 
-      MyParameterizedType.init([schema: "my_table", field: :my_field, opt1: :foo, opt2: nil])
+      MyParameterizedType.init([field: :my_field, opt1: :foo, opt2: nil])
 
   """
   @callback init(opts :: opts()) :: params()
@@ -112,10 +113,10 @@ defmodule Normandy.ParameterizedType do
   Casts the given input to the ParameterizedType with the given parameters.
 
   If the parameterized type is also a composite type,
-  the inner type can be cast by calling `Ecto.Type.cast/2`
+  the inner type can be cast by calling `Normandy.Type.cast/2`
   directly.
 
-  For more information on casting, see `c:Ecto.Type.cast/1`.
+  For more information on casting, see `c:Normandy.Type.cast/1`.
   """
   @callback cast(data :: term, params()) ::
               {:ok, term} | :error | {:error, keyword()}
@@ -128,16 +129,16 @@ defmodule Normandy.ParameterizedType do
   type, the `dumper` must be called with the inner type and
   the inner value as argument.
 
-  For more information on dumping, see `c:Ecto.Type.dump/1`.
+  For more information on dumping, see `c:Normandy.Type.dump/1`.
   Note that this callback *will* be called when dumping a `nil`
-  value, unlike `c:Ecto.Type.dump/1`.
+  value, unlike `c:Normandy.Type.dump/1`.
   """
   @callback dump(value :: any(), dumper :: function(), params()) :: {:ok, value :: any()} | :error
 
   @doc """
   Returns the underlying schema type for the ParameterizedType.
 
-  For more information on schema types, see `c:Ecto.Type.type/0`
+  For more information on schema types, see `c:Normandy.Type.type/0`
   """
   @callback type(params()) :: Normandy.Type.t()
 
@@ -150,9 +151,9 @@ defmodule Normandy.ParameterizedType do
   Formats output when a ParameterizedType is printed in exceptions and
   other logs.
 
-  Note this callback is not used when constructing `Ecto.Changeset` validation
-  errors. See the `:message` option of most `Ecto.Changeset` validation
-  functions for how to customize error messaging on a per `Ecto.Changeset` basis.
+  Note this callback is not used when constructing validation errors.
+  See the `:message` option of most `Normandy.Validate` validation
+  functions for how to customize error messaging.
   """
   @callback format(params()) :: String.t()
 

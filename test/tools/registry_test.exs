@@ -169,7 +169,7 @@ defmodule NormandyTest.Tools.RegistryTest do
       assert schema.description ==
                "Performs basic arithmetic operations (add, subtract, multiply, divide) on two numbers"
 
-      assert schema.input_schema.type == "object"
+      assert schema.input_schema.type == :object
       assert Map.has_key?(schema.input_schema.properties, :operation)
     end
 

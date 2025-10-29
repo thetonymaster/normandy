@@ -9,7 +9,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
       tool = %Calculator{operation: "add", a: 5, b: 3}
       registry = Registry.new([tool])
 
-      assert {:ok, 8} = Executor.execute(registry, "calculator")
+      assert {:ok, 8.0} = Executor.execute(registry, "calculator")
     end
 
     test "returns error for nonexistent tool" do
@@ -31,7 +31,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
     test "executes tool instance directly" do
       tool = %Calculator{operation: "multiply", a: 6, b: 7}
 
-      assert {:ok, 42} = Executor.execute_tool(tool)
+      assert {:ok, 42.0} = Executor.execute_tool(tool)
     end
 
     test "executes string manipulator tool" do
@@ -112,7 +112,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
                Executor.execute_sequential(registry, ["calculator", "string_manipulator"])
 
       assert length(results) == 2
-      assert 3 in results
+      assert 3.0 in results
       assert "HELLO" in results
     end
 

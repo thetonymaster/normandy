@@ -1,9 +1,9 @@
 defmodule Normandy.Type do
   @moduledoc """
-  Defines functions and the `Ecto.Type` behaviour for implementing
+  Defines functions and the `Normandy.Type` behaviour for implementing
   basic custom types.
 
-  Ecto provides two types of custom types: basic types and
+  Normandy provides two types of custom types: basic types and
   parameterized types. Basic types are simple, requiring only four
   callbacks to be implemented, and are enough for most occasions.
   Parameterized types can be customized on the field definition and
@@ -11,7 +11,7 @@ defmodule Normandy.Type do
 
   The definition of basic custom types and all of their callbacks are
   available in this module. You can learn more about parameterized
-  types in `Ecto.ParameterizedType`. If in doubt, prefer to use
+  types in `Normandy.ParameterizedType`. If in doubt, prefer to use
   basic custom types and rely on parameterized types if you need
   the extra functionality.
 
@@ -21,9 +21,9 @@ defmodule Normandy.Type do
   external, internal and database representations of a value belonging
   to the type.
 
-  For a definition of external and internal data take a look at the
-  [related section](`Ecto.Changeset#module-external-vs-internal-data`)
-  in the changeset documentation.
+  External data comes from user input (forms, APIs, etc.), internal data
+  is the application's runtime representation, and database data is how
+  values are persisted or serialized.
 
   ```mermaid
   stateDiagram-v2
@@ -38,25 +38,16 @@ defmodule Normandy.Type do
 
   ## Example
 
-  Imagine you want to store a URI struct as part of a schema in a
-  url-shortening service. There isn't an Ecto field type to support
-  that value at runtime therefore a custom one is needed.
+  Imagine you want to store a URI struct as part of a schema. A custom
+  type is needed to handle the conversion between string input and the
+  URI struct at runtime.
 
-  You also want to query not only by the full url, but for example
-  by specific ports used. This is possible by putting the URI data
-  into a map field instead of just storing the plain
-  string representation.
+  The custom type needs to handle the conversion from external data to
+  runtime data (`c:cast/1`) as well as transforming that runtime data
+  into a serializable format and back (`c:dump/1` and `c:load/1`).
 
-      from s in ShortUrl,
-        where: fragment("?->>? ILIKE ?", s.original_url, "port", "443")
-
-  So the custom type does need to handle the conversion from
-  external data to runtime data (`c:cast/1`) as well as
-  transforming that runtime data into the `:map` Ecto native type and
-  back (`c:dump/1` and `c:load/1`).
-
-      defmodule EctoURI do
-        use Ecto.Type
+      defmodule URIType do
+        use Normandy.Type
         def type, do: :map
 
         # Provide custom casting rules.
@@ -71,9 +62,8 @@ defmodule Normandy.Type do
         # Everything else is a failure though
         def cast(_), do: :error
 
-        # When loading data from the database, as long as it's a map,
-        # we just put the data back into a URI struct to be stored in
-        # the loaded schema struct.
+        # When loading data, as long as it's a map,
+        # we just put the data back into a URI struct.
         def load(data) when is_map(data) do
           data =
             for {key, val} <- data do
@@ -82,56 +72,57 @@ defmodule Normandy.Type do
           {:ok, struct!(URI, data)}
         end
 
-        # When dumping data to the database, we *expect* a URI struct
+        # When dumping data, we *expect* a URI struct
         # but any value could be inserted into the schema struct at runtime,
         # so we need to guard against them.
         def dump(%URI{} = uri), do: {:ok, Map.from_struct(uri)}
         def dump(_), do: :error
       end
 
-  Now we can use our new field type above in our schemas:
+  Now we can use our new field type in our schemas:
 
-      defmodule ShortUrl do
-        use Ecto.Schema
+      defmodule UrlSchema do
+        use Normandy.Schema
 
-        schema "posts" do
-          field :original_url, EctoURI
+        schema do
+          field :original_url, URIType
         end
       end
 
   Note: `nil` values are always bypassed and cannot be handled by
   custom types.
 
-  > #### `use Ecto.Type` {: .info}
+  > #### `use Normandy.Type` {: .info}
   >
-  > When you `use Ecto.Type`, it will set `@behaviour Ecto.Type` and define
+  > When you `use Normandy.Type`, it will set `@behaviour Normandy.Type` and define
   > default, overridable implementations for `c:embed_as/1` and `c:equal?/2`.
 
-  ## Custom types and primary keys
+  ## Custom types with validation
 
-  Remember that, if you change the type of your primary keys,
-  you will also need to change the type of all associations that
-  point to said primary key.
-
-  Imagine you want to encode the ID so they cannot enumerate the
-  content in your application. An Ecto type could handle the conversion
-  between the encoded version of the id and its representation in the
-  database. For the sake of simplicity, we'll use base64 encoding in
-  this example:
+  Custom types can also include validation logic. For example, an encoded
+  ID type that handles base64 encoding:
 
       defmodule EncodedId do
-        use Ecto.Type
+        use Normandy.Type
 
-        def type, do: :id
+        def type, do: :string
 
         def cast(id) when is_integer(id) do
           {:ok, encode_id(id)}
         end
+        def cast(id) when is_binary(id) do
+          case Base.decode64(id) do
+            {:ok, _} -> {:ok, id}
+            :error -> :error
+          end
+        end
         def cast(_), do: :error
 
         def dump(id) when is_binary(id) do
-          {:ok, id_decoded} = Base.decode64(id)
-          {:ok, String.to_integer(id_decoded)}
+          case Base.decode64(id) do
+            {:ok, decoded} -> {:ok, String.to_integer(decoded)}
+            :error -> :error
+          end
         end
 
         def load(id) when is_integer(id) do
@@ -145,41 +136,16 @@ defmodule Normandy.Type do
         end
       end
 
-  To use it as the type for the id in our schema, we can use the
-  `@primary_key` module attribute:
+  Now you can use this custom type in your schemas:
 
-      defmodule BlogPost do
-        use Ecto.Schema
+      defmodule ContentSchema do
+        use Normandy.Schema
 
-        @primary_key {:id, EncodedId, autogenerate: true}
-        schema "posts" do
-          belongs_to :author, Author, type: EncodedId
+        schema do
+          field :id, EncodedId
           field :content, :string
         end
       end
-
-      defmodule Author do
-        use Ecto.Schema
-
-        @primary_key {:id, EncodedId, autogenerate: true}
-        schema "authors" do
-          field :name, :string
-          has_many :posts, BlogPost
-        end
-      end
-
-  The `@primary_key` attribute will tell ecto which type to
-  use for the id.
-
-  Note the `type: EncodedId` option given to `belongs_to` in
-  the `BlogPost` schema. By default, Ecto will treat
-  associations as if their keys were `:integer`s. Our primary
-  keys are a custom type, so when Ecto tries to cast those
-  ids, it will fail.
-
-  Alternatively, you can set `@foreign_key_type EncodedId`
-  after `@primary_key` to automatically configure the type
-  of all `belongs_to` fields.
   """
 
   import Kernel, except: [match?: 2]
