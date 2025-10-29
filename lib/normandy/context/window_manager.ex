@@ -44,6 +44,7 @@ defmodule Normandy.Context.WindowManager do
             reserved_tokens: 4096,
             strategy: :oldest_first,
             model_limits: %{
+              "claude-haiku-4-5-20251001" => 200_000,
               "claude-3-5-sonnet-20241022" => 200_000,
               "claude-3-5-haiku-20241022" => 200_000,
               "claude-3-opus-20240229" => 200_000,

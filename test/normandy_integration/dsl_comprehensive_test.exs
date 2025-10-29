@@ -16,7 +16,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.7)
       system_prompt("You are a research assistant. Provide concise, factual responses.")
     end
@@ -26,7 +26,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.5)
       system_prompt("You are an analytical agent. Analyze information critically.")
     end
@@ -36,7 +36,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.3)
       system_prompt("You are a summarization agent. Create concise summaries.")
     end
@@ -46,7 +46,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.1)
       system_prompt("Analyze sentiment. Respond with: positive, negative, or neutral.")
     end
@@ -56,7 +56,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.1)
       system_prompt("Identify the main topic in one word.")
     end
@@ -66,7 +66,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.1)
       system_prompt("Rate content quality. Respond with a number 1-10.")
     end
@@ -76,7 +76,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.8)
       max_tokens(100)
       system_prompt("Provide very brief answers in 1-2 words.")
@@ -87,7 +87,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.0)
 
       system_prompt("""
@@ -102,7 +102,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.5)
       system_prompt("Process the validated input and provide a response.")
     end
@@ -112,7 +112,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.3)
       background("You are an assistant that provides structured information.")
 

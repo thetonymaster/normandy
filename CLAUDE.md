@@ -144,3 +144,4 @@ end
 - Test support files in `test/support/` (included via `elixirc_paths/1` in mix.exs)
 - Metadata tracking via `Normandy.Metadata` struct in schemas
 - Before running tests run `mix format`
+- If tests fail, they must be fixed, even if were items we were not working on.

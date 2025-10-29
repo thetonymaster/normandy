@@ -45,31 +45,49 @@ defmodule Normandy.Integration.BasicAgentTest do
   end
 
   describe "Agent with tools" do
-    test "agent uses calculator tool", %{agent: agent} do
-      calculator = NormandyIntegrationHelper.create_calculator_tool()
-      agent = BaseAgent.register_tool(agent, calculator)
+    test "agent uses weather tool to fetch real-time data" do
+      # Use Sonnet for better tool usage reliability
+      agent =
+        NormandyIntegrationHelper.create_real_agent(
+          model: "claude-sonnet-4-5-20250929",
+          temperature: 0.3
+        )
 
+      weather = NormandyIntegrationHelper.create_weather_tool()
+      agent = BaseAgent.register_tool(agent, weather)
+
+      # Ask for real-time weather - model cannot know this without using the tool
       {updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Calculate 15 + 27 using the calculator tool."})
+        BaseAgent.run(agent, %{chat_message: "What's the current weather in San Francisco?"})
 
       assert is_binary(response.chat_message)
-      assert response.chat_message =~ "42"
+      # Response should contain weather-related information
+      assert String.downcase(response.chat_message) =~ ~r/temperature|weather|celsius|°c/
 
-      # Verify tool was used in conversation history
+      # Verify tool was actually used in conversation history
       history = AgentMemory.history(updated_agent.memory)
 
       # Look for assistant message with tool_use content blocks
+      # Content is stored as JSON strings, so we need to parse and check
       has_tool_use =
         Enum.any?(history, fn msg ->
-          msg.role == "assistant" && is_list(msg.content) &&
-            Enum.any?(msg.content, fn
-              %{type: "tool_use"} -> true
-              %{type: :tool_use} -> true
-              _ -> false
-            end)
+          if msg.role == "assistant" do
+            case Poison.decode(msg.content) do
+              {:ok, content_list} when is_list(content_list) ->
+                Enum.any?(content_list, fn item ->
+                  Map.get(item, "type") == "tool_use"
+                end)
+
+              _ ->
+                false
+            end
+          else
+            false
+          end
         end)
 
-      assert has_tool_use, "Expected tool_use in conversation history"
+      assert has_tool_use,
+             "Expected tool_use in conversation history - model should have used the weather tool to fetch real-time data"
     end
   end
 end

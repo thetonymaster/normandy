@@ -29,7 +29,7 @@ defmodule Normandy.Context.WindowManagerTest do
 
   describe "for_model/2" do
     test "sets max_tokens based on known model limits" do
-      manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
+      manager = WindowManager.for_model("claude-haiku-4-5-20251001")
       assert manager.max_tokens == 200_000
     end
 
@@ -40,7 +40,7 @@ defmodule Normandy.Context.WindowManagerTest do
 
     test "allows override with options" do
       manager =
-        WindowManager.for_model("claude-3-5-sonnet-20241022",
+        WindowManager.for_model("claude-haiku-4-5-20251001",
           reserved_tokens: 8192
         )
 

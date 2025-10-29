@@ -94,7 +94,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
   ## Options
 
-  - `:model` - Model to use (default: "claude-3-5-sonnet-20241022")
+  - `:model` - Model to use (default: "claude-haiku-4-5-20251001")
   - `:temperature` - Temperature (default: 0.7)
   - `:enable_caching` - Enable prompt caching (default: true)
   - `:retry_options` - Retry configuration
@@ -113,7 +113,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
     config = %{
       client: client,
-      model: Keyword.get(opts, :model, "claude-3-5-sonnet-20241022"),
+      model: Keyword.get(opts, :model, "claude-haiku-4-5-20251001"),
       temperature: Keyword.get(opts, :temperature, 0.7),
       max_tokens: Keyword.get(opts, :max_tokens, 1024),
       retry_options: Keyword.get(opts, :retry_options),
@@ -228,6 +228,18 @@ defmodule NormandyTest.Support.IntegrationHelper do
     %Normandy.Tools.Examples.StringManipulator{
       operation: "uppercase",
       text: ""
+    }
+  end
+
+  @doc """
+  Creates a weather tool for testing.
+
+  This tool fetches real weather data, ensuring models must use it
+  as they cannot know current weather conditions.
+  """
+  def create_weather_tool do
+    %Normandy.Tools.Examples.Weather{
+      city: ""
     }
   end
 end

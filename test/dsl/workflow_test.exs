@@ -6,7 +6,7 @@ defmodule Normandy.DSL.WorkflowTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       system_prompt("You are a simple agent.")
     end
   end
@@ -15,7 +15,7 @@ defmodule Normandy.DSL.WorkflowTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       system_prompt("You process data.")
     end
   end
@@ -24,7 +24,7 @@ defmodule Normandy.DSL.WorkflowTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       system_prompt("You validate data.")
     end
   end

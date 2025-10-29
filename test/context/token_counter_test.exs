@@ -17,7 +17,7 @@ defmodule Normandy.Context.TokenCounterTest do
     defmodule Messages do
       def count_tokens(_client, payload) do
         # Return mock token counts based on payload
-        model = Map.get(payload, "model", "claude-3-5-sonnet-20241022")
+        model = Map.get(payload, "model", "claude-haiku-4-5-20251001")
         messages = Map.get(payload, "messages", [])
         system = Map.get(payload, "system")
 
@@ -59,7 +59,7 @@ defmodule Normandy.Context.TokenCounterTest do
     agent =
       BaseAgent.init(%{
         client: client,
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-haiku-4-5-20251001",
         temperature: 0.7
       })
 
@@ -143,7 +143,7 @@ defmodule Normandy.Context.TokenCounterTest do
       empty_agent =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7
         })
 
@@ -217,7 +217,7 @@ defmodule Normandy.Context.TokenCounterTest do
       agent =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7
         })
 

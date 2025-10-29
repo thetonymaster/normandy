@@ -8,7 +8,7 @@ defmodule Normandy.Coordination.ReactiveTest do
   defp create_test_agent do
     config = %{
       client: %NormandyTest.Support.ModelMockup{},
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-haiku-4-5-20251001",
       temperature: 0.7
     }
 

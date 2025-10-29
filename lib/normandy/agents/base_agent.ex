@@ -10,9 +10,9 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.AgentMemory
-  alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Agents.BaseAgentOutputSchema
 
   alias Normandy.Tools.Registry
 

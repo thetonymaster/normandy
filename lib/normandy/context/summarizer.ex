@@ -95,31 +95,15 @@ defmodule Normandy.Context.Summarizer do
     history = AgentMemory.history(agent.memory)
     total_messages = length(history)
 
-    if total_messages <= keep_recent do
-      # Not enough messages to warrant summarization
-      {:ok, agent}
-    else
-      # Split into old (to summarize) and recent (to keep)
-      {old_messages, recent_messages} = Enum.split(history, total_messages - keep_recent)
-
-      # Summarize old messages
-      case summarize_messages(client, agent, old_messages, opts) do
-        {:ok, summary} ->
-          # Create new memory with summary + recent messages
-          new_memory =
-            rebuild_memory_with_summary(
-              agent.memory,
-              summary,
-              summary_role,
-              recent_messages
-            )
-
-          {:ok, %{agent | memory: new_memory}}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
+    do_compress_conversation(
+      client,
+      agent,
+      history,
+      total_messages,
+      keep_recent,
+      summary_role,
+      opts
+    )
   end
 
   @doc """
@@ -186,35 +170,25 @@ defmodule Normandy.Context.Summarizer do
   end
 
   defp call_llm_for_summary(client, model, temperature, max_tokens, messages) do
-    # Create a minimal response model for text output
-    response_model = %{chat_message: ""}
+    # Create a proper struct response model for text output
+    response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
-    # Check if client implements the Model protocol for future extensibility
-    if implements_model_protocol?(client) do
-      case Normandy.Agents.Model.converse(
-             client,
-             model,
-             temperature,
-             max_tokens,
-             messages,
-             response_model,
-             []
-           ) do
-        %{chat_message: summary} when is_binary(summary) ->
-          {:ok, summary}
+    # Call the Model protocol directly - clients must implement this protocol
+    case Normandy.Agents.Model.converse(
+           client,
+           model,
+           temperature,
+           max_tokens,
+           messages,
+           response_model,
+           []
+         ) do
+      %{chat_message: summary} when is_binary(summary) ->
+        {:ok, summary}
 
-        other ->
-          {:error, {:unexpected_response, other}}
-      end
-    else
-      {:error, :client_not_supported}
+      other ->
+        {:error, {:unexpected_response, other}}
     end
-  end
-
-  defp implements_model_protocol?(client) do
-    # Check if the struct implements the Normandy.Agents.Model protocol
-    impl = Normandy.Agents.Model.impl_for(client)
-    impl != nil
   end
 
   defp rebuild_memory_with_summary(original_memory, summary, summary_role, recent_messages) do
@@ -229,9 +203,12 @@ defmodule Normandy.Context.Summarizer do
       current_turn_id: turn_id
     }
 
-    # Add summary message first
-    memory =
-      AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
+    # Add summary message first - wrap in proper IO schema struct
+    summary_content = %Normandy.Agents.BaseAgentOutputSchema{
+      chat_message: "Previous conversation summary: " <> summary
+    }
+
+    memory = AgentMemory.add_message(memory, summary_role, summary_content)
 
     # Add recent messages in chronological order
     # (add_message prepends, and history() will reverse, so this gives correct final order)
@@ -239,5 +216,52 @@ defmodule Normandy.Context.Summarizer do
     |> Enum.reduce(memory, fn msg, mem ->
       AgentMemory.add_message(mem, msg.role, msg.content)
     end)
+  end
+
+  # Helper function that uses pattern matching instead of conditionals
+  # to avoid dialyzer warnings about unreachable branches
+  defp do_compress_conversation(
+         _client,
+         agent,
+         _history,
+         total_messages,
+         keep_recent,
+         _summary_role,
+         _opts
+       )
+       when total_messages <= keep_recent do
+    # Not enough messages to warrant summarization
+    {:ok, agent}
+  end
+
+  defp do_compress_conversation(
+         client,
+         agent,
+         history,
+         total_messages,
+         keep_recent,
+         summary_role,
+         opts
+       ) do
+    # Split into old (to summarize) and recent (to keep)
+    {old_messages, recent_messages} = Enum.split(history, total_messages - keep_recent)
+
+    # Summarize old messages
+    case summarize_messages(client, agent, old_messages, opts) do
+      {:ok, summary} ->
+        # Create new memory with summary + recent messages
+        new_memory =
+          rebuild_memory_with_summary(
+            agent.memory,
+            summary,
+            summary_role,
+            recent_messages
+          )
+
+        {:ok, %{agent | memory: new_memory}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

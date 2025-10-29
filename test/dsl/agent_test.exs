@@ -8,7 +8,7 @@ defmodule Normandy.DSL.AgentTest do
     agent do
       name("Test Agent")
       description("A test agent")
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       temperature(0.8)
       max_tokens(2048)
       system_prompt("You are a test agent.")
@@ -20,7 +20,7 @@ defmodule Normandy.DSL.AgentTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       background("Background context")
       steps("1. Think\n2. Respond")
       output_instructions("Format as JSON")
@@ -32,7 +32,7 @@ defmodule Normandy.DSL.AgentTest do
     use Normandy.DSL.Agent
 
     agent do
-      model("claude-3-5-sonnet-20241022")
+      model("claude-haiku-4-5-20251001")
       max_messages(10)
     end
   end
@@ -43,7 +43,7 @@ defmodule Normandy.DSL.AgentTest do
 
       assert config.name == "Test Agent"
       assert config.description == "A test agent"
-      assert config.model == "claude-3-5-sonnet-20241022"
+      assert config.model == "claude-haiku-4-5-20251001"
       assert config.temperature == 0.8
       assert config.max_tokens == 2048
       assert config.system_prompt == "You are a test agent."
@@ -52,7 +52,7 @@ defmodule Normandy.DSL.AgentTest do
     test "config/0 with structured prompt" do
       config = StructuredAgent.config()
 
-      assert config.model == "claude-3-5-sonnet-20241022"
+      assert config.model == "claude-haiku-4-5-20251001"
       assert config.background == "Background context"
       assert config.steps == "1. Think\n2. Respond"
       assert config.output_instructions == "Format as JSON"
@@ -61,7 +61,7 @@ defmodule Normandy.DSL.AgentTest do
     test "config/0 with max_messages" do
       config = LimitedMemoryAgent.config()
 
-      assert config.model == "claude-3-5-sonnet-20241022"
+      assert config.model == "claude-haiku-4-5-20251001"
       assert config.max_messages == 10
     end
   end
@@ -73,7 +73,7 @@ defmodule Normandy.DSL.AgentTest do
       {:ok, agent} = TestAgent.new(client: client)
 
       assert agent.client == client
-      assert agent.model == "claude-3-5-sonnet-20241022"
+      assert agent.model == "claude-haiku-4-5-20251001"
       assert agent.temperature == 0.8
       assert agent.max_tokens == 2048
     end

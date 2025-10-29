@@ -62,14 +62,14 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
       config = %{
         client: adapter,
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-haiku-4-5-20251001",
         temperature: 0.7
       }
 
       agent = Normandy.Agents.BaseAgent.init(config)
 
       assert agent.client == adapter
-      assert agent.model == "claude-3-5-sonnet-20241022"
+      assert agent.model == "claude-haiku-4-5-20251001"
       assert agent.temperature == 0.7
     end
   end

@@ -77,18 +77,24 @@ defmodule Normandy.Agents.ValidationMiddleware do
   defp validate_input_map(input_schema, input_map) do
     schema_module = input_schema.__struct__
 
-    # Check if schema module has validation support
-    if function_exported?(schema_module, :__schema__, 1) do
-      case Validator.validate(schema_module, input_map) do
-        {:ok, validated_params} ->
-          {:ok, struct(schema_module, validated_params)}
+    # Skip validation for base schemas (backward compatibility)
+    cond do
+      schema_module == Normandy.Agents.BaseAgentInputSchema ->
+        {:ok, struct(schema_module, input_map)}
 
-        {:error, errors} ->
-          {:error, format_validation_errors("Input", errors)}
-      end
-    else
+      # Check if schema module has validation support
+      function_exported?(schema_module, :__schema__, 1) ->
+        case Validator.validate(schema_module, input_map) do
+          {:ok, validated_params} ->
+            {:ok, struct(schema_module, validated_params)}
+
+          {:error, errors} ->
+            {:error, format_validation_errors("Input", errors)}
+        end
+
       # Schema doesn't support validation, return as-is
-      {:ok, input_schema}
+      true ->
+        {:ok, input_schema}
     end
   end
 
@@ -132,18 +138,24 @@ defmodule Normandy.Agents.ValidationMiddleware do
   defp validate_output_map(output_schema, output_map) do
     schema_module = output_schema.__struct__
 
-    # Check if schema module has validation support
-    if function_exported?(schema_module, :__schema__, 1) do
-      case Validator.validate(schema_module, output_map) do
-        {:ok, validated_params} ->
-          {:ok, struct(schema_module, validated_params)}
+    # Skip validation for base schemas (backward compatibility)
+    cond do
+      schema_module == Normandy.Agents.BaseAgentOutputSchema ->
+        {:ok, struct(schema_module, output_map)}
 
-        {:error, errors} ->
-          {:error, format_validation_errors("Output", errors)}
-      end
-    else
+      # Check if schema module has validation support
+      function_exported?(schema_module, :__schema__, 1) ->
+        case Validator.validate(schema_module, output_map) do
+          {:ok, validated_params} ->
+            {:ok, struct(schema_module, validated_params)}
+
+          {:error, errors} ->
+            {:error, format_validation_errors("Output", errors)}
+        end
+
       # Schema doesn't support validation, return as-is
-      {:ok, output_schema}
+      true ->
+        {:ok, output_schema}
     end
   end
 

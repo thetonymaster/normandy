@@ -46,7 +46,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       agent_with_retry =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7,
           max_tokens: 1024,
           prompt_specification: prompt_spec,
@@ -85,7 +85,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       agent_without_retry =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7,
           max_tokens: 1024,
           prompt_specification: prompt_spec,
@@ -120,7 +120,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       agent =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7,
           max_tokens: 1024,
           prompt_specification: prompt_spec,
@@ -155,7 +155,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       agent =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.7,
           max_tokens: 1024,
           prompt_specification: prompt_spec,
@@ -197,7 +197,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       agent =
         BaseAgent.init(%{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-haiku-4-5-20251001",
           temperature: 0.9,
           max_tokens: 1024,
           # Higher temperature to potentially trigger more varied responses

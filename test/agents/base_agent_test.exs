@@ -12,7 +12,7 @@ defmodule NormandyTest.BaseAgentsTest do
   setup do
     config = %{
       client: %NormandyTest.Support.ModelMockup{},
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-haiku-4-5-20251001",
       temperature: 0.9
     }
 
@@ -27,7 +27,7 @@ defmodule NormandyTest.BaseAgentsTest do
     assert Map.get(agent, :initial_memory) == Map.get(agent, :memory)
     assert Map.get(agent, :prompt_specification) == %PromptSpecification{}
     assert Map.get(agent, :client) == %NormandyTest.Support.ModelMockup{}
-    assert Map.get(agent, :model) == "claude-3-5-sonnet-20241022"
+    assert Map.get(agent, :model) == "claude-haiku-4-5-20251001"
     assert Map.get(agent, :temperature) == 0.9
     assert Map.get(agent, :max_tokens) == nil
   end
