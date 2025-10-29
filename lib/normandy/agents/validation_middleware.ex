@@ -46,25 +46,32 @@ defmodule Normandy.Agents.ValidationMiddleware do
       {:error, [%{path: [:query], message: "is required", constraint: :required}]}
   """
   @spec validate_input(BaseAgentConfig.t(), map() | struct() | nil) ::
-          {:ok, struct()} | {:error, list()} | {:ok, nil}
-  def validate_input(%BaseAgentConfig{input_schema: nil}, _input), do: {:ok, nil}
+          {:ok, struct() | term()} | {:error, list()} | {:ok, nil}
+  def validate_input(%BaseAgentConfig{input_schema: nil}, input), do: {:ok, input}
   def validate_input(%BaseAgentConfig{}, nil), do: {:ok, nil}
 
-  def validate_input(%BaseAgentConfig{input_schema: input_schema}, input)
-      when is_struct(input) do
-    # Input is already a struct, check if it matches the schema
-    if input.__struct__ == input_schema.__struct__ do
-      {:ok, input}
-    else
-      # Convert struct to map for validation
-      input_map = Map.from_struct(input)
-      validate_input_map(input_schema, input_map)
+  def validate_input(%BaseAgentConfig{input_schema: input_schema}, input) when is_map(input) do
+    cond do
+      # Check if input is a struct
+      is_map_key(input, :__struct__) ->
+        # Input is already a struct, check if it matches the schema
+        if input.__struct__ == input_schema.__struct__ do
+          {:ok, input}
+        else
+          # Convert struct to map for validation
+          input_map = Map.from_struct(input)
+          validate_input_map(input_schema, input_map)
+        end
+
+      # Input is a plain map
+      true ->
+        validate_input_map(input_schema, input)
     end
   end
 
-  def validate_input(%BaseAgentConfig{input_schema: input_schema}, input)
-      when is_map(input) do
-    validate_input_map(input_schema, input)
+  # Catch-all for non-map inputs (e.g., strings, integers, etc.)
+  def validate_input(%BaseAgentConfig{}, input) do
+    {:ok, input}
   end
 
   defp validate_input_map(input_schema, input_map) do

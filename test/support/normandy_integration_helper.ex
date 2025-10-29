@@ -3,8 +3,6 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   Helper functions for Normandy integration tests with real Anthropic API.
   """
 
-  import ExUnit.Assertions
-
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
 

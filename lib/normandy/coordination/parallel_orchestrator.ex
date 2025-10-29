@@ -74,7 +74,27 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   # Simple API: execute(agents, input) -> {:ok, [results]}
   def execute(agents, input)
-      when is_list(agents) and (is_map(input) or is_binary(input)) and not is_struct(input) do
+      when is_list(agents) and (is_map(input) or is_binary(input)) do
+    # Ensure input is not a struct (use plain maps only for simple API)
+    cond do
+      is_binary(input) ->
+        execute_simple_api(agents, input)
+
+      is_map(input) and not is_map_key(input, :__struct__) ->
+        execute_simple_api(agents, input)
+
+      true ->
+        # If opts is a keyword list (which is a list), use advanced API
+        execute_with_specs(agents, [])
+    end
+  end
+
+  # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
+  def execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
+    execute_with_specs(agent_specs, opts)
+  end
+
+  defp execute_simple_api(agents, input) do
     # Generate agent specs with unique IDs
     agent_specs =
       agents
@@ -97,11 +117,6 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       |> Enum.filter(&(&1 != nil))
 
     {:ok, result_list}
-  end
-
-  # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
-  def execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
-    execute_with_specs(agent_specs, opts)
   end
 
   defp execute_with_specs(agent_specs, opts) when is_list(agent_specs) do
@@ -274,9 +289,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     end
   end
 
-  defp prepare_input(input) when is_map(input) and not is_struct(input) do
-    # Try to extract chat_message if present
-    Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
+  defp prepare_input(input) when is_map(input) do
+    # Check if it's a struct
+    if is_map_key(input, :__struct__) do
+      # It's a struct, return as-is
+      input
+    else
+      # Plain map - try to extract chat_message if present
+      Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
+    end
   end
 
   defp prepare_input(input) when is_binary(input) do
