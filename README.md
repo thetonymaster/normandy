@@ -1100,3 +1100,11 @@ mix docs
 ```
 
 Then open `doc/index.html` in your browser.
+
+## Acknowledgments
+
+Schema system design inspired by [Ecto](https://github.com/elixir-ecto/ecto)'s elegant approach to data validation and changesets.
+
+---
+
+**Made with Elixir** 💜
