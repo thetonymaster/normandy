@@ -334,7 +334,7 @@ defmodule Normandy.Schema do
 
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
-            @adapter Application.compile_env(:normandy, :adapter)
+            @adapter Application.compile_env(:normandy, :adapter, Poison)
             def __str__(str), do: @adapter.encode!(str)
             def __rich__(str), do: @adapter.encode!(str, pretty: true)
             def to_json(str), do: @adapter.encode!(str)

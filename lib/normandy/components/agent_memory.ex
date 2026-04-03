@@ -80,7 +80,7 @@ defmodule Normandy.Components.AgentMemory do
     history = Map.get(memory, :history)
     turn_id = Map.get(memory, :current_turn_id)
 
-    adapter = Application.get_env(:normandy, :adapter)
+    adapter = Application.get_env(:normandy, :adapter, Poison)
 
     serialized_history =
       for %Message{turn_id: turn_id, role: role, content: content} <- history do
@@ -100,7 +100,7 @@ defmodule Normandy.Components.AgentMemory do
 
   @spec load(String.t()) :: t()
   def load(dump) do
-    adapter = Application.get_env(:normandy, :adapter)
+    adapter = Application.get_env(:normandy, :adapter, Poison)
     loaded_memory = adapter.decode!(dump, keys: :atoms)
 
     max_messages = Map.get(loaded_memory, :max_messages)
