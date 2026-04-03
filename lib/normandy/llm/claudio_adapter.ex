@@ -84,8 +84,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     and converts response back to Normandy schema.
     """
     def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
-      # Extract tools from opts if provided
+      # Extract tools and MCP servers from opts if provided
       tools = Keyword.get(opts, :tools, [])
+      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
 
       # Initialize Claudio client
       claudio_client = build_claudio_client(client)
@@ -100,6 +101,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_max_tokens(max_tokens)
         |> add_messages(messages, enable_caching)
         |> add_tools(tools, enable_caching)
+        |> add_mcp_servers(mcp_servers)
         |> add_client_options(client.options)
 
       # Execute request
@@ -352,6 +354,27 @@ defmodule Normandy.LLM.ClaudioAdapter do
       }
     end
 
+    defp add_mcp_servers(request, nil), do: request
+    defp add_mcp_servers(request, []), do: request
+
+    defp add_mcp_servers(request, servers) when is_list(servers) do
+      Enum.reduce(servers, request, fn server, req ->
+        claudio_server =
+          case server do
+            %Normandy.MCP.ServerConfig{} ->
+              Normandy.MCP.ServerConfig.to_claudio(server)
+
+            %Claudio.MCP.ServerConfig{} ->
+              server
+
+            map when is_map(map) ->
+              map
+          end
+
+        Claudio.Messages.Request.add_mcp_server(req, claudio_server)
+      end)
+    end
+
     defp add_client_options(request, options) do
       request
       |> maybe_set_thinking(Map.get(options, :thinking_budget))
@@ -420,12 +443,33 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
       content_blocks
       |> Enum.filter(fn block ->
-        Map.get(block, :type) == :tool_use || Map.get(block, "type") == "tool_use"
+        type = Map.get(block, :type) || Map.get(block, "type")
+        type in [:tool_use, :mcp_tool_use, "tool_use", "mcp_tool_use"]
       end)
       |> Enum.map(fn tool_use ->
+        type = Map.get(tool_use, :type) || Map.get(tool_use, "type")
+
+        tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
+
+        name =
+          cond do
+            type in [:mcp_tool_use, "mcp_tool_use"] ->
+              server_name =
+                Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
+
+              if server_name do
+                "#{server_name}__#{tool_name}"
+              else
+                tool_name
+              end
+
+            true ->
+              tool_name
+          end
+
         %Normandy.Components.ToolCall{
           id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
-          name: Map.get(tool_use, :name) || Map.get(tool_use, "name"),
+          name: name,
           input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
         }
       end)

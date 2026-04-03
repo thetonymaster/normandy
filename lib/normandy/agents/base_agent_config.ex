@@ -27,7 +27,8 @@ defmodule Normandy.Agents.BaseAgentConfig do
           retry_options: keyword() | nil,
           circuit_breaker: pid() | nil,
           enable_json_retry: boolean(),
-          json_retry_max_attempts: pos_integer()
+          json_retry_max_attempts: pos_integer(),
+          mcp_servers: list() | nil
         }
 
   schema do
@@ -47,5 +48,6 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:circuit_breaker, :any, default: nil)
     field(:enable_json_retry, :boolean, default: false)
     field(:json_retry_max_attempts, :integer, default: 2)
+    field(:mcp_servers, :any, default: nil)
   end
 end

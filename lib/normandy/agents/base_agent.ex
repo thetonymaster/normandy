@@ -62,7 +62,8 @@ defmodule Normandy.Agents.BaseAgent do
       retry_options: Map.get(config, :retry_options, nil),
       circuit_breaker: circuit_breaker,
       enable_json_retry: Map.get(config, :enable_json_retry, false),
-      json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2)
+      json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
+      mcp_servers: Map.get(config, :mcp_servers, nil)
     }
   end
 
@@ -127,6 +128,14 @@ defmodule Normandy.Agents.BaseAgent do
         [tools: tool_schemas]
       else
         []
+      end
+
+    # Pass MCP server configs through to the LLM adapter
+    opts =
+      if config.mcp_servers do
+        Keyword.put(opts, :mcp_servers, config.mcp_servers)
+      else
+        opts
       end
 
     # Wrap LLM call with resilience patterns
@@ -444,14 +453,23 @@ defmodule Normandy.Agents.BaseAgent do
             case Registry.get(config.tool_registry, tool_call.name) do
               {:ok, tool} ->
                 # Update tool struct with input parameters from LLM
-                # Convert string keys to atoms for struct update
-                input_with_atom_keys =
-                  Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
-                    atom_key = if is_binary(key), do: String.to_existing_atom(key), else: key
-                    Map.put(acc, atom_key, value)
-                  end)
+                # Tools implementing prepare_input/2 receive the raw input map
+                # (used by MCP/A2A tools with dynamic schemas)
+                updated_tool =
+                  if function_exported?(tool.__struct__, :prepare_input, 2) do
+                    tool.__struct__.prepare_input(tool, tool_call.input)
+                  else
+                    # Convert string keys to atoms for struct update
+                    # Uses String.to_atom since tool schemas have finite field sets
+                    # defined at compile time; struct/2 drops unknown keys safely
+                    input_with_atom_keys =
+                      Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
+                        atom_key = if is_binary(key), do: String.to_atom(key), else: key
+                        Map.put(acc, atom_key, value)
+                      end)
 
-                updated_tool = struct(tool, input_with_atom_keys)
+                    struct(tool, input_with_atom_keys)
+                  end
 
                 # Execute the updated tool
                 case Executor.execute_tool(updated_tool) do
@@ -700,19 +718,56 @@ defmodule Normandy.Agents.BaseAgent do
             # Execute each tool call
             tool_results =
               Enum.map(tool_calls, fn tool_call ->
-                result =
-                  case Executor.execute(config.tool_registry, tool_call["name"]) do
-                    {:ok, result} ->
-                      %ToolResult{
-                        tool_call_id: tool_call["id"],
-                        output: result,
-                        is_error: false
-                      }
+                tool_name = tool_call["name"]
 
-                    {:error, error} ->
+                tool_input =
+                  case tool_call["input"] do
+                    nil -> %{}
+                    input when is_map(input) -> input
+                    input when is_binary(input) -> parse_json_input(input)
+                  end
+
+                result =
+                  case Registry.get(config.tool_registry, tool_name) do
+                    {:ok, tool} ->
+                      # Use prepare_input/2 for MCP/A2A tools, struct for regular tools
+                      updated_tool =
+                        if function_exported?(tool.__struct__, :prepare_input, 2) do
+                          tool.__struct__.prepare_input(tool, tool_input)
+                        else
+                          # Uses String.to_atom since tool schemas have finite field sets
+                          # defined at compile time; struct/2 drops unknown keys safely
+                          input_with_atom_keys =
+                            Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
+                              atom_key =
+                                if is_binary(key), do: String.to_atom(key), else: key
+
+                              Map.put(acc, atom_key, value)
+                            end)
+
+                          struct(tool, input_with_atom_keys)
+                        end
+
+                      case Executor.execute_tool(updated_tool) do
+                        {:ok, result} ->
+                          %ToolResult{
+                            tool_call_id: tool_call["id"],
+                            output: result,
+                            is_error: false
+                          }
+
+                        {:error, error} ->
+                          %ToolResult{
+                            tool_call_id: tool_call["id"],
+                            output: %{error: error},
+                            is_error: true
+                          }
+                      end
+
+                    :error ->
                       %ToolResult{
                         tool_call_id: tool_call["id"],
-                        output: %{error: error},
+                        output: %{error: "Tool '#{tool_name}' not found in registry"},
                         is_error: true
                       }
                   end
@@ -752,6 +807,13 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp extract_tool_calls(_response), do: nil
+
+  defp parse_json_input(json_string) when is_binary(json_string) do
+    case Poison.decode(json_string) do
+      {:ok, parsed} when is_map(parsed) -> parsed
+      _ -> %{}
+    end
+  end
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
@@ -896,6 +958,60 @@ defmodule Normandy.Agents.BaseAgent do
   @spec has_tools?(BaseAgentConfig.t()) :: boolean()
   def has_tools?(%BaseAgentConfig{tool_registry: nil}), do: false
   def has_tools?(%BaseAgentConfig{tool_registry: registry}), do: Registry.count(registry) > 0
+
+  ## MCP Server Management
+
+  @doc """
+  Adds an MCP server configuration for server-side MCP.
+
+  The server config is passed to the Anthropic API, which connects
+  to the MCP server on your behalf.
+
+  ## Examples
+
+      alias Normandy.MCP.ServerConfig
+
+      server = ServerConfig.new("my_server", "https://mcp.example.com/sse")
+      agent = BaseAgent.add_mcp_server(agent, server)
+
+  """
+  @spec add_mcp_server(BaseAgentConfig.t(), struct() | map()) :: BaseAgentConfig.t()
+  def add_mcp_server(%BaseAgentConfig{mcp_servers: nil} = config, server) do
+    %{config | mcp_servers: [server]}
+  end
+
+  def add_mcp_server(%BaseAgentConfig{mcp_servers: servers} = config, server) do
+    %{config | mcp_servers: servers ++ [server]}
+  end
+
+  @doc """
+  Discovers and registers client-side MCP tools in the agent's tool registry.
+
+  Connects to an MCP server via the specified adapter, discovers available tools,
+  and registers them as Normandy tools that can be used in the agent's tool loop.
+
+  ## Options
+
+    - `:prefix` - Namespace prefix for tool names (e.g., `"my_server"`)
+
+  ## Examples
+
+      agent = BaseAgent.register_mcp_tools(agent, MyAdapter, mcp_client, prefix: "server1")
+
+  """
+  @spec register_mcp_tools(BaseAgentConfig.t(), module(), term(), keyword()) ::
+          {:ok, BaseAgentConfig.t()} | {:error, term()}
+  def register_mcp_tools(%BaseAgentConfig{} = config, adapter, client, opts \\ []) do
+    registry = config.tool_registry || Registry.new()
+
+    case Normandy.MCP.Registry.discover_and_register(registry, adapter, client, opts) do
+      {:ok, updated_registry} ->
+        {:ok, %{config | tool_registry: updated_registry}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
 
   ## Batch Processing
 
