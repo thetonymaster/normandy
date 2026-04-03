@@ -18,7 +18,7 @@ defprotocol Normandy.Components.BaseIOSchema do
   def __rich__(struct)
 
   @doc "Converts the struct to a JSON string"
-  @spec to_json(struct()) :: String.t()
+  @spec to_json(struct()) :: String.t() | list()
   def to_json(struct)
 
   @doc "Returns the schema definition for the struct"

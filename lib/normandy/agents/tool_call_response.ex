@@ -56,9 +56,7 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Agents.ToolCallResponse 
     # Reverse to maintain correct order (text first, then tool_uses)
     blocks = Enum.reverse(blocks)
 
-    # Encode to JSON string
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-    adapter.encode!(blocks)
+    blocks
   end
 
   def get_schema(_), do: %{}

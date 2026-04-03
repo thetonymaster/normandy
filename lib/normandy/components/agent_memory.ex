@@ -55,7 +55,7 @@ defmodule Normandy.Components.AgentMemory do
     Enum.take(history, max_messages)
   end
 
-  @spec history(t()) :: [%{role: String.t(), content: String.t()}]
+  @spec history(t()) :: [%{role: String.t(), content: String.t() | list()}]
   def history(%{history: history}) do
     # Reverse since messages are stored in reverse order (newest first)
     # Then map to create the history format

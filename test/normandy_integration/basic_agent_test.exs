@@ -68,19 +68,12 @@ defmodule Normandy.Integration.BasicAgentTest do
       history = AgentMemory.history(updated_agent.memory)
 
       # Look for assistant message with tool_use content blocks
-      # Content is stored as JSON strings, so we need to parse and check
       has_tool_use =
         Enum.any?(history, fn msg ->
-          if msg.role == "assistant" do
-            case Poison.decode(msg.content) do
-              {:ok, content_list} when is_list(content_list) ->
-                Enum.any?(content_list, fn item ->
-                  Map.get(item, "type") == "tool_use"
-                end)
-
-              _ ->
-                false
-            end
+          if msg.role == "assistant" and is_list(msg.content) do
+            Enum.any?(msg.content, fn item ->
+              Map.get(item, :type) == "tool_use"
+            end)
           else
             false
           end

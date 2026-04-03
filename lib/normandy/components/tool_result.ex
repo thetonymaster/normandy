@@ -38,9 +38,7 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
       }
     ]
 
-    # Encode to JSON string
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-    adapter.encode!(blocks)
+    blocks
   end
 
   defp format_tool_output(output) when is_binary(output), do: output
