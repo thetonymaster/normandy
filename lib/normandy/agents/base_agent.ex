@@ -411,7 +411,8 @@ defmodule Normandy.Agents.BaseAgent do
             # We have content in the ToolCallResponse, convert to output schema
             case config.output_schema do
               %{chat_message: _} ->
-                Map.put(config.output_schema, :chat_message, response.content)
+                text = unwrap_llm_content(response.content)
+                Map.put(config.output_schema, :chat_message, text)
 
               _ ->
                 config.output_schema
@@ -509,6 +510,18 @@ defmodule Normandy.Agents.BaseAgent do
         execute_tool_loop(config, iterations_left - 1)
     end
   end
+
+  # The LLM sometimes wraps its text response in JSON like {"chat_message":"actual text"}
+  # because the output schema instructions tell it to use JSON format.
+  # Unwrap it to get the plain text.
+  defp unwrap_llm_content(content) when is_binary(content) do
+    case Poison.decode(content) do
+      {:ok, %{"chat_message" => text}} when is_binary(text) -> text
+      _ -> content
+    end
+  end
+
+  defp unwrap_llm_content(content), do: content
 
   @doc """
   Stream a response from the LLM with real-time callbacks.
