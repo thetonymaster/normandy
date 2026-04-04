@@ -378,7 +378,12 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     # Execute tool loop
-    execute_tool_loop(config, max_iterations)
+    metadata = %{model: config.model, max_iterations: max_iterations}
+
+    :telemetry.span([:normandy, :agent, :run], metadata, fn ->
+      result = execute_tool_loop(config, max_iterations)
+      {result, metadata}
+    end)
   end
 
   # Private function to handle the tool execution loop
@@ -396,7 +401,15 @@ defmodule Normandy.Agents.BaseAgent do
     alias Normandy.Tools.Executor
 
     # Get response from LLM (may include tool calls)
-    response = get_response(config, %ToolCallResponse{})
+    iteration = config.max_tool_iterations - iterations_left + 1
+    llm_metadata = %{model: config.model, iteration: iteration}
+
+    response =
+      :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
+        r = get_response(config, %ToolCallResponse{})
+        has_tools = not (is_nil(r.tool_calls) or r.tool_calls == [])
+        {r, Map.put(llm_metadata, :has_tool_calls, has_tools)}
+      end)
 
     cond do
       # No tool calls - this IS the final text response, just in ToolCallResponse format
@@ -473,7 +486,15 @@ defmodule Normandy.Agents.BaseAgent do
                   end
 
                 # Execute the updated tool
-                case Executor.execute_tool(updated_tool) do
+                tool_meta = %{tool_name: tool_call.name}
+
+                tool_result =
+                  :telemetry.span([:normandy, :tool, :execute], tool_meta, fn ->
+                    r = Executor.execute_tool(updated_tool)
+                    {r, Map.put(tool_meta, :status, elem(r, 0))}
+                  end)
+
+                case tool_result do
                   {:ok, result} ->
                     %ToolResult{
                       tool_call_id: tool_call.id,
