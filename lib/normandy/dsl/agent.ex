@@ -266,6 +266,10 @@ defmodule Normandy.DSL.Agent do
         BaseAgent.run(agent, prepare_input(input))
       end
 
+      def run(agent, input, opts) when is_list(opts) do
+        BaseAgent.run(agent, prepare_input(input), opts)
+      end
+
       @doc """
       Runs the agent with tools enabled.
 
