@@ -340,25 +340,28 @@ defmodule Normandy.DSL.Agent do
       end
 
       defp apply_system_prompt(agent) do
+        system_prompt = to_list(@agent_compile_config.system_prompt)
+        background = to_list(@agent_compile_config.background)
+        steps = to_list(@agent_compile_config.steps)
+        output_instructions = to_list(@agent_compile_config.output_instructions)
+
         cond do
-          @agent_compile_config.system_prompt != nil ->
-            # Simple system prompt - convert string to list
+          system_prompt != [] ->
+            # Simple system prompt
             prompt_spec = %PromptSpecification{
-              background: to_list(@agent_compile_config.system_prompt),
+              background: system_prompt,
               steps: [],
               output_instructions: []
             }
 
             %{agent | prompt_specification: prompt_spec}
 
-          @agent_compile_config.background != nil or
-            @agent_compile_config.steps != nil or
-              @agent_compile_config.output_instructions != nil ->
-            # Structured prompt - convert strings to lists
+          background != [] or steps != [] or output_instructions != [] ->
+            # Structured prompt
             prompt_spec = %PromptSpecification{
-              background: to_list(@agent_compile_config.background),
-              steps: to_list(@agent_compile_config.steps),
-              output_instructions: to_list(@agent_compile_config.output_instructions)
+              background: background,
+              steps: steps,
+              output_instructions: output_instructions
             }
 
             %{agent | prompt_specification: prompt_spec}

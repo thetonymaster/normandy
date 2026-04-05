@@ -210,13 +210,19 @@ defmodule Normandy.Agents.BaseAgent do
         config = %BaseAgentConfig{tool_registry: tool_registry},
         user_input \\ nil
       ) do
-    # If tools are registered, automatically use the tool execution loop
-    if tool_registry != nil && Registry.count(tool_registry) > 0 do
-      run_with_tools(config, user_input)
-    else
-      # No tools registered, use simple response
-      run_without_tools(config, user_input)
-    end
+    metadata = %{model: config.model}
+
+    :telemetry.span([:normandy, :agent, :run], metadata, fn ->
+      result =
+        if tool_registry != nil && Registry.count(tool_registry) > 0 do
+          run_with_tools(config, user_input)
+        else
+          # No tools registered, use simple response
+          run_without_tools(config, user_input)
+        end
+
+      {result, metadata}
+    end)
   end
 
   @doc """
@@ -291,7 +297,13 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     # Get response from LLM
-    response = get_response(config, output_schema)
+    llm_metadata = %{model: config.model, iteration: 1}
+
+    response =
+      :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
+        r = get_response(config, output_schema)
+        {r, Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})}
+      end)
 
     # Validate output
     validated_response =
@@ -378,12 +390,7 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     # Execute tool loop
-    metadata = %{model: config.model, max_iterations: max_iterations}
-
-    :telemetry.span([:normandy, :agent, :run], metadata, fn ->
-      result = execute_tool_loop(config, max_iterations)
-      {result, metadata}
-    end)
+    execute_tool_loop(config, max_iterations)
   end
 
   # Private function to handle the tool execution loop
@@ -407,8 +414,14 @@ defmodule Normandy.Agents.BaseAgent do
     response =
       :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
         r = get_response(config, %ToolCallResponse{})
-        has_tools = not (is_nil(r.tool_calls) or r.tool_calls == [])
-        {r, Map.put(llm_metadata, :has_tool_calls, has_tools)}
+        tool_calls = r.tool_calls || []
+        has_tools = tool_calls != []
+
+        {r,
+         Map.merge(llm_metadata, %{
+           has_tool_calls: has_tools,
+           tool_call_count: length(tool_calls)
+         })}
       end)
 
     cond do
@@ -532,17 +545,16 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # The LLM sometimes wraps its text response in JSON like {"chat_message":"actual text"}
-  # because the output schema instructions tell it to use JSON format.
-  # Unwrap it to get the plain text.
-  defp unwrap_llm_content(content) when is_binary(content) do
+  @doc false
+  def unwrap_llm_content(content) when is_binary(content) do
     case Poison.decode(content) do
       {:ok, %{"chat_message" => text}} when is_binary(text) -> text
       _ -> content
     end
   end
 
-  defp unwrap_llm_content(content), do: content
+  @doc false
+  def unwrap_llm_content(content), do: content
 
   @doc """
   Stream a response from the LLM with real-time callbacks.

@@ -122,4 +122,62 @@ defmodule NormandyTest.BaseAgentsTest do
 
     assert Normandy.Components.BaseIOSchema.__rich__(test_io) != nil
   end
+
+  describe "unwrap_llm_content/1" do
+    test "unwraps JSON with chat_message key" do
+      content = "{\"chat_message\": \"actual text\"}"
+      assert BaseAgent.unwrap_llm_content(content) == "actual text"
+    end
+
+    test "returns original content if not JSON" do
+      content = "just some text"
+      assert BaseAgent.unwrap_llm_content(content) == "just some text"
+    end
+
+    test "returns original content if JSON doesn't have chat_message" do
+      content = "{\"other\": \"stuff\"}"
+      assert BaseAgent.unwrap_llm_content(content) == "{\"other\": \"stuff\"}"
+    end
+
+    test "returns original if not a string" do
+      assert BaseAgent.unwrap_llm_content(%{not: "a string"}) == %{not: "a string"}
+    end
+  end
+
+  describe "telemetry" do
+    test "emits telemetry events during run", %{agent: agent} do
+      parent = self()
+      ref = make_ref()
+
+      handler = fn event, measurements, metadata, _config ->
+        send(parent, {ref, event, measurements, metadata})
+      end
+
+      events = [
+        [:normandy, :agent, :run, :start],
+        [:normandy, :agent, :run, :stop],
+        [:normandy, :agent, :llm_call, :start],
+        [:normandy, :agent, :llm_call, :stop]
+      ]
+
+      :telemetry.attach_many("test-handler", events, handler, nil)
+
+      try do
+        BaseAgent.run(agent, "hello")
+
+        # Check for run events
+        assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{model: _}}
+        assert_receive {^ref, [:normandy, :agent, :run, :stop], %{duration: _}, %{model: _}}
+
+        # Check for LLM call events
+        assert_receive {^ref, [:normandy, :agent, :llm_call, :start], _ms,
+                        %{model: _, iteration: 1}}
+
+        assert_receive {^ref, [:normandy, :agent, :llm_call, :stop], %{duration: _},
+                        %{model: _, iteration: 1, has_tool_calls: false, tool_call_count: 0}}
+      after
+        :telemetry.detach("test-handler")
+      end
+    end
+  end
 end
