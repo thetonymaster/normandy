@@ -28,10 +28,12 @@ defmodule Normandy.Agents.BaseAgentConfig do
           circuit_breaker: pid() | nil,
           enable_json_retry: boolean(),
           json_retry_max_attempts: pos_integer(),
+          name: String.t() | nil,
           mcp_servers: list() | nil
         }
 
   schema do
+    field(:name, :string, default: nil)
     field(:input_schema, :struct)
     field(:output_schema, :struct)
     field(:client, :struct)

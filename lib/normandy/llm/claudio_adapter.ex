@@ -50,13 +50,15 @@ defmodule Normandy.LLM.ClaudioAdapter do
   @type t :: %__MODULE__{
           api_key: String.t(),
           base_url: String.t() | nil,
-          options: keyword()
+          options: keyword(),
+          finch: atom() | nil
         }
 
   schema do
     field(:api_key, :string, required: true)
     field(:base_url, :string, default: nil)
     field(:options, :map, default: %{})
+    field(:finch, :any, default: nil)
   end
 
   defimpl Normandy.Agents.Model do
@@ -266,6 +268,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
         token: client.api_key,
         version: "2023-06-01"
       }
+
+      config = if client.finch, do: Map.put(config, :finch, client.finch), else: config
 
       # base_url is a second parameter, not part of config
       if client.base_url do

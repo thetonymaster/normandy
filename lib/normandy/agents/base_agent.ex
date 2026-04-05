@@ -63,7 +63,8 @@ defmodule Normandy.Agents.BaseAgent do
       circuit_breaker: circuit_breaker,
       enable_json_retry: Map.get(config, :enable_json_retry, false),
       json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
-      mcp_servers: Map.get(config, :mcp_servers, nil)
+      mcp_servers: Map.get(config, :mcp_servers, nil),
+      name: Map.get(config, :name, nil)
     }
   end
 
@@ -210,7 +211,7 @@ defmodule Normandy.Agents.BaseAgent do
         config = %BaseAgentConfig{tool_registry: tool_registry},
         user_input \\ nil
       ) do
-    metadata = %{model: config.model}
+    metadata = %{model: config.model, agent_name: config.name}
 
     :telemetry.span([:normandy, :agent, :run], metadata, fn ->
       result =
@@ -297,7 +298,7 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     # Get response from LLM
-    llm_metadata = %{model: config.model, iteration: 1}
+    llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
 
     response =
       :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
@@ -409,7 +410,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     # Get response from LLM (may include tool calls)
     iteration = config.max_tool_iterations - iterations_left + 1
-    llm_metadata = %{model: config.model, iteration: iteration}
+    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
     response =
       :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
@@ -499,7 +500,7 @@ defmodule Normandy.Agents.BaseAgent do
                   end
 
                 # Execute the updated tool
-                tool_meta = %{tool_name: tool_call.name}
+                tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
 
                 tool_result =
                   :telemetry.span([:normandy, :tool, :execute], tool_meta, fn ->
