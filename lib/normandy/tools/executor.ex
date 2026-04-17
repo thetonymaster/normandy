@@ -65,7 +65,13 @@ defmodule Normandy.Tools.Executor do
   """
   @spec execute_tool(struct(), execution_options()) :: execution_result()
   def execute_tool(tool, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    # Precedence: explicit opts > per-tool struct :timeout > module default.
+    # Per-tool timeout lets slow tools (e.g. a delegation that fans out to
+    # another agent's tool loop) opt into longer-than-default budgets
+    # without changing the global default for fast tools.
+    timeout =
+      Keyword.get(opts, :timeout) || Map.get(tool, :timeout) || @default_timeout
+
     execute_with_timeout(tool, timeout)
   end
 

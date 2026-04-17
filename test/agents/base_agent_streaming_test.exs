@@ -356,6 +356,56 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       assert length(history) >= 3
     end
 
+    # Regression: `execute_streaming_tool_loop/3` used to store the raw
+    # StreamProcessor map as the assistant message. `AgentMemory.history/1`
+    # then routed it through `BaseIOSchema.Map.to_json`, which
+    # `Poison.encode!`s the whole thing into a JSON string — destroying
+    # the tool_use block structure. On the next iteration, Anthropic
+    # received the assistant turn as plain text and rejected the trailing
+    # tool_result block with `unexpected tool_use_id`. The fix wraps the
+    # response in a `%ToolCallResponse{}` whose BaseIOSchema impl emits a
+    # list of content blocks that survives round-tripping.
+    test "preserves assistant tool_use content as a list across memory round-trip" do
+      client = %MockStreamingClientWithTools{}
+
+      config =
+        BaseAgent.init(%{
+          client: client,
+          model: "claude-3",
+          temperature: 0.7
+        })
+
+      tool = %TestCalculator{}
+      config = BaseAgent.register_tool(config, tool)
+
+      callback = fn _, _ -> :ok end
+
+      {updated_config, _response} =
+        BaseAgent.stream_with_tools(config, %{chat_message: "Calculate"}, callback)
+
+      history = AgentMemory.history(updated_config.memory)
+
+      # Find the assistant turn that carried the tool_use. In the broken
+      # code, .content was a JSON string and this Enum.find/2 returned nil.
+      assistant_tool_msg =
+        Enum.find(history, fn msg ->
+          msg.role == "assistant" and is_list(msg.content) and
+            Enum.any?(msg.content, fn block ->
+              block_type(block) == "tool_use"
+            end)
+        end)
+
+      assert assistant_tool_msg,
+             "assistant message with tool_use must have list content (got: " <>
+               inspect(Enum.find(history, &(&1.role == "assistant"))) <> ")"
+
+      tool_use_block =
+        Enum.find(assistant_tool_msg.content, fn b -> block_type(b) == "tool_use" end)
+
+      assert block_field(tool_use_block, "name") == "calculator"
+      assert block_field(tool_use_block, "id") != nil
+    end
+
     test "handles max iterations limit" do
       client = %MockStreamingClientWithTools{}
 
@@ -459,4 +509,15 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       assert response.error == "Stream failed"
     end
   end
+
+  # Content blocks come back from BaseIOSchema.to_json with mixed key
+  # conventions (string or atom) depending on the source — these helpers
+  # normalize reads so assertions don't need to guess.
+  defp block_type(block), do: block_field(block, "type")
+
+  defp block_field(block, key) when is_map(block) do
+    Map.get(block, key) || Map.get(block, String.to_atom(key))
+  end
+
+  defp block_field(_block, _key), do: nil
 end

@@ -255,7 +255,15 @@ defmodule Normandy.Agents.BaseAgent do
           on_chunk
         end
 
-      stream_response(config, user_input, callback)
+      # Mirror run/2's dispatch: if the agent has tools, drive the
+      # streaming tool loop so tool_use blocks actually execute. Without
+      # this, agents with tools stream back a tool_use event, the tool
+      # never runs, and the user sees an empty assistant message.
+      if has_tools?(config) do
+        stream_with_tools(config, user_input, callback)
+      else
+        stream_response(config, user_input, callback)
+      end
     else
       # Fall back to regular run
       run(config, user_input)
@@ -609,6 +617,17 @@ defmodule Normandy.Agents.BaseAgent do
         {config, config.memory}
       end
 
+    # Convert history plain maps to Message structs so the LLM adapter's
+    # pattern-matched add_single_message picks them up. Without this, the
+    # adapter's catch-all silently drops every history entry — streaming
+    # requests reach the API with only the system message, and the API
+    # rejects them as empty (`messages: at least one message is required`).
+    history_messages =
+      AgentMemory.history(memory)
+      |> Enum.map(fn %{role: role, content: content} ->
+        %Message{role: role, content: content}
+      end)
+
     # Build messages for LLM
     messages =
       [
@@ -620,7 +639,7 @@ defmodule Normandy.Agents.BaseAgent do
               config.tool_registry
             )
         }
-      ] ++ AgentMemory.history(memory)
+      ] ++ history_messages
 
     # Prepare options with tools and callback
     opts =
@@ -722,6 +741,13 @@ defmodule Normandy.Agents.BaseAgent do
     alias Normandy.Components.ToolResult
     alias Normandy.Tools.Executor
 
+    # Convert history plain maps to Message structs (see stream_response for why).
+    history_messages =
+      AgentMemory.history(config.memory)
+      |> Enum.map(fn %{role: role, content: content} ->
+        %Message{role: role, content: content}
+      end)
+
     # Build messages for LLM
     messages =
       [
@@ -733,7 +759,7 @@ defmodule Normandy.Agents.BaseAgent do
               config.tool_registry
             )
         }
-      ] ++ AgentMemory.history(config.memory)
+      ] ++ history_messages
 
     # Prepare options with tools and callback
     opts =
@@ -753,14 +779,20 @@ defmodule Normandy.Agents.BaseAgent do
         cond do
           # No tool calls - final response
           is_nil(tool_calls) or length(tool_calls) == 0 ->
-            memory = AgentMemory.add_message(config.memory, "assistant", final_response)
+            # Store as ToolCallResponse so BaseIOSchema serialization emits
+            # content blocks (Map.to_json would JSON-stringify the whole map).
+            assistant_response = build_streaming_assistant_response(final_response, [])
+            memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
             config = Map.put(config, :memory, memory)
             {config, final_response}
 
           # Has tool calls - execute them
           true ->
-            # Add assistant message with tool calls to memory
-            memory = AgentMemory.add_message(config.memory, "assistant", final_response)
+            # Store assistant response as ToolCallResponse so the next
+            # iteration's history preserves tool_use blocks (Anthropic
+            # requires each tool_result to pair with the prior tool_use).
+            assistant_response = build_streaming_assistant_response(final_response, tool_calls)
+            memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
 
             # Execute each tool call
             tool_results =
@@ -854,6 +886,50 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp extract_tool_calls(_response), do: nil
+
+  # Build a ToolCallResponse from a streamed final_response so the assistant
+  # turn survives AgentMemory.history/1 re-serialization. Without this, the
+  # generic Map BaseIOSchema impl stringifies the whole response map and the
+  # next LLM call loses its tool_use content blocks.
+  defp build_streaming_assistant_response(%{content: content}, tool_calls)
+       when is_list(content) do
+    alias Normandy.Agents.ToolCallResponse
+    alias Normandy.Components.ToolCall
+
+    text =
+      content
+      |> Enum.filter(&(&1["type"] == "text"))
+      |> Enum.map(&Map.get(&1, "text", ""))
+      |> Enum.join("")
+
+    calls =
+      Enum.map(tool_calls || [], fn block ->
+        %ToolCall{
+          id: block["id"],
+          name: block["name"],
+          input: normalize_tool_input(block["input"])
+        }
+      end)
+
+    %ToolCallResponse{
+      content: if(text == "", do: nil, else: text),
+      tool_calls: calls
+    }
+  end
+
+  defp build_streaming_assistant_response(other, _), do: other
+
+  defp normalize_tool_input(nil), do: %{}
+  defp normalize_tool_input(input) when is_map(input), do: input
+
+  defp normalize_tool_input(input) when is_binary(input) do
+    case Poison.decode(input) do
+      {:ok, parsed} when is_map(parsed) -> parsed
+      _ -> %{}
+    end
+  end
+
+  defp normalize_tool_input(_), do: %{}
 
   defp parse_json_input(json_string) when is_binary(json_string) do
     case Poison.decode(json_string) do

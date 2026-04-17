@@ -204,7 +204,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
                 case event do
                   {:ok, parsed_event} ->
                     invoke_stream_callback(parsed_event, callback)
-                    parsed_event
+                    to_stream_processor_event(parsed_event)
 
                   {:error, _} = error ->
                     error
@@ -212,7 +212,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
               end)
             else
               Stream.map(event_stream, fn
-                {:ok, event} -> event
+                {:ok, event} -> to_stream_processor_event(event)
                 error -> error
               end)
             end
@@ -258,6 +258,80 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp invoke_stream_callback(_, _callback), do: :ok
+
+    # Claudio's parse_events emits `%{event: "...", data: %{...}}` where
+    # `data` was decoded with `Poison.decode(..., keys: :atoms)` — so its
+    # keys are atoms. Normandy's StreamProcessor pattern-matches
+    # `%{type: "...", <shaped-fields>}` directly (atom :type, atom field
+    # keys, but the nested content block / delta maps stay string-keyed
+    # because StreamProcessor's inner patterns use `%{"type" => ...}`).
+    # So we pull fields with atom keys and stringify the nested block/delta
+    # payloads so StreamProcessor's downstream patterns match.
+    defp to_stream_processor_event(%{event: "message_start", data: data}) do
+      %{type: "message_start", message: data_get(data, :message) |> stringify_keys()}
+    end
+
+    defp to_stream_processor_event(%{event: "content_block_start", data: data}) do
+      %{
+        type: "content_block_start",
+        content_block: data_get(data, :content_block) |> stringify_keys(),
+        index: data_get(data, :index) || 0
+      }
+    end
+
+    defp to_stream_processor_event(%{event: "content_block_delta", data: data}) do
+      %{
+        type: "content_block_delta",
+        delta: data_get(data, :delta) |> stringify_keys(),
+        index: data_get(data, :index) || 0
+      }
+    end
+
+    defp to_stream_processor_event(%{event: "content_block_stop", data: data}) do
+      %{type: "content_block_stop", index: data_get(data, :index) || 0}
+    end
+
+    defp to_stream_processor_event(%{event: "message_delta", data: data}) do
+      %{
+        type: "message_delta",
+        delta: data_get(data, :delta) |> stringify_keys(),
+        usage: data_get(data, :usage) |> stringify_keys()
+      }
+    end
+
+    defp to_stream_processor_event(%{event: "message_stop"}), do: %{type: "message_stop"}
+
+    defp to_stream_processor_event(%{event: "ping"}), do: %{type: "ping"}
+
+    defp to_stream_processor_event(%{event: "error", data: data}) do
+      %{type: "error", error: data_get(data, :error) || data}
+    end
+
+    defp to_stream_processor_event(other), do: other
+
+    # Claudio historically mixes atom-keyed and string-keyed map payloads
+    # depending on decode path — read both to stay compatible.
+    defp data_get(data, key) when is_map(data) do
+      Map.get(data, key) || Map.get(data, Atom.to_string(key))
+    end
+
+    defp data_get(_, _), do: nil
+
+    # StreamProcessor's inner patterns (append_text_delta, append_json_delta)
+    # key into nested maps with STRING keys (e.g. `%{"type" => "tool_use"}`,
+    # `%{"type" => "text_delta", "text" => ...}`). Convert atom-keyed maps
+    # to string-keyed maps at any depth so those patterns match.
+    defp stringify_keys(nil), do: nil
+    defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+
+    defp stringify_keys(map) when is_map(map) and not is_struct(map) do
+      Map.new(map, fn {k, v} ->
+        key = if is_atom(k), do: Atom.to_string(k), else: k
+        {key, stringify_keys(v)}
+      end)
+    end
+
+    defp stringify_keys(other), do: other
 
     # Private functions
 
