@@ -6,6 +6,8 @@ defmodule Normandy.Agents.BaseAgent do
   stateful configuration approach.
   """
 
+  require Logger
+
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
@@ -74,10 +76,16 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
-  def get_response(
-        config = %BaseAgentConfig{prompt_specification: prompt_specification},
-        response_model \\ nil
-      ) do
+  def get_response(config = %BaseAgentConfig{}, response_model \\ nil) do
+    {response, _usage} = get_response_with_usage(config, response_model)
+    response
+  end
+
+  @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil) :: {struct(), map() | nil}
+  defp get_response_with_usage(
+         config = %BaseAgentConfig{prompt_specification: prompt_specification},
+         response_model
+       ) do
     response_model =
       if response_model != nil do
         response_model
@@ -144,6 +152,8 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Private helper to call LLM with retry and circuit breaker protection
+  @spec call_llm_with_resilience(BaseAgentConfig.t(), list(), struct(), keyword()) ::
+          {struct(), map() | nil}
   defp call_llm_with_resilience(config, messages, response_model, opts) do
     llm_call = fn ->
       result =
@@ -197,10 +207,10 @@ defmodule Normandy.Agents.BaseAgent do
     # Execute and unwrap result
     result =
       case protected_call.() do
-        {:ok, {:ok, response}} -> response
-        {:ok, response} -> response
-        {:error, {_reason, _attempts, _errors}} -> response_model
-        {:error, _reason} -> response_model
+        {:ok, {:ok, response}} -> normalize_model_response(response)
+        {:ok, response} -> normalize_model_response(response)
+        {:error, {_reason, _attempts, _errors}} -> {response_model, nil}
+        {:error, _reason} -> {response_model, nil}
       end
 
     result
@@ -213,7 +223,7 @@ defmodule Normandy.Agents.BaseAgent do
       ) do
     metadata = %{model: config.model, agent_name: config.name}
 
-    :telemetry.span([:normandy, :agent, :run], metadata, fn ->
+    with_agent_run_span(config, metadata, fn ->
       result =
         if tool_registry != nil && Registry.count(tool_registry) > 0 do
           run_with_tools(config, user_input)
@@ -309,9 +319,10 @@ defmodule Normandy.Agents.BaseAgent do
     llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
 
     response =
-      :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
-        r = get_response(config, output_schema)
-        {r, Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})}
+      with_llm_call_span(config, llm_metadata, fn ->
+        {r, usage} = get_response_with_usage(config, output_schema)
+
+        {r, Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0, usage: usage})}
       end)
 
     # Validate output
@@ -420,16 +431,23 @@ defmodule Normandy.Agents.BaseAgent do
     iteration = config.max_tool_iterations - iterations_left + 1
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
+    log_lifecycle(:debug, "normandy agent iteration",
+      agent: log_agent_name(config),
+      iteration: iteration,
+      pending_tool_calls: pending_tool_call_count(config)
+    )
+
     response =
-      :telemetry.span([:normandy, :agent, :llm_call], llm_metadata, fn ->
-        r = get_response(config, %ToolCallResponse{})
+      with_llm_call_span(config, llm_metadata, fn ->
+        {r, usage} = get_response_with_usage(config, %ToolCallResponse{})
         tool_calls = r.tool_calls || []
         has_tools = tool_calls != []
 
         {r,
          Map.merge(llm_metadata, %{
            has_tool_calls: has_tools,
-           tool_call_count: length(tool_calls)
+           tool_call_count: length(tool_calls),
+           usage: usage
          })}
       end)
 
@@ -511,7 +529,7 @@ defmodule Normandy.Agents.BaseAgent do
                 tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
 
                 tool_result =
-                  :telemetry.span([:normandy, :tool, :execute], tool_meta, fn ->
+                  with_tool_execute_span(config, tool_call.name, tool_meta, fn ->
                     r = Executor.execute_tool(updated_tool)
                     {r, Map.put(tool_meta, :status, elem(r, 0))}
                   end)
@@ -966,6 +984,204 @@ defmodule Normandy.Agents.BaseAgent do
       {:error, "Client does not support streaming"}
     end
   end
+
+  defp with_agent_run_span(config, telemetry_metadata, fun) do
+    :telemetry.span([:normandy, :agent, :run], telemetry_metadata, fn ->
+      log_lifecycle(:info, "normandy agent run start",
+        agent: log_agent_name(config),
+        iteration: 0,
+        max_iterations: max_run_iterations(config)
+      )
+
+      try do
+        {result, stop_metadata} = fun.()
+
+        log_lifecycle(:info, "normandy agent run stop",
+          agent: log_agent_name(config),
+          iterations: completed_iterations(result),
+          status: :ok
+        )
+
+        {result, stop_metadata}
+      rescue
+        error ->
+          log_span_exception("normandy agent exception", config, :error, error)
+          reraise(error, __STACKTRACE__)
+      catch
+        kind, reason ->
+          log_span_exception("normandy agent exception", config, kind, reason)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+    end)
+  end
+
+  defp with_llm_call_span(config, telemetry_metadata, fun) do
+    :telemetry.span([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
+      log_lifecycle(:info, "normandy llm call start",
+        agent: log_agent_name(config),
+        model: config.model,
+        iteration: telemetry_metadata.iteration
+      )
+
+      started_at = System.monotonic_time()
+
+      try do
+        {result, stop_metadata} = fun.()
+        duration_ms = elapsed_ms(started_at)
+        {input_tokens, output_tokens} = token_counts(Map.get(stop_metadata, :usage) || result)
+
+        log_lifecycle(:info, "normandy llm call stop",
+          agent: log_agent_name(config),
+          model: config.model,
+          iteration: telemetry_metadata.iteration,
+          duration_ms: duration_ms,
+          input_tokens: input_tokens,
+          output_tokens: output_tokens,
+          has_tool_calls: Map.get(stop_metadata, :has_tool_calls, false)
+        )
+
+        {result, stop_metadata}
+      rescue
+        error ->
+          log_span_exception("normandy llm call exception", config, :error, error)
+          reraise(error, __STACKTRACE__)
+      catch
+        kind, reason ->
+          log_span_exception("normandy llm call exception", config, kind, reason)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+    end)
+  end
+
+  defp with_tool_execute_span(config, tool_name, telemetry_metadata, fun) do
+    :telemetry.span([:normandy, :tool, :execute], telemetry_metadata, fn ->
+      log_lifecycle(:info, "normandy tool execute start",
+        agent: log_agent_name(config),
+        tool: tool_name
+      )
+
+      started_at = System.monotonic_time()
+
+      try do
+        {result, stop_metadata} = fun.()
+
+        log_lifecycle(:info, "normandy tool execute stop",
+          agent: log_agent_name(config),
+          tool: tool_name,
+          duration_ms: elapsed_ms(started_at),
+          status: Map.get(stop_metadata, :status, :ok)
+        )
+
+        {result, stop_metadata}
+      rescue
+        error ->
+          log_span_exception("normandy tool exception", config, :error, error, tool: tool_name)
+          reraise(error, __STACKTRACE__)
+      catch
+        kind, reason ->
+          log_span_exception("normandy tool exception", config, kind, reason, tool: tool_name)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+    end)
+  end
+
+  defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do
+    log_lifecycle(
+      :error,
+      message,
+      [
+        agent: log_agent_name(config),
+        kind: kind,
+        reason: format_exception_reason(reason)
+      ] ++ extra_metadata
+    )
+  end
+
+  defp format_exception_reason(reason) do
+    if Kernel.is_exception(reason) do
+      Exception.message(reason)
+    else
+      inspect(reason)
+    end
+  end
+
+  defp log_lifecycle(level, message, metadata) do
+    Logger.log(level, message, metadata)
+  end
+
+  defp normalize_model_response({response, usage}) when is_map(usage) or is_nil(usage) do
+    {response, usage}
+  end
+
+  defp normalize_model_response(response), do: {response, nil}
+
+  defp elapsed_ms(started_at) do
+    (System.monotonic_time() - started_at)
+    |> System.convert_time_unit(:native, :millisecond)
+  end
+
+  defp token_counts(response) do
+    usage =
+      cond do
+        is_map(response) and usage_map?(response) -> response
+        is_map(response) -> Map.get(response, :usage) || Map.get(response, "usage")
+        true -> nil
+      end
+
+    {usage_value(usage, :input_tokens), usage_value(usage, :output_tokens)}
+  end
+
+  defp usage_map?(usage) when is_map(usage) do
+    Map.has_key?(usage, :input_tokens) ||
+      Map.has_key?(usage, "input_tokens") ||
+      Map.has_key?(usage, :output_tokens) ||
+      Map.has_key?(usage, "output_tokens")
+  end
+
+  defp usage_map?(_usage), do: false
+
+  defp usage_value(nil, _key), do: nil
+
+  defp usage_value(usage, key) do
+    Map.get(usage, key) || Map.get(usage, Atom.to_string(key))
+  end
+
+  defp pending_tool_call_count(%BaseAgentConfig{memory: %{history: [latest | _]}})
+       when latest.role == "assistant" do
+    latest.content
+    |> Map.get(:tool_calls, [])
+    |> length()
+  end
+
+  defp pending_tool_call_count(_), do: 0
+
+  defp completed_iterations({%BaseAgentConfig{memory: %{history: history}}, _response}) do
+    assistant_turn_id =
+      history
+      |> Enum.find_value(fn
+        %Message{role: "assistant", turn_id: turn_id} -> turn_id
+        _ -> nil
+      end)
+
+    history
+    |> Enum.count(fn
+      %Message{role: "assistant", turn_id: ^assistant_turn_id} -> true
+      _ -> false
+    end)
+  end
+
+  defp completed_iterations(_), do: 0
+
+  defp max_run_iterations(config) do
+    if has_tools?(config) do
+      config.max_tool_iterations
+    else
+      1
+    end
+  end
+
+  defp log_agent_name(%BaseAgentConfig{name: nil}), do: "unnamed_agent"
+  defp log_agent_name(%BaseAgentConfig{name: name}), do: name
 
   @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
   def get_context_provider(

@@ -21,7 +21,7 @@ Runs unit tests across multiple Elixir and OTP versions to ensure compatibility:
 - Install and compile dependencies
 - Check code formatting (on latest version only)
 - Compile with warnings as errors
-- Run unit tests (excludes `integration` and `normandy_integration` tags)
+- Run the default test suite (`mix test`, which excludes `integration` and `normandy_integration` by default)
 - Generate coverage report (on latest version only)
 
 #### 2. **Integration Tests**
@@ -80,7 +80,7 @@ To enable integration tests in CI:
 
 ### Unit Tests Only
 ```bash
-mix test --exclude integration --exclude normandy_integration
+mix test
 ```
 
 ### Integration Tests Only
@@ -92,7 +92,7 @@ mix test --only integration --only normandy_integration
 ### All Tests
 ```bash
 export API_KEY="your-api-key-here"
-mix test
+mix test --include integration --include normandy_integration
 ```
 
 ### With Coverage
@@ -127,7 +127,7 @@ mix format --check-formatted
 mix compile --warnings-as-errors
 
 # Unit tests
-mix test --exclude integration --exclude normandy_integration
+mix test
 
 # Dialyzer
 mix dialyzer
@@ -186,7 +186,7 @@ strategy:
 Modify the test steps:
 ```yaml
 - name: Run unit tests
-  run: mix test --exclude integration --exclude normandy_integration --trace
+  run: mix test --trace
 ```
 
 ### Adding Code Coverage Upload

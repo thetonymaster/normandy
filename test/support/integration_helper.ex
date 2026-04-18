@@ -33,9 +33,10 @@ defmodule NormandyTest.Support.IntegrationHelper do
   @doc """
   Gets API key or raises clear error if not available.
 
-  Tests marked with @tag :api will automatically be skipped when running
-  `mix test --exclude api`. This function provides a clear error message
-  if API key is missing when tests do run.
+      Integration suites are skipped by default when running `mix test`.
+      Tests marked with @tag :api will also be skipped when running
+      `mix test --exclude api`. This function provides a clear error message
+      if API key is missing when tests do run.
 
   ## Example
 
@@ -53,7 +54,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
         - API_KEY environment variable (local)
         - ANTHROPIC_API_KEY environment variable (standard)
 
-      To skip integration tests, run:
+      To skip API-tagged tests explicitly, run:
         mix test --exclude api
       """
     end
