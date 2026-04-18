@@ -10,6 +10,17 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
 
   @handler_id :normandy_test_logger_handler
 
+  defmodule NamedDSLAgent do
+    use Normandy.DSL.Agent
+
+    agent do
+      name("planner")
+      model("test-model")
+      temperature(0.7)
+      max_tokens(2048)
+    end
+  end
+
   defmodule LoggingToolCallClient do
     use Normandy.Schema
 
@@ -122,6 +133,23 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
 
     assert Enum.at(llm_stop_entries, 1).meta.input_tokens == 0
     assert Enum.at(llm_stop_entries, 1).meta.output_tokens == 5
+  end
+
+  test "uses DSL agent name in lifecycle log metadata" do
+    {:ok, agent} = NamedDSLAgent.new(client: %LoggingToolCallClient{})
+
+    {_agent, _response} =
+      BaseAgent.run(agent, %BaseAgentInputSchema{chat_message: "Hello from planner"})
+
+    Logger.flush()
+
+    events = drain_logger_events([])
+
+    llm_stop_entry =
+      Enum.find(events, &(logger_message(&1) == "normandy llm call stop"))
+
+    assert llm_stop_entry.meta.agent == "planner"
+    refute llm_stop_entry.meta.agent == "unnamed_agent"
   end
 
   defp drain_logger_events(events) do

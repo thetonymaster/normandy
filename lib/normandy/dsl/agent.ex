@@ -322,7 +322,8 @@ defmodule Normandy.DSL.Agent do
           client: client,
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
-          max_tokens: @agent_compile_config.max_tokens
+          max_tokens: @agent_compile_config.max_tokens,
+          name: @agent_name
         }
 
         # Apply max_messages if set
