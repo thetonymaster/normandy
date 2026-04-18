@@ -254,6 +254,8 @@ defmodule Normandy.Agents.BaseAgent do
     on_chunk = Keyword.get(opts, :on_chunk)
 
     if stream and on_chunk do
+      metadata = %{model: config.model, agent_name: config.name}
+
       # Convert arity-1 callback to arity-2 if needed
       callback =
         if is_function(on_chunk, 1) do
@@ -265,15 +267,20 @@ defmodule Normandy.Agents.BaseAgent do
           on_chunk
         end
 
-      # Mirror run/2's dispatch: if the agent has tools, drive the
-      # streaming tool loop so tool_use blocks actually execute. Without
-      # this, agents with tools stream back a tool_use event, the tool
-      # never runs, and the user sees an empty assistant message.
-      if has_tools?(config) do
-        stream_with_tools(config, user_input, callback)
-      else
-        stream_response(config, user_input, callback)
-      end
+      with_agent_run_span(config, metadata, fn ->
+        # Mirror run/2's dispatch: if the agent has tools, drive the
+        # streaming tool loop so tool_use blocks actually execute. Without
+        # this, agents with tools stream back a tool_use event, the tool
+        # never runs, and the user sees an empty assistant message.
+        result =
+          if has_tools?(config) do
+            stream_with_tools(config, user_input, callback)
+          else
+            stream_response(config, user_input, callback)
+          end
+
+        {result, metadata}
+      end)
     else
       # Fall back to regular run
       run(config, user_input)
@@ -668,8 +675,31 @@ defmodule Normandy.Agents.BaseAgent do
         [callback: callback]
       end
 
+    llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
+
     # Stream response from LLM
-    case stream_response_from_llm(config, messages, opts) do
+    llm_result =
+      with_llm_call_span(config, llm_metadata, fn ->
+        result = stream_response_from_llm(config, messages, opts)
+
+        stop_metadata =
+          case result do
+            {:ok, final_response} ->
+              tool_calls = extract_tool_calls(final_response) || []
+
+              Map.merge(llm_metadata, %{
+                has_tool_calls: tool_calls != [],
+                tool_call_count: length(tool_calls)
+              })
+
+            {:error, _error} ->
+              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
+          end
+
+        {result, stop_metadata}
+      end)
+
+    case llm_result do
       {:ok, final_response} ->
         # Add response to memory
         updated_memory = AgentMemory.add_message(memory, "assistant", final_response)
@@ -759,6 +789,15 @@ defmodule Normandy.Agents.BaseAgent do
     alias Normandy.Components.ToolResult
     alias Normandy.Tools.Executor
 
+    iteration = config.max_tool_iterations - iterations_left + 1
+    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    log_lifecycle(:debug, "normandy agent iteration",
+      agent: log_agent_name(config),
+      iteration: iteration,
+      pending_tool_calls: pending_tool_call_count(config)
+    )
+
     # Convert history plain maps to Message structs (see stream_response for why).
     history_messages =
       AgentMemory.history(config.memory)
@@ -789,7 +828,28 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     # Stream response from LLM
-    case stream_response_from_llm(config, messages, opts) do
+    llm_result =
+      with_llm_call_span(config, llm_metadata, fn ->
+        result = stream_response_from_llm(config, messages, opts)
+
+        stop_metadata =
+          case result do
+            {:ok, final_response} ->
+              tool_calls = extract_tool_calls(final_response) || []
+
+              Map.merge(llm_metadata, %{
+                has_tool_calls: tool_calls != [],
+                tool_call_count: length(tool_calls)
+              })
+
+            {:error, _error} ->
+              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
+          end
+
+        {result, stop_metadata}
+      end)
+
+    case llm_result do
       {:ok, final_response} ->
         # Check if response contains tool calls
         tool_calls = extract_tool_calls(final_response)
@@ -845,7 +905,15 @@ defmodule Normandy.Agents.BaseAgent do
                           struct(tool, input_with_atom_keys)
                         end
 
-                      case Executor.execute_tool(updated_tool) do
+                      tool_meta = %{tool_name: tool_name, agent_name: config.name}
+
+                      tool_result =
+                        with_tool_execute_span(config, tool_name, tool_meta, fn ->
+                          r = Executor.execute_tool(updated_tool)
+                          {r, Map.put(tool_meta, :status, elem(r, 0))}
+                        end)
+
+                      case tool_result do
                         {:ok, result} ->
                           %ToolResult{
                             tool_call_id: tool_call["id"],
@@ -993,13 +1061,17 @@ defmodule Normandy.Agents.BaseAgent do
         max_iterations: max_run_iterations(config)
       )
 
+      started_at = System.monotonic_time()
+
       try do
         {result, stop_metadata} = fun.()
+        duration_ms = Map.get(stop_metadata, :duration_ms, elapsed_ms(started_at))
 
         log_lifecycle(:info, "normandy agent run stop",
           agent: log_agent_name(config),
           iterations: completed_iterations(result),
-          status: :ok
+          status: :ok,
+          duration_ms: duration_ms
         )
 
         {result, stop_metadata}
@@ -1043,11 +1115,19 @@ defmodule Normandy.Agents.BaseAgent do
         {result, stop_metadata}
       rescue
         error ->
-          log_span_exception("normandy llm call exception", config, :error, error)
+          log_span_exception("normandy llm call exception", config, :error, error,
+            model: config.model,
+            iteration: telemetry_metadata.iteration
+          )
+
           reraise(error, __STACKTRACE__)
       catch
         kind, reason ->
-          log_span_exception("normandy llm call exception", config, kind, reason)
+          log_span_exception("normandy llm call exception", config, kind, reason,
+            model: config.model,
+            iteration: telemetry_metadata.iteration
+          )
+
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
     end)
