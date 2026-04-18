@@ -95,6 +95,38 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Methods: `to_json/1`, `get_schema/1`, `__str__/1`, `__rich__/1`
   - Uses adapter from `:normandy` app config (`:adapter` key, typically Poison)
 
+### Resilience & Error Handling
+
+- **`Normandy.Resilience.Retry`** - Exponential backoff retry with jitter
+  - Integrated into `BaseAgent` for automatic retries on LLM call failures
+  - Configurable max attempts, backoff factor, and delay
+
+- **`Normandy.Resilience.CircuitBreaker`** - Three-state circuit breaker (Closed, Open, Half-Open)
+  - Prevents cascading failures by failing fast when thresholds are reached
+  - Thresholds and timeouts are configurable per agent
+
+### Declarative DSLs
+
+- **`Normandy.DSL.Agent`** - `agent do ... end` macro for defining agents declaratively
+  - Configure background, steps, output_instructions, model, tools, etc.
+  - Generates `new/1` and `run/1-3` functions automatically
+
+- **`Normandy.DSL.Workflow`** - `workflow do ... end` macro for multi-agent workflows
+  - Sequential (`step`), parallel (`parallel`), and race (`race`) execution patterns
+  - Built-in data flow, transformations, and conditional branching
+
+### Observability & Telemetry
+
+- **`Normandy.Agents.BaseAgent`** - Integrated Telemetry and structured logging
+  - Events: `[:normandy, :agent, :run, :start | :stop | :exception]`, etc.
+  - Automatic duration tracking and metadata enrichment (agent name, model, tools)
+  - OpenTelemetry-compatible span context correlation
+
+### Protocol Support
+
+- **`Normandy.MCP.ToolWrapper`** - Interoperate with Model Context Protocol servers
+- **`Normandy.A2A.Server`** - Expose agents for agent-to-agent collaboration via standardized protocols
+
 ## Key Patterns
 
 ### Defining Agent I/O Schemas

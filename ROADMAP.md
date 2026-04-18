@@ -119,30 +119,38 @@ This document tracks the phased implementation of the Normandy AI agent framewor
 - Use cases for each pattern
 - Updated features list and architecture section
 
+### Phase 9: Observability & Logging ✅
+**Status**: Completed - 2026-04-18
+
+**Implemented**:
+- Structured logging for agent, LLM, and tool lifecycle events
+- Telemetry integration for metrics and events
+- OpenTelemetry-friendly logging with span context correlation
+- Duration tracking for all key operations
+- Metadata enrichment with agent names, models, and tool names
+- Error tracking and exception logging for all spans
+
+**Key Modules**:
+- `Normandy.Agents.BaseAgent` - Integrated telemetry and logging
+- `Normandy.Agents.ValidationMiddleware` - Integrated logging for validation
+- `Normandy.Tools.Executor` - Telemetry for tool execution
+
+### Phase 13: Protocol Interoperability (MCP & A2A) ✅
+**Status**: Completed - 2026-04-18
+
+**Implemented**:
+- Model Context Protocol (MCP) support for tool sharing
+- Agent-to-Agent (A2A) protocol for cross-agent collaboration
+- Tool registry wrappers for MCP servers
+- Standardized server implementation for agent exposure
+
+**Key Modules**:
+- `Normandy.MCP.ToolWrapper`
+- `Normandy.MCP.Registry`
+- `Normandy.A2A.Server`
+- `Normandy.A2A.AgentTool`
+
 ## Upcoming Phases 🚀
-
----
-
-### Phase 9: Observability & Logging
-**Status**: Not Started
-
-**Goals**:
-- Structured logging for agent operations
-- Telemetry integration for metrics
-- Tracing for agent execution flows
-- Debug/replay capabilities for conversations
-
-**Key Features**:
-- `Normandy.Observability.Logger` - Structured logging
-- `Normandy.Observability.Telemetry` - Metrics and events
-- `Normandy.Observability.Tracer` - Execution flow tracing
-- `Normandy.Observability.Replay` - Conversation replay/debug
-
-**Integration Points**:
-- `:telemetry` library for events
-- `:logger` metadata for correlation IDs
-- Distributed tracing support (OpenTelemetry)
-- Agent execution timeline visualization
 
 ---
 
@@ -250,7 +258,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 | 8 | ✅ Complete | 380 | 38 | 2025-10-26 |
 | 8.5 | ✅ Complete | 480 (380+100 integration) | 39 | 2025-10-26 |
 | 8.6 | ✅ Complete | 493 (443+56 integration) | 40 | 2025-10-26 |
-| 9 | 📋 Planned | - | - | - |
+| 9 | ✅ Complete | 505+ | ~45 | 2026-04-18 |
+| 13 | ✅ Complete | 505+ | ~50 | 2026-04-18 |
 | 10 | 📋 Planned | - | - | - |
 | 11 | 📋 Planned | - | - | - |
 | 12 | 📋 Planned | - | - | - |
