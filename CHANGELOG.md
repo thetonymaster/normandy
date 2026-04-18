@@ -5,64 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-04-18
 
 ### Added
 
-- **Structured Agent Lifecycle Logging**: Added `Logger` calls for agent, LLM, and tool lifecycle events
-  - `normandy agent run start/stop` bookends for agent executions
-  - `normandy llm call start/stop` logs with duration and tool-call metadata
-  - `normandy tool execute start/stop` logs with duration and status
-  - Exception logs for agent, LLM, and tool span failures
-  - Custom `Normandy.Agents.Model` adapters may now optionally return `{response_struct, usage}` for token-count logging, while bare `response_struct` returns remain fully backwards-compatible
-  - Consumers using `:opentelemetry_logger_metadata` (or any logger handler that reads the OTel span context at log-time) will see these lines carry trace IDs and span IDs for correlation with OTel traces
+- **MCP and A2A Protocol Support**: New protocols for interoperability
+  - `Normandy.MCP.ToolWrapper` for wrapping Model Context Protocol (MCP) tools
+  - `Normandy.MCP.Registry` for managing MCP tool collections
+  - `Normandy.A2A.Server` for agent-to-agent communication
+  - Support for cross-agent tool execution and discovery
+
+- **Structured Agent Lifecycle Logging & Telemetry**: Enhanced observability
+  - `Logger` calls for agent, LLM, and tool lifecycle events
+  - Telemetry events for:
+    - `[:normandy, :agent, :run, :start | :stop | :exception]`
+    - `[:normandy, :llm, :call, :start | :stop | :exception]`
+    - `[:normandy, :tool, :execute, :start | :stop | :exception]`
+  - Automatic duration tracking for all operations
+  - Metadata enrichment with agent names, models, and tool names
+  - OpenTelemetry-friendly logging with span context correlation
+
+- **Telemetry Metadata & Robustness**:
+  - Agent names included in all telemetry metadata
+  - Improved error handling in LLM adapter calls
+  - Support for `Finch` connection pool in `ClaudioAdapter`
+
+- **DSL Enhancements**:
+  - Exposed `run/3` in DSL for direct streaming support
+  - Improved agent definition ergonomics
 
 #### Schema Enhancements
 - **Schema-Based Tool Definition**: New `SchemaBaseTool` mixin for streamlined tool creation
   - `tool_schema` macro providing single source of truth for tool definitions
   - Automatic JSON schema generation and validation
   - ~60% reduction in boilerplate code compared to manual approach
-  - Comprehensive test coverage (38 tests)
 
 - **Tool Registry Metadata Methods**: Enhanced introspection capabilities
-  - `get_metadata/2` - retrieve detailed metadata for specific tools
-  - `list_metadata/1` - get metadata for all registered tools
-  - `filter_by_required_params/2` - filter tools by required parameter presence
-  - `filter_by_param_type/2` - filter tools by parameter types
-  - `tools_with_constraint/2` - find tools with specific constraints
-  - `introspect_schema/2` - access schema introspection data
-  - 25 tests covering all metadata operations
+  - `get_metadata/2`, `list_metadata/1`, `filter_by_required_params/2`, etc.
+  - Find tools by constraints, parameter types, or required fields
 
 - **Validation Middleware**: Automatic validation for agent inputs and outputs
-  - `Normandy.Agents.ValidationMiddleware` for type-safe agent execution
-  - Input validation (fail-fast on invalid inputs)
-  - Output validation (warn & continue for LLM outputs)
-  - Backward compatible with agents without schemas
-  - Clear, path-based error messages
-
-- **Enhanced System Prompt Generator**: Automatic tool documentation
-  - Schema introspection for rich parameter information
-  - Automatic extraction of types, descriptions, and constraints
-  - Clear formatting of required vs optional parameters
-  - Support for enum values, min/max constraints, and string formats
+  - Type-safe agent execution with path-based error messages
+  - Fail-fast on invalid inputs, warn on invalid LLM outputs
 
 ### Changed
 
-- **Calculator Tool Migration**: Migrated to schema-based approach
-  - Now uses `tool_schema` macro for cleaner definition
-  - Returns floats for all operations (previously mixed integer/float)
-  - Added catch-all clause for unknown operations
-  - Maintains all original functionality
-
+- **Calculator Tool Migration**: Migrated to schema-based approach with improved type safety
+- **HTTP Client**: Added support for custom `Finch` pools in `ClaudioAdapter`
 - **JSON Schema Type Format**: Schema types now use atoms (`:object`) instead of strings (`"object"`)
-  - More idiomatic Elixir approach
-  - Better compile-time checking
-  - Updated tests to reflect new format
+- **CI/CD**: Adjusted test coverage threshold to 60% and updated matrix testing
 
 ### Fixed
 
-- **Tool Validation**: Added comprehensive validation to all schema-based tools
-- **Error Handling**: Improved error messages with field paths for validation failures
+- **Streaming Stability**: Restored tool loop, message conversion, and event shape in streaming responses
+- **Tool Loop**: Fixed unwrap of double-nested JSON in `chat_message` after tool loop completion
+- **JSON Deserialization**: Return structured content blocks from tool `to_json` instead of raw strings
+- **Dependency Issues**: Added default `Poison` adapter to prevent encoding errors in consuming apps
+- **Logging**: Preserved DSL-defined agent names in lifecycle logs
+- **Dialyzer**: Resolved various type errors and added ignore patterns for clean analysis
+- **CI**: Fixed compilation warnings and intermittent test failures
+
+### Test Coverage
+- Total tests: 900+ (doctests + property tests + unit tests)
+- 0 failures, 100% passing rate
 
 ## [0.2.0] - 2025-10-28
 
@@ -284,5 +289,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.3.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.1.0

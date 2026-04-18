@@ -6,6 +6,8 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 
 - 🧠 **Agent System** - Build conversational AI agents with memory and state management
 - 🤝 **Multi-Agent Coordination** - Reactive patterns (race/all/some) and agent pooling for concurrent workflows
+- 🔌 **Protocol Support** - Interoperate via Model Context Protocol (MCP) and Agent-to-Agent (A2A) protocols
+- 📊 **Observability** - Structured lifecycle logging and Telemetry events for monitoring and tracing
 - 📋 **Schema DSL** - Define typed, validated data structures with JSON Schema generation
   - Virtual/computed fields with custom transformations
   - Composition (anyOf, oneOf, allOf) for polymorphic types
@@ -21,7 +23,7 @@ A powerful Elixir library for building AI agents with structured schemas, memory
 - 💾 **Memory Management** - Track conversation history with turn-based organization
 - ✅ **Validation** - Runtime data validation with format checking (email, UUID, etc.)
 - 🎯 **Type Safety** - Comprehensive type system with Dialyzer support
-- 🧪 **Well Tested** - 490+ tests including property-based testing
+- 🧪 **Well Tested** - 900+ tests including property-based testing
 
 ## Installation
 
@@ -30,7 +32,7 @@ Add `normandy` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:normandy, "~> 0.1.0"}
+    {:normandy, "~> 0.3.0"}
   ]
 end
 ```
