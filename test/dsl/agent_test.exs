@@ -110,6 +110,43 @@ defmodule Normandy.DSL.AgentTest do
       assert agent.max_tokens == 1024
     end
 
+    test "accepts top-level name override" do
+      client = %NormandyTest.Support.ModelMockup{}
+
+      {:ok, agent} = StructuredAgent.new(client: client, name: "foo")
+
+      assert agent.name == "foo"
+    end
+
+    test "explicit override wins over top-level option on conflict" do
+      client = %NormandyTest.Support.ModelMockup{}
+
+      {:ok, agent} =
+        StructuredAgent.new(
+          client: client,
+          name: "implicit",
+          override: [name: "explicit"]
+        )
+
+      assert agent.name == "explicit"
+    end
+
+    test "uses declared DSL name when no runtime name override is provided" do
+      client = %NormandyTest.Support.ModelMockup{}
+
+      {:ok, agent} = TestAgent.new(client: client)
+
+      assert agent.name == "Test Agent"
+    end
+
+    test "keeps name nil when no DSL name is declared and no runtime override is provided" do
+      client = %NormandyTest.Support.ModelMockup{}
+
+      {:ok, agent} = StructuredAgent.new(client: client)
+
+      assert agent.name == nil
+    end
+
     test "raises when client is missing" do
       assert_raise KeyError, fn ->
         TestAgent.new([])

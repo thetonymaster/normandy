@@ -240,7 +240,9 @@ defmodule Normandy.DSL.Agent do
       """
       def new(opts) do
         client = Keyword.fetch!(opts, :client)
-        overrides = Keyword.get(opts, :override, [])
+        explicit = Keyword.get(opts, :override, [])
+        implicit = Keyword.drop(opts, [:client, :override])
+        overrides = Keyword.merge(implicit, explicit)
 
         config = build_config(client, overrides)
         agent = BaseAgent.init(config)
