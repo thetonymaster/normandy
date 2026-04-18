@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Structured Agent Lifecycle Logging**: Added `Logger` calls for agent, LLM, and tool lifecycle events
+  - `normandy agent run start/stop` bookends for agent executions
+  - `normandy llm call start/stop` logs with duration and tool-call metadata
+  - `normandy tool execute start/stop` logs with duration and status
+  - Exception logs for agent, LLM, and tool span failures
+  - Custom `Normandy.Agents.Model` adapters may now optionally return `{response_struct, usage}` for token-count logging, while bare `response_struct` returns remain fully backwards-compatible
+  - Consumers using `:opentelemetry_logger_metadata` (or any logger handler that reads the OTel span context at log-time) will see these lines carry trace IDs and span IDs for correlation with OTel traces
+
 #### Schema Enhancements
 - **Schema-Based Tool Definition**: New `SchemaBaseTool` mixin for streamlined tool creation
   - `tool_schema` macro providing single source of truth for tool definitions

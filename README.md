@@ -1057,7 +1057,7 @@ end
 
 ## Testing
 
-Run the test suite:
+Run the default test suite (integration tests are skipped by default):
 
 ```bash
 mix test
@@ -1067,6 +1067,20 @@ Run with coverage:
 
 ```bash
 mix test --cover
+```
+
+Run integration tests explicitly:
+
+```bash
+export API_KEY="your-api-key-here"
+mix test --only integration --only normandy_integration
+```
+
+Run the full suite:
+
+```bash
+export API_KEY="your-api-key-here"
+mix test --include integration --include normandy_integration
 ```
 
 Run Dialyzer for type checking:

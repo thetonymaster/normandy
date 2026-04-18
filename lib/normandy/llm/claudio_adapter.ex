@@ -119,7 +119,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
             tools: tools
           }
 
-          convert_response_to_normandy(response, response_model, context)
+          normalized_response = convert_response_to_normandy(response, response_model, context)
+          {normalized_response, extract_usage(response)}
 
         {:error, error} ->
           handle_error(error, response_model)
@@ -593,6 +594,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
           schema
       end
     end
+
+    defp extract_usage(response) when is_map(response) do
+      Map.get(response, :usage) || Map.get(response, "usage")
+    end
+
+    defp extract_usage(_response), do: nil
 
     defp handle_error(error, response_model) do
       # Log error and return empty response_model
