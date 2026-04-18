@@ -1283,8 +1283,16 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  defp log_agent_name(%BaseAgentConfig{name: name}) when is_binary(name) do
+    case String.trim(name) do
+      "" -> "unnamed_agent"
+      trimmed -> trimmed
+    end
+  end
+
   defp log_agent_name(%BaseAgentConfig{name: nil}), do: "unnamed_agent"
-  defp log_agent_name(%BaseAgentConfig{name: name}), do: name
+  defp log_agent_name(%BaseAgentConfig{name: name}) when is_atom(name), do: Atom.to_string(name)
+  defp log_agent_name(%BaseAgentConfig{}), do: "unnamed_agent"
 
   @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
   def get_context_provider(
