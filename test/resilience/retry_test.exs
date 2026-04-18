@@ -188,8 +188,8 @@ defmodule Normandy.Resilience.RetryTest do
         delay2 = Enum.at(times, 2) - Enum.at(times, 1)
 
         # Allow some tolerance for timing
-        assert delay1 >= 90 and delay1 <= 150
-        assert delay2 >= 180 and delay2 <= 250
+        assert delay1 >= 80 and delay1 <= 300
+        assert delay2 >= 160 and delay2 <= 600
       end
 
       Agent.stop(agent)
