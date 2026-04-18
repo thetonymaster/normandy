@@ -209,8 +209,8 @@ defmodule Normandy.Agents.BaseAgent do
       case protected_call.() do
         {:ok, {:ok, response}} -> normalize_model_response(response)
         {:ok, response} -> normalize_model_response(response)
-        {:error, {_reason, _attempts, _errors}} -> {response_model, nil}
-        {:error, _reason} -> {response_model, nil}
+        {:error, {reason, _attempts, _errors}} -> raise_llm_call_error(reason)
+        {:error, reason} -> raise_llm_call_error(reason)
       end
 
     result
@@ -1143,7 +1143,30 @@ defmodule Normandy.Agents.BaseAgent do
   defp usage_value(nil, _key), do: nil
 
   defp usage_value(usage, key) do
-    Map.get(usage, key) || Map.get(usage, Atom.to_string(key))
+    case Map.fetch(usage, key) do
+      {:ok, value} -> value
+      :error -> Map.get(usage, Atom.to_string(key))
+    end
+  end
+
+  defp raise_llm_call_error({:exception, error, _stacktrace}) do
+    if Kernel.is_exception(error) do
+      raise RuntimeError, "LLM call failed: #{Exception.message(error)}"
+    else
+      raise RuntimeError, "LLM call failed: #{inspect({:exception, error})}"
+    end
+  end
+
+  defp raise_llm_call_error({:exception, error}) do
+    if Kernel.is_exception(error) do
+      raise RuntimeError, "LLM call failed: #{Exception.message(error)}"
+    else
+      raise RuntimeError, "LLM call failed: #{inspect({:exception, error})}"
+    end
+  end
+
+  defp raise_llm_call_error(reason) do
+    raise RuntimeError, "LLM call failed: #{inspect(reason)}"
   end
 
   defp pending_tool_call_count(%BaseAgentConfig{memory: %{history: [latest | _]}})

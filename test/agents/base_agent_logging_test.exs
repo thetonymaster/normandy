@@ -1,14 +1,14 @@
 defmodule NormandyTest.Agents.BaseAgentLoggingTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, ToolCallResponse}
   alias Normandy.Components.ToolCall
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
 
   require Logger
+
+  @handler_id :normandy_test_logger_handler
 
   defmodule LoggingToolCallClient do
     use Normandy.Schema
@@ -44,13 +44,13 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
                    input: %{operation: "add", a: 5, b: 3}
                  }
                ]
-             }, %{"input_tokens" => 11, "output_tokens" => 7}}
+             }, %{"input_tokens" => 11, "output_tokens" => 0}}
 
           tool_message_count > 0 ->
             {%ToolCallResponse{
                content: config.final_response,
                tool_calls: []
-             }, %{"input_tokens" => 13, "output_tokens" => 5}}
+             }, %{"input_tokens" => 0, "output_tokens" => 5}}
 
           true ->
             response_model
@@ -59,28 +59,24 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
     end
   end
 
-  setup do
-    console_config = Application.get_env(:logger, :console, [])
+  defmodule MetadataHandler do
+    def log(event, %{config: %{parent: parent}}) do
+      send(parent, {:logger_event, event})
+      :ok
+    end
+  end
 
-    Logger.configure_backend(:console,
-      format: "$message $metadata\n",
-      metadata: [
-        :agent,
-        :iteration,
-        :max_iterations,
-        :iterations,
-        :model,
-        :tool,
-        :duration_ms,
-        :status,
-        :has_tool_calls,
-        :input_tokens,
-        :output_tokens
-      ]
-    )
+  setup do
+    :logger.remove_handler(@handler_id)
+
+    :ok =
+      :logger.add_handler(@handler_id, MetadataHandler, %{
+        level: :debug,
+        config: %{parent: self()}
+      })
 
     on_exit(fn ->
-      Logger.configure_backend(:console, console_config)
+      :logger.remove_handler(@handler_id)
     end)
 
     registry = Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
@@ -99,22 +95,44 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
   end
 
   test "emits structured lifecycle logs for agent, llm, and tool spans", %{agent: agent} do
-    log =
-      capture_log(fn ->
-        {_agent, response} =
-          BaseAgent.run(agent, %BaseAgentInputSchema{chat_message: "What is 5 + 3?"})
+    {_agent, response} =
+      BaseAgent.run(agent, %BaseAgentInputSchema{chat_message: "What is 5 + 3?"})
 
-        assert response.chat_message == "Task completed"
-        Logger.flush()
-      end)
+    assert response.chat_message == "Task completed"
+    Logger.flush()
 
-    assert log =~ "normandy agent run start"
-    assert log =~ "normandy llm call start"
-    assert log =~ "normandy tool execute start"
-    assert log =~ "normandy tool execute stop"
-    assert log =~ "normandy agent run stop"
+    events = drain_logger_events([])
 
-    assert length(Regex.scan(~r/normandy llm call start/, log)) == 2
-    assert length(Regex.scan(~r/normandy llm call stop/, log)) == 2
+    messages = Enum.map(events, &logger_message/1)
+
+    assert "normandy agent run start" in messages
+    assert "normandy llm call start" in messages
+    assert "normandy tool execute start" in messages
+    assert "normandy tool execute stop" in messages
+    assert "normandy agent run stop" in messages
+
+    assert Enum.count(messages, &(&1 == "normandy llm call start")) == 2
+    assert Enum.count(messages, &(&1 == "normandy llm call stop")) == 2
+
+    llm_stop_entries =
+      Enum.filter(events, &(logger_message(&1) == "normandy llm call stop"))
+
+    assert Enum.at(llm_stop_entries, 0).meta.input_tokens == 11
+    assert Enum.at(llm_stop_entries, 0).meta.output_tokens == 0
+
+    assert Enum.at(llm_stop_entries, 1).meta.input_tokens == 0
+    assert Enum.at(llm_stop_entries, 1).meta.output_tokens == 5
   end
+
+  defp drain_logger_events(events) do
+    receive do
+      {:logger_event, event} ->
+        drain_logger_events([event | events])
+    after
+      50 -> Enum.reverse(events)
+    end
+  end
+
+  defp logger_message(%{msg: {:string, message}}), do: IO.iodata_to_binary(message)
+  defp logger_message(%{msg: message}), do: inspect(message)
 end
