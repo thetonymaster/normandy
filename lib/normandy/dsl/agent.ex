@@ -227,6 +227,18 @@ defmodule Normandy.DSL.Agent do
 
       - `:client` - LLM client (required)
       - `:override` - Keyword list to override agent defaults
+      - Top-level override-like keys (for example `name:`, `temperature:`) are also
+        accepted and treated as overrides.
+
+      The implementation gathers explicit overrides from `:override` and implicit
+      override-like keys from top-level options, then merges them:
+
+          explicit = Keyword.get(opts, :override, [])
+          implicit = Keyword.drop(opts, [:client, :override])
+          overrides = Keyword.merge(implicit, explicit)
+
+      This allows callers to pass overrides either under `:override` or directly
+      at the top level. When both are present for the same key, `:override` wins.
 
       ## Examples
 
@@ -237,6 +249,9 @@ defmodule Normandy.DSL.Agent do
             client: my_client,
             override: [temperature: 0.9]
           )
+
+          # Top-level overrides are also supported
+          {:ok, agent} = MyAgent.new(client: my_client, name: "planner")
       """
       def new(opts) do
         client = Keyword.fetch!(opts, :client)
