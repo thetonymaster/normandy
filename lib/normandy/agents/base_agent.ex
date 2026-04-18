@@ -1149,9 +1149,9 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  defp raise_llm_call_error({:exception, error, _stacktrace}) do
+  defp raise_llm_call_error({:exception, error, stacktrace}) do
     if Kernel.is_exception(error) do
-      raise RuntimeError, "LLM call failed: #{Exception.message(error)}"
+      reraise(error, stacktrace)
     else
       raise RuntimeError, "LLM call failed: #{inspect({:exception, error})}"
     end
