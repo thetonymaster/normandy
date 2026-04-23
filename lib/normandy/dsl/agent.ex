@@ -363,7 +363,9 @@ defmodule Normandy.DSL.Agent do
           steps: @agent_compile_config.steps,
           output_instructions: @agent_compile_config.output_instructions,
           tools: @agent_compile_config.tools,
-          max_messages: @agent_compile_config.max_messages
+          max_messages: @agent_compile_config.max_messages,
+          input_guardrails: @agent_compile_config.input_guardrails,
+          output_guardrails: @agent_compile_config.output_guardrails
         }
       end
 

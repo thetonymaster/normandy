@@ -81,5 +81,23 @@ defmodule Normandy.DSL.AgentGuardrailsTest do
       assert agent.input_guardrails ==
                [{ForbiddenSubstrings, terms: ["nope"], field: :chat_message}]
     end
+
+    test "config/0 exposes guardrails for introspection" do
+      config = GuardedAgent.config()
+
+      assert config.input_guardrails == [
+               {MaxLength, limit: 100, field: :chat_message},
+               {ForbiddenSubstrings, terms: ["ignore previous"], field: :chat_message}
+             ]
+
+      assert config.output_guardrails == [{RequiredFields, fields: [:chat_message]}]
+    end
+
+    test "config/0 exposes empty guardrail lists when undefined" do
+      config = PlainAgent.config()
+
+      assert config.input_guardrails == []
+      assert config.output_guardrails == []
+    end
   end
 end
