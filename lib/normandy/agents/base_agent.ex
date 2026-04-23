@@ -40,16 +40,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   @spec init(config_input()) :: BaseAgentConfig.t()
   def init(config) do
-    # Initialize circuit breaker if enabled
-    circuit_breaker =
-      if Map.get(config, :enable_circuit_breaker, false) do
-        cb_opts = Map.get(config, :circuit_breaker_options, [])
-        {:ok, cb} = Normandy.Resilience.CircuitBreaker.start_link(cb_opts)
-        cb
-      else
-        nil
-      end
-
+    # Validate guardrail config BEFORE starting the circuit breaker process;
+    # otherwise a bad config would leak a linked breaker before we raise.
     input_guardrails = Map.get(config, :input_guardrails, [])
     output_guardrails = Map.get(config, :output_guardrails, [])
 
@@ -62,6 +54,16 @@ defmodule Normandy.Agents.BaseAgent do
       raise ArgumentError,
             "output_guardrails must be a list of guard specs, got: #{inspect(output_guardrails)}"
     end
+
+    # Initialize circuit breaker if enabled
+    circuit_breaker =
+      if Map.get(config, :enable_circuit_breaker, false) do
+        cb_opts = Map.get(config, :circuit_breaker_options, [])
+        {:ok, cb} = Normandy.Resilience.CircuitBreaker.start_link(cb_opts)
+        cb
+      else
+        nil
+      end
 
     %BaseAgentConfig{
       input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
@@ -446,12 +448,28 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Private function to handle the tool execution loop
   defp execute_tool_loop(config, iterations_left) when iterations_left <= 0 do
-    # Max iterations reached, return current state
+    alias Normandy.Agents.ValidationMiddleware
+
+    # Max iterations reached, return current state. Validate the fallback
+    # output the same way the normal final-response path does so that output
+    # guardrails observe a consistent, schema-cast shape on both branches.
     response = get_response(config, config.output_schema)
-    run_output_guardrails(config, response)
-    memory = AgentMemory.add_message(config.memory, "assistant", response)
+
+    validated_response =
+      case ValidationMiddleware.validate_output(config, response) do
+        {:ok, validated} ->
+          validated || response
+
+        {:error, errors} ->
+          error_msg = ValidationMiddleware.error_message(errors)
+          IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(response)}")
+          response
+      end
+
+    run_output_guardrails(config, validated_response)
+    memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
     config = Map.put(config, :memory, memory)
-    {config, response}
+    {config, validated_response}
   end
 
   defp execute_tool_loop(config, iterations_left) do
@@ -652,8 +670,8 @@ defmodule Normandy.Agents.BaseAgent do
           {BaseAgentConfig.t(), map()}
   def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
     # Streaming paths do not schema-validate input (unlike run_without_tools/run_with_tools),
-    # so guardrails run on raw user_input here. Guardrails that target struct fields via `:field`
-    # should match the schema's field names — or use a field-less guard that inspects the whole value.
+    # so guardrails run on the raw user_input shape here. Guards using `:field` must name
+    # keys present on the raw input — or use a field-less guard that inspects the whole value.
     if user_input != nil, do: run_input_guardrails!(config, user_input)
 
     # Add user input to memory if provided

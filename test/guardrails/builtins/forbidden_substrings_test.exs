@@ -75,5 +75,11 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstringsTest do
         ForbiddenSubstrings.check(42, terms: ["x"])
       end
     end
+
+    test "raises when :field is set but value is not a map or struct" do
+      assert_raise ArgumentError, ~r/expected a map or struct when using :field/, fn ->
+        ForbiddenSubstrings.check("raw string", terms: ["block"], field: :msg)
+      end
+    end
   end
 end

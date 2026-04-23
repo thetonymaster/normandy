@@ -70,7 +70,11 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
 
   defp extract(value, nil), do: value
   defp extract(value, field) when is_map(value), do: Map.get(value, field)
-  defp extract(_value, _field), do: nil
+
+  defp extract(value, field) do
+    raise ArgumentError,
+          "#{inspect(__MODULE__)} expected a map or struct when using :field #{inspect(field)}, got: #{inspect(value)}"
+  end
 
   defp field_suffix(nil), do: ""
   defp field_suffix(field), do: " at field #{inspect(field)}"

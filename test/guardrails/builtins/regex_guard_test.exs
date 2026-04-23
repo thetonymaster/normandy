@@ -78,5 +78,11 @@ defmodule Normandy.Guardrails.Builtins.RegexGuardTest do
         RegexGuard.check("x", patterns: [~r/x/], mode: :other)
       end
     end
+
+    test "raises when :field is set but value is not a map or struct" do
+      assert_raise ArgumentError, ~r/expected a map or struct when using :field/, fn ->
+        RegexGuard.check("raw string", patterns: [~r/x/], field: :msg)
+      end
+    end
   end
 end
