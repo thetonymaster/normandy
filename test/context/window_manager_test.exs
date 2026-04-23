@@ -89,6 +89,67 @@ defmodule Normandy.Context.WindowManagerTest do
       tokens = WindowManager.estimate_message_content_tokens(nil)
       assert tokens == 0
     end
+
+    test "estimates tokens for a list of multimodal content blocks" do
+      alias Normandy.Components.ContentBlock.Document
+      alias Normandy.Components.ContentBlock.Image
+      alias Normandy.Components.ContentBlock.Text
+
+      # Image-heavy list must NOT report 0 — that would silently let
+      # image-heavy conversations overflow the context window.
+      list = [
+        Image.new_base64("DATA", "image/png"),
+        Text.new("What's in this image?")
+      ]
+
+      assert WindowManager.estimate_message_content_tokens(list) > 1000
+
+      # Each image block contributes a conservative fixed estimate.
+      assert WindowManager.estimate_message_content_tokens([
+               Image.new_base64("A", "image/jpeg"),
+               Image.new_base64("B", "image/jpeg"),
+               Text.new("compare")
+             ]) >
+               WindowManager.estimate_message_content_tokens([
+                 Image.new_base64("A", "image/jpeg"),
+                 Text.new("compare")
+               ])
+
+      # Document blocks carry their own conservative fixed estimate.
+      assert WindowManager.estimate_message_content_tokens([
+               Document.new_file("file_x"),
+               Text.new("summarize")
+             ]) > 1000
+    end
+
+    test "estimates single ContentBlock struct via its heuristic (not is_map JSON fallback)" do
+      alias Normandy.Components.ContentBlock.Document
+      alias Normandy.Components.ContentBlock.Image
+
+      # A standalone single-image message must use the ~1600 heuristic, not
+      # the JSON-size fallback which would undercount/vary by data length.
+      # Anchor the assertion by comparing against a tiny-data image: if
+      # we were JSON-encoding the struct, small data → tiny estimate.
+      img = Image.new_base64("x", "image/png")
+      assert WindowManager.estimate_message_content_tokens(img) >= 1600
+
+      doc = Document.new_file("f")
+      assert WindowManager.estimate_message_content_tokens(doc) >= 3000
+    end
+
+    test "estimates tokens for pre-shaped caller block maps" do
+      # A raw Anthropic-shape map (e.g. with cache_control) should still
+      # contribute a non-zero estimate via JSON fallback.
+      list = [
+        %{
+          "type" => "image",
+          "source" => %{"type" => "base64", "media_type" => "image/png", "data" => "DDD"}
+        },
+        %{"type" => "text", "text" => "hi"}
+      ]
+
+      assert WindowManager.estimate_message_content_tokens(list) > 0
+    end
   end
 
   describe "estimate_conversation_tokens/1" do

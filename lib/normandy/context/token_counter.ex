@@ -170,7 +170,25 @@ defmodule Normandy.Context.TokenCounter do
     Poison.encode!(content)
   end
 
+  defp format_content(content) when is_list(content) do
+    # Multimodal content — convert each block to its Anthropic-shape map
+    # so the Claudio `count_tokens` endpoint sees the real payload rather
+    # than an empty string.
+    Enum.map(content, &block_to_claudio_map/1)
+  end
+
   defp format_content(_), do: ""
+
+  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Text{} = b),
+    do: Normandy.Components.ContentBlock.Text.to_claudio(b)
+
+  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Image{} = b),
+    do: Normandy.Components.ContentBlock.Image.to_claudio(b)
+
+  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Document{} = b),
+    do: Normandy.Components.ContentBlock.Document.to_claudio(b)
+
+  defp block_to_claudio_map(%{} = raw), do: raw
 
   defp get_system_prompt(agent) do
     # Try to extract system prompt from agent's prompt_specification or memory
@@ -211,5 +229,25 @@ defmodule Normandy.Context.TokenCounter do
     |> get_content_preview()
   end
 
+  defp get_content_preview(content) when is_list(content) do
+    # Build a short textual summary of multimodal blocks so the debug
+    # view in `count_detailed/2` doesn't silently blank out.
+    parts =
+      Enum.map(content, fn
+        %Normandy.Components.ContentBlock.Text{text: t} -> truncate(t, 40)
+        %Normandy.Components.ContentBlock.Image{} -> "[image]"
+        %Normandy.Components.ContentBlock.Document{} -> "[document]"
+        %{"type" => "text", "text" => t} when is_binary(t) -> truncate(t, 40)
+        %{"type" => type} -> "[#{type}]"
+        _ -> "[block]"
+      end)
+
+    get_content_preview(Enum.join(parts, " "))
+  end
+
   defp get_content_preview(_), do: ""
+
+  defp truncate(s, n) when is_binary(s) do
+    if String.length(s) > n, do: String.slice(s, 0, n - 3) <> "...", else: s
+  end
 end

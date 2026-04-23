@@ -69,6 +69,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     """
 
     alias Normandy.Components.Message
+    alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
+    alias Normandy.Components.ContentBlock.Image, as: ImageBlock
+    alias Normandy.Components.ContentBlock.Text, as: TextBlock
 
     @doc """
     Legacy completion function (not used with Claudio).
@@ -370,7 +373,24 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end)
     end
 
-    defp add_single_message(request, %Message{role: "system", content: content}, enable_caching) do
+    @doc false
+    # Public (not `defp`) so tests can exercise the dispatch branches
+    # directly without round-tripping through `converse/7` and a live
+    # Claudio HTTP client. Not part of the adapter's supported surface —
+    # callers should go through `Normandy.Agents.Model.converse/7`.
+    # List-form system prompts: convert ContentBlock structs to Anthropic
+    # wire shape. Caching-with-list is deliberately not supported here —
+    # `set_system_with_cache/2` only wraps strings; callers who need
+    # caching on multimodal system prompts can hand-build blocks with
+    # `cache_control` and pass them as a list.
+    def add_single_message(request, %Message{role: "system", content: content}, _enable_caching)
+        when is_list(content) do
+      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
+      Claudio.Messages.Request.set_system(request, raw)
+    end
+
+    def add_single_message(request, %Message{role: "system", content: content}, enable_caching)
+        when is_binary(content) do
       if enable_caching do
         # Use caching for system prompts (up to 90% cost reduction)
         Claudio.Messages.Request.set_system_with_cache(request, content)
@@ -379,23 +399,144 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    defp add_single_message(request, %Message{role: role, content: content}, _enable_caching)
-         when role in ["user", "assistant"] do
+    def add_single_message(
+          request,
+          %Message{role: role, content: content},
+          _enable_caching
+        )
+        when role in ["user", "assistant"] and is_list(content) do
+      ensure_non_empty_content!(content)
+      role_atom = String.to_existing_atom(role)
+      dispatch_multimodal(request, role_atom, content)
+    end
+
+    # Single ContentBlock struct as content — treat as a one-element list
+    # so the wire shape is symmetric with `content: [block]`. Without this,
+    # a caller who sets `content: %Image{...}` ships a raw struct to
+    # Claudio and the request is malformed at JSON-encode time.
+    def add_single_message(
+          request,
+          %Message{role: role, content: %block_mod{} = block},
+          _enable_caching
+        )
+        when role in ["user", "assistant"] and
+               block_mod in [TextBlock, ImageBlock, DocumentBlock] do
+      role_atom = String.to_existing_atom(role)
+      Claudio.Messages.Request.add_message(request, role_atom, [block_to_claudio(block)])
+    end
+
+    def add_single_message(request, %Message{role: role, content: content}, _enable_caching)
+        when role in ["user", "assistant"] do
       role_atom = String.to_existing_atom(role)
       Claudio.Messages.Request.add_message(request, role_atom, content)
     end
 
-    defp add_single_message(
-           request,
-           %Message{role: "tool", content: content},
-           _enable_caching
-         ) do
+    # List-form tool content: convert ContentBlock structs to Anthropic
+    # wire shape. Pre-shaped maps (e.g. from BaseIOSchema.to_json/1) pass
+    # through via the `%{} = raw when not is_struct` branch of
+    # block_to_claudio/1, preserving the pre-multimodal tool_result path.
+    def add_single_message(
+          request,
+          %Message{role: "tool", content: content},
+          _enable_caching
+        )
+        when is_list(content) do
+      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
+      Claudio.Messages.Request.add_message(request, :user, raw)
+    end
+
+    def add_single_message(
+          request,
+          %Message{role: "tool", content: content},
+          _enable_caching
+        ) do
       # Tool results are serialized via BaseIOSchema protocol
       # They come as content blocks, send as user message
       Claudio.Messages.Request.add_message(request, :user, content)
     end
 
-    defp add_single_message(request, _msg, _enable_caching), do: request
+    # Caller typos and unsupported roles (e.g. OpenAI's "function") would
+    # otherwise silently disappear from the request — the model gets a
+    # degraded conversation with no feedback loop. Raise at the boundary.
+    def add_single_message(
+          _request,
+          %Message{role: role, turn_id: turn_id},
+          _enable_caching
+        )
+        when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: unrecognized message role #{inspect(role)} " <>
+              "(turn_id=#{inspect(turn_id)}). Expected one of: " <>
+              ~s("system", "user", "assistant", "tool".)
+    end
+
+    def add_single_message(request, _msg, _enable_caching), do: request
+
+    # Shared non-empty-list guard — called from every list branch of
+    # `add_single_message/3` so no role (system/user/assistant/tool) can
+    # ship `"content": []` to the provider (Anthropic rejects it). Single
+    # source of truth; raising here beats an opaque 400 downstream.
+    defp ensure_non_empty_content!([]) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: message content list must be non-empty; " <>
+              "use a plain string for simple text content instead."
+    end
+
+    defp ensure_non_empty_content!(list) when is_list(list), do: list
+
+    # Opportunistic dispatch: when a content list exactly matches a shape
+    # covered by one of Claudio's named helpers, use the helper so intent
+    # is preserved in the request builder. Any other shape (multi-block,
+    # reversed order, image-alone, etc.) falls through to the raw-list
+    # path, which Claudio's `add_message/3` accepts natively. Empty-list
+    # is rejected at every list-branch entry via `ensure_non_empty_content!/1`,
+    # so the clauses below never see `[]`.
+    defp dispatch_multimodal(request, role, [
+           %ImageBlock{source: :base64, data: data, media_type: media_type},
+           %TextBlock{text: text}
+         ])
+         when is_binary(data) and is_binary(media_type) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
+    end
+
+    defp dispatch_multimodal(request, role, [
+           %ImageBlock{source: :url, url: url},
+           %TextBlock{text: text}
+         ])
+         when is_binary(url) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
+    end
+
+    defp dispatch_multimodal(request, role, [
+           %DocumentBlock{source: :file_id, file_id: file_id},
+           %TextBlock{text: text}
+         ])
+         when is_binary(file_id) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
+    end
+
+    defp dispatch_multimodal(request, role, blocks) when is_list(blocks) do
+      raw = Enum.map(blocks, &block_to_claudio/1)
+      Claudio.Messages.Request.add_message(request, role, raw)
+    end
+
+    defp block_to_claudio(%TextBlock{} = b), do: TextBlock.to_claudio(b)
+    defp block_to_claudio(%ImageBlock{} = b), do: ImageBlock.to_claudio(b)
+    defp block_to_claudio(%DocumentBlock{} = b), do: DocumentBlock.to_claudio(b)
+    # Pass through any caller-provided pre-shaped block map (e.g. when a
+    # caller hand-builds an Anthropic block for a feature Normandy doesn't
+    # model yet, like `cache_control`). Plain maps only — structs (which
+    # are maps with `__struct__`) must match an explicit clause above so
+    # unknown struct kinds fail loudly here rather than shipping malformed
+    # wire data to Anthropic.
+    defp block_to_claudio(%{} = raw) when not is_struct(raw), do: raw
+
+    defp block_to_claudio(other) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: unsupported content block #{inspect(other)}. " <>
+              "Expected a Normandy.Components.ContentBlock.* struct or a " <>
+              "pre-shaped Anthropic block map."
+    end
 
     defp add_tools(request, [], _enable_caching), do: request
 

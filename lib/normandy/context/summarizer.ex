@@ -163,6 +163,23 @@ defmodule Normandy.Context.Summarizer do
     end
   end
 
+  defp extract_content(content) when is_list(content) do
+    # Multimodal content — join text blocks for the summary transcript
+    # and emit a short placeholder for non-text blocks so summaries
+    # don't silently drop images/documents from the context.
+    content
+    |> Enum.map(fn
+      %Normandy.Components.ContentBlock.Text{text: t} -> t
+      %Normandy.Components.ContentBlock.Image{} -> "[image]"
+      %Normandy.Components.ContentBlock.Document{} -> "[document]"
+      %{"type" => "text", "text" => t} when is_binary(t) -> t
+      %{"type" => type} -> "[#{type}]"
+      _ -> ""
+    end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(" ")
+  end
+
   defp extract_content(_), do: ""
 
   defp get_model(agent, opts) do
