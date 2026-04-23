@@ -72,6 +72,9 @@ jobs:
     runs-on: ubuntu-latest
     # Only run integration tests if unit tests pass
     needs: test
+    # Only run on pushes to main — integration tests hit the real Anthropic API
+    # and saturate a 50 RPM org limit; PR branches would thrash that quota.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
