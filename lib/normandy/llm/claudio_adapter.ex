@@ -385,7 +385,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # `cache_control` and pass them as a list.
     def add_single_message(request, %Message{role: "system", content: content}, _enable_caching)
         when is_list(content) do
-      raw = Enum.map(content, &block_to_claudio/1)
+      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
       Claudio.Messages.Request.set_system(request, raw)
     end
 
@@ -405,6 +405,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           _enable_caching
         )
         when role in ["user", "assistant"] and is_list(content) do
+      ensure_non_empty_content!(content)
       role_atom = String.to_existing_atom(role)
       dispatch_multimodal(request, role_atom, content)
     end
@@ -440,7 +441,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           _enable_caching
         )
         when is_list(content) do
-      raw = Enum.map(content, &block_to_claudio/1)
+      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
       Claudio.Messages.Request.add_message(request, :user, raw)
     end
 
@@ -456,20 +457,25 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     def add_single_message(request, _msg, _enable_caching), do: request
 
-    # Opportunistic dispatch: when a content list exactly matches a shape
-    # covered by one of Claudio's named helpers, use the helper so intent
-    # is preserved in the request builder. Any other shape (multi-block,
-    # reversed order, image-alone, etc.) falls through to the raw-list
-    # path, which Claudio's `add_message/3` accepts natively.
-
-    # Empty list would ship `"content": []` which the Anthropic API rejects —
-    # fail at the Normandy boundary with a clear error instead.
-    defp dispatch_multimodal(_request, _role, []) do
+    # Shared non-empty-list guard — called from every list branch of
+    # `add_single_message/3` so no role (system/user/assistant/tool) can
+    # ship `"content": []` to the provider (Anthropic rejects it). Single
+    # source of truth; raising here beats an opaque 400 downstream.
+    defp ensure_non_empty_content!([]) do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: message content list must be non-empty; " <>
               "use a plain string for simple text content instead."
     end
 
+    defp ensure_non_empty_content!(list) when is_list(list), do: list
+
+    # Opportunistic dispatch: when a content list exactly matches a shape
+    # covered by one of Claudio's named helpers, use the helper so intent
+    # is preserved in the request builder. Any other shape (multi-block,
+    # reversed order, image-alone, etc.) falls through to the raw-list
+    # path, which Claudio's `add_message/3` accepts natively. Empty-list
+    # is rejected at every list-branch entry via `ensure_non_empty_content!/1`,
+    # so the clauses below never see `[]`.
     defp dispatch_multimodal(request, role, [
            %ImageBlock{source: :base64, data: data, media_type: media_type},
            %TextBlock{text: text}

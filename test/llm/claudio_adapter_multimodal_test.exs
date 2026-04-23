@@ -336,8 +336,23 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert_raise ArgumentError, ~r/unsupported content block/, fn -> add(msg) end
     end
 
-    test "empty content list raises ArgumentError" do
+    test "empty content list raises ArgumentError (user role)" do
       msg = %Message{role: "user", content: []}
+      assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
+    end
+
+    test "empty content list raises ArgumentError (assistant role)" do
+      msg = %Message{role: "assistant", content: []}
+      assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
+    end
+
+    test "empty content list raises ArgumentError (system role)" do
+      msg = %Message{role: "system", content: []}
+      assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
+    end
+
+    test "empty content list raises ArgumentError (tool role)" do
+      msg = %Message{role: "tool", content: []}
       assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
     end
   end
