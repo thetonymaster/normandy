@@ -195,5 +195,9 @@ defmodule Normandy.Components.StreamProcessor do
     callback.(:message_stop, %{})
   end
 
+  defp invoke_callback(%{type: "guardrail_violation"} = event, callback) do
+    callback.(:guardrail_violation, Map.delete(event, :type))
+  end
+
   defp invoke_callback(_, _callback), do: :ok
 end

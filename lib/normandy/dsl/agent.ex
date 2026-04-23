@@ -238,6 +238,30 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @doc """
+  Selects the output-guardrail streaming mode for this agent.
+
+  `:accumulate` (default) runs guards on the full message after the stream
+  completes; `:incremental` runs guards at chunk boundaries and halts the
+  stream on violation. See `Normandy.Guardrails` for the full semantics.
+  """
+  defmacro streaming_mode(value) do
+    quote do
+      Module.put_attribute(__MODULE__, :agent_output_guardrails_streaming_mode, unquote(value))
+    end
+  end
+
+  @doc """
+  Sets the chunk size (bytes of accumulated text) at which incremental output
+  guardrails run. Only takes effect when `streaming_mode :incremental` is set.
+  Default: 200.
+  """
+  defmacro streaming_chunk_size(value) do
+    quote do
+      Module.put_attribute(__MODULE__, :agent_output_guardrails_chunk_size, unquote(value))
+    end
+  end
+
   defmacro __before_compile__(_env) do
     quote do
       # Store configuration at compile time - MUST come first before any function uses it
@@ -252,7 +276,11 @@ defmodule Normandy.DSL.Agent do
         output_instructions: Module.get_attribute(__MODULE__, :agent_output_instructions),
         tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse(),
         input_guardrails: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
-        output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, [])
+        output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, []),
+        output_guardrails_streaming_mode:
+          Module.get_attribute(__MODULE__, :agent_output_guardrails_streaming_mode, :accumulate),
+        output_guardrails_chunk_size:
+          Module.get_attribute(__MODULE__, :agent_output_guardrails_chunk_size, 200)
       }
 
       # Store additional config at compile time
@@ -365,7 +393,10 @@ defmodule Normandy.DSL.Agent do
           tools: @agent_compile_config.tools,
           max_messages: @agent_compile_config.max_messages,
           input_guardrails: @agent_compile_config.input_guardrails,
-          output_guardrails: @agent_compile_config.output_guardrails
+          output_guardrails: @agent_compile_config.output_guardrails,
+          output_guardrails_streaming_mode:
+            @agent_compile_config.output_guardrails_streaming_mode,
+          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size
         }
       end
 
@@ -383,7 +414,10 @@ defmodule Normandy.DSL.Agent do
           max_tokens: @agent_compile_config.max_tokens,
           name: @agent_name,
           input_guardrails: @agent_compile_config.input_guardrails,
-          output_guardrails: @agent_compile_config.output_guardrails
+          output_guardrails: @agent_compile_config.output_guardrails,
+          output_guardrails_streaming_mode:
+            @agent_compile_config.output_guardrails_streaming_mode,
+          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size
         }
 
         # Apply max_messages if set

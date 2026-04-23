@@ -35,7 +35,9 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:enable_json_retry) => boolean(),
           optional(:json_retry_max_attempts) => pos_integer(),
           optional(:input_guardrails) => [Normandy.Guardrails.spec()],
-          optional(:output_guardrails) => [Normandy.Guardrails.spec()]
+          optional(:output_guardrails) => [Normandy.Guardrails.spec()],
+          optional(:output_guardrails_streaming_mode) => :accumulate | :incremental,
+          optional(:output_guardrails_chunk_size) => pos_integer()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -53,6 +55,19 @@ defmodule Normandy.Agents.BaseAgent do
     unless is_list(output_guardrails) do
       raise ArgumentError,
             "output_guardrails must be a list of guard specs, got: #{inspect(output_guardrails)}"
+    end
+
+    streaming_mode = Map.get(config, :output_guardrails_streaming_mode, :accumulate)
+    chunk_size = Map.get(config, :output_guardrails_chunk_size, 200)
+
+    unless streaming_mode in [:accumulate, :incremental] do
+      raise ArgumentError,
+            "output_guardrails_streaming_mode must be :accumulate or :incremental, got: #{inspect(streaming_mode)}"
+    end
+
+    unless is_integer(chunk_size) and chunk_size > 0 do
+      raise ArgumentError,
+            "output_guardrails_chunk_size must be a positive integer, got: #{inspect(chunk_size)}"
     end
 
     # Initialize circuit breaker if enabled
@@ -85,7 +100,9 @@ defmodule Normandy.Agents.BaseAgent do
       mcp_servers: Map.get(config, :mcp_servers, nil),
       name: Map.get(config, :name, nil),
       input_guardrails: input_guardrails,
-      output_guardrails: output_guardrails
+      output_guardrails: output_guardrails,
+      output_guardrails_streaming_mode: streaming_mode,
+      output_guardrails_chunk_size: chunk_size
     }
   end
 
@@ -751,6 +768,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     case llm_result do
       {:ok, final_response} ->
+        final_response = run_streaming_output_guardrails(config, final_response, callback)
         # Add response to memory
         updated_memory = AgentMemory.add_message(memory, "assistant", final_response)
         updated_config = Map.put(config, :memory, updated_memory)
@@ -910,6 +928,9 @@ defmodule Normandy.Agents.BaseAgent do
         cond do
           # No tool calls - final response
           is_nil(tool_calls) or length(tool_calls) == 0 ->
+            # Run output guardrails on the final text response. Intermediate
+            # tool-call responses are not user-facing output and are skipped.
+            final_response = run_streaming_output_guardrails(config, final_response, callback)
             # Store as ToolCallResponse so BaseIOSchema serialization emits
             # content blocks (Map.to_json would JSON-stringify the whole map).
             assistant_response = build_streaming_assistant_response(final_response, [])
@@ -1093,10 +1114,22 @@ defmodule Normandy.Agents.BaseAgent do
              opts
            ) do
         {:ok, stream} ->
-          # Process the stream and build final message
-          events = Enum.to_list(stream)
-          final_message = Normandy.Components.StreamProcessor.build_final_message(events)
-          {:ok, final_message}
+          case config do
+            %BaseAgentConfig{
+              output_guardrails: [_ | _],
+              output_guardrails_streaming_mode: :incremental
+            } ->
+              consume_stream_with_incremental_guards(
+                stream,
+                config,
+                Keyword.get(opts, :callback)
+              )
+
+            _ ->
+              events = Enum.to_list(stream)
+              final_message = Normandy.Components.StreamProcessor.build_final_message(events)
+              {:ok, final_message}
+          end
 
         {:error, _} = error ->
           error
@@ -1105,6 +1138,98 @@ defmodule Normandy.Agents.BaseAgent do
       {:error, "Client does not support streaming"}
     end
   end
+
+  # Consumes a stream event-by-event, running output guards every
+  # `output_guardrails_chunk_size` bytes of accumulated text. On violation,
+  # halts consumption, emits telemetry + the :guardrail_violation callback
+  # event, strips any partial tool-use block from the response, and returns
+  # `{:ok, final_message_with_violations}`.
+  defp consume_stream_with_incremental_guards(stream, config, callback) do
+    guards = config.output_guardrails
+    chunk_size = config.output_guardrails_chunk_size
+
+    initial = %{events: [], accumulated: "", since_last_check: 0, violations: []}
+
+    final_acc =
+      Enum.reduce_while(stream, initial, fn event, acc ->
+        text_delta = extract_text_delta_for_guard(event)
+        new_accumulated = acc.accumulated <> text_delta
+        new_since = acc.since_last_check + byte_size(text_delta)
+
+        base_acc = %{
+          acc
+          | events: [event | acc.events],
+            accumulated: new_accumulated,
+            since_last_check: new_since
+        }
+
+        if text_delta != "" and new_since >= chunk_size do
+          case Normandy.Guardrails.run(guards, new_accumulated) do
+            {:ok, _} ->
+              {:cont, %{base_acc | since_last_check: 0}}
+
+            {:error, violations} ->
+              emit_guardrail_violation(:output, config, guards, violations, %{
+                streaming: true,
+                mode: :incremental
+              })
+
+              if is_function(callback, 2) do
+                callback.(:guardrail_violation, %{
+                  stage: :output,
+                  mode: :incremental,
+                  violations: violations
+                })
+              end
+
+              {:halt, %{base_acc | violations: violations}}
+          end
+        else
+          {:cont, base_acc}
+        end
+      end)
+
+    events = Enum.reverse(final_acc.events)
+    final_message = Normandy.Components.StreamProcessor.build_final_message(events)
+
+    final_message =
+      case final_acc.violations do
+        [] ->
+          Map.put(final_message, :guardrail_violations, [])
+
+        violations ->
+          final_message
+          |> strip_partial_tool_use()
+          |> Map.put(:guardrail_violations, violations)
+      end
+
+    {:ok, final_message}
+  end
+
+  defp extract_text_delta_for_guard(%{
+         type: "content_block_delta",
+         delta: %{"type" => "text_delta", "text" => text}
+       })
+       when is_binary(text),
+       do: text
+
+  defp extract_text_delta_for_guard(_), do: ""
+
+  # Drops non-text content blocks from the final_message. Used on incremental
+  # cancel so a halted stream doesn't commit an in-flight tool-use block —
+  # if we halt output, we also shouldn't execute the tool the LLM was
+  # assembling.
+  defp strip_partial_tool_use(%{content: content} = message) when is_list(content) do
+    text_only =
+      Enum.filter(content, fn
+        %{"type" => "text"} -> true
+        _ -> false
+      end)
+
+    %{message | content: text_only}
+  end
+
+  defp strip_partial_tool_use(message), do: message
 
   defp with_agent_run_span(config, telemetry_metadata, fun) do
     :telemetry.span([:normandy, :agent, :run], telemetry_metadata, fn ->
@@ -1620,19 +1745,93 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  defp emit_guardrail_violation(stage, config, guards, violations) do
+  defp emit_guardrail_violation(stage, config, guards, violations, extra_meta \\ %{}) do
     :telemetry.execute(
       [:normandy, :agent, :guardrail, :violation],
       %{count: length(violations)},
-      %{
-        stage: stage,
-        agent_name: config.name,
-        guards: Enum.map(guards, &guard_module/1),
-        violations: violations
-      }
+      Map.merge(
+        %{
+          stage: stage,
+          agent_name: config.name,
+          guards: Enum.map(guards, &guard_module/1),
+          violations: violations
+        },
+        extra_meta
+      )
     )
   end
 
   defp guard_module(mod) when is_atom(mod), do: mod
   defp guard_module({mod, _opts}), do: mod
+
+  # Runs output guardrails on the accumulated text of a streaming final message.
+  # Dispatches by mode: :accumulate runs guards after the stream completes
+  # (log-and-continue, mirrors non-streaming posture); :incremental is a
+  # no-op here because guards already ran at chunk boundaries inside
+  # `consume_stream_with_incremental_guards/3`.
+  #
+  # Returns the final_response with :guardrail_violations populated ([] on pass).
+  defp run_streaming_output_guardrails(
+         %BaseAgentConfig{output_guardrails: []} = _config,
+         final_response,
+         _callback
+       ) do
+    Map.put_new(final_response, :guardrail_violations, [])
+  end
+
+  defp run_streaming_output_guardrails(
+         %BaseAgentConfig{output_guardrails_streaming_mode: :incremental} = _config,
+         final_response,
+         _callback
+       ) do
+    # Guards already ran at chunk boundaries; :guardrail_violations is set.
+    Map.put_new(final_response, :guardrail_violations, [])
+  end
+
+  defp run_streaming_output_guardrails(
+         %BaseAgentConfig{output_guardrails: guards} = config,
+         final_response,
+         callback
+       ) do
+    text = extract_streaming_text(final_response)
+
+    case Normandy.Guardrails.run(guards, text) do
+      {:ok, _} ->
+        Map.put(final_response, :guardrail_violations, [])
+
+      {:error, violations} ->
+        emit_guardrail_violation(:output, config, guards, violations, %{
+          streaming: true,
+          mode: :accumulate
+        })
+
+        IO.warn(
+          "Agent streaming output guardrail violation: " <>
+            Normandy.Agents.ValidationMiddleware.error_message(violations)
+        )
+
+        if is_function(callback, 2) do
+          callback.(:guardrail_violation, %{
+            stage: :output,
+            mode: :accumulate,
+            violations: violations
+          })
+        end
+
+        Map.put(final_response, :guardrail_violations, violations)
+    end
+  end
+
+  # Concatenates text from a streaming final_response's content blocks into a
+  # single string. Tool-use blocks and other non-text content are skipped —
+  # guardrails on structured content are a non-streaming concern.
+  defp extract_streaming_text(%{content: content}) when is_list(content) do
+    content
+    |> Enum.map_join("", fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> text
+      _ -> ""
+    end)
+  end
+
+  defp extract_streaming_text(_), do: ""
 end

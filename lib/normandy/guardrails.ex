@@ -30,11 +30,23 @@ defmodule Normandy.Guardrails do
   `BaseAgent.stream_with_tools/3`) before the LLM call — violations raise the
   same as non-streaming paths.
 
-  Output guardrails **do not** run on streaming paths: inspecting a
-  partially-emitted response would require either buffering (defeating
-  streaming) or post-hoc policy (the content has already reached the caller).
-  If output-side content policy is load-bearing, use the non-streaming
-  `BaseAgent.run/2`.
+  Output guardrails run on streaming in one of two modes, configured per agent:
+
+  - `:accumulate` (default) — mirrors non-streaming: guards run on the final
+    message after the stream completes. Log-and-continue on violation; content
+    has already reached the caller. Matches the Pydantic AI / LangChain baseline
+    of running validators on the assembled output.
+
+  - `:incremental` — guards run every `:output_guardrails_chunk_size` bytes of
+    accumulated assistant text. On violation, the stream is halted, a
+    `:guardrail_violation` event is emitted to the caller callback, any
+    partial tool-use block is dropped, and the returned response carries
+    `:guardrail_violations`. Follows NVIDIA NeMo Guardrails' chunking approach.
+
+  Both modes populate the `:guardrail_violations` field on the returned
+  response (list, empty on pass) and emit the
+  `[:normandy, :agent, :guardrail, :violation]` telemetry event with metadata
+  `streaming: true` and `mode: :accumulate | :incremental`.
 
   ## Telemetry
 
