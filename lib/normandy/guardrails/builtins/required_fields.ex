@@ -45,9 +45,9 @@ defmodule Normandy.Guardrails.Builtins.RequiredFields do
       [] ->
         :ok
 
-      fields ->
+      missing_fields ->
         violations =
-          Enum.map(fields, fn field ->
+          Enum.map(missing_fields, fn field ->
             %{
               guard: __MODULE__,
               path: [field],

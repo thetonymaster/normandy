@@ -45,11 +45,11 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
           [] ->
             :ok
 
-          terms ->
+          matched_terms ->
             path = if field, do: [field], else: []
 
             violations =
-              Enum.map(terms, fn term ->
+              Enum.map(matched_terms, fn term ->
                 %{
                   guard: __MODULE__,
                   path: path,

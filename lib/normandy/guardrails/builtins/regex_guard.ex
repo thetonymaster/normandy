@@ -64,11 +64,11 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
       [] ->
         :ok
 
-      patterns ->
+      matched_patterns ->
         path = if field, do: [field], else: []
 
         violations =
-          Enum.map(patterns, fn pattern ->
+          Enum.map(matched_patterns, fn pattern ->
             %{
               guard: __MODULE__,
               path: path,

@@ -651,6 +651,9 @@ defmodule Normandy.Agents.BaseAgent do
   @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
           {BaseAgentConfig.t(), map()}
   def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
+    # Streaming paths do not schema-validate input (unlike run_without_tools/run_with_tools),
+    # so guardrails run on raw user_input here. Guardrails that target struct fields via `:field`
+    # should match the schema's field names — or use a field-less guard that inspects the whole value.
     if user_input != nil, do: run_input_guardrails!(config, user_input)
 
     # Add user input to memory if provided
@@ -784,6 +787,7 @@ defmodule Normandy.Agents.BaseAgent do
         callback
       )
       when is_function(callback, 2) do
+    # See stream_response/3: streaming paths run guardrails on raw user_input.
     if user_input != nil, do: run_input_guardrails!(config, user_input)
 
     # Initialize turn with user input if provided
