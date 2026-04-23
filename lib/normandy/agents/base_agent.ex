@@ -33,7 +33,9 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:enable_circuit_breaker) => boolean(),
           optional(:circuit_breaker_options) => keyword(),
           optional(:enable_json_retry) => boolean(),
-          optional(:json_retry_max_attempts) => pos_integer()
+          optional(:json_retry_max_attempts) => pos_integer(),
+          optional(:input_guardrails) => [Normandy.Guardrails.spec()],
+          optional(:output_guardrails) => [Normandy.Guardrails.spec()]
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -47,6 +49,19 @@ defmodule Normandy.Agents.BaseAgent do
       else
         nil
       end
+
+    input_guardrails = Map.get(config, :input_guardrails, [])
+    output_guardrails = Map.get(config, :output_guardrails, [])
+
+    unless is_list(input_guardrails) do
+      raise ArgumentError,
+            "input_guardrails must be a list of guard specs, got: #{inspect(input_guardrails)}"
+    end
+
+    unless is_list(output_guardrails) do
+      raise ArgumentError,
+            "output_guardrails must be a list of guard specs, got: #{inspect(output_guardrails)}"
+    end
 
     %BaseAgentConfig{
       input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
@@ -66,7 +81,9 @@ defmodule Normandy.Agents.BaseAgent do
       enable_json_retry: Map.get(config, :enable_json_retry, false),
       json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
       mcp_servers: Map.get(config, :mcp_servers, nil),
-      name: Map.get(config, :name, nil)
+      name: Map.get(config, :name, nil),
+      input_guardrails: input_guardrails,
+      output_guardrails: output_guardrails
     }
   end
 
@@ -300,13 +317,16 @@ defmodule Normandy.Agents.BaseAgent do
         # Validate user input against input schema
         case ValidationMiddleware.validate_input(config, user_input) do
           {:ok, validated_input} ->
+            effective_input = validated_input || user_input
+            run_input_guardrails!(config, effective_input)
+
             updated_memory =
               memory
               |> AgentMemory.initialize_turn()
-              |> AgentMemory.add_message("user", validated_input || user_input)
+              |> AgentMemory.add_message("user", effective_input)
 
             config
-            |> Map.put(:current_user_input, validated_input || user_input)
+            |> Map.put(:current_user_input, effective_input)
             |> Map.put(:memory, updated_memory)
 
           {:error, errors} ->
@@ -347,6 +367,8 @@ defmodule Normandy.Agents.BaseAgent do
 
           response
       end
+
+    run_output_guardrails(config, validated_response)
 
     memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
     config = Map.put(config, :memory, memory)
@@ -401,6 +423,8 @@ defmodule Normandy.Agents.BaseAgent do
                 details: error_msg
           end
 
+        run_input_guardrails!(config, validated_input)
+
         updated_memory =
           memory
           |> AgentMemory.initialize_turn()
@@ -424,6 +448,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp execute_tool_loop(config, iterations_left) when iterations_left <= 0 do
     # Max iterations reached, return current state
     response = get_response(config, config.output_schema)
+    run_output_guardrails(config, response)
     memory = AgentMemory.add_message(config.memory, "assistant", response)
     config = Map.put(config, :memory, memory)
     {config, response}
@@ -497,6 +522,8 @@ defmodule Normandy.Agents.BaseAgent do
 
               final_response
           end
+
+        run_output_guardrails(config, validated_response)
 
         memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
         config = Map.put(config, :memory, memory)
@@ -624,6 +651,8 @@ defmodule Normandy.Agents.BaseAgent do
   @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
           {BaseAgentConfig.t(), map()}
   def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
+    if user_input != nil, do: run_input_guardrails!(config, user_input)
+
     # Add user input to memory if provided
     {config, memory} =
       if user_input != nil do
@@ -755,6 +784,8 @@ defmodule Normandy.Agents.BaseAgent do
         callback
       )
       when is_function(callback, 2) do
+    if user_input != nil, do: run_input_guardrails!(config, user_input)
+
     # Initialize turn with user input if provided
     memory =
       if user_input != nil do
@@ -1524,4 +1555,62 @@ defmodule Normandy.Agents.BaseAgent do
   def process_batch_with_stats(agent, inputs, opts \\ []) do
     Normandy.Batch.Processor.process_batch_with_stats(agent, inputs, opts)
   end
+
+  # Runs input guardrails and raises Normandy.Guardrails.ViolationError on any
+  # violation. Mirrors the input-side raise behaviour of ValidationMiddleware —
+  # a rejected input is a hard halt, not a soft pass-through.
+  defp run_input_guardrails!(%BaseAgentConfig{input_guardrails: []}, _value), do: :ok
+
+  defp run_input_guardrails!(%BaseAgentConfig{input_guardrails: guards} = config, value) do
+    case Normandy.Guardrails.run(guards, value) do
+      {:ok, _value} ->
+        :ok
+
+      {:error, violations} ->
+        emit_guardrail_violation(:input, config, guards, violations)
+
+        raise Normandy.Guardrails.ViolationError,
+          message: "Agent input guardrail violation",
+          violations: violations
+    end
+  end
+
+  # Runs output guardrails and logs a warning on violation. Mirrors the
+  # output-side log-and-continue behaviour of ValidationMiddleware — we don't
+  # want an overzealous pattern to break end-user responses, but operators
+  # should still see the event in logs and telemetry.
+  defp run_output_guardrails(%BaseAgentConfig{output_guardrails: []}, _value), do: :ok
+
+  defp run_output_guardrails(%BaseAgentConfig{output_guardrails: guards} = config, value) do
+    case Normandy.Guardrails.run(guards, value) do
+      {:ok, _value} ->
+        :ok
+
+      {:error, violations} ->
+        emit_guardrail_violation(:output, config, guards, violations)
+
+        IO.warn(
+          "Agent output guardrail violation: " <>
+            Normandy.Agents.ValidationMiddleware.error_message(violations)
+        )
+
+        :ok
+    end
+  end
+
+  defp emit_guardrail_violation(stage, config, guards, violations) do
+    :telemetry.execute(
+      [:normandy, :agent, :guardrail, :violation],
+      %{count: length(violations)},
+      %{
+        stage: stage,
+        agent_name: config.name,
+        guards: Enum.map(guards, &guard_module/1),
+        violations: violations
+      }
+    )
+  end
+
+  defp guard_module(mod) when is_atom(mod), do: mod
+  defp guard_module({mod, _opts}), do: mod
 end

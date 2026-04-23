@@ -201,6 +201,43 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @doc """
+  Configures guardrails for the agent.
+
+  `stage` is either `:input` or `:output`. `specs` is a list of guard
+  specifications — either a module atom or `{module, opts}` tuple. See
+  `Normandy.Guardrails` for the full contract.
+
+  Calling this macro twice for the same stage replaces the previous list.
+
+  ## Example
+
+      agent do
+        model "claude-sonnet-4-6"
+
+        guardrails :input, [
+          {Normandy.Guardrails.Builtins.MaxLength, limit: 10_000},
+          {Normandy.Guardrails.Builtins.ForbiddenSubstrings, terms: ["ignore previous"]}
+        ]
+
+        guardrails :output, [
+          {Normandy.Guardrails.Builtins.RegexGuard,
+           patterns: [~r/\\b\\d{3}-\\d{2}-\\d{4}\\b/], mode: :deny}
+        ]
+      end
+  """
+  defmacro guardrails(stage, specs) when stage in [:input, :output] do
+    attr =
+      case stage do
+        :input -> :agent_input_guardrails
+        :output -> :agent_output_guardrails
+      end
+
+    quote do
+      Module.put_attribute(__MODULE__, unquote(attr), unquote(specs))
+    end
+  end
+
   defmacro __before_compile__(_env) do
     quote do
       # Store configuration at compile time - MUST come first before any function uses it
@@ -213,7 +250,9 @@ defmodule Normandy.DSL.Agent do
         background: Module.get_attribute(__MODULE__, :agent_background),
         steps: Module.get_attribute(__MODULE__, :agent_steps),
         output_instructions: Module.get_attribute(__MODULE__, :agent_output_instructions),
-        tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse()
+        tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse(),
+        input_guardrails: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
+        output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, [])
       }
 
       # Store additional config at compile time
@@ -340,7 +379,9 @@ defmodule Normandy.DSL.Agent do
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
-          name: @agent_name
+          name: @agent_name,
+          input_guardrails: @agent_compile_config.input_guardrails,
+          output_guardrails: @agent_compile_config.output_guardrails
         }
 
         # Apply max_messages if set

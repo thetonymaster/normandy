@@ -92,6 +92,15 @@ defmodule Normandy.MixProject do
             Normandy.Resilience.Retry,
             Normandy.Resilience.CircuitBreaker
           ],
+          Guardrails: [
+            Normandy.Guardrails,
+            Normandy.Guardrails.Guard,
+            Normandy.Guardrails.ViolationError,
+            Normandy.Guardrails.Builtins.MaxLength,
+            Normandy.Guardrails.Builtins.ForbiddenSubstrings,
+            Normandy.Guardrails.Builtins.RegexGuard,
+            Normandy.Guardrails.Builtins.RequiredFields
+          ],
           "Batch Processing": [
             Normandy.Batch.Processor
           ],

@@ -29,7 +29,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           enable_json_retry: boolean(),
           json_retry_max_attempts: pos_integer(),
           name: String.t() | nil,
-          mcp_servers: list() | nil
+          mcp_servers: list() | nil,
+          input_guardrails: [Normandy.Guardrails.spec()],
+          output_guardrails: [Normandy.Guardrails.spec()]
         }
 
   schema do
@@ -51,5 +53,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:enable_json_retry, :boolean, default: false)
     field(:json_retry_max_attempts, :integer, default: 2)
     field(:mcp_servers, :any, default: nil)
+    field(:input_guardrails, :any, default: [])
+    field(:output_guardrails, :any, default: [])
   end
 end

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Guardrail Helpers**: Composable content-level constraints for agent I/O
+  - `Normandy.Guardrails` runner with short-circuit semantics
+  - `Normandy.Guardrails.Guard` behaviour for custom guards
+  - `Normandy.Guardrails.ViolationError` raised on input violations
+  - Built-in guards: `MaxLength`, `ForbiddenSubstrings`, `RegexGuard`
+    (`:deny`/`:require` modes), `RequiredFields`
+  - `BaseAgent` integration via new `:input_guardrails` / `:output_guardrails`
+    config keys (input violations halt, output violations log and continue,
+    mirroring `ValidationMiddleware`)
+  - DSL macro `guardrails(:input | :output, [specs])` in `Normandy.DSL.Agent`
+  - Telemetry event `[:normandy, :agent, :guardrail, :violation]` with
+    `:stage`, `:agent_name`, `:guards`, and `:violations` metadata
+
 ## [0.3.0] - 2026-04-18
 
 ### Added
