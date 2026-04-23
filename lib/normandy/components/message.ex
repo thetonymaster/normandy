@@ -24,7 +24,7 @@ defmodule Normandy.Components.Message do
 
   @type t :: %__MODULE__{
           role: String.t(),
-          content: String.t() | struct() | [struct()],
+          content: String.t() | struct() | map() | [struct() | map()],
           turn_id: String.t()
         }
 

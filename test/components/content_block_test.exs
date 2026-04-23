@@ -55,6 +55,30 @@ defmodule NormandyTest.Components.ContentBlockTest do
                }
              }
     end
+
+    test "to_claudio/1 raises on base64 block with nil data" do
+      bad = %Image{source: :base64, data: nil, media_type: "image/png"}
+
+      assert_raise ArgumentError, ~r/invalid base64 image/i, fn -> Image.to_claudio(bad) end
+    end
+
+    test "to_claudio/1 raises on base64 block with nil media_type" do
+      bad = %Image{source: :base64, data: "D", media_type: nil}
+
+      assert_raise ArgumentError, ~r/invalid base64 image/i, fn -> Image.to_claudio(bad) end
+    end
+
+    test "to_claudio/1 raises on url block with nil url" do
+      bad = %Image{source: :url, url: nil}
+
+      assert_raise ArgumentError, ~r/invalid url image/i, fn -> Image.to_claudio(bad) end
+    end
+
+    test "to_claudio/1 raises on unknown source" do
+      bad = %Image{source: :nope}
+
+      assert_raise ArgumentError, ~r/unsupported image source/i, fn -> Image.to_claudio(bad) end
+    end
   end
 
   describe "Document" do
@@ -72,6 +96,12 @@ defmodule NormandyTest.Components.ContentBlockTest do
                  "file_id" => "file_abc123"
                }
              }
+    end
+
+    test "to_claudio/1 raises on file_id-source block with nil file_id" do
+      bad = %Document{source: :file_id, file_id: nil}
+
+      assert_raise ArgumentError, ~r/invalid document/i, fn -> Document.to_claudio(bad) end
     end
   end
 end

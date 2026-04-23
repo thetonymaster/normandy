@@ -409,6 +409,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
       dispatch_multimodal(request, role_atom, content)
     end
 
+    # Single ContentBlock struct as content — treat as a one-element list
+    # so the wire shape is symmetric with `content: [block]`. Without this,
+    # a caller who sets `content: %Image{...}` ships a raw struct to
+    # Claudio and the request is malformed at JSON-encode time.
+    def add_single_message(
+          request,
+          %Message{role: role, content: %block_mod{} = block},
+          _enable_caching
+        )
+        when role in ["user", "assistant"] and
+               block_mod in [TextBlock, ImageBlock, DocumentBlock] do
+      role_atom = String.to_existing_atom(role)
+      Claudio.Messages.Request.add_message(request, role_atom, [block_to_claudio(block)])
+    end
+
     def add_single_message(request, %Message{role: role, content: content}, _enable_caching)
         when role in ["user", "assistant"] do
       role_atom = String.to_existing_atom(role)

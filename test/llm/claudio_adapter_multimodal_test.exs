@@ -243,6 +243,49 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     end
   end
 
+  describe "single ContentBlock struct as content (sugar for one-element list)" do
+    test "single TextBlock emits same wire shape as [TextBlock]" do
+      req_single = add(%Message{role: "user", content: TextBlock.new("hi")})
+      req_list = add(%Message{role: "user", content: [TextBlock.new("hi")]})
+
+      assert single_message(req_single) == single_message(req_list)
+    end
+
+    test "single ImageBlock emits image content list (no struct in wire shape)" do
+      req = add(%Message{role: "user", content: ImageBlock.new_base64("D", "image/png")})
+
+      assert %{
+               "role" => "user",
+               "content" => [
+                 %{
+                   "type" => "image",
+                   "source" => %{"type" => "base64", "media_type" => "image/png", "data" => "D"}
+                 }
+               ]
+             } = single_message(req)
+    end
+
+    test "single DocumentBlock emits document content list" do
+      req = add(%Message{role: "user", content: DocumentBlock.new_file("file_x")})
+
+      assert %{
+               "role" => "user",
+               "content" => [
+                 %{"type" => "document", "source" => %{"type" => "file", "file_id" => "file_x"}}
+               ]
+             } = single_message(req)
+    end
+
+    test "non-ContentBlock single struct still passes through opaquely (backward-compat)" do
+      # OpaqueStruct is not a ContentBlock — existing I/O schema pattern
+      # where callers assign a serialized struct as content.
+      struct_msg = %OpaqueStruct{payload: "blob"}
+      req = add(%Message{role: "user", content: struct_msg})
+
+      assert %{"role" => "user", "content" => ^struct_msg} = single_message(req)
+    end
+  end
+
   describe "defensive guards for unsafe shapes" do
     test "system role with list content converts blocks to raw-shape list" do
       msg = %Message{role: "system", content: [TextBlock.new("sys")]}

@@ -146,13 +146,6 @@ defmodule Normandy.Context.WindowManager do
     estimate_tokens(content)
   end
 
-  def estimate_message_content_tokens(content) when is_map(content) do
-    # For structured content, estimate based on JSON representation
-    content
-    |> Poison.encode!()
-    |> estimate_tokens()
-  end
-
   # Token estimates for opaque multimodal blocks. Anthropic documents
   # ~1568 tokens for a 1.15-megapixel image (https://docs.anthropic.com/);
   # round up to 1600 so we overcount rather than silently overflow. The
@@ -161,8 +154,29 @@ defmodule Normandy.Context.WindowManager do
   @image_token_estimate 1600
   @document_token_estimate 3000
 
+  # Single ContentBlock structs — delegate to the same heuristic used for
+  # list content. Must come before the generic `is_map` clause, since
+  # structs are maps in Elixir and would otherwise hit the JSON-size
+  # fallback and undercount.
+  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Text{text: text})
+      when is_binary(text),
+      do: estimate_tokens(text)
+
+  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Image{}),
+    do: @image_token_estimate
+
+  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Document{}),
+    do: @document_token_estimate
+
   def estimate_message_content_tokens(content) when is_list(content) do
     Enum.reduce(content, 0, fn block, acc -> acc + estimate_block_tokens(block) end)
+  end
+
+  def estimate_message_content_tokens(content) when is_map(content) do
+    # For structured content, estimate based on JSON representation
+    content
+    |> Poison.encode!()
+    |> estimate_tokens()
   end
 
   def estimate_message_content_tokens(_), do: 0

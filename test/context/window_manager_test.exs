@@ -122,6 +122,21 @@ defmodule Normandy.Context.WindowManagerTest do
              ]) > 1000
     end
 
+    test "estimates single ContentBlock struct via its heuristic (not is_map JSON fallback)" do
+      alias Normandy.Components.ContentBlock.Document
+      alias Normandy.Components.ContentBlock.Image
+
+      # A standalone single-image message must use the ~1600 heuristic, not
+      # the JSON-size fallback which would undercount/vary by data length.
+      # Anchor the assertion by comparing against a tiny-data image: if
+      # we were JSON-encoding the struct, small data → tiny estimate.
+      img = Image.new_base64("x", "image/png")
+      assert WindowManager.estimate_message_content_tokens(img) >= 1600
+
+      doc = Document.new_file("f")
+      assert WindowManager.estimate_message_content_tokens(doc) >= 3000
+    end
+
     test "estimates tokens for pre-shaped caller block maps" do
       # A raw Anthropic-shape map (e.g. with cache_control) should still
       # contribute a non-zero estimate via JSON fallback.

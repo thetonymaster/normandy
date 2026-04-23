@@ -50,9 +50,15 @@ defmodule Normandy.Components.ContentBlock.Image do
   @doc """
   Converts the block into the Anthropic/Claudio content-block map shape
   (string keys).
+
+  Raises `ArgumentError` when the struct is in an incomplete state (e.g.
+  `source: :base64` with `nil` data, or `source: :url` with `nil` url).
+  The constructors (`new_base64/2`, `new_url/1`) enforce valid state, so
+  this only fires when a caller bypasses them.
   """
   @spec to_claudio(t()) :: %{required(String.t()) => term()}
-  def to_claudio(%__MODULE__{source: :base64, data: data, media_type: media_type}) do
+  def to_claudio(%__MODULE__{source: :base64, data: data, media_type: media_type})
+      when is_binary(data) and data != "" and is_binary(media_type) and media_type != "" do
     %{
       "type" => "image",
       "source" => %{
@@ -63,7 +69,13 @@ defmodule Normandy.Components.ContentBlock.Image do
     }
   end
 
-  def to_claudio(%__MODULE__{source: :url, url: url}) do
+  def to_claudio(%__MODULE__{source: :base64} = block) do
+    raise ArgumentError,
+          "Normandy.Components.ContentBlock.Image: invalid base64 image — " <>
+            "data and media_type must be non-empty strings. Got: #{inspect(block)}"
+  end
+
+  def to_claudio(%__MODULE__{source: :url, url: url}) when is_binary(url) and url != "" do
     %{
       "type" => "image",
       "source" => %{
@@ -71,5 +83,17 @@ defmodule Normandy.Components.ContentBlock.Image do
         "url" => url
       }
     }
+  end
+
+  def to_claudio(%__MODULE__{source: :url} = block) do
+    raise ArgumentError,
+          "Normandy.Components.ContentBlock.Image: invalid url image — " <>
+            "url must be a non-empty string. Got: #{inspect(block)}"
+  end
+
+  def to_claudio(%__MODULE__{source: source}) do
+    raise ArgumentError,
+          "Normandy.Components.ContentBlock.Image: unsupported image source #{inspect(source)}. " <>
+            "Expected :base64 or :url."
   end
 end

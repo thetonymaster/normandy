@@ -32,9 +32,14 @@ defmodule Normandy.Components.ContentBlock.Document do
   @doc """
   Converts the block into the Anthropic/Claudio content-block map shape
   (string keys).
+
+  Raises `ArgumentError` on an incomplete struct (e.g. `source: :file_id`
+  with `nil` `file_id`). The constructor (`new_file/1`) enforces valid
+  state, so this only fires when a caller bypasses it.
   """
   @spec to_claudio(t()) :: %{required(String.t()) => term()}
-  def to_claudio(%__MODULE__{source: :file_id, file_id: file_id}) do
+  def to_claudio(%__MODULE__{source: :file_id, file_id: file_id})
+      when is_binary(file_id) and file_id != "" do
     %{
       "type" => "document",
       "source" => %{
@@ -42,5 +47,11 @@ defmodule Normandy.Components.ContentBlock.Document do
         "file_id" => file_id
       }
     }
+  end
+
+  def to_claudio(%__MODULE__{} = block) do
+    raise ArgumentError,
+          "Normandy.Components.ContentBlock.Document: invalid document — " <>
+            "source must be :file_id and file_id a non-empty string. Got: #{inspect(block)}"
   end
 end
