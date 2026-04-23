@@ -355,6 +355,19 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       msg = %Message{role: "tool", content: []}
       assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
     end
+
+    test "unrecognized role raises ArgumentError naming the role" do
+      # e.g. caller typo, or OpenAI's "function" role passed in by mistake
+      msg = %Message{role: "function", content: "x", turn_id: "t-42"}
+
+      assert_raise ArgumentError, ~r/unrecognized message role.*"function"/, fn -> add(msg) end
+    end
+
+    test "unrecognized role error includes turn_id for traceability" do
+      msg = %Message{role: "System", content: "typo", turn_id: "t-99"}
+
+      assert_raise ArgumentError, ~r/t-99/, fn -> add(msg) end
+    end
   end
 
   describe "full adapter schema is untouched" do

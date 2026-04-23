@@ -455,6 +455,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
       Claudio.Messages.Request.add_message(request, :user, content)
     end
 
+    # Caller typos and unsupported roles (e.g. OpenAI's "function") would
+    # otherwise silently disappear from the request — the model gets a
+    # degraded conversation with no feedback loop. Raise at the boundary.
+    def add_single_message(
+          _request,
+          %Message{role: role, turn_id: turn_id},
+          _enable_caching
+        )
+        when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: unrecognized message role #{inspect(role)} " <>
+              "(turn_id=#{inspect(turn_id)}). Expected one of: " <>
+              ~s("system", "user", "assistant", "tool".)
+    end
+
     def add_single_message(request, _msg, _enable_caching), do: request
 
     # Shared non-empty-list guard — called from every list branch of
