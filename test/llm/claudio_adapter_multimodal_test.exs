@@ -370,6 +370,155 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     end
   end
 
+  # Tests in this block assert the adapter's *passthrough contract*: whatever
+  # content-block shape the caller hands in, the adapter ships it verbatim
+  # (modulo ContentBlock-struct → wire-map conversion). The inline hand-built
+  # maps in tests 2–5 are illustrative of common Anthropic product shapes but
+  # are not normative — if Anthropic's shapes drift, callers will update their
+  # own hand-built maps and the passthrough still holds.
+  describe "product scenarios — shapes Claudio helpers don't wrap" do
+    test "mood-board: 5 base64 images + 1 text prompt falls through to raw-list" do
+      # 6-block list deliberately avoids the 2-arity shapes Claudio wraps
+      # (add_message_with_image etc.), guaranteeing dispatch_multimodal/3's
+      # raw-list fallback clause runs.
+      images =
+        for n <- 1..5 do
+          ImageBlock.new_base64("IMG#{n}DATA", "image/jpeg")
+        end
+
+      msg = %Message{
+        role: "user",
+        content: images ++ [TextBlock.new("Pick a palette from these inspirations.")]
+      }
+
+      req = add(msg)
+
+      assert %{"role" => "user", "content" => blocks} = single_message(req)
+      assert length(blocks) == 6
+
+      image_blocks = Enum.take(blocks, 5)
+      text_block = List.last(blocks)
+
+      for {block, n} <- Enum.with_index(image_blocks, 1) do
+        assert block == %{
+                 "type" => "image",
+                 "source" => %{
+                   "type" => "base64",
+                   "media_type" => "image/jpeg",
+                   "data" => "IMG#{n}DATA"
+                 }
+               }
+      end
+
+      assert text_block == %{
+               "type" => "text",
+               "text" => "Pick a palette from these inspirations."
+             }
+    end
+
+    test "base64 PDF + prompt: hand-built document map passes through verbatim" do
+      # Document struct doesn't model base64 source — caller hand-builds.
+      pdf_block = %{
+        "type" => "document",
+        "source" => %{
+          "type" => "base64",
+          "media_type" => "application/pdf",
+          "data" => "JVBERi0xLjQK"
+        }
+      }
+
+      msg = %Message{
+        role: "user",
+        content: [pdf_block, TextBlock.new("Summarize this vendor contract.")]
+      }
+
+      req = add(msg)
+
+      assert single_message(req) == %{
+               "role" => "user",
+               "content" => [
+                 pdf_block,
+                 %{"type" => "text", "text" => "Summarize this vendor contract."}
+               ]
+             }
+    end
+
+    test "URL-sourced PDF + prompt: hand-built document map passes through verbatim" do
+      # Document struct doesn't model URL source — caller hand-builds.
+      pdf_block = %{
+        "type" => "document",
+        "source" => %{
+          "type" => "url",
+          "url" => "https://vendor.example/catalog.pdf"
+        }
+      }
+
+      msg = %Message{
+        role: "user",
+        content: [pdf_block, TextBlock.new("What packages do they offer?")]
+      }
+
+      req = add(msg)
+
+      assert single_message(req) == %{
+               "role" => "user",
+               "content" => [
+                 pdf_block,
+                 %{"type" => "text", "text" => "What packages do they offer?"}
+               ]
+             }
+    end
+
+    test "Files-API image source + prompt: hand-built image map passes through verbatim" do
+      # Image struct models :base64 and :url only — caller hand-builds Files-API.
+      image_block = %{
+        "type" => "image",
+        "source" => %{
+          "type" => "file",
+          "file_id" => "file_xyz123"
+        }
+      }
+
+      msg = %Message{
+        role: "user",
+        content: [image_block, TextBlock.new("Does this match the new mood board?")]
+      }
+
+      req = add(msg)
+
+      assert single_message(req) == %{
+               "role" => "user",
+               "content" => [
+                 image_block,
+                 %{"type" => "text", "text" => "Does this match the new mood board?"}
+               ]
+             }
+    end
+
+    test "cache_control on image: hand-built image map preserves the annotation" do
+      # ImageBlock struct doesn't carry cache_control — caller annotates a map.
+      cached_image = %{
+        "type" => "image",
+        "source" => %{
+          "type" => "base64",
+          "media_type" => "image/png",
+          "data" => "INSPIRATION_DATA"
+        },
+        "cache_control" => %{"type" => "ephemeral"}
+      }
+
+      msg = %Message{
+        role: "user",
+        content: [cached_image, TextBlock.new("Critique this inspiration photo.")]
+      }
+
+      req = add(msg)
+
+      assert %{"role" => "user", "content" => [image, _text]} = single_message(req)
+      assert image == cached_image
+    end
+  end
+
   describe "full adapter schema is untouched" do
     test "ClaudioAdapter struct still builds with existing fields" do
       adapter = %ClaudioAdapter{api_key: "k", options: %{timeout: 1_000}}
