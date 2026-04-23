@@ -243,6 +243,62 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     end
   end
 
+  describe "defensive guards for unsafe shapes" do
+    test "system role with list content converts blocks to raw-shape list" do
+      msg = %Message{role: "system", content: [TextBlock.new("sys")]}
+      req = add(msg)
+
+      assert req.system == [%{"type" => "text", "text" => "sys"}]
+      assert req.messages == []
+    end
+
+    test "system role with list content + caching enabled also converts (caching ignored)" do
+      # Claudio's set_system_with_cache only wraps strings. For list content
+      # we deliberately take the non-caching path — callers who need caching
+      # on multimodal system prompts must hand-build blocks with cache_control.
+      msg = %Message{role: "system", content: [TextBlock.new("sys")]}
+      req = add(msg, true)
+
+      assert req.system == [%{"type" => "text", "text" => "sys"}]
+    end
+
+    test "tool role with list of ContentBlock structs routes via block_to_claudio" do
+      msg = %Message{role: "tool", content: [TextBlock.new("tool result")]}
+      req = add(msg)
+
+      assert single_message(req) == %{
+               "role" => "user",
+               "content" => [%{"type" => "text", "text" => "tool result"}]
+             }
+    end
+
+    test "tool role with a pre-shaped map list is still preserved (backward-compat)" do
+      # BaseIOSchema-derived tool_result shape — already Anthropic-shape.
+      pre_shaped = [
+        %{"type" => "tool_result", "tool_use_id" => "t1", "content" => "ok", "is_error" => false}
+      ]
+
+      msg = %Message{role: "tool", content: pre_shaped}
+      req = add(msg)
+
+      assert single_message(req) == %{"role" => "user", "content" => pre_shaped}
+    end
+
+    test "unknown struct in content list raises ArgumentError" do
+      msg = %Message{
+        role: "user",
+        content: [%OpaqueStruct{payload: "x"}, TextBlock.new("t")]
+      }
+
+      assert_raise ArgumentError, ~r/unsupported content block/, fn -> add(msg) end
+    end
+
+    test "empty content list raises ArgumentError" do
+      msg = %Message{role: "user", content: []}
+      assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
+    end
+  end
+
   describe "full adapter schema is untouched" do
     test "ClaudioAdapter struct still builds with existing fields" do
       adapter = %ClaudioAdapter{api_key: "k", options: %{timeout: 1_000}}
