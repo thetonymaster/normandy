@@ -153,7 +153,43 @@ defmodule Normandy.Context.WindowManager do
     |> estimate_tokens()
   end
 
+  # Token estimates for opaque multimodal blocks. Anthropic documents
+  # ~1568 tokens for a 1.15-megapixel image (https://docs.anthropic.com/);
+  # round up to 1600 so we overcount rather than silently overflow. The
+  # document estimate is a conservative guess — document blocks include
+  # the full file content at Claude-side, so real costs vary wildly.
+  @image_token_estimate 1600
+  @document_token_estimate 3000
+
+  def estimate_message_content_tokens(content) when is_list(content) do
+    Enum.reduce(content, 0, fn block, acc -> acc + estimate_block_tokens(block) end)
+  end
+
   def estimate_message_content_tokens(_), do: 0
+
+  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Text{text: text})
+       when is_binary(text),
+       do: estimate_tokens(text)
+
+  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Image{}),
+    do: @image_token_estimate
+
+  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Document{}),
+    do: @document_token_estimate
+
+  defp estimate_block_tokens(%{"type" => "text", "text" => text}) when is_binary(text),
+    do: estimate_tokens(text)
+
+  defp estimate_block_tokens(%{"type" => "image"}), do: @image_token_estimate
+  defp estimate_block_tokens(%{"type" => "document"}), do: @document_token_estimate
+
+  # Unknown / caller-provided shape — estimate from JSON size so we
+  # never silently count zero.
+  defp estimate_block_tokens(block) when is_map(block) do
+    block |> Poison.encode!() |> estimate_tokens()
+  end
+
+  defp estimate_block_tokens(_), do: 0
 
   @doc """
   Checks if current conversation is within token limit.

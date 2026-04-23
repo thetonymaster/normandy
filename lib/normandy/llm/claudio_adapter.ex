@@ -69,6 +69,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     """
 
     alias Normandy.Components.Message
+    alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
+    alias Normandy.Components.ContentBlock.Image, as: ImageBlock
+    alias Normandy.Components.ContentBlock.Text, as: TextBlock
 
     @doc """
     Legacy completion function (not used with Claudio).
@@ -370,7 +373,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end)
     end
 
-    defp add_single_message(request, %Message{role: "system", content: content}, enable_caching) do
+    @doc false
+    # Public (not `defp`) so tests can exercise the dispatch branches
+    # directly without round-tripping through `converse/7` and a live
+    # Claudio HTTP client. Not part of the adapter's supported surface —
+    # callers should go through `Normandy.Agents.Model.converse/7`.
+    def add_single_message(request, %Message{role: "system", content: content}, enable_caching) do
       if enable_caching do
         # Use caching for system prompts (up to 90% cost reduction)
         Claudio.Messages.Request.set_system_with_cache(request, content)
@@ -379,23 +387,75 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    defp add_single_message(request, %Message{role: role, content: content}, _enable_caching)
-         when role in ["user", "assistant"] do
+    def add_single_message(
+          request,
+          %Message{role: role, content: content},
+          _enable_caching
+        )
+        when role in ["user", "assistant"] and is_list(content) do
+      role_atom = String.to_existing_atom(role)
+      dispatch_multimodal(request, role_atom, content)
+    end
+
+    def add_single_message(request, %Message{role: role, content: content}, _enable_caching)
+        when role in ["user", "assistant"] do
       role_atom = String.to_existing_atom(role)
       Claudio.Messages.Request.add_message(request, role_atom, content)
     end
 
-    defp add_single_message(
-           request,
-           %Message{role: "tool", content: content},
-           _enable_caching
-         ) do
+    def add_single_message(
+          request,
+          %Message{role: "tool", content: content},
+          _enable_caching
+        ) do
       # Tool results are serialized via BaseIOSchema protocol
       # They come as content blocks, send as user message
       Claudio.Messages.Request.add_message(request, :user, content)
     end
 
-    defp add_single_message(request, _msg, _enable_caching), do: request
+    def add_single_message(request, _msg, _enable_caching), do: request
+
+    # Opportunistic dispatch: when a content list exactly matches a shape
+    # covered by one of Claudio's named helpers, use the helper so intent
+    # is preserved in the request builder. Any other shape (multi-block,
+    # reversed order, image-alone, etc.) falls through to the raw-list
+    # path, which Claudio's `add_message/3` accepts natively.
+    defp dispatch_multimodal(request, role, [
+           %ImageBlock{source: :base64, data: data, media_type: media_type},
+           %TextBlock{text: text}
+         ])
+         when is_binary(data) and is_binary(media_type) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
+    end
+
+    defp dispatch_multimodal(request, role, [
+           %ImageBlock{source: :url, url: url},
+           %TextBlock{text: text}
+         ])
+         when is_binary(url) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
+    end
+
+    defp dispatch_multimodal(request, role, [
+           %DocumentBlock{source: :file_id, file_id: file_id},
+           %TextBlock{text: text}
+         ])
+         when is_binary(file_id) and is_binary(text) do
+      Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
+    end
+
+    defp dispatch_multimodal(request, role, blocks) when is_list(blocks) do
+      raw = Enum.map(blocks, &block_to_claudio/1)
+      Claudio.Messages.Request.add_message(request, role, raw)
+    end
+
+    defp block_to_claudio(%TextBlock{} = b), do: TextBlock.to_claudio(b)
+    defp block_to_claudio(%ImageBlock{} = b), do: ImageBlock.to_claudio(b)
+    defp block_to_claudio(%DocumentBlock{} = b), do: DocumentBlock.to_claudio(b)
+    # Pass through any caller-provided pre-shaped block map (e.g. when a
+    # caller hand-builds an Anthropic block for a feature Normandy doesn't
+    # model yet, like `cache_control`).
+    defp block_to_claudio(%{} = raw), do: raw
 
     defp add_tools(request, [], _enable_caching), do: request
 
