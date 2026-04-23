@@ -799,9 +799,19 @@ defmodule Normandy.Agents.BaseAgent do
     - `:thinking_delta` - Extended thinking content
     - `:message_start` - Stream beginning
     - `:message_stop` - Stream complete
+    - `:guardrail_violation` - Output guardrail violation
 
   ## Returns
     `{config, final_response}` - Updated config and accumulated response
+
+  ## Guardrail Semantics
+
+  If `:output_guardrails_streaming_mode` is `:incremental` and a violation
+  fires mid-stream, the current iteration is halted and any in-flight
+  `tool_use` content block is stripped from the returned response — the
+  caller won't execute a tool whose arguments were still streaming. Tool
+  results from *earlier* iterations remain in memory; memory commits
+  happen after each stream ends, not after the loop completes.
 
   ## Example
 
@@ -1169,25 +1179,31 @@ defmodule Normandy.Agents.BaseAgent do
               {:cont, %{base_acc | since_last_check: 0}}
 
             {:error, violations} ->
-              emit_guardrail_violation(:output, config, guards, violations, %{
-                streaming: true,
-                mode: :incremental
-              })
-
-              if is_function(callback, 2) do
-                callback.(:guardrail_violation, %{
-                  stage: :output,
-                  mode: :incremental,
-                  violations: violations
-                })
-              end
-
+              report_incremental_violation(config, guards, violations, callback)
               {:halt, %{base_acc | violations: violations}}
           end
         else
           {:cont, base_acc}
         end
       end)
+
+    # Tail check: when the stream ends without crossing `chunk_size` since the
+    # last successful check, the tail bytes were never inspected. Run one
+    # final pass so short outputs (total length < chunk_size) can't bypass
+    # guards.
+    final_acc =
+      if final_acc.violations == [] and final_acc.since_last_check > 0 do
+        case Normandy.Guardrails.run(guards, final_acc.accumulated) do
+          {:ok, _} ->
+            final_acc
+
+          {:error, violations} ->
+            report_incremental_violation(config, guards, violations, callback)
+            %{final_acc | violations: violations}
+        end
+      else
+        final_acc
+      end
 
     events = Enum.reverse(final_acc.events)
     final_message = Normandy.Components.StreamProcessor.build_final_message(events)
@@ -1204,6 +1220,23 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     {:ok, final_message}
+  end
+
+  defp report_incremental_violation(config, guards, violations, callback) do
+    emit_guardrail_violation(:output, config, guards, violations, %{
+      streaming: true,
+      mode: :incremental
+    })
+
+    if is_function(callback, 2) do
+      callback.(:guardrail_violation, %{
+        stage: :output,
+        mode: :incremental,
+        violations: violations
+      })
+    end
+
+    :ok
   end
 
   defp extract_text_delta_for_guard(%{

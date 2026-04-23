@@ -195,6 +195,13 @@ defmodule Normandy.Components.StreamProcessor do
     callback.(:message_stop, %{})
   end
 
+  # Routes synthetic guardrail_violation events through the callback.
+  # Expected event shape: `%{type: "guardrail_violation", stage: :output,
+  # mode: :accumulate | :incremental, violations: [...]}`. The callback
+  # receives `{:guardrail_violation, %{stage:, mode:, violations:}}` with
+  # `:type` stripped. BaseAgent's streaming guardrail paths currently fire
+  # the callback directly; this clause exists for callers that route a
+  # synthetic event list through `process_with_callback/2`.
   defp invoke_callback(%{type: "guardrail_violation"} = event, callback) do
     callback.(:guardrail_violation, Map.delete(event, :type))
   end
