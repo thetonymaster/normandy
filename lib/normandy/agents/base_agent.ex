@@ -1116,6 +1116,13 @@ defmodule Normandy.Agents.BaseAgent do
     # Check if client protocol implements stream_converse
     impl = Normandy.Agents.Model.impl_for(config.client)
 
+    # `function_exported?/3` returns false until the module is loaded. With
+    # protocol consolidation (prod/dev), the impl module is not auto-loaded,
+    # so a cold-start stream call would fail with "Client does not support
+    # streaming" even when the adapter does implement stream_converse/7.
+    # Ensure the module is loaded before probing.
+    if impl, do: Code.ensure_loaded(impl)
+
     if impl && function_exported?(impl, :stream_converse, 7) do
       case impl.stream_converse(
              config.client,
