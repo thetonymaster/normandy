@@ -31,7 +31,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           name: String.t() | nil,
           mcp_servers: list() | nil,
           input_guardrails: [Normandy.Guardrails.spec()],
-          output_guardrails: [Normandy.Guardrails.spec()]
+          output_guardrails: [Normandy.Guardrails.spec()],
+          output_guardrails_streaming_mode: :accumulate | :incremental,
+          output_guardrails_chunk_size: pos_integer()
         }
 
   schema do
@@ -55,5 +57,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:mcp_servers, :any, default: nil)
     field(:input_guardrails, :any, default: [])
     field(:output_guardrails, :any, default: [])
+    field(:output_guardrails_streaming_mode, :any, default: :accumulate)
+    field(:output_guardrails_chunk_size, :integer, default: 200)
   end
 end
