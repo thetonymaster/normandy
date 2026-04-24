@@ -769,8 +769,11 @@ defmodule Normandy.Agents.BaseAgent do
     case llm_result do
       {:ok, final_response} ->
         final_response = run_streaming_output_guardrails(config, final_response, callback)
-        # Add response to memory
-        updated_memory = AgentMemory.add_message(memory, "assistant", final_response)
+        # Strip guardrail metadata before persisting — otherwise the violating
+        # turn (plus matched terms from violations) feeds back into the next
+        # LLM call via AgentMemory.history/1.
+        memory_response = Map.delete(final_response, :guardrail_violations)
+        updated_memory = AgentMemory.add_message(memory, "assistant", memory_response)
         updated_config = Map.put(config, :memory, updated_memory)
         {updated_config, final_response}
 

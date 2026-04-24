@@ -244,6 +244,49 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       :telemetry.detach("test-accumulate-#{inspect(ref)}")
     end
 
+    test "violation metadata is not persisted into assistant memory" do
+      client = %LazyStreamClient{text_chunks: %{chunks: ["ok ", "BADWORD here"]}}
+
+      agent =
+        BaseAgent.init(%{
+          client: client,
+          model: "claude-3",
+          temperature: 0.0,
+          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}]
+        })
+
+      {cb, _} = collect_callback()
+
+      {updated_agent, response} =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          result = BaseAgent.stream_response(agent, nil, cb)
+          send(self(), {:result, result})
+        end)
+        |> then(fn _io ->
+          receive do
+            {:result, r} -> r
+          after
+            100 -> flunk("no result captured")
+          end
+        end)
+
+      # Returned response still carries violations for the caller.
+      assert response.guardrail_violations != []
+
+      # But assistant-role memory entries must not carry the violation metadata,
+      # otherwise matched terms/paths feed back into the next LLM call.
+      assistant_entries =
+        updated_agent.memory.history
+        |> Enum.filter(&(&1.role == "assistant"))
+
+      assert assistant_entries != []
+
+      for %{content: content} <- assistant_entries do
+        refute is_map(content) and Map.has_key?(content, :guardrail_violations),
+               "assistant memory must not contain :guardrail_violations, got: #{inspect(content)}"
+      end
+    end
+
     test "shape parity: returns {config, response} and response has expected keys" do
       agent = base_config([])
       {cb, _} = collect_callback()
