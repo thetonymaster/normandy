@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-25
+
 ### Added
 
-- **Guardrail Helpers**: Composable content-level constraints for agent I/O
+- **Multimodal Content Blocks**: Image and document support for agent messages
+  - `Normandy.Components.ContentBlock.{Text, Image, Document}` framework-neutral
+    block types with per-module `to_claudio/1` emitting Anthropic wire shapes
+  - `ClaudioAdapter.add_single_message/3` opportunistically dispatches to
+    Claudio's named helpers for the three wrapped shapes (base64 image+text,
+    URL image+text, document+text); other shapes (multi-block, reversed,
+    image-alone, pre-shaped maps with `cache_control`) fall through to a
+    raw-list `add_message/3`
+  - `Normandy.Components.Message.content` widened from `:struct` to `:any` with
+    extended `@type t` covering `String.t() | struct() | [struct()]`
+  - Token accounting in `WindowManager`, `TokenCounter`, and `Summarizer` now
+    handles list content (image blocks ~1600 tokens, documents ~3000) instead
+    of silently zero-counting them
+
+- **Guardrails**: First-class content-level constraint layer for agent I/O,
+  composable across input and output stages
   - `Normandy.Guardrails` runner with short-circuit semantics
   - `Normandy.Guardrails.Guard` behaviour for custom guards
   - `Normandy.Guardrails.ViolationError` raised on input violations
@@ -21,6 +38,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - DSL macro `guardrails(:input | :output, [specs])` in `Normandy.DSL.Agent`
   - Telemetry event `[:normandy, :agent, :guardrail, :violation]` with
     `:stage`, `:agent_name`, `:guards`, and `:violations` metadata
+  - Works on both non-streaming (`run/2`) and streaming paths — see the
+    streaming output guardrails entry below for streaming specifics
+
+- **Streaming Output Guardrails**: Output guardrails now run on streaming paths
+  - `:accumulate` mode (default) — guards run on the final assistant text
+    after the stream ends; log-and-continue on violation, matching
+    non-streaming `run/2` posture
+  - `:incremental` mode (opt-in) — guards run every
+    `:output_guardrails_chunk_size` bytes of accumulated text plus a tail
+    pass when the stream ends with unchecked bytes; on violation halts
+    mid-stream, strips any in-flight `tool_use` content block, and returns
+    with `:guardrail_violations` populated
+  - Three signal channels on both modes: `:guardrail_violation` stream
+    callback event, `:guardrail_violations` field on the returned response,
+    and the existing telemetry event (metadata gains `streaming: true` and
+    `mode: :accumulate | :incremental`)
+  - New DSL macros inside `agent do … end`: `streaming_mode/1`,
+    `streaming_chunk_size/1`
+  - New `BaseAgentConfig` fields: `:output_guardrails_streaming_mode`,
+    `:output_guardrails_chunk_size`
+
+### Fixed
+
+- **Streaming Cold-Start**: `BaseAgent.stream_response/3` and
+  `stream_with_tools/3` no longer fail with `"Client does not support streaming"`
+  when invoked as the first call through the `Normandy.Agents.Model` protocol.
+  With protocol consolidation enabled (default in `:dev`/`:prod`), the
+  consolidated impl module was not auto-loaded, so the `function_exported?/3`
+  capability probe returned false. Now wraps the probe with `Code.ensure_loaded/1`
+  (#9).
+
+### Changed
+
+- **Claudio dependency** bumped to `~> 0.4.0`. Required for streaming SSE
+  events to decode with string-keyed data maps (matches the raw Anthropic
+  JSON convention); earlier `keys: :atoms` decoding silently dropped
+  callback dispatches in Normandy's adapter.
 
 ## [0.3.0] - 2026-04-18
 
@@ -306,6 +360,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.4.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.4.0
 [0.3.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.1.0
