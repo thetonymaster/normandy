@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     handles list content (image blocks ~1600 tokens, documents ~3000) instead
     of silently zero-counting them
 
-- **Guardrail Helpers**: Composable content-level constraints for agent I/O
+- **Guardrails**: First-class content-level constraint layer for agent I/O,
+  composable across input and output stages
   - `Normandy.Guardrails` runner with short-circuit semantics
   - `Normandy.Guardrails.Guard` behaviour for custom guards
   - `Normandy.Guardrails.ViolationError` raised on input violations
@@ -37,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - DSL macro `guardrails(:input | :output, [specs])` in `Normandy.DSL.Agent`
   - Telemetry event `[:normandy, :agent, :guardrail, :violation]` with
     `:stage`, `:agent_name`, `:guards`, and `:violations` metadata
+  - Works on both non-streaming (`run/2`) and streaming paths — see the
+    streaming output guardrails entry below for streaming specifics
 
 - **Streaming Output Guardrails**: Output guardrails now run on streaming paths
   - `:accumulate` mode (default) — guards run on the final assistant text
