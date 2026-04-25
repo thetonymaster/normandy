@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New DSL macros inside `agent do … end`: `streaming_mode/1`,
     `streaming_chunk_size/1`
   - New `BaseAgentConfig` fields: `:output_guardrails_streaming_mode`,
-    `:output_guardrails_chunk_size`, `:output_guardrails_context_size`
+    `:output_guardrails_chunk_size`
 
 ### Fixed
 
