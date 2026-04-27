@@ -1021,13 +1021,6 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp normalize_tool_field_key(_tool, _key), do: :error
 
-  defp parse_json_input(json_string) when is_binary(json_string) do
-    case Poison.decode(json_string) do
-      {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
-    end
-  end
-
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
     # Check if client protocol implements stream_converse
@@ -1355,12 +1348,11 @@ defmodule Normandy.Agents.BaseAgent do
   defp execute_one_streaming_tool_call(config, tool_call) do
     tool_name = tool_call["name"]
 
-    tool_input =
-      case tool_call["input"] do
-        nil -> %{}
-        input when is_map(input) -> input
-        input when is_binary(input) -> parse_json_input(input)
-      end
+    # Tool input from the streaming branch is raw LLM JSON, so it can be any
+    # JSON shape — not just nil/map/binary. Route through normalize_tool_input/1
+    # so unexpected shapes (lists, numbers, booleans) degrade to %{} instead of
+    # raising CaseClauseError and aborting the whole streaming tool loop.
+    tool_input = normalize_tool_input(tool_call["input"])
 
     case Registry.get(config.tool_registry, tool_name) do
       {:ok, tool} ->

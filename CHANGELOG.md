@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table and crash the VM. Unknown keys are now silently dropped, preserving
   the existing user-visible behaviour of `struct/2`.
 
+### Fixed
+
+- **Streaming tool input normalisation (`BaseAgent`)**:
+  `execute_one_streaming_tool_call/2` now routes `tool_call["input"]` through
+  `normalize_tool_input/1` instead of an ad-hoc `case` that only accepted
+  `nil`, maps, and binaries. Streaming tool input is raw LLM JSON, so a
+  list/number/boolean previously raised `CaseClauseError` and aborted the
+  whole streaming tool loop; unexpected shapes now degrade to `%{}`. The
+  redundant `parse_json_input/1` private helper (functionally identical to
+  the binary clause of `normalize_tool_input/1`) is removed.
+
 ## [0.4.0] - 2026-04-25
 
 ### Added
