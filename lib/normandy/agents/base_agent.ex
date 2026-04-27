@@ -31,7 +31,7 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:max_tokens) => pos_integer() | nil,
           optional(:tool_registry) => Registry.t(),
           optional(:max_tool_iterations) => pos_integer(),
-          optional(:max_tool_concurrency) => pos_integer(),
+          optional(:max_tool_concurrency) => integer(),
           optional(:retry_options) => keyword(),
           optional(:enable_circuit_breaker) => boolean(),
           optional(:circuit_breaker_options) => keyword(),
@@ -135,6 +135,26 @@ defmodule Normandy.Agents.BaseAgent do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
   end
+
+  # Translate a `Task.async_stream` element into the underlying tool result.
+  # `Task.async_stream/3` (the linked variant we use) propagates worker
+  # raises to the caller via process-link before the stream yields, so the
+  # `{:exit, {exception, stacktrace}}` clause below is unreachable for raises
+  # in the current configuration. It IS reachable for `:exit` reasons that
+  # the stream catches without killing the caller — most importantly
+  # `{:exit, :timeout}` from `on_timeout: :kill_task`, and any deliberate
+  # `exit/1` from tool wrapper code. Without this helper those would hit
+  # `FunctionClauseError` against a `{:ok, _}`-only pattern, masking the
+  # underlying cause. Public (`@doc false`) so it's directly unit-testable.
+  @doc false
+  def unwrap_tool_task_result!({:ok, result}), do: result
+
+  def unwrap_tool_task_result!({:exit, {exception, stacktrace}})
+      when is_exception(exception) and is_list(stacktrace) do
+    reraise(exception, stacktrace)
+  end
+
+  def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
 
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil) :: {struct(), map() | nil}
   defp get_response_with_usage(
@@ -610,7 +630,7 @@ defmodule Normandy.Agents.BaseAgent do
             timeout: :infinity,
             on_timeout: :kill_task
           )
-          |> Enum.map(fn {:ok, result} -> result end)
+          |> Enum.map(&unwrap_tool_task_result!/1)
 
         # Add tool results to memory
         memory =
@@ -965,7 +985,7 @@ defmodule Normandy.Agents.BaseAgent do
                 timeout: :infinity,
                 on_timeout: :kill_task
               )
-              |> Enum.map(fn {:ok, result} -> result end)
+              |> Enum.map(&unwrap_tool_task_result!/1)
 
             # Add tool results to memory
             memory =

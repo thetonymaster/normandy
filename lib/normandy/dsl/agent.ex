@@ -151,8 +151,17 @@ defmodule Normandy.DSL.Agent do
   Sets the maximum number of tool calls executed concurrently inside a single
   tool-loop iteration. Defaults to `1` (sequential — matches pre-0.5.0
   observable behaviour). Values `> 1` opt the agent into bounded parallel tool
-  execution, ordered by the LLM's tool-call sequence, with up to N running at
-  once.
+  execution with up to N tools running at once. The final result list passed
+  back to the LLM stays in the LLM's tool-call order (`Task.async_stream` is
+  invoked with `ordered: true`).
+
+  Streaming callback ordering: `BaseAgent.stream_with_tools/3` invokes
+  `callback.(:tool_result, result)` from inside each worker as soon as that
+  tool finishes. At `max_tool_concurrency > 1`, callers therefore observe
+  `:tool_result` events in **completion order**, not LLM-call order — a
+  100ms tool that fires after a 500ms tool will still emit its `:tool_result`
+  first. If you need LLM-order callback handling, set `max_tool_concurrency:
+  1` or buffer events and reorder them yourself after the stream completes.
 
   Process-semantics note: tool invocations run inside `Task.async_stream`
   workers, even at `max_tool_concurrency: 1`. Streaming callbacks fired *while

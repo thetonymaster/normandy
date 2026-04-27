@@ -182,6 +182,47 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
   end
 
+  describe "unwrap_tool_task_result!/1" do
+    # Direct unit tests for the helper. We can't exercise it via a real
+    # tool raise because `Task.async_stream/3` (linked variant) propagates
+    # worker raises to the caller through the process link *before* the
+    # stream yields, so for raises the unwrap path is unreachable. The
+    # helper still matters for `{:exit, _}` reasons that DO surface
+    # through the stream (timeouts via `on_timeout: :kill_task`,
+    # deliberate `exit/1` from wrapper code).
+
+    test "passes through {:ok, result} unchanged" do
+      result = %{some: "value"}
+      assert BaseAgent.unwrap_tool_task_result!({:ok, result}) == result
+    end
+
+    test "re-raises {:exit, {exception, stacktrace}} with original stack" do
+      stacktrace = [
+        {SomeMod, :some_fun, 1, [file: ~c"some_file.ex", line: 42]}
+      ]
+
+      err =
+        assert_raise RuntimeError, "boom", fn ->
+          BaseAgent.unwrap_tool_task_result!(
+            {:exit, {%RuntimeError{message: "boom"}, stacktrace}}
+          )
+        end
+
+      assert err.message == "boom"
+    end
+
+    test "exits cleanly with the original reason on {:exit, reason}" do
+      Process.flag(:trap_exit, true)
+
+      pid =
+        spawn_link(fn ->
+          BaseAgent.unwrap_tool_task_result!({:exit, :timeout})
+        end)
+
+      assert_receive {:EXIT, ^pid, :timeout}, 500
+    end
+  end
+
   describe "Tool input atom-table hardening" do
     # Mock client that emits a tool_use whose `input` map mixes valid binary
     # keys with a canary key (one that does NOT correspond to any field on
