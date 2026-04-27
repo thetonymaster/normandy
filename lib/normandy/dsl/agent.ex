@@ -149,14 +149,17 @@ defmodule Normandy.DSL.Agent do
 
   @doc """
   Sets the maximum number of tool calls executed concurrently inside a single
-  tool-loop iteration. Defaults to `1` (sequential, in the caller's process —
-  matches pre-0.5.0 behaviour). Values `> 1` opt the agent into bounded parallel
-  tool execution: each tool call runs in its own `Task` worker, ordered by the
-  LLM's tool-call sequence, with up to N running at once.
+  tool-loop iteration. Defaults to `1` (sequential — matches pre-0.5.0
+  observable behaviour). Values `> 1` opt the agent into bounded parallel tool
+  execution, ordered by the LLM's tool-call sequence, with up to N running at
+  once.
 
-  Process-semantics note: callbacks passed to `stream_with_tools/3` execute in
-  the worker process, not the caller. Capture `parent = self()` outside the
-  callback before sending messages to the test/owner process.
+  Process-semantics note: tool invocations run inside `Task.async_stream`
+  workers, even at `max_tool_concurrency: 1`. Streaming callbacks fired *while
+  a tool is executing* therefore run in those worker processes — capture
+  `parent = self()` outside the callback before sending messages to the
+  test/owner process. Streaming callbacks fired outside tool execution (e.g.
+  `:text_delta` before any `tool_use`) still run in the caller's process.
   """
   defmacro max_tool_concurrency(value) do
     quote do

@@ -373,15 +373,20 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
              "expected sequential >= 300ms, got #{div(elapsed_us, 1000)}ms"
     end
 
-    test "max_tool_concurrency: 3 runs tools in parallel" do
-      # 3 tools × 100 ms parallel ≈ 100–200 ms (one batch). Allow 250 ms
-      # ceiling for scheduler/CI variance.
-      {elapsed_us, response} = run_with_concurrency(3, 3, 100)
+    test "max_tool_concurrency: 3 runs tools in parallel (faster than sequential)" do
+      # Compare parallel vs sequential on the SAME runner so the assertion is
+      # self-calibrating: a slow CI machine pushes both numbers up together.
+      # 3 × 100 ms sequential ≈ 300 ms; 3 × 100 ms parallel ≈ 100 ms. The 2×
+      # slack tolerates scheduler variance while still proving parallelism
+      # actually overlapped the sleeps.
+      {seq_us, _} = run_with_concurrency(1, 3, 100)
+      {par_us, response} = run_with_concurrency(3, 3, 100)
 
       assert response != nil
 
-      assert div(elapsed_us, 1000) < 250,
-             "expected parallel < 250ms, got #{div(elapsed_us, 1000)}ms"
+      assert par_us * 2 < seq_us,
+             "expected parallel < sequential / 2, " <>
+               "got par=#{div(par_us, 1000)}ms seq=#{div(seq_us, 1000)}ms"
     end
 
     test "tool results stay in LLM-supplied call order under parallelism" do

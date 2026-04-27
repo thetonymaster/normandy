@@ -96,7 +96,8 @@ defmodule Normandy.Agents.BaseAgent do
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
       max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
-      max_tool_concurrency: Map.get(config, :max_tool_concurrency, 1),
+      max_tool_concurrency:
+        normalize_max_tool_concurrency(Map.get(config, :max_tool_concurrency, 1)),
       retry_options: Map.get(config, :retry_options, nil),
       circuit_breaker: circuit_breaker,
       enable_json_retry: Map.get(config, :enable_json_retry, false),
@@ -120,6 +121,13 @@ defmodule Normandy.Agents.BaseAgent do
     {response, _usage} = get_response_with_usage(config, response_model)
     response
   end
+
+  # Coerce inbound `:max_tool_concurrency` into the `pos_integer()` shape the
+  # struct's typespec promises. Non-integers and values < 1 fall back to 1 so
+  # the agent never carries a value that disagrees with how the runtime tool
+  # loops will actually behave (they clamp the same way).
+  defp normalize_max_tool_concurrency(n) when is_integer(n) and n >= 1, do: n
+  defp normalize_max_tool_concurrency(_), do: 1
 
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil) :: {struct(), map() | nil}
   defp get_response_with_usage(
