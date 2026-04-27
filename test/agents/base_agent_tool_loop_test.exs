@@ -376,16 +376,19 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     test "max_tool_concurrency: 3 runs tools in parallel (faster than sequential)" do
       # Compare parallel vs sequential on the SAME runner so the assertion is
       # self-calibrating: a slow CI machine pushes both numbers up together.
-      # 3 × 100 ms sequential ≈ 300 ms; 3 × 100 ms parallel ≈ 100 ms. The 2×
-      # slack tolerates scheduler variance while still proving parallelism
-      # actually overlapped the sleeps.
+      # 3 × 100 ms sequential ≈ 300 ms; 3 × 100 ms parallel ≈ 100 ms ideal,
+      # but CI runners eat ~75 ms per `Task.async_stream` batch (OTel ctx +
+      # task spawn + memory updates), pushing parallel to ~175 ms. Require at
+      # least a 1.5× speedup (`par × 3 < seq × 2`, i.e. par ≤ 2/3 of seq) —
+      # without overlap, 3 sleeps can't possibly compress that much, so a
+      # passing result still proves parallelism happened.
       {seq_us, _} = run_with_concurrency(1, 3, 100)
       {par_us, response} = run_with_concurrency(3, 3, 100)
 
       assert response != nil
 
-      assert par_us * 2 < seq_us,
-             "expected parallel < sequential / 2, " <>
+      assert par_us * 3 < seq_us * 2,
+             "expected parallel ≤ 2/3 of sequential (≥ 1.5× speedup), " <>
                "got par=#{div(par_us, 1000)}ms seq=#{div(seq_us, 1000)}ms"
     end
 
