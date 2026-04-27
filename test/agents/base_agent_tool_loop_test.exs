@@ -368,6 +368,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       {elapsed_us, response} = run_with_concurrency(1, 3, 100)
 
       assert response != nil
+
       assert div(elapsed_us, 1000) >= 300,
              "expected sequential >= 300ms, got #{div(elapsed_us, 1000)}ms"
     end
@@ -378,6 +379,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       {elapsed_us, response} = run_with_concurrency(3, 3, 100)
 
       assert response != nil
+
       assert div(elapsed_us, 1000) < 250,
              "expected parallel < 250ms, got #{div(elapsed_us, 1000)}ms"
     end
@@ -407,6 +409,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       assert length(tool_msgs) == 3
 
       labels = Enum.map(tool_msgs, fn msg -> msg.content.output end)
+
       assert labels == ["tool_1", "tool_2", "tool_3"],
              "expected ordered labels, got #{inspect(labels)}"
     end
