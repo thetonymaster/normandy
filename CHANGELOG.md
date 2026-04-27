@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool loop refactor (`BaseAgent`)**: extracted the per-tool-call body of
+  `execute_tool_loop/2` and `execute_streaming_tool_loop/3` into the private
+  helpers `execute_one_tool_call/2` and `execute_one_streaming_tool_call/2`.
+  Pure refactor — behaviour, ordering, and process semantics are identical to
+  the previous inline `Enum.map` closures. Sets up a follow-up change to swap
+  `Enum.map` for an opt-in bounded parallel runner (per-agent
+  `max_tool_concurrency`) without churning the closure body again.
+
 ## [0.4.0] - 2026-04-25
 
 ### Added
