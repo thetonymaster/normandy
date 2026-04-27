@@ -992,6 +992,35 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp normalize_tool_input(_), do: %{}
 
+  # Map an LLM-supplied input key (atom or binary) to a struct field atom on
+  # the tool, returning :error for keys that don't correspond to any field.
+  #
+  # Crucially, this NEVER calls String.to_atom/1 on untrusted input. Tool
+  # input keys come from LLM JSON, which is influenced by attacker-
+  # controllable prompt content; String.to_atom/1 would register every
+  # unknown key in the global atom table (the BEAM never garbage-collects
+  # atoms), so a sustained stream of crafted random keys would eventually
+  # exhaust the atom table and crash the VM. struct/2 silently dropping the
+  # field at the next step doesn't undo the atom allocation that already
+  # happened.
+  #
+  # Returns {:ok, atom} for known fields, :error otherwise. Callers should
+  # silently drop :error results to preserve struct/2's effective behaviour
+  # of ignoring unknown keys.
+  defp normalize_tool_field_key(tool, key) when is_atom(key) do
+    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
+  end
+
+  defp normalize_tool_field_key(tool, key) when is_binary(key) do
+    Enum.find_value(Map.keys(tool), :error, fn field ->
+      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
+        {:ok, field}
+      end
+    end)
+  end
+
+  defp normalize_tool_field_key(_tool, _key), do: :error
+
   defp parse_json_input(json_string) when is_binary(json_string) do
     case Poison.decode(json_string) do
       {:ok, parsed} when is_map(parsed) -> parsed
@@ -1287,8 +1316,10 @@ defmodule Normandy.Agents.BaseAgent do
           else
             input_with_atom_keys =
               Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
-                atom_key = if is_binary(key), do: String.to_atom(key), else: key
-                Map.put(acc, atom_key, value)
+                case normalize_tool_field_key(tool, key) do
+                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
+                  :error -> acc
+                end
               end)
 
             struct(tool, input_with_atom_keys)
@@ -1339,8 +1370,10 @@ defmodule Normandy.Agents.BaseAgent do
           else
             input_with_atom_keys =
               Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
-                atom_key = if is_binary(key), do: String.to_atom(key), else: key
-                Map.put(acc, atom_key, value)
+                case normalize_tool_field_key(tool, key) do
+                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
+                  :error -> acc
+                end
               end)
 
             struct(tool, input_with_atom_keys)

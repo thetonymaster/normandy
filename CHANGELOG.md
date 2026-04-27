@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Enum.map` for an opt-in bounded parallel runner (per-agent
   `max_tool_concurrency`) without churning the closure body again.
 
+### Security
+
+- **Atom-table hardening (`BaseAgent`)**: replaced `String.to_atom/1` over
+  LLM-supplied tool input keys with `normalize_tool_field_key/2`, which only
+  returns atoms that already exist as fields on the tool struct. LLM tool
+  input is influenced by attacker-controllable prompt content (chat
+  messages, webhooks); the previous code registered every unknown key in
+  the global atom table on the way to `struct/2` discarding it, and BEAM
+  never garbage-collects atoms — sustained crafted input could exhaust the
+  table and crash the VM. Unknown keys are now silently dropped, preserving
+  the existing user-visible behaviour of `struct/2`.
+
 ## [0.4.0] - 2026-04-25
 
 ### Added
