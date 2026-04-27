@@ -12,10 +12,12 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ToolResult
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
 
+  alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
   @type config_input :: %{
@@ -491,8 +493,6 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp execute_tool_loop(config, iterations_left) do
     alias Normandy.Agents.ToolCallResponse
-    alias Normandy.Components.ToolResult
-    alias Normandy.Tools.Executor
 
     # Get response from LLM (may include tool calls)
     iteration = config.max_tool_iterations - iterations_left + 1
@@ -569,63 +569,13 @@ defmodule Normandy.Agents.BaseAgent do
         # Add assistant message with tool calls to memory
         memory = AgentMemory.add_message(config.memory, "assistant", response)
 
-        # Execute each tool call
+        # Each tool call goes through `execute_one_tool_call/2` — extracted so
+        # a follow-up change can swap `Enum.map` for a bounded parallel runner
+        # without churning the closure body itself. Behaviour here is
+        # unchanged: ordered, sequential, in the caller's process.
         tool_results =
           Enum.map(response.tool_calls, fn tool_call ->
-            # Get the tool from registry and update it with input parameters
-            case Registry.get(config.tool_registry, tool_call.name) do
-              {:ok, tool} ->
-                # Update tool struct with input parameters from LLM
-                # Tools implementing prepare_input/2 receive the raw input map
-                # (used by MCP/A2A tools with dynamic schemas)
-                updated_tool =
-                  if function_exported?(tool.__struct__, :prepare_input, 2) do
-                    tool.__struct__.prepare_input(tool, tool_call.input)
-                  else
-                    # Convert string keys to atoms for struct update
-                    # Uses String.to_atom since tool schemas have finite field sets
-                    # defined at compile time; struct/2 drops unknown keys safely
-                    input_with_atom_keys =
-                      Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
-                        atom_key = if is_binary(key), do: String.to_atom(key), else: key
-                        Map.put(acc, atom_key, value)
-                      end)
-
-                    struct(tool, input_with_atom_keys)
-                  end
-
-                # Execute the updated tool
-                tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
-
-                tool_result =
-                  with_tool_execute_span(config, tool_call.name, tool_meta, fn ->
-                    r = Executor.execute_tool(updated_tool)
-                    {r, Map.put(tool_meta, :status, elem(r, 0))}
-                  end)
-
-                case tool_result do
-                  {:ok, result} ->
-                    %ToolResult{
-                      tool_call_id: tool_call.id,
-                      output: result,
-                      is_error: false
-                    }
-
-                  {:error, error} ->
-                    %ToolResult{
-                      tool_call_id: tool_call.id,
-                      output: %{error: error},
-                      is_error: true
-                    }
-                end
-
-              :error ->
-                %ToolResult{
-                  tool_call_id: tool_call.id,
-                  output: %{error: "Tool '#{tool_call.name}' not found in registry"},
-                  is_error: true
-                }
-            end
+            execute_one_tool_call(config, tool_call)
           end)
 
         # Add tool results to memory
@@ -870,9 +820,6 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp execute_streaming_tool_loop(config, iterations_left, callback) do
-    alias Normandy.Components.ToolResult
-    alias Normandy.Tools.Executor
-
     iteration = config.max_tool_iterations - iterations_left + 1
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
@@ -959,72 +906,13 @@ defmodule Normandy.Agents.BaseAgent do
             assistant_response = build_streaming_assistant_response(final_response, tool_calls)
             memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
 
-            # Execute each tool call
+            # See the matching comment in the non-streaming branch for the
+            # rationale behind extracting `execute_one_streaming_tool_call/2`.
+            # Behaviour is unchanged: sequential, in the caller's process,
+            # callback fires after each result.
             tool_results =
               Enum.map(tool_calls, fn tool_call ->
-                tool_name = tool_call["name"]
-
-                tool_input =
-                  case tool_call["input"] do
-                    nil -> %{}
-                    input when is_map(input) -> input
-                    input when is_binary(input) -> parse_json_input(input)
-                  end
-
-                result =
-                  case Registry.get(config.tool_registry, tool_name) do
-                    {:ok, tool} ->
-                      # Use prepare_input/2 for MCP/A2A tools, struct for regular tools
-                      updated_tool =
-                        if function_exported?(tool.__struct__, :prepare_input, 2) do
-                          tool.__struct__.prepare_input(tool, tool_input)
-                        else
-                          # Uses String.to_atom since tool schemas have finite field sets
-                          # defined at compile time; struct/2 drops unknown keys safely
-                          input_with_atom_keys =
-                            Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
-                              atom_key =
-                                if is_binary(key), do: String.to_atom(key), else: key
-
-                              Map.put(acc, atom_key, value)
-                            end)
-
-                          struct(tool, input_with_atom_keys)
-                        end
-
-                      tool_meta = %{tool_name: tool_name, agent_name: config.name}
-
-                      tool_result =
-                        with_tool_execute_span(config, tool_name, tool_meta, fn ->
-                          r = Executor.execute_tool(updated_tool)
-                          {r, Map.put(tool_meta, :status, elem(r, 0))}
-                        end)
-
-                      case tool_result do
-                        {:ok, result} ->
-                          %ToolResult{
-                            tool_call_id: tool_call["id"],
-                            output: result,
-                            is_error: false
-                          }
-
-                        {:error, error} ->
-                          %ToolResult{
-                            tool_call_id: tool_call["id"],
-                            output: %{error: error},
-                            is_error: true
-                          }
-                      end
-
-                    :error ->
-                      %ToolResult{
-                        tool_call_id: tool_call["id"],
-                        output: %{error: "Tool '#{tool_name}' not found in registry"},
-                        is_error: true
-                      }
-                  end
-
-                # Notify callback about tool result
+                result = execute_one_streaming_tool_call(config, tool_call)
                 callback.(:tool_result, result)
                 result
               end)
@@ -1104,12 +992,34 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp normalize_tool_input(_), do: %{}
 
-  defp parse_json_input(json_string) when is_binary(json_string) do
-    case Poison.decode(json_string) do
-      {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
-    end
+  # Map an LLM-supplied input key (atom or binary) to a struct field atom on
+  # the tool, returning :error for keys that don't correspond to any field.
+  #
+  # Crucially, this NEVER calls String.to_atom/1 on untrusted input. Tool
+  # input keys come from LLM JSON, which is influenced by attacker-
+  # controllable prompt content; String.to_atom/1 would register every
+  # unknown key in the global atom table (the BEAM never garbage-collects
+  # atoms), so a sustained stream of crafted random keys would eventually
+  # exhaust the atom table and crash the VM. struct/2 silently dropping the
+  # field at the next step doesn't undo the atom allocation that already
+  # happened.
+  #
+  # Returns {:ok, atom} for known fields, :error otherwise. Callers should
+  # silently drop :error results to preserve struct/2's effective behaviour
+  # of ignoring unknown keys.
+  defp normalize_tool_field_key(tool, key) when is_atom(key) do
+    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
   end
+
+  defp normalize_tool_field_key(tool, key) when is_binary(key) do
+    Enum.find_value(Map.keys(tool), :error, fn field ->
+      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
+        {:ok, field}
+      end
+    end)
+  end
+
+  defp normalize_tool_field_key(_tool, _key), do: :error
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
@@ -1384,6 +1294,106 @@ defmodule Normandy.Agents.BaseAgent do
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
     end)
+  end
+
+  # Closure body extracted from the non-streaming tool loop. Resolves the tool
+  # from the registry, applies the LLM-supplied input, runs it under the
+  # OTel/telemetry span, and returns a `%ToolResult{}`. Pure function — safe
+  # to call from inside a Task.async_stream worker.
+  defp execute_one_tool_call(config, tool_call) do
+    case Registry.get(config.tool_registry, tool_call.name) do
+      {:ok, tool} ->
+        updated_tool =
+          if function_exported?(tool.__struct__, :prepare_input, 2) do
+            tool.__struct__.prepare_input(tool, tool_call.input)
+          else
+            input_with_atom_keys =
+              Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
+                case normalize_tool_field_key(tool, key) do
+                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
+                  :error -> acc
+                end
+              end)
+
+            struct(tool, input_with_atom_keys)
+          end
+
+        tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
+
+        tool_result =
+          with_tool_execute_span(config, tool_call.name, tool_meta, fn ->
+            r = Executor.execute_tool(updated_tool)
+            {r, Map.put(tool_meta, :status, elem(r, 0))}
+          end)
+
+        case tool_result do
+          {:ok, result} ->
+            %ToolResult{tool_call_id: tool_call.id, output: result, is_error: false}
+
+          {:error, error} ->
+            %ToolResult{tool_call_id: tool_call.id, output: %{error: error}, is_error: true}
+        end
+
+      :error ->
+        %ToolResult{
+          tool_call_id: tool_call.id,
+          output: %{error: "Tool '#{tool_call.name}' not found in registry"},
+          is_error: true
+        }
+    end
+  end
+
+  # Streaming-loop variant: tool_call is a string-keyed map (from raw LLM JSON
+  # rather than a parsed %ToolCall{}), and input may need JSON-string parsing.
+  defp execute_one_streaming_tool_call(config, tool_call) do
+    tool_name = tool_call["name"]
+
+    # Tool input from the streaming branch is raw LLM JSON, so it can be any
+    # JSON shape — not just nil/map/binary. Route through normalize_tool_input/1
+    # so unexpected shapes (lists, numbers, booleans) degrade to %{} instead of
+    # raising CaseClauseError and aborting the whole streaming tool loop.
+    tool_input = normalize_tool_input(tool_call["input"])
+
+    case Registry.get(config.tool_registry, tool_name) do
+      {:ok, tool} ->
+        updated_tool =
+          if function_exported?(tool.__struct__, :prepare_input, 2) do
+            tool.__struct__.prepare_input(tool, tool_input)
+          else
+            input_with_atom_keys =
+              Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
+                case normalize_tool_field_key(tool, key) do
+                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
+                  :error -> acc
+                end
+              end)
+
+            struct(tool, input_with_atom_keys)
+          end
+
+        tool_meta = %{tool_name: tool_name, agent_name: config.name}
+
+        tool_result =
+          with_tool_execute_span(config, tool_name, tool_meta, fn ->
+            r = Executor.execute_tool(updated_tool)
+            {r, Map.put(tool_meta, :status, elem(r, 0))}
+          end)
+
+        case tool_result do
+          {:ok, result} ->
+            %ToolResult{tool_call_id: tool_call["id"], output: result, is_error: false}
+
+          {:error, error} ->
+            %ToolResult{tool_call_id: tool_call["id"], output: %{error: error}, is_error: true}
+        end
+
+      :error ->
+        %ToolResult{
+          tool_call_id: tool_call["id"],
+          output: %{error: "Tool '#{tool_name}' not found in registry"},
+          is_error: true
+        }
+    end
   end
 
   defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do

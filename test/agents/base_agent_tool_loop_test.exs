@@ -181,4 +181,90 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       assert response.chat_message == "Handled error"
     end
   end
+
+  describe "Tool input atom-table hardening" do
+    # Mock client that emits a tool_use whose `input` map mixes valid binary
+    # keys with a canary key (one that does NOT correspond to any field on
+    # the tool). This exercises the binary-key path of the per-call helper
+    # `normalize_tool_field_key/2` — the path that previously called
+    # `String.to_atom/1` and could be coerced into exhausting the BEAM atom
+    # table by attacker-controlled LLM input.
+    defmodule MockHostileToolClient do
+      use Normandy.Schema
+
+      schema do
+        field(:canary_key, :string)
+      end
+
+      defimpl Normandy.Agents.Model do
+        def completitions(_, _, _, _, _, response_model), do: response_model
+
+        def converse(
+              config,
+              _model,
+              _temperature,
+              _max_tokens,
+              messages,
+              _response_model,
+              _opts \\ []
+            ) do
+          tool_message_count =
+            Enum.count(messages, fn msg -> msg.role == "tool" end)
+
+          if tool_message_count == 0 do
+            %ToolCallResponse{
+              content: nil,
+              tool_calls: [
+                %ToolCall{
+                  id: "call_canary",
+                  name: "calculator",
+                  input: %{
+                    "operation" => "add",
+                    "a" => 5,
+                    "b" => 3,
+                    config.canary_key => "should_be_dropped"
+                  }
+                }
+              ]
+            }
+          else
+            %ToolCallResponse{content: "ok", tool_calls: []}
+          end
+        end
+      end
+    end
+
+    test "drops unknown input keys without registering them as atoms" do
+      # Build a canary string at runtime so its bytes are unique per test
+      # run. If any atom equal to this string exists in the BEAM atom table
+      # before the test runs, the assertion below would falsely pass — the
+      # initial assert_raise pins the precondition.
+      canary = "atom_table_canary_#{:erlang.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
+
+      calc = %Calculator{operation: "add", a: 0, b: 0}
+      registry = Registry.new([calc])
+
+      config = %{
+        client: %MockHostileToolClient{canary_key: canary},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: registry,
+        max_tool_iterations: 5
+      }
+
+      agent = BaseAgent.init(config)
+      user_input = %{text: "trigger hostile tool call"}
+
+      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      assert response != nil
+
+      # If the legacy `String.to_atom/1` reducer had still been in place,
+      # the canary key would now be a registered atom and this call would
+      # succeed. With `normalize_tool_field_key/2` the unknown key is
+      # silently dropped before any atom-table interaction.
+      assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
+    end
+  end
 end
