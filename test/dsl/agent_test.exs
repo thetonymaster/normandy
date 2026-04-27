@@ -258,5 +258,35 @@ defmodule Normandy.DSL.AgentTest do
 
       assert agent.max_tool_concurrency == 9
     end
+
+    test "integer < 1 clamps to 1 (matches runtime tool-loop floor)" do
+      {:ok, agent} =
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 0)
+
+      assert agent.max_tool_concurrency == 1
+    end
+
+    test "DSL-declared integer < 1 is normalized at compile time so config/0 doesn't lie" do
+      defmodule ZeroConcurrencyAgent do
+        use Normandy.DSL.Agent
+
+        agent do
+          model("claude-haiku-4-5-20251001")
+          max_tool_concurrency(0)
+        end
+      end
+
+      assert ZeroConcurrencyAgent.config().max_tool_concurrency == 1
+    end
+
+    test "non-integer raises ArgumentError to fail-fast on config bugs" do
+      assert_raise ArgumentError, ~r/:max_tool_concurrency must be an integer >= 1/, fn ->
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 4.0)
+      end
+
+      assert_raise ArgumentError, ~r/:max_tool_concurrency must be an integer >= 1/, fn ->
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: "4")
+      end
+    end
   end
 end

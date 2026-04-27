@@ -289,7 +289,10 @@ defmodule Normandy.DSL.Agent do
         model: Module.get_attribute(__MODULE__, :agent_model),
         temperature: Module.get_attribute(__MODULE__, :agent_temperature, 0.7),
         max_tokens: Module.get_attribute(__MODULE__, :agent_max_tokens, 4096),
-        max_tool_concurrency: Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1),
+        max_tool_concurrency:
+          Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(
+            Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1)
+          ),
         max_messages: Module.get_attribute(__MODULE__, :agent_max_messages),
         system_prompt: Module.get_attribute(__MODULE__, :agent_system_prompt),
         background: Module.get_attribute(__MODULE__, :agent_background),

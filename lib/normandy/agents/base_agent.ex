@@ -123,11 +123,18 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Coerce inbound `:max_tool_concurrency` into the `pos_integer()` shape the
-  # struct's typespec promises. Non-integers and values < 1 fall back to 1 so
-  # the agent never carries a value that disagrees with how the runtime tool
-  # loops will actually behave (they clamp the same way).
-  defp normalize_max_tool_concurrency(n) when is_integer(n) and n >= 1, do: n
-  defp normalize_max_tool_concurrency(_), do: 1
+  # struct's typespec promises. Integers < 1 are clamped to 1 (matches the
+  # runtime tool-loop clamp). Non-integers raise — silently coercing `"4"` or
+  # `4.0` to 1 hides a real config bug from the caller. Public so the DSL
+  # `__before_compile__` quote can reuse it for compile-time validation.
+  @doc false
+  def normalize_max_tool_concurrency(n) when is_integer(n) and n >= 1, do: n
+  def normalize_max_tool_concurrency(n) when is_integer(n) and n < 1, do: 1
+
+  def normalize_max_tool_concurrency(other) do
+    raise ArgumentError,
+          ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
+  end
 
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil) :: {struct(), map() | nil}
   defp get_response_with_usage(
