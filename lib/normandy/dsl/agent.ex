@@ -148,6 +148,23 @@ defmodule Normandy.DSL.Agent do
   end
 
   @doc """
+  Sets the maximum number of tool calls executed concurrently inside a single
+  tool-loop iteration. Defaults to `1` (sequential, in the caller's process —
+  matches pre-0.5.0 behaviour). Values `> 1` opt the agent into bounded parallel
+  tool execution: each tool call runs in its own `Task` worker, ordered by the
+  LLM's tool-call sequence, with up to N running at once.
+
+  Process-semantics note: callbacks passed to `stream_with_tools/3` execute in
+  the worker process, not the caller. Capture `parent = self()` outside the
+  callback before sending messages to the test/owner process.
+  """
+  defmacro max_tool_concurrency(value) do
+    quote do
+      Module.put_attribute(__MODULE__, :agent_max_tool_concurrency, unquote(value))
+    end
+  end
+
+  @doc """
   Sets the system prompt.
   """
   defmacro system_prompt(value) do
@@ -269,6 +286,7 @@ defmodule Normandy.DSL.Agent do
         model: Module.get_attribute(__MODULE__, :agent_model),
         temperature: Module.get_attribute(__MODULE__, :agent_temperature, 0.7),
         max_tokens: Module.get_attribute(__MODULE__, :agent_max_tokens, 4096),
+        max_tool_concurrency: Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1),
         max_messages: Module.get_attribute(__MODULE__, :agent_max_messages),
         system_prompt: Module.get_attribute(__MODULE__, :agent_system_prompt),
         background: Module.get_attribute(__MODULE__, :agent_background),
@@ -386,6 +404,7 @@ defmodule Normandy.DSL.Agent do
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
+          max_tool_concurrency: @agent_compile_config.max_tool_concurrency,
           system_prompt: @agent_compile_config.system_prompt,
           background: @agent_compile_config.background,
           steps: @agent_compile_config.steps,
@@ -412,6 +431,7 @@ defmodule Normandy.DSL.Agent do
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
+          max_tool_concurrency: @agent_compile_config.max_tool_concurrency,
           name: @agent_name,
           input_guardrails: @agent_compile_config.input_guardrails,
           output_guardrails: @agent_compile_config.output_guardrails,

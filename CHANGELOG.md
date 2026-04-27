@@ -7,8 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-agent `max_tool_concurrency` (bounded parallel tool execution)**:
+  `BaseAgentConfig` gains a `max_tool_concurrency` field (default `1`). The
+  tool loop in `BaseAgent` now wraps each per-call worker through
+  `Task.async_stream(ordered: true, max_concurrency: config.max_tool_concurrency,
+   timeout: :infinity, on_timeout: :kill_task)` in both the non-streaming and
+  streaming branches. Default `1` preserves pre-0.5.0 sequential behaviour
+  (modulo the worker-process semantics noted under *Changed* below). Values
+  `> 1` opt the agent into parallel tool execution — each tool call runs in
+  its own `Task` worker, ordered by the LLM's call sequence, with up to N
+  running at once. OTel parent context is propagated softly (via
+  `Code.ensure_loaded?(OpenTelemetry.Ctx)` — Normandy does not add OTel as a
+  hard dep) so consumer-side telemetry handlers continue to nest tool spans
+  under the parent `agent.run` span.
+- **DSL macro `max_tool_concurrency/1`**: sets the compile-time default
+  inside `Normandy.DSL.Agent.agent do ... end`. Runtime overrides on
+  `MyAgent.new/1` (top-level keyword, or via `:override`) take precedence as
+  for any other agent setting.
+
 ### Changed
 
+- **Streaming callback process semantics (`stream_with_tools/3`)**: the
+  callback now executes in the `Task.async_stream` worker process, not the
+  caller — including at `max_tool_concurrency: 1`, because `Task.async_stream`
+  always spawns one worker per closure. Callbacks that referenced `self()`
+  inside (e.g. `fn :tool_result, r -> send(self(), {:tool_result, r}) end`)
+  will now target the worker PID. To send messages back to the owner, capture
+  the PID outside the callback first: `parent = self(); fn :tool_result, r ->
+  send(parent, ...) end`. This is the canonical Elixir pattern for any
+  callback that may run in a worker process.
 - **Tool loop refactor (`BaseAgent`)**: extracted the per-tool-call body of
   `execute_tool_loop/2` and `execute_streaming_tool_loop/3` into the private
   helpers `execute_one_tool_call/2` and `execute_one_streaming_tool_call/2`.

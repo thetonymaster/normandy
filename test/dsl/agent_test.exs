@@ -212,4 +212,51 @@ defmodule Normandy.DSL.AgentTest do
       assert length(agent.memory.history) == 0
     end
   end
+
+  describe "max_tool_concurrency" do
+    defmodule ConcurrentAgent do
+      use Normandy.DSL.Agent
+
+      agent do
+        model("claude-haiku-4-5-20251001")
+        max_tool_concurrency(5)
+      end
+    end
+
+    test "default is 1 when not set in DSL" do
+      assert TestAgent.config().max_tool_concurrency == 1
+    end
+
+    test "DSL macro sets the compile-time default" do
+      assert ConcurrentAgent.config().max_tool_concurrency == 5
+    end
+
+    test "default flows through to a built agent" do
+      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      assert agent.max_tool_concurrency == 1
+    end
+
+    test "DSL value flows through to a built agent" do
+      {:ok, agent} = ConcurrentAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      assert agent.max_tool_concurrency == 5
+    end
+
+    test "top-level override on new/1 wins over DSL default" do
+      {:ok, agent} =
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 7)
+
+      assert agent.max_tool_concurrency == 7
+    end
+
+    test ":override keyword wins over both DSL and top-level" do
+      {:ok, agent} =
+        ConcurrentAgent.new(
+          client: %NormandyTest.Support.ModelMockup{},
+          max_tool_concurrency: 3,
+          override: [max_tool_concurrency: 9]
+        )
+
+      assert agent.max_tool_concurrency == 9
+    end
+  end
 end

@@ -31,6 +31,7 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:max_tokens) => pos_integer() | nil,
           optional(:tool_registry) => Registry.t(),
           optional(:max_tool_iterations) => pos_integer(),
+          optional(:max_tool_concurrency) => pos_integer(),
           optional(:retry_options) => keyword(),
           optional(:enable_circuit_breaker) => boolean(),
           optional(:circuit_breaker_options) => keyword(),
@@ -95,6 +96,7 @@ defmodule Normandy.Agents.BaseAgent do
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
       max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
+      max_tool_concurrency: Map.get(config, :max_tool_concurrency, 1),
       retry_options: Map.get(config, :retry_options, nil),
       circuit_breaker: circuit_breaker,
       enable_json_retry: Map.get(config, :enable_json_retry, false),
@@ -569,14 +571,31 @@ defmodule Normandy.Agents.BaseAgent do
         # Add assistant message with tool calls to memory
         memory = AgentMemory.add_message(config.memory, "assistant", response)
 
-        # Each tool call goes through `execute_one_tool_call/2` — extracted so
-        # a follow-up change can swap `Enum.map` for a bounded parallel runner
-        # without churning the closure body itself. Behaviour here is
-        # unchanged: ordered, sequential, in the caller's process.
+        # Tool calls run through `Task.async_stream` so an agent can opt into
+        # bounded parallel execution via `max_tool_concurrency` (default `1` =
+        # sequential). `ordered: true` keeps tool_results in the LLM's call
+        # order, which downstream code (and Anthropic's tool_result pairing)
+        # may rely on. The per-tool 30 s timeout already lives in
+        # `Executor.execute_tool/2`, so the outer stream stays `:infinity`.
+        # `parent_otel_ctx` is captured once and re-attached in each worker so
+        # tool spans nest under the parent agent.run span (the worker process
+        # has a fresh process dict).
+        parent_otel_ctx = capture_otel_ctx()
+        max_concurrency = max(config.max_tool_concurrency || 1, 1)
+
         tool_results =
-          Enum.map(response.tool_calls, fn tool_call ->
-            execute_one_tool_call(config, tool_call)
-          end)
+          response.tool_calls
+          |> Task.async_stream(
+            fn tool_call ->
+              restore_otel_ctx(parent_otel_ctx)
+              execute_one_tool_call(config, tool_call)
+            end,
+            ordered: true,
+            max_concurrency: max_concurrency,
+            timeout: :infinity,
+            on_timeout: :kill_task
+          )
+          |> Enum.map(fn {:ok, result} -> result end)
 
         # Add tool results to memory
         memory =
@@ -906,16 +925,32 @@ defmodule Normandy.Agents.BaseAgent do
             assistant_response = build_streaming_assistant_response(final_response, tool_calls)
             memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
 
-            # See the matching comment in the non-streaming branch for the
-            # rationale behind extracting `execute_one_streaming_tool_call/2`.
-            # Behaviour is unchanged: sequential, in the caller's process,
-            # callback fires after each result.
+            # Same Task.async_stream parallelism as the non-streaming branch
+            # (see comment there). Streaming additionally invokes
+            # `callback.(:tool_result, result)` per tool — at concurrency 1
+            # the callback fires in input order; at concurrency > 1 callbacks
+            # fire in tool-completion order, and the closure runs in a worker
+            # process so any `self()` reference inside the callback is the
+            # worker PID, not the caller. Capture parent PID outside the
+            # callback when sending messages to the owning process.
+            parent_otel_ctx = capture_otel_ctx()
+            max_concurrency = max(config.max_tool_concurrency || 1, 1)
+
             tool_results =
-              Enum.map(tool_calls, fn tool_call ->
-                result = execute_one_streaming_tool_call(config, tool_call)
-                callback.(:tool_result, result)
-                result
-              end)
+              tool_calls
+              |> Task.async_stream(
+                fn tool_call ->
+                  restore_otel_ctx(parent_otel_ctx)
+                  result = execute_one_streaming_tool_call(config, tool_call)
+                  callback.(:tool_result, result)
+                  result
+                end,
+                ordered: true,
+                max_concurrency: max_concurrency,
+                timeout: :infinity,
+                on_timeout: :kill_task
+              )
+              |> Enum.map(fn {:ok, result} -> result end)
 
             # Add tool results to memory
             memory =
@@ -1020,6 +1055,30 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp normalize_tool_field_key(_tool, _key), do: :error
+
+  # Soft OpenTelemetry context propagation. Normandy doesn't depend on
+  # :opentelemetry directly — consumers wire it up via telemetry handlers.
+  # When OTel is loaded, capture the active context in the parent process so
+  # the Task.async_stream worker can re-attach it; spans created inside the
+  # worker (by `:telemetry.span` handlers downstream) then nest under the
+  # parent agent.run span instead of becoming root spans in their own trace.
+  # When OTel is not loaded, both helpers are cheap no-ops.
+  defp capture_otel_ctx do
+    if Code.ensure_loaded?(OpenTelemetry.Ctx) and
+         function_exported?(OpenTelemetry.Ctx, :get_current, 0) do
+      apply(OpenTelemetry.Ctx, :get_current, [])
+    end
+  end
+
+  defp restore_otel_ctx(nil), do: :ok
+
+  defp restore_otel_ctx(ctx) do
+    if function_exported?(OpenTelemetry.Ctx, :attach, 1) do
+      apply(OpenTelemetry.Ctx, :attach, [ctx])
+    end
+
+    :ok
+  end
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do

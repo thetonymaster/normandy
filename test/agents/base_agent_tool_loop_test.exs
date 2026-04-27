@@ -267,4 +267,148 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
     end
   end
+
+  describe "max_tool_concurrency parallel execution" do
+    # Tool that sleeps for the configured duration before returning. Used as
+    # a deterministic stand-in for I/O-bound tools (HTTP, DB, search) so the
+    # parallelism speedup shows up as a wall-clock difference.
+    defmodule SleepyTool do
+      use Normandy.Schema
+
+      schema do
+        field(:sleep_ms, :integer, default: 200)
+        field(:label, :string, default: "")
+      end
+
+      defimpl Normandy.Tools.BaseTool do
+        def tool_name(_), do: "sleepy"
+        def tool_description(_), do: "Sleeps then returns its label."
+
+        def input_schema(_) do
+          %{
+            type: "object",
+            properties: %{
+              sleep_ms: %{type: "integer"},
+              label: %{type: "string"}
+            }
+          }
+        end
+
+        def run(%{sleep_ms: ms, label: label}) do
+          :timer.sleep(ms)
+          {:ok, label}
+        end
+      end
+    end
+
+    # Mock client that emits N parallel tool_use blocks pointing at the
+    # SleepyTool, then a final response once all results have streamed back.
+    defmodule MockSleepyClient do
+      use Normandy.Schema
+
+      schema do
+        field(:n, :integer, default: 3)
+        field(:sleep_ms, :integer, default: 200)
+      end
+
+      defimpl Normandy.Agents.Model do
+        def completitions(_, _, _, _, _, response_model), do: response_model
+
+        def converse(
+              config,
+              _model,
+              _temperature,
+              _max_tokens,
+              messages,
+              _response_model,
+              _opts \\ []
+            ) do
+          tool_messages = Enum.count(messages, &(&1.role == "tool"))
+
+          if tool_messages == 0 do
+            tool_calls =
+              for i <- 1..config.n do
+                %ToolCall{
+                  id: "call_#{i}",
+                  name: "sleepy",
+                  input: %{sleep_ms: config.sleep_ms, label: "tool_#{i}"}
+                }
+              end
+
+            %ToolCallResponse{content: nil, tool_calls: tool_calls}
+          else
+            %ToolCallResponse{content: "done", tool_calls: []}
+          end
+        end
+      end
+    end
+
+    defp run_with_concurrency(concurrency, n, sleep_ms) do
+      registry = Registry.new([%SleepyTool{}])
+
+      config = %{
+        client: %MockSleepyClient{n: n, sleep_ms: sleep_ms},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: registry,
+        max_tool_iterations: 5,
+        max_tool_concurrency: concurrency
+      }
+
+      agent = BaseAgent.init(config)
+
+      {elapsed_us, {_agent, response}} =
+        :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
+
+      {elapsed_us, response}
+    end
+
+    test "max_tool_concurrency: 1 runs tools sequentially" do
+      # 3 tools × 100 ms each = ~300 ms minimum, sequential
+      {elapsed_us, response} = run_with_concurrency(1, 3, 100)
+
+      assert response != nil
+      assert div(elapsed_us, 1000) >= 300,
+             "expected sequential >= 300ms, got #{div(elapsed_us, 1000)}ms"
+    end
+
+    test "max_tool_concurrency: 3 runs tools in parallel" do
+      # 3 tools × 100 ms parallel ≈ 100–200 ms (one batch). Allow 250 ms
+      # ceiling for scheduler/CI variance.
+      {elapsed_us, response} = run_with_concurrency(3, 3, 100)
+
+      assert response != nil
+      assert div(elapsed_us, 1000) < 250,
+             "expected parallel < 250ms, got #{div(elapsed_us, 1000)}ms"
+    end
+
+    test "tool results stay in LLM-supplied call order under parallelism" do
+      registry = Registry.new([%SleepyTool{}])
+
+      config = %{
+        client: %MockSleepyClient{n: 3, sleep_ms: 50},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: registry,
+        max_tool_iterations: 5,
+        max_tool_concurrency: 3
+      }
+
+      agent = BaseAgent.init(config)
+      {agent, _response} = BaseAgent.run_with_tools(agent, %{text: "fan out"})
+
+      # `memory.history` is stored LIFO ([newest | rest]) for O(1) prepends.
+      # Reverse to get chronological order before filtering.
+      tool_msgs =
+        agent.memory.history
+        |> Enum.reverse()
+        |> Enum.filter(&(&1.role == "tool"))
+
+      assert length(tool_msgs) == 3
+
+      labels = Enum.map(tool_msgs, fn msg -> msg.content.output end)
+      assert labels == ["tool_1", "tool_2", "tool_3"],
+             "expected ordered labels, got #{inspect(labels)}"
+    end
+  end
 end
