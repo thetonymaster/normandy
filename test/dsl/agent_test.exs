@@ -288,5 +288,24 @@ defmodule Normandy.DSL.AgentTest do
         TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: "4")
       end
     end
+
+    test "DSL non-integer raises at compile time" do
+      # `Code.compile_string/1` defers compilation to test-runtime so we can
+      # capture the raise. A bare `defmodule ... max_tool_concurrency("4") ...`
+      # at the test source level would fail to compile this test FILE, never
+      # giving the assertion a chance to run.
+      assert_raise ArgumentError, ~r/:max_tool_concurrency must be an integer >= 1/, fn ->
+        Code.compile_string("""
+        defmodule Normandy.DSLTest.BadConcurrencyAgent do
+          use Normandy.DSL.Agent
+
+          agent do
+            model("claude-haiku-4-5-20251001")
+            max_tool_concurrency("4")
+          end
+        end
+        """)
+      end
+    end
   end
 end
