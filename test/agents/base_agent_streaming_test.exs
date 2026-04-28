@@ -333,11 +333,16 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       tool = %TestCalculator{}
       config = BaseAgent.register_tool(config, tool)
 
+      # Capture parent PID outside the callback. With max_tool_concurrency >= 1,
+      # tool_result callbacks run in Task.async_stream worker processes — using
+      # `self()` inside the callback would target the worker, not the test.
+      parent = self()
+
       # Track events
       callback = fn
-        :tool_use_start, tool -> send(self(), {:tool_start, tool["name"]})
-        :tool_result, result -> send(self(), {:tool_result, result})
-        :text_delta, text -> send(self(), {:text, text})
+        :tool_use_start, tool -> send(parent, {:tool_start, tool["name"]})
+        :tool_result, result -> send(parent, {:tool_result, result})
+        :text_delta, text -> send(parent, {:text, text})
         _, _ -> :ok
       end
 

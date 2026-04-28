@@ -148,6 +148,35 @@ defmodule Normandy.DSL.Agent do
   end
 
   @doc """
+  Sets the maximum number of tool calls executed concurrently inside a single
+  tool-loop iteration. Defaults to `1` (sequential — matches pre-0.5.0
+  observable behaviour). Values `> 1` opt the agent into bounded parallel tool
+  execution with up to N tools running at once. The final result list passed
+  back to the LLM stays in the LLM's tool-call order (`Task.async_stream` is
+  invoked with `ordered: true`).
+
+  Streaming callback ordering: `BaseAgent.stream_with_tools/3` invokes
+  `callback.(:tool_result, result)` from inside each worker as soon as that
+  tool finishes. At `max_tool_concurrency > 1`, callers therefore observe
+  `:tool_result` events in **completion order**, not LLM-call order — a
+  100ms tool that fires after a 500ms tool will still emit its `:tool_result`
+  first. If you need LLM-order callback handling, set `max_tool_concurrency:
+  1` or buffer events and reorder them yourself after the stream completes.
+
+  Process-semantics note: tool invocations run inside `Task.async_stream`
+  workers, even at `max_tool_concurrency: 1`. Streaming callbacks fired *while
+  a tool is executing* therefore run in those worker processes — capture
+  `parent = self()` outside the callback before sending messages to the
+  test/owner process. Streaming callbacks fired outside tool execution (e.g.
+  `:text_delta` before any `tool_use`) still run in the caller's process.
+  """
+  defmacro max_tool_concurrency(value) do
+    quote do
+      Module.put_attribute(__MODULE__, :agent_max_tool_concurrency, unquote(value))
+    end
+  end
+
+  @doc """
   Sets the system prompt.
   """
   defmacro system_prompt(value) do
@@ -269,6 +298,10 @@ defmodule Normandy.DSL.Agent do
         model: Module.get_attribute(__MODULE__, :agent_model),
         temperature: Module.get_attribute(__MODULE__, :agent_temperature, 0.7),
         max_tokens: Module.get_attribute(__MODULE__, :agent_max_tokens, 4096),
+        max_tool_concurrency:
+          Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(
+            Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1)
+          ),
         max_messages: Module.get_attribute(__MODULE__, :agent_max_messages),
         system_prompt: Module.get_attribute(__MODULE__, :agent_system_prompt),
         background: Module.get_attribute(__MODULE__, :agent_background),
@@ -386,6 +419,7 @@ defmodule Normandy.DSL.Agent do
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
+          max_tool_concurrency: @agent_compile_config.max_tool_concurrency,
           system_prompt: @agent_compile_config.system_prompt,
           background: @agent_compile_config.background,
           steps: @agent_compile_config.steps,
@@ -412,6 +446,7 @@ defmodule Normandy.DSL.Agent do
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
+          max_tool_concurrency: @agent_compile_config.max_tool_concurrency,
           name: @agent_name,
           input_guardrails: @agent_compile_config.input_guardrails,
           output_guardrails: @agent_compile_config.output_guardrails,
