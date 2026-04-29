@@ -290,6 +290,56 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     end
   end
 
+  describe "named-helper guards: empty fields fall through and raise via to_claudio/1" do
+    # Constructors (`new_base64/2`, `new_url/1`, `new_file/1`) enforce
+    # non-empty fields, but a caller bypassing them with raw struct
+    # literals must still hit the ArgumentError that
+    # `ContentBlock.{Image,Document}.to_claudio/1` raises — not silently
+    # take the named-helper path with empty data.
+
+    test "ImageBlock base64 with empty data falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [
+          %ImageBlock{source: :base64, data: "", media_type: "image/png"},
+          TextBlock.new("describe")
+        ]
+      }
+
+      assert_raise ArgumentError, ~r/invalid base64 image/, fn -> add(msg) end
+    end
+
+    test "ImageBlock base64 with empty media_type falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [
+          %ImageBlock{source: :base64, data: "D", media_type: ""},
+          TextBlock.new("describe")
+        ]
+      }
+
+      assert_raise ArgumentError, ~r/invalid base64 image/, fn -> add(msg) end
+    end
+
+    test "ImageBlock url with empty url falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [%ImageBlock{source: :url, url: ""}, TextBlock.new("describe")]
+      }
+
+      assert_raise ArgumentError, ~r/invalid url image/, fn -> add(msg) end
+    end
+
+    test "DocumentBlock with empty file_id falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [%DocumentBlock{source: :file_id, file_id: ""}, TextBlock.new("summarize")]
+      }
+
+      assert_raise ArgumentError, ~r/invalid document/, fn -> add(msg) end
+    end
+  end
+
   describe "defensive guards for unsafe shapes" do
     test "system role with list content converts blocks to raw-shape list" do
       msg = %Message{role: "system", content: [TextBlock.new("sys")]}

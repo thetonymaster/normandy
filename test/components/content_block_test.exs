@@ -211,6 +211,17 @@ defmodule NormandyTest.Components.ContentBlockTest do
              ) == false
     end
 
+    test "with_cache/2 + to_claudio/1 raises when cache_control is a struct" do
+      # `%{} = cache_control` matches structs in Elixir, so without an
+      # explicit `not is_struct/1` guard the helper would iterate the
+      # struct's fields (including `__struct__`) into the cache payload.
+      bad_block = Text.new("hi") |> Text.with_cache(%Date{year: 2026, month: 1, day: 1})
+
+      assert_raise ArgumentError, ~r/cache_control must be a plain map/, fn ->
+        Text.to_claudio(bad_block)
+      end
+    end
+
     test "with_cache/2 raises on atom/string key collision after normalization" do
       # Pathological but possible: passing both an atom and a string version
       # of the same key would silently collapse to whichever the map

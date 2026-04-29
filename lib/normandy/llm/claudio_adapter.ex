@@ -507,6 +507,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # `cache_control`. So we only take the named-helper path when neither
     # block carries one — `cache_control: nil` in the pattern enforces
     # this. Cached blocks always go through the raw-list fallback.
+    # Non-empty-string guards mirror `ContentBlock.{Image,Document}.to_claudio/1`:
+    # the raw-list fallback (below) ultimately calls those serializers and
+    # raises ArgumentError on empty `data`/`media_type`/`url`/`file_id`. The
+    # named-helper path here would otherwise ship empty values to Anthropic
+    # downstream, asymmetrically letting malformed blocks through.
     defp dispatch_multimodal(request, role, [
            %ImageBlock{
              source: :base64,
@@ -516,7 +521,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
            },
            %TextBlock{text: text, cache_control: nil}
          ])
-         when is_binary(data) and is_binary(media_type) and is_binary(text) do
+         when is_binary(data) and data != "" and
+                is_binary(media_type) and media_type != "" and
+                is_binary(text) do
       Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
     end
 
@@ -524,7 +531,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
            %ImageBlock{source: :url, url: url, cache_control: nil},
            %TextBlock{text: text, cache_control: nil}
          ])
-         when is_binary(url) and is_binary(text) do
+         when is_binary(url) and url != "" and is_binary(text) do
       Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
     end
 
@@ -532,7 +539,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
            %DocumentBlock{source: :file_id, file_id: file_id, cache_control: nil},
            %TextBlock{text: text, cache_control: nil}
          ])
-         when is_binary(file_id) and is_binary(text) do
+         when is_binary(file_id) and file_id != "" and is_binary(text) do
       Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
     end
 
