@@ -789,6 +789,36 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert tail["cache_control"] == %{"type" => "ephemeral"}
     end
 
+    test "string-keyed nil falls back to atom-keyed annotation (no silent loss of TTL)" do
+      # `%{"cache_control" => nil}` is not a real annotation; the
+      # non-nil atom-keyed `:cache_control` should win and be preserved
+      # verbatim. Without the fallback, the string-keyed nil would
+      # shadow the real annotation and the default ephemeral marker
+      # would be injected, dropping the caller's TTL.
+      raw_with_both = %{
+        :type => "text",
+        :text => "tail",
+        "cache_control" => nil,
+        :cache_control => %{type: "ephemeral", ttl: "1h"}
+      }
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_both]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      # Block ships through verbatim — caller's atom-keyed annotation
+      # (with its TTL) is preserved exactly.
+      assert tail == raw_with_both
+    end
+
     test "atom-keyed :cache_control on raw caller map is respected (no double-injection)" do
       # `block_to_claudio/1` passes plain maps through unchanged, so a caller
       # who hand-builds a block with an atom-keyed `:cache_control` reaches

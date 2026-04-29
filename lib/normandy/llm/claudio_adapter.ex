@@ -634,11 +634,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # cache marker. Inject the default and clear the nil key so the wire
     # shape carries exactly one `"cache_control"`.
     defp annotate_block(block) when is_map(block) do
+      # String key wins when non-nil; otherwise fall back to the atom key
+      # (also non-nil). A nil string-keyed value must NOT shadow a real
+      # atom-keyed annotation, or callers like
+      # `%{"cache_control" => nil, cache_control: %{type: ..., ttl: ...}}`
+      # would silently lose the TTL.
       existing =
-        cond do
-          Map.has_key?(block, "cache_control") -> Map.get(block, "cache_control")
-          Map.has_key?(block, :cache_control) -> Map.get(block, :cache_control)
-          true -> nil
+        case Map.fetch(block, "cache_control") do
+          {:ok, nil} -> Map.get(block, :cache_control)
+          {:ok, value} -> value
+          :error -> Map.get(block, :cache_control)
         end
 
       if existing != nil do
