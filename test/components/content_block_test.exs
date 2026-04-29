@@ -210,5 +210,16 @@ defmodule NormandyTest.Components.ContentBlockTest do
                "cache_control"
              ) == false
     end
+
+    test "with_cache/2 raises on atom/string key collision after normalization" do
+      # Pathological but possible: passing both an atom and a string version
+      # of the same key would silently collapse to whichever the map
+      # iterator emitted last. Better to raise than to lose caller intent.
+      block = Text.new("hi") |> Text.with_cache(%{:type => "ephemeral", "type" => "custom"})
+
+      assert_raise ArgumentError, ~r/contains both an atom and string version/, fn ->
+        Text.to_claudio(block)
+      end
+    end
   end
 end

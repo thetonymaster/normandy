@@ -614,10 +614,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
       rest ++ [annotate_block(last)]
     end
 
-    defp annotate_block(%{"cache_control" => _} = block), do: block
-
+    # `block_to_claudio/1` passes caller-supplied raw maps through
+    # unchanged, so an atom-keyed `:cache_control` from a hand-built block
+    # reaches here intact. Match both atom and string key forms — otherwise
+    # we'd silently inject a second `"cache_control"` key alongside the
+    # caller's, producing a double-keyed block.
     defp annotate_block(block) when is_map(block) do
-      Map.put(block, "cache_control", %{"type" => "ephemeral"})
+      if Map.has_key?(block, "cache_control") or Map.has_key?(block, :cache_control) do
+        block
+      else
+        Map.put(block, "cache_control", %{"type" => "ephemeral"})
+      end
     end
 
     defp add_tools(request, [], _enable_caching), do: request

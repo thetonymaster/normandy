@@ -690,6 +690,31 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert req.messages == []
     end
 
+    test "atom-keyed :cache_control on raw caller map is respected (no double-injection)" do
+      # `block_to_claudio/1` passes plain maps through unchanged, so a caller
+      # who hand-builds a block with an atom-keyed `:cache_control` reaches
+      # `annotate_block/1` with that atom key intact. The adapter must
+      # treat that as "already cached" and not inject a second
+      # `"cache_control"` key.
+      atom_keyed = %{
+        type: "image",
+        source: %{type: "base64", media_type: "image/png", data: "D"},
+        cache_control: %{type: "ephemeral", ttl: "1h"}
+      }
+
+      messages = [%Message{role: "user", content: [atom_keyed]}]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [block]} = last_user
+
+      # The map ships through verbatim — no string-keyed "cache_control"
+      # gets layered on top of the atom-keyed one.
+      assert block == atom_keyed
+      refute Map.has_key?(block, "cache_control")
+    end
+
     test "blocks built via with_cache/1 ship cache_control through the pipeline" do
       # Caller-driven per-block annotation (not the auto-strategy): even
       # with `enable_caching: false`, an explicitly-cached block should

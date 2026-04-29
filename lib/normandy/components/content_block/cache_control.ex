@@ -15,9 +15,21 @@ defmodule Normandy.Components.ContentBlock.CacheControl do
 
   @spec normalize_keys(map()) :: map()
   def normalize_keys(%{} = map) do
-    Map.new(map, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-      {k, v} -> {k, v}
+    # Stringifying atom keys can collide with existing string keys
+    # (`%{type: "x", "type" => "y"}` would silently lose one entry under
+    # `Map.new/2`). Detect collisions during the reduce and raise — caller
+    # intent is unrecoverable from a collapsed map.
+    Enum.reduce(map, %{}, fn {k, v}, acc ->
+      key = if is_atom(k), do: Atom.to_string(k), else: k
+
+      if Map.has_key?(acc, key) do
+        raise ArgumentError,
+              "Normandy.Components.ContentBlock.CacheControl: cache_control map " <>
+                "contains both an atom and string version of the same key after " <>
+                "normalization (#{inspect(key)}). Pick one form."
+      end
+
+      Map.put(acc, key, v)
     end)
   end
 end
