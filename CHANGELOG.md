@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-29
+
 ### Added
 
 - **Per-agent `max_tool_concurrency` (bounded parallel tool execution)**:
@@ -26,6 +28,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `Normandy.DSL.Agent.agent do ... end`. Runtime overrides on
   `MyAgent.new/1` (top-level keyword, or via `:override`) take precedence as
   for any other agent setting.
+- **Input validation for `:max_tool_concurrency`**: non-integer values
+  (`"4"`, `4.0`, etc.) now raise `ArgumentError` rather than silently
+  coercing to a default — a config bug should surface, not hide. Integers
+  `< 1` are clamped to `1` to match the runtime tool-loop floor. Validation
+  runs at both layers: at compile time inside the DSL `__before_compile__`
+  (so `MyAgent.config().max_tool_concurrency` doesn't lie about the value
+  the agent will actually use), and at runtime inside `BaseAgent.init/1`
+  for `new/1` and `:override` callers. The shared
+  `BaseAgent.normalize_max_tool_concurrency/1` helper drives both paths.
+- **`BaseAgent.unwrap_tool_task_result!/1`** (`@doc false`, public for
+  testability): translates a `Task.async_stream` element into the underlying
+  tool result. The linked `Task.async_stream/3` propagates worker raises to
+  the caller via process-link before yielding, so `{:exit, {exception,
+  stacktrace}}` is unreachable for raises in the current configuration; the
+  helper still handles it (re-raising with the original stacktrace) along
+  with `{:exit, reason}` — most importantly `{:exit, :timeout}` from
+  `on_timeout: :kill_task` and any deliberate `exit/1` from tool wrapper
+  code — so those fail loudly instead of hitting `FunctionClauseError`
+  against a `{:ok, _}`-only pattern.
 
 ### Changed
 
@@ -38,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the PID outside the callback first: `parent = self(); fn :tool_result, r ->
   send(parent, ...) end`. This is the canonical Elixir pattern for any
   callback that may run in a worker process.
+- **Streaming `:tool_result` callback ordering at concurrency > 1**:
+  `stream_with_tools/3` invokes `callback.(:tool_result, result)` from inside
+  each worker as soon as that tool finishes, so at `max_tool_concurrency > 1`
+  callers observe `:tool_result` events in **completion order**, not
+  LLM-call order. The final list of tool results sent back to the LLM stays
+  in LLM-call order (`Task.async_stream` is invoked with `ordered: true`).
+  Callers that need call-order callback delivery should keep
+  `max_tool_concurrency: 1` or buffer + reorder client-side.
 - **Tool loop refactor (`BaseAgent`)**: extracted the per-tool-call body of
   `execute_tool_loop/2` and `execute_streaming_tool_loop/3` into the private
   helpers `execute_one_tool_call/2` and `execute_one_streaming_tool_call/2`.
