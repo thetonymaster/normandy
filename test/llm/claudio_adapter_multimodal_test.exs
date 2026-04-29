@@ -30,6 +30,10 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     @impl_module.add_single_message(new_request(), message, enable_caching)
   end
 
+  defp add_all(messages, enable_caching) do
+    @impl_module.add_messages(new_request(), messages, enable_caching)
+  end
+
   defp single_message(%Request{messages: [msg]}), do: msg
 
   describe "string content (backward-compat)" do
@@ -286,6 +290,56 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     end
   end
 
+  describe "named-helper guards: empty fields fall through and raise via to_claudio/1" do
+    # Constructors (`new_base64/2`, `new_url/1`, `new_file/1`) enforce
+    # non-empty fields, but a caller bypassing them with raw struct
+    # literals must still hit the ArgumentError that
+    # `ContentBlock.{Image,Document}.to_claudio/1` raises — not silently
+    # take the named-helper path with empty data.
+
+    test "ImageBlock base64 with empty data falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [
+          %ImageBlock{source: :base64, data: "", media_type: "image/png"},
+          TextBlock.new("describe")
+        ]
+      }
+
+      assert_raise ArgumentError, ~r/invalid base64 image/, fn -> add(msg) end
+    end
+
+    test "ImageBlock base64 with empty media_type falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [
+          %ImageBlock{source: :base64, data: "D", media_type: ""},
+          TextBlock.new("describe")
+        ]
+      }
+
+      assert_raise ArgumentError, ~r/invalid base64 image/, fn -> add(msg) end
+    end
+
+    test "ImageBlock url with empty url falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [%ImageBlock{source: :url, url: ""}, TextBlock.new("describe")]
+      }
+
+      assert_raise ArgumentError, ~r/invalid url image/, fn -> add(msg) end
+    end
+
+    test "DocumentBlock with empty file_id falls through and raises" do
+      msg = %Message{
+        role: "user",
+        content: [%DocumentBlock{source: :file_id, file_id: ""}, TextBlock.new("summarize")]
+      }
+
+      assert_raise ArgumentError, ~r/invalid document/, fn -> add(msg) end
+    end
+  end
+
   describe "defensive guards for unsafe shapes" do
     test "system role with list content converts blocks to raw-shape list" do
       msg = %Message{role: "system", content: [TextBlock.new("sys")]}
@@ -295,14 +349,17 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert req.messages == []
     end
 
-    test "system role with list content + caching enabled also converts (caching ignored)" do
-      # Claudio's set_system_with_cache only wraps strings. For list content
-      # we deliberately take the non-caching path — callers who need caching
-      # on multimodal system prompts must hand-build blocks with cache_control.
+    test "system role with list content + caching enabled annotates the last block" do
+      # Multimodal/list-form system caching: the adapter sets
+      # `cache_control: {"type": "ephemeral"}` on the last block before
+      # passing the list to Claudio's `set_system/2` (since
+      # `set_system_with_cache/2` only wraps strings).
       msg = %Message{role: "system", content: [TextBlock.new("sys")]}
       req = add(msg, true)
 
-      assert req.system == [%{"type" => "text", "text" => "sys"}]
+      assert req.system == [
+               %{"type" => "text", "text" => "sys", "cache_control" => %{"type" => "ephemeral"}}
+             ]
     end
 
     test "tool role with list of ContentBlock structs routes via block_to_claudio" do
@@ -523,6 +580,297 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
     test "ClaudioAdapter struct still builds with existing fields" do
       adapter = %ClaudioAdapter{api_key: "k", options: %{timeout: 1_000}}
       assert adapter.api_key == "k"
+    end
+  end
+
+  # The conversation-breakpoint cache strategy is implemented as a pre-pass
+  # in `add_messages/3`, not in `add_single_message/3` — so these tests run
+  # the message list through the full pipeline rather than the per-message
+  # `add/2` helper used above.
+  describe "auto-cache: last user message gets cache_control on its final block" do
+    test "list-form last user message gets cache_control on its last block" do
+      messages = [
+        %Message{role: "user", content: [TextBlock.new("first turn")]},
+        %Message{role: "assistant", content: "ack"},
+        %Message{
+          role: "user",
+          content: [
+            ImageBlock.new_url("https://e/i.png"),
+            TextBlock.new("describe")
+          ]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [_first_user, _assistant, last_user] = req.messages
+      assert %{"role" => "user", "content" => [image, text]} = last_user
+
+      assert image == %{
+               "type" => "image",
+               "source" => %{"type" => "url", "url" => "https://e/i.png"}
+             }
+
+      assert text == %{
+               "type" => "text",
+               "text" => "describe",
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "earlier user messages in history are NOT annotated" do
+      messages = [
+        %Message{role: "user", content: [TextBlock.new("first")]},
+        %Message{role: "assistant", content: "ack"},
+        %Message{role: "user", content: [TextBlock.new("second")]}
+      ]
+
+      req = add_all(messages, true)
+
+      assert [first_user, _assistant, last_user] = req.messages
+
+      assert first_user == %{
+               "role" => "user",
+               "content" => [%{"type" => "text", "text" => "first"}]
+             }
+
+      assert last_user == %{
+               "role" => "user",
+               "content" => [
+                 %{
+                   "type" => "text",
+                   "text" => "second",
+                   "cache_control" => %{"type" => "ephemeral"}
+                 }
+               ]
+             }
+    end
+
+    test "single ContentBlock struct content gets wrapped and annotated" do
+      messages = [
+        %Message{role: "user", content: TextBlock.new("just text")}
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+
+      assert last_user == %{
+               "role" => "user",
+               "content" => [
+                 %{
+                   "type" => "text",
+                   "text" => "just text",
+                   "cache_control" => %{"type" => "ephemeral"}
+                 }
+               ]
+             }
+    end
+
+    test "caller-annotated last block is preserved (no override)" do
+      # Caller used with_cache/2 with a custom map (e.g. 1-hour TTL) — the
+      # adapter must respect that and not overwrite with the default ephemeral.
+      messages = [
+        %Message{
+          role: "user",
+          content: [
+            ImageBlock.new_url("https://e/i.png"),
+            TextBlock.new("desc")
+            |> TextBlock.with_cache(%{"type" => "ephemeral", "ttl" => "1h"})
+          ]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_image, text]} = last_user
+
+      assert text == %{
+               "type" => "text",
+               "text" => "desc",
+               "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+             }
+    end
+
+    test "plain-string user content is NOT auto-annotated (wire shape unchanged)" do
+      messages = [%Message{role: "user", content: "hello"}]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      # Stays as a plain string content — no rewrite to a content-block list.
+      assert last_user == %{"role" => "user", "content" => "hello"}
+    end
+
+    test "opaque (non-ContentBlock) struct content is NOT auto-annotated" do
+      struct_msg = %OpaqueStruct{payload: "blob"}
+      messages = [%Message{role: "user", content: struct_msg}]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"role" => "user", "content" => ^struct_msg} = last_user
+    end
+
+    test "no auto-cache when enable_caching is false" do
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("hi")]
+        }
+      ]
+
+      req = add_all(messages, false)
+
+      assert [last_user] = req.messages
+
+      assert last_user == %{
+               "role" => "user",
+               "content" => [%{"type" => "text", "text" => "hi"}]
+             }
+    end
+
+    test "no user message in history => no annotation, no error" do
+      messages = [%Message{role: "system", content: "sys"}]
+
+      req = add_all(messages, true)
+
+      # System routes via set_system; no user messages in the list.
+      assert req.messages == []
+    end
+
+    test "explicit string-keyed cache_control: nil gets the default annotation, not preserved as nil" do
+      # `%{"cache_control" => nil}` looks "key-present" to `Map.has_key?`,
+      # but a nil value is not a real annotation (e.g. from a JSON-decoded
+      # `null`, or a `Map.put` with default-nil). Auto-cache must inject
+      # the default, replacing the nil key.
+      raw_with_nil = %{"type" => "text", "text" => "tail", "cache_control" => nil}
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_nil]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      assert tail == %{
+               "type" => "text",
+               "text" => "tail",
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "explicit atom-keyed :cache_control nil also gets the default annotation" do
+      raw_with_atom_nil = %{type: "text", text: "tail", cache_control: nil}
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_atom_nil]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      # The string-keyed default replaces the atom-keyed nil; no
+      # double-keyed block goes out on the wire.
+      refute Map.has_key?(tail, :cache_control)
+      assert tail[:type] == "text"
+      assert tail[:text] == "tail"
+      assert tail["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "string-keyed nil falls back to atom-keyed annotation (no silent loss of TTL)" do
+      # `%{"cache_control" => nil}` is not a real annotation; the
+      # non-nil atom-keyed `:cache_control` should win and be preserved
+      # verbatim. Without the fallback, the string-keyed nil would
+      # shadow the real annotation and the default ephemeral marker
+      # would be injected, dropping the caller's TTL.
+      raw_with_both = %{
+        :type => "text",
+        :text => "tail",
+        "cache_control" => nil,
+        :cache_control => %{type: "ephemeral", ttl: "1h"}
+      }
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_both]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      # Block ships through verbatim — caller's atom-keyed annotation
+      # (with its TTL) is preserved exactly.
+      assert tail == raw_with_both
+    end
+
+    test "atom-keyed :cache_control on raw caller map is respected (no double-injection)" do
+      # `block_to_claudio/1` passes plain maps through unchanged, so a caller
+      # who hand-builds a block with an atom-keyed `:cache_control` reaches
+      # `annotate_block/1` with that atom key intact. The adapter must
+      # treat that as "already cached" and not inject a second
+      # `"cache_control"` key.
+      atom_keyed = %{
+        type: "image",
+        source: %{type: "base64", media_type: "image/png", data: "D"},
+        cache_control: %{type: "ephemeral", ttl: "1h"}
+      }
+
+      messages = [%Message{role: "user", content: [atom_keyed]}]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [block]} = last_user
+
+      # The map ships through verbatim — no string-keyed "cache_control"
+      # gets layered on top of the atom-keyed one.
+      assert block == atom_keyed
+      refute Map.has_key?(block, "cache_control")
+    end
+
+    test "blocks built via with_cache/1 ship cache_control through the pipeline" do
+      # Caller-driven per-block annotation (not the auto-strategy): even
+      # with `enable_caching: false`, an explicitly-cached block should
+      # surface on the wire.
+      messages = [
+        %Message{
+          role: "user",
+          content: [
+            ImageBlock.new_base64("D", "image/png") |> ImageBlock.with_cache(),
+            TextBlock.new("plain")
+          ]
+        }
+      ]
+
+      req = add_all(messages, false)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [image, text]} = last_user
+
+      assert image == %{
+               "type" => "image",
+               "source" => %{"type" => "base64", "media_type" => "image/png", "data" => "D"},
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+
+      # No auto-cache on the trailing text since enable_caching is false.
+      assert text == %{"type" => "text", "text" => "plain"}
     end
   end
 end

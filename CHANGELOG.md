@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-29
+
+### Added
+
+- **Typed-struct cache control on multimodal content blocks**: each of
+  `Normandy.Components.ContentBlock.{Text,Image,Document}` gains an optional
+  `cache_control` field plus `with_cache/1` (ephemeral, the common case) and
+  `with_cache/2` (caller-supplied map, e.g. `%{"type" => "ephemeral", "ttl"
+  => "1h"}`). Atom keys are accepted and stringified at serialization time.
+  `to_claudio/1` emits the `cache_control` key only when set, so existing
+  callers see no wire-shape change. Closes the gap left in `0.5.1` where
+  multimodal cache breakpoints required hand-built raw maps.
+- **Conversation-breakpoint auto-cache strategy**: when
+  `enable_caching: true`, `Normandy.LLM.ClaudioAdapter` now annotates the
+  last block of the **last user message** with
+  `cache_control: %{"type" => "ephemeral"}`, mirroring how Anthropic
+  recommends placing prompt-cache breakpoints on chat conversations.
+  Triggers only for list-form or single-`ContentBlock`-struct content —
+  plain-string user messages keep their existing wire shape so chat-text
+  callers see no behaviour change. Caller-set `cache_control` (via
+  `with_cache/1-2` or hand-built atom/string-keyed `cache_control` on a raw
+  map) is preserved; the adapter never overrides it. Earlier user messages
+  in the history are not annotated.
+- **List-form system prompt caching**: the system clause of
+  `add_single_message/3` previously short-circuited
+  `enable_caching: true` for list-form content because Claudio's
+  `set_system_with_cache/2` only wraps strings. The adapter now annotates
+  the last block of a list-form system prompt and routes it through
+  `set_system/2` with pre-shaped wire blocks. Symmetric with the existing
+  string-system caching path.
+- **`Normandy.Components.ContentBlock.CacheControl`** (`@moduledoc false`):
+  internal helper that string-normalizes top-level cache_control keys and
+  raises `ArgumentError` when an atom and string version of the same key
+  collide post-normalization, so caller intent is never silently lost.
+
+### Changed
+
+- **`dispatch_multimodal/3` named-helper patterns now require
+  `cache_control: nil` on both blocks**. Claudio's
+  `add_message_with_image`, `add_message_with_image_url`, and
+  `add_message_with_document` take raw args and rebuild blocks internally —
+  any `cache_control` on the source `ContentBlock` struct would have been
+  silently dropped on the wire. With this change, cache-annotated blocks
+  always go through the raw-list fallback path that preserves block fields.
+- **Multimodal system prompt with `enable_caching: true`** now emits
+  `cache_control` on the last system block. Previously this combination
+  was a documented opt-out — the adapter ignored `enable_caching` for
+  list-form system content and required callers to hand-build annotated
+  block maps. Wire-shape change for callers that hit this exact combination
+  in `0.5.x`.
+
 ## [0.5.1] - 2026-04-29
 
 ### Added
@@ -473,6 +524,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.6.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.1
 [0.5.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.0
 [0.4.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.4.0
