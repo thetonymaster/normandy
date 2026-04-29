@@ -367,7 +367,15 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp add_max_tokens(request, max_tokens),
       do: Claudio.Messages.Request.set_max_tokens(request, max_tokens)
 
-    defp add_messages(request, messages, enable_caching) do
+    @doc false
+    # Public (not `defp`) so tests can exercise the full message pipeline
+    # — auto-cache strategy + per-message dispatch — directly without
+    # round-tripping through `converse/7` and a live Claudio HTTP client.
+    # Not part of the adapter's supported surface.
+    def add_messages(request, messages, enable_caching) do
+      messages =
+        if enable_caching, do: annotate_last_user_message(messages), else: messages
+
       Enum.reduce(messages, request, fn msg, req ->
         add_single_message(req, msg, enable_caching)
       end)
@@ -379,13 +387,15 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # Claudio HTTP client. Not part of the adapter's supported surface —
     # callers should go through `Normandy.Agents.Model.converse/7`.
     # List-form system prompts: convert ContentBlock structs to Anthropic
-    # wire shape. Caching-with-list is deliberately not supported here —
-    # `set_system_with_cache/2` only wraps strings; callers who need
-    # caching on multimodal system prompts can hand-build blocks with
-    # `cache_control` and pass them as a list.
-    def add_single_message(request, %Message{role: "system", content: content}, _enable_caching)
+    # wire shape. When caching is enabled, annotate the last block with
+    # `cache_control: {"type": "ephemeral"}` (unless the caller already
+    # annotated it). `set_system_with_cache/2` only wraps strings, so
+    # multimodal system caching goes through `set_system/2` with
+    # pre-annotated wire blocks.
+    def add_single_message(request, %Message{role: "system", content: content}, enable_caching)
         when is_list(content) do
       raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
+      raw = if enable_caching, do: cache_last_block(raw), else: raw
       Claudio.Messages.Request.set_system(request, raw)
     end
 
@@ -487,29 +497,40 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # Opportunistic dispatch: when a content list exactly matches a shape
     # covered by one of Claudio's named helpers, use the helper so intent
     # is preserved in the request builder. Any other shape (multi-block,
-    # reversed order, image-alone, etc.) falls through to the raw-list
-    # path, which Claudio's `add_message/3` accepts natively. Empty-list
-    # is rejected at every list-branch entry via `ensure_non_empty_content!/1`,
-    # so the clauses below never see `[]`.
+    # reversed order, image-alone, cache-annotated, etc.) falls through
+    # to the raw-list path, which Claudio's `add_message/3` accepts
+    # natively. Empty-list is rejected at every list-branch entry via
+    # `ensure_non_empty_content!/1`, so the clauses below never see `[]`.
+    #
+    # Cache annotations: Claudio's named helpers (`add_message_with_image`
+    # etc.) take raw args and rebuild blocks internally, dropping
+    # `cache_control`. So we only take the named-helper path when neither
+    # block carries one — `cache_control: nil` in the pattern enforces
+    # this. Cached blocks always go through the raw-list fallback.
     defp dispatch_multimodal(request, role, [
-           %ImageBlock{source: :base64, data: data, media_type: media_type},
-           %TextBlock{text: text}
+           %ImageBlock{
+             source: :base64,
+             data: data,
+             media_type: media_type,
+             cache_control: nil
+           },
+           %TextBlock{text: text, cache_control: nil}
          ])
          when is_binary(data) and is_binary(media_type) and is_binary(text) do
       Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
     end
 
     defp dispatch_multimodal(request, role, [
-           %ImageBlock{source: :url, url: url},
-           %TextBlock{text: text}
+           %ImageBlock{source: :url, url: url, cache_control: nil},
+           %TextBlock{text: text, cache_control: nil}
          ])
          when is_binary(url) and is_binary(text) do
       Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
     end
 
     defp dispatch_multimodal(request, role, [
-           %DocumentBlock{source: :file_id, file_id: file_id},
-           %TextBlock{text: text}
+           %DocumentBlock{source: :file_id, file_id: file_id, cache_control: nil},
+           %TextBlock{text: text, cache_control: nil}
          ])
          when is_binary(file_id) and is_binary(text) do
       Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
@@ -536,6 +557,67 @@ defmodule Normandy.LLM.ClaudioAdapter do
             "Normandy.LLM.ClaudioAdapter: unsupported content block #{inspect(other)}. " <>
               "Expected a Normandy.Components.ContentBlock.* struct or a " <>
               "pre-shaped Anthropic block map."
+    end
+
+    # Conversation-breakpoint cache strategy: when `enable_caching: true`,
+    # find the last `role: "user"` message and annotate its final content
+    # block with `cache_control`. Anthropic's prompt cache is cumulative,
+    # so a breakpoint at the latest user turn caches the entire system +
+    # tools + history up to that point.
+    #
+    # Only multimodal/list-form content (or a single ContentBlock struct)
+    # is annotated — plain string user content is left as-is so we don't
+    # silently change the wire shape for chat-text callers.
+    defp annotate_last_user_message(messages) do
+      case last_user_index(messages) do
+        nil -> messages
+        idx -> List.update_at(messages, idx, &auto_cache_user_message/1)
+      end
+    end
+
+    defp last_user_index(messages) do
+      messages
+      |> Enum.with_index()
+      |> Enum.reduce(nil, fn
+        {%Message{role: "user"}, idx}, _acc -> idx
+        _, acc -> acc
+      end)
+    end
+
+    # List-form content: convert to wire-shape and cache the last block.
+    defp auto_cache_user_message(%Message{content: content} = msg)
+         when is_list(content) and content != [] do
+      raw = Enum.map(content, &block_to_claudio/1)
+      %{msg | content: cache_last_block(raw)}
+    end
+
+    # Single ContentBlock struct: treat as a one-element list.
+    defp auto_cache_user_message(%Message{content: %mod{} = block} = msg)
+         when mod in [TextBlock, ImageBlock, DocumentBlock] do
+      %{msg | content: cache_last_block([block_to_claudio(block)])}
+    end
+
+    # String, opaque structs (I/O schema, ToolResult), or empty list:
+    # leave the message unchanged. The empty-list case is rejected later
+    # by `ensure_non_empty_content!/1` in the dispatch path with a clear
+    # ArgumentError; we don't want to mask that here.
+    defp auto_cache_user_message(msg), do: msg
+
+    # Annotate the last block of a wire-shape list with a default ephemeral
+    # cache breakpoint. If the caller already annotated it (via
+    # `with_cache/1` on a struct or by hand-building a map with
+    # `"cache_control"`), respect the existing annotation.
+    defp cache_last_block([]), do: []
+
+    defp cache_last_block(blocks) do
+      {last, rest} = List.pop_at(blocks, -1)
+      rest ++ [annotate_block(last)]
+    end
+
+    defp annotate_block(%{"cache_control" => _} = block), do: block
+
+    defp annotate_block(block) when is_map(block) do
+      Map.put(block, "cache_control", %{"type" => "ephemeral"})
     end
 
     defp add_tools(request, [], _enable_caching), do: request
