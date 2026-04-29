@@ -172,6 +172,51 @@ defmodule Normandy.DSL.AgentTest do
 
       assert is_map(response)
     end
+
+    test "list-shaped input reaches memory verbatim (multimodal passthrough)" do
+      client = %NormandyTest.Support.ModelMockup{}
+      {:ok, agent} = TestAgent.new(client: client)
+
+      blocks = [
+        %{"type" => "text", "text" => "what is in this image?"},
+        %{
+          "type" => "image",
+          "source" => %{"type" => "url", "url" => "https://example.com/cat.png"}
+        }
+      ]
+
+      {updated_agent, _response} = TestAgent.run(agent, blocks)
+
+      user_msg =
+        Enum.find(updated_agent.memory.history, fn msg -> msg.role == "user" end)
+
+      assert user_msg.content == blocks
+    end
+
+    test "binary input wraps to chat_message (regression)" do
+      client = %NormandyTest.Support.ModelMockup{}
+      {:ok, agent} = TestAgent.new(client: client)
+
+      {updated_agent, _response} = TestAgent.run(agent, "plain text")
+
+      user_msg =
+        Enum.find(updated_agent.memory.history, fn msg -> msg.role == "user" end)
+
+      assert %Normandy.Agents.BaseAgentInputSchema{chat_message: "plain text"} =
+               user_msg.content
+    end
+
+    test "map input is cast into BaseAgentInputSchema (regression)" do
+      client = %NormandyTest.Support.ModelMockup{}
+      {:ok, agent} = TestAgent.new(client: client)
+
+      {updated_agent, _response} = TestAgent.run(agent, %{chat_message: "test"})
+
+      user_msg =
+        Enum.find(updated_agent.memory.history, fn msg -> msg.role == "user" end)
+
+      assert %Normandy.Agents.BaseAgentInputSchema{chat_message: "test"} = user_msg.content
+    end
   end
 
   describe "reset_memory/1" do

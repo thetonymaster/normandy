@@ -46,6 +46,13 @@ defimpl Normandy.Components.BaseIOSchema, for: Map do
   def get_schema(_map), do: %{}
 end
 
+defimpl Normandy.Components.BaseIOSchema, for: List do
+  def __str__(list), do: inspect(list)
+  def __rich__(list), do: inspect(list)
+  def to_json(list), do: list
+  def get_schema(_list), do: %{}
+end
+
 defimpl Normandy.Components.BaseIOSchema, for: Any do
   def __str__(_), do: ""
   def __rich__(_), do: ""

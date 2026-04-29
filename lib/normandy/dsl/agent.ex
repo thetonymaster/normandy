@@ -514,6 +514,7 @@ defmodule Normandy.DSL.Agent do
 
       defp prepare_input(input) when is_binary(input), do: %{chat_message: input}
       defp prepare_input(input) when is_map(input), do: input
+      defp prepare_input(input) when is_list(input), do: input
       defp prepare_input(input), do: %{chat_message: to_string(input)}
     end
   end

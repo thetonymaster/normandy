@@ -102,6 +102,23 @@ defmodule NormandyTest.Components.AgentMemoryTest do
            ]
   end
 
+  test "list-shaped content survives history/1 verbatim" do
+    blocks = [
+      %{"type" => "text", "text" => "describe this"},
+      %{
+        "type" => "image",
+        "source" => %{"type" => "url", "url" => "https://example.com/a.png"}
+      }
+    ]
+
+    history =
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", blocks)
+      |> AgentMemory.history()
+
+    assert history == [%{role: "user", content: blocks}]
+  end
+
   test "get current turn" do
     memory = AgentMemory.new_memory()
     assert AgentMemory.get_current_turn_id(memory) == nil

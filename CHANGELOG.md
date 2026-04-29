@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-29
+
+### Added
+
+- **Multimodal user input via list-shaped content blocks**: agents can now
+  receive a list of content blocks (e.g. `[%{"type" => "text", ...}, %{"type"
+  => "image", ...}]`) through `MyAgent.run/2`, `MyAgent.run/3`, and
+  `MyAgent.run_with_tools/2`. The list flows through `prepare_input/1`,
+  `AgentMemory`, and the Claudio adapter unchanged, where
+  `add_single_message/3` already dispatches it through the existing
+  multimodal path. Two minimal upstream changes make this work:
+  `Normandy.Components.BaseIOSchema` now has a `for: List` impl whose
+  `to_json/1` returns the list verbatim (mirrors the four-callback shape of
+  the existing `BitString`/`Map` impls), and `Normandy.DSL.Agent.prepare_input/1`
+  passes lists through unchanged. Strings continue to wrap into
+  `%{chat_message: ...}` and maps continue to pass through (unchanged).
+  Callers that need prompt-cache breakpoints inside multimodal user content
+  can hand-build raw block maps with a `"cache_control"` key — the adapter's
+  raw-list path preserves them verbatim. Typed-struct caching support on
+  `Normandy.Components.ContentBlock.{Text,Image,Document}` is deferred to a
+  future release.
+
 ## [0.5.0] - 2026-04-29
 
 ### Added
@@ -451,6 +473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.5.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.1
 [0.5.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.0
 [0.4.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.4.0
 [0.3.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.3.0
