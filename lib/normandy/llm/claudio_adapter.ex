@@ -626,11 +626,28 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # reaches here intact. Match both atom and string key forms — otherwise
     # we'd silently inject a second `"cache_control"` key alongside the
     # caller's, producing a double-keyed block.
+    #
+    # An explicit nil value (`%{"cache_control" => nil}` or
+    # `%{cache_control: nil}`) is treated as "no annotation": presence
+    # alone isn't enough, since a JSON-decoded `null` or a `Map.put`
+    # pattern can leave nil values that the caller did not intend as a
+    # cache marker. Inject the default and clear the nil key so the wire
+    # shape carries exactly one `"cache_control"`.
     defp annotate_block(block) when is_map(block) do
-      if Map.has_key?(block, "cache_control") or Map.has_key?(block, :cache_control) do
+      existing =
+        cond do
+          Map.has_key?(block, "cache_control") -> Map.get(block, "cache_control")
+          Map.has_key?(block, :cache_control) -> Map.get(block, :cache_control)
+          true -> nil
+        end
+
+      if existing != nil do
         block
       else
-        Map.put(block, "cache_control", %{"type" => "ephemeral"})
+        block
+        |> Map.delete("cache_control")
+        |> Map.delete(:cache_control)
+        |> Map.put("cache_control", %{"type" => "ephemeral"})
       end
     end
 

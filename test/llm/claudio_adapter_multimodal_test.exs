@@ -740,6 +740,55 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert req.messages == []
     end
 
+    test "explicit string-keyed cache_control: nil gets the default annotation, not preserved as nil" do
+      # `%{"cache_control" => nil}` looks "key-present" to `Map.has_key?`,
+      # but a nil value is not a real annotation (e.g. from a JSON-decoded
+      # `null`, or a `Map.put` with default-nil). Auto-cache must inject
+      # the default, replacing the nil key.
+      raw_with_nil = %{"type" => "text", "text" => "tail", "cache_control" => nil}
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_nil]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      assert tail == %{
+               "type" => "text",
+               "text" => "tail",
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "explicit atom-keyed :cache_control nil also gets the default annotation" do
+      raw_with_atom_nil = %{type: "text", text: "tail", cache_control: nil}
+
+      messages = [
+        %Message{
+          role: "user",
+          content: [TextBlock.new("head"), raw_with_atom_nil]
+        }
+      ]
+
+      req = add_all(messages, true)
+
+      assert [last_user] = req.messages
+      assert %{"content" => [_head, tail]} = last_user
+
+      # The string-keyed default replaces the atom-keyed nil; no
+      # double-keyed block goes out on the wire.
+      refute Map.has_key?(tail, :cache_control)
+      assert tail[:type] == "text"
+      assert tail[:text] == "tail"
+      assert tail["cache_control"] == %{"type" => "ephemeral"}
+    end
+
     test "atom-keyed :cache_control on raw caller map is respected (no double-injection)" do
       # `block_to_claudio/1` passes plain maps through unchanged, so a caller
       # who hand-builds a block with an atom-keyed `:cache_control` reaches
