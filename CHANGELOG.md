@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-04-29
+## [0.6.0] - 2026-05-01
 
 ### Added
 
@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list-form system content and required callers to hand-build annotated
   block maps. Wire-shape change for callers that hit this exact combination
   in `0.5.x`.
+- **Claudio dependency** bumped to `~> 0.5.0`.
 
 ## [0.5.1] - 2026-04-29
 
