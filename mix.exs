@@ -137,7 +137,7 @@ defmodule Normandy.MixProject do
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.0"},
-      {:claudio, "~> 0.4.0"},
+      {:claudio, "~> 0.5.0"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
