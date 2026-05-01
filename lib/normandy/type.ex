@@ -266,7 +266,16 @@ defmodule Normandy.Type do
   """
   @callback autogenerate() :: term()
 
-  @optional_callbacks autogenerate: 0
+  @doc """
+  Loads the given term into the custom type, the inverse of `c:dump/1`.
+
+  This callback is called with a term coming from a serialized
+  representation and is expected to convert it back into the runtime
+  type produced by `c:cast/1`.
+  """
+  @callback load(term) :: {:ok, term} | :error
+
+  @optional_callbacks autogenerate: 0, load: 1
 
   ## Functions
 

@@ -157,7 +157,19 @@ defmodule Normandy.ParameterizedType do
   """
   @callback format(params()) :: String.t()
 
-  @optional_callbacks format: 1
+  @doc """
+  Dictates how the type should be treated inside embeds.
+
+  By default, the type is sent as itself, without calling dumping to
+  keep the higher level representation. But it can be set to `:dump`
+  so that it is dumped before being encoded.
+
+  `use Normandy.ParameterizedType` injects an overridable default that
+  returns `:self`.
+  """
+  @callback embed_as(format :: atom, params()) :: :self | :dump
+
+  @optional_callbacks format: 1, embed_as: 2
 
   @doc """
   Inits a parameterized type given by `type` with `opts`.
