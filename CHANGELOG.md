@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the last block of a list-form system prompt and routes it through
   `set_system/2` with pre-shaped wire blocks. Symmetric with the existing
   string-system caching path.
-- **`Normandy.Components.ContentBlock.CacheControl`** (`@moduledoc false`):
+- **Normandy.Components.ContentBlock.CacheControl** (`@moduledoc false`):
   internal helper that string-normalizes top-level cache_control keys and
   raises `ArgumentError` when an atom and string version of the same key
   collide post-normalization, so caller intent is never silently lost.
@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multimodal path. Two minimal upstream changes make this work:
   `Normandy.Components.BaseIOSchema` now has a `for: List` impl whose
   `to_json/1` returns the list verbatim (mirrors the four-callback shape of
-  the existing `BitString`/`Map` impls), and `Normandy.DSL.Agent.prepare_input/1`
+  the existing `BitString`/`Map` impls), and Normandy.DSL.Agent.prepare_input/1
   passes lists through unchanged. Strings continue to wrap into
   `%{chat_message: ...}` and maps continue to pass through (unchanged).
   Callers that need prompt-cache breakpoints inside multimodal user content
