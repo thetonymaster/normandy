@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-02
+
+### Fixed
+
+- **OpenTelemetry context propagation across `Normandy.Tools.Executor`
+  spawn sites**: tool bodies run via `Task.async/1` in
+  `execute_with_timeout/2` and `execute_parallel/3`. OTel context lives in
+  the process dictionary, so spawned `Task`s started with an empty context
+  — any span opened inside a tool's `run/1` became a root span in a fresh
+  trace instead of nesting under `normandy.tool.execute`. Symptom in
+  downstream apps: integration spans (e.g. external API calls, blob
+  downloads) appeared as orphans in Tempo, and `normandy.tool.execute`
+  was an opaque blob with no breakdown. The executor now captures the
+  parent context before each spawn and re-attaches it inside the spawned
+  function. Applied at both `Task.async` sites:
+  `execute_with_timeout/2` (the primary fix) and `execute_parallel/3` (so
+  the inner timeout call sees a non-empty context to propagate further).
+  The capture/restore helpers (already present in `BaseAgent` for
+  `Task.async_stream`) are extracted into a new internal
+  `Normandy.Telemetry.OtelCtx` module and shared by both call sites; they
+  no-op when `:opentelemetry` is not loaded, so consumers without OTel
+  pay nothing (#20).
+
+### Security
+
+- **Secret redaction in `Inspect` output for `Normandy.LLM.ClaudioAdapter`
+  and `Normandy.A2A.AgentTool`**: a live API key leaked through default
+  error logging in a downstream project when a `Task` crashed and the
+  BEAM error logger inspected closure args holding a `%ClaudioAdapter{}`.
+  `Kernel.inspect/2` rendered the secret in plaintext. Both structs now
+  carry `@derive {Inspect, except: [...]}` covering `:api_key`
+  (`ClaudioAdapter`) and `:auth_token` (`AgentTool`).
+  `Normandy.MCP.ServerConfig` already had this protection. Field access
+  (dot syntax, `Map.get/2`, pattern matching) is unchanged; only the
+  `Inspect` representation is affected. Locked in with regression tests
+  asserting the secret value never appears in `inspect/1` output (#19).
+
+### Changed
+
+- **ExDoc warnings silenced**: `Normandy.Type.load/1` is now declared as
+  an optional callback (the contract was already documented and
+  exercised by custom-type implementations).
+  `Normandy.ParameterizedType.embed_as/2` is also now declared as an
+  optional callback (already in `defoverridable` with a default `:self`
+  impl). No behavioural change; doc-build is now warning-clean (#18).
+
 ## [0.6.0] - 2026-05-01
 
 ### Added
@@ -525,6 +571,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.6.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.1
 [0.6.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.1
 [0.5.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.0
