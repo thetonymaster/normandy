@@ -33,6 +33,7 @@ defmodule Normandy.A2A.AgentTool do
           input: map()
         }
 
+  @derive {Inspect, except: [:auth_token]}
   defstruct [
     :endpoint,
     :agent_card,

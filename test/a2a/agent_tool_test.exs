@@ -194,4 +194,25 @@ defmodule Normandy.A2A.AgentToolTest do
       assert msg =~ "timed out"
     end
   end
+
+  describe "Inspect protocol" do
+    test "does not leak auth_token in inspect output", %{card: card} do
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          auth_token: "bearer-secret-leak-canary"
+        )
+
+      output = inspect(tool)
+
+      refute output =~ "bearer-secret-leak-canary"
+      refute output =~ "auth_token"
+    end
+
+    test "still allows direct auth_token access after redaction", %{card: card} do
+      tool = AgentTool.new("https://agent.example.com/a2a", card, auth_token: "bearer-x")
+
+      assert tool.auth_token == "bearer-x"
+      assert Map.get(tool, :auth_token) == "bearer-x"
+    end
+  end
 end
