@@ -73,4 +73,22 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert agent.temperature == 0.7
     end
   end
+
+  describe "Inspect protocol" do
+    test "does not leak api_key in inspect output" do
+      adapter = %ClaudioAdapter{api_key: "sk-ant-secret-leak-canary"}
+      output = inspect(adapter)
+
+      refute output =~ "sk-ant-secret-leak-canary"
+      refute output =~ "api_key"
+    end
+
+    test "still allows direct api_key access after redaction" do
+      adapter = %ClaudioAdapter{api_key: "sk-secret"}
+
+      assert adapter.api_key == "sk-secret"
+      assert Map.get(adapter, :api_key) == "sk-secret"
+      assert match?(%ClaudioAdapter{api_key: "sk-secret"}, adapter)
+    end
+  end
 end
