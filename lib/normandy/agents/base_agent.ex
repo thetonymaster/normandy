@@ -17,6 +17,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
 
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
@@ -615,14 +616,14 @@ defmodule Normandy.Agents.BaseAgent do
         # `parent_otel_ctx` is captured once and re-attached in each worker so
         # tool spans nest under the parent agent.run span (the worker process
         # has a fresh process dict).
-        parent_otel_ctx = capture_otel_ctx()
+        parent_otel_ctx = OtelCtx.capture()
         max_concurrency = max(config.max_tool_concurrency || 1, 1)
 
         tool_results =
           response.tool_calls
           |> Task.async_stream(
             fn tool_call ->
-              restore_otel_ctx(parent_otel_ctx)
+              OtelCtx.restore(parent_otel_ctx)
               execute_one_tool_call(config, tool_call)
             end,
             ordered: true,
@@ -968,14 +969,14 @@ defmodule Normandy.Agents.BaseAgent do
             # process so any `self()` reference inside the callback is the
             # worker PID, not the caller. Capture parent PID outside the
             # callback when sending messages to the owning process.
-            parent_otel_ctx = capture_otel_ctx()
+            parent_otel_ctx = OtelCtx.capture()
             max_concurrency = max(config.max_tool_concurrency || 1, 1)
 
             tool_results =
               tool_calls
               |> Task.async_stream(
                 fn tool_call ->
-                  restore_otel_ctx(parent_otel_ctx)
+                  OtelCtx.restore(parent_otel_ctx)
                   result = execute_one_streaming_tool_call(config, tool_call)
                   callback.(:tool_result, result)
                   result
@@ -1090,30 +1091,6 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp normalize_tool_field_key(_tool, _key), do: :error
-
-  # Soft OpenTelemetry context propagation. Normandy doesn't depend on
-  # :opentelemetry directly — consumers wire it up via telemetry handlers.
-  # When OTel is loaded, capture the active context in the parent process so
-  # the Task.async_stream worker can re-attach it; spans created inside the
-  # worker (by `:telemetry.span` handlers downstream) then nest under the
-  # parent agent.run span instead of becoming root spans in their own trace.
-  # When OTel is not loaded, both helpers are cheap no-ops.
-  defp capture_otel_ctx do
-    if Code.ensure_loaded?(OpenTelemetry.Ctx) and
-         function_exported?(OpenTelemetry.Ctx, :get_current, 0) do
-      apply(OpenTelemetry.Ctx, :get_current, [])
-    end
-  end
-
-  defp restore_otel_ctx(nil), do: :ok
-
-  defp restore_otel_ctx(ctx) do
-    if function_exported?(OpenTelemetry.Ctx, :attach, 1) do
-      apply(OpenTelemetry.Ctx, :attach, [ctx])
-    end
-
-    :ok
-  end
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do

@@ -9,6 +9,7 @@ defmodule Normandy.Tools.Executor do
   - Result validation
   """
 
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
@@ -97,9 +98,14 @@ defmodule Normandy.Tools.Executor do
           execution_result()
         ]
   def execute_parallel(registry, tool_specs, opts \\ []) do
+    parent_ctx = OtelCtx.capture()
+
     tool_specs
     |> Enum.map(fn {tool_name, _params} ->
-      Task.async(fn -> execute(registry, tool_name, opts) end)
+      Task.async(fn ->
+        OtelCtx.restore(parent_ctx)
+        execute(registry, tool_name, opts)
+      end)
     end)
     |> Enum.map(&Task.await(&1, :infinity))
   end
@@ -147,8 +153,12 @@ defmodule Normandy.Tools.Executor do
   end
 
   defp execute_with_timeout(tool, timeout) do
+    parent_ctx = OtelCtx.capture()
+
     task =
       Task.async(fn ->
+        OtelCtx.restore(parent_ctx)
+
         try do
           BaseTool.run(tool)
         rescue

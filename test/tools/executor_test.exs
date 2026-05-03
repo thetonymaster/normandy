@@ -153,4 +153,75 @@ defmodule NormandyTest.Tools.ExecutorTest do
       assert error =~ "Intentional crash"
     end
   end
+
+  describe "Executor OTel context propagation" do
+    # `Task.async` spawns a fresh process, which gets an empty process
+    # dictionary — and therefore an empty OpenTelemetry context. Without the
+    # capture/restore dance in `Executor`, any span opened inside the tool's
+    # `run/1` becomes a root span in a fresh trace instead of a child of the
+    # caller's active span. These tests verify the propagation by setting a
+    # known key in the parent's OTel context and asserting the spawned tool
+    # sees it via `get_value/2`.
+    defmodule CtxCapturingTool do
+      defstruct [:reply_to]
+
+      defimpl Normandy.Tools.BaseTool do
+        def tool_name(_), do: "ctx_capturing_tool"
+        def tool_description(_), do: "Snapshots OTel ctx for the test harness"
+        def input_schema(_), do: %{type: "object", properties: %{}}
+
+        def run(%{reply_to: pid}) do
+          value = OpenTelemetry.Ctx.get_value(:normandy_test_marker, :missing)
+          send(pid, {:captured_marker, value})
+          {:ok, :captured}
+        end
+      end
+    end
+
+    setup do
+      # Each test attaches its own ctx and detaches in on_exit so tests don't
+      # leak ctx state into each other. Tests run with `async: true` but each
+      # has its own process dictionary, so isolation is per-process.
+      on_exit(fn -> OpenTelemetry.Ctx.clear() end)
+      :ok
+    end
+
+    test "execute_tool/2 propagates active OTel context into the spawned task" do
+      marker = make_ref()
+      OpenTelemetry.Ctx.set_value(:normandy_test_marker, marker)
+
+      tool = %CtxCapturingTool{reply_to: self()}
+      assert {:ok, :captured} = Executor.execute_tool(tool)
+
+      assert_receive {:captured_marker, ^marker}, 1_000
+    end
+
+    test "execute_parallel/3 propagates active OTel context into each task" do
+      marker = make_ref()
+      OpenTelemetry.Ctx.set_value(:normandy_test_marker, marker)
+
+      tool = %CtxCapturingTool{reply_to: self()}
+      registry = Registry.new([tool])
+
+      results =
+        Executor.execute_parallel(registry, [
+          {"ctx_capturing_tool", %{}},
+          {"ctx_capturing_tool", %{}}
+        ])
+
+      assert results == [{:ok, :captured}, {:ok, :captured}]
+      assert_receive {:captured_marker, ^marker}, 1_000
+      assert_receive {:captured_marker, ^marker}, 1_000
+    end
+
+    test "execute_tool/2 with empty ctx still works (no-op restore)" do
+      # Sanity check: with no parent ctx set, capture returns the default
+      # ctx and restore is a no-op. The tool runs normally and reads `:missing`
+      # because the test marker was never set.
+      tool = %CtxCapturingTool{reply_to: self()}
+      assert {:ok, :captured} = Executor.execute_tool(tool)
+
+      assert_receive {:captured_marker, :missing}, 1_000
+    end
+  end
 end
