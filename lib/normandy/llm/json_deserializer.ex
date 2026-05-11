@@ -294,26 +294,23 @@ defmodule Normandy.LLM.JsonDeserializer do
     # Try to parse JSON
     case adapter.decode(cleaned_content) do
       {:ok, parsed} when is_map(parsed) ->
-        # Normalize field names before validation
-        normalized_params = normalize_field_names(parsed)
-
-        # Get permitted fields and required fields from schema
         permitted_fields = get_permitted_fields(schema)
         required_fields = get_required_fields(schema)
 
-        # Cast and validate using Normandy.Validate
-        changeset =
-          schema
-          |> Validate.cast(normalized_params, permitted_fields)
-          |> Validate.validate_required(required_fields)
+        case cast_map(parsed, schema, permitted_fields, required_fields, content) do
+          {:ok, populated_schema} = ok ->
+            maybe_unwrap_arguments(
+              ok,
+              parsed,
+              schema,
+              permitted_fields,
+              required_fields,
+              content,
+              populated_schema
+            )
 
-        case Validate.apply_action(changeset, :parse) do
-          {:ok, validated_schema} ->
-            {:ok, validated_schema}
-
-          {:error, changeset} ->
-            # Validation failed, extract detailed errors
-            {:error, {:validation_error, changeset, content}}
+          {:error, _} = err ->
+            err
         end
 
       {:error, reason} ->
@@ -323,6 +320,60 @@ defmodule Normandy.LLM.JsonDeserializer do
       _ ->
         {:error, {:unexpected_parse_result, content}}
     end
+  end
+
+  # Cast a map of params against the schema and return either a populated
+  # struct or a validation error in the same shape as parse_and_populate/3.
+  defp cast_map(params, schema, permitted_fields, required_fields, content) do
+    normalized_params = normalize_field_names(params)
+
+    changeset =
+      schema
+      |> Validate.cast(normalized_params, permitted_fields)
+      |> Validate.validate_required(required_fields)
+
+    case Validate.apply_action(changeset, :parse) do
+      {:ok, validated_schema} -> {:ok, validated_schema}
+      {:error, changeset} -> {:error, {:validation_error, changeset, content}}
+    end
+  end
+
+  # If the outer cast succeeded but produced an all-defaults result, and the
+  # parsed payload looks like a tool-use envelope (i.e. `{"arguments": {...}}`),
+  # retry casting against the inner map once. If that yields any populated
+  # field, return it; otherwise preserve the original empty result so callers
+  # don't see a shape change.
+  defp maybe_unwrap_arguments(
+         original_ok,
+         parsed,
+         schema,
+         permitted_fields,
+         required_fields,
+         content,
+         populated_schema
+       ) do
+    with true <- all_defaults?(populated_schema, schema, permitted_fields),
+         %{} = inner <- Map.get(parsed, "arguments") do
+      case cast_map(inner, schema, permitted_fields, required_fields, content) do
+        {:ok, inner_schema} ->
+          if all_defaults?(inner_schema, schema, permitted_fields),
+            do: original_ok,
+            else: {:ok, inner_schema}
+
+        {:error, _} ->
+          original_ok
+      end
+    else
+      _ -> original_ok
+    end
+  end
+
+  # True when every permitted field on the populated struct still matches the
+  # corresponding field on the input schema — i.e. the cast didn't change anything.
+  defp all_defaults?(populated, schema, permitted_fields) do
+    Enum.all?(permitted_fields, fn field ->
+      Map.get(populated, field) == Map.get(schema, field)
+    end)
   end
 
   # Clean content by removing code fences and trimming
@@ -358,15 +409,28 @@ defmodule Normandy.LLM.JsonDeserializer do
     |> Map.keys()
   end
 
-  # Get required fields from schema specification
+  # Get required fields from schema specification.
+  # Prefer the dedicated `__schema__(:required)` entry produced by
+  # Normandy.Schema; fall back to scanning `__specification__/0` for
+  # any schema whose spec stores per-field metadata maps.
   defp get_required_fields(schema) do
-    # For now, we'll extract required fields from the schema specification
-    # The schema specification contains field metadata including :required flag
-    spec = schema.__struct__.__specification__()
+    module = schema.__struct__
 
-    spec
+    cond do
+      function_exported?(module, :__schema__, 1) ->
+        case module.__schema__(:required) do
+          fields when is_list(fields) -> fields
+          _ -> required_from_specification(module)
+        end
+
+      true ->
+        required_from_specification(module)
+    end
+  end
+
+  defp required_from_specification(module) do
+    module.__specification__()
     |> Enum.filter(fn {_key, field_spec} ->
-      # Check if the field spec has required: true option
       is_map(field_spec) && Map.get(field_spec, :required, false)
     end)
     |> Enum.map(fn {key, _} -> key end)
