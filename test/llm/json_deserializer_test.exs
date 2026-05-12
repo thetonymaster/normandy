@@ -19,6 +19,16 @@ defmodule Normandy.LLM.JsonDeserializerTest.WrapperFixtures do
       field(:chat_message, :string, description: "required message", required: true)
     end
   end
+
+  defmodule RecoveryFixture do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "fixture for truncated-string recovery tests" do
+      field(:page_text, :string, description: "transcribed text", default: "")
+      field(:facts, {:array, :string}, description: "facts", default: [])
+    end
+  end
 end
 
 defmodule Normandy.LLM.JsonDeserializerTest do
@@ -28,6 +38,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.MultiField
   alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RequiredField
+  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RecoveryFixture
 
   describe "deserialize_with_retry/8" do
     test "parses valid JSON and populates schema" do
@@ -390,6 +401,24 @@ defmodule Normandy.LLM.JsonDeserializerTest do
 
       assert {:error, {:validation_error, _changeset, _content}} =
                JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
+  end
+
+  describe "parse_and_validate/3 — :recover_truncated_strings option" do
+    test "recovers a top-level string field truncated at a \\n-escape runaway" do
+      # Bytes: { " p a g e _ t e x t " :   " h e l l o   w o r l d \ n \ n \ n \ n
+      # No closing " and no closing }. The trailing \n sequences are the model
+      # runaway; recovery should truncate at the last position before the runaway,
+      # close the string, and close the object.
+      truncated = ~s({"page_text": "hello world\\n\\n\\n\\n)
+
+      assert {:ok, %RecoveryFixture{page_text: "hello world"}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: true
+               )
     end
   end
 end
