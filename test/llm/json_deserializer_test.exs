@@ -420,5 +420,117 @@ defmodule Normandy.LLM.JsonDeserializerTest do
                  recover_truncated_strings: true
                )
     end
+
+    test "default-off: truncated content returns the original parse error" do
+      truncated = ~s({"page_text": "hello\\n\\n\\n)
+
+      assert {:error, {:json_parse_error, _, _}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison
+               )
+    end
+
+    test "explicit false: truncated content returns the original parse error" do
+      truncated = ~s({"page_text": "hello\\n\\n\\n)
+
+      assert {:error, {:json_parse_error, _, _}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: false
+               )
+    end
+
+    test "declines recovery when truncation is inside a nested object" do
+      # Truncation is in an inner object's string value (offerings[0].name).
+      # opener_depth at EOF is 3 (outer object, array, inner object) — recovery
+      # must not fire here, because manufacturing a closer would produce a
+      # half-truthful inner record rather than an empty top-level field.
+      truncated = ~s({"offerings": [{"name": "Paq)
+
+      assert {:error, {:json_parse_error, _, _}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: true
+               )
+    end
+
+    test "declines recovery when truncation is inside a top-level array element string" do
+      # Same shape: the inner string lives at depth 2 (object → array → string).
+      truncated = ~s({"facts": ["fact one", "fact tw)
+
+      assert {:error, {:json_parse_error, _, _}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: true
+               )
+    end
+
+    test "recovers an immediately-truncated empty top-level string to \"\"" do
+      # The model emitted the opening quote of page_text and ran out of tokens
+      # right there. Recovery should produce an empty string for page_text
+      # rather than giving up.
+      truncated = ~s({"page_text": ")
+
+      assert {:ok, %RecoveryFixture{page_text: ""}} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: true
+               )
+    end
+
+    test "valid JSON with recover_truncated_strings: true behaves exactly as without" do
+      valid = ~s({"page_text": "complete", "facts": ["a", "b"]})
+
+      with_flag =
+        JsonDeserializer.parse_and_validate(
+          valid,
+          %RecoveryFixture{},
+          adapter: Poison,
+          recover_truncated_strings: true
+        )
+
+      without_flag =
+        JsonDeserializer.parse_and_validate(
+          valid,
+          %RecoveryFixture{},
+          adapter: Poison
+        )
+
+      assert {:ok, %RecoveryFixture{page_text: "complete", facts: ["a", "b"]}} = with_flag
+      assert with_flag == without_flag
+    end
+
+    test "recovers the page_text-last shape from the captured Nemotron-VL fixture" do
+      # Mirrors the captured fixture: facts populated, page_text opens, model
+      # emits some real prose, then runs away with \n escapes and EOFs without
+      # closing the string or the outer object. Recovery must:
+      #   * keep facts populated;
+      #   * truncate page_text at the last non-\n-escape position;
+      #   * close the string and the outer object.
+      truncated =
+        ~s({"facts": ["Mixology", "Premium Bar"], "page_text": "NATIVA MIXOLOGY\\n\\n\\n\\n\\n\\n\\n\\n)
+
+      assert {:ok,
+              %RecoveryFixture{
+                page_text: "NATIVA MIXOLOGY",
+                facts: ["Mixology", "Premium Bar"]
+              }} =
+               JsonDeserializer.parse_and_validate(
+                 truncated,
+                 %RecoveryFixture{},
+                 adapter: Poison,
+                 recover_truncated_strings: true
+               )
+    end
   end
 end
