@@ -297,21 +297,16 @@ defmodule Normandy.LLM.JsonDeserializer do
         permitted_fields = get_permitted_fields(schema)
         required_fields = get_required_fields(schema)
 
-        case cast_map(parsed, schema, permitted_fields, required_fields, content) do
-          {:ok, populated_schema} = ok ->
-            maybe_unwrap_arguments(
-              ok,
-              parsed,
-              schema,
-              permitted_fields,
-              required_fields,
-              content,
-              populated_schema
-            )
+        outer = cast_map(parsed, schema, permitted_fields, required_fields, content)
 
-          {:error, _} = err ->
-            err
-        end
+        maybe_unwrap_arguments(
+          outer,
+          parsed,
+          schema,
+          permitted_fields,
+          required_fields,
+          content
+        )
 
       {:error, reason} ->
         # JSON parse failed
@@ -338,34 +333,53 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # If the outer cast succeeded but produced an all-defaults result, and the
-  # parsed payload looks like a tool-use envelope (i.e. `{"arguments": {...}}`),
-  # retry casting against the inner map once. If that yields any populated
-  # field, return it; otherwise preserve the original empty result so callers
-  # don't see a shape change.
+  # Opportunistically retry the cast against `parsed["arguments"]` when the
+  # outer payload looks like a tool-use envelope and the outer cast either
+  # produced nothing or already failed. One level only — no recursion.
+  #
+  # Rules:
+  #   * Outer succeeded with populated data → keep outer; don't unwrap.
+  #   * No "arguments" map → keep outer (success or error).
+  #   * Inner cast succeeds with populated data → return inner.
+  #   * Inner cast succeeds with all-defaults → keep outer (the envelope is
+  #     unrelated to this schema; preserve the existing shape).
+  #   * Inner cast errors → propagate the error if the inner map carried any
+  #     permitted key (the data was meant for us and is invalid); otherwise
+  #     keep outer so unrelated envelopes don't manufacture new errors.
   defp maybe_unwrap_arguments(
-         original_ok,
+         outer,
          parsed,
          schema,
          permitted_fields,
          required_fields,
-         content,
-         populated_schema
+         content
        ) do
-    with true <- all_defaults?(populated_schema, schema, permitted_fields),
-         %{} = inner <- Map.get(parsed, "arguments") do
-      case cast_map(inner, schema, permitted_fields, required_fields, content) do
-        {:ok, inner_schema} ->
-          if all_defaults?(inner_schema, schema, permitted_fields),
-            do: original_ok,
-            else: {:ok, inner_schema}
+    inner = Map.get(parsed, "arguments")
+    should_try? = outer_eligible?(outer, schema, permitted_fields) and is_map(inner)
 
-        {:error, _} ->
-          original_ok
-      end
+    if should_try? do
+      inner_result = cast_map(inner, schema, permitted_fields, required_fields, content)
+      resolve_inner(outer, inner_result, inner, schema, permitted_fields)
     else
-      _ -> original_ok
+      outer
     end
+  end
+
+  defp outer_eligible?({:ok, populated}, schema, permitted_fields),
+    do: all_defaults?(populated, schema, permitted_fields)
+
+  defp outer_eligible?({:error, _}, _schema, _permitted_fields), do: true
+
+  defp resolve_inner(outer, {:ok, inner_schema}, _inner_map, schema, permitted_fields) do
+    if all_defaults?(inner_schema, schema, permitted_fields),
+      do: outer,
+      else: {:ok, inner_schema}
+  end
+
+  defp resolve_inner(outer, {:error, _} = inner_error, inner_map, _schema, permitted_fields) do
+    if inner_targets_schema?(inner_map, permitted_fields),
+      do: inner_error,
+      else: outer
   end
 
   # True when every permitted field on the populated struct still matches the
@@ -373,6 +387,20 @@ defmodule Normandy.LLM.JsonDeserializer do
   defp all_defaults?(populated, schema, permitted_fields) do
     Enum.all?(permitted_fields, fn field ->
       Map.get(populated, field) == Map.get(schema, field)
+    end)
+  end
+
+  # True when the inner map has at least one key that corresponds to a
+  # permitted field (atom or string form). Used to decide whether an inner
+  # cast error is the user's data being invalid (propagate) versus an
+  # unrelated envelope (suppress).
+  defp inner_targets_schema?(inner_map, permitted_fields) when is_map(inner_map) do
+    inner_keys = Map.keys(inner_map)
+
+    Enum.any?(permitted_fields, fn field ->
+      Enum.any?(inner_keys, fn key ->
+        key == field or key == Atom.to_string(field)
+      end)
     end)
   end
 

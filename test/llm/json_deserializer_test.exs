@@ -377,5 +377,19 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       assert {:error, {:validation_error, _changeset, _content}} =
                JsonDeserializer.parse_and_validate(content, %RequiredField{}, adapter: Poison)
     end
+
+    test "wrapper supplies required field only in inner — unwrap still succeeds" do
+      content = ~s({"name": "extract", "arguments": {"chat_message": "hi"}})
+
+      assert {:ok, %RequiredField{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{}, adapter: Poison)
+    end
+
+    test "inner cast error on a permitted key is surfaced, not masked as empty success" do
+      content = ~s({"name": "extract", "arguments": {"count": "not_a_number"}})
+
+      assert {:error, {:validation_error, _changeset, _content}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
   end
 end
