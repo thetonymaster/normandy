@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-11
+
+### Fixed
+
+- **`Normandy.LLM.JsonDeserializer` now recovers from tool-use-style
+  response envelopes**: some vision/instruction-following LLMs
+  (Nemotron-Nano-12B-VL on DigitalOcean Inference, some Llama variants)
+  wrap their JSON in `{"name": "...", "arguments": {...}}` even when
+  given `response_format: {"type": "json_object"}` and a system prompt
+  asking for the bare object shape. `parse_and_validate/3` previously
+  cast such payloads to an all-defaults struct and returned `:ok`, so
+  downstream consumers (notably `event_crew`'s vendor-doc vision
+  extraction) silently dropped every populated field. `parse_and_populate/3`
+  now retries the cast once against `parsed["arguments"]` when the outer
+  attempt either succeeded with all-defaults OR returned a
+  validation error, and the `"arguments"` value is itself a map. If the
+  retry yields any populated field it wins; if it still yields
+  all-defaults the original result is preserved so bare-shape responses
+  see no behaviour change. One level only — `{"arguments": {"arguments":
+  {...}}}` is not unwrapped. Inner cast errors are propagated when the
+  inner map carries at least one permitted key (atom or string form), so
+  e.g. `{"arguments":{"count":"not_a_number"}}` against `count: :integer`
+  surfaces the validation error instead of returning an empty struct;
+  inner errors are still suppressed when no permitted keys are present,
+  so unrelated envelopes don't manufacture new failures. The
+  `{:ok, struct}` / `{:error, reason}` contract is unchanged for every
+  pre-existing shape (#22).
+- **`get_required_fields/1` in `JsonDeserializer` now reads required
+  fields from the correct source**: the helper was filtering
+  `__specification__/0` entries as if each were a metadata map, but
+  `Normandy.Schema` stores `{name, type}` tuples there — so the filter
+  never matched and `validate_required/2` was being called with an empty
+  list for every schema. It now reads `__schema__(:required)` (the
+  source of truth) and falls back to the old scan for schemas that don't
+  expose that callback. Required-field validation now actually fires for
+  schemas declaring `field :foo, _, required: true` (#22).
+
 ## [0.6.1] - 2026-05-02
 
 ### Fixed
