@@ -570,23 +570,5 @@ defmodule Normandy.LLM.JsonDeserializerTest do
         :telemetry.detach(handler_id)
       end
     end
-
-    test "does not emit recovery telemetry when recovery did not fire" do
-      # No handler attached: telemetry handlers are global, so attaching one
-      # here would also fire on recovery events from concurrent async tests
-      # in this same module — causing flaky :telemetry messages to land in
-      # our mailbox. Skipping the attach guarantees no message can reach us.
-      valid = ~s({"page_text": "complete"})
-
-      {:ok, _} =
-        JsonDeserializer.parse_and_validate(
-          valid,
-          %RecoveryFixture{},
-          adapter: Poison,
-          recover_truncated_strings: true
-        )
-
-      refute_received {:telemetry, [:normandy, :json_deserializer, :recovery], _, _}
-    end
   end
 end

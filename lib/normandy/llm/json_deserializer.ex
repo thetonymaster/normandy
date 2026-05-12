@@ -83,12 +83,16 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `opts` - Options:
       - `:adapter` - JSON adapter module (default: from `:normandy` app config)
       - `:recover_truncated_strings` - When `true`, on adapter decode failure
-        attempt one recovery pass for the specific failure mode "unclosed
-        top-level string at depth 1 with `\\n`-escape runaway tail" (e.g.
-        Nemotron-VL `page_text` payloads that exhaust max_tokens mid-string).
-        Truncates at the last non-`\\n`-escape position, appends `"` and the
-        balancing object/array closers, re-decodes, and emits
+        attempt one recovery pass for the failure mode "unclosed top-level
+        string at depth 1" (e.g. Nemotron-VL `page_text` payloads that
+        exhaust max_tokens mid-string). The canonical case is a `\\n`-escape
+        runaway tail, but any unclosed depth-1 string also recovers: scan
+        truncates at the last non-`\\n`-escape position (or the byte after
+        the opening quote if none), appends `"` and the balancing object or
+        array closers, re-decodes, and emits
         `[:normandy, :json_deserializer, :recovery]` telemetry on success.
+        Truncations inside nested objects or arrays are not recovered. On
+        recovery failure the original adapter error is returned unchanged.
         Default: `false`.
 
   ## Returns
