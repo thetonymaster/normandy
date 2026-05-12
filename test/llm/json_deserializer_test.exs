@@ -572,33 +572,21 @@ defmodule Normandy.LLM.JsonDeserializerTest do
     end
 
     test "does not emit recovery telemetry when recovery did not fire" do
-      handler_id = "recovery-telemetry-negative-test-#{System.unique_integer([:positive])}"
-      test_pid = self()
+      # No handler attached: telemetry handlers are global, so attaching one
+      # here would also fire on recovery events from concurrent async tests
+      # in this same module — causing flaky :telemetry messages to land in
+      # our mailbox. Skipping the attach guarantees no message can reach us.
+      valid = ~s({"page_text": "complete"})
 
-      :telemetry.attach(
-        handler_id,
-        [:normandy, :json_deserializer, :recovery],
-        fn name, measurements, metadata, %{test_pid: pid} ->
-          send(pid, {:telemetry, name, measurements, metadata})
-        end,
-        %{test_pid: test_pid}
-      )
+      {:ok, _} =
+        JsonDeserializer.parse_and_validate(
+          valid,
+          %RecoveryFixture{},
+          adapter: Poison,
+          recover_truncated_strings: true
+        )
 
-      try do
-        valid = ~s({"page_text": "complete"})
-
-        {:ok, _} =
-          JsonDeserializer.parse_and_validate(
-            valid,
-            %RecoveryFixture{},
-            adapter: Poison,
-            recover_truncated_strings: true
-          )
-
-        refute_received {:telemetry, _, _, _}
-      after
-        :telemetry.detach(handler_id)
-      end
+      refute_received {:telemetry, [:normandy, :json_deserializer, :recovery], _, _}
     end
   end
 end

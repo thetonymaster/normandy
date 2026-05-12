@@ -60,6 +60,8 @@ defmodule Normandy.LLM.JsonDeserializer do
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:tools` - Tool schemas to include in retry
   - `:adapter` - JSON adapter module (default: from :normandy app config)
+  - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
+    string truncation (default: `false`). See `parse_and_validate/3`.
   """
 
   alias Normandy.Components.Message
@@ -78,7 +80,16 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
-    - `opts` - Options (`:adapter`)
+    - `opts` - Options:
+      - `:adapter` - JSON adapter module (default: from `:normandy` app config)
+      - `:recover_truncated_strings` - When `true`, on adapter decode failure
+        attempt one recovery pass for the specific failure mode "unclosed
+        top-level string at depth 1 with `\\n`-escape runaway tail" (e.g.
+        Nemotron-VL `page_text` payloads that exhaust max_tokens mid-string).
+        Truncates at the last non-`\\n`-escape position, appends `"` and the
+        balancing object/array closers, re-decodes, and emits
+        `[:normandy, :json_deserializer, :recovery]` telemetry on success.
+        Default: `false`.
 
   ## Returns
 
@@ -120,7 +131,8 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `temperature` - Temperature setting
     - `max_tokens` - Max tokens
     - `messages` - Original message history
-    - `opts` - Options (`:max_retries`, `:tools`, `:adapter`)
+    - `opts` - Options (`:max_retries`, `:tools`, `:adapter`,
+      `:recover_truncated_strings` — see `parse_and_validate/3` for details)
 
   ## Returns
 
