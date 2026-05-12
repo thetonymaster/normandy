@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-05-12
+
+### Added
+
+- **`Normandy.LLM.JsonDeserializer` now supports opt-in recovery from a
+  specific truncated-JSON failure mode**: when an LLM (notably
+  Nemotron-Nano-12B-VL on DigitalOcean Inference) emits a response that
+  ends inside an unclosed top-level string field — typically because the
+  model entered a `\n`-escape runaway and ran out of output tokens —
+  `parse_and_validate/3` and `deserialize_with_retry/8` now accept
+  `recover_truncated_strings: true`. When the flag is on AND the strict
+  decode fails AND the content looks like a single top-level object AND a
+  byte scanner determines the unclosed string is at the outermost depth,
+  Normandy truncates the string at the last position whose preceding
+  bytes were not part of a `\n` escape, appends a closing `"`, and
+  appends `}`/`]` closers derived from a tracked open-container stack.
+  The recovered payload is re-decoded once through the adapter and run
+  through the same cast pipeline as the happy path; a
+  `[:normandy, :json_deserializer, :recovery]` telemetry event is
+  emitted on success with `%{recovered: 1}` measurements and
+  `%{strategy: :truncated_string, byte_size_before: _, byte_size_after: _}`
+  metadata. Default is `false` — pre-existing callers see no behaviour
+  change. Designed for vision-pipeline `page_text` transcription
+  payloads where the alternative is an empty `%Output{}` and zero RAG
+  indexing on customer-grade documents; not a general-purpose JSON
+  repair. Nested-string truncation (e.g. `{"offerings":[{"name":"Paq`)
+  explicitly does NOT recover, since manufacturing a closer there would
+  produce a half-truthful inner record rather than empty top-level data.
+
 ## [0.6.2] - 2026-05-11
 
 ### Fixed

@@ -60,6 +60,8 @@ defmodule Normandy.LLM.JsonDeserializer do
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:tools` - Tool schemas to include in retry
   - `:adapter` - JSON adapter module (default: from :normandy app config)
+  - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
+    string truncation (default: `false`). See `parse_and_validate/3`.
   """
 
   alias Normandy.Components.Message
@@ -78,7 +80,20 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
-    - `opts` - Options (`:adapter`)
+    - `opts` - Options:
+      - `:adapter` - JSON adapter module (default: from `:normandy` app config)
+      - `:recover_truncated_strings` - When `true`, on adapter decode failure
+        attempt one recovery pass for the failure mode "unclosed top-level
+        string at depth 1" (e.g. Nemotron-VL `page_text` payloads that
+        exhaust max_tokens mid-string). The canonical case is a `\\n`-escape
+        runaway tail, but any unclosed depth-1 string also recovers: scan
+        truncates at the last non-`\\n`-escape position (or the byte after
+        the opening quote if none), appends `"` and the balancing object or
+        array closers, re-decodes, and emits
+        `[:normandy, :json_deserializer, :recovery]` telemetry on success.
+        Truncations inside nested objects or arrays are not recovered. On
+        recovery failure the original adapter error is returned unchanged.
+        Default: `false`.
 
   ## Returns
 
@@ -99,7 +114,7 @@ defmodule Normandy.LLM.JsonDeserializer do
           {:ok, struct()} | {:error, term()}
   def parse_and_validate(content, schema, opts \\ []) do
     adapter = Keyword.get(opts, :adapter, get_json_adapter())
-    parse_and_populate(content, schema, adapter)
+    parse_and_populate(content, schema, adapter, opts)
   end
 
   @doc """
@@ -120,7 +135,8 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `temperature` - Temperature setting
     - `max_tokens` - Max tokens
     - `messages` - Original message history
-    - `opts` - Options (`:max_retries`, `:tools`, `:adapter`)
+    - `opts` - Options (`:max_retries`, `:tools`, `:adapter`,
+      `:recover_truncated_strings` — see `parse_and_validate/3` for details)
 
   ## Returns
 
@@ -174,14 +190,14 @@ defmodule Normandy.LLM.JsonDeserializer do
          _temperature,
          _max_tokens,
          _messages,
-         _opts,
+         opts,
          adapter,
          attempt,
          max_retries
        )
        when attempt >= max_retries do
     # Max retries reached, attempt final parse and return result
-    case parse_and_populate(content, schema, adapter) do
+    case parse_and_populate(content, schema, adapter, opts) do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
 
@@ -203,7 +219,7 @@ defmodule Normandy.LLM.JsonDeserializer do
          attempt,
          max_retries
        ) do
-    case parse_and_populate(content, schema, adapter) do
+    case parse_and_populate(content, schema, adapter, opts) do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
 
@@ -287,12 +303,11 @@ defmodule Normandy.LLM.JsonDeserializer do
   end
 
   # Parse JSON and validate using Normandy.Validate
-  defp parse_and_populate(content, schema, adapter) do
+  defp parse_and_populate(content, schema, adapter, opts) do
     # Clean content (remove markdown code fences, etc.)
     cleaned_content = clean_content(content)
 
-    # Try to parse JSON
-    case adapter.decode(cleaned_content) do
+    case decode_with_optional_recovery(cleaned_content, adapter, opts) do
       {:ok, parsed} when is_map(parsed) ->
         permitted_fields = get_permitted_fields(schema)
         required_fields = get_required_fields(schema)
@@ -317,8 +332,54 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
+  # Decode JSON, optionally retrying once via truncated-string recovery.
+  #
+  # When :recover_truncated_strings is true AND the cleaned content looks like a
+  # single top-level object AND the strict decode fails AND the failure mode is
+  # "unclosed top-level string at depth 1 with a \n-escape runaway tail" (as
+  # determined by recover_truncated_string/1), we synthesize a closing quote and
+  # balance the brace stack, then re-decode once. On success we emit a recovery
+  # telemetry event. On any failure we return the original adapter error so the
+  # caller's existing {:json_parse_error, _, _} contract is preserved.
+  defp decode_with_optional_recovery(cleaned_content, adapter, opts) do
+    case adapter.decode(cleaned_content) do
+      {:ok, parsed} ->
+        {:ok, parsed}
+
+      {:error, _reason} = original_error ->
+        with true <- Keyword.get(opts, :recover_truncated_strings, false),
+             true <- top_level_object?(cleaned_content),
+             {:ok, recovered} <- recover_truncated_string(cleaned_content),
+             {:ok, parsed} <- adapter.decode(recovered) do
+          emit_recovery_telemetry(byte_size(cleaned_content), byte_size(recovered))
+          {:ok, parsed}
+        else
+          _ -> original_error
+        end
+    end
+  end
+
+  defp top_level_object?(content) when is_binary(content) do
+    case String.trim_leading(content) do
+      "{" <> _ -> true
+      _ -> false
+    end
+  end
+
+  defp emit_recovery_telemetry(byte_size_before, byte_size_after) do
+    :telemetry.execute(
+      [:normandy, :json_deserializer, :recovery],
+      %{recovered: 1},
+      %{
+        strategy: :truncated_string,
+        byte_size_before: byte_size_before,
+        byte_size_after: byte_size_after
+      }
+    )
+  end
+
   # Cast a map of params against the schema and return either a populated
-  # struct or a validation error in the same shape as parse_and_populate/3.
+  # struct or a validation error in the same shape as parse_and_populate/4.
   defp cast_map(params, schema, permitted_fields, required_fields, content) do
     normalized_params = normalize_field_names(params)
 
@@ -402,6 +463,140 @@ defmodule Normandy.LLM.JsonDeserializer do
         key == field or key == Atom.to_string(field)
       end)
     end)
+  end
+
+  # Attempt to recover a truncated JSON payload whose failure mode is "unclosed
+  # top-level string at depth 1 with a \n-escape runaway tail" (Nemotron-VL
+  # vision worker page_text case). Returns {:ok, recovered_string} on success
+  # or :error if the truncation doesn't match this specific shape.
+  #
+  # Algorithm:
+  #   1. Single-pass byte scan tracking a stack of :object/:array opens, an
+  #      in_string flag, and a "safe_until" byte index — the byte index just
+  #      past the most recent character that is NOT part of a \n escape
+  #      sequence and is inside the currently-open string at depth 1.
+  #   2. At EOF, recover iff in_string AND opener_depth == 1 AND safe_until
+  #      is set AND the stack is non-empty.
+  #   3. Recovered string = first safe_until bytes of input + "\"" + closers
+  #      derived from the stack (head = innermost, so reverse for output is
+  #      not needed — head is the LAST opened container, which closes FIRST).
+  defp recover_truncated_string(content) when is_binary(content) do
+    case scan(content, 0, [], false, false, nil, nil) do
+      {:unclosed_top_level_string, safe_until, stack}
+      when is_integer(safe_until) and stack != [] ->
+        prefix = binary_part(content, 0, safe_until)
+        {:ok, prefix <> "\"" <> build_closers(stack)}
+
+      _ ->
+        :error
+    end
+  end
+
+  # scan(rest, pos, stack, in_string?, escape_pending?, opener_depth, safe_until)
+  #
+  # stack head = innermost open container. List head close char closes the
+  # innermost open first — exactly the order JSON needs.
+  #
+  # escape_pending? is true for exactly one byte: the byte immediately after a
+  # \ inside a string. That byte is consumed unconditionally.
+  #
+  # safe_until is updated only inside the string opened at depth 1, and only
+  # for characters that are not part of a \n escape sequence. It marks the
+  # byte position just past the last "safe to truncate after" character.
+
+  # EOF inside an unclosed string at depth-1 opener with at least one safe
+  # boundary recorded → recovery possible.
+  defp scan(<<>>, _pos, stack, true, _esc, 1, safe_until)
+       when is_integer(safe_until) and stack != [] do
+    {:unclosed_top_level_string, safe_until, stack}
+  end
+
+  # EOF in any other state → no recovery.
+  defp scan(<<>>, _pos, _stack, _in_string, _esc, _opener_depth, _safe_until) do
+    :no_recovery
+  end
+
+  # Inside string, escape pending: consume the escaped byte. If it is "n" (or
+  # "r"), it is part of a runaway sequence — do NOT advance safe_until. For
+  # every other escape (\" \\ \t \b \f \/ \uXXXX), the escape represents a
+  # legitimate character — advance safe_until past the two bytes.
+  defp scan(<<byte, rest::binary>>, pos, stack, true, true, opener_depth, safe_until) do
+    new_safe_until =
+      cond do
+        opener_depth != 1 -> safe_until
+        byte == ?n or byte == ?r -> safe_until
+        true -> pos + 1
+      end
+
+    scan(rest, pos + 1, stack, true, false, opener_depth, new_safe_until)
+  end
+
+  # Inside string, backslash starts an escape — next byte handled by the
+  # escape_pending? clause above.
+  defp scan(<<?\\, rest::binary>>, pos, stack, true, false, opener_depth, safe_until) do
+    scan(rest, pos + 1, stack, true, true, opener_depth, safe_until)
+  end
+
+  # Inside string, closing unescaped quote: exit string, reset opener tracking.
+  defp scan(<<?", rest::binary>>, pos, stack, true, false, _opener_depth, _safe_until) do
+    scan(rest, pos + 1, stack, false, false, nil, nil)
+  end
+
+  # Inside string, any other byte (including literal \n, \r — which JSON
+  # technically forbids unescaped, but we don't reject; the surrounding decode
+  # will). Advance safe_until only at depth 1.
+  defp scan(<<_byte, rest::binary>>, pos, stack, true, false, opener_depth, safe_until) do
+    new_safe_until = if opener_depth == 1, do: pos + 1, else: safe_until
+    scan(rest, pos + 1, stack, true, false, opener_depth, new_safe_until)
+  end
+
+  # Outside string, opening quote: enter string. opener_depth = current stack
+  # depth. Initialize safe_until at the byte AFTER the opener so an immediately
+  # truncated empty string `{"k": "` recovers to {"k": ""}.
+  defp scan(<<?", rest::binary>>, pos, stack, false, _esc, _opener_depth, _safe_until) do
+    depth = length(stack)
+    initial_safe_until = if depth == 1, do: pos + 1, else: nil
+    scan(rest, pos + 1, stack, true, false, depth, initial_safe_until)
+  end
+
+  # Outside string, object/array openers push onto the stack.
+  defp scan(<<?{, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
+    scan(rest, pos + 1, [:object | stack], false, false, opener_depth, safe_until)
+  end
+
+  defp scan(<<?[, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
+    scan(rest, pos + 1, [:array | stack], false, false, opener_depth, safe_until)
+  end
+
+  # Outside string, matching closers pop the stack. Mismatches fall through to
+  # the catch-all below, which keeps walking; the surrounding decode will have
+  # already failed for the right reason if the input is malformed in a way the
+  # scanner can't help with.
+  defp scan(<<?}, rest::binary>>, pos, [:object | tail], false, _esc, opener_depth, safe_until) do
+    scan(rest, pos + 1, tail, false, false, opener_depth, safe_until)
+  end
+
+  defp scan(<<?], rest::binary>>, pos, [:array | tail], false, _esc, opener_depth, safe_until) do
+    scan(rest, pos + 1, tail, false, false, opener_depth, safe_until)
+  end
+
+  # Outside string, any other byte (whitespace, structural chars like : , ,
+  # mismatched closers): walk on. We don't validate structure; that's the
+  # adapter's job. We only need enough state to know "are we inside a top-level
+  # string at EOF, and where's the last safe byte."
+  defp scan(<<_byte, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
+    scan(rest, pos + 1, stack, false, false, opener_depth, safe_until)
+  end
+
+  # Build the closer string for a stack. Head of stack = innermost open =
+  # closes first.
+  defp build_closers(stack) do
+    stack
+    |> Enum.map(fn
+      :object -> "}"
+      :array -> "]"
+    end)
+    |> Enum.join()
   end
 
   # Clean content by removing code fences and trimming
