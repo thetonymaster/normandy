@@ -532,5 +532,73 @@ defmodule Normandy.LLM.JsonDeserializerTest do
                  recover_truncated_strings: true
                )
     end
+
+    test "emits [:normandy, :json_deserializer, :recovery] on successful recovery" do
+      handler_id = "recovery-telemetry-test-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:normandy, :json_deserializer, :recovery],
+        fn name, measurements, metadata, %{test_pid: pid} ->
+          send(pid, {:telemetry, name, measurements, metadata})
+        end,
+        %{test_pid: test_pid}
+      )
+
+      try do
+        truncated = ~s({"page_text": "hello world\\n\\n\\n)
+
+        {:ok, _} =
+          JsonDeserializer.parse_and_validate(
+            truncated,
+            %RecoveryFixture{},
+            adapter: Poison,
+            recover_truncated_strings: true
+          )
+
+        assert_received {:telemetry, [:normandy, :json_deserializer, :recovery], %{recovered: 1},
+                         %{
+                           strategy: :truncated_string,
+                           byte_size_before: before,
+                           byte_size_after: after_
+                         }}
+
+        assert is_integer(before) and before > 0
+        assert is_integer(after_) and after_ > 0
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
+
+    test "does not emit recovery telemetry when recovery did not fire" do
+      handler_id = "recovery-telemetry-negative-test-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler_id,
+        [:normandy, :json_deserializer, :recovery],
+        fn name, measurements, metadata, %{test_pid: pid} ->
+          send(pid, {:telemetry, name, measurements, metadata})
+        end,
+        %{test_pid: test_pid}
+      )
+
+      try do
+        valid = ~s({"page_text": "complete"})
+
+        {:ok, _} =
+          JsonDeserializer.parse_and_validate(
+            valid,
+            %RecoveryFixture{},
+            adapter: Poison,
+            recover_truncated_strings: true
+          )
+
+        refute_received {:telemetry, _, _, _}
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
   end
 end
