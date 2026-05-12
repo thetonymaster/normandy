@@ -318,7 +318,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   end
 
   # Cast a map of params against the schema and return either a populated
-  # struct or a validation error in the same shape as parse_and_populate/3.
+  # struct or a validation error in the same shape as parse_and_populate/4.
   defp cast_map(params, schema, permitted_fields, required_fields, content) do
     normalized_params = normalize_field_names(params)
 
