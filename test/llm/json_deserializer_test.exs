@@ -1,8 +1,33 @@
+defmodule Normandy.LLM.JsonDeserializerTest.WrapperFixtures do
+  @moduledoc false
+
+  defmodule MultiField do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "multi-field schema for wrapper tests" do
+      field(:chat_message, :string, description: "message")
+      field(:count, :integer, description: "count", default: 0)
+    end
+  end
+
+  defmodule RequiredField do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "schema with a required field" do
+      field(:chat_message, :string, description: "required message", required: true)
+    end
+  end
+end
+
 defmodule Normandy.LLM.JsonDeserializerTest do
   use ExUnit.Case, async: true
 
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.MultiField
+  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RequiredField
 
   describe "deserialize_with_retry/8" do
     test "parses valid JSON and populates schema" do
@@ -303,6 +328,68 @@ defmodule Normandy.LLM.JsonDeserializerTest do
         )
 
       assert {:ok, %BaseAgentOutputSchema{chat_message: "Hello 世界 🌍"}} = result
+    end
+  end
+
+  describe "parse_and_validate/3 — tool-use-style wrapper unwrap" do
+    test "bare shape still parses normally (regression guard)" do
+      content = ~s({"chat_message": "Hello world", "count": 5})
+
+      assert {:ok, %MultiField{chat_message: "Hello world", count: 5}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
+
+    test "wrapper shape with matching inner keys is unwrapped" do
+      content = ~s({"name": "extract", "arguments": {"chat_message": "hello", "count": 7}})
+
+      assert {:ok, %MultiField{chat_message: "hello", count: 7}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
+
+    test "wrapper shape with non-matching inner keys returns the empty struct" do
+      content = ~s({"name": "extract", "arguments": {"unrelated": "data"}})
+
+      assert {:ok, %MultiField{chat_message: nil, count: 0}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
+
+    test "no arguments key and empty cast preserves current behavior" do
+      content = ~s({"name": "extract"})
+
+      assert {:ok, %MultiField{chat_message: nil, count: 0}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
+    end
+
+    test "non-map arguments value falls back to empty struct (no crash)" do
+      string_args = ~s({"name": "extract", "arguments": "not a map"})
+      list_args = ~s({"name": "extract", "arguments": [1, 2, 3]})
+
+      assert {:ok, %MultiField{chat_message: nil, count: 0}} =
+               JsonDeserializer.parse_and_validate(string_args, %MultiField{}, adapter: Poison)
+
+      assert {:ok, %MultiField{chat_message: nil, count: 0}} =
+               JsonDeserializer.parse_and_validate(list_args, %MultiField{}, adapter: Poison)
+    end
+
+    test "required-field validation still fires when neither outer nor inner supplies it" do
+      content = ~s({"name": "extract", "arguments": {"unrelated": "data"}})
+
+      assert {:error, {:validation_error, _changeset, _content}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{}, adapter: Poison)
+    end
+
+    test "wrapper supplies required field only in inner — unwrap still succeeds" do
+      content = ~s({"name": "extract", "arguments": {"chat_message": "hi"}})
+
+      assert {:ok, %RequiredField{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{}, adapter: Poison)
+    end
+
+    test "inner cast error on a permitted key is surfaced, not masked as empty success" do
+      content = ~s({"name": "extract", "arguments": {"count": "not_a_number"}})
+
+      assert {:error, {:validation_error, _changeset, _content}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Poison)
     end
   end
 end
