@@ -99,7 +99,7 @@ defmodule Normandy.LLM.JsonDeserializer do
           {:ok, struct()} | {:error, term()}
   def parse_and_validate(content, schema, opts \\ []) do
     adapter = Keyword.get(opts, :adapter, get_json_adapter())
-    parse_and_populate(content, schema, adapter)
+    parse_and_populate(content, schema, adapter, opts)
   end
 
   @doc """
@@ -174,14 +174,14 @@ defmodule Normandy.LLM.JsonDeserializer do
          _temperature,
          _max_tokens,
          _messages,
-         _opts,
+         opts,
          adapter,
          attempt,
          max_retries
        )
        when attempt >= max_retries do
     # Max retries reached, attempt final parse and return result
-    case parse_and_populate(content, schema, adapter) do
+    case parse_and_populate(content, schema, adapter, opts) do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
 
@@ -203,7 +203,7 @@ defmodule Normandy.LLM.JsonDeserializer do
          attempt,
          max_retries
        ) do
-    case parse_and_populate(content, schema, adapter) do
+    case parse_and_populate(content, schema, adapter, opts) do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
 
@@ -287,7 +287,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   end
 
   # Parse JSON and validate using Normandy.Validate
-  defp parse_and_populate(content, schema, adapter) do
+  defp parse_and_populate(content, schema, adapter, _opts) do
     # Clean content (remove markdown code fences, etc.)
     cleaned_content = clean_content(content)
 
