@@ -124,4 +124,51 @@ defmodule Normandy.Agents.DispatchTest do
              } = result
     end
   end
+
+  describe "dispatch_one/3 policy outcomes" do
+    test "deny → error ToolResult with rationale fed into output, tool not run" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c6", name: "weather", input: %{"city" => "NYC"}}
+
+      deny_policy = fn _config, _call, _tool ->
+        {:deny,
+         %{reason: "weather tool blocked", rule_id: "R-7", rationale: "shares state with billing"}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: deny_policy}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+
+      assert %ToolResult{
+               tool_call_id: "c6",
+               is_error: true,
+               output: %{
+                 error: "weather tool blocked",
+                 rule_id: "R-7",
+                 rationale: "shares state with billing",
+                 denied: true,
+                 pending_approval: false
+               }
+             } = result
+    end
+
+    test "needs_approval → tagged denial result with pending_approval: true" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c7", name: "weather", input: %{"city" => "NYC"}}
+
+      approval_policy = fn _config, _call, _tool ->
+        {:needs_approval, %{reason: "human review", rationale: "high-cost op"}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: approval_policy}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+
+      assert %ToolResult{
+               tool_call_id: "c7",
+               is_error: true,
+               output: %{denied: true, pending_approval: true, rationale: "high-cost op"}
+             } = result
+    end
+  end
 end
