@@ -96,4 +96,46 @@ defmodule Normandy.Agents.Turn.InlineTest do
       assert_received {:appended, "assistant", ^second}
     end
   end
+
+  describe "run/2 hitting the iteration cap" do
+    test "always-tool model stops at the cap with one forced final call" do
+      test_pid = self()
+      config = %{name: "t", tool_registry: Registry.new([%WeatherTool{}])}
+      call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
+      always = %ToolCallResponse{content: nil, tool_calls: [call]}
+
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      deps = %{
+        call_llm: fn req ->
+          Agent.update(counter, &(&1 + 1))
+          send(test_pid, {:llm_call, req})
+          {:ok, always}
+        end,
+        dispatch: fn calls ->
+          Enum.map(calls, fn c ->
+            Dispatch.dispatch_one(config, c, Dispatch.default_pipeline())
+          end)
+        end,
+        append: fn _role, _content -> :ok end,
+        emit: fn _name, _meta -> :ok end
+      }
+
+      state = Turn.new(max_iterations: 3, response_model: :rm, output_schema: :os)
+      assert {:ok, final} = Inline.run(state, deps)
+
+      assert final.status == :stopped
+      assert final.stop_reason == :max_iterations
+      # 3 normal tool-dispatching calls + 1 forced final call = 4.
+      assert Agent.get(counter, & &1) == 4
+
+      # Three normal calls (response_model :rm) and one forced final call
+      # (response_model :os, final: true). assert_received consumes one matching
+      # message each; order between distinct patterns does not matter.
+      assert_received {:llm_call, %{response_model: :os, final: true}}
+      assert_received {:llm_call, %{response_model: :rm, final: false}}
+      assert_received {:llm_call, %{response_model: :rm, final: false}}
+      assert_received {:llm_call, %{response_model: :rm, final: false}}
+    end
+  end
 end
