@@ -109,4 +109,19 @@ defmodule Normandy.Agents.DispatchTest do
       assert %ToolResult{tool_call_id: "c9", output: "weather in LA", is_error: false} = result
     end
   end
+
+  describe "dispatch_one/3 registry miss" do
+    test "unknown tool → error ToolResult, tool not executed" do
+      config = config_with_tools([])
+      call = %ToolCall{id: "c5", name: "nope", input: %{}}
+
+      result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert %ToolResult{
+               tool_call_id: "c5",
+               is_error: true,
+               output: %{error: "Tool 'nope' not found in registry"}
+             } = result
+    end
+  end
 end
