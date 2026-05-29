@@ -110,6 +110,35 @@ defmodule Normandy.Agents.Turn do
     end
   end
 
+  def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
+    new_left = s.iterations_left - 1
+    append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
+    steering = {:emit_event, :steering, %{iterations_left: new_left}}
+
+    if new_left <= 0 do
+      # Iteration cap reached: one forced final call against the output schema,
+      # then finalize regardless of tool calls (see :assistant_streaming +
+      # awaiting_final in Task 5). `:steering` is where compaction will hook in
+      # Phase 5; today it is only an emitted boundary event, not a resting state.
+      {%{
+         s
+         | status: :assistant_streaming,
+           awaiting_final: true,
+           iterations_left: new_left,
+           pending_calls: []
+       },
+       append_effects ++ [steering, {:call_llm, %{response_model: s.output_schema, final: true}}]}
+    else
+      iteration =
+        {:emit_event, :iteration,
+         %{iteration: s.max_iterations - new_left + 1, iterations_left: new_left}}
+
+      {%{s | status: :assistant_streaming, iterations_left: new_left, pending_calls: []},
+       append_effects ++
+         [steering, iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
+    end
+  end
+
   defp tool_calls(%{tool_calls: nil}), do: []
   defp tool_calls(%{tool_calls: calls}) when is_list(calls), do: calls
   defp tool_calls(_), do: []

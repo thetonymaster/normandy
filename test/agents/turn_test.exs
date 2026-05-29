@@ -5,6 +5,7 @@ defmodule Normandy.Agents.TurnTest do
   alias Normandy.Agents.Turn.State
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
 
   describe "new/1" do
     test "seeds a provisioning state with iterations_left = max_iterations" do
@@ -87,6 +88,38 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [
                {:append_message, "assistant", resp},
                {:dispatch_tools, calls}
+             ]
+    end
+  end
+
+  describe "step/2 tool_dispatch with results (under the cap)" do
+    test "appends each tool result, decrements iterations_left, emits steering + iteration, calls LLM" do
+      s = %State{
+        status: :tool_dispatch,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        pending_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]
+      }
+
+      results = [
+        %ToolResult{tool_call_id: "c1", output: "weather in NYC", is_error: false},
+        %ToolResult{tool_call_id: "c2", output: "ok", is_error: false}
+      ]
+
+      {s2, effects} = Turn.step(s, {:tool_results, results})
+
+      assert s2.status == :assistant_streaming
+      assert s2.iterations_left == 4
+      assert s2.pending_calls == []
+      assert s2.awaiting_final == false
+
+      assert effects == [
+               {:append_message, "tool", Enum.at(results, 0)},
+               {:append_message, "tool", Enum.at(results, 1)},
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
   end
