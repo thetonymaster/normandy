@@ -92,4 +92,25 @@ defmodule Normandy.Agents.Turn do
        {:call_llm, %{response_model: s.response_model, final: false}}
      ]}
   end
+
+  def step(%State{status: :assistant_streaming} = s, {:llm_response, resp}) do
+    case tool_calls(resp) do
+      [] ->
+        {%{
+           s
+           | status: :stopped,
+             last_response: resp,
+             final_response: resp,
+             stop_reason: :completed
+         }, [{:append_message, "assistant", resp}, {:finalize, resp}]}
+
+      calls ->
+        {%{s | status: :tool_dispatch, last_response: resp, pending_calls: calls},
+         [{:append_message, "assistant", resp}, {:dispatch_tools, calls}]}
+    end
+  end
+
+  defp tool_calls(%{tool_calls: nil}), do: []
+  defp tool_calls(%{tool_calls: calls}) when is_list(calls), do: calls
+  defp tool_calls(_), do: []
 end

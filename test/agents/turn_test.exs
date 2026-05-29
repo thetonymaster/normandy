@@ -3,6 +3,7 @@ defmodule Normandy.Agents.TurnTest do
 
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.State
+  alias Normandy.Agents.ToolCallResponse
 
   describe "new/1" do
     test "seeds a provisioning state with iterations_left = max_iterations" do
@@ -38,6 +39,34 @@ defmodule Normandy.Agents.TurnTest do
                {:emit_event, :iteration, %{iteration: 1, iterations_left: 5}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
+    end
+  end
+
+  describe "step/2 assistant_streaming with no tool calls" do
+    test "finalizes: appends assistant message, emits finalize, stops as :completed" do
+      s = %State{status: :assistant_streaming, iterations_left: 5, max_iterations: 5}
+      resp = %ToolCallResponse{content: "all done", tool_calls: nil}
+
+      {s2, effects} = Turn.step(s, {:llm_response, resp})
+
+      assert s2.status == :stopped
+      assert s2.stop_reason == :completed
+      assert s2.final_response == resp
+      assert s2.last_response == resp
+
+      assert effects == [
+               {:append_message, "assistant", resp},
+               {:finalize, resp}
+             ]
+    end
+
+    test "treats an empty tool_calls list as no tool calls" do
+      s = %State{status: :assistant_streaming, iterations_left: 5, max_iterations: 5}
+      resp = %ToolCallResponse{content: "done", tool_calls: []}
+
+      {s2, _effects} = Turn.step(s, {:llm_response, resp})
+      assert s2.status == :stopped
+      assert s2.stop_reason == :completed
     end
   end
 end
