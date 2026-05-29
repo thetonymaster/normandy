@@ -177,4 +177,47 @@ defmodule Normandy.Agents.TurnTest do
              ]
     end
   end
+
+  describe "step/2 failures and terminal states" do
+    test "llm_error from a non-terminal state transitions to :failed and emits fail" do
+      s = %State{status: :assistant_streaming, iterations_left: 3, max_iterations: 5}
+
+      {s2, effects} = Turn.step(s, {:llm_error, :boom})
+
+      assert s2.status == :failed
+      assert s2.error == :boom
+      assert effects == [{:fail, :boom}]
+    end
+
+    test "tool_error from a non-terminal state transitions to :failed and emits fail" do
+      s = %State{status: :tool_dispatch, iterations_left: 3, max_iterations: 5}
+
+      {s2, effects} = Turn.step(s, {:tool_error, :crashed})
+
+      assert s2.status == :failed
+      assert s2.error == :crashed
+      assert effects == [{:fail, :crashed}]
+    end
+
+    test ":stopped absorbs any further event with no effects and no status change" do
+      s = %State{status: :stopped, stop_reason: :completed, iterations_left: 2, max_iterations: 5}
+      assert Turn.step(s, {:llm_response, %ToolCallResponse{}}) == {s, []}
+      assert Turn.step(s, {:llm_error, :late}) == {s, []}
+    end
+
+    test ":failed absorbs any further event with no effects and no status change" do
+      s = %State{status: :failed, error: :prior, iterations_left: 2, max_iterations: 5}
+      assert Turn.step(s, {:tool_results, []}) == {s, []}
+    end
+
+    test "an unexpected event in a non-terminal state fails loudly with context" do
+      s = %State{status: :assistant_streaming, iterations_left: 3, max_iterations: 5}
+
+      {s2, effects} = Turn.step(s, {:tool_results, []})
+
+      assert s2.status == :failed
+      assert s2.error == {:unexpected_event, :assistant_streaming, {:tool_results, []}}
+      assert effects == [{:fail, {:unexpected_event, :assistant_streaming, {:tool_results, []}}}]
+    end
+  end
 end

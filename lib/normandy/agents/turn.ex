@@ -150,6 +150,28 @@ defmodule Normandy.Agents.Turn do
     end
   end
 
+  def step(%State{status: status} = s, {:llm_error, reason})
+      when status not in [:stopped, :failed] do
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  def step(%State{status: status} = s, {:tool_error, reason})
+      when status not in [:stopped, :failed] do
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  def step(%State{status: status} = s, _event) when status in [:stopped, :failed] do
+    {s, []}
+  end
+
+  # Total function: an unexpected (state, event) pair surfaces as :failed rather
+  # than crashing the shell, with enough context to debug. Reaching this is a bug
+  # in the shell's event sequencing, not normal flow.
+  def step(%State{status: status} = s, event) do
+    reason = {:unexpected_event, status, event}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
   defp tool_calls(%{tool_calls: nil}), do: []
   defp tool_calls(%{tool_calls: calls}) when is_list(calls), do: calls
   defp tool_calls(_), do: []
