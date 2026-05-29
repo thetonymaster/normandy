@@ -171,4 +171,54 @@ defmodule Normandy.Agents.DispatchTest do
              } = result
     end
   end
+
+  describe "dispatch_one/3 hooks" do
+    test "before-hook returning {:halt, result} short-circuits, tool not run" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c8", name: "weather", input: %{"city" => "NYC"}}
+
+      halting_hook = fn _config, %ToolCall{id: id} ->
+        {:halt,
+         %ToolResult{tool_call_id: id, output: %{error: "blocked by hook"}, is_error: true}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | before_hooks: [halting_hook]}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+
+      assert result == %ToolResult{
+               tool_call_id: "c8",
+               output: %{error: "blocked by hook"},
+               is_error: true
+             }
+    end
+
+    test "before-hook returning {:cont, call} can rewrite input" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c10", name: "weather", input: %{"city" => "NYC"}}
+
+      rewrite_hook = fn _config, %ToolCall{} = c ->
+        {:cont, %{c | input: %{"city" => "Boston"}}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | before_hooks: [rewrite_hook]}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+      assert result.output == "weather in Boston"
+    end
+
+    test "after-hook transforms the result" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c11", name: "weather", input: %{"city" => "NYC"}}
+
+      redact_hook = fn _config, _call, %ToolResult{} = r ->
+        %{r | output: "REDACTED"}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | after_hooks: [redact_hook]}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+      assert result.output == "REDACTED"
+    end
+  end
 end
