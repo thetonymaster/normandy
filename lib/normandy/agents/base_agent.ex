@@ -12,7 +12,6 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.AgentMemory
-  alias Normandy.Components.ToolResult
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
@@ -1040,7 +1039,7 @@ defmodule Normandy.Agents.BaseAgent do
         %ToolCall{
           id: block["id"],
           name: block["name"],
-          input: normalize_tool_input(block["input"])
+          input: Dispatch.normalize_tool_input(block["input"])
         }
       end)
 
@@ -1051,47 +1050,6 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp build_streaming_assistant_response(other, _), do: other
-
-  defp normalize_tool_input(nil), do: %{}
-  defp normalize_tool_input(input) when is_map(input), do: input
-
-  defp normalize_tool_input(input) when is_binary(input) do
-    case Poison.decode(input) do
-      {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
-    end
-  end
-
-  defp normalize_tool_input(_), do: %{}
-
-  # Map an LLM-supplied input key (atom or binary) to a struct field atom on
-  # the tool, returning :error for keys that don't correspond to any field.
-  #
-  # Crucially, this NEVER calls String.to_atom/1 on untrusted input. Tool
-  # input keys come from LLM JSON, which is influenced by attacker-
-  # controllable prompt content; String.to_atom/1 would register every
-  # unknown key in the global atom table (the BEAM never garbage-collects
-  # atoms), so a sustained stream of crafted random keys would eventually
-  # exhaust the atom table and crash the VM. struct/2 silently dropping the
-  # field at the next step doesn't undo the atom allocation that already
-  # happened.
-  #
-  # Returns {:ok, atom} for known fields, :error otherwise. Callers should
-  # silently drop :error results to preserve struct/2's effective behaviour
-  # of ignoring unknown keys.
-  defp normalize_tool_field_key(tool, key) when is_atom(key) do
-    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
-  end
-
-  defp normalize_tool_field_key(tool, key) when is_binary(key) do
-    Enum.find_value(Map.keys(tool), :error, fn field ->
-      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
-        {:ok, field}
-      end
-    end)
-  end
-
-  defp normalize_tool_field_key(_tool, _key), do: :error
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
