@@ -93,6 +93,17 @@ defmodule Normandy.Agents.Turn do
      ]}
   end
 
+  def step(%State{status: :assistant_streaming, awaiting_final: true} = s, {:llm_response, resp}) do
+    {%{
+       s
+       | status: :stopped,
+         awaiting_final: false,
+         last_response: resp,
+         final_response: resp,
+         stop_reason: :max_iterations
+     }, [{:append_message, "assistant", resp}, {:finalize, resp}]}
+  end
+
   def step(%State{status: :assistant_streaming} = s, {:llm_response, resp}) do
     case tool_calls(resp) do
       [] ->

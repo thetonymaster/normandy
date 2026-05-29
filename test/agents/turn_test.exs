@@ -123,4 +123,58 @@ defmodule Normandy.Agents.TurnTest do
              ]
     end
   end
+
+  describe "step/2 iteration cap" do
+    test "tool_dispatch results that exhaust the cap issue a forced final call" do
+      s = %State{
+        status: :tool_dispatch,
+        iterations_left: 1,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]
+      }
+
+      results = [%ToolResult{tool_call_id: "c1", output: "x", is_error: false}]
+
+      {s2, effects} = Turn.step(s, {:tool_results, results})
+
+      assert s2.status == :assistant_streaming
+      assert s2.awaiting_final == true
+      assert s2.iterations_left == 0
+
+      assert effects == [
+               {:append_message, "tool", Enum.at(results, 0)},
+               {:emit_event, :steering, %{iterations_left: 0}},
+               {:call_llm, %{response_model: :os, final: true}}
+             ]
+    end
+
+    test "the forced final response finalizes regardless of tool calls, as :max_iterations" do
+      s = %State{
+        status: :assistant_streaming,
+        awaiting_final: true,
+        iterations_left: 0,
+        max_iterations: 5
+      }
+
+      # Even if the model tries to call a tool, the forced-final response stops the turn.
+      resp = %ToolCallResponse{
+        content: "forced answer",
+        tool_calls: [%ToolCall{id: "z", name: "noop", input: %{}}]
+      }
+
+      {s2, effects} = Turn.step(s, {:llm_response, resp})
+
+      assert s2.status == :stopped
+      assert s2.stop_reason == :max_iterations
+      assert s2.final_response == resp
+      assert s2.awaiting_final == false
+
+      assert effects == [
+               {:append_message, "assistant", resp},
+               {:finalize, resp}
+             ]
+    end
+  end
 end
