@@ -1389,57 +1389,11 @@ defmodule Normandy.Agents.BaseAgent do
     Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
   end
 
-  # Streaming-loop variant: tool_call is a string-keyed map (from raw LLM JSON
-  # rather than a parsed %ToolCall{}), and input may need JSON-string parsing.
+  # Streaming-loop variant: tool_call is a string-keyed map (raw LLM JSON).
+  # Dispatch.dispatch_one/3 normalizes it into a %ToolCall{} before running the
+  # same chokepoint pipeline as the non-streaming path.
   defp execute_one_streaming_tool_call(config, tool_call) do
-    tool_name = tool_call["name"]
-
-    # Tool input from the streaming branch is raw LLM JSON, so it can be any
-    # JSON shape — not just nil/map/binary. Route through normalize_tool_input/1
-    # so unexpected shapes (lists, numbers, booleans) degrade to %{} instead of
-    # raising CaseClauseError and aborting the whole streaming tool loop.
-    tool_input = normalize_tool_input(tool_call["input"])
-
-    case Registry.get(config.tool_registry, tool_name) do
-      {:ok, tool} ->
-        updated_tool =
-          if function_exported?(tool.__struct__, :prepare_input, 2) do
-            tool.__struct__.prepare_input(tool, tool_input)
-          else
-            input_with_atom_keys =
-              Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
-                case normalize_tool_field_key(tool, key) do
-                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
-                  :error -> acc
-                end
-              end)
-
-            struct(tool, input_with_atom_keys)
-          end
-
-        tool_meta = %{tool_name: tool_name, agent_name: config.name}
-
-        tool_result =
-          with_tool_execute_span(config, tool_name, tool_meta, fn ->
-            r = Executor.execute_tool(updated_tool)
-            {r, Map.put(tool_meta, :status, elem(r, 0))}
-          end)
-
-        case tool_result do
-          {:ok, result} ->
-            %ToolResult{tool_call_id: tool_call["id"], output: result, is_error: false}
-
-          {:error, error} ->
-            %ToolResult{tool_call_id: tool_call["id"], output: %{error: error}, is_error: true}
-        end
-
-      :error ->
-        %ToolResult{
-          tool_call_id: tool_call["id"],
-          output: %{error: "Tool '#{tool_name}' not found in registry"},
-          is_error: true
-        }
-    end
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
   end
 
   defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do
