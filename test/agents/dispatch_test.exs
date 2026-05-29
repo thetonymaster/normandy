@@ -16,4 +16,50 @@ defmodule Normandy.Agents.DispatchTest do
       assert p.budget_record_fn.(%{}, %{}, %{}) == :ok
     end
   end
+
+  alias Normandy.Components.ToolCall
+
+  defmodule FakeTool do
+    use Normandy.Schema
+
+    schema do
+      field(:city, :string)
+    end
+  end
+
+  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchTest.FakeTool do
+    def tool_name(_), do: "weather"
+    def tool_description(_), do: "fake"
+    def input_schema(_), do: %{}
+    def run(tool), do: {:ok, "weather in #{tool.city}"}
+  end
+
+  describe "to_tool_call/1" do
+    test "passes a %ToolCall{} through unchanged" do
+      call = %ToolCall{id: "c1", name: "weather", input: %{city: "NYC"}}
+      assert Dispatch.to_tool_call(call) == call
+    end
+
+    test "normalizes a string-keyed JSON map into a %ToolCall{}" do
+      raw = %{"id" => "c2", "name" => "weather", "input" => %{"city" => "LA"}}
+
+      assert Dispatch.to_tool_call(raw) ==
+               %ToolCall{id: "c2", name: "weather", input: %{"city" => "LA"}}
+    end
+
+    test "decodes a JSON-string input and degrades non-map input to %{}" do
+      raw = %{"id" => "c3", "name" => "weather", "input" => ~s({"city":"SF"})}
+      assert Dispatch.to_tool_call(raw).input == %{"city" => "SF"}
+
+      bad = %{"id" => "c4", "name" => "weather", "input" => [1, 2, 3]}
+      assert Dispatch.to_tool_call(bad).input == %{}
+    end
+  end
+
+  describe "prepare_tool/2" do
+    test "maps known string keys onto struct fields and drops unknown keys" do
+      prepared = Dispatch.prepare_tool(%FakeTool{}, %{"city" => "NYC", "bogus" => 1})
+      assert prepared == %FakeTool{city: "NYC"}
+    end
+  end
 end

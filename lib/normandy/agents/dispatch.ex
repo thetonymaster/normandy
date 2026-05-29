@@ -65,4 +65,68 @@ defmodule Normandy.Agents.Dispatch do
       after_hooks: []
     }
   end
+
+  @doc "Normalizes a raw LLM tool call (struct or string-keyed map) into a %ToolCall{}."
+  @spec to_tool_call(ToolCall.t() | map()) :: ToolCall.t()
+  def to_tool_call(%ToolCall{} = call), do: call
+
+  def to_tool_call(%{} = raw) do
+    %ToolCall{
+      id: raw["id"] || raw[:id],
+      name: raw["name"] || raw[:name],
+      input: normalize_tool_input(raw["input"] || raw[:input])
+    }
+  end
+
+  @doc """
+  Builds the tool struct from LLM-supplied input. Uses the tool's
+  `prepare_input/2` if exported; otherwise maps known keys onto struct fields.
+  """
+  @spec prepare_tool(struct(), map()) :: struct()
+  def prepare_tool(tool, input) do
+    if function_exported?(tool.__struct__, :prepare_input, 2) do
+      tool.__struct__.prepare_input(tool, input)
+    else
+      input_with_atom_keys =
+        Enum.reduce(input, %{}, fn {key, value}, acc ->
+          case normalize_tool_field_key(tool, key) do
+            {:ok, atom_key} -> Map.put(acc, atom_key, value)
+            :error -> acc
+          end
+        end)
+
+      struct(tool, input_with_atom_keys)
+    end
+  end
+
+  @doc false
+  def normalize_tool_input(nil), do: %{}
+  def normalize_tool_input(input) when is_map(input), do: input
+
+  def normalize_tool_input(input) when is_binary(input) do
+    case Poison.decode(input) do
+      {:ok, parsed} when is_map(parsed) -> parsed
+      _ -> %{}
+    end
+  end
+
+  def normalize_tool_input(_), do: %{}
+
+  # Map an LLM-supplied input key (atom or binary) to a struct field atom on the
+  # tool, returning :error for keys that don't correspond to any field. NEVER
+  # calls String.to_atom/1 on untrusted input (atom-table exhaustion / DoS).
+  @doc false
+  def normalize_tool_field_key(tool, key) when is_atom(key) do
+    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
+  end
+
+  def normalize_tool_field_key(tool, key) when is_binary(key) do
+    Enum.find_value(Map.keys(tool), :error, fn field ->
+      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
+        {:ok, field}
+      end
+    end)
+  end
+
+  def normalize_tool_field_key(_tool, _key), do: :error
 end
