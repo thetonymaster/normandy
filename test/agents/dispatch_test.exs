@@ -221,4 +221,36 @@ defmodule Normandy.Agents.DispatchTest do
       assert result.output == "REDACTED"
     end
   end
+
+  describe "dispatch_one/3 budget" do
+    test "budget_check_fn returning {:error, reason} denies before executing" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c12", name: "weather", input: %{"city" => "NYC"}}
+
+      over_budget = fn _config, _call -> {:error, :cap_exceeded} end
+      pipeline = %{Dispatch.default_pipeline() | budget_check_fn: over_budget}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+
+      assert %ToolResult{tool_call_id: "c12", is_error: true, output: %{denied: true}} = result
+      assert result.output.error =~ "budget check failed"
+    end
+
+    test "budget_record_fn is called with the success result" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c13", name: "weather", input: %{"city" => "NYC"}}
+      test_pid = self()
+
+      recorder = fn _config, _call, result ->
+        send(test_pid, {:recorded, result})
+        :ok
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | budget_record_fn: recorder}
+
+      Dispatch.dispatch_one(config, call, pipeline)
+
+      assert_receive {:recorded, %ToolResult{output: "weather in NYC", is_error: false}}
+    end
+  end
 end
