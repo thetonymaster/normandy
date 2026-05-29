@@ -99,6 +99,96 @@ defmodule Normandy.Agents.Dispatch do
     end
   end
 
+  @doc """
+  Runs one tool call through the chokepoint pipeline and returns a %ToolResult{}.
+
+  Accepts either a %ToolCall{} (non-streaming) or a raw string-keyed map
+  (streaming); the latter is normalized first.
+  """
+  @spec dispatch_one(map(), ToolCall.t() | map(), Pipeline.t()) :: ToolResult.t()
+  def dispatch_one(config, tool_call, pipeline \\ default_pipeline())
+
+  def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    case Registry.get(config.tool_registry, call.name) do
+      {:ok, tool} ->
+        with {:cont, call} <- run_before_hooks(config, call, pipeline.before_hooks),
+             prepared = prepare_tool(tool, call.input),
+             {:allow, _meta} <- pipeline.policy_fn.(config, call, prepared),
+             :ok <- pipeline.budget_check_fn.(config, call) do
+          result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
+          pipeline.budget_record_fn.(config, call, result)
+          run_after_hooks(config, call, result, pipeline.after_hooks)
+        else
+          {:halt, %ToolResult{} = result} -> result
+          {:deny, info} -> denial_result(call, info, false)
+          {:needs_approval, info} -> denial_result(call, info, true)
+          {:error, reason} -> budget_denial_result(call, reason)
+        end
+
+      :error ->
+        not_found_result(call)
+    end
+  end
+
+  def dispatch_one(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
+    dispatch_one(config, to_tool_call(raw_call), pipeline)
+  end
+
+  defp execute_and_wrap(config, call, prepared, execute_fn) do
+    case execute_fn.(config, prepared, call.name) do
+      {:ok, result} ->
+        %ToolResult{tool_call_id: call.id, output: result, is_error: false}
+
+      {:error, error} ->
+        %ToolResult{tool_call_id: call.id, output: %{error: error}, is_error: true}
+    end
+  end
+
+  defp run_before_hooks(_config, call, []), do: {:cont, call}
+
+  defp run_before_hooks(config, call, [hook | rest]) do
+    case hook.(config, call) do
+      {:cont, %ToolCall{} = call} -> run_before_hooks(config, call, rest)
+      {:halt, %ToolResult{} = result} -> {:halt, result}
+    end
+  end
+
+  defp run_after_hooks(_config, _call, result, []), do: result
+
+  defp run_after_hooks(config, call, result, [hook | rest]) do
+    run_after_hooks(config, call, hook.(config, call, result), rest)
+  end
+
+  defp denial_result(call, info, pending?) do
+    %ToolResult{
+      tool_call_id: call.id,
+      output: %{
+        error: Map.get(info, :reason, "denied by policy"),
+        rationale: Map.get(info, :rationale),
+        rule_id: Map.get(info, :rule_id),
+        denied: true,
+        pending_approval: pending?
+      },
+      is_error: true
+    }
+  end
+
+  defp budget_denial_result(call, reason) do
+    %ToolResult{
+      tool_call_id: call.id,
+      output: %{error: "budget check failed: #{inspect(reason)}", denied: true},
+      is_error: true
+    }
+  end
+
+  defp not_found_result(call) do
+    %ToolResult{
+      tool_call_id: call.id,
+      output: %{error: "Tool '#{call.name}' not found in registry"},
+      is_error: true
+    }
+  end
+
   @doc false
   def normalize_tool_input(nil), do: %{}
   def normalize_tool_input(input) when is_map(input), do: input

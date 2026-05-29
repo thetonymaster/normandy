@@ -18,6 +18,8 @@ defmodule Normandy.Agents.DispatchTest do
   end
 
   alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
+  alias Normandy.Tools.Registry
 
   defmodule FakeTool do
     use Normandy.Schema
@@ -77,6 +79,34 @@ defmodule Normandy.Agents.DispatchTest do
     test "delegates to the tool's prepare_input/2 when exported" do
       prepared = Dispatch.prepare_tool(%FakeToolWithPrepare{}, %{"city" => "nyc"})
       assert prepared == %FakeToolWithPrepare{city: "NYC"}
+    end
+  end
+
+  defp config_with_tools(tools) do
+    %{name: "test-agent", tool_registry: Registry.new(tools)}
+  end
+
+  describe "dispatch_one/3 happy path" do
+    test "allow → executes the tool and returns a success ToolResult" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
+
+      result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert %ToolResult{
+               tool_call_id: "c1",
+               output: "weather in NYC",
+               is_error: false
+             } = result
+    end
+
+    test "accepts a raw string-keyed map (streaming shape)" do
+      config = config_with_tools([%FakeTool{}])
+      raw = %{"id" => "c9", "name" => "weather", "input" => %{"city" => "LA"}}
+
+      result = Dispatch.dispatch_one(config, raw, Dispatch.default_pipeline())
+
+      assert %ToolResult{tool_call_id: "c9", output: "weather in LA", is_error: false} = result
     end
   end
 end
