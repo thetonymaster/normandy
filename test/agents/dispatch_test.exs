@@ -34,6 +34,18 @@ defmodule Normandy.Agents.DispatchTest do
     def run(tool), do: {:ok, "weather in #{tool.city}"}
   end
 
+  defmodule FakeToolWithPrepare do
+    use Normandy.Schema
+
+    schema do
+      field(:city, :string)
+    end
+
+    def prepare_input(tool, input) do
+      %{tool | city: String.upcase(input["city"] || "")}
+    end
+  end
+
   describe "to_tool_call/1" do
     test "passes a %ToolCall{} through unchanged" do
       call = %ToolCall{id: "c1", name: "weather", input: %{city: "NYC"}}
@@ -60,6 +72,11 @@ defmodule Normandy.Agents.DispatchTest do
     test "maps known string keys onto struct fields and drops unknown keys" do
       prepared = Dispatch.prepare_tool(%FakeTool{}, %{"city" => "NYC", "bogus" => 1})
       assert prepared == %FakeTool{city: "NYC"}
+    end
+
+    test "delegates to the tool's prepare_input/2 when exported" do
+      prepared = Dispatch.prepare_tool(%FakeToolWithPrepare{}, %{"city" => "nyc"})
+      assert prepared == %FakeToolWithPrepare{city: "NYC"}
     end
   end
 end

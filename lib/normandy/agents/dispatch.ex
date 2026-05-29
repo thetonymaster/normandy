@@ -83,7 +83,7 @@ defmodule Normandy.Agents.Dispatch do
   `prepare_input/2` if exported; otherwise maps known keys onto struct fields.
   """
   @spec prepare_tool(struct(), map()) :: struct()
-  def prepare_tool(tool, input) do
+  def prepare_tool(tool, input) when is_map(input) do
     if function_exported?(tool.__struct__, :prepare_input, 2) do
       tool.__struct__.prepare_input(tool, input)
     else
