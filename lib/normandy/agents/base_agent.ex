@@ -17,6 +17,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
 
+  alias Normandy.Agents.Dispatch
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -1367,51 +1368,25 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # Closure body extracted from the non-streaming tool loop. Resolves the tool
-  # from the registry, applies the LLM-supplied input, runs it under the
-  # OTel/telemetry span, and returns a `%ToolResult{}`. Pure function — safe
-  # to call from inside a Task.async_stream worker.
+  # The chokepoint pipeline BaseAgent uses: default behaviours (allow-all,
+  # no-op budget, no hooks) plus a telemetry-instrumented execute_fn so tool
+  # spans keep nesting under the agent.run span. Real behaviours are wired in
+  # the Phase 2 plan.
+  defp base_agent_pipeline do
+    %{Dispatch.default_pipeline() | execute_fn: &span_execute/3}
+  end
+
+  defp span_execute(config, prepared_tool, tool_name) do
+    tool_meta = %{tool_name: tool_name, agent_name: config.name}
+
+    with_tool_execute_span(config, tool_name, tool_meta, fn ->
+      r = Executor.execute_tool(prepared_tool)
+      {r, Map.put(tool_meta, :status, elem(r, 0))}
+    end)
+  end
+
   defp execute_one_tool_call(config, tool_call) do
-    case Registry.get(config.tool_registry, tool_call.name) do
-      {:ok, tool} ->
-        updated_tool =
-          if function_exported?(tool.__struct__, :prepare_input, 2) do
-            tool.__struct__.prepare_input(tool, tool_call.input)
-          else
-            input_with_atom_keys =
-              Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
-                case normalize_tool_field_key(tool, key) do
-                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
-                  :error -> acc
-                end
-              end)
-
-            struct(tool, input_with_atom_keys)
-          end
-
-        tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
-
-        tool_result =
-          with_tool_execute_span(config, tool_call.name, tool_meta, fn ->
-            r = Executor.execute_tool(updated_tool)
-            {r, Map.put(tool_meta, :status, elem(r, 0))}
-          end)
-
-        case tool_result do
-          {:ok, result} ->
-            %ToolResult{tool_call_id: tool_call.id, output: result, is_error: false}
-
-          {:error, error} ->
-            %ToolResult{tool_call_id: tool_call.id, output: %{error: error}, is_error: true}
-        end
-
-      :error ->
-        %ToolResult{
-          tool_call_id: tool_call.id,
-          output: %{error: "Tool '#{tool_call.name}' not found in registry"},
-          is_error: true
-        }
-    end
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
   end
 
   # Streaming-loop variant: tool_call is a string-keyed map (from raw LLM JSON
