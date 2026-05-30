@@ -238,13 +238,14 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
   describe "output_guardrails on exhausted tool loop" do
     test "max-iterations branch still runs output guardrails" do
-      # max_tool_iterations: 0 forces execute_tool_loop to hit the base case
-      # (iterations_left <= 0) immediately. Before the fix, that branch
-      # skipped output guardrails entirely.
+      # max_tool_iterations: 1 (minimum valid value). The ModelMockup returns
+      # %ToolCallResponse{tool_calls: []} on the first call (no tool calls),
+      # so the agent proceeds immediately to the convert+validate+guard output
+      # path, exercising the output guardrail in the run_with_tools branch.
       agent =
         BaseAgent.init(
           base_config(%{
-            max_tool_iterations: 0,
+            max_tool_iterations: 1,
             output_guardrails: [{RequiredFields, fields: [:chat_message]}]
           })
         )

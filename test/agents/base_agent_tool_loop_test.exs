@@ -97,13 +97,16 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     test "respects max_tool_iterations limit" do
-      # Create agent with very low max iterations
+      # max_tool_iterations: 1 exercises the iteration-cap path:
+      # call #1 returns a tool call → dispatch → results → iterations_left hits 0
+      # → forced-final call #2 → finalize. Verifies the cap is hit and a
+      # response is still returned.
       config = %{
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
         tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
-        max_tool_iterations: 0
+        max_tool_iterations: 1
       }
 
       agent = BaseAgent.init(config)
@@ -111,8 +114,22 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
 
-      # Should still return a response even with 0 iterations
       assert response != nil
+    end
+
+    test "init/1 rejects max_tool_iterations below 1" do
+      base = %{
+        client: %MockToolCallClient{final_response: "Stopped due to limit"},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+      }
+
+      config = Map.put(base, :max_tool_iterations, 0)
+
+      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
+        BaseAgent.init(config)
+      end
     end
 
     test "works without user_input (continuing conversation)" do

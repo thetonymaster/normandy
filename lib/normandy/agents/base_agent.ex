@@ -97,7 +97,8 @@ defmodule Normandy.Agents.BaseAgent do
       temperature: config.temperature,
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
-      max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
+      max_tool_iterations:
+        normalize_max_tool_iterations(Map.get(config, :max_tool_iterations, 5)),
       max_tool_concurrency:
         normalize_max_tool_concurrency(Map.get(config, :max_tool_concurrency, 1)),
       retry_options: Map.get(config, :retry_options, nil),
@@ -136,6 +137,19 @@ defmodule Normandy.Agents.BaseAgent do
   def normalize_max_tool_concurrency(other) do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
+  end
+
+  # Enforce the `pos_integer()` contract for `:max_tool_iterations`. Unlike
+  # `:max_tool_concurrency` (which clamps), we REJECT values < 1: a 0/negative
+  # iteration budget is a caller bug with no well-defined turn semantics under
+  # the Turn-FSM driver. Non-integers raise for the same reason. Public so the
+  # DSL can reuse it, mirroring normalize_max_tool_concurrency/1.
+  @doc false
+  def normalize_max_tool_iterations(n) when is_integer(n) and n >= 1, do: n
+
+  def normalize_max_tool_iterations(other) do
+    raise ArgumentError,
+          ":max_tool_iterations must be an integer >= 1, got: #{inspect(other)}"
   end
 
   # Translate a `Task.async_stream` element into the underlying tool result.
