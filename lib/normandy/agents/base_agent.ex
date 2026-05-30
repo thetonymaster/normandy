@@ -499,7 +499,7 @@ defmodule Normandy.Agents.BaseAgent do
       dispatch_tools: &dispatch_turn_tools/2,
       convert: &convert_turn_output/3,
       validate: &validate_turn_output/2,
-      guard: fn config, value -> run_output_guardrails(config, value) end,
+      guard: &run_output_guardrails/2,
       append: fn config, role, content ->
         Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
       end,
