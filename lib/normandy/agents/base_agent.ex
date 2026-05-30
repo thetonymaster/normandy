@@ -657,6 +657,11 @@ defmodule Normandy.Agents.BaseAgent do
       call_llm: fn config, state, _request -> call_stream_llm(config, state, callback) end,
       dispatch_tools: fn config, calls -> dispatch_stream_tools(config, calls, callback) end,
       convert: fn _config, raw, _output_schema -> raw end,
+      # Output guardrails run in the `validate` slot, NOT `guard`: the driver
+      # threads `validate`'s return value forward (so the :guardrail_violations
+      # tag that run_streaming_output_guardrails attaches survives onto the
+      # returned response), but DISCARDS `guard`'s return. Do not swap these —
+      # moving guardrails to `guard` would silently drop the violations tag.
       validate: fn config, value -> run_streaming_output_guardrails(config, value, callback) end,
       guard: fn _config, _value -> :ok end,
       append: fn config, role, content -> append_stream_message(config, role, content) end,
@@ -729,7 +734,9 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Assistant turns are persisted as a %ToolCallResponse{} built from content
   # blocks so tool_use survives AgentMemory.history/1 re-serialization; any
-  # :guardrail_violations is dropped (build produces a fresh struct without it).
+  # :guardrail_violations is dropped (build produces a fresh struct without it),
+  # as is the synthetic :tool_calls key added in call_stream_llm/3 for FSM
+  # branching (the fresh struct doesn't carry it through persistence).
   # Other roles (e.g. "tool") persist their content unchanged.
   defp append_stream_message(config, "assistant", content) do
     tool_calls = extract_tool_calls(content) || []
