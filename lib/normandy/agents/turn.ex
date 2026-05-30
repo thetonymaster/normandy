@@ -67,10 +67,18 @@ defmodule Normandy.Agents.Turn do
   Options: `:max_iterations` (default 5), `:response_model` (the response model
   for normal tool-loop LLM calls, e.g. `%ToolCallResponse{}`), `:output_schema`
   (the response model for the forced final call when the iteration cap is hit).
+
+  Raises `ArgumentError` if `:max_iterations` is not an integer >= 1, enforcing
+  the `pos_integer()` contract on `State.max_iterations` (mirrors the check
+  `BaseAgent.init/1` applies at the shell boundary).
   """
   @spec new(keyword()) :: State.t()
   def new(opts \\ []) do
     max = Keyword.get(opts, :max_iterations, 5)
+
+    unless is_integer(max) and max >= 1 do
+      raise ArgumentError, ":max_iterations must be an integer >= 1, got: #{inspect(max)}"
+    end
 
     %State{
       status: :provisioning,

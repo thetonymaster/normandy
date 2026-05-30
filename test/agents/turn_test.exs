@@ -26,6 +26,26 @@ defmodule Normandy.Agents.TurnTest do
       assert Turn.new().max_iterations == 5
       assert Turn.new().iterations_left == 5
     end
+
+    test "rejects max_iterations below 1, mirroring the pos_integer() contract" do
+      assert_raise ArgumentError, ~r/:max_iterations must be an integer >= 1/, fn ->
+        Turn.new(max_iterations: 0)
+      end
+
+      assert_raise ArgumentError, ~r/got: -1/, fn ->
+        Turn.new(max_iterations: -1)
+      end
+    end
+
+    test "rejects a non-integer max_iterations" do
+      assert_raise ArgumentError, ~r/got: 1.5/, fn ->
+        Turn.new(max_iterations: 1.5)
+      end
+
+      assert_raise ArgumentError, ~r/got: "5"/, fn ->
+        Turn.new(max_iterations: "5")
+      end
+    end
   end
 
   describe "step/2 provisioning" do
