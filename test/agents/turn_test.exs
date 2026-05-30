@@ -213,15 +213,19 @@ defmodule Normandy.Agents.TurnTest do
              ]
     end
 
-    test "the forced final response finalizes regardless of tool calls, as :max_iterations" do
+    test "the forced final response enters :finalizing as :max_iterations, skipping convert" do
       s = %State{
         status: :assistant_streaming,
         awaiting_final: true,
         iterations_left: 0,
-        max_iterations: 5
+        max_iterations: 5,
+        response_model: %ToolCallResponse{},
+        output_schema: :os
       }
 
-      # Even if the model tries to call a tool, the forced-final response stops the turn.
+      # Even though resp carries tool calls and response_model != output_schema,
+      # the forced-final path skips conversion (parity with execute_tool_loop's
+      # iterations_left <= 0 branch, which calls get_response(output_schema)).
       resp = %ToolCallResponse{
         content: "forced answer",
         tool_calls: [%ToolCall{id: "z", name: "noop", input: %{}}]
@@ -229,15 +233,12 @@ defmodule Normandy.Agents.TurnTest do
 
       {s2, effects} = Turn.step(s, {:llm_response, resp})
 
-      assert s2.status == :stopped
+      assert s2.status == :finalizing
       assert s2.stop_reason == :max_iterations
-      assert s2.final_response == resp
       assert s2.awaiting_final == false
+      assert s2.last_response == resp
 
-      assert effects == [
-               {:append_message, "assistant", resp},
-               {:finalize, resp}
-             ]
+      assert effects == [{:validate_output, resp}]
     end
   end
 
