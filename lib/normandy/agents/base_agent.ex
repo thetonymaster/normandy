@@ -608,6 +608,141 @@ defmodule Normandy.Agents.BaseAgent do
 
   # ── End Turn FSM production interpreter ──────────────────────────────────────
 
+  # Streaming analog of run_turn/2. Admission (input guardrails + memory init,
+  # NO schema validation — streaming parity) before Turn.step(:start), then drive
+  # the FSM with the streaming handler set. Returns {config, final_response}; the
+  # synthetic :tool_calls key (added so the FSM could branch) is stripped from the
+  # returned response. A thrown stream error becomes the non-raising early return.
+  defp run_stream_turn(config, user_input, callback) when is_function(callback, 2) do
+    config = admit_stream_turn_input(config, user_input)
+
+    state =
+      Turn.new(
+        max_iterations: config.max_tool_iterations,
+        response_model: turn_response_model(config),
+        output_schema: config.output_schema
+      )
+
+    try do
+      {config, final_state} = Driver.drive(state, streaming_handlers(callback), config)
+      {config, Map.delete(final_state.final_response, :tool_calls)}
+    catch
+      {:stream_turn_error, error, config_at_failure} ->
+        IO.warn("Streaming error: #{inspect(error)}")
+        {config_at_failure, %{error: error}}
+    end
+  end
+
+  # Streaming admission: input guardrails on the RAW user_input + memory init.
+  # Unlike admit_turn_input/2, streaming does NOT schema-validate input.
+  defp admit_stream_turn_input(config, nil), do: config
+
+  defp admit_stream_turn_input(config, user_input) do
+    run_input_guardrails!(config, user_input)
+
+    updated_memory =
+      config.memory
+      |> AgentMemory.initialize_turn()
+      |> AgentMemory.add_message("user", user_input)
+
+    config
+    |> Map.put(:current_user_input, user_input)
+    |> Map.put(:memory, updated_memory)
+  end
+
+  # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
+
+  defp streaming_handlers(callback) do
+    %Driver.Handlers{
+      call_llm: fn config, state, _request -> call_stream_llm(config, state, callback) end,
+      dispatch_tools: fn config, calls -> dispatch_stream_tools(config, calls, callback) end,
+      convert: fn _config, raw, _output_schema -> raw end,
+      validate: fn config, value -> run_streaming_output_guardrails(config, value, callback) end,
+      guard: fn _config, _value -> :ok end,
+      append: fn config, role, content -> append_stream_message(config, role, content) end,
+      emit: &emit_turn_event/3
+    }
+  end
+
+  # Streams one LLM call to a final message, augmenting it with a :tool_calls key
+  # so the pure FSM (which branches on .tool_calls) can dispatch. Tool calls are
+  # stripped for no-tools agents (parity: stream_response never executed tools),
+  # mirroring call_turn_llm's no-tools strip. A stream failure is thrown past the
+  # driver and caught in run_stream_turn/3 (parity: non-raising early return).
+  defp call_stream_llm(config, state, callback) do
+    iteration = config.max_tool_iterations - state.iterations_left + 1
+    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    result =
+      with_llm_call_span(config, llm_metadata, fn ->
+        r =
+          stream_response_from_llm(
+            config,
+            build_stream_messages(config),
+            stream_opts(config, callback)
+          )
+
+        stop_metadata =
+          case r do
+            {:ok, final_message} ->
+              tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
+              Map.merge(llm_metadata, %{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
+
+            {:error, _error} ->
+              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
+          end
+
+        {r, stop_metadata}
+      end)
+
+    case result do
+      {:ok, final_message} ->
+        tool_calls = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
+        Map.put(final_message, :tool_calls, tool_calls)
+
+      {:error, error} ->
+        throw({:stream_turn_error, error, config})
+    end
+  end
+
+  # Mirror of dispatch_turn_tools with the streaming per-tool :tool_result
+  # callback. Same Task.async_stream parallelism + OtelCtx propagation.
+  defp dispatch_stream_tools(config, calls, callback) do
+    parent_otel_ctx = OtelCtx.capture()
+    max_concurrency = max(config.max_tool_concurrency || 1, 1)
+
+    calls
+    |> Task.async_stream(
+      fn call ->
+        OtelCtx.restore(parent_otel_ctx)
+        result = execute_one_streaming_tool_call(config, call)
+        callback.(:tool_result, result)
+        result
+      end,
+      ordered: true,
+      max_concurrency: max_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  # Assistant turns are persisted as a %ToolCallResponse{} built from content
+  # blocks so tool_use survives AgentMemory.history/1 re-serialization; any
+  # :guardrail_violations is dropped (build produces a fresh struct without it).
+  # Other roles (e.g. "tool") persist their content unchanged.
+  defp append_stream_message(config, "assistant", content) do
+    tool_calls = extract_tool_calls(content) || []
+    message = build_streaming_assistant_response(content, tool_calls)
+    Map.put(config, :memory, AgentMemory.add_message(config.memory, "assistant", message))
+  end
+
+  defp append_stream_message(config, role, content) do
+    Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
+  end
+
+  # ── End streaming Turn FSM handlers ──────────────────────────────────────────
+
   @doc """
   Stream a response from the LLM with real-time callbacks.
 
@@ -642,102 +777,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
           {BaseAgentConfig.t(), map()}
   def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
-    # Streaming paths do not schema-validate input (unlike run_without_tools/run_with_tools),
-    # so guardrails run on the raw user_input shape here. Guards using `:field` must name
-    # keys present on the raw input — or use a field-less guard that inspects the whole value.
-    if user_input != nil, do: run_input_guardrails!(config, user_input)
-
-    # Add user input to memory if provided
-    {config, memory} =
-      if user_input != nil do
-        updated_memory =
-          config.memory
-          |> AgentMemory.initialize_turn()
-          |> AgentMemory.add_message("user", user_input)
-
-        updated_config =
-          config
-          |> Map.put(:current_user_input, user_input)
-          |> Map.put(:memory, updated_memory)
-
-        {updated_config, updated_memory}
-      else
-        {config, config.memory}
-      end
-
-    # Convert history plain maps to Message structs so the LLM adapter's
-    # pattern-matched add_single_message picks them up. Without this, the
-    # adapter's catch-all silently drops every history entry — streaming
-    # requests reach the API with only the system message, and the API
-    # rejects them as empty (`messages: at least one message is required`).
-    history_messages =
-      AgentMemory.history(memory)
-      |> Enum.map(fn %{role: role, content: content} ->
-        %Message{role: role, content: content}
-      end)
-
-    # Build messages for LLM
-    messages =
-      [
-        %Message{
-          role: "system",
-          content:
-            SystemPromptGenerator.generate_prompt(
-              config.prompt_specification,
-              config.tool_registry
-            )
-        }
-      ] ++ history_messages
-
-    # Prepare options with tools and callback
-    opts =
-      if has_tools?(config) do
-        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
-        [tools: tool_schemas, callback: callback]
-      else
-        [callback: callback]
-      end
-
-    llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
-
-    # Stream response from LLM
-    llm_result =
-      with_llm_call_span(config, llm_metadata, fn ->
-        result = stream_response_from_llm(config, messages, opts)
-
-        stop_metadata =
-          case result do
-            {:ok, final_response} ->
-              tool_calls = extract_tool_calls(final_response) || []
-
-              Map.merge(llm_metadata, %{
-                has_tool_calls: tool_calls != [],
-                tool_call_count: length(tool_calls)
-              })
-
-            {:error, _error} ->
-              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
-          end
-
-        {result, stop_metadata}
-      end)
-
-    case llm_result do
-      {:ok, final_response} ->
-        final_response = run_streaming_output_guardrails(config, final_response, callback)
-        # Strip guardrail metadata before persisting — otherwise the violating
-        # turn (plus matched terms from violations) feeds back into the next
-        # LLM call via AgentMemory.history/1.
-        memory_response = Map.delete(final_response, :guardrail_violations)
-        updated_memory = AgentMemory.add_message(memory, "assistant", memory_response)
-        updated_config = Map.put(config, :memory, updated_memory)
-        {updated_config, final_response}
-
-      {:error, error} ->
-        # Handle error - return config unchanged
-        IO.warn("Streaming error: #{inspect(error)}")
-        {config, %{error: error}}
-    end
+    run_stream_turn(config, user_input, callback)
   end
 
   @doc """
@@ -786,176 +826,9 @@ defmodule Normandy.Agents.BaseAgent do
   """
   @spec stream_with_tools(BaseAgentConfig.t(), struct() | nil, function()) ::
           {BaseAgentConfig.t(), struct()}
-  def stream_with_tools(
-        config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
-        user_input \\ nil,
-        callback
-      )
+  def stream_with_tools(config = %BaseAgentConfig{}, user_input \\ nil, callback)
       when is_function(callback, 2) do
-    # See stream_response/3: streaming paths run guardrails on raw user_input.
-    if user_input != nil, do: run_input_guardrails!(config, user_input)
-
-    # Initialize turn with user input if provided
-    memory =
-      if user_input != nil do
-        memory
-        |> AgentMemory.initialize_turn()
-        |> AgentMemory.add_message("user", user_input)
-      else
-        memory
-      end
-
-    config =
-      if user_input != nil do
-        config
-        |> Map.put(:current_user_input, user_input)
-        |> Map.put(:memory, memory)
-      else
-        config
-      end
-
-    # Execute streaming tool loop
-    execute_streaming_tool_loop(config, max_iterations, callback)
-  end
-
-  # Private function to handle the streaming tool execution loop
-  defp execute_streaming_tool_loop(config, iterations_left, callback)
-       when iterations_left <= 0 do
-    # Max iterations reached, get final streaming response
-    stream_response(config, nil, callback)
-  end
-
-  defp execute_streaming_tool_loop(config, iterations_left, callback) do
-    iteration = config.max_tool_iterations - iterations_left + 1
-    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
-
-    log_lifecycle(:debug, "normandy agent iteration",
-      agent: log_agent_name(config),
-      iteration: iteration,
-      pending_tool_calls: pending_tool_call_count(config)
-    )
-
-    # Convert history plain maps to Message structs (see stream_response for why).
-    history_messages =
-      AgentMemory.history(config.memory)
-      |> Enum.map(fn %{role: role, content: content} ->
-        %Message{role: role, content: content}
-      end)
-
-    # Build messages for LLM
-    messages =
-      [
-        %Message{
-          role: "system",
-          content:
-            SystemPromptGenerator.generate_prompt(
-              config.prompt_specification,
-              config.tool_registry
-            )
-        }
-      ] ++ history_messages
-
-    # Prepare options with tools and callback
-    opts =
-      if has_tools?(config) do
-        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
-        [tools: tool_schemas, callback: callback]
-      else
-        [callback: callback]
-      end
-
-    # Stream response from LLM
-    llm_result =
-      with_llm_call_span(config, llm_metadata, fn ->
-        result = stream_response_from_llm(config, messages, opts)
-
-        stop_metadata =
-          case result do
-            {:ok, final_response} ->
-              tool_calls = extract_tool_calls(final_response) || []
-
-              Map.merge(llm_metadata, %{
-                has_tool_calls: tool_calls != [],
-                tool_call_count: length(tool_calls)
-              })
-
-            {:error, _error} ->
-              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
-          end
-
-        {result, stop_metadata}
-      end)
-
-    case llm_result do
-      {:ok, final_response} ->
-        # Check if response contains tool calls
-        tool_calls = extract_tool_calls(final_response)
-
-        cond do
-          # No tool calls - final response
-          is_nil(tool_calls) or length(tool_calls) == 0 ->
-            # Run output guardrails on the final text response. Intermediate
-            # tool-call responses are not user-facing output and are skipped.
-            final_response = run_streaming_output_guardrails(config, final_response, callback)
-            # Store as ToolCallResponse so BaseIOSchema serialization emits
-            # content blocks (Map.to_json would JSON-stringify the whole map).
-            assistant_response = build_streaming_assistant_response(final_response, [])
-            memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
-            config = Map.put(config, :memory, memory)
-            {config, final_response}
-
-          # Has tool calls - execute them
-          true ->
-            # Store assistant response as ToolCallResponse so the next
-            # iteration's history preserves tool_use blocks (Anthropic
-            # requires each tool_result to pair with the prior tool_use).
-            assistant_response = build_streaming_assistant_response(final_response, tool_calls)
-            memory = AgentMemory.add_message(config.memory, "assistant", assistant_response)
-
-            # Same Task.async_stream parallelism as the non-streaming branch
-            # (see comment there). Streaming additionally invokes
-            # `callback.(:tool_result, result)` per tool — at concurrency 1
-            # the callback fires in input order; at concurrency > 1 callbacks
-            # fire in tool-completion order, and the closure runs in a worker
-            # process so any `self()` reference inside the callback is the
-            # worker PID, not the caller. Capture parent PID outside the
-            # callback when sending messages to the owning process.
-            parent_otel_ctx = OtelCtx.capture()
-            max_concurrency = max(config.max_tool_concurrency || 1, 1)
-
-            tool_results =
-              tool_calls
-              |> Task.async_stream(
-                fn tool_call ->
-                  OtelCtx.restore(parent_otel_ctx)
-                  result = execute_one_streaming_tool_call(config, tool_call)
-                  callback.(:tool_result, result)
-                  result
-                end,
-                ordered: true,
-                max_concurrency: max_concurrency,
-                timeout: :infinity,
-                on_timeout: :kill_task
-              )
-              |> Enum.map(&unwrap_tool_task_result!/1)
-
-            # Add tool results to memory
-            memory =
-              Enum.reduce(tool_results, memory, fn result, mem ->
-                AgentMemory.add_message(mem, "tool", result)
-              end)
-
-            config = Map.put(config, :memory, memory)
-
-            # Continue the loop with decremented iterations
-            execute_streaming_tool_loop(config, iterations_left - 1, callback)
-        end
-
-      {:error, error} ->
-        # Handle error
-        IO.warn("Streaming error: #{inspect(error)}")
-        {config, %{error: error}}
-    end
+    run_stream_turn(config, user_input, callback)
   end
 
   # Extract tool calls from streaming response
@@ -1001,6 +874,36 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp build_streaming_assistant_response(other, _), do: other
+
+  # Build the [system | history] message list for a streaming LLM call.
+  # History plain maps are converted to %Message{} structs so the adapter's
+  # add_single_message picks them up (otherwise the catch-all drops them).
+  defp build_stream_messages(config) do
+    history_messages =
+      AgentMemory.history(config.memory)
+      |> Enum.map(fn %{role: role, content: content} ->
+        %Message{role: role, content: content}
+      end)
+
+    [
+      %Message{
+        role: "system",
+        content:
+          SystemPromptGenerator.generate_prompt(
+            config.prompt_specification,
+            config.tool_registry
+          )
+      }
+    ] ++ history_messages
+  end
+
+  defp stream_opts(config, callback) do
+    if has_tools?(config) do
+      [tools: Registry.to_tool_schemas(config.tool_registry), callback: callback]
+    else
+      [callback: callback]
+    end
+  end
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
