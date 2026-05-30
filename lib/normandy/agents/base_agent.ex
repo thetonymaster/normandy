@@ -12,11 +12,12 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.AgentMemory
-  alias Normandy.Components.ToolResult
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
 
+  alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.Turn
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -96,7 +97,8 @@ defmodule Normandy.Agents.BaseAgent do
       temperature: config.temperature,
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
-      max_tool_iterations: Map.get(config, :max_tool_iterations, 5),
+      max_tool_iterations:
+        normalize_max_tool_iterations(Map.get(config, :max_tool_iterations, 5)),
       max_tool_concurrency:
         normalize_max_tool_concurrency(Map.get(config, :max_tool_concurrency, 1)),
       retry_options: Map.get(config, :retry_options, nil),
@@ -135,6 +137,19 @@ defmodule Normandy.Agents.BaseAgent do
   def normalize_max_tool_concurrency(other) do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
+  end
+
+  # Enforce the `pos_integer()` contract for `:max_tool_iterations`. Unlike
+  # `:max_tool_concurrency` (which clamps), we REJECT values < 1: a 0/negative
+  # iteration budget is a caller bug with no well-defined turn semantics under
+  # the Turn-FSM driver. Non-integers raise for the same reason. Public so the
+  # DSL can reuse it, mirroring normalize_max_tool_concurrency/1.
+  @doc false
+  def normalize_max_tool_iterations(n) when is_integer(n) and n >= 1, do: n
+
+  def normalize_max_tool_iterations(other) do
+    raise ArgumentError,
+          ":max_tool_iterations must be an integer >= 1, got: #{inspect(other)}"
   end
 
   # Translate a `Task.async_stream` element into the underlying tool result.
@@ -363,76 +378,10 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Private function for simple runs without tool support
-  defp run_without_tools(
-         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
-         user_input
-       ) do
-    alias Normandy.Agents.ValidationMiddleware
-
-    # Validate input if provided
-    config =
-      if user_input != nil do
-        # Validate user input against input schema
-        case ValidationMiddleware.validate_input(config, user_input) do
-          {:ok, validated_input} ->
-            effective_input = validated_input || user_input
-            run_input_guardrails!(config, effective_input)
-
-            updated_memory =
-              memory
-              |> AgentMemory.initialize_turn()
-              |> AgentMemory.add_message("user", effective_input)
-
-            config
-            |> Map.put(:current_user_input, effective_input)
-            |> Map.put(:memory, updated_memory)
-
-          {:error, errors} ->
-            # Input validation failed - raise error with details
-            error_msg = ValidationMiddleware.error_message(errors)
-
-            raise Normandy.Schema.ValidationError,
-              message: "Agent input validation failed",
-              errors: errors,
-              details: error_msg
-        end
-      else
-        config
-      end
-
-    # Get response from LLM
-    llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
-
-    response =
-      with_llm_call_span(config, llm_metadata, fn ->
-        {r, usage} = get_response_with_usage(config, output_schema)
-
-        {r, Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0, usage: usage})}
-      end)
-
-    # Validate output
-    validated_response =
-      case ValidationMiddleware.validate_output(config, response) do
-        {:ok, validated} ->
-          validated || response
-
-        {:error, errors} ->
-          # Output validation failed - log warning but continue
-          # (we don't want to break on LLM output issues)
-          error_msg = ValidationMiddleware.error_message(errors)
-
-          IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(response)}")
-
-          response
-      end
-
-    run_output_guardrails(config, validated_response)
-
-    memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
-    config = Map.put(config, :memory, memory)
-
-    {config, validated_response}
+  # Private function for simple runs without tool support.
+  # Delegates to the Turn FSM production interpreter (Phase 1c).
+  defp run_without_tools(config, user_input) do
+    run_turn(config, user_input)
   end
 
   @doc """
@@ -458,192 +407,8 @@ defmodule Normandy.Agents.BaseAgent do
   """
   @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
           {BaseAgentConfig.t(), struct()}
-  def run_with_tools(
-        config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
-        user_input \\ nil
-      ) do
-    alias Normandy.Agents.ValidationMiddleware
-
-    # Validate and initialize turn with user input if provided
-    {config, _memory} =
-      if user_input != nil do
-        # Validate user input
-        validated_input =
-          case ValidationMiddleware.validate_input(config, user_input) do
-            {:ok, validated} ->
-              validated || user_input
-
-            {:error, errors} ->
-              error_msg = ValidationMiddleware.error_message(errors)
-
-              raise Normandy.Schema.ValidationError,
-                message: "Agent input validation failed",
-                errors: errors,
-                details: error_msg
-          end
-
-        run_input_guardrails!(config, validated_input)
-
-        updated_memory =
-          memory
-          |> AgentMemory.initialize_turn()
-          |> AgentMemory.add_message("user", validated_input)
-
-        updated_config =
-          config
-          |> Map.put(:current_user_input, validated_input)
-          |> Map.put(:memory, updated_memory)
-
-        {updated_config, updated_memory}
-      else
-        {config, memory}
-      end
-
-    # Execute tool loop
-    execute_tool_loop(config, max_iterations)
-  end
-
-  # Private function to handle the tool execution loop
-  defp execute_tool_loop(config, iterations_left) when iterations_left <= 0 do
-    alias Normandy.Agents.ValidationMiddleware
-
-    # Max iterations reached, return current state. Validate the fallback
-    # output the same way the normal final-response path does so that output
-    # guardrails observe a consistent, schema-cast shape on both branches.
-    response = get_response(config, config.output_schema)
-
-    validated_response =
-      case ValidationMiddleware.validate_output(config, response) do
-        {:ok, validated} ->
-          validated || response
-
-        {:error, errors} ->
-          error_msg = ValidationMiddleware.error_message(errors)
-          IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(response)}")
-          response
-      end
-
-    run_output_guardrails(config, validated_response)
-    memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
-    config = Map.put(config, :memory, memory)
-    {config, validated_response}
-  end
-
-  defp execute_tool_loop(config, iterations_left) do
-    alias Normandy.Agents.ToolCallResponse
-
-    # Get response from LLM (may include tool calls)
-    iteration = config.max_tool_iterations - iterations_left + 1
-    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
-
-    log_lifecycle(:debug, "normandy agent iteration",
-      agent: log_agent_name(config),
-      iteration: iteration,
-      pending_tool_calls: pending_tool_call_count(config)
-    )
-
-    response =
-      with_llm_call_span(config, llm_metadata, fn ->
-        {r, usage} = get_response_with_usage(config, %ToolCallResponse{})
-        tool_calls = r.tool_calls || []
-        has_tools = tool_calls != []
-
-        {r,
-         Map.merge(llm_metadata, %{
-           has_tool_calls: has_tools,
-           tool_call_count: length(tool_calls),
-           usage: usage
-         })}
-      end)
-
-    cond do
-      # No tool calls - this IS the final text response, just in ToolCallResponse format
-      # We need to convert it to the actual output schema
-      is_nil(response.tool_calls) or length(response.tool_calls) == 0 ->
-        alias Normandy.Agents.ValidationMiddleware
-
-        # Convert ToolCallResponse to actual output schema
-        # The response.content contains the final text
-        final_response =
-          if response.content && response.content != "" do
-            # We have content in the ToolCallResponse, convert to output schema
-            case config.output_schema do
-              %{chat_message: _} ->
-                text = unwrap_llm_content(response.content)
-                Map.put(config.output_schema, :chat_message, text)
-
-              _ ->
-                config.output_schema
-            end
-          else
-            config.output_schema
-          end
-
-        # Validate output
-        validated_response =
-          case ValidationMiddleware.validate_output(config, final_response) do
-            {:ok, validated} ->
-              validated || final_response
-
-            {:error, errors} ->
-              # Output validation failed - log warning but continue
-              error_msg = ValidationMiddleware.error_message(errors)
-
-              IO.warn(
-                "Agent output validation failed: #{error_msg}\nReceived: #{inspect(final_response)}"
-              )
-
-              final_response
-          end
-
-        run_output_guardrails(config, validated_response)
-
-        memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
-        config = Map.put(config, :memory, memory)
-        {config, validated_response}
-
-      # Has tool calls - execute them
-      true ->
-        # Add assistant message with tool calls to memory
-        memory = AgentMemory.add_message(config.memory, "assistant", response)
-
-        # Tool calls run through `Task.async_stream` so an agent can opt into
-        # bounded parallel execution via `max_tool_concurrency` (default `1` =
-        # sequential). `ordered: true` keeps tool_results in the LLM's call
-        # order, which downstream code (and Anthropic's tool_result pairing)
-        # may rely on. The per-tool 30 s timeout already lives in
-        # `Executor.execute_tool/2`, so the outer stream stays `:infinity`.
-        # `parent_otel_ctx` is captured once and re-attached in each worker so
-        # tool spans nest under the parent agent.run span (the worker process
-        # has a fresh process dict).
-        parent_otel_ctx = OtelCtx.capture()
-        max_concurrency = max(config.max_tool_concurrency || 1, 1)
-
-        tool_results =
-          response.tool_calls
-          |> Task.async_stream(
-            fn tool_call ->
-              OtelCtx.restore(parent_otel_ctx)
-              execute_one_tool_call(config, tool_call)
-            end,
-            ordered: true,
-            max_concurrency: max_concurrency,
-            timeout: :infinity,
-            on_timeout: :kill_task
-          )
-          |> Enum.map(&unwrap_tool_task_result!/1)
-
-        # Add tool results to memory
-        memory =
-          Enum.reduce(tool_results, memory, fn result, mem ->
-            AgentMemory.add_message(mem, "tool", result)
-          end)
-
-        config = Map.put(config, :memory, memory)
-
-        # Continue the loop with decremented iterations
-        execute_tool_loop(config, iterations_left - 1)
-    end
+  def run_with_tools(config, user_input \\ nil) do
+    run_turn(config, user_input)
   end
 
   @doc false
@@ -656,6 +421,225 @@ defmodule Normandy.Agents.BaseAgent do
 
   @doc false
   def unwrap_llm_content(content), do: content
+
+  # ── Turn FSM production interpreter (Phase 1c, non-streaming) ────────────────
+  #
+  # Synchronous shell that drives the pure `Normandy.Agents.Turn` core to a stop,
+  # threading the running %BaseAgentConfig{} (the memory accumulator) alongside
+  # the FSM state and performing each effect via the existing BaseAgent helpers.
+  # Returns {config, final_response}. Input validation + guardrails + memory init
+  # are admission control performed before :start (they raise on failure, as the
+  # pre-FSM loop did). LLM failures raise inside the :call_llm handler (parity:
+  # exceptions propagate out of run/2), so the FSM's :failed path is only reached
+  # on an unexpected event-sequencing bug.
+
+  @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil) ::
+          {BaseAgentConfig.t(), struct()}
+  defp run_turn(config, user_input) do
+    config = admit_turn_input(config, user_input)
+
+    state =
+      Turn.new(
+        max_iterations: config.max_tool_iterations,
+        response_model: turn_response_model(config),
+        output_schema: config.output_schema
+      )
+
+    {config, final_state} = drive_turn(config, state)
+    {config, final_state.final_response}
+  end
+
+  defp turn_response_model(config) do
+    if has_tools?(config) do
+      %Normandy.Agents.ToolCallResponse{}
+    else
+      config.output_schema
+    end
+  end
+
+  defp admit_turn_input(config, nil), do: config
+
+  defp admit_turn_input(config, user_input) do
+    alias Normandy.Agents.ValidationMiddleware
+
+    validated_input =
+      case ValidationMiddleware.validate_input(config, user_input) do
+        {:ok, validated} ->
+          validated || user_input
+
+        {:error, errors} ->
+          error_msg = ValidationMiddleware.error_message(errors)
+
+          raise Normandy.Schema.ValidationError,
+            message: "Agent input validation failed",
+            errors: errors,
+            details: error_msg
+      end
+
+    run_input_guardrails!(config, validated_input)
+
+    updated_memory =
+      config.memory
+      |> AgentMemory.initialize_turn()
+      |> AgentMemory.add_message("user", validated_input)
+
+    config
+    |> Map.put(:current_user_input, validated_input)
+    |> Map.put(:memory, updated_memory)
+  end
+
+  defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
+    {state, effects} = Turn.step(state, :start)
+    run_turn_effects(config, state, effects)
+  end
+
+  defp run_turn_effects(config, state, []), do: {config, state}
+
+  defp run_turn_effects(config, state, [effect | rest]) do
+    case effect do
+      {:emit_event, name, meta} ->
+        emit_turn_event(config, name, meta)
+        run_turn_effects(config, state, rest)
+
+      {:append_message, role, content} ->
+        config = Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
+        run_turn_effects(config, state, rest)
+
+      {:call_llm, request} ->
+        response = call_turn_llm(config, state, request)
+        advance_turn(config, state, {:llm_response, response})
+
+      {:dispatch_tools, calls} ->
+        results = dispatch_turn_tools(config, calls)
+        advance_turn(config, state, {:tool_results, results})
+
+      {:convert_output, raw, output_schema} ->
+        advance_turn(
+          config,
+          state,
+          {:output_converted, convert_turn_output(config, raw, output_schema)}
+        )
+
+      {:validate_output, value} ->
+        advance_turn(config, state, {:output_validated, validate_turn_output(config, value)})
+
+      {:guard_output, value} ->
+        run_output_guardrails(config, value)
+        advance_turn(config, state, {:output_guarded, value})
+
+      {:finalize, _value} ->
+        {config, state}
+
+      {:fail, reason} ->
+        raise "Turn FSM reached :failed unexpectedly: #{inspect(reason)}"
+    end
+  end
+
+  defp advance_turn(config, state, event) do
+    {state, effects} = Turn.step(state, event)
+    run_turn_effects(config, state, effects)
+  end
+
+  # Effect handlers ────────────────────────────────────────────────────────────
+
+  defp call_turn_llm(config, state, %{response_model: response_model}) do
+    iteration = config.max_tool_iterations - state.iterations_left + 1
+    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    with_llm_call_span(config, llm_metadata, fn ->
+      {r, usage} = get_response_with_usage(config, response_model)
+
+      # When this agent has no tools, strip any tool_calls the LLM may have
+      # returned (e.g. a misbehaving or generic mock). Old run_without_tools
+      # never inspected tool_calls on the response, so the FSM must not see
+      # them either — this preserves the no-tools parity contract.
+      r =
+        case {has_tools?(config), r} do
+          {false, %{tool_calls: [_ | _]}} -> Map.put(r, :tool_calls, [])
+          _ -> r
+        end
+
+      tool_calls = Map.get(r, :tool_calls) || []
+
+      meta =
+        Map.merge(llm_metadata, %{
+          has_tool_calls: tool_calls != [],
+          tool_call_count: length(tool_calls),
+          usage: usage
+        })
+
+      {r, meta}
+    end)
+  end
+
+  defp dispatch_turn_tools(config, calls) do
+    parent_otel_ctx = OtelCtx.capture()
+    max_concurrency = max(config.max_tool_concurrency || 1, 1)
+
+    calls
+    |> Task.async_stream(
+      fn call ->
+        OtelCtx.restore(parent_otel_ctx)
+        execute_one_tool_call(config, call)
+      end,
+      ordered: true,
+      max_concurrency: max_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  # Mirror of execute_tool_loop's no-tool-call conversion (old ~:562-580).
+  # Called only when convert_needed? is true (the tool-loop case). The FSM passes
+  # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
+  # as the third arg; we use it directly rather than reaching back into config.
+  defp convert_turn_output(_config, raw, output_schema) do
+    if raw.content && raw.content != "" do
+      case output_schema do
+        %{chat_message: _} ->
+          Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
+
+        _ ->
+          output_schema
+      end
+    else
+      output_schema
+    end
+  end
+
+  # Mirror of the soft validate_output handling (old ~:415-428 / ~:583-597).
+  defp validate_turn_output(config, value) do
+    alias Normandy.Agents.ValidationMiddleware
+
+    case ValidationMiddleware.validate_output(config, value) do
+      {:ok, validated} ->
+        validated || value
+
+      {:error, errors} ->
+        error_msg = ValidationMiddleware.error_message(errors)
+        IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(value)}")
+        value
+    end
+  end
+
+  # Reproduces the per-iteration debug log the old tool loop emitted (~:539).
+  # Gated on has_tools? because the old run_without_tools did NOT emit this
+  # line; the FSM emits :iteration even for no-tools turns, so we suppress it
+  # here to preserve logging parity for the no-tools path.
+  defp emit_turn_event(config, :iteration, %{iteration: iteration}) do
+    if has_tools?(config) do
+      log_lifecycle(:debug, "normandy agent iteration",
+        agent: log_agent_name(config),
+        iteration: iteration,
+        pending_tool_calls: pending_tool_call_count(config)
+      )
+    end
+  end
+
+  defp emit_turn_event(_config, _name, _meta), do: :ok
+
+  # ── End Turn FSM production interpreter ──────────────────────────────────────
 
   @doc """
   Stream a response from the LLM with real-time callbacks.
@@ -1039,7 +1023,7 @@ defmodule Normandy.Agents.BaseAgent do
         %ToolCall{
           id: block["id"],
           name: block["name"],
-          input: normalize_tool_input(block["input"])
+          input: Dispatch.normalize_tool_input(block["input"])
         }
       end)
 
@@ -1050,47 +1034,6 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp build_streaming_assistant_response(other, _), do: other
-
-  defp normalize_tool_input(nil), do: %{}
-  defp normalize_tool_input(input) when is_map(input), do: input
-
-  defp normalize_tool_input(input) when is_binary(input) do
-    case Poison.decode(input) do
-      {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
-    end
-  end
-
-  defp normalize_tool_input(_), do: %{}
-
-  # Map an LLM-supplied input key (atom or binary) to a struct field atom on
-  # the tool, returning :error for keys that don't correspond to any field.
-  #
-  # Crucially, this NEVER calls String.to_atom/1 on untrusted input. Tool
-  # input keys come from LLM JSON, which is influenced by attacker-
-  # controllable prompt content; String.to_atom/1 would register every
-  # unknown key in the global atom table (the BEAM never garbage-collects
-  # atoms), so a sustained stream of crafted random keys would eventually
-  # exhaust the atom table and crash the VM. struct/2 silently dropping the
-  # field at the next step doesn't undo the atom allocation that already
-  # happened.
-  #
-  # Returns {:ok, atom} for known fields, :error otherwise. Callers should
-  # silently drop :error results to preserve struct/2's effective behaviour
-  # of ignoring unknown keys.
-  defp normalize_tool_field_key(tool, key) when is_atom(key) do
-    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
-  end
-
-  defp normalize_tool_field_key(tool, key) when is_binary(key) do
-    Enum.find_value(Map.keys(tool), :error, fn field ->
-      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
-        {:ok, field}
-      end
-    end)
-  end
-
-  defp normalize_tool_field_key(_tool, _key), do: :error
 
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
@@ -1367,104 +1310,32 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # Closure body extracted from the non-streaming tool loop. Resolves the tool
-  # from the registry, applies the LLM-supplied input, runs it under the
-  # OTel/telemetry span, and returns a `%ToolResult{}`. Pure function — safe
-  # to call from inside a Task.async_stream worker.
-  defp execute_one_tool_call(config, tool_call) do
-    case Registry.get(config.tool_registry, tool_call.name) do
-      {:ok, tool} ->
-        updated_tool =
-          if function_exported?(tool.__struct__, :prepare_input, 2) do
-            tool.__struct__.prepare_input(tool, tool_call.input)
-          else
-            input_with_atom_keys =
-              Enum.reduce(tool_call.input, %{}, fn {key, value}, acc ->
-                case normalize_tool_field_key(tool, key) do
-                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
-                  :error -> acc
-                end
-              end)
-
-            struct(tool, input_with_atom_keys)
-          end
-
-        tool_meta = %{tool_name: tool_call.name, agent_name: config.name}
-
-        tool_result =
-          with_tool_execute_span(config, tool_call.name, tool_meta, fn ->
-            r = Executor.execute_tool(updated_tool)
-            {r, Map.put(tool_meta, :status, elem(r, 0))}
-          end)
-
-        case tool_result do
-          {:ok, result} ->
-            %ToolResult{tool_call_id: tool_call.id, output: result, is_error: false}
-
-          {:error, error} ->
-            %ToolResult{tool_call_id: tool_call.id, output: %{error: error}, is_error: true}
-        end
-
-      :error ->
-        %ToolResult{
-          tool_call_id: tool_call.id,
-          output: %{error: "Tool '#{tool_call.name}' not found in registry"},
-          is_error: true
-        }
-    end
+  # The chokepoint pipeline BaseAgent uses: default behaviours (allow-all,
+  # no-op budget, no hooks) plus a telemetry-instrumented execute_fn so tool
+  # spans keep nesting under the agent.run span. Real behaviours are wired in
+  # the Phase 2 plan.
+  defp base_agent_pipeline do
+    %{Dispatch.default_pipeline() | execute_fn: &span_execute/3}
   end
 
-  # Streaming-loop variant: tool_call is a string-keyed map (from raw LLM JSON
-  # rather than a parsed %ToolCall{}), and input may need JSON-string parsing.
+  defp span_execute(config, prepared_tool, tool_name) do
+    tool_meta = %{tool_name: tool_name, agent_name: config.name}
+
+    with_tool_execute_span(config, tool_name, tool_meta, fn ->
+      r = Executor.execute_tool(prepared_tool)
+      {r, Map.put(tool_meta, :status, elem(r, 0))}
+    end)
+  end
+
+  defp execute_one_tool_call(config, tool_call) do
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
+  end
+
+  # Streaming-loop variant: tool_call is a string-keyed map (raw LLM JSON).
+  # Dispatch.dispatch_one/3 normalizes it into a %ToolCall{} before running the
+  # same chokepoint pipeline as the non-streaming path.
   defp execute_one_streaming_tool_call(config, tool_call) do
-    tool_name = tool_call["name"]
-
-    # Tool input from the streaming branch is raw LLM JSON, so it can be any
-    # JSON shape — not just nil/map/binary. Route through normalize_tool_input/1
-    # so unexpected shapes (lists, numbers, booleans) degrade to %{} instead of
-    # raising CaseClauseError and aborting the whole streaming tool loop.
-    tool_input = normalize_tool_input(tool_call["input"])
-
-    case Registry.get(config.tool_registry, tool_name) do
-      {:ok, tool} ->
-        updated_tool =
-          if function_exported?(tool.__struct__, :prepare_input, 2) do
-            tool.__struct__.prepare_input(tool, tool_input)
-          else
-            input_with_atom_keys =
-              Enum.reduce(tool_input, %{}, fn {key, value}, acc ->
-                case normalize_tool_field_key(tool, key) do
-                  {:ok, atom_key} -> Map.put(acc, atom_key, value)
-                  :error -> acc
-                end
-              end)
-
-            struct(tool, input_with_atom_keys)
-          end
-
-        tool_meta = %{tool_name: tool_name, agent_name: config.name}
-
-        tool_result =
-          with_tool_execute_span(config, tool_name, tool_meta, fn ->
-            r = Executor.execute_tool(updated_tool)
-            {r, Map.put(tool_meta, :status, elem(r, 0))}
-          end)
-
-        case tool_result do
-          {:ok, result} ->
-            %ToolResult{tool_call_id: tool_call["id"], output: result, is_error: false}
-
-          {:error, error} ->
-            %ToolResult{tool_call_id: tool_call["id"], output: %{error: error}, is_error: true}
-        end
-
-      :error ->
-        %ToolResult{
-          tool_call_id: tool_call["id"],
-          output: %{error: "Tool '#{tool_name}' not found in registry"},
-          is_error: true
-        }
-    end
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
   end
 
   defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do
