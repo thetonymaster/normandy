@@ -68,7 +68,7 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc "Normalizes a raw LLM tool call (struct or string-keyed map) into a %ToolCall{}."
   @spec to_tool_call(ToolCall.t() | map()) :: ToolCall.t()
-  def to_tool_call(%ToolCall{} = call), do: call
+  def to_tool_call(%ToolCall{} = call), do: %{call | input: normalize_tool_input(call.input)}
 
   def to_tool_call(%{} = raw) do
     %ToolCall{
@@ -109,6 +109,8 @@ defmodule Normandy.Agents.Dispatch do
   def dispatch_one(config, tool_call, pipeline \\ default_pipeline())
 
   def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    call = %{call | input: normalize_tool_input(call.input)}
+
     case Registry.get(config.tool_registry, call.name) do
       {:ok, tool} ->
         with {:cont, call} <- run_before_hooks(config, call, pipeline.before_hooks),

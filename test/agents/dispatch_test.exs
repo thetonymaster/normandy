@@ -49,9 +49,22 @@ defmodule Normandy.Agents.DispatchTest do
   end
 
   describe "to_tool_call/1" do
-    test "passes a %ToolCall{} through unchanged" do
+    test "passes a %ToolCall{} with map input through unchanged" do
       call = %ToolCall{id: "c1", name: "weather", input: %{city: "NYC"}}
       assert Dispatch.to_tool_call(call) == call
+    end
+
+    test "normalizes a %ToolCall{} with nil or non-map input to a map" do
+      assert Dispatch.to_tool_call(%ToolCall{id: "c1a", name: "weather", input: nil}).input == %{}
+
+      assert Dispatch.to_tool_call(%ToolCall{id: "c1b", name: "weather", input: [1, 2, 3]}).input ==
+               %{}
+
+      assert Dispatch.to_tool_call(%ToolCall{
+               id: "c1c",
+               name: "weather",
+               input: ~s({"city":"SF"})
+             }).input == %{"city" => "SF"}
     end
 
     test "normalizes a string-keyed JSON map into a %ToolCall{}" do
@@ -107,6 +120,15 @@ defmodule Normandy.Agents.DispatchTest do
       result = Dispatch.dispatch_one(config, raw, Dispatch.default_pipeline())
 
       assert %ToolResult{tool_call_id: "c9", output: "weather in LA", is_error: false} = result
+    end
+
+    test "a %ToolCall{} with nil input is normalized, not crashed, before prepare_tool" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c10", name: "weather", input: nil}
+
+      result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert %ToolResult{tool_call_id: "c10", output: "weather in ", is_error: false} = result
     end
   end
 
