@@ -1,13 +1,66 @@
 defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Agents.BaseAgentInputSchema
-  alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.Components.AgentMemory
+  alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, BaseAgentOutputSchema, ToolCallResponse}
+  alias Normandy.Components.{AgentMemory, ToolCall}
+  alias Normandy.Tools.Examples.Calculator
+  alias Normandy.Tools.Registry
 
   # Re-uses the project-wide ModelMockup: converse/completitions return
   # response_model as-is, giving deterministic LLM responses without network.
+
+  # Fake client for the with-tools characterization tests: mirrors the shape
+  # of MockToolCallClient in base_agent_tool_loop_test.exs exactly so the test
+  # remains a characterization of the SAME dispatch path.
+  defmodule MockWithToolsClient do
+    use Normandy.Schema
+
+    schema do
+      field(:final_response, :string, default: "Task completed")
+    end
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
+        response_model
+      end
+
+      def converse(
+            config,
+            _model,
+            _temperature,
+            _max_tokens,
+            messages,
+            _response_model,
+            _opts \\ []
+          ) do
+        tool_message_count = Enum.count(messages, fn msg -> msg.role == "tool" end)
+
+        if tool_message_count == 0 do
+          %ToolCallResponse{
+            content: nil,
+            tool_calls: [
+              %ToolCall{id: "call_1", name: "calculator", input: %{operation: "add", a: 5, b: 3}}
+            ]
+          }
+        else
+          %ToolCallResponse{content: config.final_response, tool_calls: []}
+        end
+      end
+    end
+  end
+
+  defp with_tools_agent do
+    calc = %Calculator{operation: "add", a: 0, b: 0}
+    registry = Registry.new([calc])
+
+    BaseAgent.init(%{
+      client: %MockWithToolsClient{},
+      model: "test-model",
+      temperature: 0.7,
+      tool_registry: registry,
+      max_tool_iterations: 5
+    })
+  end
 
   defp no_tools_agent do
     BaseAgent.init(%{
@@ -61,6 +114,27 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       history = AgentMemory.history(updated.memory)
       roles = Enum.map(history, & &1.role)
       assert roles == ["assistant"]
+    end
+  end
+
+  describe "with-tools run drives the tool loop through the FSM" do
+    test "first response calls a tool, second finalizes; memory has user/assistant/tool/assistant" do
+      config = with_tools_agent()
+      user_input = %BaseAgentInputSchema{chat_message: "What is 5 + 3?"}
+
+      {updated, response} = BaseAgent.run(config, user_input)
+
+      # The final response should be the converted output schema
+      assert %BaseAgentOutputSchema{} = response
+      assert response.chat_message == "Task completed"
+
+      # Memory should have the full tool-loop sequence in role order
+      roles =
+        updated.memory
+        |> AgentMemory.history()
+        |> Enum.map(& &1.role)
+
+      assert roles == ["user", "assistant", "tool", "assistant"]
     end
   end
 end

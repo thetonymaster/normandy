@@ -393,49 +393,8 @@ defmodule Normandy.Agents.BaseAgent do
   """
   @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
           {BaseAgentConfig.t(), struct()}
-  def run_with_tools(
-        config = %BaseAgentConfig{memory: memory, max_tool_iterations: max_iterations},
-        user_input \\ nil
-      ) do
-    alias Normandy.Agents.ValidationMiddleware
-
-    # Validate and initialize turn with user input if provided
-    {config, _memory} =
-      if user_input != nil do
-        # Validate user input
-        validated_input =
-          case ValidationMiddleware.validate_input(config, user_input) do
-            {:ok, validated} ->
-              validated || user_input
-
-            {:error, errors} ->
-              error_msg = ValidationMiddleware.error_message(errors)
-
-              raise Normandy.Schema.ValidationError,
-                message: "Agent input validation failed",
-                errors: errors,
-                details: error_msg
-          end
-
-        run_input_guardrails!(config, validated_input)
-
-        updated_memory =
-          memory
-          |> AgentMemory.initialize_turn()
-          |> AgentMemory.add_message("user", validated_input)
-
-        updated_config =
-          config
-          |> Map.put(:current_user_input, validated_input)
-          |> Map.put(:memory, updated_memory)
-
-        {updated_config, updated_memory}
-      else
-        {config, memory}
-      end
-
-    # Execute tool loop
-    execute_tool_loop(config, max_iterations)
+  def run_with_tools(config, user_input \\ nil) do
+    run_turn(config, user_input)
   end
 
   # Private function to handle the tool execution loop
