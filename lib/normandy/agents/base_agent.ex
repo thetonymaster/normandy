@@ -761,19 +761,20 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Mirror of execute_tool_loop's no-tool-call conversion (old ~:562-580).
-  # Called only when convert_needed? is true, i.e. the tool-loop case where
-  # the LLM was asked for %ToolCallResponse{} instead of the output_schema.
-  defp convert_turn_output(config, raw, _output_schema) do
+  # Called only when convert_needed? is true (the tool-loop case). The FSM passes
+  # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
+  # as the third arg; we use it directly rather than reaching back into config.
+  defp convert_turn_output(_config, raw, output_schema) do
     if raw.content && raw.content != "" do
-      case config.output_schema do
+      case output_schema do
         %{chat_message: _} ->
-          Map.put(config.output_schema, :chat_message, unwrap_llm_content(raw.content))
+          Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
 
         _ ->
-          config.output_schema
+          output_schema
       end
     else
-      config.output_schema
+      output_schema
     end
   end
 
