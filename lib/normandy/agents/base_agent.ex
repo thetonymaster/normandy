@@ -17,6 +17,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentOutputSchema
 
   alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.Turn
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -363,76 +364,10 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Private function for simple runs without tool support
-  defp run_without_tools(
-         config = %BaseAgentConfig{memory: memory, output_schema: output_schema},
-         user_input
-       ) do
-    alias Normandy.Agents.ValidationMiddleware
-
-    # Validate input if provided
-    config =
-      if user_input != nil do
-        # Validate user input against input schema
-        case ValidationMiddleware.validate_input(config, user_input) do
-          {:ok, validated_input} ->
-            effective_input = validated_input || user_input
-            run_input_guardrails!(config, effective_input)
-
-            updated_memory =
-              memory
-              |> AgentMemory.initialize_turn()
-              |> AgentMemory.add_message("user", effective_input)
-
-            config
-            |> Map.put(:current_user_input, effective_input)
-            |> Map.put(:memory, updated_memory)
-
-          {:error, errors} ->
-            # Input validation failed - raise error with details
-            error_msg = ValidationMiddleware.error_message(errors)
-
-            raise Normandy.Schema.ValidationError,
-              message: "Agent input validation failed",
-              errors: errors,
-              details: error_msg
-        end
-      else
-        config
-      end
-
-    # Get response from LLM
-    llm_metadata = %{model: config.model, iteration: 1, agent_name: config.name}
-
-    response =
-      with_llm_call_span(config, llm_metadata, fn ->
-        {r, usage} = get_response_with_usage(config, output_schema)
-
-        {r, Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0, usage: usage})}
-      end)
-
-    # Validate output
-    validated_response =
-      case ValidationMiddleware.validate_output(config, response) do
-        {:ok, validated} ->
-          validated || response
-
-        {:error, errors} ->
-          # Output validation failed - log warning but continue
-          # (we don't want to break on LLM output issues)
-          error_msg = ValidationMiddleware.error_message(errors)
-
-          IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(response)}")
-
-          response
-      end
-
-    run_output_guardrails(config, validated_response)
-
-    memory = AgentMemory.add_message(config.memory, "assistant", validated_response)
-    config = Map.put(config, :memory, memory)
-
-    {config, validated_response}
+  # Private function for simple runs without tool support.
+  # Delegates to the Turn FSM production interpreter (Phase 1c).
+  defp run_without_tools(config, user_input) do
+    run_turn(config, user_input)
   end
 
   @doc """
@@ -656,6 +591,224 @@ defmodule Normandy.Agents.BaseAgent do
 
   @doc false
   def unwrap_llm_content(content), do: content
+
+  # ── Turn FSM production interpreter (Phase 1c, non-streaming) ────────────────
+  #
+  # Synchronous shell that drives the pure `Normandy.Agents.Turn` core to a stop,
+  # threading the running %BaseAgentConfig{} (the memory accumulator) alongside
+  # the FSM state and performing each effect via the existing BaseAgent helpers.
+  # Returns {config, final_response}. Input validation + guardrails + memory init
+  # are admission control performed before :start (they raise on failure, as the
+  # pre-FSM loop did). LLM failures raise inside the :call_llm handler (parity:
+  # exceptions propagate out of run/2), so the FSM's :failed path is only reached
+  # on an unexpected event-sequencing bug.
+
+  @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil) ::
+          {BaseAgentConfig.t(), struct()}
+  defp run_turn(config, user_input) do
+    config = admit_turn_input(config, user_input)
+
+    state =
+      Turn.new(
+        max_iterations: config.max_tool_iterations,
+        response_model: turn_response_model(config),
+        output_schema: config.output_schema
+      )
+
+    {config, final_state} = drive_turn(config, state)
+    {config, final_state.final_response}
+  end
+
+  defp turn_response_model(config) do
+    if has_tools?(config) do
+      %Normandy.Agents.ToolCallResponse{}
+    else
+      config.output_schema
+    end
+  end
+
+  defp admit_turn_input(config, nil), do: config
+
+  defp admit_turn_input(config, user_input) do
+    alias Normandy.Agents.ValidationMiddleware
+
+    validated_input =
+      case ValidationMiddleware.validate_input(config, user_input) do
+        {:ok, validated} ->
+          validated || user_input
+
+        {:error, errors} ->
+          error_msg = ValidationMiddleware.error_message(errors)
+
+          raise Normandy.Schema.ValidationError,
+            message: "Agent input validation failed",
+            errors: errors,
+            details: error_msg
+      end
+
+    run_input_guardrails!(config, validated_input)
+
+    updated_memory =
+      config.memory
+      |> AgentMemory.initialize_turn()
+      |> AgentMemory.add_message("user", validated_input)
+
+    config
+    |> Map.put(:current_user_input, validated_input)
+    |> Map.put(:memory, updated_memory)
+  end
+
+  defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
+    {state, effects} = Turn.step(state, :start)
+    run_turn_effects(config, state, effects)
+  end
+
+  defp run_turn_effects(config, state, []), do: {config, state}
+
+  defp run_turn_effects(config, state, [effect | rest]) do
+    case effect do
+      {:emit_event, name, meta} ->
+        emit_turn_event(config, name, meta)
+        run_turn_effects(config, state, rest)
+
+      {:append_message, role, content} ->
+        config = Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
+        run_turn_effects(config, state, rest)
+
+      {:call_llm, request} ->
+        response = call_turn_llm(config, state, request)
+        advance_turn(config, state, {:llm_response, response})
+
+      {:dispatch_tools, calls} ->
+        results = dispatch_turn_tools(config, calls)
+        advance_turn(config, state, {:tool_results, results})
+
+      {:convert_output, raw, output_schema} ->
+        advance_turn(
+          config,
+          state,
+          {:output_converted, convert_turn_output(config, raw, output_schema)}
+        )
+
+      {:validate_output, value} ->
+        advance_turn(config, state, {:output_validated, validate_turn_output(config, value)})
+
+      {:guard_output, value} ->
+        run_output_guardrails(config, value)
+        advance_turn(config, state, {:output_guarded, value})
+
+      {:finalize, _value} ->
+        {config, state}
+
+      {:fail, reason} ->
+        raise "Turn FSM reached :failed unexpectedly: #{inspect(reason)}"
+    end
+  end
+
+  defp advance_turn(config, state, event) do
+    {state, effects} = Turn.step(state, event)
+    run_turn_effects(config, state, effects)
+  end
+
+  # Effect handlers ────────────────────────────────────────────────────────────
+
+  defp call_turn_llm(config, state, %{response_model: response_model}) do
+    iteration = config.max_tool_iterations - state.iterations_left + 1
+    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    with_llm_call_span(config, llm_metadata, fn ->
+      {r, usage} = get_response_with_usage(config, response_model)
+
+      # When this agent has no tools, strip any tool_calls the LLM may have
+      # returned (e.g. a misbehaving or generic mock). Old run_without_tools
+      # never inspected tool_calls on the response, so the FSM must not see
+      # them either — this preserves the no-tools parity contract.
+      r =
+        case {has_tools?(config), r} do
+          {false, %{tool_calls: [_ | _]}} -> Map.put(r, :tool_calls, [])
+          _ -> r
+        end
+
+      tool_calls = Map.get(r, :tool_calls) || []
+
+      meta =
+        Map.merge(llm_metadata, %{
+          has_tool_calls: tool_calls != [],
+          tool_call_count: length(tool_calls),
+          usage: usage
+        })
+
+      {r, meta}
+    end)
+  end
+
+  defp dispatch_turn_tools(config, calls) do
+    parent_otel_ctx = OtelCtx.capture()
+    max_concurrency = max(config.max_tool_concurrency || 1, 1)
+
+    calls
+    |> Task.async_stream(
+      fn call ->
+        OtelCtx.restore(parent_otel_ctx)
+        execute_one_tool_call(config, call)
+      end,
+      ordered: true,
+      max_concurrency: max_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  # Mirror of execute_tool_loop's no-tool-call conversion (old ~:562-580).
+  # Called only when convert_needed? is true, i.e. the tool-loop case where
+  # the LLM was asked for %ToolCallResponse{} instead of the output_schema.
+  defp convert_turn_output(config, raw, _output_schema) do
+    if raw.content && raw.content != "" do
+      case config.output_schema do
+        %{chat_message: _} ->
+          Map.put(config.output_schema, :chat_message, unwrap_llm_content(raw.content))
+
+        _ ->
+          config.output_schema
+      end
+    else
+      config.output_schema
+    end
+  end
+
+  # Mirror of the soft validate_output handling (old ~:415-428 / ~:583-597).
+  defp validate_turn_output(config, value) do
+    alias Normandy.Agents.ValidationMiddleware
+
+    case ValidationMiddleware.validate_output(config, value) do
+      {:ok, validated} ->
+        validated || value
+
+      {:error, errors} ->
+        error_msg = ValidationMiddleware.error_message(errors)
+        IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(value)}")
+        value
+    end
+  end
+
+  # Reproduces the per-iteration debug log the old tool loop emitted (~:539).
+  # Gated on has_tools? because the old run_without_tools did NOT emit this
+  # line; the FSM emits :iteration even for no-tools turns, so we suppress it
+  # here to preserve logging parity for the no-tools path.
+  defp emit_turn_event(config, :iteration, %{iteration: iteration}) do
+    if has_tools?(config) do
+      log_lifecycle(:debug, "normandy agent iteration",
+        agent: log_agent_name(config),
+        iteration: iteration,
+        pending_tool_calls: pending_tool_call_count(config)
+      )
+    end
+  end
+
+  defp emit_turn_event(_config, _name, _meta), do: :ok
+
+  # ── End Turn FSM production interpreter ──────────────────────────────────────
 
   @doc """
   Stream a response from the LLM with real-time callbacks.
