@@ -9,9 +9,12 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   # Re-uses the project-wide ModelMockup: converse/completitions return
   # response_model as-is, giving deterministic LLM responses without network.
 
-  # Fake client for the with-tools characterization tests: mirrors the shape
-  # of MockToolCallClient in base_agent_tool_loop_test.exs exactly so the test
-  # remains a characterization of the SAME dispatch path.
+  # Fake client for the with-tools characterization tests: a SIMPLIFIED
+  # single-use variant of MockToolCallClient (base_agent_tool_loop_test.exs).
+  # Omits the tool_call_count guard and true-fallback cond branch because this
+  # client is constructed fresh per test and never re-primed — tool_message_count
+  # == 0 on the first call is always guaranteed. The dispatch path exercised is
+  # the same; only the guard structure is simplified.
   defmodule MockWithToolsClient do
     use Normandy.Schema
 
@@ -122,7 +125,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = with_tools_agent()
       user_input = %BaseAgentInputSchema{chat_message: "What is 5 + 3?"}
 
-      {updated, response} = BaseAgent.run(config, user_input)
+      {updated, response} = BaseAgent.run_with_tools(config, user_input)
 
       # The final response should be the converted output schema
       assert %BaseAgentOutputSchema{} = response
