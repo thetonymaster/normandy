@@ -99,6 +99,40 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.status == :finalizing
       assert effects == [{:validate_output, :converted}]
     end
+
+    test ":output_validated advances to :guard_output" do
+      s = %State{
+        status: :finalizing,
+        stop_reason: :completed,
+        iterations_left: 4,
+        max_iterations: 5
+      }
+
+      {s2, effects} = Turn.step(s, {:output_validated, :validated})
+
+      assert s2.status == :finalizing
+      assert effects == [{:guard_output, :validated}]
+    end
+
+    test ":output_guarded finalizes: stops, sets final_response, appends assistant, emits finalize" do
+      s = %State{
+        status: :finalizing,
+        stop_reason: :completed,
+        iterations_left: 4,
+        max_iterations: 5
+      }
+
+      {s2, effects} = Turn.step(s, {:output_guarded, :final_value})
+
+      assert s2.status == :stopped
+      assert s2.stop_reason == :completed
+      assert s2.final_response == :final_value
+
+      assert effects == [
+               {:append_message, "assistant", :final_value},
+               {:finalize, :final_value}
+             ]
+    end
   end
 
   describe "step/2 assistant_streaming with tool calls" do

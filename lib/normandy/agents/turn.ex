@@ -126,6 +126,15 @@ defmodule Normandy.Agents.Turn do
     {s, [{:validate_output, converted}]}
   end
 
+  def step(%State{status: :finalizing} = s, {:output_validated, validated}) do
+    {s, [{:guard_output, validated}]}
+  end
+
+  def step(%State{status: :finalizing} = s, {:output_guarded, value}) do
+    {%{s | status: :stopped, final_response: value},
+     [{:append_message, "assistant", value}, {:finalize, value}]}
+  end
+
   def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
     new_left = s.iterations_left - 1
     append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
