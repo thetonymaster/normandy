@@ -3,7 +3,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
   import ExUnit.CaptureIO
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.{BaseAgent, ToolCallResponse}
+  alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Guardrails.Builtins.{ForbiddenSubstrings, MaxLength, RequiredFields}
 
   defmodule NoopTool do
@@ -236,15 +237,60 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
   end
 
+  # Local mock for the iteration-cap guardrail test.
+  # - First call (no "tool" messages in history yet): returns a ToolCallResponse
+  #   with one tool call targeting NoopTool ("noop"), forcing the loop to
+  #   dispatch the tool and exhaust the single allowed iteration.
+  # - Forced-final call (after a "tool" message exists, response_model is the
+  #   output_schema): returns response_model unchanged. Since output_schema is
+  #   %BaseAgentOutputSchema{chat_message: nil}, the RequiredFields guardrail
+  #   will fire on the nil field.
+  defmodule MockCapClient do
+    defstruct []
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_, _, _, _, _, response_model), do: response_model
+
+      def converse(
+            _config,
+            _model,
+            _temperature,
+            _max_tokens,
+            messages,
+            response_model,
+            _opts \\ []
+          ) do
+        tool_message_count = Enum.count(messages, fn msg -> msg.role == "tool" end)
+
+        if tool_message_count == 0 do
+          %ToolCallResponse{
+            content: nil,
+            tool_calls: [
+              %ToolCall{id: "cap_call_1", name: "noop", input: %{}}
+            ]
+          }
+        else
+          # Forced-final call: return the output_schema (chat_message: nil)
+          # so RequiredFields fires.
+          response_model
+        end
+      end
+    end
+  end
+
   describe "output_guardrails on exhausted tool loop" do
     test "max-iterations branch still runs output guardrails" do
-      # max_tool_iterations: 1 (minimum valid value). The ModelMockup returns
-      # %ToolCallResponse{tool_calls: []} on the first call (no tool calls),
-      # so the agent proceeds immediately to the convert+validate+guard output
-      # path, exercising the output guardrail in the run_with_tools branch.
+      # max_tool_iterations: 1. MockCapClient returns a ToolCall on the first
+      # LLM call → NoopTool dispatches → iterations_left hits 0 → Turn FSM
+      # forces a final LLM call against the output_schema. MockCapClient returns
+      # the output_schema unchanged (%BaseAgentOutputSchema{chat_message: nil}),
+      # which violates RequiredFields([:chat_message]). The memory history will
+      # contain a "tool" role message, proving the cap path was taken (not the
+      # completed path).
       agent =
         BaseAgent.init(
           base_config(%{
+            client: %MockCapClient{},
             max_tool_iterations: 1,
             output_guardrails: [{RequiredFields, fields: [:chat_message]}]
           })
@@ -252,12 +298,19 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       agent = BaseAgent.register_tool(agent, %NoopTool{})
 
-      {output, {_updated, _response}} =
+      {output, {updated, _response}} =
         capture_io_and_result(fn ->
           BaseAgent.run(agent, "anything")
         end)
 
+      # Guardrail must fire.
       assert output =~ "output guardrail violation"
+
+      # Prove the cap path was taken: a "tool" role message in memory means
+      # NoopTool was actually dispatched (only happens on the :max_iterations
+      # path when iterations_left hits 0 after executing the tool call).
+      roles = updated.memory |> AgentMemory.history() |> Enum.map(& &1.role)
+      assert "tool" in roles, "expected a tool message in memory, got: #{inspect(roles)}"
     end
   end
 

@@ -132,6 +132,45 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
     end
 
+    test "init/1 rejects negative max_tool_iterations" do
+      base = %{
+        client: %MockToolCallClient{final_response: "Stopped due to limit"},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+      }
+
+      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
+        BaseAgent.init(Map.put(base, :max_tool_iterations, -1))
+      end
+    end
+
+    test "init/1 rejects non-integer max_tool_iterations (float)" do
+      base = %{
+        client: %MockToolCallClient{final_response: "Stopped due to limit"},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+      }
+
+      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
+        BaseAgent.init(Map.put(base, :max_tool_iterations, 1.5))
+      end
+    end
+
+    test "init/1 rejects non-integer max_tool_iterations (string)" do
+      base = %{
+        client: %MockToolCallClient{final_response: "Stopped due to limit"},
+        model: "test-model",
+        temperature: 0.7,
+        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+      }
+
+      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
+        BaseAgent.init(Map.put(base, :max_tool_iterations, "5"))
+      end
+    end
+
     test "works without user_input (continuing conversation)" do
       # First run with user input
       calc = %Calculator{operation: "multiply", a: 0, b: 0}
