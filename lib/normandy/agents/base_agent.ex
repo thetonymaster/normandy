@@ -18,6 +18,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
+  alias Normandy.Agents.Turn.Driver
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -489,55 +490,21 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
-    {state, effects} = Turn.step(state, :start)
-    run_turn_effects(config, state, effects)
+    Driver.drive(state, non_streaming_handlers(), config)
   end
 
-  defp run_turn_effects(config, state, []), do: {config, state}
-
-  defp run_turn_effects(config, state, [effect | rest]) do
-    case effect do
-      {:emit_event, name, meta} ->
-        emit_turn_event(config, name, meta)
-        run_turn_effects(config, state, rest)
-
-      {:append_message, role, content} ->
-        config = Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
-        run_turn_effects(config, state, rest)
-
-      {:call_llm, request} ->
-        response = call_turn_llm(config, state, request)
-        advance_turn(config, state, {:llm_response, response})
-
-      {:dispatch_tools, calls} ->
-        results = dispatch_turn_tools(config, calls)
-        advance_turn(config, state, {:tool_results, results})
-
-      {:convert_output, raw, output_schema} ->
-        advance_turn(
-          config,
-          state,
-          {:output_converted, convert_turn_output(config, raw, output_schema)}
-        )
-
-      {:validate_output, value} ->
-        advance_turn(config, state, {:output_validated, validate_turn_output(config, value)})
-
-      {:guard_output, value} ->
-        run_output_guardrails(config, value)
-        advance_turn(config, state, {:output_guarded, value})
-
-      {:finalize, _value} ->
-        {config, state}
-
-      {:fail, reason} ->
-        raise "Turn FSM reached :failed unexpectedly: #{inspect(reason)}"
-    end
-  end
-
-  defp advance_turn(config, state, event) do
-    {state, effects} = Turn.step(state, event)
-    run_turn_effects(config, state, effects)
+  defp non_streaming_handlers do
+    %Driver.Handlers{
+      call_llm: &call_turn_llm/3,
+      dispatch_tools: &dispatch_turn_tools/2,
+      convert: &convert_turn_output/3,
+      validate: &validate_turn_output/2,
+      guard: fn config, value -> run_output_guardrails(config, value) end,
+      append: fn config, role, content ->
+        Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
+      end,
+      emit: &emit_turn_event/3
+    }
   end
 
   # Effect handlers ────────────────────────────────────────────────────────────
