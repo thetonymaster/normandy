@@ -138,4 +138,32 @@ defmodule Normandy.Agents.Turn.InlineTest do
       assert_received {:llm_call, %{response_model: :rm, final: false}}
     end
   end
+
+  describe "run/2 output pipeline" do
+    test "convert/validate/guard deps thread the transformed value into finalize" do
+      test_pid = self()
+      resp = %ToolCallResponse{content: "raw", tool_calls: nil}
+
+      deps = %{
+        call_llm: fn _req -> {:ok, resp} end,
+        dispatch: fn _calls -> flunk("no dispatch expected") end,
+        append: fn role, content -> send(test_pid, {:appended, role, content}) end,
+        emit: fn _name, _meta -> :ok end,
+        convert: fn %ToolCallResponse{content: c}, :os -> {:converted, c} end,
+        validate: fn {:converted, c} -> {:validated, c} end,
+        guard: fn {:validated, _c} = v -> send(test_pid, {:guarded, v}) end
+      }
+
+      # response_model (:rm) != output_schema (:os) => convert runs.
+      state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :os)
+      assert {:ok, final} = Inline.run(state, deps)
+
+      assert final.status == :stopped
+      assert final.stop_reason == :completed
+      assert final.final_response == {:validated, "raw"}
+
+      assert_received {:guarded, {:validated, "raw"}}
+      assert_received {:appended, "assistant", {:validated, "raw"}}
+    end
+  end
 end

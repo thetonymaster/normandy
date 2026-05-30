@@ -17,6 +17,12 @@ defmodule Normandy.Agents.Turn.Inline do
     * `:dispatch` — `fn calls -> [%ToolResult{}] end` (required)
     * `:append`   — `fn role, content -> any end` (optional, defaults to no-op)
     * `:emit`     — `fn name, meta -> any end` (optional, defaults to no-op)
+    * `:convert`  — `fn raw, response_model -> converted end` (optional, defaults to identity:
+                    returns `raw` unchanged)
+    * `:validate` — `fn value -> validated end` (optional, defaults to identity: returns `value`
+                    unchanged)
+    * `:guard`    — `fn value -> any end` (optional, defaults to no-op: side-effecting, return
+                    is ignored and the input `value` is fed forward via `{:output_guarded, value}`)
 
   By design, `step/2` always places the single blocking/terminal effect
   (`:call_llm`, `:dispatch_tools`, `:finalize`, `:fail`) last in its effect list,
@@ -29,7 +35,16 @@ defmodule Normandy.Agents.Turn.Inline do
   @spec run(Turn.State.t(), map()) :: {:ok, Turn.State.t()} | {:error, term(), Turn.State.t()}
   def run(%Turn.State{} = state, deps) do
     deps =
-      Map.merge(%{emit: fn _name, _meta -> :ok end, append: fn _role, _content -> :ok end}, deps)
+      Map.merge(
+        %{
+          emit: fn _name, _meta -> :ok end,
+          append: fn _role, _content -> :ok end,
+          convert: fn raw, _response_model -> raw end,
+          validate: fn value -> value end,
+          guard: fn _value -> :ok end
+        },
+        deps
+      )
 
     {state, effects} = Turn.step(state, :start)
     process(state, effects, deps)
@@ -56,6 +71,18 @@ defmodule Normandy.Agents.Turn.Inline do
       {:dispatch_tools, calls} ->
         results = deps.dispatch.(calls)
         advance(state, {:tool_results, results}, deps)
+
+      {:convert_output, raw, response_model} ->
+        converted = deps.convert.(raw, response_model)
+        advance(state, {:output_converted, converted}, deps)
+
+      {:validate_output, value} ->
+        validated = deps.validate.(value)
+        advance(state, {:output_validated, validated}, deps)
+
+      {:guard_output, value} ->
+        deps.guard.(value)
+        advance(state, {:output_guarded, value}, deps)
 
       {:finalize, _response} ->
         {:ok, state}
