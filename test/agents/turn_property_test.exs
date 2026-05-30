@@ -12,6 +12,7 @@ defmodule Normandy.Agents.TurnPropertyTest do
     :provisioning,
     :assistant_streaming,
     :tool_dispatch,
+    :finalizing,
     :awaiting_approval,
     :steering,
     :stopped,
@@ -27,6 +28,9 @@ defmodule Normandy.Agents.TurnPropertyTest do
          %ToolCallResponse{content: nil, tool_calls: [%ToolCall{id: "c", name: "t", input: %{}}]}}
       ),
       constant({:tool_results, [%ToolResult{tool_call_id: "c", output: "o", is_error: false}]}),
+      constant({:output_converted, :c}),
+      constant({:output_validated, :v}),
+      constant({:output_guarded, :g}),
       constant({:llm_error, :boom}),
       constant({:tool_error, :crash}),
       constant({:bogus_event, 1})
@@ -98,15 +102,30 @@ defmodule Normandy.Agents.TurnPropertyTest do
     end
   end
 
-  # Helper: feed events the way the interpreter would, counting :call_llm effects,
-  # always answering an LLM call with a tool-call response (worst case).
+  # Helper: feed events the way an interpreter would, counting :call_llm effects,
+  # always answering an LLM call with a tool-call response (worst case). When the
+  # turn reaches :finalizing, walk the convert->validate->guard pipeline to a stop
+  # using identity transforms (feed the response straight back at each stage).
   defp drive(state, tool_resp, results, calls) do
-    {state, effects} = Turn.step(state, next_event(state, tool_resp, results))
-    calls = calls + Enum.count(effects, &match?({:call_llm, _}, &1))
-
     case state.status do
-      s when s in [:stopped, :failed] -> {calls, s}
-      _ -> drive(state, tool_resp, results, calls)
+      :finalizing ->
+        # Both finalize entries (convert-path and validate-path) accept
+        # {:output_converted,_} first: the convert clause emits :validate_output,
+        # and on the validate-path the {:output_converted,_} clause simply emits
+        # :validate_output as well. Then {:output_validated,_} -> {:guard_output},
+        # and {:output_guarded,_} -> :stopped. Deterministic, no new :call_llm.
+        {s1, _} = Turn.step(state, {:output_converted, state.last_response})
+        {s2, _} = Turn.step(s1, {:output_validated, state.last_response})
+        {s3, _} = Turn.step(s2, {:output_guarded, state.last_response})
+        {calls, s3.status}
+
+      status when status in [:stopped, :failed] ->
+        {calls, status}
+
+      _ ->
+        {state, effects} = Turn.step(state, next_event(state, tool_resp, results))
+        calls = calls + Enum.count(effects, &match?({:call_llm, _}, &1))
+        drive(state, tool_resp, results, calls)
     end
   end
 

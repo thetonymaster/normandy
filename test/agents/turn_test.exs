@@ -283,5 +283,23 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.error == {:unexpected_event, :assistant_streaming, {:tool_results, []}}
       assert effects == [{:fail, {:unexpected_event, :assistant_streaming, {:tool_results, []}}}]
     end
+
+    test "an unexpected event in :finalizing fails loudly with context" do
+      s = %State{
+        status: :finalizing,
+        stop_reason: :completed,
+        iterations_left: 2,
+        max_iterations: 5
+      }
+
+      {s2, effects} = Turn.step(s, {:llm_response, %ToolCallResponse{}})
+
+      assert s2.status == :failed
+      assert s2.error == {:unexpected_event, :finalizing, {:llm_response, %ToolCallResponse{}}}
+
+      assert effects == [
+               {:fail, {:unexpected_event, :finalizing, {:llm_response, %ToolCallResponse{}}}}
+             ]
+    end
   end
 end
