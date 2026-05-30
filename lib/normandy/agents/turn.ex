@@ -28,6 +28,7 @@ defmodule Normandy.Agents.Turn do
             :provisioning
             | :assistant_streaming
             | :tool_dispatch
+            | :finalizing
             | :awaiting_approval
             | :steering
             | :stopped
@@ -107,18 +108,22 @@ defmodule Normandy.Agents.Turn do
   def step(%State{status: :assistant_streaming} = s, {:llm_response, resp}) do
     case tool_calls(resp) do
       [] ->
-        {%{
-           s
-           | status: :stopped,
-             last_response: resp,
-             final_response: resp,
-             stop_reason: :completed
-         }, [{:append_message, "assistant", resp}, {:finalize, resp}]}
+        s = %{s | status: :finalizing, last_response: resp, stop_reason: :completed}
+
+        if convert_needed?(s) do
+          {s, [{:convert_output, resp, s.output_schema}]}
+        else
+          {s, [{:validate_output, resp}]}
+        end
 
       calls ->
         {%{s | status: :tool_dispatch, last_response: resp, pending_calls: calls},
          [{:append_message, "assistant", resp}, {:dispatch_tools, calls}]}
     end
+  end
+
+  def step(%State{status: :finalizing} = s, {:output_converted, converted}) do
+    {s, [{:validate_output, converted}]}
   end
 
   def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
@@ -175,4 +180,12 @@ defmodule Normandy.Agents.Turn do
   defp tool_calls(%{tool_calls: nil}), do: []
   defp tool_calls(%{tool_calls: calls}) when is_list(calls), do: calls
   defp tool_calls(_), do: []
+
+  # Conversion (the ToolCallResponse -> output_schema unwrap) is needed only when
+  # the turn's normal-call response model differs from the output schema — i.e.
+  # the tool-loop case, where the LLM was asked for %ToolCallResponse{}. A
+  # no-tools turn sets response_model == output_schema and skips conversion,
+  # matching run_without_tools. The forced-final (:max_iterations) path skips
+  # conversion structurally (see the awaiting_final clause).
+  defp convert_needed?(%State{response_model: rm, output_schema: os}), do: rm != os
 end

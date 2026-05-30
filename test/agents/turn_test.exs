@@ -44,31 +44,60 @@ defmodule Normandy.Agents.TurnTest do
     end
   end
 
-  describe "step/2 assistant_streaming with no tool calls" do
-    test "finalizes: appends assistant message, emits finalize, stops as :completed" do
-      s = %State{status: :assistant_streaming, iterations_left: 5, max_iterations: 5}
+  describe "step/2 assistant_streaming with no tool calls (enters :finalizing)" do
+    test "enters :finalizing as :completed and emits :convert_output when response_model != output_schema" do
+      s = %State{
+        status: :assistant_streaming,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: %ToolCallResponse{},
+        output_schema: :os
+      }
+
       resp = %ToolCallResponse{content: "all done", tool_calls: nil}
 
       {s2, effects} = Turn.step(s, {:llm_response, resp})
 
-      assert s2.status == :stopped
+      assert s2.status == :finalizing
       assert s2.stop_reason == :completed
-      assert s2.final_response == resp
       assert s2.last_response == resp
+      refute s2.final_response
 
-      assert effects == [
-               {:append_message, "assistant", resp},
-               {:finalize, resp}
-             ]
+      assert effects == [{:convert_output, resp, :os}]
     end
 
-    test "treats an empty tool_calls list as no tool calls" do
-      s = %State{status: :assistant_streaming, iterations_left: 5, max_iterations: 5}
+    test "enters :finalizing and emits :validate_output (skips convert) when response_model == output_schema" do
+      s = %State{
+        status: :assistant_streaming,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :os,
+        output_schema: :os
+      }
+
       resp = %ToolCallResponse{content: "done", tool_calls: []}
 
-      {s2, _effects} = Turn.step(s, {:llm_response, resp})
-      assert s2.status == :stopped
+      {s2, effects} = Turn.step(s, {:llm_response, resp})
+
+      assert s2.status == :finalizing
       assert s2.stop_reason == :completed
+      assert effects == [{:validate_output, resp}]
+    end
+  end
+
+  describe "step/2 finalizing pipeline" do
+    test ":output_converted advances to :validate_output" do
+      s = %State{
+        status: :finalizing,
+        stop_reason: :completed,
+        iterations_left: 4,
+        max_iterations: 5
+      }
+
+      {s2, effects} = Turn.step(s, {:output_converted, :converted})
+
+      assert s2.status == :finalizing
+      assert effects == [{:validate_output, :converted}]
     end
   end
 
