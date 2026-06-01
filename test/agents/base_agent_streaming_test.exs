@@ -435,6 +435,38 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       assert true
     end
 
+    test "max iterations forced-final returns a clean response and persists a tool turn" do
+      client = %MockStreamingClientWithTools{}
+
+      config =
+        BaseAgent.init(%{
+          client: client,
+          model: "claude-3",
+          temperature: 0.7,
+          # Only allow 1 iteration: stream a tool call, dispatch it, hit the
+          # cap, then force one final streaming call (the awaiting_final path).
+          max_tool_iterations: 1
+        })
+
+      tool = %TestCalculator{}
+      config = BaseAgent.register_tool(config, tool)
+
+      callback = fn _, _ -> :ok end
+      user_input = %{chat_message: "Calculate"}
+
+      {updated_config, response} = BaseAgent.stream_with_tools(config, user_input, callback)
+
+      # The forced-final streaming call produced a final message.
+      assert response.content
+
+      # The synthetic :tool_calls key must be stripped from the returned response.
+      refute Map.has_key?(response, :tool_calls)
+
+      # The dispatched tool result was recorded before the forced-final call.
+      roles = AgentMemory.history(updated_config.memory) |> Enum.map(& &1.role)
+      assert "tool" in roles
+    end
+
     test "streams final response after tool execution" do
       client = %MockStreamingClientWithTools{}
 
