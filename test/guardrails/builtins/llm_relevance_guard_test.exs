@@ -25,7 +25,7 @@ defmodule Normandy.Guardrails.Builtins.LlmRelevanceGuardTest do
   defp on_topic(reason \\ "about an event"),
     do: %RelevanceMock{response: %Decision{on_topic: true, reason: reason}}
 
-  defp off_topic(reason \\ "not about events"),
+  defp off_topic(reason),
     do: %RelevanceMock{response: %Decision{on_topic: false, reason: reason}}
 
   describe "check/2 allow & block" do

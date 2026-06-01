@@ -58,6 +58,12 @@ defmodule Normandy.Guardrails.Builtins.LlmRelevanceGuard do
     max_tokens = Keyword.get(opts, :max_tokens, 128)
     examples = Keyword.get(opts, :examples, [])
     on_error = Keyword.get(opts, :on_error, :allow)
+
+    unless on_error in [:allow, :block] do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)} :on_error must be :allow or :block, got: #{inspect(on_error)}"
+    end
+
     path = field_path(Keyword.get(opts, :field))
 
     messages = build_messages(text, domain, examples)
@@ -76,10 +82,10 @@ defmodule Normandy.Guardrails.Builtins.LlmRelevanceGuard do
       )
 
     case decision do
-      %{on_topic: true} ->
+      %Decision{on_topic: true} ->
         :ok
 
-      %{on_topic: false} = d ->
+      %Decision{on_topic: false} = d ->
         {:error,
          [
            %{
