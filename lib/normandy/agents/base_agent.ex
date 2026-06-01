@@ -905,10 +905,19 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp stream_opts(config, callback) do
-    if has_tools?(config) do
-      [tools: Registry.to_tool_schemas(config.tool_registry), callback: callback]
+    opts =
+      if has_tools?(config) do
+        [tools: Registry.to_tool_schemas(config.tool_registry), callback: callback]
+      else
+        [callback: callback]
+      end
+
+    # Pass MCP server configs through to the LLM adapter, mirroring the
+    # non-streaming path in get_response/2.
+    if config.mcp_servers do
+      Keyword.put(opts, :mcp_servers, config.mcp_servers)
     else
-      [callback: callback]
+      opts
     end
   end
 
