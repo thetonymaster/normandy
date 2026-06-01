@@ -47,6 +47,12 @@ defmodule Normandy.Context.WindowManagerTest do
       assert manager.max_tokens == 200_000
       assert manager.reserved_tokens == 8192
     end
+
+    test "sources limits from the canonical ModelCatalog (single source of truth)" do
+      for {model, window} <- Normandy.Behaviours.ModelCatalog.Static.limits() do
+        assert WindowManager.for_model(model).max_tokens == window
+      end
+    end
   end
 
   describe "estimate_tokens/1" do

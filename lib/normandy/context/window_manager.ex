@@ -43,14 +43,7 @@ defmodule Normandy.Context.WindowManager do
   defstruct max_tokens: 100_000,
             reserved_tokens: 4096,
             strategy: :oldest_first,
-            model_limits: %{
-              "claude-haiku-4-5-20251001" => 200_000,
-              "claude-3-5-sonnet-20241022" => 200_000,
-              "claude-3-5-haiku-20241022" => 200_000,
-              "claude-3-opus-20240229" => 200_000,
-              "claude-3-sonnet-20240229" => 200_000,
-              "claude-3-haiku-20240307" => 200_000
-            }
+            model_limits: Normandy.Behaviours.ModelCatalog.Static.limits()
 
   @doc """
   Creates a new WindowManager with optional configuration.
@@ -90,7 +83,9 @@ defmodule Normandy.Context.WindowManager do
   @spec for_model(String.t(), keyword()) :: t()
   def for_model(model, opts \\ []) do
     manager = new(opts)
-    model_limit = Map.get(manager.model_limits, model, manager.max_tokens)
+
+    model_limit =
+      Normandy.Behaviours.ModelCatalog.Static.context_window(model) || manager.max_tokens
 
     %{manager | max_tokens: model_limit}
   end
