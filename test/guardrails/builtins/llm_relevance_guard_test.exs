@@ -143,4 +143,37 @@ defmodule Normandy.Guardrails.Builtins.LlmRelevanceGuardTest do
       assert v.constraint == :off_topic
     end
   end
+
+  describe ":field extraction" do
+    test "extracts the configured field from a map before classifying" do
+      client = %RelevanceMock{response: %Decision{on_topic: false, reason: "off"}, notify: self()}
+
+      assert {:error, [v]} =
+               LlmRelevanceGuard.check(
+                 %{chat_message: "what's the capital of France?"},
+                 client: client,
+                 domain: "event planning",
+                 field: :chat_message
+               )
+
+      assert v.constraint == :off_topic
+      assert v.path == [:chat_message]
+
+      assert_receive {:classify_messages, messages}
+      user = Enum.find(messages, &(&1.role == "user")).content
+      assert user == "what's the capital of France?"
+    end
+
+    test "raises ArgumentError when :field is set but the value is not a map" do
+      client = %RelevanceMock{response: %Decision{on_topic: true}}
+
+      assert_raise ArgumentError, fn ->
+        LlmRelevanceGuard.check("not a map",
+          client: client,
+          domain: "event planning",
+          field: :chat_message
+        )
+      end
+    end
+  end
 end
