@@ -24,6 +24,15 @@ defmodule Normandy.Guardrails do
   `:output_guardrails` on `Normandy.Agents.BaseAgentConfig`, or via the
   `guardrails/2` macro in `Normandy.DSL.Agent`.
 
+  ## Relevance gating with graceful redirect
+
+  For topic/relevance guardrails — keeping an agent on a single subject — use
+  `Normandy.Guardrails.Builtins.LlmRelevanceGuard` (an LLM classifier guard)
+  together with `Normandy.Guardrails.Gate`. The gate runs an optional cheap
+  deny-stack plus the LLM guard through `run/2` and, instead of raising, returns
+  a polite redirect response on block while leaving agent memory untouched. See
+  those modules for details.
+
   ## Streaming
 
   Input guardrails run on streaming entry points (`BaseAgent.stream_response/3`,
