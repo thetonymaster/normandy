@@ -106,4 +106,30 @@ defmodule Normandy.Guardrails.GateTest do
       end
     end
   end
+
+  describe "deny-stack" do
+    test "short-circuits before the classifier is ever called" do
+      # notify: self() makes the mock forward messages when (and only when) it
+      # classifies. If MaxLength short-circuits first, the classifier never runs
+      # and no {:classify_messages, _} arrives.
+      client = %RelevanceMock{response: %Decision{on_topic: true}, notify: self()}
+
+      agent =
+        BaseAgent.init(%{
+          client: client,
+          model: "claude-haiku-4-5-20251001",
+          temperature: 0.0
+        })
+
+      {_a, response} =
+        Gate.run(agent, "way too long for the limit",
+          deny: [{Normandy.Guardrails.Builtins.MaxLength, limit: 3}],
+          relevance: [domain: "event planning"],
+          redirect_message: "nope"
+        )
+
+      assert response == %BaseAgentOutputSchema{chat_message: "nope"}
+      refute_received {:classify_messages, _}
+    end
+  end
 end
