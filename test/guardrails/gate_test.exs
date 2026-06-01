@@ -1,4 +1,5 @@
 defmodule Normandy.Guardrails.GateTest do
+  # async: false — later tasks attach global :telemetry handlers to this module.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema}

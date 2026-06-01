@@ -56,6 +56,9 @@ defmodule Normandy.Guardrails.Gate do
         _ -> BaseAgentOutputSchema
       end
 
+    # struct/2 silently ignores keys absent from the module, so a misconfigured
+    # :redirect_field yields a valid struct with the message field left nil. That
+    # is acceptable: :redirect_field is set by the caller at wire-up time.
     struct(module, %{field => message})
   end
 
@@ -66,6 +69,8 @@ defmodule Normandy.Guardrails.Gate do
       %{
         stage: :relevance,
         agent_name: agent.name,
+        # the full guard stack (not just firing guards) — mirrors
+        # BaseAgent.emit_guardrail_violation/5 for dashboard consistency.
         guards: Enum.map(guards, &guard_module/1),
         violations: violations
       }

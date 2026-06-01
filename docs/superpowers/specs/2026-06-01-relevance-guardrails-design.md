@@ -201,9 +201,10 @@ Normandy.Guardrails.Gate.run(agent, message,
        `%BaseAgentOutputSchema{}` when `output_schema` is nil.
      - Emit `[:normandy, :agent, :guardrail, :violation]` with measurements
        `%{count: length(violations)}` and metadata `%{stage: :relevance,
-       agent_name: agent.name, guards: Enum.map(violations, & &1.guard)}` — same
-       event the existing input-guardrail path emits, so blocks land on the same
-       dashboards.
+       agent_name: agent.name, guards: Enum.map(guards, &guard_module/1),
+       violations: violations}` — the **full guard stack** (not just the firing
+       guards), matching `BaseAgent.emit_guardrail_violation/5` exactly so blocks
+       land on the same dashboards with a consistent shape.
      - **Memory:** do **not** add the message or the redirect to `agent.memory`
        (decision #6). Return the **unchanged** `agent` plus the redirect response:
        `{agent, response}`.
