@@ -32,11 +32,13 @@ defmodule Normandy.Behaviours.PolicyEngine do
   defmodule Ruleset do
     @moduledoc """
     PolicyEngine that evaluates an ordered list of in-memory rules, first match
-    wins, with a configurable default action. The ruleset is supplied through
-    the behaviour opts on `ctx.opts`:
+    wins, with a configurable default action. The ruleset is supplied as a
+    **keyword list** on `ctx.opts` (the `opts` half of the bundle's
+    `{module, opts}` ref — always a keyword list by construction):
 
       * `:rules` — list of `%{match, action, rule_id, rationale}` maps. `match`
-        is a tool-name glob (`"*"` / `"prefix_*"` / exact). `action` is
+        is a tool-name glob: `"*"` (matches all), `"prefix_*"` (trailing `*`
+        only — prefix match), or an exact name. `action` is
         `:allow | :deny | :require_approval`.
       * `:default_action` — action when no rule matches (default `:allow`).
 
