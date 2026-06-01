@@ -88,4 +88,59 @@ defmodule Normandy.Guardrails.Builtins.LlmRelevanceGuardTest do
       assert user == "plan my quinceañera"
     end
   end
+
+  describe "could-not-classify" do
+    test "fails open and emits :error telemetry when on_topic is non-boolean" do
+      handler = "relguard-error-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler,
+        [:normandy, :agent, :guardrail, :error],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      try do
+        # on_topic defaults to nil — simulates an API error / unparseable reply,
+        # which converse swallows into a defaulted struct.
+        client = %RelevanceMock{response: %Decision{on_topic: nil}}
+
+        assert LlmRelevanceGuard.check("anything", client: client, domain: "event planning") ==
+                 :ok
+
+        assert_receive {:telemetry, [:normandy, :agent, :guardrail, :error], %{count: 1},
+                        %{guard: LlmRelevanceGuard}}
+      after
+        :telemetry.detach(handler)
+      end
+    end
+
+    test "fails closed with :classifier_error when on_error: :block" do
+      client = %RelevanceMock{response: %Decision{on_topic: nil}}
+
+      assert {:error, [v]} =
+               LlmRelevanceGuard.check("anything",
+                 client: client,
+                 domain: "event planning",
+                 on_error: :block
+               )
+
+      assert v.constraint == :classifier_error
+      assert v.guard == LlmRelevanceGuard
+    end
+
+    test "unwraps a {Decision, usage} tuple return" do
+      client = %RelevanceMock{
+        response: {%Decision{on_topic: false, reason: "off"}, %{output_tokens: 3}}
+      }
+
+      assert {:error, [v]} =
+               LlmRelevanceGuard.check("x", client: client, domain: "event planning")
+
+      assert v.constraint == :off_topic
+    end
+  end
 end
