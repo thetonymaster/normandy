@@ -111,7 +111,8 @@ defmodule Normandy.Agents.BaseAgent do
       input_guardrails: input_guardrails,
       output_guardrails: output_guardrails,
       output_guardrails_streaming_mode: streaming_mode,
-      output_guardrails_chunk_size: chunk_size
+      output_guardrails_chunk_size: chunk_size,
+      behaviours: Map.get(config, :behaviours, nil)
     }
   end
 
@@ -1196,12 +1197,16 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # The chokepoint pipeline BaseAgent uses: default behaviours (allow-all,
-  # no-op budget, no hooks) plus a telemetry-instrumented execute_fn so tool
-  # spans keep nesting under the agent.run span. Real behaviours are wired in
-  # the Phase 2 plan.
-  defp base_agent_pipeline do
-    %{Dispatch.default_pipeline() | execute_fn: &span_execute/3}
+  # The chokepoint pipeline BaseAgent uses: the agent's selected behaviours
+  # (default bundle = allow-all policy, no-op budget, no hooks) adapted into a
+  # %Dispatch.Pipeline{}, plus a telemetry-instrumented execute_fn so tool spans
+  # keep nesting under the agent.run span. With the default (nil) bundle this is
+  # byte-identical to the pre-Phase-2 default_pipeline/0 + span_execute path.
+  defp base_agent_pipeline(config) do
+    %{
+      Normandy.Behaviours.Config.to_pipeline(config.behaviours)
+      | execute_fn: &span_execute/3
+    }
   end
 
   defp span_execute(config, prepared_tool, tool_name) do
@@ -1214,14 +1219,14 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp execute_one_tool_call(config, tool_call) do
-    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
   end
 
   # Streaming-loop variant: tool_call is a string-keyed map (raw LLM JSON).
   # Dispatch.dispatch_one/3 normalizes it into a %ToolCall{} before running the
   # same chokepoint pipeline as the non-streaming path.
   defp execute_one_streaming_tool_call(config, tool_call) do
-    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline())
+    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
   end
 
   defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do
