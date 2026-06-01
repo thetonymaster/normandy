@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-01
+
+### Added
+
+- **Pluggable behaviours (Phase 2 of the harness decomposition).** The dispatch
+  chokepoint's function slots are now backed by four Elixir `@behaviour`s, each
+  with a default impl that preserves current behavior:
+  - `Normandy.Behaviours.PolicyEngine` (`check/2`) — default `AllowAll`; plus a
+    shipped `Ruleset` impl that evaluates ordered in-memory rules
+    (`match` glob → `:allow | :deny | :require_approval`, first-match-wins,
+    configurable `default_action`).
+  - `Normandy.Behaviours.BudgetTracker` (`check/2`, `record/2`) — default `NoOp`.
+  - `Normandy.Behaviours.CredentialProvider` (`get_token/2`) — default
+    `FromClient` (extracts `api_key` from the client struct). Defined and
+    defaulted; LLM-call consumption deferred.
+  - `Normandy.Behaviours.ModelCatalog` (`get/1`, `supports?/2`,
+    `context_window/1`) — default `Static`, now the single source of truth for
+    `WindowManager`'s context-window limits.
+- **`Normandy.Behaviours.Config`** bundle + `to_pipeline/1`, selectable per-agent
+  via the new `BaseAgentConfig.behaviours` field. `before/after` hooks are now
+  first-class, config-selectable function slots.
+
+### Notes
+
+- Additive and default-off: with the default bundle, observable behavior is
+  unchanged. No migration required.
+
 ## [0.6.3] - 2026-05-12
 
 ### Added
