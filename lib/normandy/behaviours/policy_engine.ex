@@ -28,4 +28,64 @@ defmodule Normandy.Behaviours.PolicyEngine do
     @impl true
     def check(_call, _ctx), do: {:allow, %{}}
   end
+
+  defmodule Ruleset do
+    @moduledoc """
+    PolicyEngine that evaluates an ordered list of in-memory rules, first match
+    wins, with a configurable default action. The ruleset is supplied through
+    the behaviour opts on `ctx.opts`:
+
+      * `:rules` — list of `%{match, action, rule_id, rationale}` maps. `match`
+        is a tool-name glob (`"*"` / `"prefix_*"` / exact). `action` is
+        `:allow | :deny | :require_approval`.
+      * `:default_action` — action when no rule matches (default `:allow`).
+
+    A YAML-file loader is intentionally deferred — YAML is only a serialization
+    of this in-memory shape.
+    """
+    @behaviour Normandy.Behaviours.PolicyEngine
+
+    @impl true
+    def check(call, ctx) do
+      opts = Map.get(ctx, :opts, [])
+      rules = Keyword.get(opts, :rules, [])
+      default_action = Keyword.get(opts, :default_action, :allow)
+      name = call_name(call)
+
+      case Enum.find(rules, fn rule -> matches?(rule[:match], name) end) do
+        nil -> decide(default_action, empty_meta())
+        rule -> decide(rule[:action] || :allow, rule_meta(rule))
+      end
+    end
+
+    defp call_name(%{name: name}) when is_binary(name), do: name
+    defp call_name(_), do: ""
+
+    defp empty_meta, do: %{reason: nil, rule_id: nil, rationale: nil}
+
+    defp rule_meta(rule) do
+      %{
+        reason: rule[:reason] || rule[:rationale],
+        rule_id: rule[:rule_id],
+        rationale: rule[:rationale]
+      }
+    end
+
+    defp decide(:allow, _meta), do: {:allow, %{}}
+    defp decide(:deny, meta), do: {:deny, meta}
+    defp decide(:require_approval, meta), do: {:needs_approval, meta}
+
+    defp matches?("*", _name), do: true
+    defp matches?(nil, _name), do: false
+
+    defp matches?(pattern, name) when is_binary(pattern) do
+      if String.ends_with?(pattern, "*") do
+        String.starts_with?(name, String.trim_trailing(pattern, "*"))
+      else
+        pattern == name
+      end
+    end
+
+    defp matches?(_pattern, _name), do: false
+  end
 end
