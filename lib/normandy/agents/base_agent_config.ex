@@ -34,7 +34,8 @@ defmodule Normandy.Agents.BaseAgentConfig do
           input_guardrails: [Normandy.Guardrails.spec()],
           output_guardrails: [Normandy.Guardrails.spec()],
           output_guardrails_streaming_mode: :accumulate | :incremental,
-          output_guardrails_chunk_size: pos_integer()
+          output_guardrails_chunk_size: pos_integer(),
+          behaviours: Normandy.Behaviours.Config.t() | nil
         }
 
   schema do
@@ -61,5 +62,6 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:output_guardrails, :any, default: [])
     field(:output_guardrails_streaming_mode, :any, default: :accumulate)
     field(:output_guardrails_chunk_size, :integer, default: 200)
+    field(:behaviours, :any, default: nil)
   end
 end

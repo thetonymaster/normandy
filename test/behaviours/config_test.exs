@@ -100,4 +100,35 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert %ToolResult{output: "REDACTED"} = Dispatch.dispatch_one(config, call, pipeline)
     end
   end
+
+  describe "BaseAgent integration" do
+    test "init/1 stores a supplied behaviours bundle on the config" do
+      bundle = %Config{
+        policy:
+          {PolicyEngine.Ruleset, rules: [%{match: "*", action: :allow}], default_action: :allow}
+      }
+
+      config =
+        Normandy.Agents.BaseAgent.init(%{
+          client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
+          model: "claude-3-5-sonnet-20241022",
+          temperature: 0.0,
+          behaviours: bundle
+        })
+
+      assert config.behaviours == bundle
+    end
+
+    test "init/1 defaults behaviours to nil (resolved to defaults at pipeline build)" do
+      config =
+        Normandy.Agents.BaseAgent.init(%{
+          client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
+          model: "claude-3-5-sonnet-20241022",
+          temperature: 0.0
+        })
+
+      assert config.behaviours == nil
+      assert %Pipeline{} = Config.to_pipeline(config.behaviours)
+    end
+  end
 end
