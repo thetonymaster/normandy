@@ -62,6 +62,19 @@ defmodule Normandy.SessionStoreContract do
         assert {:error, _} = @store.fork(h, "no-such-session", "no-such-entry")
       end
 
+      test "concurrent appends to one session do not lose entries", %{handle: h} do
+        n = 200
+
+        1..n
+        |> Enum.map(fn i ->
+          Task.async(fn -> @store.append_entry(h, "s1", contract_entry("user", i)) end)
+        end)
+        |> Enum.each(&Task.await(&1, 5000))
+
+        assert {:ok, entries} = @store.history(h, "s1")
+        assert length(entries) == n
+      end
+
       test "turn state round-trips an opaque term; missing is :error", %{handle: h} do
         term = {:turn, %{step: 3, calls: [:a, :b]}, "opaque"}
         assert :ok = @store.save_turn_state(h, "s1", term)
