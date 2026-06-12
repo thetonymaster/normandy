@@ -355,15 +355,12 @@ defmodule Normandy.Context.WindowManager do
     max_messages = Map.get(original_memory, :max_messages)
     turn_id = Map.get(original_memory, :current_turn_id)
 
-    # Start with empty memory and properly add messages using AgentMemory.add_message
-    memory = %{
-      max_messages: max_messages,
-      history: [],
-      current_turn_id: turn_id
-    }
+    # Start from a fresh entry-graph memory, preserving the active turn id so the
+    # rebuilt entries stay grouped exactly as before.
+    memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
     # Add messages in chronological order
-    # (add_message prepends, and history() will reverse, so this gives correct final order)
+    # (add_message appends to the active branch; iterating chronologically gives the correct chain order)
     messages
     |> Enum.reduce(memory, fn msg, mem ->
       AgentMemory.add_message(mem, msg.role, msg.content)

@@ -212,13 +212,8 @@ defmodule Normandy.Context.Summarizer do
     max_messages = Map.get(original_memory, :max_messages)
     turn_id = Map.get(original_memory, :current_turn_id)
 
-    # Start with empty memory and properly add messages using AgentMemory.add_message
-    # This ensures content is stored correctly regardless of type
-    memory = %{
-      max_messages: max_messages,
-      history: [],
-      current_turn_id: turn_id
-    }
+    # Start from a fresh entry-graph memory, preserving the active turn id.
+    memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
     # Add summary message first - wrap in proper IO schema struct
     summary_content = %Normandy.Agents.BaseAgentOutputSchema{
@@ -228,7 +223,7 @@ defmodule Normandy.Context.Summarizer do
     memory = AgentMemory.add_message(memory, summary_role, summary_content)
 
     # Add recent messages in chronological order
-    # (add_message prepends, and history() will reverse, so this gives correct final order)
+    # (add_message appends to the active branch; iterating chronologically gives the correct chain order)
     recent_messages
     |> Enum.reduce(memory, fn msg, mem ->
       AgentMemory.add_message(mem, msg.role, msg.content)
