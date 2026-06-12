@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   active-chain length; after a `fork/2` with divergent appends it counts entries
   across all branches, not just the active one.
 
+### Security
+
+- `AgentMemory.load/1` no longer decodes dumps with `keys: :atoms`. A blanket
+  atom decode interned every nested content key, so an untrusted/corrupt dump
+  could exhaust the VM atom table. `load/1` now decodes with string keys and
+  atomizes only known struct field names (via `to_existing_atom`, which never
+  mints new atoms); raw content round-trips verbatim.
+
 ### Notes
 
 - Linear-conversation observable behavior is unchanged — the end-to-end suite is

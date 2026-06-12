@@ -160,42 +160,29 @@ defmodule Normandy.Components.AgentMemory do
   @spec load(String.t()) :: t()
   def load(dump) do
     adapter = Application.get_env(:normandy, :adapter, Poison)
-    loaded = adapter.decode!(dump, keys: :atoms)
-    # Second pass with string keys: raw (non-struct) content must round-trip
-    # verbatim. Decoding the whole dump with `keys: :atoms` atomizes the keys
-    # *inside* multimodal/list content (e.g. "type" -> :type), silently breaking
-    # downstream string-key dispatch. We recover raw content from this string-keyed
-    # view, keeping the atom view for the envelope and struct content.
-    loaded_raw = adapter.decode!(dump)
-
-    atom_entries = loaded.entries
-    raw_entries = loaded_raw["entries"]
-
-    if length(atom_entries) != length(raw_entries) do
-      raise ArgumentError,
-            "AgentMemory.load/1: entry count mismatch " <>
-              "(#{length(atom_entries)} vs #{length(raw_entries)}) — dump is corrupt"
-    end
+    # Decode with string keys only. A dump can carry untrusted/raw content, and a
+    # blanket `keys: :atoms` would intern every nested content key — an atom-table
+    # exhaustion vector. We read the fixed envelope by string key and atomize
+    # nothing outside known struct field names (see decode_content/1).
+    loaded = adapter.decode!(dump)
 
     entries =
-      Enum.zip(atom_entries, raw_entries)
-      |> Enum.map(fn {e, e_raw} ->
-        {e.id,
+      for e <- loaded["entries"], into: %{} do
+        {e["id"],
          %Entry{
-           id: e.id,
-           parent_id: e.parent_id,
-           turn_id: e.turn_id,
-           role: e.role,
-           content: decode_content(e.content, e_raw)
+           id: e["id"],
+           parent_id: e["parent_id"],
+           turn_id: e["turn_id"],
+           role: e["role"],
+           content: decode_content(e["content"])
          }}
-      end)
-      |> Map.new()
+      end
 
     %__MODULE__{
       entries: entries,
-      head: Map.get(loaded, :head),
-      current_turn_id: Map.get(loaded, :current_turn_id),
-      max_messages: Map.get(loaded, :max_messages)
+      head: loaded["head"],
+      current_turn_id: loaded["current_turn_id"],
+      max_messages: loaded["max_messages"]
     }
   end
 
@@ -284,12 +271,19 @@ defmodule Normandy.Components.AgentMemory do
 
   defp encode_content(content), do: %{type: "raw", data: content}
 
-  # Struct content rebuilds from the atom-keyed view. Raw content is taken from
-  # the string-keyed view (`e_raw`) so its (typically string) keys survive verbatim.
-  defp decode_content(%{type: "raw"}, e_raw), do: e_raw["content"]["data"]
+  # Raw (non-struct) content round-trips verbatim — its keys stay strings, so an
+  # untrusted dump cannot grow the atom table.
+  defp decode_content(%{"type" => "raw", "data" => data}), do: data
 
-  defp decode_content(%{type: type, data: data}, _e_raw) do
+  # Struct content rebuilds onto the named module. Only the struct's own field
+  # names are atomized, via `to_existing_atom` (which never mints a new atom), so a
+  # hostile dump still cannot exhaust the atom table.
+  defp decode_content(%{"type" => type, "data" => data}) do
     mod = String.to_existing_atom(type)
-    struct(mod, data)
+    struct(mod, atomize_struct_fields(data))
+  end
+
+  defp atomize_struct_fields(data) do
+    for {key, value} <- data, into: %{}, do: {String.to_existing_atom(key), value}
   end
 end

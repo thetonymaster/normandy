@@ -229,6 +229,21 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert loaded |> AgentMemory.messages() |> hd() |> Map.get(:content) == blocks
   end
 
+  test "load does not intern arbitrary content keys (atom-table DoS guard)" do
+    # A key that exists nowhere else in the codebase. A blanket `keys: :atoms`
+    # decode of an untrusted dump would intern it permanently (atom-table
+    # exhaustion vector); a hardened load must leave content keys as strings.
+    probe = "cr_dos_guard_probe_key_9f3a"
+    memory = AgentMemory.new_memory() |> AgentMemory.add_message("user", %{probe => 1})
+
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+    # Content round-trips verbatim (string key preserved)...
+    assert loaded |> AgentMemory.messages() |> hd() |> Map.get(:content) == %{probe => 1}
+    # ...and the probe key was never interned.
+    assert_raise ArgumentError, fn -> String.to_existing_atom(probe) end
+  end
+
   test "entry_chain terminates on a corrupt parent cycle instead of hanging" do
     # A self-cyclic entry (parent_id == id) — the shape a corrupt dump or a
     # duplicate-id append produces. The walk must terminate, not loop forever.
