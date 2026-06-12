@@ -161,17 +161,32 @@ defmodule Normandy.Components.AgentMemory do
   def load(dump) do
     adapter = Application.get_env(:normandy, :adapter, Poison)
     loaded = adapter.decode!(dump, keys: :atoms)
+    # Second pass with string keys: raw (non-struct) content must round-trip
+    # verbatim. Decoding the whole dump with `keys: :atoms` atomizes the keys
+    # *inside* multimodal/list content (e.g. "type" -> :type), silently breaking
+    # downstream string-key dispatch. We recover raw content from this string-keyed
+    # view, keeping the atom view for the envelope and struct content.
+    loaded_raw = adapter.decode!(dump)
+
+    atom_entries = loaded.entries
+    raw_entries = loaded_raw["entries"]
+
+    if length(atom_entries) != length(raw_entries) do
+      raise ArgumentError,
+            "AgentMemory.load/1: entry count mismatch " <>
+              "(#{length(atom_entries)} vs #{length(raw_entries)}) — dump is corrupt"
+    end
 
     entries =
-      loaded.entries
-      |> Enum.map(fn e ->
+      Enum.zip(atom_entries, raw_entries)
+      |> Enum.map(fn {e, e_raw} ->
         {e.id,
          %Entry{
            id: e.id,
            parent_id: e.parent_id,
            turn_id: e.turn_id,
            role: e.role,
-           content: decode_content(e.content)
+           content: decode_content(e.content, e_raw)
          }}
       end)
       |> Map.new()
@@ -190,16 +205,22 @@ defmodule Normandy.Components.AgentMemory do
     %Message{turn_id: turn_id, role: role, content: content}
   end
 
-  # Walk head -> root, newest entry first.
+  # Walk head -> root, newest entry first. Tracks visited ids so a corrupt
+  # parent_id cycle (e.g. from a malformed dump or a duplicate-id append)
+  # terminates gracefully instead of looping forever.
   defp chain_newest_first(%__MODULE__{head: head, entries: entries}) do
-    Stream.unfold(head, fn
-      nil ->
+    Stream.unfold({head, MapSet.new()}, fn
+      {nil, _visited} ->
         nil
 
-      id ->
-        case Map.get(entries, id) do
-          nil -> nil
-          %Entry{parent_id: parent_id} = entry -> {entry, parent_id}
+      {id, visited} ->
+        if MapSet.member?(visited, id) do
+          nil
+        else
+          case Map.get(entries, id) do
+            nil -> nil
+            %Entry{parent_id: parent_id} = entry -> {entry, {parent_id, MapSet.put(visited, id)}}
+          end
         end
     end)
     |> Enum.to_list()
@@ -250,9 +271,11 @@ defmodule Normandy.Components.AgentMemory do
 
   defp encode_content(content), do: %{type: "raw", data: content}
 
-  defp decode_content(%{type: "raw", data: data}), do: data
+  # Struct content rebuilds from the atom-keyed view. Raw content is taken from
+  # the string-keyed view (`e_raw`) so its (typically string) keys survive verbatim.
+  defp decode_content(%{type: "raw"}, e_raw), do: e_raw["content"]["data"]
 
-  defp decode_content(%{type: type, data: data}) do
+  defp decode_content(%{type: type, data: data}, _e_raw) do
     mod = String.to_existing_atom(type)
     struct(mod, data)
   end

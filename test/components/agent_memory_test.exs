@@ -3,6 +3,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
   alias NormandyTest.IOTest
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
   doctest Normandy.Components.AgentMemory
 
@@ -214,5 +215,28 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert AgentMemory.count_messages(memory) == 2
     assert Enum.map(AgentMemory.messages(memory), & &1.content) == [%{c: "a"}, %{c: "c"}]
     assert AgentMemory.latest_message(memory).turn_id == turn_c
+  end
+
+  test "dump/load preserves string-keyed (multimodal) raw content verbatim" do
+    blocks = [
+      %{"type" => "text", "text" => "describe this"},
+      %{"type" => "image", "source" => %{"type" => "url", "url" => "https://example.com/a.png"}}
+    ]
+
+    memory = AgentMemory.new_memory() |> AgentMemory.add_message("user", blocks)
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+    assert loaded |> AgentMemory.messages() |> hd() |> Map.get(:content) == blocks
+  end
+
+  test "entry_chain terminates on a corrupt parent cycle instead of hanging" do
+    # A self-cyclic entry (parent_id == id) — the shape a corrupt dump or a
+    # duplicate-id append produces. The walk must terminate, not loop forever.
+    entry = %Entry{id: "x", parent_id: "x", turn_id: "t", role: "user", content: %{}}
+    memory = %AgentMemory{entries: %{"x" => entry}, head: "x", current_turn_id: "t"}
+
+    # Run under a timeout so a regression fails the test instead of hanging the suite.
+    chain = Task.await(Task.async(fn -> AgentMemory.entry_chain(memory) end), 2000)
+    assert Enum.map(chain, & &1.id) == ["x"]
   end
 end
