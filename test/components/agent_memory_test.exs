@@ -239,4 +239,28 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     chain = Task.await(Task.async(fn -> AgentMemory.entry_chain(memory) end), 2000)
     assert Enum.map(chain, & &1.id) == ["x"]
   end
+
+  test "delete_turn terminates on a corrupt parent cycle instead of hanging" do
+    # Two entries in one turn forming a parent cycle (a <-> b) — the shape a corrupt
+    # dump can produce. delete_turn marks both deleted; rewiring survivors must not
+    # loop forever walking the cycle.
+    a = %Entry{id: "a", parent_id: "b", turn_id: "T", role: "user", content: %{}}
+    b = %Entry{id: "b", parent_id: "a", turn_id: "T", role: "assistant", content: %{}}
+    c = %Entry{id: "c", parent_id: "a", turn_id: "U", role: "user", content: %{}}
+
+    memory = %AgentMemory{
+      entries: %{"a" => a, "b" => b, "c" => c},
+      head: "c",
+      current_turn_id: "U"
+    }
+
+    # Under a timeout so a regression fails the test instead of hanging the suite.
+    result = Task.await(Task.async(fn -> AgentMemory.delete_turn(memory, "T") end), 2000)
+
+    # a and b are gone; c survives. Its parent walked up into the cycle, so no
+    # surviving ancestor exists -> nil.
+    assert AgentMemory.count_messages(result) == 1
+    assert AgentMemory.get_entry(result, "c").parent_id == nil
+    assert result.head == "c"
+  end
 end

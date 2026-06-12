@@ -251,17 +251,30 @@ defmodule Normandy.Components.AgentMemory do
     end
   end
 
-  # Nearest non-deleted id walking up parent links; nil if none survives.
-  defp surviving_ancestor(nil, _entries, _deleted), do: nil
+  # Nearest non-deleted id walking up parent links; nil if none survives. Tracks
+  # visited ids so a corrupt parent cycle (same vector `chain_newest_first/1`
+  # guards against) terminates instead of looping forever.
+  defp surviving_ancestor(id, entries, deleted),
+    do: surviving_ancestor(id, entries, deleted, MapSet.new())
 
-  defp surviving_ancestor(id, entries, deleted) do
-    if MapSet.member?(deleted, id) do
-      case Map.get(entries, id) do
-        %Entry{parent_id: parent_id} -> surviving_ancestor(parent_id, entries, deleted)
-        nil -> nil
-      end
-    else
-      id
+  defp surviving_ancestor(nil, _entries, _deleted, _visited), do: nil
+
+  defp surviving_ancestor(id, entries, deleted, visited) do
+    cond do
+      MapSet.member?(visited, id) ->
+        nil
+
+      MapSet.member?(deleted, id) ->
+        case Map.get(entries, id) do
+          %Entry{parent_id: parent_id} ->
+            surviving_ancestor(parent_id, entries, deleted, MapSet.put(visited, id))
+
+          nil ->
+            nil
+        end
+
+      true ->
+        id
     end
   end
 
