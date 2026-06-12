@@ -276,7 +276,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       # But assistant-role memory entries must not carry the violation metadata,
       # otherwise matched terms/paths feed back into the next LLM call.
       assistant_entries =
-        updated_agent.memory.history
+        Normandy.Components.AgentMemory.messages(updated_agent.memory)
         |> Enum.filter(&(&1.role == "assistant"))
 
       assert assistant_entries != []

@@ -130,9 +130,9 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         BaseAgent.run(agent, %{chat_message: "What's my name?"})
 
       # Should have conversation history
-      assert agent2.memory.history != []
+      assert Normandy.Components.AgentMemory.count_messages(agent2.memory) != 0
       # user, assistant, user, assistant
-      assert length(agent2.memory.history) >= 4
+      assert Normandy.Components.AgentMemory.count_messages(agent2.memory) >= 4
     end
   end
 

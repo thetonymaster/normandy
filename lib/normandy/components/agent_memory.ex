@@ -68,6 +68,21 @@ defmodule Normandy.Components.AgentMemory do
     %{role: role, content: BaseIOSchema.to_json(content)}
   end
 
+  @doc "The conversation as `%Message{}` structs, chronological (oldest -> newest)."
+  @spec messages(t()) :: [Message.t()]
+  def messages(memory) do
+    memory |> Map.get(:history, []) |> Enum.reverse()
+  end
+
+  @doc "The newest message, or nil when empty."
+  @spec latest_message(t()) :: Message.t() | nil
+  def latest_message(memory) do
+    case Map.get(memory, :history, []) do
+      [latest | _] -> latest
+      [] -> nil
+    end
+  end
+
   @spec get_current_turn_id(t()) :: String.t() | nil
   def get_current_turn_id(memory), do: Map.get(memory, :current_turn_id)
 

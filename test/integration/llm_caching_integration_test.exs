@@ -160,7 +160,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
           updated
         end)
 
-      assert length(agent1.memory.history) >= 6
+      assert Normandy.Components.AgentMemory.count_messages(agent1.memory) >= 6
 
       # Second run with fresh agent but similar pattern
       _agent2 =

@@ -31,7 +31,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
 
       # Verify tool was executed (check memory for tool_use/tool_result)
       memory = updated_agent.memory
-      history = memory.history
+      history = Normandy.Components.AgentMemory.messages(memory)
 
       # Should have: user message, assistant tool_use, tool_result, assistant response
       assert length(history) >= 3
