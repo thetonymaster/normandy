@@ -504,11 +504,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
       {agent, _response} = BaseAgent.run_with_tools(agent, %{text: "fan out"})
 
-      # `memory.history` is stored LIFO ([newest | rest]) for O(1) prepends.
-      # Reverse to get chronological order before filtering.
+      # AgentMemory.messages/1 returns the conversation chronological.
       tool_msgs =
-        agent.memory.history
-        |> Enum.reverse()
+        Normandy.Components.AgentMemory.messages(agent.memory)
         |> Enum.filter(&(&1.role == "tool"))
 
       assert length(tool_msgs) == 3

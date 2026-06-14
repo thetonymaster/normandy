@@ -1313,25 +1313,30 @@ defmodule Normandy.Agents.BaseAgent do
     raise RuntimeError, "LLM call failed: #{inspect(reason)}"
   end
 
-  defp pending_tool_call_count(%BaseAgentConfig{memory: %{history: [latest | _]}})
-       when latest.role == "assistant" do
-    latest.content
-    |> Map.get(:tool_calls, [])
-    |> length()
+  defp pending_tool_call_count(%BaseAgentConfig{memory: memory}) do
+    case AgentMemory.latest_message(memory) do
+      %Message{role: "assistant", content: content} ->
+        content |> Map.get(:tool_calls, []) |> length()
+
+      _ ->
+        0
+    end
   end
 
-  defp pending_tool_call_count(_), do: 0
+  defp completed_iterations({%BaseAgentConfig{memory: memory}, _response}) do
+    messages = AgentMemory.messages(memory)
 
-  defp completed_iterations({%BaseAgentConfig{memory: %{history: history}}, _response}) do
+    # messages/1 is chronological (oldest-first); re-reverse to scan newest-first
+    # so Enum.find_value returns the *most recent* assistant turn_id.
     assistant_turn_id =
-      history
+      messages
+      |> Enum.reverse()
       |> Enum.find_value(fn
         %Message{role: "assistant", turn_id: turn_id} -> turn_id
         _ -> nil
       end)
 
-    history
-    |> Enum.count(fn
+    Enum.count(messages, fn
       %Message{role: "assistant", turn_id: ^assistant_turn_id} -> true
       _ -> false
     end)

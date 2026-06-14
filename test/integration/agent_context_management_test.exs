@@ -24,7 +24,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         BaseAgent.run(agent, %{chat_message: "What's my name and favorite color?"})
 
       # Should remember both pieces of information
-      history = agent.memory.history
+      history = Normandy.Components.AgentMemory.messages(agent.memory)
       # 3 user messages + 3 assistant responses
       assert length(history) >= 6
 
@@ -47,7 +47,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         end)
 
       # Should have full history
-      assert length(final_agent.memory.history) >= 6
+      assert Normandy.Components.AgentMemory.count_messages(final_agent.memory) >= 6
     end
 
     test "system messages are preserved", %{agent: agent} do
@@ -81,7 +81,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       assert is_binary(r3.chat_message)
 
       # Memory should contain all interactions
-      assert length(agent.memory.history) >= 6
+      assert Normandy.Components.AgentMemory.count_messages(agent.memory) >= 6
     end
   end
 
@@ -108,7 +108,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         end)
 
       # Should handle many turns
-      assert length(final_agent.memory.history) >= 20
+      assert Normandy.Components.AgentMemory.count_messages(final_agent.memory) >= 20
     end
 
     test "memory structure is maintained", %{agent: agent} do
@@ -116,9 +116,9 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       {agent, _r2} = BaseAgent.run(agent, %{chat_message: "Second message"})
 
       # Verify memory structure
-      assert is_list(agent.memory.history)
+      assert is_list(Normandy.Components.AgentMemory.messages(agent.memory))
 
-      assert Enum.all?(agent.memory.history, fn msg ->
+      assert Enum.all?(Normandy.Components.AgentMemory.messages(agent.memory), fn msg ->
                Map.has_key?(msg, :role) && Map.has_key?(msg, :content)
              end)
     end

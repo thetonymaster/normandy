@@ -9,8 +9,10 @@ defmodule Normandy.Behaviours.Config do
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
   `before_hooks`, `after_hooks`) into a `%Normandy.Agents.Dispatch.Pipeline{}`.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
-  the dependency points Phase 2 → Phase 1. The `credential` and `model_catalog`
-  slots are not dispatch-path concerns and are not placed on the pipeline.
+  the dependency points Phase 2 → Phase 1. The `credential`, `model_catalog`, and `session_store` slots are not
+  dispatch-path concerns and are not placed on the pipeline. `session_store`
+  selects where session entries / turn state persist; it is wired here but not yet
+  consumed by the turn loop (Phase 4 reads it).
   """
 
   alias Normandy.Agents.Dispatch.Pipeline
@@ -18,6 +20,7 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Behaviours.CredentialProvider
   alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.PolicyEngine
+  alias Normandy.Behaviours.SessionStore
   alias Normandy.Tools.Executor
 
   @type ref :: {module(), keyword()}
@@ -28,7 +31,8 @@ defmodule Normandy.Behaviours.Config do
           before_hooks: [hook()],
           after_hooks: [hook()],
           credential: ref(),
-          model_catalog: ref()
+          model_catalog: ref(),
+          session_store: ref()
         }
 
   defstruct policy: {PolicyEngine.AllowAll, []},
@@ -36,7 +40,8 @@ defmodule Normandy.Behaviours.Config do
             before_hooks: [],
             after_hooks: [],
             credential: {CredentialProvider.FromClient, []},
-            model_catalog: {ModelCatalog.Static, []}
+            model_catalog: {ModelCatalog.Static, []},
+            session_store: {SessionStore.InMemory, []}
 
   @doc """
   Builds a `%Dispatch.Pipeline{}` from the dispatch-path slots of the bundle.

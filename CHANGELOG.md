@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-12
+
+### Added
+
+- **Branching session memory + SessionStore (Phase 3 of the harness
+  decomposition).**
+  - `Normandy.Components.AgentMemory` is now a struct of parent-linked
+    `AgentMemory.Entry` records (`id` + `parent_id`) instead of a linear list.
+    Branching is opt-in via `fork/2`; a linear conversation is a degenerate
+    single-parent chain and `history/1` output is unchanged. New accessors:
+    `fork/2`, `entries/1`, `get_entry/2`, `entry_chain/1`, `messages/1`,
+    `latest_message/1`.
+  - `Normandy.Behaviours.SessionStore` (`append_entry/3`, `history/2`, `fork/3`,
+    `save_turn_state/3`, `load_turn_state/2`) with `InMemory` (default) and `ETS`
+    impls sharing one contract suite. Both serialize per-session writes (the
+    `InMemory` impl via its `Agent`, the `ETS` impl via a GenServer that owns a
+    private table), so concurrent appends/forks to one session can't clobber each
+    other — a guarantee the shared contract now exercises under concurrency. The
+    turn-state half round-trips an opaque term; its consumer (suspendable turn /
+    passivation) lands in Phase 4. Postgres is deferred.
+  - `session_store` slot on `Normandy.Behaviours.Config` (default
+    `{SessionStore.InMemory, []}`) — selectable per-agent, not on the dispatch
+    pipeline, not yet consumed by the turn loop.
+
+### Changed
+
+- **BREAKING:** `AgentMemory`'s struct shape and `dump/1`/`load/1` JSON format
+  changed (entry-based). The dump carries a `version` key (currently `1`) as a
+  forward marker for future format detection — `load/1` does not yet branch on it.
+  Code that read the old `%{history: [...]}` map shape must use the public API or
+  the new accessors. The `dump/1`/`load/1` format is not backward-compatible with
+  pre-1.0 dumps.
+- `count_messages/1` now returns the total number of stored entries
+  (`map_size(entries)`). For a linear conversation this is identical to the old
+  active-chain length; after a `fork/2` with divergent appends it counts entries
+  across all branches, not just the active one.
+
+### Security
+
+- `AgentMemory.load/1` no longer decodes dumps with `keys: :atoms`. A blanket
+  atom decode interned every nested content key, so an untrusted/corrupt dump
+  could exhaust the VM atom table. `load/1` now decodes with string keys and
+  atomizes only known struct field names (via `to_existing_atom`, which never
+  mints new atoms); raw content round-trips verbatim.
+
+### Robustness
+
+- `AgentMemory` graph walks are cycle-safe. Both the active-branch walk
+  (`chain_newest_first/1`, behind `history/1`, `entry_chain/1`, `messages/1`) and
+  the survivor-rewiring walk (`surviving_ancestor`, behind `delete_turn/2`) track
+  visited ids, so a corrupt dump carrying a parent cycle terminates instead of
+  looping forever.
+
+### Notes
+
+- Linear-conversation observable behavior is unchanged — the end-to-end suite is
+  the parity oracle. Internal consumers (`base_agent` iteration counters,
+  `window_manager`/`summarizer` memory rebuild) and white-box tests were migrated
+  behavior-preservingly to the new accessors.
+
 ## [0.7.0] - 2026-06-01
 
 ### Added

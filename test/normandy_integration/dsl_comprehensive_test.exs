@@ -403,17 +403,19 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     assert is_map(response)
 
     # Verify memory was updated
-    assert length(updated_agent.memory.history) > 0
+    assert Normandy.Components.AgentMemory.count_messages(updated_agent.memory) > 0
 
     # Run again to test memory accumulation
     {updated_agent2, response2} = StructuredAgent.run(updated_agent, "And what about OTP?")
 
     assert is_map(response2)
-    assert length(updated_agent2.memory.history) > length(updated_agent.memory.history)
+
+    assert Normandy.Components.AgentMemory.count_messages(updated_agent2.memory) >
+             Normandy.Components.AgentMemory.count_messages(updated_agent.memory)
 
     # Test reset_memory
     reset_agent = StructuredAgent.reset_memory(updated_agent2)
-    assert length(reset_agent.memory.history) == 0
+    assert Normandy.Components.AgentMemory.count_messages(reset_agent.memory) == 0
 
     # Use pattern matching helpers to validate results
     results = [{:ok, response}, {:ok, response2}]

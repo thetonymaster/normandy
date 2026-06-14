@@ -3,88 +3,67 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
   alias NormandyTest.IOTest
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
   doctest Normandy.Components.AgentMemory
 
-  test "get a new memory" do
+  test "new_memory builds an empty entry graph" do
     memory = AgentMemory.new_memory(10)
 
-    assert Map.get(memory, :max_messages) == 10
-    assert Map.get(memory, :history) == []
-    assert Map.get(memory, :current_turn_id) == nil
+    assert memory.max_messages == 10
+    assert memory.entries == %{}
+    assert memory.head == nil
+    assert memory.current_turn_id == nil
   end
 
   test "custom memory max_messages" do
-    memory = AgentMemory.new_memory(20)
-
-    assert Map.get(memory, :max_messages) == 20
+    assert AgentMemory.new_memory(20).max_messages == 20
   end
 
-  test "initialize turn id" do
-    memory = AgentMemory.new_memory()
-
-    memory =
-      memory
-      |> AgentMemory.initialize_turn()
-
-    turn_id = Map.get(memory, :current_turn_id)
-
+  test "initialize_turn mints a fresh current_turn_id each call" do
+    memory = AgentMemory.new_memory() |> AgentMemory.initialize_turn()
+    turn_id = AgentMemory.get_current_turn_id(memory)
     assert turn_id != nil
 
     turn_id_after =
-      memory
-      |> AgentMemory.initialize_turn()
-      |> Map.get(:current_turn_id)
+      memory |> AgentMemory.initialize_turn() |> AgentMemory.get_current_turn_id()
 
     assert turn_id != turn_id_after
   end
 
-  test "add a new message" do
+  test "add_message links each entry to the prior head" do
     memory = AgentMemory.new_memory()
     content_a = %{hello: "goodbye"}
     memory = AgentMemory.add_message(memory, "main", content_a)
-    turn_id = Map.get(memory, :current_turn_id)
-    history = Map.get(memory, :history)
+    turn_id = AgentMemory.get_current_turn_id(memory)
 
     assert turn_id != nil
+    assert AgentMemory.count_messages(memory) == 1
 
-    # History is stored in reverse order (newest first)
-    result = [%Message{role: "main", content: content_a, turn_id: turn_id}]
-    assert history == result
+    assert [%Message{role: "main", content: ^content_a, turn_id: ^turn_id}] =
+             AgentMemory.messages(memory)
 
     content_b = %{goodbye: "hello"}
-    # When stored, newest message is first in the list
-    result = [%Message{role: "secondary", content: content_b, turn_id: turn_id} | result]
+    memory = AgentMemory.add_message(memory, "secondary", content_b)
 
-    history =
-      AgentMemory.add_message(memory, "secondary", content_b)
-      |> Map.get(:history)
+    assert [
+             %Message{role: "main", content: ^content_a},
+             %Message{role: "secondary", content: ^content_b}
+           ] = AgentMemory.messages(memory)
 
-    assert history == result
+    assert AgentMemory.latest_message(memory).role == "secondary"
   end
 
-  test "memory overflow" do
+  test "max_messages overflow keeps only the newest entries" do
     memory = AgentMemory.new_memory(1)
-    content_a = %{hello: "goodbye"}
-    memory = AgentMemory.add_message(memory, "main", content_a)
-    turn_id = Map.get(memory, :current_turn_id)
-    history = Map.get(memory, :history)
+    memory = AgentMemory.add_message(memory, "main", %{hello: "goodbye"})
+    memory = AgentMemory.add_message(memory, "secondary", %{goodbye: "hello"})
 
-    result = [%Message{role: "main", content: content_a, turn_id: turn_id}]
-    assert history == result
-
-    content_b = %{goodbye: "hello"}
-    # With max_messages=1, only the newest message is kept
-    result = [%Message{role: "secondary", content: content_b, turn_id: turn_id}]
-
-    history =
-      AgentMemory.add_message(memory, "secondary", content_b)
-      |> Map.get(:history)
-
-    assert history == result
+    assert AgentMemory.count_messages(memory) == 1
+    assert [%Message{role: "secondary"}] = AgentMemory.messages(memory)
   end
 
-  test "get history" do
+  test "history reconstructs the chronological role/content view" do
     content_a = %IOTest{}
     content_b = %IOTest{test_field: "hello there"}
 
@@ -93,8 +72,6 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       |> AgentMemory.add_message("user", content_a)
       |> AgentMemory.add_message("system", content_b)
       |> AgentMemory.history()
-
-    assert length(history) == 2
 
     assert history == [
              %{role: "user", content: "{\"test_field\":\"test_value\"}"},
@@ -105,10 +82,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
   test "list-shaped content survives history/1 verbatim" do
     blocks = [
       %{"type" => "text", "text" => "describe this"},
-      %{
-        "type" => "image",
-        "source" => %{"type" => "url", "url" => "https://example.com/a.png"}
-      }
+      %{"type" => "image", "source" => %{"type" => "url", "url" => "https://example.com/a.png"}}
     ]
 
     history =
@@ -119,7 +93,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert history == [%{role: "user", content: blocks}]
   end
 
-  test "get current turn" do
+  test "get_current_turn_id" do
     memory = AgentMemory.new_memory()
     assert AgentMemory.get_current_turn_id(memory) == nil
 
@@ -127,18 +101,19 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert AgentMemory.get_current_turn_id(memory) != nil
   end
 
-  test "get count" do
+  test "count_messages" do
     memory = AgentMemory.new_memory()
-
     assert AgentMemory.count_messages(memory) == 0
 
-    content_a = %IOTest{}
-    memory = AgentMemory.add_message(memory, "user", content_a)
-
+    memory = AgentMemory.add_message(memory, "user", %IOTest{})
     assert AgentMemory.count_messages(memory) == 1
   end
 
-  test "dump and load" do
+  test "latest_message is nil for empty memory" do
+    assert AgentMemory.latest_message(AgentMemory.new_memory()) == nil
+  end
+
+  test "dump and load round-trips through the JSON adapter" do
     content_a = %IOTest{}
     content_b = %IOTest{test_field: "hello there"}
 
@@ -147,53 +122,41 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       |> AgentMemory.add_message("user", content_a)
       |> AgentMemory.add_message("system", content_b)
 
-    dump = AgentMemory.dump(memory)
-    loaded_memory = AgentMemory.load(dump)
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
 
-    assert AgentMemory.count_messages(loaded_memory) == 2
+    assert AgentMemory.count_messages(loaded) == 2
+    assert AgentMemory.get_current_turn_id(memory) == AgentMemory.get_current_turn_id(loaded)
+    assert memory.max_messages == loaded.max_messages
 
-    history = AgentMemory.history(loaded_memory)
-
-    assert AgentMemory.get_current_turn_id(memory) ==
-             AgentMemory.get_current_turn_id(loaded_memory)
-
-    assert Map.get(memory, :max_messages) == Map.get(loaded_memory, :max_messages)
-
-    assert history == [
+    assert AgentMemory.history(loaded) == [
              %{role: "user", content: "{\"test_field\":\"test_value\"}"},
              %{role: "system", content: "{\"test_field\":\"hello there\"}"}
            ]
   end
 
-  test "memory with no limits" do
-    memory = AgentMemory.new_memory()
+  test "dump tolerates raw (non-struct) content" do
+    memory = AgentMemory.new_memory() |> AgentMemory.add_message("user", %{a: 1})
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+    assert AgentMemory.count_messages(loaded) == 1
+  end
 
-    {_, result} =
-      Enum.map_reduce(1..100, memory, fn x, memory ->
-        result = AgentMemory.add_message(memory, "user", %IOTest{test_field: "hello #{x}"})
-        {memory, result}
+  test "memory with no limits keeps everything" do
+    memory =
+      Enum.reduce(1..100, AgentMemory.new_memory(), fn x, mem ->
+        AgentMemory.add_message(mem, "user", %IOTest{test_field: "hello #{x}"})
       end)
 
-    size = AgentMemory.count_messages(result)
-
-    assert size == 100
+    assert AgentMemory.count_messages(memory) == 100
   end
 
-  test "memory with limit zero" do
-    memory = AgentMemory.new_memory(0)
-
-    memory = AgentMemory.add_message(memory, "user", %IOTest{})
-
-    size = AgentMemory.count_messages(memory)
-
-    assert size == 0
+  test "memory with limit zero stores nothing" do
+    memory = AgentMemory.new_memory(0) |> AgentMemory.add_message("user", %IOTest{})
+    assert AgentMemory.count_messages(memory) == 0
   end
 
-  test "turn consistency" do
-    memory = AgentMemory.new_memory()
-    memory = memory |> AgentMemory.initialize_turn()
-    turn_id = memory |> AgentMemory.get_current_turn_id()
-
+  test "turn consistency across initialize_turn" do
+    memory = AgentMemory.new_memory() |> AgentMemory.initialize_turn()
+    turn_id = AgentMemory.get_current_turn_id(memory)
     assert turn_id != nil
 
     memory =
@@ -201,64 +164,118 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       |> AgentMemory.add_message("user", %IOTest{test_field: "hello 1"})
       |> AgentMemory.add_message("user", %IOTest{test_field: "hello 2"})
 
-    history = memory.history
+    assert Enum.all?(AgentMemory.messages(memory), &(&1.turn_id == turn_id))
 
-    # History stored in reverse, so index 0 is newest (hello 2), index 1 is older (hello 1)
-    assert Enum.at(history, 0).turn_id == turn_id
-    assert Enum.at(history, 1).turn_id == turn_id
-
-    memory = memory |> AgentMemory.initialize_turn()
-    new_turn_id = memory |> AgentMemory.get_current_turn_id()
-
-    memory =
-      memory
-      |> AgentMemory.add_message("user", %IOTest{test_field: "hello 3"})
-
-    history = memory.history
+    memory = AgentMemory.initialize_turn(memory)
+    new_turn_id = AgentMemory.get_current_turn_id(memory)
+    memory = AgentMemory.add_message(memory, "user", %IOTest{test_field: "hello 3"})
 
     assert new_turn_id != turn_id
-    # Index 0 is newest (hello 3) with new_turn_id
-    assert Enum.at(history, 0).turn_id == new_turn_id
+    assert AgentMemory.latest_message(memory).turn_id == new_turn_id
   end
 
-  test "delete turn" do
-    initial_turn_id = "14c35357-c5cc-4f76-920f-b5ed17d3e832"
-    other_turn_id = "d1cf623c-61b7-4478-b74c-8bae84ca73ac"
+  test "delete_turn splices entries and raises on a missing turn" do
+    memory = AgentMemory.new_memory() |> AgentMemory.initialize_turn()
+    initial_turn_id = AgentMemory.get_current_turn_id(memory)
+    memory = AgentMemory.add_message(memory, "user", %IOTest{test_field: "hello"})
 
-    test_message_a = %IOTest{test_field: "hello"}
-    test_message_b = %IOTest{test_field: "goodbye"}
-
-    memory =
-      %{
-        history: [
-          %Message{
-            turn_id: initial_turn_id,
-            content: test_message_a,
-            role: "user"
-          },
-          %Message{
-            turn_id: other_turn_id,
-            content: test_message_b,
-            role: "user"
-          }
-        ]
-      }
+    memory = AgentMemory.initialize_turn(memory)
+    other_turn_id = AgentMemory.get_current_turn_id(memory)
+    memory = AgentMemory.add_message(memory, "user", %IOTest{test_field: "goodbye"})
 
     assert AgentMemory.count_messages(memory) == 2
 
-    memory = memory |> AgentMemory.delete_turn(initial_turn_id)
-
+    memory = AgentMemory.delete_turn(memory, initial_turn_id)
     assert AgentMemory.count_messages(memory) == 1
-    assert Enum.at(memory.history, 0).turn_id == other_turn_id
+    assert AgentMemory.latest_message(memory).turn_id == other_turn_id
 
-    memory = memory |> AgentMemory.delete_turn(other_turn_id)
-
+    memory = AgentMemory.delete_turn(memory, other_turn_id)
     assert AgentMemory.count_messages(memory) == 0
 
-    assert_raise Normandy.NonExistentTurn,
-                 "turn \"d1cf623c-61b7-4478-b74c-8bae84ca73ac\" does not exist",
-                 fn ->
-                   AgentMemory.delete_turn(memory, other_turn_id)
-                 end
+    assert_raise Normandy.NonExistentTurn, fn ->
+      AgentMemory.delete_turn(memory, other_turn_id)
+    end
+  end
+
+  test "delete_turn re-links survivors around a deleted middle turn" do
+    memory = AgentMemory.new_memory() |> AgentMemory.initialize_turn()
+    memory = AgentMemory.add_message(memory, "user", %{c: "a"})
+
+    memory = AgentMemory.initialize_turn(memory)
+    turn_b = AgentMemory.get_current_turn_id(memory)
+    memory = AgentMemory.add_message(memory, "assistant", %{c: "b"})
+
+    memory = AgentMemory.initialize_turn(memory)
+    turn_c = AgentMemory.get_current_turn_id(memory)
+    memory = AgentMemory.add_message(memory, "user", %{c: "c"})
+
+    # Chain is A -> B -> C. Deleting the middle turn B must re-link C's parent to A.
+    memory = AgentMemory.delete_turn(memory, turn_b)
+
+    assert AgentMemory.count_messages(memory) == 2
+    assert Enum.map(AgentMemory.messages(memory), & &1.content) == [%{c: "a"}, %{c: "c"}]
+    assert AgentMemory.latest_message(memory).turn_id == turn_c
+  end
+
+  test "dump/load preserves string-keyed (multimodal) raw content verbatim" do
+    blocks = [
+      %{"type" => "text", "text" => "describe this"},
+      %{"type" => "image", "source" => %{"type" => "url", "url" => "https://example.com/a.png"}}
+    ]
+
+    memory = AgentMemory.new_memory() |> AgentMemory.add_message("user", blocks)
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+    assert loaded |> AgentMemory.messages() |> hd() |> Map.get(:content) == blocks
+  end
+
+  test "load does not intern arbitrary content keys (atom-table DoS guard)" do
+    # A key that exists nowhere else in the codebase. A blanket `keys: :atoms`
+    # decode of an untrusted dump would intern it permanently (atom-table
+    # exhaustion vector); a hardened load must leave content keys as strings.
+    probe = "cr_dos_guard_probe_key_9f3a"
+    memory = AgentMemory.new_memory() |> AgentMemory.add_message("user", %{probe => 1})
+
+    loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+    # Content round-trips verbatim (string key preserved)...
+    assert loaded |> AgentMemory.messages() |> hd() |> Map.get(:content) == %{probe => 1}
+    # ...and the probe key was never interned.
+    assert_raise ArgumentError, fn -> String.to_existing_atom(probe) end
+  end
+
+  test "entry_chain terminates on a corrupt parent cycle instead of hanging" do
+    # A self-cyclic entry (parent_id == id) — the shape a corrupt dump or a
+    # duplicate-id append produces. The walk must terminate, not loop forever.
+    entry = %Entry{id: "x", parent_id: "x", turn_id: "t", role: "user", content: %{}}
+    memory = %AgentMemory{entries: %{"x" => entry}, head: "x", current_turn_id: "t"}
+
+    # Run under a timeout so a regression fails the test instead of hanging the suite.
+    chain = Task.await(Task.async(fn -> AgentMemory.entry_chain(memory) end), 2000)
+    assert Enum.map(chain, & &1.id) == ["x"]
+  end
+
+  test "delete_turn terminates on a corrupt parent cycle instead of hanging" do
+    # Two entries in one turn forming a parent cycle (a <-> b) — the shape a corrupt
+    # dump can produce. delete_turn marks both deleted; rewiring survivors must not
+    # loop forever walking the cycle.
+    a = %Entry{id: "a", parent_id: "b", turn_id: "T", role: "user", content: %{}}
+    b = %Entry{id: "b", parent_id: "a", turn_id: "T", role: "assistant", content: %{}}
+    c = %Entry{id: "c", parent_id: "a", turn_id: "U", role: "user", content: %{}}
+
+    memory = %AgentMemory{
+      entries: %{"a" => a, "b" => b, "c" => c},
+      head: "c",
+      current_turn_id: "U"
+    }
+
+    # Under a timeout so a regression fails the test instead of hanging the suite.
+    result = Task.await(Task.async(fn -> AgentMemory.delete_turn(memory, "T") end), 2000)
+
+    # a and b are gone; c survives. Its parent walked up into the cycle, so no
+    # surviving ancestor exists -> nil.
+    assert AgentMemory.count_messages(result) == 1
+    assert AgentMemory.get_entry(result, "c").parent_id == nil
+    assert result.head == "c"
   end
 end
