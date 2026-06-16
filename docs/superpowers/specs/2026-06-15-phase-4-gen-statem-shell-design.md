@@ -161,7 +161,7 @@ One new status is **entered**: `:awaiting_approval`. New events/effects:
 | `:tool_dispatch` | `{:tool_results, results}` | *(unchanged)* | `apply_tool_results/2` (append each, decrement, steering, continue/forced-final) |
 | `:tool_dispatch` | `{:needs_approval, held, parked}` | `:awaiting_approval` | `{:emit_event, :awaiting_approval, %{parked: n}}`, `{:persist, state'}` |
 | `:awaiting_approval` | `{:approval, decisions}` — all rejected | →results | merge `held ++ rejected_denials`, reorder by `pending_calls`, `apply_tool_results/2` |
-| `:awaiting_approval` | `{:approval, decisions}` — some approved | `:tool_dispatch` | stash rejected denials into `held`; `{:execute_approved, approved_calls}` |
+| `:awaiting_approval` | `{:approval, decisions}` — some approved | `:awaiting_approval` | stash rejected denials into `held`; `{:execute_approved, approved_calls}` (stays parked until `:approved_results`) |
 | `:awaiting_approval` | `{:approved_results, results}` | →results | merge `held ++ results`, reorder by `pending_calls`, `apply_tool_results/2` |
 
 - `decisions` is a map `tool_call_id => :approve | :reject`. Any parked id absent
