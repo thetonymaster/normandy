@@ -230,8 +230,13 @@ Dependency-respecting:
 2. **Phase 2** — the four behaviours with real default impls + before/after hooks.
 3. **Phase 3** — `SessionStore` + branching `AgentMemory` struct (#5).
 4. **Phase 4** — `:gen_statem` shell + suspend/resume/approval + passivation +
-   pluggable registry (#3 full).
+   pluggable registry (#3 full). Ships `Turn.Server` as a **standalone, opt-in**
+   shell; `BaseAgent.run/2`'s inline path is untouched.
 5. **Phase 5** — compaction wiring (#4).
+6. **Phase 6 (future, post-milestone)** — full virtual-actor integration:
+   `AgentProcess` delegates session ownership to `Turn.Server` (started/supervised
+   beneath it) so the coordination layer routes through the durable turn engine.
+   Deferred from Phase 4 to keep that phase's blast radius bounded.
 
 ## Out of scope (this milestone)
 
@@ -240,12 +245,22 @@ Dependency-respecting:
 - A WebSocket/network bus or polyglot workers — explicitly rejected in favor of
   in-process BEAM primitives.
 - Distributed multi-node session registry implementation (the registry is *pluggable*;
-  shipping a Horde/syn-backed impl is deferred).
+  shipping a Horde/syn-backed impl is deferred). Phase 4 ships the `SessionRegistry`
+  behaviour + a `Native` (Elixir `Registry`) default; Horde/syn stay deferred.
+- `AgentProcess` ↔ `Turn.Server` integration: Phase 4 ships the `:gen_statem` turn engine
+  as a standalone, opt-in shell and leaves `coordination/agent_process.ex` untouched.
+  Making `AgentProcess` own/route through `Turn.Server` (the "AgentProcess stays as the
+  session supervisor; the new statem is the turn engine beneath it" end-state) is deferred
+  to **Phase 6** (above).
 
-## Open questions
+## Resolved (during phase planning)
 
-- Default `SessionStore` for production: ETS is in-node only; teams wanting
-  cross-node/durable sessions need the Postgres reference impl or their own. Confirm ETS
-  is an acceptable default vs. shipping Postgres as the default.
-- Exact `%TurnState{}` serialization format for persistence (term vs. explicit
-  encode/decode) — to be settled in Phase 3/4 planning.
+- **Default `SessionStore`:** `InMemory` is the default (Phase 3); `ETS` ships as an
+  in-node alternative; Postgres remains a deferred reference impl. ETS-vs-Postgres as the
+  *production* default is revisited only if/when Postgres lands.
+- **`%TurnState{}` serialization (Phase 4):** persisted as an **opaque Erlang term** — the
+  default `InMemory`/`ETS` stores hold terms directly, so no custom codec ships. Only
+  `%Turn.State{}` is persisted (the conversation persists separately via `append_entry`);
+  the agent config (client/credentials, behaviours, model) is **re-supplied by the caller**
+  on resume, never written to the store. Explicit encode/decode rides along with the
+  deferred Postgres impl.
