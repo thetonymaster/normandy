@@ -48,4 +48,25 @@ defmodule Normandy.Guardrails.Guard do
         }
 
   @callback check(value :: term(), opts :: keyword()) :: :ok | {:error, [violation()]}
+
+  @doc """
+  Optional callback for guards that need host-supplied **context** in addition
+  to the value and their static options.
+
+  `Normandy.Guardrails.run/3` (and `Normandy.Agents.BaseAgent.admit/3`) thread a
+  caller-provided `context` map — ids, locale, conversation history, anything
+  the host knows but the framework must not interpret — to any guard that
+  exports `check/3`. Guards that implement only `check/2` are unaffected: the
+  context never reaches them and their received `opts` are unchanged.
+
+  Implement `check/3` when the guard's decision depends on runtime context (for
+  example a semantic classifier). A common pattern is to delegate the
+  context-free arity:
+
+      def check(value, opts), do: check(value, opts, %{})
+  """
+  @callback check(value :: term(), opts :: keyword(), context :: map()) ::
+              :ok | {:error, [violation()]}
+
+  @optional_callbacks check: 3
 end
