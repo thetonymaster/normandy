@@ -170,5 +170,57 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:call_llm, %{response_model: :os, final: true}}
              ] = effects
     end
+
+    test "mixed approve+reject across a 2-parked batch resolves in batch order" do
+      pending = [
+        %ToolCall{id: "a1", name: "weather", input: %{}},
+        %ToolCall{id: "p1", name: "billing", input: %{}},
+        %ToolCall{id: "p2", name: "refund", input: %{}}
+      ]
+
+      held = [%ToolResult{tool_call_id: "a1", output: "sunny", is_error: false}]
+
+      parked = [
+        %ToolCall{id: "p1", name: "billing", input: %{}},
+        %ToolCall{id: "p2", name: "refund", input: %{}}
+      ]
+
+      s = %State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: pending,
+        held_results: held,
+        parked_calls: parked
+      }
+
+      # p1 approved, p2 rejected
+      {s2, [{:execute_approved, [%ToolCall{id: "p1"}]}]} =
+        Turn.step(s, {:approval, %{"p1" => :approve, "p2" => :reject}})
+
+      assert s2.status == :awaiting_approval
+      # original a1 result plus the p2 rejection denial are stashed in held_results
+      assert s2.held_results |> Enum.map(& &1.tool_call_id) |> Enum.sort() == ["a1", "p2"]
+
+      {s3, effects} =
+        Turn.step(
+          s2,
+          {:approved_results,
+           [%ToolResult{tool_call_id: "p1", output: "charged", is_error: false}]}
+        )
+
+      assert s3.status == :assistant_streaming
+      assert s3.iterations_left == 4
+
+      appended = for {:append_message, "tool", %ToolResult{tool_call_id: id}} <- effects, do: id
+      assert appended == ["a1", "p1", "p2"]
+
+      results = for {:append_message, "tool", r} <- effects, do: r
+      p2 = Enum.find(results, &(&1.tool_call_id == "p2"))
+      assert p2.is_error == true
+      assert p2.output.denied == true
+    end
   end
 end
