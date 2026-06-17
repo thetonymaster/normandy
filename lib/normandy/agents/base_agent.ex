@@ -451,7 +451,8 @@ defmodule Normandy.Agents.BaseAgent do
     {config, final_state.final_response}
   end
 
-  defp turn_response_model(config) do
+  @doc false
+  def turn_response_model(config) do
     if has_tools?(config) do
       %Normandy.Agents.ToolCallResponse{}
     else
@@ -459,9 +460,10 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  defp admit_turn_input(config, nil), do: config
+  @doc false
+  def admit_turn_input(config, nil), do: config
 
-  defp admit_turn_input(config, user_input) do
+  def admit_turn_input(config, user_input) do
     alias Normandy.Agents.ValidationMiddleware
 
     validated_input =
@@ -494,7 +496,8 @@ defmodule Normandy.Agents.BaseAgent do
     Driver.drive(state, non_streaming_handlers(), config)
   end
 
-  defp non_streaming_handlers do
+  @doc false
+  def non_streaming_handlers do
     %Driver.Handlers{
       call_llm: &call_turn_llm/3,
       dispatch_tools: &dispatch_turn_tools/2,
@@ -1202,7 +1205,8 @@ defmodule Normandy.Agents.BaseAgent do
   # %Dispatch.Pipeline{}, plus a telemetry-instrumented execute_fn so tool spans
   # keep nesting under the agent.run span. With the default (nil) bundle this is
   # byte-identical to the pre-Phase-2 default_pipeline/0 + span_execute path.
-  defp base_agent_pipeline(config) do
+  @doc false
+  def base_agent_pipeline(config) do
     %{
       Normandy.Behaviours.Config.to_pipeline(config.behaviours)
       | execute_fn: &span_execute/3

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-06-17
 
 ### Added
 
@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     factored into a shared `apply_tool_results/2` (one decrement per batch,
     API-order preserved). The synchronous inline path is unchanged — only the
     Phase 4b `:gen_statem` shell will exercise these transitions.
+
+- **Phase 4b — `:gen_statem` Turn shell (harness decomposition).**
+  - `Normandy.Agents.Turn.Server`: an opt-in asynchronous `:gen_statem` interpreter
+    of the pure `Turn` FSM (the async analog of the inline `Driver`). Coarse
+    lifecycle states (`:running`/`:awaiting_approval`/`:idle`) carry monitored
+    Tasks for blocking effects, `state_timeout`s (approval expiry, passivation
+    idle), persistence at suspend points, and mid-turn message postponement. Real
+    human-approval parking: park on `:needs_approval`, resume via
+    `Turn.Server.approve/2`, fail-closed on approval timeout.
+  - `Normandy.Agents.Turn.Session` (router: whereis → route | rehydrate),
+    `Normandy.Agents.Turn.Supervisor` (`DynamicSupervisor`, `restart: :transient`).
+  - `Normandy.Behaviours.SessionRegistry` (`whereis/register/unregister`) + `Native`
+    default over Elixir `Registry`; `session_registry` slot on `Behaviours.Config`.
+  - `Normandy.Components.AgentMemory.from_entries/1` rebuilds memory from stored
+    history for rehydration.
+  - Four `BaseAgent` turn helpers exposed `@doc false` for shell reuse
+    (`non_streaming_handlers/0`, `admit_turn_input/2`, `base_agent_pipeline/1`,
+    `turn_response_model/1`) — visibility-only, no behavior change.
+  - `BaseAgent.run/2`'s inline path is unchanged; `Turn.Server` is additive.
 
 ### Fixed
 
@@ -745,6 +764,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.9.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.9.0
 [0.8.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.8.0
 [0.7.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.7.0
 [0.6.3]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.3

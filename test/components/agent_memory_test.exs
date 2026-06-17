@@ -255,6 +255,26 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert Enum.map(chain, & &1.id) == ["x"]
   end
 
+  test "from_entries/1 rebuilds a memory whose entry_chain matches the input" do
+    alias Normandy.Components.AgentMemory
+
+    m =
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", "a")
+      |> AgentMemory.add_message("assistant", "b")
+
+    entries = AgentMemory.entry_chain(m)
+    rebuilt = AgentMemory.from_entries(entries)
+
+    assert AgentMemory.entry_chain(rebuilt) |> Enum.map(& &1.content) == ["a", "b"]
+    assert rebuilt.head == m.head
+  end
+
+  test "from_entries/1 on [] is an empty memory" do
+    alias Normandy.Components.AgentMemory
+    assert AgentMemory.from_entries([]) == AgentMemory.new_memory()
+  end
+
   test "delete_turn terminates on a corrupt parent cycle instead of hanging" do
     # Two entries in one turn forming a parent cycle (a <-> b) — the shape a corrupt
     # dump can produce. delete_turn marks both deleted; rewiring survivors must not

@@ -1,3 +1,27 @@
+defmodule NormandyTest.Agents.SleepyProbe do
+  @moduledoc false
+  # Tracks how many SleepyTool executions are simultaneously in flight so the
+  # parallelism test can assert observed concurrency deterministically, instead
+  # of inferring it from a flaky wall-clock ratio. `Agent.update` serializes the
+  # read-modify-write, so the running count and its peak are race-free.
+  use Agent
+
+  def start_link(_opts), do: Agent.start_link(fn -> %{current: 0, max: 0} end, name: __MODULE__)
+
+  def reset, do: Agent.update(__MODULE__, fn _ -> %{current: 0, max: 0} end)
+
+  def enter do
+    Agent.update(__MODULE__, fn %{current: c, max: m} ->
+      current = c + 1
+      %{current: current, max: max(m, current)}
+    end)
+  end
+
+  def leave, do: Agent.update(__MODULE__, fn %{current: c} = s -> %{s | current: c - 1} end)
+
+  def max_observed, do: Agent.get(__MODULE__, & &1.max)
+end
+
 defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   use ExUnit.Case, async: true
 
@@ -392,7 +416,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         end
 
         def run(%{sleep_ms: ms, label: label}) do
+          NormandyTest.Agents.SleepyProbe.enter()
           :timer.sleep(ms)
+          NormandyTest.Agents.SleepyProbe.leave()
           {:ok, label}
         end
       end
@@ -440,7 +466,19 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
     end
 
+    setup do
+      # Every test in this block exercises SleepyTool, which reports into the
+      # probe; start it once (idempotent) and reset its peak before each test.
+      ensure_probe_started()
+      NormandyTest.Agents.SleepyProbe.reset()
+      :ok
+    end
+
     defp run_with_concurrency(concurrency, n, sleep_ms) do
+      # Reset again so the parallel test's two back-to-back runs each measure
+      # their own peak concurrency in isolation.
+      NormandyTest.Agents.SleepyProbe.reset()
+
       registry = Registry.new([%SleepyTool{}])
 
       config = %{
@@ -457,36 +495,48 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       {elapsed_us, {_agent, response}} =
         :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
 
-      {elapsed_us, response}
+      {elapsed_us, response, NormandyTest.Agents.SleepyProbe.max_observed()}
+    end
+
+    defp ensure_probe_started do
+      case NormandyTest.Agents.SleepyProbe.start_link(nil) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
     end
 
     test "max_tool_concurrency: 1 runs tools sequentially" do
-      # 3 tools × 100 ms each = ~300 ms minimum, sequential
-      {elapsed_us, response} = run_with_concurrency(1, 3, 100)
+      # 3 tools × 100 ms each = ~300 ms minimum, sequential. The probe confirms
+      # one-at-a-time execution; the wall-clock lower bound is a deterministic
+      # floor (3 sequential sleeps cannot finish faster than their sum).
+      {elapsed_us, response, max_concurrency} = run_with_concurrency(1, 3, 100)
 
       assert response != nil
+
+      assert max_concurrency == 1,
+             "expected one tool at a time, observed #{max_concurrency} concurrent"
 
       assert div(elapsed_us, 1000) >= 300,
              "expected sequential >= 300ms, got #{div(elapsed_us, 1000)}ms"
     end
 
-    test "max_tool_concurrency: 3 runs tools in parallel (faster than sequential)" do
-      # Compare parallel vs sequential on the SAME runner so the assertion is
-      # self-calibrating: a slow CI machine pushes both numbers up together.
-      # 3 × 100 ms sequential ≈ 300 ms; 3 × 100 ms parallel ≈ 100 ms ideal,
-      # but CI runners eat ~75 ms per `Task.async_stream` batch (OTel ctx +
-      # task spawn + memory updates), pushing parallel to ~175 ms. Require at
-      # least a 1.5× speedup (`par × 3 < seq × 2`, i.e. par ≤ 2/3 of seq) —
-      # without overlap, 3 sleeps can't possibly compress that much, so a
-      # passing result still proves parallelism happened.
-      {seq_us, _} = run_with_concurrency(1, 3, 100)
-      {par_us, response} = run_with_concurrency(3, 3, 100)
+    test "max_tool_concurrency: 3 runs tools in parallel" do
+      # Deterministic parallelism check: a shared probe records the peak number
+      # of SleepyTool executions in flight at once. With concurrency 3 and three
+      # 100 ms tools, all three enter the probe before any sleep elapses, so the
+      # observed peak is exactly 3 — proving real overlap. This replaces a former
+      # wall-clock ratio that flaked under variable CI load (the module is
+      # async: true, so co-running tests skewed the timing).
+      {_seq_us, _seq_response, seq_max} = run_with_concurrency(1, 3, 100)
+      {_par_us, response, par_max} = run_with_concurrency(3, 3, 100)
 
       assert response != nil
 
-      assert par_us * 3 < seq_us * 2,
-             "expected parallel ≤ 2/3 of sequential (≥ 1.5× speedup), " <>
-               "got par=#{div(par_us, 1000)}ms seq=#{div(seq_us, 1000)}ms"
+      assert seq_max == 1,
+             "expected sequential baseline of 1 concurrent tool, observed #{seq_max}"
+
+      assert par_max == 3,
+             "expected 3 tools running concurrently, observed #{par_max}"
     end
 
     test "tool results stay in LLM-supplied call order under parallelism" do

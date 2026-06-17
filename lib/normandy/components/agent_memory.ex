@@ -133,6 +133,25 @@ defmodule Normandy.Components.AgentMemory do
     %{memory | entries: entries, head: head}
   end
 
+  @doc """
+  Rebuild a memory from a chronological list of `Entry.t()` (e.g. the output of
+  `SessionStore.history/2`). The `head` becomes the last entry's id and the
+  `current_turn_id` the last entry's `turn_id`, so the active branch reconstructs.
+  """
+  @spec from_entries([Entry.t()]) :: t()
+  def from_entries([]), do: new_memory()
+
+  def from_entries(entries) when is_list(entries) do
+    last = List.last(entries)
+
+    %__MODULE__{
+      entries: Map.new(entries, fn %Entry{id: id} = e -> {id, e} end),
+      head: last.id,
+      current_turn_id: last.turn_id,
+      max_messages: nil
+    }
+  end
+
   @spec dump(t()) :: String.t()
   def dump(%__MODULE__{} = memory) do
     adapter = Application.get_env(:normandy, :adapter, Poison)

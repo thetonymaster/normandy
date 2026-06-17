@@ -31,8 +31,8 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s2.iterations_left == 5
 
       assert effects == [
-               {:emit_event, :awaiting_approval, %{parked: 1}},
-               {:persist, s2}
+               {:persist, s2},
+               {:emit_event, :awaiting_approval, %{parked: 1}}
              ]
     end
   end

@@ -39,6 +39,16 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.Static, []}
       assert b.session_store == {Normandy.Behaviours.SessionStore.InMemory, []}
     end
+
+    test "default bundle carries the Native session_registry slot" do
+      assert %Normandy.Behaviours.Config{}.session_registry ==
+               {Normandy.Behaviours.SessionRegistry.Native, []}
+    end
+
+    test "to_pipeline/1 ignores session_registry (not a dispatch-path concern)" do
+      pipeline = Normandy.Behaviours.Config.to_pipeline(%Normandy.Behaviours.Config{})
+      refute Map.has_key?(Map.from_struct(pipeline), :session_registry)
+    end
   end
 
   describe "to_pipeline/1 equivalence with default_pipeline/0" do
