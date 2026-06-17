@@ -30,6 +30,7 @@ defmodule Normandy.Coordination.AgentProcess do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Turn
 
   @type agent_id :: String.t()
   @type run_opts :: [
@@ -193,18 +194,114 @@ defmodule Normandy.Coordination.AgentProcess do
     agent = Keyword.fetch!(opts, :agent)
     agent_id = Keyword.get(opts, :agent_id, UUID.uuid4())
     context_pid = Keyword.get(opts, :context_pid)
+    turn_engine = Keyword.get(opts, :turn_engine, :inline)
 
-    state = %{
+    base = %{
       agent: agent,
       agent_id: agent_id,
       context_pid: context_pid,
+      turn_engine: turn_engine,
+      store: nil,
+      registry: nil,
+      supervisor: nil,
+      extra_session_opts: [],
+      owned: [],
+      pending_runs: %{},
       run_count: 0,
       last_run: nil,
       total_runtime_ms: 0,
       created_at: DateTime.utc_now()
     }
 
-    {:ok, state}
+    case turn_engine do
+      :inline ->
+        {:ok, base}
+
+      :server ->
+        case server_infra(opts) do
+          {:ok, store, registry, supervisor, owned} ->
+            {:ok,
+             %{
+               base
+               | store: store,
+                 registry: registry,
+                 supervisor: supervisor,
+                 owned: owned,
+                 extra_session_opts:
+                   Keyword.take(opts, [
+                     :subscriber,
+                     :handlers,
+                     :approval_timeout_ms,
+                     :idle_timeout_ms
+                   ])
+             }}
+
+          {:error, reason} ->
+            {:stop, {:server_init_failed, reason}}
+        end
+    end
+  end
+
+  # Resolve session infra: use what the caller supplied, else start+own defaults.
+  # Returns {:ok, store, registry, supervisor, owned_pids} | {:error, reason}.
+  defp server_infra(opts) do
+    {store, owned_store} =
+      case Keyword.get(opts, :store) do
+        nil ->
+          store_pid = Normandy.Behaviours.SessionStore.InMemory.new()
+          {{Normandy.Behaviours.SessionStore.InMemory, store_pid}, [store_pid]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {registry, owned_reg} =
+      case Keyword.get(opts, :registry) do
+        nil ->
+          name = :"agentprocess_reg_#{System.unique_integer([:positive])}"
+          {:ok, reg_pid} = Normandy.Behaviours.SessionRegistry.Native.start_link(name: name)
+          {{Normandy.Behaviours.SessionRegistry.Native, name}, [reg_pid]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {supervisor, owned_sup} =
+      case Keyword.get(opts, :supervisor) do
+        nil ->
+          {:ok, sup} = Turn.Supervisor.start_link([])
+          {sup, [sup]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {:ok, store, registry, supervisor, owned_store ++ owned_reg ++ owned_sup}
+  rescue
+    e -> {:error, e}
+  end
+
+  @impl true
+  def terminate(_reason, %{owned: owned}) when is_list(owned) do
+    Enum.each(owned, fn pid ->
+      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :shutdown)
+    end)
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  # The keyword list Turn.Session.run/2 and Turn.Session.approve/2 expect.
+  # Used by Turn.Server routing (Task 2+). Made public to satisfy compiler.
+  def session_opts(state) do
+    [
+      session_id: state.agent_id,
+      config: state.agent,
+      store: state.store,
+      registry: state.registry,
+      supervisor: state.supervisor
+    ] ++ state.extra_session_opts
   end
 
   @impl true
