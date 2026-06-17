@@ -95,4 +95,50 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert Process.alive?(store_h)
     end
   end
+
+  describe ":server run/3" do
+    test "round-trips a turn through Turn.Session and returns the final result" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: final_handlers("hello")] ++
+            infra
+        )
+
+      assert {:ok, %Resp{content: "hello"}} = AgentProcess.run(pid, "hi there")
+
+      stats = AgentProcess.get_stats(pid)
+      assert stats.run_count == 1
+      assert stats.last_run != nil
+    end
+
+    test "GenServer stays responsive while a run is in flight" do
+      infra = supplied_infra()
+
+      slow_handlers = %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn _c, _s, _r ->
+            Process.sleep(150)
+            %Resp{content: "slow"}
+          end
+      }
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: slow_handlers] ++ infra
+        )
+
+      parent = self()
+      spawn(fn -> send(parent, {:result, AgentProcess.run(pid, "go")}) end)
+      Process.sleep(30)
+
+      # The slow turn is mid-flight; a sync call must still return immediately.
+      t0 = System.monotonic_time(:millisecond)
+      _ = AgentProcess.get_stats(pid)
+      assert System.monotonic_time(:millisecond) - t0 < 50
+
+      assert_receive {:result, {:ok, %Resp{content: "slow"}}}, 2_000
+    end
+  end
 end

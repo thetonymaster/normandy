@@ -293,8 +293,8 @@ defmodule Normandy.Coordination.AgentProcess do
   def terminate(_reason, _state), do: :ok
 
   # The keyword list Turn.Session.run/2 and Turn.Session.approve/2 expect.
-  # Used by Turn.Server routing (Task 2+). Made public to satisfy compiler.
-  def session_opts(state) do
+  # Used by Turn.Server routing (Task 2+).
+  defp session_opts(state) do
     [
       session_id: state.agent_id,
       config: state.agent,
@@ -302,6 +302,13 @@ defmodule Normandy.Coordination.AgentProcess do
       registry: state.registry,
       supervisor: state.supervisor
     ] ++ state.extra_session_opts
+  end
+
+  @impl true
+  def handle_call({:run, input}, from, %{turn_engine: :server} = state) do
+    start_time = System.monotonic_time(:millisecond)
+    ref = spawn_run(state, prepare_input(input))
+    {:noreply, %{state | pending_runs: Map.put(state.pending_runs, ref, {from, start_time})}}
   end
 
   @impl true
@@ -390,6 +397,67 @@ defmodule Normandy.Coordination.AgentProcess do
     }
 
     {:noreply, updated_state}
+  end
+
+  # Spawn a monitored, UNLINKED worker that runs the turn and tags its reply
+  # with the monitor ref (so {:run_result, ref, …} and {:DOWN, ref, …} correlate).
+  defp spawn_run(state, user_input) do
+    server = self()
+    opts = session_opts(state)
+
+    worker =
+      spawn(fn ->
+        ref =
+          receive do
+            {:monitor_ref, r} -> r
+          end
+
+        result =
+          case Turn.Session.run(opts, user_input) do
+            {:ok, value} -> {:ok, extract_result(value)}
+            {:error, _} = err -> err
+          end
+
+        send(server, {:run_result, ref, result})
+      end)
+
+    ref = Process.monitor(worker)
+    send(worker, {:monitor_ref, ref})
+    ref
+  end
+
+  @impl true
+  def handle_info({:run_result, ref, result}, state) do
+    case Map.pop(state.pending_runs, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{from, start_time}, rest} ->
+        Process.demonitor(ref, [:flush])
+        runtime = System.monotonic_time(:millisecond) - start_time
+        GenServer.reply(from, result)
+
+        {:noreply,
+         %{
+           state
+           | pending_runs: rest,
+             run_count: state.run_count + 1,
+             last_run: DateTime.utc_now(),
+             total_runtime_ms: state.total_runtime_ms + runtime
+         }}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.pending_runs, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{from, _start}, rest} ->
+        GenServer.reply(from, {:error, {:task_down, reason}})
+        {:noreply, %{state | pending_runs: rest}}
+    end
   end
 
   # Private Functions
