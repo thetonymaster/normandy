@@ -11,11 +11,14 @@ defmodule Normandy.Agents.Turn.ServerTest do
   end
 
   # Parameterized fake tool for testing tool dispatch/classification.
+  # `notify` is a pid that receives `{:tool_ran, name}` when the tool runs,
+  # letting tests assert whether a tool was executed or silently rejected.
   defmodule FakeTool do
     use Normandy.Schema
 
     schema do
       field(:name, :string)
+      field(:notify, :any, default: nil)
     end
   end
 
@@ -23,7 +26,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def tool_name(t), do: t.name
     def tool_description(_), do: "fake"
     def input_schema(_), do: %{}
-    def run(t), do: {:ok, "ran #{t.name}"}
+
+    def run(t) do
+      if t.notify, do: send(t.notify, {:tool_ran, t.name})
+      {:ok, "ran #{t.name}"}
+    end
   end
 
   # Minimal config the reused BaseAgent helpers tolerate for a no-tools turn.
@@ -47,6 +54,17 @@ defmodule Normandy.Agents.Turn.ServerTest do
     tools = [
       %FakeTool{name: "weather"},
       %FakeTool{name: "billing"}
+    ]
+
+    %{base_config() | tool_registry: Normandy.Tools.Registry.new(tools)}
+  end
+
+  # Config with notify-instrumented tools so tests can assert whether billing ran.
+  # `pid` is the test pid that receives `{:tool_ran, "billing"}` if the tool executes.
+  defp config_with_notify(pid) do
+    tools = [
+      %FakeTool{name: "weather", notify: pid},
+      %FakeTool{name: "billing", notify: pid}
     ]
 
     %{base_config() | tool_registry: Normandy.Tools.Registry.new(tools)}
@@ -151,8 +169,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
 
+    # Use notify-instrumented tools so we can assert billing DID execute after approval.
     config = %{
-      base_config_with_tools()
+      config_with_notify(test_pid)
       | behaviours: %Normandy.Behaviours.Config{
           policy:
             {Normandy.Behaviours.PolicyEngine.Ruleset,
@@ -178,6 +197,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
     :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
 
     assert_receive {:run_result, {:ok, %Resp{}}}, 2_000
+    # Prove billing WAS executed after approval (fail-open guard: not just finalized).
+    assert_receive {:tool_ran, "billing"}, 2_000
   end
 
   test "approval timeout rejects all parked calls (fail-closed) and resumes" do
@@ -207,8 +228,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
 
+    # Use notify-instrumented tools so we can assert billing was NOT executed on timeout.
     config = %{
-      base_config_with_tools()
+      config_with_notify(test_pid)
       | behaviours: %Normandy.Behaviours.Config{
           policy:
             {Normandy.Behaviours.PolicyEngine.Ruleset,
@@ -234,5 +256,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # The turn should finalize (billing denied by timeout, not approved) via the
     # 2nd no-tools LLM call.
     assert_receive {:run_result, {:ok, %Resp{}}}, 2_000
+    # Prove billing was NOT executed (fail-closed Global Constraint: timeout → reject).
+    refute_receive {:tool_ran, "billing"}, 100
   end
 end
