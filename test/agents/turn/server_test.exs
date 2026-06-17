@@ -425,4 +425,81 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # Prove billing was NOT executed (fail-closed Global Constraint: timeout → reject).
     refute_receive {:tool_ran, "billing"}, 100
   end
+
+  # Part B (Task 7 requirement): proves the Server threads the compacted config2
+  # (returned by the compact handler) into the NEXT blocking effect, not the stale
+  # pre-compaction config. A regression where the Server discards config2 and keeps
+  # the old data.config would make the second call_llm see memory WITHOUT the
+  # sentinel message — causing the final assertion to fail.
+  test "compact handler's config2 is threaded into the subsequent LLM call by the Server" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    test_pid = self()
+    sentinel = "__COMPACT_MARKER__"
+
+    # Stateful call_llm: 1st call → one tool call (triggers tool batch → steering →
+    # maybe_compact); 2nd call → no-tools final response. Both calls report the
+    # memory they received so we can assert the sentinel is present on call #2.
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn config, _state, _req ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+      send(test_pid, {:llm_call, n, config.memory})
+
+      if n == 0 do
+        %Resp{
+          content: "",
+          tool_calls: [%ToolCall{id: "tc1", name: "weather", input: %{}}]
+        }
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    # Instrumented compact handler: appends a sentinel message to memory, returns
+    # config2 (detectably different from config), and notifies the test it ran.
+    compact = fn config, _turn_state, _info ->
+      config2 = %{
+        config
+        | memory: Normandy.Components.AgentMemory.add_message(config.memory, "user", sentinel)
+      }
+
+      send(test_pid, {:compact_ran, config2.memory})
+      {config2, %{compacted: true}}
+    end
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: call_llm,
+        compact: compact
+    }
+
+    # Config with weather tool so the Server's internal dispatch can run it
+    # (tool_registry needed: the FSM strips tool_calls when the config has no tools).
+    config = %{base_config_with_tools() | max_tool_iterations: 3}
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-compact-threading",
+        config: config,
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:ok, %Resp{}} = Turn.Server.run(srv, "compact me")
+
+    # Compact handler ran.
+    assert_receive {:compact_ran, _memory}, 2_000
+
+    # Second LLM call saw the compacted config2 (sentinel in memory).
+    # If the Server had threaded the stale pre-compaction config, the sentinel
+    # would be absent and this assertion would fail.
+    assert_receive {:llm_call, 1, memory_at_second_call}, 2_000
+
+    history = Normandy.Components.AgentMemory.history(memory_at_second_call)
+
+    assert Enum.any?(history, fn msg -> msg.content == sentinel end),
+           "Second LLM call did not see the compacted config2 — Server threaded stale config"
+  end
 end
