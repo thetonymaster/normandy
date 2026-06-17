@@ -38,11 +38,13 @@ defmodule Normandy.Behaviours.SessionRegistry.Native do
   end
 
   def register(handle, session_id, pid) do
-    # Register a foreign pid by asking nobody — Registry only registers self().
-    # The Turn.Server always registers itself, so this clause exists for the
-    # contract test (registering `self()` from the test process) and for any
-    # caller that owns `pid`. We register on behalf via a short-lived link only
-    # when pid == self(); otherwise fall back to Registry's metadata table.
+    # Fallback for `pid != self()`. NOTE: `Registry.register/3` always registers
+    # the CALLING process, never `pid` — the third arg is the stored *value*, not
+    # the pid to register. So this clause registers the caller under `session_id`
+    # with `pid` as metadata; it does NOT track the foreign pid's liveness.
+    # Nothing in Normandy hits this path: `Turn.Server` self-registers (first
+    # clause) and the contract test self-registers from inside the spawned
+    # process. Correct foreign-pid registration would require a `:via`-tuple start.
     case Registry.register(handle, session_id, pid) do
       {:ok, _owner} -> :ok
       {:error, {:already_registered, _}} -> {:error, :taken}
