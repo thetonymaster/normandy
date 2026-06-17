@@ -23,7 +23,12 @@ defmodule NormandyTest.Support.IntegrationHelper do
   default, so the whole real-API suite can run on one valid model.
   """
   def default_model(fallback \\ @default_model) do
-    System.get_env("NORMANDY_TEST_MODEL") || fallback
+    # Treat an unset OR empty env var as absent — CI passes `${{ vars.X }}` as an
+    # empty string when the variable is unset, and "" is truthy in Elixir.
+    case System.get_env("NORMANDY_TEST_MODEL") do
+      blank when blank in [nil, ""] -> fallback
+      model -> model
+    end
   end
 
   @doc """

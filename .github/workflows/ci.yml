@@ -103,6 +103,9 @@ jobs:
         env:
           # Set API key from GitHub secrets if available
           API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Model for the live integration suite. Empty when the repo variable is
+          # unset; default_model/1 falls back to a current model in that case.
+          NORMANDY_TEST_MODEL: ${{ vars.NORMANDY_TEST_MODEL }}
         run: |
           if [ -n "$API_KEY" ]; then
             echo "Running integration tests with API key"
