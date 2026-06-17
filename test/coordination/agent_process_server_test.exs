@@ -266,4 +266,33 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
              end)
     end
   end
+
+  describe ":server update_agent/2" do
+    test "applies non-memory changes and discards memory mutations" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: final_handlers()] ++ infra
+        )
+
+      tampered =
+        Normandy.Components.AgentMemory.add_message(
+          Normandy.Components.AgentMemory.new_memory(),
+          "user",
+          "injected"
+        )
+
+      :ok =
+        AgentProcess.update_agent(pid, fn a ->
+          %{a | temperature: 0.42, memory: tampered}
+        end)
+
+      %{agent: agent} = :sys.get_state(pid)
+      # Non-memory change applied:
+      assert agent.temperature == 0.42
+      # Memory mutation discarded (still the empty template, not the injected one):
+      assert Normandy.Components.AgentMemory.entry_chain(agent.memory) == []
+    end
+  end
 end

@@ -391,6 +391,25 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
+  def handle_call({:update_agent, update_fn}, _from, %{turn_engine: :server} = state) do
+    updated = update_fn.(state.agent)
+
+    new_agent =
+      if updated.memory != state.agent.memory do
+        Logger.warning(
+          "AgentProcess #{state.agent_id}: update_agent memory mutation ignored in :server mode " <>
+            "(SessionStore is authoritative)"
+        )
+
+        %{updated | memory: state.agent.memory}
+      else
+        updated
+      end
+
+    {:reply, :ok, %{state | agent: new_agent}}
+  end
+
+  @impl true
   def handle_call({:update_agent, update_fn}, _from, state) do
     updated_agent = update_fn.(state.agent)
     {:reply, :ok, %{state | agent: updated_agent}}
