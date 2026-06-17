@@ -261,9 +261,56 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       contents = Enum.map(Normandy.Components.AgentMemory.entry_chain(agent.memory), & &1.content)
 
       # The user message persisted to the store is reflected back through get_agent.
-      assert Enum.any?(contents, fn c ->
-               c == %{chat_message: "first message"} or c == "first message"
-             end)
+      # :server mode wraps input via prepare_input/1, so the persisted content is the map form.
+      assert Enum.any?(contents, fn c -> c == %{chat_message: "first message"} end)
+    end
+  end
+
+  describe "handle_info resilience" do
+    test "an unexpected info message does not crash the process (inline)" do
+      agent =
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "claude-haiku-4-5-20251001",
+          temperature: 0.7
+        })
+
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+      send(pid, {:totally_unexpected, :stray})
+      # still alive + responsive
+      assert is_binary(AgentProcess.get_id(pid))
+    end
+
+    test "an unexpected info message does not crash the process (:server)" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: final_handlers()] ++ infra
+        )
+
+      send(pid, {:totally_unexpected, :stray})
+      assert %{run_count: _} = AgentProcess.get_stats(pid)
+    end
+  end
+
+  describe ":server worker-crash contract" do
+    test ":server run/3 returns {:error, {:task_down, _}} when the turn worker crashes" do
+      infra = supplied_infra()
+
+      crash_handlers = %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn _c, _s, _r -> raise "boom" end
+      }
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: crash_handlers] ++ infra
+        )
+
+      assert {:error, {:task_down, _reason}} = AgentProcess.run(pid, "go")
+      # GenServer survived the worker crash:
+      assert %{agent_id: _} = AgentProcess.get_stats(pid)
     end
   end
 

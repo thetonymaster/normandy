@@ -36,8 +36,9 @@ defmodule Normandy.Coordination.AgentProcess do
 
   In `:server` mode:
 
-  - `run/3` is non-blocking internally (the GenServer stays responsive while a
-    turn is parked); `approve/2` delivers human-approval decisions to a parked turn.
+  - `run/3`/`cast/3` route through `Turn.Session`; `run/3` is non-blocking
+    internally (the GenServer stays responsive while a turn is parked);
+    `approve/2` delivers human-approval decisions to a parked turn.
   - The `SessionStore` owns conversation memory: `get_agent/1` reconstructs it
     from the store, and `update_agent/2` updates only the config template
     (model/temperature/behaviours/tools) — memory mutations are ignored.
@@ -546,6 +547,12 @@ defmodule Normandy.Coordination.AgentProcess do
         GenServer.reply(from, {:error, {:task_down, reason}})
         {:noreply, %{state | pending_runs: rest}}
     end
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.debug("AgentProcess #{state.agent_id} ignoring unexpected message: #{inspect(msg)}")
+    {:noreply, state}
   end
 
   # Private Functions
