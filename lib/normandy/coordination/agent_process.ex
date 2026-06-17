@@ -117,6 +117,20 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @doc """
+  Delivers approval decisions to a turn parked awaiting human approval
+  (`:server` mode only). `decisions` maps `tool_call_id` to `:approve | :reject`;
+  any parked id absent or `:reject` is treated as rejected (fail-closed).
+
+  Returns `:ok`, `{:error, :no_session}` if no live parked session exists, or
+  `{:error, :inline_mode}` when the process runs in `:inline` mode.
+  """
+  @spec approve(GenServer.server(), %{optional(String.t()) => :approve | :reject}) ::
+          :ok | {:error, :no_session} | {:error, :inline_mode}
+  def approve(server, decisions) do
+    GenServer.call(server, {:approve, decisions})
+  end
+
+  @doc """
   Returns the current agent state.
 
   ## Example
@@ -375,6 +389,16 @@ defmodule Normandy.Coordination.AgentProcess do
   def handle_call({:update_agent, update_fn}, _from, state) do
     updated_agent = update_fn.(state.agent)
     {:reply, :ok, %{state | agent: updated_agent}}
+  end
+
+  @impl true
+  def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
+    {:reply, Turn.Session.approve(session_opts(state), decisions), state}
+  end
+
+  @impl true
+  def handle_call({:approve, _decisions}, _from, state) do
+    {:reply, {:error, :inline_mode}, state}
   end
 
   @impl true

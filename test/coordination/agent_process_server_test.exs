@@ -55,6 +55,35 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     [store: {InMemory, InMemory.new()}, registry: {Native, Native.new()}, supervisor: sup]
   end
 
+  # Counter-switched call_llm: 1st call parks one "billing" tool call; later calls finalize.
+  defp approval_handlers do
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _c, _s, _r ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      if n == 0 do
+        %Resp{content: "", tool_calls: [%ToolCall{id: "pk1", name: "billing", input: %{}}]}
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+  end
+
+  defp approval_config do
+    server_config(%{
+      tool_registry: Normandy.Tools.Registry.new([%FakeTool{name: "billing"}]),
+      behaviours: %Normandy.Behaviours.Config{
+        policy:
+          {Normandy.Behaviours.PolicyEngine.Ruleset,
+           rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+           default_action: :allow}
+      }
+    })
+  end
+
   describe ":server infra ownership" do
     test "self-contained mode starts and owns store/registry/supervisor; stop tears them down" do
       {:ok, pid} =
@@ -158,6 +187,61 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       :ok = AgentProcess.cast(pid, "bg", reply_to: self())
       assert_receive {:agent_result, "srv_async", {:ok, %Resp{content: "async-ok"}}}, 2_000
+    end
+  end
+
+  describe "approve/2" do
+    test "inline mode rejects approve" do
+      agent =
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "claude-haiku-4-5-20251001",
+          temperature: 0.7
+        })
+
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+      assert {:error, :inline_mode} = AgentProcess.approve(pid, %{"pk1" => :approve})
+    end
+
+    test "unknown session returns {:error, :no_session}" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: final_handlers()] ++ infra
+        )
+
+      assert {:error, :no_session} = AgentProcess.approve(pid, %{"pk1" => :approve})
+    end
+
+    test "park → stays responsive → approve → resume → original caller gets final result" do
+      infra = supplied_infra()
+      parent = self()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: approval_config(),
+            turn_engine: :server,
+            agent_id: "approval-rt",
+            handlers: approval_handlers(),
+            subscriber: fn name, meta -> send(parent, {:event, name, meta}) end
+          ] ++ infra
+        )
+
+      # run blocks the CALLER until the turn finalizes, so run it from another process.
+      spawn(fn -> send(parent, {:result, AgentProcess.run(pid, "please charge")}) end)
+
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+      # GenServer is responsive while the turn is parked.
+      t0 = System.monotonic_time(:millisecond)
+      stats = AgentProcess.get_stats(pid)
+      assert System.monotonic_time(:millisecond) - t0 < 50
+      assert stats.agent_id == "approval-rt"
+
+      :ok = AgentProcess.approve(pid, %{"pk1" => :approve})
+      assert_receive {:result, {:ok, %Resp{content: "done"}}}, 2_000
     end
   end
 end
