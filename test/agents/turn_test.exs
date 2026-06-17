@@ -192,7 +192,7 @@ defmodule Normandy.Agents.TurnTest do
 
       {s2, effects} = Turn.step(s, {:tool_results, results})
 
-      assert s2.status == :assistant_streaming
+      assert s2.status == :steering
       assert s2.iterations_left == 4
       assert s2.pending_calls == []
       assert s2.awaiting_final == false
@@ -201,6 +201,14 @@ defmodule Normandy.Agents.TurnTest do
                {:append_message, "tool", Enum.at(results, 0)},
                {:append_message, "tool", Enum.at(results, 1)},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4}}
+             ]
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.status == :assistant_streaming
+
+      assert effects2 == [
                {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
@@ -222,15 +230,22 @@ defmodule Normandy.Agents.TurnTest do
 
       {s2, effects} = Turn.step(s, {:tool_results, results})
 
-      assert s2.status == :assistant_streaming
-      assert s2.awaiting_final == true
+      assert s2.status == :steering
+      assert s2.awaiting_final == false
       assert s2.iterations_left == 0
 
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:call_llm, %{response_model: :os, final: true}}
+               {:maybe_compact, %{iterations_left: 0}}
              ]
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.status == :assistant_streaming
+      assert s3.awaiting_final == true
+
+      assert effects2 == [{:call_llm, %{response_model: :os, final: true}}]
     end
 
     test "the forced final response enters :finalizing as :max_iterations, skipping convert" do

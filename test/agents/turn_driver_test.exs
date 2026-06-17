@@ -87,26 +87,27 @@ defmodule Normandy.Agents.Turn.DriverTest do
     assert acc == ["assistant", "tool", "assistant"]
   end
 
-  @tag :pending_phase5_core
   test "drive/3 runs the compact handler at the steering boundary and threads acc" do
-    # Hand-build a state already at :tool_dispatch; one tool result drives it
-    # through :steering -> {:maybe_compact} -> {:compaction_done} -> next call.
-    state = %Turn.State{
-      status: :tool_dispatch,
-      max_iterations: 5,
-      iterations_left: 5,
-      response_model: :rm,
-      output_schema: :rm,
-      pending_calls: [%Normandy.Components.ToolCall{id: "c1", name: "t", input: %{}}]
-    }
-
+    # Drive a real turn from :provisioning (via Turn.new) where:
+    # - first LLM response carries a tool call  →  :tool_dispatch → :steering → {:maybe_compact}
+    #   → compact handler fires → {:compaction_done} → :assistant_streaming (iteration 2)
+    # - second LLM response has no tool calls  →  :finalizing → :stopped
+    # This exercises the full steering round-trip through the Driver without
+    # bypassing the :start gate.
     pid = self()
 
     {:ok, responses} =
-      Agent.start_link(fn -> [%{content: "final", tool_calls: []}] end)
+      Agent.start_link(fn ->
+        [
+          %{content: nil, tool_calls: [%{id: "c1"}]},
+          %{content: "final", tool_calls: []}
+        ]
+      end)
 
     handlers = %Handlers{
-      call_llm: fn _acc, _s, _r -> Agent.get_and_update(responses, fn [h | t] -> {h, t} end) end,
+      call_llm: fn _acc, _s, _r ->
+        Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
+      end,
       dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{ok: true} end) end,
       convert: fn _acc, raw, _os -> raw end,
       validate: fn _acc, v -> v end,
@@ -119,9 +120,8 @@ defmodule Normandy.Agents.Turn.DriverTest do
       emit: fn _acc, _n, _m -> :ok end
     }
 
-    {acc, final} =
-      Driver.drive(state |> Map.put(:status, :tool_dispatch), handlers, [])
-      |> then(fn {acc, final} -> {acc, final} end)
+    state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :rm)
+    {acc, final} = Driver.drive(state, handlers, [])
 
     assert final.status == :stopped
     # compact handler ran exactly once, between the tool result and the next call

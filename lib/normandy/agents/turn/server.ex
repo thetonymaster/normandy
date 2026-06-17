@@ -87,6 +87,19 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # :running — a monitored Task delivered the outcome of a blocking effect.
+  # Compact result carries the updated config alongside the meta; thread both.
+  def handle_event(
+        :info,
+        {task_ref, {:compact_result, config2, meta}},
+        :running,
+        %Data{task_ref: task_ref} = data
+      )
+      when is_reference(task_ref) do
+    Process.demonitor(task_ref, [:flush])
+    {state, effects} = Turn.step(data.turn_state, {:compaction_done, meta})
+    interpret(effects, %{data | turn_state: state, task_ref: nil, config: config2})
+  end
+
   def handle_event(:info, {task_ref, event}, :running, %Data{task_ref: task_ref} = data)
       when is_reference(task_ref) do
     Process.demonitor(task_ref, [:flush])
@@ -188,6 +201,12 @@ defmodule Normandy.Agents.Turn.Server do
 
       {:execute_approved, calls} ->
         spawn_task(data, fn _h, d -> {:approved_results, execute_approved(d, calls)} end)
+
+      {:maybe_compact, info} ->
+        spawn_task(data, fn h, d ->
+          {config2, meta} = h.compact.(d.config, d.turn_state, info)
+          {:compact_result, config2, meta}
+        end)
 
       {:finalize, value} ->
         reply(data, {:ok, value})
