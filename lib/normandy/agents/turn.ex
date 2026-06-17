@@ -153,11 +153,17 @@ defmodule Normandy.Agents.Turn do
   # Some calls in the batch need human approval. The shell has already executed the
   # allowed calls and passes their `held` results plus the `parked` calls. Park:
   # store both (the persisted state carries them, so resume needs no re-execution),
-  # emit the awaiting-approval event, and persist. Results are NOT appended yet —
-  # the whole batch's tool_results must go to the model together (later tasks).
+  # persist the suspend state, then emit the awaiting-approval event. Results are
+  # NOT appended yet — the whole batch's tool_results must go to the model
+  # together (later tasks).
   def step(%State{status: :tool_dispatch} = s, {:needs_approval, held, parked}) do
     s2 = %{s | status: :awaiting_approval, held_results: held, parked_calls: parked}
-    {s2, [{:emit_event, :awaiting_approval, %{parked: length(parked)}}, {:persist, s2}]}
+    # Persist BEFORE announcing the park: an observer that sees `:awaiting_approval`
+    # is then guaranteed the resumable state is durable, and a persist failure fails
+    # the turn without ever signalling the park (honouring the suspend-point hard
+    # gate). The Driver never reaches this branch (it never parks), so the order is
+    # immaterial to the inline path.
+    {s2, [{:persist, s2}, {:emit_event, :awaiting_approval, %{parked: length(parked)}}]}
   end
 
   # Once a partial approval clears parked_calls (some approved → shell is running
