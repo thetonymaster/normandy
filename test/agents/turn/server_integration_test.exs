@@ -110,7 +110,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
 
     :ok = Turn.Session.approve(opts, %{"pk1" => :approve})
-    assert_receive {:result, {:ok, %Resp{}}}, 2_000
+    assert_receive {:result, {:ok, %Resp{content: "done"}}}, 2_000
 
     # Phase 2: let server passivate after idle timeout
     # Be resilient to the race: the server may already be gone by the time we check.

@@ -607,6 +607,8 @@ defmodule Normandy.Agents.BaseAgent do
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes
   # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
   # as the third arg; we use it directly rather than reaching back into config.
+  # For a chat_message schema we map the unwrapped content into it; for any other
+  # schema we return the raw response (parity with the no-tools finalize path).
   defp convert_turn_output(_config, raw, output_schema) do
     if raw.content && raw.content != "" do
       case output_schema do
@@ -614,7 +616,7 @@ defmodule Normandy.Agents.BaseAgent do
           Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
 
         _ ->
-          output_schema
+          raw
       end
     else
       output_schema
