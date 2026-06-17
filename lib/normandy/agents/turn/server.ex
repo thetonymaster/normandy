@@ -10,6 +10,7 @@ defmodule Normandy.Agents.Turn.Server do
   @behaviour :gen_statem
 
   alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
+  alias Normandy.Components.ToolCall
 
   defmodule Data do
     @moduledoc false
@@ -97,6 +98,18 @@ defmodule Normandy.Agents.Turn.Server do
       ) do
     {state, effects} = Turn.step(data.turn_state, {:llm_error, {:task_down, reason}})
     interpret(effects, %{data | turn_state: state, task_ref: nil})
+  end
+
+  # :awaiting_approval — out-of-band approval decisions for a parked turn.
+  def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
+    {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
+    interpret(effects, %{data | turn_state: state})
+  end
+
+  # Approval expiry → all-reject (fail-closed): feed an empty decisions map.
+  def handle_event(:state_timeout, :approval_expiry, :awaiting_approval, data) do
+    {state, effects} = Turn.step(data.turn_state, {:approval, %{}})
+    interpret(effects, %{data | turn_state: state})
   end
 
   # ---- effect interpreter ----
@@ -269,5 +282,27 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  defp execute_approved(_data, _calls), do: raise("execute_approved/2 lands in Task 6")
+  # Run already-approved calls: re-derive `prepared` (registry + prepare_tool,
+  # deterministic, no policy) and run Dispatch.execute/4. NOT re-classify —
+  # re-running policy would re-park. Concurrency mirrors dispatch/2.
+  defp execute_approved(%Data{config: config}, calls) do
+    pipeline = BaseAgent.base_agent_pipeline(config)
+    max_conc = max(config.max_tool_concurrency || 1, 1)
+    parent_ctx = Normandy.Telemetry.OtelCtx.capture()
+
+    calls
+    |> Task.async_stream(
+      fn %ToolCall{} = call ->
+        Normandy.Telemetry.OtelCtx.restore(parent_ctx)
+        {:ok, tool} = Normandy.Tools.Registry.get(config.tool_registry, call.name)
+        prepared = Dispatch.prepare_tool(tool, call.input)
+        Dispatch.execute(config, prepared, call, pipeline)
+      end,
+      ordered: true,
+      max_concurrency: max_conc,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+  end
 end

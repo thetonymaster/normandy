@@ -122,4 +122,117 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
     assert {:ok, _term} = InMemory.load_turn_state(store, "s-park")
   end
+
+  test "approving a parked call resumes the turn and finalizes" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    test_pid = self()
+    parent = self()
+
+    # Stateful call_llm: 1st call → two tool calls (weather allowed, billing parked);
+    # 2nd call → no-tools final response.
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _c, _s, _r ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      if n == 0 do
+        %Resp{
+          content: "",
+          tool_calls: [
+            %ToolCall{id: "ok1", name: "weather", input: %{}},
+            %ToolCall{id: "pk1", name: "billing", input: %{}}
+          ]
+        }
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+
+    config = %{
+      base_config_with_tools()
+      | behaviours: %Normandy.Behaviours.Config{
+          policy:
+            {Normandy.Behaviours.PolicyEngine.Ruleset,
+             rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+             default_action: :allow}
+        }
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-approve",
+        config: config,
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers,
+        subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+      )
+
+    spawn(fn -> send(parent, {:run_result, Turn.Server.run(srv, "go")}) end)
+
+    assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+    :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+
+    assert_receive {:run_result, {:ok, %Resp{}}}, 2_000
+  end
+
+  test "approval timeout rejects all parked calls (fail-closed) and resumes" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    test_pid = self()
+    parent = self()
+
+    # Stateful call_llm: 1st call → two tool calls; 2nd call → no-tools final.
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _c, _s, _r ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      if n == 0 do
+        %Resp{
+          content: "",
+          tool_calls: [
+            %ToolCall{id: "ok1", name: "weather", input: %{}},
+            %ToolCall{id: "pk1", name: "billing", input: %{}}
+          ]
+        }
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+
+    config = %{
+      base_config_with_tools()
+      | behaviours: %Normandy.Behaviours.Config{
+          policy:
+            {Normandy.Behaviours.PolicyEngine.Ruleset,
+             rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+             default_action: :allow}
+        }
+    }
+
+    # Short timeout so the approval_expiry fires quickly.
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-timeout",
+        config: config,
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers,
+        approval_timeout_ms: 50,
+        subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+      )
+
+    spawn(fn -> send(parent, {:run_result, Turn.Server.run(srv, "go")}) end)
+
+    # The turn should finalize (billing denied by timeout, not approved) via the
+    # 2nd no-tools LLM call.
+    assert_receive {:run_result, {:ok, %Resp{}}}, 2_000
+  end
 end
