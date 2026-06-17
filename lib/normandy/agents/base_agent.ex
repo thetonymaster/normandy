@@ -121,6 +121,47 @@ defmodule Normandy.Agents.BaseAgent do
     Map.put(config, :memory, memory)
   end
 
+  @doc """
+  Runs the config's input guardrails as a standalone **admission decision** —
+  no turn, no memory mutation, no circuit breaker.
+
+  Use this as a pre-charge filter: a host can reject disallowed input before
+  paying for an expensive turn. Returns `:ok` to admit, or `{:block, violations}`
+  to reject. Unlike the in-turn input check (`run_turn`/streaming admission,
+  which raises `Normandy.Guardrails.ViolationError`), `admit/2,3` never raises on
+  a violation — the caller decides what to do with a block.
+
+  `context` is threaded to any guard implementing the optional `Guard.check/3`
+  callback (see `Normandy.Guardrails.run/3`). The framework treats it as opaque;
+  guards that need host data (ids, locale, history) read it, others ignore it.
+
+  Emits `[:normandy, :agent, :guardrail, :decision]` with `outcome` in
+  `:admit | :block | :error` (`:error` when the block came from a crashed guard
+  under `on_error: :closed`), and on a block the same
+  `[:normandy, :agent, :guardrail, :violation]` event as the in-turn path. With
+  no input guardrails configured it is a silent `:ok` — no telemetry.
+  """
+  @spec admit(BaseAgentConfig.t(), term()) ::
+          :ok | {:block, [Normandy.Guardrails.Guard.violation()]}
+  @spec admit(BaseAgentConfig.t(), term(), map()) ::
+          :ok | {:block, [Normandy.Guardrails.Guard.violation()]}
+  def admit(config, value, context \\ %{})
+
+  def admit(%BaseAgentConfig{input_guardrails: []}, _value, _context), do: :ok
+
+  def admit(%BaseAgentConfig{input_guardrails: guards} = config, value, context) do
+    case Normandy.Guardrails.run(guards, value, context) do
+      {:ok, _value} ->
+        emit_guardrail_decision(:admit, config, guards, [])
+        :ok
+
+      {:error, violations} ->
+        emit_guardrail_violation(:input, config, guards, violations)
+        emit_guardrail_decision(decision_outcome(violations), config, guards, violations)
+        {:block, violations}
+    end
+  end
+
   @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
   def get_response(config = %BaseAgentConfig{}, response_model \\ nil) do
     {response, _usage} = get_response_with_usage(config, response_model)
@@ -1600,17 +1641,15 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Runs input guardrails and raises Normandy.Guardrails.ViolationError on any
   # violation. Mirrors the input-side raise behaviour of ValidationMiddleware —
-  # a rejected input is a hard halt, not a soft pass-through.
-  defp run_input_guardrails!(%BaseAgentConfig{input_guardrails: []}, _value), do: :ok
-
-  defp run_input_guardrails!(%BaseAgentConfig{input_guardrails: guards} = config, value) do
-    case Normandy.Guardrails.run(guards, value) do
-      {:ok, _value} ->
+  # a rejected input is a hard halt, not a soft pass-through. Delegates to
+  # admit/2 so the bang and non-bang entries share guard execution + telemetry;
+  # the only difference is that a block here raises rather than returns.
+  defp run_input_guardrails!(%BaseAgentConfig{} = config, value) do
+    case admit(config, value) do
+      :ok ->
         :ok
 
-      {:error, violations} ->
-        emit_guardrail_violation(:input, config, guards, violations)
-
+      {:block, violations} ->
         raise Normandy.Guardrails.ViolationError,
           message: "Agent input guardrail violation",
           violations: violations
@@ -1654,6 +1693,35 @@ defmodule Normandy.Agents.BaseAgent do
         extra_meta
       )
     )
+  end
+
+  # Emits the admission-decision event. Separate from :violation so consumers
+  # can monitor admit/block/error rates on a single stream regardless of
+  # outcome. Only emitted from admit/2,3 (and the in-turn path that delegates to
+  # it), and only when guardrails are configured.
+  defp emit_guardrail_decision(outcome, config, guards, violations) do
+    :telemetry.execute(
+      [:normandy, :agent, :guardrail, :decision],
+      %{count: length(violations)},
+      %{
+        stage: :input,
+        outcome: outcome,
+        agent_name: config.name,
+        guards: Enum.map(guards, &guard_module/1),
+        violations: violations
+      }
+    )
+  end
+
+  # A block whose violation came from a crashed guard (on_error: :closed) is an
+  # :error outcome; an ordinary policy rejection is a :block. run/3 short-circuits
+  # on the first failing guard, so violations originate from a single guard.
+  defp decision_outcome(violations) do
+    if Enum.any?(violations, &(Map.get(&1, :constraint) == :guard_error)) do
+      :error
+    else
+      :block
+    end
   end
 
   defp guard_module(mod) when is_atom(mod), do: mod

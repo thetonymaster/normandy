@@ -24,6 +24,44 @@ defmodule Normandy.Guardrails do
   `:output_guardrails` on `Normandy.Agents.BaseAgentConfig`, or via the
   `guardrails/2` macro in `Normandy.DSL.Agent`.
 
+  ## Pre-charge admission
+
+  Input guardrails run inside a turn by default and signal a rejection by
+  raising. To use them as a **pre-charge filter** — block disallowed input
+  before paying for a turn — call `Normandy.Agents.BaseAgent.admit/2,3`, which
+  runs `run/2,3` with no turn, memory, or circuit breaker and returns
+  `:ok | {:block, violations}` instead of raising.
+
+  ## Context
+
+  `run/3` threads a caller-supplied `context` map to any guard implementing the
+  optional `Guard.check/3` callback (guards with only `check/2` are unaffected).
+  Context carries host data a guard needs but the framework must not interpret —
+  ids, locale, conversation history. See `Normandy.Guardrails.Builtins.SemanticScope`
+  for a guard that uses it.
+
+  ## Error handling (`:on_error`)
+
+  Each guard spec may carry an `:on_error` policy controlling what happens when
+  its `check` **raises**:
+
+  - `:reraise` (default) — the exception propagates. A configuration bug stays a
+    crash, not a silent admit.
+  - `:open` — the crash is rescued and treated as a pass. Use this for a guard
+    that calls an external service so an outage admits instead of taking down
+    the whole guard chain.
+  - `:closed` — the crash is rescued and turned into a `:guard_error` violation.
+
+  Only the guard's `check` call is rescued; a malformed return value is a
+  contract violation and always raises regardless of `:on_error`.
+
+  ## Structured reason
+
+  A violation's `:constraint` (an atom) is the machine-readable rejection
+  reason. Hosts map it to localized copy or routing — e.g. a guard returning
+  `constraint: :off_topic` lets the caller render scope-specific messaging
+  without parsing strings. Extra keys on the violation map are allowed.
+
   ## Streaming
 
   Input guardrails run on streaming entry points (`BaseAgent.stream_response/3`,
@@ -61,6 +99,12 @@ defmodule Normandy.Guardrails do
   with `enable_json_retry` plus retries, a single turn can emit multiple
   output-guardrail events. Metadata includes the matched `:term` / `:pattern`
   on the violation payload; redact downstream if your block-list is sensitive.
+
+  `Normandy.Agents.BaseAgent.admit/2,3` additionally emits
+  `[:normandy, :agent, :guardrail, :decision]` with `outcome` in
+  `:admit | :block | :error`, so hosts can monitor admit/block/false-positive
+  rates on one stream. The in-turn input path emits it too (it delegates to
+  `admit/2`); it is suppressed when no guardrails are configured.
   """
 
   alias Normandy.Guardrails.Guard
@@ -74,13 +118,27 @@ defmodule Normandy.Guardrails do
   soon as one fails. An empty guard list is always `{:ok, value}`.
   """
   @spec run([spec()], term()) :: {:ok, term()} | {:error, [Guard.violation()]}
-  def run([], value), do: {:ok, value}
+  def run(guards, value), do: run(guards, value, %{})
 
-  def run(guards, value) when is_list(guards) do
+  @doc """
+  Runs the guard list against `value`, threading `context` to guards.
+
+  Behaves exactly like `run/2`, additionally passing the `context` map to any
+  guard that implements the optional `Guard.check/3` callback. Guards that
+  implement only `check/2` never see the context and their `opts` are
+  unchanged — `run/2` is `run(guards, value, %{})`, so this is purely additive.
+
+  Returns `{:ok, value}` if every guard passes, or `{:error, [violation]}` as
+  soon as one fails. An empty guard list is always `{:ok, value}`.
+  """
+  @spec run([spec()], term(), map()) :: {:ok, term()} | {:error, [Guard.violation()]}
+  def run([], value, _context), do: {:ok, value}
+
+  def run(guards, value, context) when is_list(guards) and is_map(context) do
     Enum.reduce_while(guards, {:ok, value}, fn spec, {:ok, v} ->
       {mod, opts} = normalize(spec)
 
-      case mod.check(v, opts) do
+      case invoke(mod, v, opts, context) do
         :ok ->
           {:cont, {:ok, v}}
 
@@ -92,6 +150,56 @@ defmodule Normandy.Guardrails do
                 "expected #{inspect(mod)}.check/2 to return :ok or {:error, [violation]}, got: #{inspect(other)}"
       end
     end)
+  end
+
+  # Invokes the guard under its `:on_error` policy. `:reraise` (default) lets a
+  # crashing guard propagate — a config bug stays a crash, not a silent admit.
+  # `:open` rescues and treats the crash as a pass; `:closed` rescues and turns
+  # it into a `:guard_error` violation. Only the `check` call is rescued: a
+  # malformed return is a contract violation handled by the caller, not an
+  # `:on_error` case.
+  defp invoke(mod, value, opts, context) do
+    case Keyword.get(opts, :on_error, :reraise) do
+      :reraise ->
+        do_check(mod, value, opts, context)
+
+      policy when policy in [:open, :closed] ->
+        try do
+          do_check(mod, value, opts, context)
+        rescue
+          exception -> on_error_result(policy, mod, exception)
+        end
+
+      other ->
+        raise ArgumentError,
+              "invalid :on_error for #{inspect(mod)}: expected :reraise, :open, or " <>
+                ":closed, got: #{inspect(other)}"
+    end
+  end
+
+  # Dispatches to the guard's check/3 when it implements the optional context
+  # arity, otherwise its check/2. Context-unaware guards are invoked exactly as
+  # before.
+  defp do_check(mod, value, opts, context) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :check, 3) do
+      mod.check(value, opts, context)
+    else
+      mod.check(value, opts)
+    end
+  end
+
+  defp on_error_result(:open, _mod, _exception), do: :ok
+
+  defp on_error_result(:closed, mod, exception) do
+    {:error,
+     [
+       %{
+         guard: mod,
+         path: [],
+         message: "guard #{inspect(mod)} crashed: #{Exception.message(exception)}",
+         constraint: :guard_error
+       }
+     ]}
   end
 
   defp normalize(mod) when is_atom(mod), do: {mod, []}
