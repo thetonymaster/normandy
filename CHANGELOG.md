@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-06-12
+### Added
+
+- **Phase 4a — approval core + chokepoint split (harness decomposition).**
+  - `Normandy.Agents.Dispatch.classify/3` (registry → before-hooks → policy →
+    verdict) and `Dispatch.execute/4` (budget → execute → record → after).
+    `dispatch_one/3` is re-expressed as `classify ➞ execute`; its observable
+    behavior is unchanged (the existing dispatch suite is the parity oracle).
+  - `Normandy.Agents.Turn` core gains real human-approval parking: an
+    `:awaiting_approval` state, `parked_calls`/`held_results` on `%Turn.State{}`,
+    and the `{:needs_approval, held, parked}` → `{:approval, decisions}` →
+    `{:approved_results, results}` event flow, with the batch-results logic
+    factored into a shared `apply_tool_results/2` (one decrement per batch,
+    API-order preserved). The synchronous inline path is unchanged — only the
+    Phase 4b `:gen_statem` shell will exercise these transitions.
+
+### Fixed
+
+- Corrected the version stamp: the prior `1.0.0` (Phase 3) was never tagged and
+  `1.0.0` is reserved for the final phase of the harness-decomposition milestone.
+  Phase 3 is re-labeled `0.8.0` (a pre-1.0 breaking change from `0.7.0`).
+
+## [0.8.0] - 2026-06-12
 
 ### Added
 
