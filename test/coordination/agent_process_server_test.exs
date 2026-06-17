@@ -55,6 +55,26 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     [store: {InMemory, InMemory.new()}, registry: {Native, Native.new()}, supervisor: sup]
   end
 
+  # Poll until every pid is dead, up to ~2s. Owned infra is torn down via async
+  # `Process.exit(:shutdown)` signals (incl. a DynamicSupervisor's graceful
+  # shutdown), so a fixed sleep is fragile under slow/instrumented CI (e.g.
+  # `mix test --cover`). Poll instead of asserting after one short sleep.
+  defp assert_all_dead(pids, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 2_000
+
+    cond do
+      not Enum.any?(pids, &Process.alive?/1) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("owned infra still alive: #{inspect(Enum.filter(pids, &Process.alive?/1))}")
+
+      true ->
+        Process.sleep(10)
+        assert_all_dead(pids, deadline)
+    end
+  end
+
   # Counter-switched call_llm: 1st call parks one "billing" tool call; later calls finalize.
   defp approval_handlers do
     {:ok, counter} = Agent.start_link(fn -> 0 end)
@@ -103,8 +123,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert Enum.all?(owned, &Process.alive?/1)
 
       :ok = AgentProcess.stop(pid)
-      Process.sleep(20)
-      refute Enum.any?(owned, &Process.alive?/1)
+      assert_all_dead(owned)
     end
 
     test "supplied infra is used and NOT owned (survives stop)" do
@@ -148,7 +167,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       slow_handlers = %{
         BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r ->
-            Process.sleep(150)
+            Process.sleep(500)
             %Resp{content: "slow"}
           end
       }
@@ -162,10 +181,12 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       spawn(fn -> send(parent, {:result, AgentProcess.run(pid, "go")}) end)
       Process.sleep(30)
 
-      # The slow turn is mid-flight; a sync call must still return immediately.
+      # The slow turn (500ms) is mid-flight; a sync call must still return
+      # promptly. A blocking implementation would make this wait ~470ms; the
+      # bound stays well below that while tolerating instrumented/slow CI.
       t0 = System.monotonic_time(:millisecond)
       _ = AgentProcess.get_stats(pid)
-      assert System.monotonic_time(:millisecond) - t0 < 50
+      assert System.monotonic_time(:millisecond) - t0 < 200
 
       assert_receive {:result, {:ok, %Resp{content: "slow"}}}, 2_000
     end
@@ -234,10 +255,12 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
 
-      # GenServer is responsive while the turn is parked.
+      # GenServer is responsive while the turn is parked. A blocking
+      # implementation would hang this call until the approval timeout (~300s);
+      # the bound proves non-blocking with ample headroom for slow/instrumented CI.
       t0 = System.monotonic_time(:millisecond)
       stats = AgentProcess.get_stats(pid)
-      assert System.monotonic_time(:millisecond) - t0 < 50
+      assert System.monotonic_time(:millisecond) - t0 < 500
       assert stats.agent_id == "approval-rt"
 
       :ok = AgentProcess.approve(pid, %{"pk1" => :approve})
