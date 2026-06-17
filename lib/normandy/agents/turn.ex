@@ -12,11 +12,9 @@ defmodule Normandy.Agents.Turn do
 
   ## States
 
-  Seven statuses are defined; this phase exercises five. `:awaiting_approval`
-  (suspend/resume, Phase 4) and `:steering` as a *resting* state with compaction
-  (Phase 5) are reserved in the type but not yet entered — the current loop does
-  not rest at a steering point, so the tool-results transition passes through it
-  as an emitted event only (see `step/2` on `:tool_dispatch`).
+  Seven statuses are defined. `:awaiting_approval` (suspend/resume for human
+  approval) is entered when a dispatched batch parks calls; `:steering` as a
+  *resting* state with compaction (Phase 5) is still reserved but not yet entered.
   """
 
   alias Normandy.Agents.Turn.State
@@ -148,6 +146,16 @@ defmodule Normandy.Agents.Turn do
 
   def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
     apply_tool_results(s, results)
+  end
+
+  # Some calls in the batch need human approval. The shell has already executed the
+  # allowed calls and passes their `held` results plus the `parked` calls. Park:
+  # store both (the persisted state carries them, so resume needs no re-execution),
+  # emit the awaiting-approval event, and persist. Results are NOT appended yet —
+  # the whole batch's tool_results must go to the model together (later tasks).
+  def step(%State{status: :tool_dispatch} = s, {:needs_approval, held, parked}) do
+    s2 = %{s | status: :awaiting_approval, held_results: held, parked_calls: parked}
+    {s2, [{:emit_event, :awaiting_approval, %{parked: length(parked)}}, {:persist, s2}]}
   end
 
   def step(%State{status: status} = s, {:llm_error, reason})
