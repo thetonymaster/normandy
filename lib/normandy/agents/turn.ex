@@ -186,6 +186,16 @@ defmodule Normandy.Agents.Turn do
     end
   end
 
+  # The shell finished running the approved calls. Merge their results with the
+  # held (allowed + rejected) results, reorder to the original batch order, and
+  # apply the complete batch — decrementing the iteration counter exactly once.
+  def step(
+        %State{status: :awaiting_approval, held_results: held} = s,
+        {:approved_results, results}
+      ) do
+    apply_tool_results(s, reorder(held ++ results, s.pending_calls))
+  end
+
   def step(%State{status: status} = s, {:llm_error, reason})
       when status not in [:stopped, :failed] do
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}

@@ -108,4 +108,67 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert effects == [{:execute_approved, [%ToolCall{id: "p1", name: "billing", input: %{}}]}]
     end
   end
+
+  describe "step/2 approved results (:awaiting_approval + :approved_results)" do
+    test "merges held + approved results in batch order and applies once" do
+      s = %State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: [
+          %ToolCall{id: "a1", name: "weather", input: %{}},
+          %ToolCall{id: "p1", name: "billing", input: %{}}
+        ],
+        held_results: [%ToolResult{tool_call_id: "a1", output: "sunny", is_error: false}],
+        parked_calls: []
+      }
+
+      approved_results = [%ToolResult{tool_call_id: "p1", output: "charged", is_error: false}]
+
+      {s2, effects} = Turn.step(s, {:approved_results, approved_results})
+
+      assert s2.status == :assistant_streaming
+      assert s2.iterations_left == 4
+      assert s2.held_results == []
+
+      assert [
+               {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
+               {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:call_llm, %{response_model: :rm, final: false}}
+             ] = effects
+    end
+
+    test "at the iteration cap, the resolved batch issues the forced-final call" do
+      s = %State{
+        status: :awaiting_approval,
+        iterations_left: 1,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: [%ToolCall{id: "p1", name: "billing", input: %{}}],
+        held_results: [],
+        parked_calls: []
+      }
+
+      {s2, effects} =
+        Turn.step(
+          s,
+          {:approved_results, [%ToolResult{tool_call_id: "p1", output: "x", is_error: false}]}
+        )
+
+      assert s2.status == :assistant_streaming
+      assert s2.awaiting_final == true
+      assert s2.iterations_left == 0
+
+      assert [
+               {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
+               {:emit_event, :steering, %{iterations_left: 0}},
+               {:call_llm, %{response_model: :os, final: true}}
+             ] = effects
+    end
+  end
 end
