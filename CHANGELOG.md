@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `convert_turn_output/3` previously returned the empty output-schema struct for
   tool-using turns with non-`chat_message` output schemas, dropping the final-
   response content. Non-`chat_message`-schema agents using tools were affected.
+- `Normandy.Context.TokenCounter` was unusable against the live API: every
+  `count_message/2,3`, `count_conversation/2`, and `count_detailed/2` call sent
+  `max_tokens` in the `/v1/messages/count_tokens` payload, which the endpoint
+  rejects (`400 invalid_request_error: "max_tokens: Extra inputs are not
+  permitted"`). The field is now omitted. The default model also moved off the
+  retired `claude-3-5-sonnet-20241022` to `claude-haiku-4-5-20251001`. The
+  previously-skipped token-counter tests are now enabled as `:integration` tests
+  and pass against the live endpoint.
 
 ### Migration
 

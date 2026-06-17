@@ -46,10 +46,11 @@ defmodule Normandy.Integration.BasicAgentTest do
 
   describe "Agent with tools" do
     test "agent uses weather tool to fetch real-time data" do
-      # Use Sonnet for better tool usage reliability
+      # Model is env-overridable via NORMANDY_TEST_MODEL; set a stronger model
+      # there if tool-use reliability needs it.
       agent =
         NormandyIntegrationHelper.create_real_agent(
-          model: "claude-sonnet-4-5-20250929",
+          model: NormandyIntegrationHelper.default_model(),
           temperature: 0.3
         )
 

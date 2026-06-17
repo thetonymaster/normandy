@@ -5,46 +5,12 @@ defmodule Normandy.Context.TokenCounterTest do
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Components.AgentMemory
   alias Normandy.Agents.BaseAgent
-
-  # Mock Claudio module for testing
-  defmodule MockClaudio do
-    defmodule Client do
-      def new(%{token: _token, version: _version}) do
-        %{mock: true}
-      end
-    end
-
-    defmodule Messages do
-      def count_tokens(_client, payload) do
-        # Return mock token counts based on payload
-        model = Map.get(payload, "model", "claude-haiku-4-5-20251001")
-        messages = Map.get(payload, "messages", [])
-        system = Map.get(payload, "system")
-
-        # Calculate mock token count
-        message_tokens =
-          Enum.reduce(messages, 0, fn msg, acc ->
-            content = Map.get(msg, "content", "")
-            # ~4 chars per token approximation
-            acc + div(String.length(content), 4) + 5
-          end)
-
-        system_tokens =
-          if system do
-            div(String.length(system), 4) + 5
-          else
-            0
-          end
-
-        {:ok, %{"input_tokens" => message_tokens + system_tokens}}
-      end
-    end
-  end
+  alias NormandyTest.Support.IntegrationHelper
 
   setup do
-    # Create a mock ClaudioAdapter client
+    # Real Claudio client — these tests exercise the live count_tokens endpoint.
     client = %ClaudioAdapter{
-      api_key: "test-key",
+      api_key: IntegrationHelper.get_api_key(),
       base_url: nil,
       options: %{}
     }
@@ -69,7 +35,7 @@ defmodule Normandy.Context.TokenCounterTest do
   end
 
   describe "count_message/3" do
-    @tag :skip
+    @tag :integration
     test "counts tokens for a simple message", %{client: client} do
       {:ok, result} = TokenCounter.count_message(client, "Hello, world!")
 
@@ -78,7 +44,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert result["input_tokens"] > 0
     end
 
-    @tag :skip
+    @tag :integration
     test "counts tokens for a longer message", %{client: client} do
       long_message = """
       This is a longer message that contains multiple sentences.
@@ -92,27 +58,23 @@ defmodule Normandy.Context.TokenCounterTest do
       assert result["input_tokens"] > 10
     end
 
-    @tag :skip
+    @tag :integration
     test "counts tokens with custom model", %{client: client} do
       {:ok, result} =
-        TokenCounter.count_message(client, "Test message", "claude-3-opus-20240229")
+        TokenCounter.count_message(client, "Test message", "claude-haiku-4-5-20251001")
 
       assert is_map(result)
       assert Map.has_key?(result, "input_tokens")
     end
 
-    @tag :skip
-    test "handles empty message", %{client: client} do
-      {:ok, result} = TokenCounter.count_message(client, "")
-
-      assert is_map(result)
-      # Even empty messages have some overhead
-      assert result["input_tokens"] >= 0
+    test "counts an empty message as zero tokens (no API call)", %{client: client} do
+      # Empty input short-circuits to zero without hitting the endpoint.
+      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_message(client, "")
     end
   end
 
   describe "count_conversation/2" do
-    @tag :skip
+    @tag :integration
     test "counts tokens for conversation history", %{client: client, agent: agent} do
       {:ok, result} = TokenCounter.count_conversation(client, agent)
 
@@ -122,7 +84,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert result["input_tokens"] > 15
     end
 
-    @tag :skip
+    @tag :integration
     test "counts tokens with system prompt", %{client: client, agent: agent} do
       # Add a system prompt to the agent's prompt_specification
       agent_with_system =
@@ -138,8 +100,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert result["input_tokens"] > 20
     end
 
-    @tag :skip
-    test "handles agent with empty memory", %{client: client} do
+    test "counts an agent with empty memory as zero tokens (no API call)", %{client: client} do
       empty_agent =
         BaseAgent.init(%{
           client: client,
@@ -147,16 +108,13 @@ defmodule Normandy.Context.TokenCounterTest do
           temperature: 0.7
         })
 
-      {:ok, result} = TokenCounter.count_conversation(client, empty_agent)
-
-      assert is_map(result)
-      # Empty conversation should have minimal tokens
-      assert result["input_tokens"] >= 0
+      # No messages → zero tokens, short-circuited before any request.
+      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_conversation(client, empty_agent)
     end
   end
 
   describe "count_detailed/2" do
-    @tag :skip
+    @tag :integration
     test "returns detailed token breakdown", %{client: client, agent: agent} do
       {:ok, details} = TokenCounter.count_detailed(client, agent)
 
@@ -172,7 +130,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert is_list(details.messages)
     end
 
-    @tag :skip
+    @tag :integration
     test "provides per-message estimates", %{client: client, agent: agent} do
       {:ok, details} = TokenCounter.count_detailed(client, agent)
 
@@ -188,7 +146,7 @@ defmodule Normandy.Context.TokenCounterTest do
       end)
     end
 
-    @tag :skip
+    @tag :integration
     test "includes system prompt tokens when present", %{client: client, agent: agent} do
       system_prompt = "You are a helpful AI assistant that provides clear answers."
 
@@ -206,7 +164,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert details.total_tokens == details.system_tokens + details.message_tokens
     end
 
-    @tag :skip
+    @tag :integration
     test "truncates long content in preview", %{client: client} do
       long_content = String.duplicate("a", 100)
 
@@ -233,7 +191,7 @@ defmodule Normandy.Context.TokenCounterTest do
   end
 
   describe "error handling" do
-    @tag :skip
+    @tag :integration
     test "handles API errors gracefully", %{agent: agent} do
       # Create a client with invalid credentials
       invalid_client = %ClaudioAdapter{
@@ -248,7 +206,7 @@ defmodule Normandy.Context.TokenCounterTest do
       assert match?({:error, _}, result)
     end
 
-    @tag :skip
+    @tag :integration
     test "handles malformed agent structure", %{client: client} do
       malformed_agent = %{
         config: %{model: "test-model"},
