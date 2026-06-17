@@ -19,8 +19,15 @@ defmodule Normandy.Agents.Turn.Session do
     sid = Keyword.fetch!(opts, :session_id)
 
     case reg_mod.whereis(reg_handle, sid) do
-      {:ok, pid} -> Server.approve(pid, decisions)
-      :none -> with {:ok, pid} <- ensure_server(opts), do: Server.approve(pid, decisions)
+      {:ok, pid} ->
+        Server.approve(pid, decisions)
+
+      # Approval only makes sense against a live, parked server. An
+      # awaiting-approval server never passivates (only :idle does), so a
+      # registry miss means there is no session to approve — fail closed
+      # instead of booting a fresh server and silently dropping the approval.
+      :none ->
+        {:error, :no_session}
     end
   end
 
@@ -51,7 +58,15 @@ defmodule Normandy.Agents.Turn.Session do
       end
 
     {:ok, entries} = store_mod.history(store_handle, sid)
-    config = %{config | memory: AgentMemory.from_entries(entries)}
+
+    # `from_entries/1` rebuilds with `max_messages: nil`; restore the caller's
+    # configured cap so passivation/rehydration doesn't silently uncap memory.
+    rebuilt_memory = %{
+      AgentMemory.from_entries(entries)
+      | max_messages: config.memory.max_messages
+    }
+
+    config = %{config | memory: rebuilt_memory}
 
     server_opts =
       opts

@@ -72,4 +72,49 @@ defmodule Normandy.Agents.Turn.SessionTest do
     assert {:ok, _} = Turn.Session.run(opts, "again")
     assert length(DynamicSupervisor.which_children(sup)) == 1
   end
+
+  test "approve/2 returns {:error, :no_session} for an unknown session" do
+    alias Normandy.Behaviours.SessionRegistry.Native
+
+    opts = [session_id: "ghost", registry: {Native, Native.new()}]
+
+    # No live session exists, so approval cannot succeed and must not boot one.
+    assert {:error, :no_session} = Turn.Session.approve(opts, %{})
+  end
+
+  test "rehydration preserves the configured memory cap (max_messages)" do
+    alias Normandy.Behaviours.SessionStore.InMemory
+    alias Normandy.Behaviours.SessionRegistry.Native
+
+    store = InMemory.new()
+    reg = Native.new()
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    {:ok, _} =
+      InMemory.append_entry(store, "capped", %Normandy.Components.AgentMemory.Entry{
+        turn_id: "t0",
+        role: "user",
+        content: "earlier"
+      })
+
+    config = %{session_config() | memory: Normandy.Components.AgentMemory.new_memory(7)}
+
+    opts = [
+      session_id: "capped",
+      config: config,
+      store: {InMemory, store},
+      registry: {Native, reg},
+      supervisor: sup,
+      handlers: %{
+        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
+      }
+    ]
+
+    assert {:ok, _} = Turn.Session.run(opts, "now")
+
+    {:ok, pid} = Native.whereis(reg, "capped")
+    {_state, data} = :sys.get_state(pid)
+    assert data.config.memory.max_messages == 7
+  end
 end
