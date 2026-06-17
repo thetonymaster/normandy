@@ -42,6 +42,7 @@ defmodule Normandy.Agents.TurnPropertyTest do
       constant(
         {:approved_results, [%ToolResult{tool_call_id: "p", output: "o", is_error: false}]}
       ),
+      constant({:compaction_done, %{}}),
       constant({:bogus_event, 1})
     ])
   end
@@ -184,4 +185,6 @@ defmodule Normandy.Agents.TurnPropertyTest do
     do: {:llm_response, tool_resp}
 
   defp next_event(%State{status: :tool_dispatch}, _tr, results), do: {:tool_results, results}
+
+  defp next_event(%State{status: :steering}, _tr, _res), do: {:compaction_done, %{}}
 end

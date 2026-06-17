@@ -31,9 +31,10 @@ defmodule Normandy.Agents.Turn.Driver do
             validate: (acc(), term() -> term()),
             guard: (acc(), term() -> any()),
             append: (acc(), String.t(), term() -> acc()),
+            compact: (acc(), Turn.State.t(), map() -> {acc(), map()}),
             emit: (acc(), atom(), map() -> any())
           }
-    defstruct [:call_llm, :dispatch_tools, :convert, :validate, :guard, :append, :emit]
+    defstruct [:call_llm, :dispatch_tools, :convert, :validate, :guard, :append, :compact, :emit]
   end
 
   @spec drive(Turn.State.t(), Handlers.t(), term()) :: {term(), Turn.State.t()}
@@ -60,6 +61,10 @@ defmodule Normandy.Agents.Turn.Driver do
       {:dispatch_tools, calls} ->
         results = handlers.dispatch_tools.(acc, calls)
         advance(acc, state, {:tool_results, results}, handlers)
+
+      {:maybe_compact, info} ->
+        {acc2, meta} = handlers.compact.(acc, state, info)
+        advance(acc2, state, {:compaction_done, meta}, handlers)
 
       {:convert_output, raw, output_schema} ->
         advance(

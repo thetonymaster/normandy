@@ -64,7 +64,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
     test "all rejected → applies held + denial results in batch order, decrements once", %{s: s} do
       {s2, effects} = Turn.step(s, {:approval, %{"p1" => :reject}})
 
-      assert s2.status == :assistant_streaming
+      assert s2.status == :steering
       assert s2.iterations_left == 4
       assert s2.parked_calls == []
       assert s2.held_results == []
@@ -74,15 +74,23 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool",
                 %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4}}
+             ] = effects
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.status == :assistant_streaming
+
+      assert effects2 == [
                {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
                {:call_llm, %{response_model: :rm, final: false}}
-             ] = effects
+             ]
     end
 
     test "absent decision is treated as rejected (fail-closed)", %{s: s} do
       {s2, effects} = Turn.step(s, {:approval, %{}})
 
-      assert s2.status == :assistant_streaming
+      assert s2.status == :steering
 
       assert Enum.any?(
                effects,
@@ -91,6 +99,9 @@ defmodule Normandy.Agents.TurnApprovalTest do
                  &1
                )
              )
+
+      {s3, _effects2} = Turn.step(s2, {:compaction_done, %{}})
+      assert s3.status == :assistant_streaming
     end
 
     test "some approved → stays :awaiting_approval, stashes rejected, emits :execute_approved", %{
@@ -149,7 +160,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       {s2, effects} = Turn.step(s, {:approved_results, approved_results})
 
-      assert s2.status == :assistant_streaming
+      assert s2.status == :steering
       assert s2.iterations_left == 4
       assert s2.held_results == []
 
@@ -157,9 +168,17 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4}}
+             ] = effects
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.status == :assistant_streaming
+
+      assert effects2 == [
                {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
                {:call_llm, %{response_model: :rm, final: false}}
-             ] = effects
+             ]
     end
 
     test "at the iteration cap, the resolved batch issues the forced-final call" do
@@ -180,15 +199,22 @@ defmodule Normandy.Agents.TurnApprovalTest do
           {:approved_results, [%ToolResult{tool_call_id: "p1", output: "x", is_error: false}]}
         )
 
-      assert s2.status == :assistant_streaming
-      assert s2.awaiting_final == true
+      assert s2.status == :steering
+      assert s2.awaiting_final == false
       assert s2.iterations_left == 0
 
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:call_llm, %{response_model: :os, final: true}}
+               {:maybe_compact, %{iterations_left: 0}}
              ] = effects
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.status == :assistant_streaming
+      assert s3.awaiting_final == true
+
+      assert effects2 == [{:call_llm, %{response_model: :os, final: true}}]
     end
 
     test "mixed approve+reject across a 2-parked batch resolves in batch order" do
@@ -231,7 +257,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
            [%ToolResult{tool_call_id: "p1", output: "charged", is_error: false}]}
         )
 
-      assert s3.status == :assistant_streaming
+      assert s3.status == :steering
       assert s3.iterations_left == 4
 
       appended = for {:append_message, "tool", %ToolResult{tool_call_id: id}} <- effects, do: id
@@ -241,6 +267,9 @@ defmodule Normandy.Agents.TurnApprovalTest do
       p2 = Enum.find(results, &(&1.tool_call_id == "p2"))
       assert p2.is_error == true
       assert p2.output.denied == true
+
+      {s4, _effects2} = Turn.step(s3, {:compaction_done, %{}})
+      assert s4.status == :assistant_streaming
     end
   end
 end

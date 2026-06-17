@@ -17,6 +17,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
       validate: fn _acc, value -> value end,
       guard: fn _acc, _value -> :ok end,
       append: fn acc, role, _content -> [role | acc] end,
+      compact: fn acc, _state, _info -> {acc, %{compacted: false}} end,
       emit: fn _acc, name, _meta -> send(pid, {:emit, name}) end
     }
   end
@@ -71,6 +72,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
       validate: fn _acc, value -> value end,
       guard: fn _acc, _value -> :ok end,
       append: fn acc, role, _content -> [role | acc] end,
+      compact: fn acc, _state, _info -> {acc, %{compacted: false}} end,
       emit: fn _acc, _name, _meta -> :ok end
     }
 
@@ -83,5 +85,48 @@ defmodule Normandy.Agents.Turn.DriverTest do
     assert_received {:convert, :os}
     # acc threaded across iterations: assistant (tool turn) -> tool (result) -> assistant (final)
     assert acc == ["assistant", "tool", "assistant"]
+  end
+
+  test "drive/3 runs the compact handler at the steering boundary and threads acc" do
+    # Drive a real turn from :provisioning (via Turn.new) where:
+    # - first LLM response carries a tool call  →  :tool_dispatch → :steering → {:maybe_compact}
+    #   → compact handler fires → {:compaction_done} → :assistant_streaming (iteration 2)
+    # - second LLM response has no tool calls  →  :finalizing → :stopped
+    # This exercises the full steering round-trip through the Driver without
+    # bypassing the :start gate.
+    pid = self()
+
+    {:ok, responses} =
+      Agent.start_link(fn ->
+        [
+          %{content: nil, tool_calls: [%{id: "c1"}]},
+          %{content: "final", tool_calls: []}
+        ]
+      end)
+
+    handlers = %Handlers{
+      call_llm: fn _acc, _s, _r ->
+        Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
+      end,
+      dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{ok: true} end) end,
+      convert: fn _acc, raw, _os -> raw end,
+      validate: fn _acc, v -> v end,
+      guard: fn _acc, _v -> :ok end,
+      append: fn acc, role, _c -> [role | acc] end,
+      compact: fn acc, _s, info ->
+        send(pid, {:compacted, info})
+        {[:compacted | acc], %{compacted: true}}
+      end,
+      emit: fn _acc, _n, _m -> :ok end
+    }
+
+    state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :rm)
+    {acc, final} = Driver.drive(state, handlers, [])
+
+    assert final.status == :stopped
+    # compact handler ran exactly once, between the tool result and the next call
+    assert_received {:compacted, %{iterations_left: 4}}
+    refute_received {:compacted, _}
+    assert :compacted in acc
   end
 end

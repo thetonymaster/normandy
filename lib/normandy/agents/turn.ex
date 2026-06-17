@@ -13,8 +13,10 @@ defmodule Normandy.Agents.Turn do
   ## States
 
   Seven statuses are defined. `:awaiting_approval` (suspend/resume for human
-  approval) is entered when a dispatched batch parks calls; `:steering` as a
-  *resting* state with compaction (Phase 5) is still reserved but not yet entered.
+  approval) is entered when a dispatched batch parks calls. `:steering` is a
+  resting state entered at every tool-batch boundary: the core emits a
+  `{:maybe_compact, info}` effect there and resumes on `{:compaction_done, _}`,
+  which is where context-window compaction (Phase 5) runs in the shell.
   """
 
   alias Normandy.Agents.Turn.State
@@ -150,6 +152,25 @@ defmodule Normandy.Agents.Turn do
     apply_tool_results(s, results)
   end
 
+  # Compaction (or its no-op) finished. Resolve the steering boundary. At/after
+  # the iteration cap, issue the forced-final call (skipping convert, like the old
+  # path); otherwise emit the next :iteration and continue. iterations_left was
+  # already decremented in apply_tool_results.
+  def step(%State{status: :steering, iterations_left: left} = s, {:compaction_done, _meta})
+      when left <= 0 do
+    {%{s | status: :assistant_streaming, awaiting_final: true},
+     [{:call_llm, %{response_model: s.output_schema, final: true}}]}
+  end
+
+  def step(%State{status: :steering} = s, {:compaction_done, _meta}) do
+    iteration =
+      {:emit_event, :iteration,
+       %{iteration: s.max_iterations - s.iterations_left + 1, iterations_left: s.iterations_left}}
+
+    {%{s | status: :assistant_streaming},
+     [iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
+  end
+
   # Some calls in the batch need human approval. The shell has already executed the
   # allowed calls and passes their `held` results plus the `parked` calls. Park:
   # store both (the persisted state carries them, so resume needs no re-execution),
@@ -236,29 +257,27 @@ defmodule Normandy.Agents.Turn do
   end
 
   # The batch-results transition, shared by the normal `:tool_dispatch` path and
-  # the approval-resume paths (later tasks). Appends each result, decrements the
-  # iteration counter exactly once per batch, emits the steering boundary, and
-  # either continues (next LLM call) or issues the forced-final call at the cap.
-  # Always clears the per-batch scratch fields (`pending_calls`, `parked_calls`,
-  # `held_results`); on the normal path the latter two are already empty.
+  # the approval-resume paths. Appends each result, decrements the iteration
+  # counter exactly once per batch, emits the steering boundary event, then parks
+  # in `:steering` and asks the shell to (maybe) compact before the next LLM call.
+  # The continue-vs-forced-final decision is deferred to the `:compaction_done`
+  # clauses below. Always clears the per-batch scratch fields (`pending_calls`,
+  # `parked_calls`, `held_results`); on the normal path the latter two are empty.
   defp apply_tool_results(%State{} = s, results) do
     new_left = s.iterations_left - 1
     append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
     steering = {:emit_event, :steering, %{iterations_left: new_left}}
-    base = %{s | pending_calls: [], parked_calls: [], held_results: []}
 
-    if new_left <= 0 do
-      {%{base | status: :assistant_streaming, awaiting_final: true, iterations_left: new_left},
-       append_effects ++ [steering, {:call_llm, %{response_model: s.output_schema, final: true}}]}
-    else
-      iteration =
-        {:emit_event, :iteration,
-         %{iteration: s.max_iterations - new_left + 1, iterations_left: new_left}}
+    s2 = %{
+      s
+      | status: :steering,
+        iterations_left: new_left,
+        pending_calls: [],
+        parked_calls: [],
+        held_results: []
+    }
 
-      {%{base | status: :assistant_streaming, iterations_left: new_left},
-       append_effects ++
-         [steering, iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
-    end
+    {s2, append_effects ++ [steering, {:maybe_compact, %{iterations_left: new_left}}]}
   end
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by
