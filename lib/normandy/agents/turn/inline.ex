@@ -9,8 +9,9 @@ defmodule Normandy.Agents.Turn.Inline do
 
   This is the library / scripted-run shell. It does NOT (yet) replace
   `BaseAgent.run/2`; it exists to prove the FSM core runs a real turn against a
-  real `Dispatch` chokepoint. Streaming, guardrails, validation, persistence,
-  approval and compaction shells come in later phases.
+  real `Dispatch` chokepoint. Compaction at the `:steering` boundary is
+  supported via the optional `:compact` dep (default no-op); streaming,
+  guardrails, validation, persistence and approval shells come in later phases.
 
   `deps` is a map of side-effecting functions:
     * `:call_llm` — `fn request -> {:ok, response} | {:error, reason} end` (required)
@@ -23,6 +24,9 @@ defmodule Normandy.Agents.Turn.Inline do
                     unchanged)
     * `:guard`    — `fn value -> any end` (optional, defaults to no-op: side-effecting, return
                     is ignored and the input `value` is fed forward via `{:output_guarded, value}`)
+    * `:compact`  — `fn info -> any end` (optional, defaults to no-op). Invoked at the
+                    `:steering` boundary; the inline shell does not thread memory, so
+                    a real impl must compact external state by side effect.
 
   By design, `step/2` always places the single blocking/terminal effect
   (`:call_llm`, `:dispatch_tools`, `:finalize`, `:fail`) last in its effect list,
@@ -41,7 +45,8 @@ defmodule Normandy.Agents.Turn.Inline do
           append: fn _role, _content -> :ok end,
           convert: fn raw, _response_model -> raw end,
           validate: fn value -> value end,
-          guard: fn _value -> :ok end
+          guard: fn _value -> :ok end,
+          compact: fn _info -> :ok end
         },
         deps
       )
@@ -71,6 +76,10 @@ defmodule Normandy.Agents.Turn.Inline do
       {:dispatch_tools, calls} ->
         results = deps.dispatch.(calls)
         advance(state, {:tool_results, results}, deps)
+
+      {:maybe_compact, info} ->
+        deps.compact.(info)
+        advance(state, {:compaction_done, %{}}, deps)
 
       {:convert_output, raw, response_model} ->
         converted = deps.convert.(raw, response_model)
