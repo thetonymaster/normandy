@@ -112,6 +112,17 @@ defmodule Normandy.Agents.Turn.Server do
     interpret(effects, %{data | turn_state: state})
   end
 
+  # Idle long enough → passivate. Final turn state is already persisted; just stop.
+  def handle_event(:state_timeout, :passivate, :idle, data) do
+    {:stop, :normal, data}
+  end
+
+  # A turn request mid-turn is postponed and replayed when we re-enter :idle.
+  def handle_event({:call, _from}, {:turn, _input}, state, _data)
+      when state in [:running, :awaiting_approval] do
+    {:keep_state_and_data, :postpone}
+  end
+
   # ---- effect interpreter ----
   # Processes effects left-to-right. Non-blocking effects run synchronously and
   # advance the core in-line (convert/validate/guard) or just side-effect

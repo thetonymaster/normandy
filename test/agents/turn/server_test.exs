@@ -201,6 +201,62 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert_receive {:tool_ran, "billing"}, 2_000
   end
 
+  test "passivates (stops :normal) after the idle timeout" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-idle",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: %{
+          Normandy.Agents.BaseAgent.non_streaming_handlers()
+          | call_llm: fn _c, _s, _r -> %Resp{content: "x"} end
+        },
+        idle_timeout_ms: 50
+      )
+
+    ref = Process.monitor(srv)
+    {:ok, _} = Turn.Server.run(srv, "hi")
+    assert_receive {:DOWN, ^ref, :process, ^srv, :normal}, 1_000
+  end
+
+  test "a turn request received while :running is postponed and runs after idle" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    parent = self()
+
+    # Blocking call_llm so the first turn stays :running while the second request arrives.
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r ->
+          Process.sleep(150)
+          %Resp{content: "x"}
+        end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-postpone",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    # First turn: arrives while server is :idle → starts immediately.
+    spawn(fn -> send(parent, {:a, Turn.Server.run(srv, "first")}) end)
+    # Let the first turn reach :running (call_llm is sleeping).
+    Process.sleep(50)
+    # Second turn: arrives while server is :running → postponed, replayed on :idle entry.
+    spawn(fn -> send(parent, {:b, Turn.Server.run(srv, "second")}) end)
+
+    assert_receive {:a, {:ok, %Resp{}}}, 2_000
+    assert_receive {:b, {:ok, %Resp{}}}, 2_000
+  end
+
   test "approval timeout rejects all parked calls (fail-closed) and resumes" do
     store = InMemory.new()
     reg = Normandy.Behaviours.SessionRegistry.Native.new()
