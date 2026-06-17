@@ -1,6 +1,8 @@
 defmodule Normandy.Coordination.AgentProcessServerTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -139,7 +141,9 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       {InMemory, store_h} = infra[:store]
       :ok = AgentProcess.stop(pid)
-      Process.sleep(20)
+      # Wait until the AgentProcess has fully terminated (so terminate/2 ran),
+      # then assert the SUPPLIED store survived — deterministic, not a fixed sleep.
+      assert_all_dead([pid])
       assert Process.alive?(store_h)
     end
   end
@@ -163,10 +167,12 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
     test "GenServer stays responsive while a run is in flight" do
       infra = supplied_infra()
+      parent = self()
 
       slow_handlers = %{
         BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r ->
+            send(parent, :llm_started)
             Process.sleep(500)
             %Resp{content: "slow"}
           end
@@ -177,9 +183,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           [agent: server_config(), turn_engine: :server, handlers: slow_handlers] ++ infra
         )
 
-      parent = self()
       spawn(fn -> send(parent, {:result, AgentProcess.run(pid, "go")}) end)
-      Process.sleep(30)
+      # Wait for proof the turn is actually inside call_llm before measuring;
+      # a fixed sleep can't prove the run is in-flight (false-positive risk).
+      assert_receive :llm_started, 1_000
 
       # The slow turn (500ms) is mid-flight; a sync call must still return
       # promptly. A blocking implementation would make this wait ~470ms; the
@@ -208,6 +215,32 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       :ok = AgentProcess.cast(pid, "bg", reply_to: self())
       assert_receive {:agent_result, "srv_async", {:ok, %Resp{content: "async-ok"}}}, 2_000
+    end
+
+    test "delivers an error to reply_to when the turn crashes (no silent loss)" do
+      infra = supplied_infra()
+
+      crash_handlers = %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn _c, _s, _r -> raise "boom" end
+      }
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(),
+            turn_engine: :server,
+            agent_id: "srv_async_crash",
+            handlers: crash_handlers
+          ] ++ infra
+        )
+
+      capture_log(fn ->
+        :ok = AgentProcess.cast(pid, "bg", reply_to: self())
+        # A crashing async turn must still notify reply_to with an error,
+        # never drop the reply.
+        assert_receive {:agent_result, "srv_async_crash", {:error, _reason}}, 2_000
+      end)
     end
   end
 
@@ -323,7 +356,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       crash_handlers = %{
         BaseAgent.non_streaming_handlers()
-        | call_llm: fn _c, _s, _r -> raise "boom" end
+        | # exit/1 (not raise) so the abnormal worker exit doesn't spew an
+          # exception crash-report into CI output; still yields a non-normal
+          # :DOWN reason and thus {:task_down, _}.
+          call_llm: fn _c, _s, _r -> exit(:boom) end
       }
 
       {:ok, pid} =
