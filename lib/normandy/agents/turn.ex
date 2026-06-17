@@ -18,6 +18,8 @@ defmodule Normandy.Agents.Turn do
   """
 
   alias Normandy.Agents.Turn.State
+  alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
 
   defmodule State do
     @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`)."
@@ -158,6 +160,32 @@ defmodule Normandy.Agents.Turn do
     {s2, [{:emit_event, :awaiting_approval, %{parked: length(parked)}}, {:persist, s2}]}
   end
 
+  # Human approval decisions arrive (tool_call_id => :approve | :reject). Anything
+  # not explicitly :approve is rejected (fail-closed). Build denials for rejects;
+  # if none are approved, finish the batch now (held ++ denials, reordered to the
+  # original tool_use order). If some are approved, stash the denials and ask the
+  # shell to run the approved calls (no re-classify — a later task applies the merge).
+  def step(
+        %State{status: :awaiting_approval, parked_calls: parked, held_results: held} = s,
+        {:approval, decisions}
+      ) do
+    {approved, rejected} =
+      Enum.split_with(parked, fn %ToolCall{id: id} -> Map.get(decisions, id) == :approve end)
+
+    rejected_results = Enum.map(rejected, &rejection_result/1)
+
+    case approved do
+      [] ->
+        apply_tool_results(s, reorder(held ++ rejected_results, s.pending_calls))
+
+      _ ->
+        # status deliberately stays :awaiting_approval — the shell runs the approved
+        # calls, then feeds :approved_results back (handled by a later clause).
+        s2 = %{s | parked_calls: [], held_results: held ++ rejected_results}
+        {s2, [{:execute_approved, approved}]}
+    end
+  end
+
   def step(%State{status: status} = s, {:llm_error, reason})
       when status not in [:stopped, :failed] do
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}
@@ -204,6 +232,28 @@ defmodule Normandy.Agents.Turn do
        append_effects ++
          [steering, iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
     end
+  end
+
+  # Reorder a merged result list to match the original batch (`pending_calls`) by
+  # tool_call_id, so the next user turn presents tool_result blocks in API order.
+  defp reorder(results, pending_calls) do
+    index =
+      pending_calls
+      |> Enum.with_index()
+      |> Map.new(fn {%ToolCall{id: id}, i} -> {id, i} end)
+
+    Enum.sort_by(results, fn %ToolResult{tool_call_id: id} ->
+      Map.get(index, id, length(pending_calls))
+    end)
+  end
+
+  # Denial result for a parked call the approver rejected (or never decided).
+  defp rejection_result(%ToolCall{id: id}) do
+    %ToolResult{
+      tool_call_id: id,
+      output: %{error: "tool call rejected by approver", denied: true, pending_approval: false},
+      is_error: true
+    }
   end
 
   defp tool_calls(%{tool_calls: nil}), do: []
