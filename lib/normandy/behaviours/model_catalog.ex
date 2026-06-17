@@ -4,8 +4,9 @@ defmodule Normandy.Behaviours.ModelCatalog do
 
   The default impl `Static` is the canonical home for the context-window limits
   that previously lived hardcoded on `Normandy.Context.WindowManager`. Phase 2
-  consumption is limited to `WindowManager` sourcing its limits here; turn-loop
-  consumption (compaction) arrives in Phase 5.
+  consumption is `WindowManager` sourcing its limits here; Phase 5 adds turn-loop
+  consumption — `BaseAgent.compact_turn_memory/3` reads `context_window/1` to
+  decide the `:steering`-boundary compaction trigger.
   """
 
   @callback get(model :: String.t()) :: {:ok, map()} | :error

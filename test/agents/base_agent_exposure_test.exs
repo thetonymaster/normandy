@@ -20,5 +20,28 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     for slot <- [:call_llm, :dispatch_tools, :convert, :validate, :guard, :append, :emit] do
       assert is_function(Map.fetch!(h, slot))
     end
+
+    assert is_function(h.compact, 3)
+  end
+
+  test "compact_turn_memory/3 with default config is a NoOp that returns memory unchanged" do
+    alias Normandy.Agents.BaseAgentConfig
+    alias Normandy.Components.AgentMemory
+
+    memory =
+      AgentMemory.new_memory(nil)
+      |> AgentMemory.add_message("user", "hello")
+
+    config = %BaseAgentConfig{
+      model: "claude-3-5-sonnet-20241022",
+      memory: memory,
+      behaviours: nil
+    }
+
+    {config2, meta} =
+      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{iterations_left: 3})
+
+    assert meta.compacted == false
+    assert AgentMemory.history(config2.memory) == AgentMemory.history(config.memory)
   end
 end

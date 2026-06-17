@@ -507,6 +507,7 @@ defmodule Normandy.Agents.BaseAgent do
       append: fn config, role, content ->
         Map.put(config, :memory, AgentMemory.add_message(config.memory, role, content))
       end,
+      compact: &compact_turn_memory/3,
       emit: &emit_turn_event/3
     }
   end
@@ -610,6 +611,45 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp emit_turn_event(_config, _name, _meta), do: :ok
 
+  # Compaction at the :steering boundary. Resolves the configured Compactor and
+  # the model's context window (via the configured ModelCatalog), compacts the
+  # running config.memory, and logs when it actually shrinks the conversation.
+  # The default config selects Compactor.NoOp, so this is observably a no-op
+  # unless an agent opts into a real compactor.
+  @doc false
+  def compact_turn_memory(%BaseAgentConfig{} = config, %Turn.State{} = _state, info) do
+    {mod, opts} = compactor_ref(config)
+    ctx = %{model: config.model, window: context_window_for(config)}
+    {config2, meta} = mod.maybe_compact(config, ctx, opts)
+
+    if Map.get(meta, :compacted) do
+      log_lifecycle(:debug, "normandy agent compaction",
+        agent: log_agent_name(config),
+        iterations_left: Map.get(info, :iterations_left),
+        tokens_before: Map.get(meta, :tokens_before),
+        tokens_after: Map.get(meta, :tokens_after),
+        strategy: Map.get(meta, :strategy)
+      )
+    end
+
+    {config2, meta}
+  end
+
+  defp compactor_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{compactor: ref}}),
+    do: ref
+
+  defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
+
+  defp context_window_for(%BaseAgentConfig{model: model} = config) do
+    {catalog_mod, _opts} = catalog_ref(config)
+    catalog_mod.context_window(model)
+  end
+
+  defp catalog_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{model_catalog: ref}}),
+    do: ref
+
+  defp catalog_ref(_config), do: {Normandy.Behaviours.ModelCatalog.Static, []}
+
   # ── End Turn FSM production interpreter ──────────────────────────────────────
 
   # Streaming analog of run_turn/2. Admission (input guardrails + memory init,
@@ -669,6 +709,7 @@ defmodule Normandy.Agents.BaseAgent do
       validate: fn config, value -> run_streaming_output_guardrails(config, value, callback) end,
       guard: fn _config, _value -> :ok end,
       append: fn config, role, content -> append_stream_message(config, role, content) end,
+      compact: &compact_turn_memory/3,
       emit: &emit_turn_event/3
     }
   end
