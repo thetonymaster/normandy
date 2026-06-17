@@ -126,6 +126,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
     assert final.status == :stopped
     # compact handler ran exactly once, between the tool result and the next call
     assert_received {:compacted, %{iterations_left: 4}}
+    refute_received {:compacted, _}
     assert :compacted in acc
   end
 end
