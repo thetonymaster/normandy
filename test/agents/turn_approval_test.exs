@@ -107,6 +107,26 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert effects == [{:execute_approved, [%ToolCall{id: "p1", name: "billing", input: %{}}]}]
     end
+
+    test "a retried :approval after parked_calls cleared fails, not completes the batch early", %{
+      s: s
+    } do
+      # Approve p1 → parked_calls cleared, still :awaiting_approval, awaiting :approved_results.
+      {s2, [{:execute_approved, _}]} = Turn.step(s, {:approval, %{"p1" => :approve}})
+      assert s2.status == :awaiting_approval
+      assert s2.parked_calls == []
+
+      # A duplicate/retried :approval must NOT re-enter the resolve clause with an
+      # empty parked list — that would apply only held_results, drop the approved
+      # (still-executing) result, and decrement the batch early. It must fail instead.
+      {s3, effects} = Turn.step(s2, {:approval, %{"p1" => :approve}})
+
+      assert s3.status == :failed
+      assert {:unexpected_event, :awaiting_approval, _} = s3.error
+      assert [{:fail, {:unexpected_event, :awaiting_approval, _}}] = effects
+      # Batch not completed: the iteration counter is untouched.
+      assert s3.iterations_left == s.iterations_left
+    end
   end
 
   describe "step/2 approved results (:awaiting_approval + :approved_results)" do

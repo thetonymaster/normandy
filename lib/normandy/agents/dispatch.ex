@@ -134,7 +134,7 @@ defmodule Normandy.Agents.Dispatch do
           {:cont, call} ->
             prepared = prepare_tool(tool, call.input)
 
-            case pipeline.policy_fn.(config, call, prepared) do
+            case apply_policy(pipeline, config, call, prepared) do
               {:allow, _meta} -> {:execute, prepared, call}
               {:deny, info} -> {:deny, denial_result(call, info, false)}
               {:needs_approval, info} -> {:needs_approval, prepared, call, info}
@@ -210,6 +210,21 @@ defmodule Normandy.Agents.Dispatch do
       {:cont, %ToolCall{} = call} -> run_before_hooks(config, call, rest)
       {:halt, %ToolResult{} = result} -> {:halt, result}
     end
+  end
+
+  # Belt-and-suspenders fail-closed at the chokepoint. The policy_fn (Phase 2's
+  # pipeline) owns the fail-closed contract, but a buggy or network-backed policy
+  # engine that raises, or that times out / is unreachable (surfacing as an exit),
+  # must never let a tool call slip through un-vetted. Any escape is normalized to
+  # {:deny, …}, honoring the spec's "a policy timeout/unreachable surfaces as
+  # {:deny, …}". `catch` covers exits/throws (e.g. a GenServer.call timeout);
+  # `rescue` covers raised exceptions.
+  defp apply_policy(pipeline, config, call, prepared) do
+    pipeline.policy_fn.(config, call, prepared)
+  rescue
+    e -> {:deny, %{reason: "policy check raised", rationale: Exception.message(e)}}
+  catch
+    kind, value -> {:deny, %{reason: "policy check failed (#{kind})", rationale: inspect(value)}}
   end
 
   defp run_after_hooks(_config, _call, result, []), do: result

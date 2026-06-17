@@ -160,6 +160,17 @@ defmodule Normandy.Agents.Turn do
     {s2, [{:emit_event, :awaiting_approval, %{parked: length(parked)}}, {:persist, s2}]}
   end
 
+  # Once a partial approval clears parked_calls (some approved → shell is running
+  # them, awaiting :approved_results), a retried/duplicate {:approval, _} must not
+  # re-enter the resolve clause below: with parked == [] it would apply only
+  # held_results, drop the still-executing approved result, and decrement the batch
+  # early (violating the batch-completeness contract). Surface it as :failed — a
+  # shell sequencing bug, consistent with the total-function fallback.
+  def step(%State{status: :awaiting_approval, parked_calls: []} = s, {:approval, _decisions}) do
+    reason = {:unexpected_event, :awaiting_approval, :approval_without_parked_calls}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
   # Human approval decisions arrive (tool_call_id => :approve | :reject). Anything
   # not explicitly :approve is rejected (fail-closed). Build denials for rejects;
   # if none are approved, finish the batch now (held ++ denials, reordered to the

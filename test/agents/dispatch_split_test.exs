@@ -78,6 +78,28 @@ defmodule Normandy.Agents.DispatchSplitTest do
                Dispatch.classify(config, call, pipeline)
     end
 
+    test "policy_fn that raises → {:deny}, fail-closed (belt-and-suspenders)" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c11", name: "weather", input: %{"city" => "NYC"}}
+
+      boom = fn _c, _call, _tool -> raise "policy engine down" end
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: boom}
+
+      assert {:deny, %ToolResult{tool_call_id: "c11", is_error: true, output: %{denied: true}}} =
+               Dispatch.classify(config, call, pipeline)
+    end
+
+    test "policy_fn that exits (timeout/unreachable) → {:deny}, fail-closed" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c12", name: "weather", input: %{"city" => "NYC"}}
+
+      timeout = fn _c, _call, _tool -> exit(:timeout) end
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: timeout}
+
+      assert {:deny, %ToolResult{tool_call_id: "c12", is_error: true, output: %{denied: true}}} =
+               Dispatch.classify(config, call, pipeline)
+    end
+
     test "accepts a raw string-keyed map" do
       config = config_with_tools([%FakeTool{}])
       raw = %{"id" => "c6", "name" => "weather", "input" => %{"city" => "LA"}}

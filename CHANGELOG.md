@@ -745,6 +745,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.8.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.8.0
+[0.7.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.7.0
+[0.6.3]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.3
+[0.6.2]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.2
 [0.6.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.1
 [0.6.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.1
