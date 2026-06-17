@@ -57,31 +57,37 @@ defmodule Normandy.Agents.Turn.Session do
         :error -> nil
       end
 
-    {:ok, entries} = store_mod.history(store_handle, sid)
+    # `history/2` may return a contract-permitted `{:error, _}` on a genuine
+    # store fault; propagate it as run/2's error tuple instead of crashing.
+    case store_mod.history(store_handle, sid) do
+      {:ok, entries} ->
+        # `from_entries/1` rebuilds with `max_messages: nil`; restore the caller's
+        # configured cap so passivation/rehydration doesn't silently uncap memory.
+        rebuilt_memory = %{
+          AgentMemory.from_entries(entries)
+          | max_messages: config.memory.max_messages
+        }
 
-    # `from_entries/1` rebuilds with `max_messages: nil`; restore the caller's
-    # configured cap so passivation/rehydration doesn't silently uncap memory.
-    rebuilt_memory = %{
-      AgentMemory.from_entries(entries)
-      | max_messages: config.memory.max_messages
-    }
+        config = %{config | memory: rebuilt_memory}
 
-    config = %{config | memory: rebuilt_memory}
+        server_opts =
+          opts
+          |> Keyword.take([
+            :session_id,
+            :store,
+            :registry,
+            :subscriber,
+            :handlers,
+            :approval_timeout_ms,
+            :idle_timeout_ms
+          ])
+          |> Keyword.put(:config, config)
+          |> Keyword.put(:turn_state, turn_state)
 
-    server_opts =
-      opts
-      |> Keyword.take([
-        :session_id,
-        :store,
-        :registry,
-        :subscriber,
-        :handlers,
-        :approval_timeout_ms,
-        :idle_timeout_ms
-      ])
-      |> Keyword.put(:config, config)
-      |> Keyword.put(:turn_state, turn_state)
+        Supervisor.start_server(supervisor, server_opts)
 
-    Supervisor.start_server(supervisor, server_opts)
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

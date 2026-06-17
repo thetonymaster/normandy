@@ -7,6 +7,13 @@ defmodule Normandy.Agents.Turn.SessionTest do
     defstruct content: "", tool_calls: nil
   end
 
+  # A store whose history/2 reports a genuine fault (a contract-permitted
+  # {:error, _}), used to prove rehydration propagates it instead of crashing.
+  defmodule FaultyStore do
+    def load_turn_state(_handle, _sid), do: :error
+    def history(_handle, _sid), do: {:error, :store_unavailable}
+  end
+
   defp session_config do
     %Normandy.Agents.BaseAgentConfig{
       input_schema: nil,
@@ -116,5 +123,22 @@ defmodule Normandy.Agents.Turn.SessionTest do
     {:ok, pid} = Native.whereis(reg, "capped")
     {_state, data} = :sys.get_state(pid)
     assert data.config.memory.max_messages == 7
+  end
+
+  test "run/2 returns {:error, reason} when history/2 faults during rehydration" do
+    alias Normandy.Behaviours.SessionRegistry.Native
+
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    opts = [
+      session_id: "faulty",
+      config: session_config(),
+      store: {FaultyStore, :ignored},
+      registry: {Native, Native.new()},
+      supervisor: sup
+    ]
+
+    # A store fault must surface as run/2's error tuple, not a caller crash.
+    assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
   end
 end
