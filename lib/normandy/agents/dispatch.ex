@@ -8,6 +8,12 @@ defmodule Normandy.Agents.Dispatch do
   `Pipeline` struct so they can be injected in tests and replaced by real
   implementations in later phases. The default pipeline is allow-all / no-op /
   identity, preserving current behavior.
+
+  The pipeline is also exposed as two composable halves: `classify/3` (registry →
+  before-hooks → policy, producing a verdict with no side effects) and `execute/4`
+  (budget → execute → record → after, running an already-classified call).
+  `dispatch_one/3` is exactly `classify ➞ execute`; a durable shell consults
+  `classify/3` to park a `:needs_approval` call before any side effect runs.
   """
 
   alias Normandy.Components.ToolCall
@@ -100,35 +106,86 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
+  Classifies one tool call: registry resolution → before-hooks → policy. Returns
+  the routing decision WITHOUT executing the tool, so a durable shell can act on a
+  `:needs_approval` verdict (park) before any side effect runs.
+
+    * `{:execute, prepared, call}` — allowed; `prepared` is the built tool struct,
+      `call` the post-before-hook `%ToolCall{}` (hooks may have rewritten it).
+    * `{:deny, %ToolResult{}}` — registry miss, a before-hook `:halt`, or a policy
+      `:deny`, already shaped into the error/denial result.
+    * `{:needs_approval, prepared, call, info}` — policy wants human approval.
+  """
+  @spec classify(map(), ToolCall.t() | map(), Pipeline.t()) ::
+          {:execute, struct(), ToolCall.t()}
+          | {:deny, ToolResult.t()}
+          | {:needs_approval, struct(), ToolCall.t(), map()}
+  def classify(config, tool_call, pipeline \\ default_pipeline())
+
+  def classify(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    call = %{call | input: normalize_tool_input(call.input)}
+
+    case Registry.get(config.tool_registry, call.name) do
+      {:ok, tool} ->
+        case run_before_hooks(config, call, pipeline.before_hooks) do
+          {:halt, %ToolResult{} = result} ->
+            {:deny, result}
+
+          {:cont, call} ->
+            prepared = prepare_tool(tool, call.input)
+
+            case apply_policy(pipeline, config, call, prepared) do
+              {:allow, _meta} -> {:execute, prepared, call}
+              {:deny, info} -> {:deny, denial_result(call, info, false)}
+              {:needs_approval, info} -> {:needs_approval, prepared, call, info}
+            end
+        end
+
+      :error ->
+        {:deny, not_found_result(call)}
+    end
+  end
+
+  def classify(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
+    classify(config, to_tool_call(raw_call), pipeline)
+  end
+
+  @doc """
+  Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
+  execute → budget record → after-hooks. Returns a `%ToolResult{}`. Skips
+  re-classification — the verdict was already decided by `classify/3` (and, for an
+  approved call, by a human), so re-running policy here would re-deny/re-park.
+  """
+  @spec execute(map(), struct(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
+  def execute(config, prepared, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    case pipeline.budget_check_fn.(config, call) do
+      :ok ->
+        result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
+        pipeline.budget_record_fn.(config, call, result)
+        run_after_hooks(config, call, result, pipeline.after_hooks)
+
+      {:error, reason} ->
+        budget_denial_result(call, reason)
+    end
+  end
+
+  @doc """
   Runs one tool call through the chokepoint pipeline and returns a %ToolResult{}.
 
-  Accepts either a %ToolCall{} (non-streaming) or a raw string-keyed map
-  (streaming); the latter is normalized first.
+  Re-expressed as `classify ➞ execute`; observable behavior is unchanged. Accepts
+  either a %ToolCall{} (non-streaming) or a raw string-keyed map (streaming); the
+  latter is normalized first. A `:needs_approval` verdict collapses to the interim
+  denial result here (the synchronous path cannot wait for a human); only the
+  durable shell parks on it.
   """
   @spec dispatch_one(map(), ToolCall.t() | map(), Pipeline.t()) :: ToolResult.t()
   def dispatch_one(config, tool_call, pipeline \\ default_pipeline())
 
   def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
-    call = %{call | input: normalize_tool_input(call.input)}
-
-    case Registry.get(config.tool_registry, call.name) do
-      {:ok, tool} ->
-        with {:cont, call} <- run_before_hooks(config, call, pipeline.before_hooks),
-             prepared = prepare_tool(tool, call.input),
-             {:allow, _meta} <- pipeline.policy_fn.(config, call, prepared),
-             :ok <- pipeline.budget_check_fn.(config, call) do
-          result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
-          pipeline.budget_record_fn.(config, call, result)
-          run_after_hooks(config, call, result, pipeline.after_hooks)
-        else
-          {:halt, %ToolResult{} = result} -> result
-          {:deny, info} -> denial_result(call, info, false)
-          {:needs_approval, info} -> denial_result(call, info, true)
-          {:error, reason} -> budget_denial_result(call, reason)
-        end
-
-      :error ->
-        not_found_result(call)
+    case classify(config, call, pipeline) do
+      {:execute, prepared, call} -> execute(config, prepared, call, pipeline)
+      {:deny, %ToolResult{} = result} -> result
+      {:needs_approval, _prepared, call, info} -> denial_result(call, info, true)
     end
   end
 
@@ -153,6 +210,21 @@ defmodule Normandy.Agents.Dispatch do
       {:cont, %ToolCall{} = call} -> run_before_hooks(config, call, rest)
       {:halt, %ToolResult{} = result} -> {:halt, result}
     end
+  end
+
+  # Belt-and-suspenders fail-closed at the chokepoint. The policy_fn (Phase 2's
+  # pipeline) owns the fail-closed contract, but a buggy or network-backed policy
+  # engine that raises, or that times out / is unreachable (surfacing as an exit),
+  # must never let a tool call slip through un-vetted. Any escape is normalized to
+  # {:deny, …}, honoring the spec's "a policy timeout/unreachable surfaces as
+  # {:deny, …}". `catch` covers exits/throws (e.g. a GenServer.call timeout);
+  # `rescue` covers raised exceptions.
+  defp apply_policy(pipeline, config, call, prepared) do
+    pipeline.policy_fn.(config, call, prepared)
+  rescue
+    e -> {:deny, %{reason: "policy check raised", rationale: Exception.message(e)}}
+  catch
+    kind, value -> {:deny, %{reason: "policy check failed (#{kind})", rationale: inspect(value)}}
   end
 
   defp run_after_hooks(_config, _call, result, []), do: result

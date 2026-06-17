@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-06-12
+### Added
+
+- **Phase 4a — approval core + chokepoint split (harness decomposition).**
+  - `Normandy.Agents.Dispatch.classify/3` (registry → before-hooks → policy →
+    verdict) and `Dispatch.execute/4` (budget → execute → record → after).
+    `dispatch_one/3` is re-expressed as `classify ➞ execute`; its observable
+    behavior is unchanged (the existing dispatch suite is the parity oracle).
+  - `Normandy.Agents.Turn` core gains real human-approval parking: an
+    `:awaiting_approval` state, `parked_calls`/`held_results` on `%Turn.State{}`,
+    and the `{:needs_approval, held, parked}` → `{:approval, decisions}` →
+    `{:approved_results, results}` event flow, with the batch-results logic
+    factored into a shared `apply_tool_results/2` (one decrement per batch,
+    API-order preserved). The synchronous inline path is unchanged — only the
+    Phase 4b `:gen_statem` shell will exercise these transitions.
+
+### Fixed
+
+- Corrected the version stamp: the prior `1.0.0` (Phase 3) was never tagged and
+  `1.0.0` is reserved for the final phase of the harness-decomposition milestone.
+  Phase 3 is re-labeled `0.8.0` (a pre-1.0 breaking change from `0.7.0`).
+
+## [0.8.0] - 2026-06-12
 
 ### Added
 
@@ -724,6 +745,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `test/dsl/workflow_transform_integration_test.exs` (4 tests)
   - `test/normandy_integration/dsl_comprehensive_test.exs` (6 comprehensive integration tests)
 
+[0.8.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.8.0
+[0.7.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.7.0
+[0.6.3]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.3
+[0.6.2]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.2
 [0.6.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.1
 [0.6.0]: https://github.com/thetonymaster/normandy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/thetonymaster/normandy/releases/tag/v0.5.1

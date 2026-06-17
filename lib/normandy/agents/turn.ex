@@ -12,14 +12,14 @@ defmodule Normandy.Agents.Turn do
 
   ## States
 
-  Seven statuses are defined; this phase exercises five. `:awaiting_approval`
-  (suspend/resume, Phase 4) and `:steering` as a *resting* state with compaction
-  (Phase 5) are reserved in the type but not yet entered — the current loop does
-  not rest at a steering point, so the tool-results transition passes through it
-  as an emitted event only (see `step/2` on `:tool_dispatch`).
+  Seven statuses are defined. `:awaiting_approval` (suspend/resume for human
+  approval) is entered when a dispatched batch parks calls; `:steering` as a
+  *resting* state with compaction (Phase 5) is still reserved but not yet entered.
   """
 
   alias Normandy.Agents.Turn.State
+  alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
 
   defmodule State do
     @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`)."
@@ -42,6 +42,8 @@ defmodule Normandy.Agents.Turn do
             response_model: term(),
             output_schema: term(),
             pending_calls: [term()],
+            parked_calls: [term()],
+            held_results: [term()],
             last_response: term() | nil,
             final_response: term() | nil,
             stop_reason: :completed | :max_iterations | nil,
@@ -55,6 +57,8 @@ defmodule Normandy.Agents.Turn do
               response_model: nil,
               output_schema: nil,
               pending_calls: [],
+              parked_calls: [],
+              held_results: [],
               last_response: nil,
               final_response: nil,
               stop_reason: nil,
@@ -143,32 +147,64 @@ defmodule Normandy.Agents.Turn do
   end
 
   def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
-    new_left = s.iterations_left - 1
-    append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
-    steering = {:emit_event, :steering, %{iterations_left: new_left}}
+    apply_tool_results(s, results)
+  end
 
-    if new_left <= 0 do
-      # Iteration cap reached: one forced final call against the output schema,
-      # then finalize regardless of tool calls (see :assistant_streaming +
-      # awaiting_final in Task 5). `:steering` is where compaction will hook in
-      # Phase 5; today it is only an emitted boundary event, not a resting state.
-      {%{
-         s
-         | status: :assistant_streaming,
-           awaiting_final: true,
-           iterations_left: new_left,
-           pending_calls: []
-       },
-       append_effects ++ [steering, {:call_llm, %{response_model: s.output_schema, final: true}}]}
-    else
-      iteration =
-        {:emit_event, :iteration,
-         %{iteration: s.max_iterations - new_left + 1, iterations_left: new_left}}
+  # Some calls in the batch need human approval. The shell has already executed the
+  # allowed calls and passes their `held` results plus the `parked` calls. Park:
+  # store both (the persisted state carries them, so resume needs no re-execution),
+  # emit the awaiting-approval event, and persist. Results are NOT appended yet —
+  # the whole batch's tool_results must go to the model together (later tasks).
+  def step(%State{status: :tool_dispatch} = s, {:needs_approval, held, parked}) do
+    s2 = %{s | status: :awaiting_approval, held_results: held, parked_calls: parked}
+    {s2, [{:emit_event, :awaiting_approval, %{parked: length(parked)}}, {:persist, s2}]}
+  end
 
-      {%{s | status: :assistant_streaming, iterations_left: new_left, pending_calls: []},
-       append_effects ++
-         [steering, iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
+  # Once a partial approval clears parked_calls (some approved → shell is running
+  # them, awaiting :approved_results), a retried/duplicate {:approval, _} must not
+  # re-enter the resolve clause below: with parked == [] it would apply only
+  # held_results, drop the still-executing approved result, and decrement the batch
+  # early (violating the batch-completeness contract). Surface it as :failed — a
+  # shell sequencing bug, consistent with the total-function fallback.
+  def step(%State{status: :awaiting_approval, parked_calls: []} = s, {:approval, _decisions}) do
+    reason = {:unexpected_event, :awaiting_approval, :approval_without_parked_calls}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  # Human approval decisions arrive (tool_call_id => :approve | :reject). Anything
+  # not explicitly :approve is rejected (fail-closed). Build denials for rejects;
+  # if none are approved, finish the batch now (held ++ denials, reordered to the
+  # original tool_use order). If some are approved, stash the denials and ask the
+  # shell to run the approved calls (no re-classify — a later task applies the merge).
+  def step(
+        %State{status: :awaiting_approval, parked_calls: parked, held_results: held} = s,
+        {:approval, decisions}
+      ) do
+    {approved, rejected} =
+      Enum.split_with(parked, fn %ToolCall{id: id} -> Map.get(decisions, id) == :approve end)
+
+    rejected_results = Enum.map(rejected, &rejection_result/1)
+
+    case approved do
+      [] ->
+        apply_tool_results(s, reorder(held ++ rejected_results, s.pending_calls))
+
+      _ ->
+        # status deliberately stays :awaiting_approval — the shell runs the approved
+        # calls, then feeds :approved_results back (handled by a later clause).
+        s2 = %{s | parked_calls: [], held_results: held ++ rejected_results}
+        {s2, [{:execute_approved, approved}]}
     end
+  end
+
+  # The shell finished running the approved calls. Merge their results with the
+  # held (allowed + rejected) results, reorder to the original batch order, and
+  # apply the complete batch — decrementing the iteration counter exactly once.
+  def step(
+        %State{status: :awaiting_approval, held_results: held} = s,
+        {:approved_results, results}
+      ) do
+    apply_tool_results(s, reorder(held ++ results, s.pending_calls))
   end
 
   def step(%State{status: status} = s, {:llm_error, reason})
@@ -191,6 +227,54 @@ defmodule Normandy.Agents.Turn do
   def step(%State{status: status} = s, event) do
     reason = {:unexpected_event, status, event}
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  # The batch-results transition, shared by the normal `:tool_dispatch` path and
+  # the approval-resume paths (later tasks). Appends each result, decrements the
+  # iteration counter exactly once per batch, emits the steering boundary, and
+  # either continues (next LLM call) or issues the forced-final call at the cap.
+  # Always clears the per-batch scratch fields (`pending_calls`, `parked_calls`,
+  # `held_results`); on the normal path the latter two are already empty.
+  defp apply_tool_results(%State{} = s, results) do
+    new_left = s.iterations_left - 1
+    append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
+    steering = {:emit_event, :steering, %{iterations_left: new_left}}
+    base = %{s | pending_calls: [], parked_calls: [], held_results: []}
+
+    if new_left <= 0 do
+      {%{base | status: :assistant_streaming, awaiting_final: true, iterations_left: new_left},
+       append_effects ++ [steering, {:call_llm, %{response_model: s.output_schema, final: true}}]}
+    else
+      iteration =
+        {:emit_event, :iteration,
+         %{iteration: s.max_iterations - new_left + 1, iterations_left: new_left}}
+
+      {%{base | status: :assistant_streaming, iterations_left: new_left},
+       append_effects ++
+         [steering, iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
+    end
+  end
+
+  # Reorder a merged result list to match the original batch (`pending_calls`) by
+  # tool_call_id, so the next user turn presents tool_result blocks in API order.
+  defp reorder(results, pending_calls) do
+    index =
+      pending_calls
+      |> Enum.with_index()
+      |> Map.new(fn {%ToolCall{id: id}, i} -> {id, i} end)
+
+    Enum.sort_by(results, fn %ToolResult{tool_call_id: id} ->
+      Map.get(index, id, length(pending_calls))
+    end)
+  end
+
+  # Denial result for a parked call the approver rejected (or never decided).
+  defp rejection_result(%ToolCall{id: id}) do
+    %ToolResult{
+      tool_call_id: id,
+      output: %{error: "tool call rejected by approver", denied: true, pending_approval: false},
+      is_error: true
+    }
   end
 
   defp tool_calls(%{tool_calls: nil}), do: []
