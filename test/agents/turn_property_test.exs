@@ -33,6 +33,15 @@ defmodule Normandy.Agents.TurnPropertyTest do
       constant({:output_guarded, :g}),
       constant({:llm_error, :boom}),
       constant({:tool_error, :crash}),
+      constant(
+        {:needs_approval, [%ToolResult{tool_call_id: "a", output: "o", is_error: false}],
+         [%ToolCall{id: "p", name: "t", input: %{}}]}
+      ),
+      constant({:approval, %{"p" => :approve}}),
+      constant({:approval, %{"p" => :reject}}),
+      constant(
+        {:approved_results, [%ToolResult{tool_call_id: "p", output: "o", is_error: false}]}
+      ),
       constant({:bogus_event, 1})
     ])
   end
@@ -99,6 +108,46 @@ defmodule Normandy.Agents.TurnPropertyTest do
 
       assert status == :stopped
       assert calls <= max + 1
+    end
+  end
+
+  property "park → approve → approved-results decrements once and preserves batch order" do
+    check all(left <- integer(2..6)) do
+      pending = [
+        %ToolCall{id: "a1", name: "weather", input: %{}},
+        %ToolCall{id: "p1", name: "billing", input: %{}}
+      ]
+
+      held = [%ToolResult{tool_call_id: "a1", output: "sunny", is_error: false}]
+      parked = [%ToolCall{id: "p1", name: "billing", input: %{}}]
+
+      s0 = %State{
+        status: :tool_dispatch,
+        iterations_left: left,
+        max_iterations: 6,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: pending
+      }
+
+      {s1, _} = Turn.step(s0, {:needs_approval, held, parked})
+      assert s1.status == :awaiting_approval
+
+      {s2, _} = Turn.step(s1, {:approval, %{"p1" => :approve}})
+      assert s2.status == :awaiting_approval
+
+      {s3, effects} =
+        Turn.step(
+          s2,
+          {:approved_results, [%ToolResult{tool_call_id: "p1", output: "ok", is_error: false}]}
+        )
+
+      # exactly one decrement across the whole parked batch
+      assert s3.iterations_left == left - 1
+
+      # tool appends are in pending_calls order: a1 then p1
+      appended = for {:append_message, "tool", %ToolResult{tool_call_id: id}} <- effects, do: id
+      assert appended == ["a1", "p1"]
     end
   end
 
