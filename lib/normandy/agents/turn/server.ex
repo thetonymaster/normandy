@@ -9,7 +9,7 @@ defmodule Normandy.Agents.Turn.Server do
   """
   @behaviour :gen_statem
 
-  alias Normandy.Agents.{BaseAgent, Turn}
+  alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
 
   defmodule Data do
     @moduledoc false
@@ -104,6 +104,11 @@ defmodule Normandy.Agents.Turn.Server do
   # advance the core in-line (convert/validate/guard) or just side-effect
   # (append/emit/persist). A blocking effect spawns a monitored Task and parks in
   # :running. {:finalize}/{:fail} reply and return to :idle.
+
+  defp interpret([], %Data{turn_state: %Turn.State{status: :awaiting_approval}} = data) do
+    {:next_state, :awaiting_approval, data,
+     {:state_timeout, data.approval_timeout_ms, :approval_expiry}}
+  end
 
   defp interpret([], data), do: {:keep_state, data}
 
@@ -222,7 +227,47 @@ defmodule Normandy.Agents.Turn.Server do
   defp persist_user_message(data, _config, user_input),
     do: append_to_store(data, "user", user_input)
 
-  # dispatch/2 and execute_approved/2 are implemented in Task 5/6.
-  defp dispatch(_data, _calls), do: raise("dispatch/2 lands in Task 5")
+  # Classify every call; execute the allowed ones concurrently (mirrors
+  # BaseAgent.dispatch_turn_tools/2's Task.async_stream); collect held results.
+  # If any call needs approval, park the batch; else hand back ordered results.
+  defp dispatch(%Data{config: config}, calls) do
+    pipeline = BaseAgent.base_agent_pipeline(config)
+    max_conc = max(config.max_tool_concurrency || 1, 1)
+    parent_ctx = Normandy.Telemetry.OtelCtx.capture()
+
+    classified =
+      calls
+      |> Enum.map(&Dispatch.to_tool_call/1)
+      |> Enum.map(fn call -> {call, Dispatch.classify(config, call, pipeline)} end)
+
+    parked =
+      for {call, {:needs_approval, _p, ncall, _info}} <- classified, do: %{ncall | id: call.id}
+
+    runnable = for {_call, {:execute, prepared, ncall}} <- classified, do: {prepared, ncall}
+    denied = for {_call, {:deny, %_{} = result}} <- classified, do: result
+
+    executed =
+      runnable
+      |> Task.async_stream(
+        fn {prepared, ncall} ->
+          Normandy.Telemetry.OtelCtx.restore(parent_ctx)
+          Dispatch.execute(config, prepared, ncall, pipeline)
+        end,
+        ordered: true,
+        max_concurrency: max_conc,
+        timeout: :infinity,
+        on_timeout: :kill_task
+      )
+      |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+
+    held = executed ++ denied
+
+    if parked == [] do
+      {:tool_results, held}
+    else
+      {:needs_approval, held, parked}
+    end
+  end
+
   defp execute_approved(_data, _calls), do: raise("execute_approved/2 lands in Task 6")
 end
