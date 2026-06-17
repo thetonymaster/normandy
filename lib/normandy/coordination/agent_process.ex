@@ -24,12 +24,35 @@ defmodule Normandy.Coordination.AgentProcess do
 
       # Get current agent state
       agent = AgentProcess.get_agent(pid)
+
+  ## Durable turn engine (`:server` mode)
+
+  Pass `turn_engine: :server` to route turns through the durable
+  `Normandy.Agents.Turn.Session`/`Turn.Server` engine (approval parking,
+  passivation, persistence) instead of the default synchronous `:inline`
+  `BaseAgent.run/2` path. `:inline` is the default and is unchanged.
+
+      {:ok, pid} = AgentProcess.start_link(agent: config, turn_engine: :server)
+
+  In `:server` mode:
+
+  - `run/3`/`cast/3` route through `Turn.Session`; `run/3` is non-blocking
+    internally (the GenServer stays responsive while a turn is parked);
+    `approve/2` delivers human-approval decisions to a parked turn.
+  - The `SessionStore` owns conversation memory: `get_agent/1` reconstructs it
+    from the store, and `update_agent/2` updates only the config template
+    (model/temperature/behaviours/tools) — memory mutations are ignored.
+  - Session infra (`:store`, `:registry`, `:supervisor`) may be supplied via
+    `start_link`; if omitted, the process starts and owns in-memory defaults
+    that terminate with it. `:subscriber`, `:handlers`, `:approval_timeout_ms`,
+    and `:idle_timeout_ms` are forwarded to `Turn.Session` when supplied.
   """
 
   use GenServer
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Turn
 
   @type agent_id :: String.t()
   @type run_opts :: [
@@ -116,6 +139,20 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @doc """
+  Delivers approval decisions to a turn parked awaiting human approval
+  (`:server` mode only). `decisions` maps `tool_call_id` to `:approve | :reject`;
+  any parked id absent or `:reject` is treated as rejected (fail-closed).
+
+  Returns `:ok`, `{:error, :no_session}` if no live parked session exists, or
+  `{:error, :inline_mode}` when the process runs in `:inline` mode.
+  """
+  @spec approve(GenServer.server(), %{optional(String.t()) => :approve | :reject}) ::
+          :ok | {:error, :no_session} | {:error, :inline_mode}
+  def approve(server, decisions) do
+    GenServer.call(server, {:approve, decisions})
+  end
+
+  @doc """
   Returns the current agent state.
 
   ## Example
@@ -193,18 +230,121 @@ defmodule Normandy.Coordination.AgentProcess do
     agent = Keyword.fetch!(opts, :agent)
     agent_id = Keyword.get(opts, :agent_id, UUID.uuid4())
     context_pid = Keyword.get(opts, :context_pid)
+    turn_engine = Keyword.get(opts, :turn_engine, :inline)
 
-    state = %{
+    base = %{
       agent: agent,
       agent_id: agent_id,
       context_pid: context_pid,
+      turn_engine: turn_engine,
+      store: nil,
+      registry: nil,
+      supervisor: nil,
+      extra_session_opts: [],
+      owned: [],
+      pending_runs: %{},
       run_count: 0,
       last_run: nil,
       total_runtime_ms: 0,
       created_at: DateTime.utc_now()
     }
 
-    {:ok, state}
+    case turn_engine do
+      :inline ->
+        {:ok, base}
+
+      :server ->
+        case server_infra(opts) do
+          {:ok, store, registry, supervisor, owned} ->
+            {:ok,
+             %{
+               base
+               | store: store,
+                 registry: registry,
+                 supervisor: supervisor,
+                 owned: owned,
+                 extra_session_opts:
+                   Keyword.take(opts, [
+                     :subscriber,
+                     :handlers,
+                     :approval_timeout_ms,
+                     :idle_timeout_ms
+                   ])
+             }}
+
+          {:error, reason} ->
+            {:stop, {:server_init_failed, reason}}
+        end
+    end
+  end
+
+  # Resolve session infra: use what the caller supplied, else start+own defaults.
+  # Returns {:ok, store, registry, supervisor, owned_pids} | {:error, reason}.
+  defp server_infra(opts) do
+    {store, owned_store} =
+      case Keyword.get(opts, :store) do
+        nil ->
+          store_pid = Normandy.Behaviours.SessionStore.InMemory.new()
+          {{Normandy.Behaviours.SessionStore.InMemory, store_pid}, [store_pid]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {registry, owned_reg} =
+      case Keyword.get(opts, :registry) do
+        nil ->
+          name = :"agentprocess_reg_#{System.unique_integer([:positive])}"
+          {:ok, reg_pid} = Normandy.Behaviours.SessionRegistry.Native.start_link(name: name)
+          {{Normandy.Behaviours.SessionRegistry.Native, name}, [reg_pid]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {supervisor, owned_sup} =
+      case Keyword.get(opts, :supervisor) do
+        nil ->
+          {:ok, sup} = Turn.Supervisor.start_link([])
+          {sup, [sup]}
+
+        supplied ->
+          {supplied, []}
+      end
+
+    {:ok, store, registry, supervisor, owned_store ++ owned_reg ++ owned_sup}
+  rescue
+    e -> {:error, e}
+  end
+
+  @impl true
+  def terminate(_reason, %{owned: owned}) when is_list(owned) do
+    Enum.each(owned, fn pid ->
+      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :shutdown)
+    end)
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  # The keyword list Turn.Session.run/2 and Turn.Session.approve/2 expect.
+  # Used by Turn.Server routing (Task 2+).
+  defp session_opts(state) do
+    [
+      session_id: state.agent_id,
+      config: state.agent,
+      store: state.store,
+      registry: state.registry,
+      supervisor: state.supervisor
+    ] ++ state.extra_session_opts
+  end
+
+  @impl true
+  def handle_call({:run, input}, from, %{turn_engine: :server} = state) do
+    start_time = System.monotonic_time(:millisecond)
+    ref = spawn_run(state, prepare_input(input))
+    {:noreply, %{state | pending_runs: Map.put(state.pending_runs, ref, {from, start_time})}}
   end
 
   @impl true
@@ -245,6 +385,11 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
+  def handle_call(:get_agent, _from, %{turn_engine: :server} = state) do
+    {:reply, reconstruct_agent(state), state}
+  end
+
+  @impl true
   def handle_call(:get_agent, _from, state) do
     {:reply, state.agent, state}
   end
@@ -268,9 +413,70 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
+  def handle_call({:update_agent, update_fn}, _from, %{turn_engine: :server} = state) do
+    updated = update_fn.(state.agent)
+
+    new_agent =
+      if updated.memory != state.agent.memory do
+        Logger.warning(
+          "AgentProcess #{state.agent_id}: update_agent memory mutation ignored in :server mode " <>
+            "(SessionStore is authoritative)"
+        )
+
+        %{updated | memory: state.agent.memory}
+      else
+        updated
+      end
+
+    {:reply, :ok, %{state | agent: new_agent}}
+  end
+
+  @impl true
   def handle_call({:update_agent, update_fn}, _from, state) do
     updated_agent = update_fn.(state.agent)
     {:reply, :ok, %{state | agent: updated_agent}}
+  end
+
+  @impl true
+  def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
+    {:reply, Turn.Session.approve(session_opts(state), decisions), state}
+  end
+
+  @impl true
+  def handle_call({:approve, _decisions}, _from, state) do
+    {:reply, {:error, :inline_mode}, state}
+  end
+
+  @impl true
+  def handle_cast({:run_async, input, reply_to}, %{turn_engine: :server} = state) do
+    opts = session_opts(state)
+    agent_id = state.agent_id
+    user_input = prepare_input(input)
+
+    Task.start(fn ->
+      # Guarantee reply_to always hears back: a raised/exited turn must not be
+      # lost silently. Mirrors the inline path's handle_async_run/3 error shape,
+      # plus a catch for exits/throws (Turn.Session.run can crash the turn).
+      result =
+        try do
+          case Turn.Session.run(opts, user_input) do
+            {:ok, value} -> {:ok, extract_result(value)}
+            {:error, _} = err -> err
+          end
+        rescue
+          e ->
+            Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
+            {:error, {:exception, e, __STACKTRACE__}}
+        catch
+          kind, reason ->
+            Logger.error("Async agent #{agent_id} #{kind}: #{inspect(reason)}")
+            {:error, {kind, reason}}
+        end
+
+      if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
+    end)
+
+    {:noreply, %{state | run_count: state.run_count + 1, last_run: DateTime.utc_now()}}
   end
 
   @impl true
@@ -293,6 +499,73 @@ defmodule Normandy.Coordination.AgentProcess do
     }
 
     {:noreply, updated_state}
+  end
+
+  # Spawn a monitored, UNLINKED worker that runs the turn and tags its reply
+  # with the monitor ref (so {:run_result, ref, …} and {:DOWN, ref, …} correlate).
+  defp spawn_run(state, user_input) do
+    server = self()
+    opts = session_opts(state)
+
+    worker =
+      spawn(fn ->
+        ref =
+          receive do
+            {:monitor_ref, r} -> r
+          end
+
+        result =
+          case Turn.Session.run(opts, user_input) do
+            {:ok, value} -> {:ok, extract_result(value)}
+            {:error, _} = err -> err
+          end
+
+        send(server, {:run_result, ref, result})
+      end)
+
+    ref = Process.monitor(worker)
+    send(worker, {:monitor_ref, ref})
+    ref
+  end
+
+  @impl true
+  def handle_info({:run_result, ref, result}, state) do
+    case Map.pop(state.pending_runs, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{from, start_time}, rest} ->
+        Process.demonitor(ref, [:flush])
+        runtime = System.monotonic_time(:millisecond) - start_time
+        GenServer.reply(from, result)
+
+        {:noreply,
+         %{
+           state
+           | pending_runs: rest,
+             run_count: state.run_count + 1,
+             last_run: DateTime.utc_now(),
+             total_runtime_ms: state.total_runtime_ms + runtime
+         }}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.pending_runs, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{from, _start}, rest} ->
+        GenServer.reply(from, {:error, {:task_down, reason}})
+        {:noreply, %{state | pending_runs: rest}}
+    end
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    Logger.debug("AgentProcess #{state.agent_id} ignoring unexpected message: #{inspect(msg)}")
+    {:noreply, state}
   end
 
   # Private Functions
@@ -323,6 +596,24 @@ defmodule Normandy.Coordination.AgentProcess do
       e ->
         Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
         {:error, {:exception, e, __STACKTRACE__}}
+    end
+  end
+
+  # Store-authoritative read: rebuild config.memory from the SessionStore so callers
+  # see durable truth. On a store fault, log and return the template unchanged.
+  defp reconstruct_agent(%{store: {mod, handle}, agent: agent, agent_id: sid}) do
+    case mod.history(handle, sid) do
+      {:ok, entries} ->
+        rebuilt = %{
+          Normandy.Components.AgentMemory.from_entries(entries)
+          | max_messages: agent.memory.max_messages
+        }
+
+        %{agent | memory: rebuilt}
+
+      {:error, reason} ->
+        Logger.warning("AgentProcess #{sid}: get_agent could not read store: #{inspect(reason)}")
+        agent
     end
   end
 end
