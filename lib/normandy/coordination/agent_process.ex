@@ -363,6 +363,11 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
+  def handle_call(:get_agent, _from, %{turn_engine: :server} = state) do
+    {:reply, reconstruct_agent(state), state}
+  end
+
+  @impl true
   def handle_call(:get_agent, _from, state) do
     {:reply, state.agent, state}
   end
@@ -531,6 +536,24 @@ defmodule Normandy.Coordination.AgentProcess do
       e ->
         Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
         {:error, {:exception, e, __STACKTRACE__}}
+    end
+  end
+
+  # Store-authoritative read: rebuild config.memory from the SessionStore so callers
+  # see durable truth. On a store fault, log and return the template unchanged.
+  defp reconstruct_agent(%{store: {mod, handle}, agent: agent, agent_id: sid}) do
+    case mod.history(handle, sid) do
+      {:ok, entries} ->
+        rebuilt = %{
+          Normandy.Components.AgentMemory.from_entries(entries)
+          | max_messages: agent.memory.max_messages
+        }
+
+        %{agent | memory: rebuilt}
+
+      {:error, reason} ->
+        Logger.warning("AgentProcess #{sid}: get_agent could not read store: #{inspect(reason)}")
+        agent
     end
   end
 end

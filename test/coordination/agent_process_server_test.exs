@@ -244,4 +244,26 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert_receive {:result, {:ok, %Resp{content: "done"}}}, 2_000
     end
   end
+
+  describe ":server get_agent/1" do
+    test "reconstructs config.memory from the SessionStore after a turn" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [agent: server_config(), turn_engine: :server, handlers: final_handlers("reply-1")] ++
+            infra
+        )
+
+      assert {:ok, _} = AgentProcess.run(pid, "first message")
+
+      agent = AgentProcess.get_agent(pid)
+      contents = Enum.map(Normandy.Components.AgentMemory.entry_chain(agent.memory), & &1.content)
+
+      # The user message persisted to the store is reflected back through get_agent.
+      assert Enum.any?(contents, fn c ->
+               c == %{chat_message: "first message"} or c == "first message"
+             end)
+    end
+  end
 end
