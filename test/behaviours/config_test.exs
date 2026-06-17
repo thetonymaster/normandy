@@ -45,6 +45,11 @@ defmodule Normandy.Behaviours.ConfigTest do
                {Normandy.Behaviours.SessionRegistry.Native, []}
     end
 
+    test "default bundle carries the NoOp compactor slot" do
+      b = %Config{}
+      assert b.compactor == {Normandy.Behaviours.Compactor.NoOp, []}
+    end
+
     test "to_pipeline/1 ignores session_registry (not a dispatch-path concern)" do
       pipeline = Normandy.Behaviours.Config.to_pipeline(%Normandy.Behaviours.Config{})
       refute Map.has_key?(Map.from_struct(pipeline), :session_registry)

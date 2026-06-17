@@ -9,14 +9,17 @@ defmodule Normandy.Behaviours.Config do
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
   `before_hooks`, `after_hooks`) into a `%Normandy.Agents.Dispatch.Pipeline{}`.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
-  the dependency points Phase 2 → Phase 1. The `credential`, `model_catalog`, `session_store`, and
-  `session_registry` slots are not dispatch-path concerns and are not placed on the pipeline. `session_store`
-  selects where session entries / turn state persist; it is wired here but not yet
-  consumed by the turn loop (Phase 4 reads it).
+  the dependency points Phase 2 → Phase 1. The `credential`, `compactor`,
+  `model_catalog`, `session_store`, and `session_registry` slots are not
+  dispatch-path concerns and are not placed on the pipeline. `compactor` selects
+  the `:steering`-boundary compaction strategy (Phase 5); `session_store`
+  selects where session entries / turn state persist; it is wired here but not
+  yet consumed by the turn loop (Phase 4 reads it).
   """
 
   alias Normandy.Agents.Dispatch.Pipeline
   alias Normandy.Behaviours.BudgetTracker
+  alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.CredentialProvider
   alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.PolicyEngine
@@ -32,6 +35,7 @@ defmodule Normandy.Behaviours.Config do
           before_hooks: [hook()],
           after_hooks: [hook()],
           credential: ref(),
+          compactor: ref(),
           model_catalog: ref(),
           session_store: ref(),
           session_registry: ref()
@@ -42,6 +46,7 @@ defmodule Normandy.Behaviours.Config do
             before_hooks: [],
             after_hooks: [],
             credential: {CredentialProvider.FromClient, []},
+            compactor: {Compactor.NoOp, []},
             model_catalog: {ModelCatalog.Static, []},
             session_store: {SessionStore.InMemory, []},
             session_registry: {SessionRegistry.Native, []}
