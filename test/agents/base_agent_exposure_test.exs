@@ -44,4 +44,28 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     assert meta.compacted == false
     assert AgentMemory.history(config2.memory) == AgentMemory.history(config.memory)
   end
+
+  test "compact_turn_memory/3 falls back to NoOp when Config field is nil" do
+    alias Normandy.Agents.BaseAgentConfig
+    alias Normandy.Components.AgentMemory
+
+    memory =
+      AgentMemory.new_memory(nil)
+      |> AgentMemory.add_message("user", "test input")
+      |> AgentMemory.add_message("assistant", "test response")
+
+    config = %BaseAgentConfig{
+      model: "claude-3-5-sonnet-20241022",
+      memory: memory,
+      behaviours: %Normandy.Behaviours.Config{compactor: nil, model_catalog: nil}
+    }
+
+    initial_history = AgentMemory.history(config.memory)
+
+    {config2, meta} =
+      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{iterations_left: 3})
+
+    assert meta.compacted == false
+    assert AgentMemory.history(config2.memory) == initial_history
+  end
 end

@@ -635,8 +635,9 @@ defmodule Normandy.Agents.BaseAgent do
     {config2, meta}
   end
 
-  defp compactor_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{compactor: ref}}),
-    do: ref
+  defp compactor_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{compactor: ref}})
+       when not is_nil(ref),
+       do: ref
 
   defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
 
@@ -645,8 +646,9 @@ defmodule Normandy.Agents.BaseAgent do
     catalog_mod.context_window(model)
   end
 
-  defp catalog_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{model_catalog: ref}}),
-    do: ref
+  defp catalog_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{model_catalog: ref}})
+       when not is_nil(ref),
+       do: ref
 
   defp catalog_ref(_config), do: {Normandy.Behaviours.ModelCatalog.Static, []}
 
