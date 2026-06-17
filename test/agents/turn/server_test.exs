@@ -228,10 +228,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Normandy.Behaviours.SessionRegistry.Native.new()
     parent = self()
 
-    # Blocking call_llm so the first turn stays :running while the second request arrives.
+    # Blocking call_llm that signals the test when it has started, then sleeps
+    # to keep the server :running while the second turn request arrives.
     handlers = %{
       Normandy.Agents.BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
+          send(parent, :llm_started)
           Process.sleep(150)
           %Resp{content: "x"}
         end
@@ -248,13 +250,121 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     # First turn: arrives while server is :idle → starts immediately.
     spawn(fn -> send(parent, {:a, Turn.Server.run(srv, "first")}) end)
-    # Let the first turn reach :running (call_llm is sleeping).
-    Process.sleep(50)
+    # Wait for the LLM task to actually start (deterministic: server is now :running).
+    assert_receive :llm_started, 1_000
     # Second turn: arrives while server is :running → postponed, replayed on :idle entry.
     spawn(fn -> send(parent, {:b, Turn.Server.run(srv, "second")}) end)
 
     assert_receive {:a, {:ok, %Resp{}}}, 2_000
     assert_receive {:b, {:ok, %Resp{}}}, 2_000
+  end
+
+  test "stale/late approval cast in :idle state does not crash the server" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    parent = self()
+
+    # Stateful call_llm: 1st call (turn "go") → two tool calls; 2nd call → final;
+    # 3rd call (turn "again") → final with no tools.
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _c, _s, _r ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      cond do
+        n == 0 ->
+          %Resp{
+            content: "",
+            tool_calls: [
+              %ToolCall{id: "ok1", name: "weather", input: %{}},
+              %ToolCall{id: "pk1", name: "billing", input: %{}}
+            ]
+          }
+
+        true ->
+          %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+
+    config = %{
+      base_config_with_tools()
+      | behaviours: %Normandy.Behaviours.Config{
+          policy:
+            {Normandy.Behaviours.PolicyEngine.Ruleset,
+             rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+             default_action: :allow}
+        }
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-stale-approval",
+        config: config,
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers,
+        subscriber: fn name, meta -> send(parent, {:event, name, meta}) end
+      )
+
+    # Start the first turn; it will park awaiting billing approval.
+    spawn(fn -> send(parent, {:run_result, Turn.Server.run(srv, "go")}) end)
+    assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+    # Send the real approval so the first turn completes.
+    :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+    assert_receive {:run_result, {:ok, %Resp{}}}, 2_000
+
+    # Server is now :idle. Send a stale/duplicate approval — must NOT crash.
+    ref = Process.monitor(srv)
+    :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+    refute_receive {:DOWN, ^ref, _, _, _}, 200
+
+    # Server still accepts a new turn after the stale cast.
+    assert {:ok, _} = Turn.Server.run(srv, "again")
+  end
+
+  test "append_entry failure during user message persist returns {:error, {:persist_failed, _}}" do
+    # Tiny inline store where append_entry always fails.
+    defmodule FailingAppendStore do
+      @behaviour Normandy.Behaviours.SessionStore
+
+      def new, do: :handle
+
+      @impl true
+      def save_turn_state(_handle, _sid, _state), do: :ok
+
+      @impl true
+      def load_turn_state(_handle, _sid), do: {:error, :not_found}
+
+      @impl true
+      def append_entry(_handle, _sid, _entry), do: {:error, :disk_full}
+
+      @impl true
+      def history(_handle, _sid), do: {:ok, []}
+
+      @impl true
+      def fork(_handle, _sid, _new_sid), do: {:error, :nope}
+    end
+
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: "unreachable", tool_calls: nil} end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-fail-append",
+        config: base_config(),
+        store: {FailingAppendStore, :handle},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hi")
   end
 
   test "approval timeout rejects all parked calls (fail-closed) and resumes" do

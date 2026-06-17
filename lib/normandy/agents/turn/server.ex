@@ -67,18 +67,23 @@ defmodule Normandy.Agents.Turn.Server do
   @impl true
   def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
     config = BaseAgent.admit_turn_input(data.config, user_input)
-    persist_user_message(data, config, user_input)
 
-    state =
-      Turn.new(
-        max_iterations: config.max_tool_iterations,
-        response_model: BaseAgent.turn_response_model(config),
-        output_schema: config.output_schema
-      )
+    case persist_user_message(data, config, user_input) do
+      :ok ->
+        state =
+          Turn.new(
+            max_iterations: config.max_tool_iterations,
+            response_model: BaseAgent.turn_response_model(config),
+            output_schema: config.output_schema
+          )
 
-    data = %{data | config: config, pending_reply: from}
-    {state, effects} = Turn.step(state, :start)
-    interpret(effects, %{data | turn_state: state})
+        data = %{data | config: config, pending_reply: from}
+        {state, effects} = Turn.step(state, :start)
+        interpret(effects, %{data | turn_state: state})
+
+      {:error, reason} ->
+        {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
+    end
   end
 
   # :running — a monitored Task delivered the outcome of a blocking effect.
@@ -104,6 +109,13 @@ defmodule Normandy.Agents.Turn.Server do
   def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
     {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
     interpret(effects, %{data | turn_state: state})
+  end
+
+  # A stale/duplicate/late approval cast (double-click, or arriving after the turn
+  # already resumed or finalized) lands in a state with no parked calls. Drop it
+  # rather than let an unhandled event crash (and transient-restart) the server.
+  def handle_event(:cast, {:approval, _decisions}, _state, _data) do
+    :keep_state_and_data
   end
 
   # Approval expiry → all-reject (fail-closed): feed an empty decisions map.
@@ -144,8 +156,11 @@ defmodule Normandy.Agents.Turn.Server do
 
       {:append_message, role, content} ->
         config = data.handlers.append.(data.config, role, content)
-        append_to_store(data, role, content)
-        interpret(rest, %{data | config: config})
+
+        case append_to_store(data, role, content) do
+          :ok -> interpret(rest, %{data | config: config})
+          {:error, reason} -> fail(%{data | config: config}, {:persist_failed, reason})
+        end
 
       {:persist, turn_state} ->
         case persist_turn_state(data, turn_state) do
@@ -236,14 +251,14 @@ defmodule Normandy.Agents.Turn.Server do
     do: mod.save_turn_state(handle, sid, turn_state)
 
   defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, role, content) do
-    {:ok, _id} =
-      mod.append_entry(handle, sid, %Normandy.Components.AgentMemory.Entry{
-        turn_id: "live",
-        role: role,
-        content: content
-      })
-
-    :ok
+    case mod.append_entry(handle, sid, %Normandy.Components.AgentMemory.Entry{
+           turn_id: "live",
+           role: role,
+           content: content
+         }) do
+      {:ok, _id} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp persist_user_message(_data, _config, nil), do: :ok
