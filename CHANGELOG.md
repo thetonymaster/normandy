@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-06-17
+
+### Added
+
+- **Phase 6 — AgentProcess durable turn engine (`:server` mode).**
+  - `Normandy.Coordination.AgentProcess` opt-in `:server` mode (`turn_engine: :server`)
+    routing turns through the durable `Turn.Session`/`Turn.Server` engine: approval
+    parking, passivation, and persistence. `:inline` remains the default and is
+    byte-for-byte unchanged.
+  - `AgentProcess.approve/2` delivers human-approval decisions to a parked turn.
+  - Non-blocking `:server` `run/3`/`cast/3`: the GenServer stays responsive while
+    a turn is parked awaiting approval or passivated.
+  - Store-authoritative `get_agent/1`: reconstructs agent (including conversation
+    memory) from `SessionStore` in `:server` mode.
+  - Template-only `update_agent/2` in `:server` mode: updates config template
+    (model/temperature/behaviours/tools); memory mutations are ignored because
+    `SessionStore` is authoritative.
+  - Owned-or-supplied session infra: `:store`, `:registry`, `:supervisor` may be
+    passed to `start_link`; if omitted, the process starts and owns in-memory
+    defaults that terminate with it. `:subscriber`, `:handlers`,
+    `:approval_timeout_ms`, and `:idle_timeout_ms` are forwarded to `Turn.Session`.
+
+- **Phase 5 — compaction wiring (`:steering` boundary).**
+  - `Normandy.Behaviours.Compactor` behaviour (+ `NoOp` default, opt-in
+    `WindowManager` impl) invoked at the `:steering` turn boundary when the context
+    window is exceeded; `compactor` slot on `Behaviours.Config`. (PR #32)
+
+### Fixed
+
+- `convert_turn_output/3` previously returned the empty output-schema struct for
+  tool-using turns with non-`chat_message` output schemas, dropping the final-
+  response content. Non-`chat_message`-schema agents using tools were affected.
+
+### Migration
+
+- No action required: `:inline` is the default and is byte-for-byte unchanged.
+- To adopt the durable engine:
+  `AgentProcess.start_link(agent: config, turn_engine: :server)`, optionally
+  passing shared `:store`/`:registry`/`:supervisor`.
+
 ## [0.9.0] - 2026-06-17
 
 ### Added

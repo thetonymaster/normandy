@@ -24,6 +24,27 @@ defmodule Normandy.Coordination.AgentProcess do
 
       # Get current agent state
       agent = AgentProcess.get_agent(pid)
+
+  ## Durable turn engine (`:server` mode)
+
+  Pass `turn_engine: :server` to route turns through the durable
+  `Normandy.Agents.Turn.Session`/`Turn.Server` engine (approval parking,
+  passivation, persistence) instead of the default synchronous `:inline`
+  `BaseAgent.run/2` path. `:inline` is the default and is unchanged.
+
+      {:ok, pid} = AgentProcess.start_link(agent: config, turn_engine: :server)
+
+  In `:server` mode:
+
+  - `run/3` is non-blocking internally (the GenServer stays responsive while a
+    turn is parked); `approve/2` delivers human-approval decisions to a parked turn.
+  - The `SessionStore` owns conversation memory: `get_agent/1` reconstructs it
+    from the store, and `update_agent/2` updates only the config template
+    (model/temperature/behaviours/tools) — memory mutations are ignored.
+  - Session infra (`:store`, `:registry`, `:supervisor`) may be supplied via
+    `start_link`; if omitted, the process starts and owns in-memory defaults
+    that terminate with it. `:subscriber`, `:handlers`, `:approval_timeout_ms`,
+    and `:idle_timeout_ms` are forwarded to `Turn.Session` when supplied.
   """
 
   use GenServer
