@@ -378,6 +378,25 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
+  def handle_cast({:run_async, input, reply_to}, %{turn_engine: :server} = state) do
+    opts = session_opts(state)
+    agent_id = state.agent_id
+    user_input = prepare_input(input)
+
+    Task.start(fn ->
+      result =
+        case Turn.Session.run(opts, user_input) do
+          {:ok, value} -> {:ok, extract_result(value)}
+          {:error, _} = err -> err
+        end
+
+      if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
+    end)
+
+    {:noreply, %{state | run_count: state.run_count + 1, last_run: DateTime.utc_now()}}
+  end
+
+  @impl true
   def handle_cast({:run_async, input, reply_to}, state) do
     # Spawn task to run agent without blocking GenServer
     {:ok, _task_pid} =

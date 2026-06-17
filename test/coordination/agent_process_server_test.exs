@@ -141,4 +141,23 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert_receive {:result, {:ok, %Resp{content: "slow"}}}, 2_000
     end
   end
+
+  describe ":server cast/3" do
+    test "delivers the async result to reply_to" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(),
+            turn_engine: :server,
+            agent_id: "srv_async",
+            handlers: final_handlers("async-ok")
+          ] ++ infra
+        )
+
+      :ok = AgentProcess.cast(pid, "bg", reply_to: self())
+      assert_receive {:agent_result, "srv_async", {:ok, %Resp{content: "async-ok"}}}, 2_000
+    end
+  end
 end
