@@ -1,3 +1,9 @@
+defmodule Normandy.Test.StubCreds do
+  @behaviour Normandy.Behaviours.CredentialProvider
+  @impl true
+  def get_token(_provider, _opts), do: {:ok, "TEST-TOKEN"}
+end
+
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
 
@@ -525,5 +531,42 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     assert Enum.any?(history, fn msg -> msg.content == sentinel end),
            "Second LLM call did not see the compacted config2 — Server threaded stale config"
+  end
+
+  test "Tier-2 server reconstructs config from a persisted template (no :config in opts)" do
+    store = Normandy.Behaviours.SessionStore.InMemory.new()
+    sid = "recon-#{System.unique_integer([:positive])}"
+
+    base = base_config()
+
+    tmpl =
+      put_in(
+        Normandy.Agents.ConfigTemplate.from_config(base, "kind-a").behaviours_refs.credential,
+        {Normandy.Test.StubCreds, []}
+      )
+
+    :ok = Normandy.Behaviours.SessionStore.InMemory.save_config_template(store, sid, tmpl)
+
+    {:ok, cat} = Normandy.Behaviours.AgentTemplate.Catalog.start_link([])
+
+    :ok =
+      Normandy.Behaviours.AgentTemplate.Catalog.put(cat, "kind-a", %{
+        tool_registry: base.tool_registry,
+        before_hooks: [],
+        after_hooks: [],
+        client_builder: fn _token -> base.client end
+      })
+
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    opts = [
+      session_id: sid,
+      store: {Normandy.Behaviours.SessionStore.InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+      template_provider: {Normandy.Behaviours.AgentTemplate.Catalog, cat}
+    ]
+
+    assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
+    assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Native.whereis(reg, sid)
   end
 end

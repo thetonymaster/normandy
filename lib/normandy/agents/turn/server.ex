@@ -24,7 +24,9 @@ defmodule Normandy.Agents.Turn.Server do
               task_ref: nil,
               pending_reply: nil,
               approval_timeout_ms: 300_000,
-              idle_timeout_ms: 60_000
+              idle_timeout_ms: 60_000,
+              template_provider: nil,
+              resume_policy: :lazy
   end
 
   # ---- public API ----
@@ -52,11 +54,25 @@ defmodule Normandy.Agents.Turn.Server do
 
   @impl true
   def init(opts) do
+    store = Keyword.fetch!(opts, :store)
+    registry = Keyword.fetch!(opts, :registry)
+    session_id = Keyword.fetch!(opts, :session_id)
+    template_provider = Keyword.get(opts, :template_provider)
+
+    config =
+      if Keyword.has_key?(opts, :config) do
+        Keyword.fetch!(opts, :config)
+      else
+        reconstruct_config!(store, template_provider, session_id)
+      end
+
     data = %Data{
-      session_id: Keyword.fetch!(opts, :session_id),
-      config: Keyword.fetch!(opts, :config),
-      store: Keyword.fetch!(opts, :store),
-      registry: Keyword.fetch!(opts, :registry),
+      session_id: session_id,
+      config: config,
+      store: store,
+      registry: registry,
+      template_provider: template_provider,
+      resume_policy: Keyword.get(opts, :resume_policy, :lazy),
       subscriber: Keyword.get(opts, :subscriber),
       handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
       turn_state: Keyword.get(opts, :turn_state),
@@ -67,6 +83,21 @@ defmodule Normandy.Agents.Turn.Server do
     register_self(data)
     {:ok, :idle, data, idle_timeout(data)}
   end
+
+  defp reconstruct_config!({store_mod, store_handle}, {tp_mod, tp_handle}, session_id) do
+    {:ok, tmpl} = store_mod.load_config_template(store_handle, session_id)
+    {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
+    {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
+    {:ok, token} = cred_mod.get_token(token_provider(tmpl), cred_opts)
+    Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
+  end
+
+  defp session_id_template_id(%{template_id: id}), do: id
+
+  # FromClient needs a client carrying :api_key; env/vault providers ignore the
+  # first arg. For reconstruction the token must come from a node-local provider,
+  # so we pass a minimal provider map derived from the template's model.
+  defp token_provider(%{model: model}), do: %{model: model}
 
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   @impl true
