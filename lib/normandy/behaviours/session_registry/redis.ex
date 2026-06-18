@@ -18,6 +18,10 @@ if Code.ensure_loaded?(Redix) do
 
     @default_ttl_ms 60_000
 
+    # Compare-and-delete: remove the key only if it still holds OUR value, so a
+    # node never evicts a key another node re-claimed after a TTL lapse.
+    @del_if_owner ~S{if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end}
+
     # --- behaviour API (handle = owner name) ---
 
     @impl Normandy.Behaviours.SessionRegistry
@@ -85,6 +89,7 @@ if Code.ensure_loaded?(Redix) do
 
       case Redix.command(s.conn, cmd) do
         {:ok, "OK"} ->
+          s = drop_existing(s, sid)
           ref = Process.monitor(pid)
 
           {:reply, :ok,
@@ -105,15 +110,16 @@ if Code.ensure_loaded?(Redix) do
             :none
 
           {:ok, blob} when is_binary(blob) ->
-            # Registry values are our own pids (not user data), so plain binary_to_term is fine.
-            # [:safe] would reject decoding a pid whose node-atom isn't already known locally,
-            # which would break cross-node whereis liveness.
+            # Stored values are this registry's own routing pids (trusted, not user data),
+            # so plain binary_to_term is used. `[:safe]` blocks creating NEW atoms while
+            # decoding; a pid embeds its node atom, so `[:safe]` would raise only for a pid
+            # from a node whose atom isn't already known locally — which we must still route.
             pid = :erlang.binary_to_term(blob)
 
             if alive?(pid) do
               {:ok, pid}
             else
-              Redix.command(s.conn, ["DEL", reg_key(s.ns, sid)])
+              del_if_owner(s.conn, reg_key(s.ns, sid), blob)
               :none
             end
 
@@ -125,12 +131,11 @@ if Code.ensure_loaded?(Redix) do
     end
 
     def handle_call({:unregister, sid}, _from, s) do
-      Redix.command(s.conn, ["DEL", reg_key(s.ns, sid)])
-
       s =
         case Map.pop(s.sids, sid) do
-          {{_pid, ref}, sids} ->
+          {{pid, ref}, sids} ->
             Process.demonitor(ref, [:flush])
+            del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
             %{s | sids: sids, mons: Map.delete(s.mons, ref)}
 
           {nil, _} ->
@@ -141,14 +146,14 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl GenServer
-    def handle_info({:DOWN, ref, :process, _pid, _reason}, s) do
+    def handle_info({:DOWN, ref, :process, pid, _reason}, s) do
       s =
         case Map.pop(s.mons, ref) do
           {nil, _} ->
             s
 
           {sid, mons} ->
-            Redix.command(s.conn, ["DEL", reg_key(s.ns, sid)])
+            del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
             %{s | mons: mons, sids: Map.delete(s.sids, sid)}
         end
 
@@ -176,5 +181,20 @@ if Code.ensure_loaded?(Redix) do
     end
 
     defp reg_key(ns, sid), do: "#{ns}:reg:{#{sid}}"
+
+    defp del_if_owner(conn, key, value) do
+      Redix.command(conn, ["EVAL", @del_if_owner, "1", key, value])
+    end
+
+    defp drop_existing(s, sid) do
+      case Map.pop(s.sids, sid) do
+        {{_pid, ref}, sids} ->
+          Process.demonitor(ref, [:flush])
+          %{s | sids: sids, mons: Map.delete(s.mons, ref)}
+
+        {nil, _} ->
+          s
+      end
+    end
   end
 end
