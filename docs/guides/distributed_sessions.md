@@ -37,6 +37,11 @@ defmodule MyApp.Repo.Migrations.AddNormandySessions do
 end
 ```
 
+> The `MigrationAddTemplate` / `MigrationAddResumePolicy` columns are only *used* by
+> Tier 2 (template-based reconstruction + eager resume). They're nullable and inert
+> under Tier 1, but including them now means a later Tier-2 upgrade needs no extra
+> migration. A strictly Tier-1 deployment may run only `Migration.up()` / `.down()`.
+
 Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to the
 session opts. The store holds the conversation graph, suspended turn state, and a
 non-secret config template — all as opaque Erlang terms.
@@ -65,6 +70,11 @@ children = [
 
 Supervisor.start_link(children, strategy: :one_for_one)
 ```
+
+Both `store` (the durable Postgres backend) and `template_provider` (the node-local
+`AgentTemplate.Catalog`) are **required** for Tier 2 — they are how a session is
+rebuilt on another node after failover, and `Normandy.Cluster.child_specs/1` only
+starts the `ResumeReaper` when both are present. Tier 1 can omit them.
 
 Register a supplement per agent kind at boot (same on every node):
 
