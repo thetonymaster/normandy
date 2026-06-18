@@ -56,7 +56,7 @@ defmodule Normandy.Behaviours.SessionRegistry.Horde do
   end
 
   @doc "Via-name for an atomic, supervisor-driven start (see SessionRegistry.child_name/2)."
-  @spec child_name(atom(), String.t()) :: {:via, module(), {atom(), String.t()}}
+  @impl true
   def child_name(handle, session_id), do: {:via, Horde.Registry, {handle, session_id}}
 
   defp unique_name do
