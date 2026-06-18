@@ -552,7 +552,14 @@ defmodule Normandy.Agents.Turn.ServerTest do
       name: name
     ]
 
-    assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
+    # A bare start_link under a Horde :via name can lose Horde's eventually-consistent
+    # registration race: OTP's gen.erl exits {:process_not_registered_via, _} when the
+    # via register_name returns :no and whereis_name is not yet visible. Production never
+    # hits the linked crash because it starts under the Horde DynamicSupervisor and
+    # Turn.Session.start_with_retry contains+retries it. Mirror that containment here:
+    # trap the exit so start_link returns the error (instead of killing us), then retry.
+    Process.flag(:trap_exit, true)
+    pid = start_via_with_retry(opts)
 
     # Horde reflects a registration through an async CRDT→ETS flush (even on a single
     # node), so poll `whereis` until the via registration is visible rather than racing
@@ -573,6 +580,24 @@ defmodule Normandy.Agents.Turn.ServerTest do
       fun.() -> true
       retries == 0 -> false
       true -> Process.sleep(10) && wait_until(fun, retries - 1)
+    end
+  end
+
+  # Direct-start analogue of Turn.Session.start_with_retry: with trap_exit on, a via
+  # registration race returns {:error, {:process_not_registered_via, _}} instead of
+  # killing the caller, so we can retry until Horde's registration converges.
+  defp start_via_with_retry(opts, retries \\ 50) do
+    case Normandy.Agents.Turn.Server.start_link(opts) do
+      {:ok, pid} ->
+        pid
+
+      {:error, {:process_not_registered_via, _}} = err ->
+        if retries > 0 do
+          Process.sleep(10)
+          start_via_with_retry(opts, retries - 1)
+        else
+          flunk("Horde via registration never converged: #{inspect(err)}")
+        end
     end
   end
 
