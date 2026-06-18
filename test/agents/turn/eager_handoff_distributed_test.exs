@@ -36,6 +36,15 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   2. Sets pool mode to :auto so all spawned processes (Turn.Server, Tasks) can
      check out their own connections without explicit allow-listing.
   3. Cleans up the session row in on_exit.
+
+  ## Tag behaviour note
+
+  This module carries both @moduletag :distributed and @moduletag :postgres.
+  ExUnit's include logic means `--include distributed` alone causes this test to
+  be included even though :postgres is in the default exclude list. The setup
+  block guards against this by checking whether Normandy.TestRepo is started and
+  skipping if not — ensuring the test only runs in the intended `--include
+  distributed --include postgres` configuration.
   """
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
@@ -53,33 +62,39 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   end
 
   setup do
-    # Non-sandboxed checkout so committed writes are visible across nodes.
-    # Then set :auto mode so all spawned processes get their own connections.
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo, sandbox: false)
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
+    # Guard: skip if TestRepo is not running (happens when --include distributed is used
+    # without --include postgres; test_helper.exs only starts the Repo for postgres runs).
+    if Process.whereis(Normandy.TestRepo) == nil do
+      {:skip, "Normandy.TestRepo not started; run with --include postgres"}
+    else
+      # Non-sandboxed checkout so committed writes are visible across nodes.
+      # Then set :auto mode so all spawned processes get their own connections.
+      :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo, sandbox: false)
+      Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
 
-    sid = "eager-handoff-#{System.unique_integer([:positive])}"
+      sid = "eager-handoff-#{System.unique_integer([:positive])}"
 
-    on_exit(fn ->
-      # Restore manual mode and clean up the test session row.
-      Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :manual)
+      on_exit(fn ->
+        # Restore manual mode and clean up the test session row.
+        Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :manual)
 
-      try do
-        import Ecto.Query
+        try do
+          import Ecto.Query
 
-        Normandy.TestRepo.delete_all(
-          from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
-            where: s.session_id == ^sid
+          Normandy.TestRepo.delete_all(
+            from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
+              where: s.session_id == ^sid
+            )
           )
-        )
-      rescue
-        _ -> :ok
-      end
+        rescue
+          _ -> :ok
+        end
 
-      Ecto.Adapters.SQL.Sandbox.checkin(Normandy.TestRepo)
-    end)
+        Ecto.Adapters.SQL.Sandbox.checkin(Normandy.TestRepo)
+      end)
 
-    {:ok, sid: sid}
+      {:ok, sid: sid}
+    end
   end
 
   test "Postgres-backed session rehydrates on primary after peer death (lazy path)", %{sid: sid} do
@@ -119,7 +134,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
     :ok = PGStore.save_turn_state(repo, sid, steering)
 
-    # Verify the seeds are actually in Postgres.
+    # Verify the seeds are in Postgres.
     assert match?({:ok, %{template_id: "k"}}, PGStore.load_config_template(repo, sid)),
            "config template must be persisted in Postgres"
 
