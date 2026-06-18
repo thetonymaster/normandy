@@ -178,6 +178,8 @@ defmodule Normandy.MixProject do
     Mix.Task.run("test", ["--include", "postgres" | args])
   end
 
+  # No DB setup step (unlike test.postgres): Redis needs no schema/migrations,
+  # just a reachable server at :redis_url.
   defp run_redis_tests(args) do
     System.put_env("NORMANDY_REDIS", "true")
     Mix.Task.run("test", ["--include", "redis" | args])

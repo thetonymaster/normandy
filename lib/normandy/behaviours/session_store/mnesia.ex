@@ -74,18 +74,13 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
   @impl true
   def history(%{entries: et, sessions: st}, session_id) do
-    result =
-      txn(fn ->
-        case :mnesia.read({st, session_id}) do
-          [{_, ^session_id, %{head_id: head}}] -> chain(et, head, [])
-          [] -> []
-        end
-      end)
-
-    case result do
-      {:ok, entries} -> {:ok, entries}
-      error -> error
-    end
+    # txn/1 already returns {:ok, entries} | {:error, reason} — the contract's shape.
+    txn(fn ->
+      case :mnesia.read({st, session_id}) do
+        [{_, ^session_id, %{head_id: head}}] -> chain(et, head, [])
+        [] -> []
+      end
+    end)
   end
 
   @impl true
@@ -224,16 +219,28 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   defp ensure_disc_schema!(nodes) do
     Enum.each(nodes, fn n ->
       case :mnesia.change_table_copy_type(:schema, n, :disc_copies) do
-        {:atomic, :ok} -> :ok
-        {:aborted, {:already_exists, :schema, _, :disc_copies}} -> :ok
+        {:atomic, :ok} ->
+          :ok
+
+        {:aborted, {:already_exists, :schema, _, :disc_copies}} ->
+          :ok
+
+        {:aborted, reason} ->
+          raise "Mnesia disc schema setup failed on #{inspect(n)}: #{inspect(reason)}"
       end
     end)
   end
 
   defp create_table(name, attrs, copies, nodes) do
     case :mnesia.create_table(name, [{:attributes, attrs}, {:type, :set}, {copies, nodes}]) do
-      {:atomic, :ok} -> :ok
-      {:aborted, {:already_exists, ^name}} -> :ok
+      {:atomic, :ok} ->
+        :ok
+
+      {:aborted, {:already_exists, ^name}} ->
+        :ok
+
+      {:aborted, reason} ->
+        raise "Mnesia create_table #{inspect(name)} failed: #{inspect(reason)}"
     end
   end
 end

@@ -100,7 +100,7 @@ defmodule Normandy.Cluster do
 
         [
           %{
-            id: ResumeReaper,
+            id: {ResumeReaper, registry},
             start:
               {ResumeReaper, :start_link,
                [

@@ -9,10 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `SessionStore.Mnesia` — distributed, durable session store over OTP Mnesia (no external DB).
-- `SessionStore.Redis` — durable session store over Redis Streams.
-- `SessionRegistry.Redis` — `:via`-based distributed registry using Redis as the name table.
-- `Normandy.Cluster.setup_mnesia_store!/1` and `Normandy.Cluster.redis_child_specs/1` wiring helpers.
+- **Phase 7 — distributed multi-node sessions (Tiers 0/1/2 + eager resume).**
+  - `Normandy.Behaviours.SessionStore.Postgres` — durable session store over
+    Ecto/Postgres (entries, opaque turn state, config template), with migrations
+    and `resume_policy` / `config_template` columns. The Tier-1 durable store.
+  - `Normandy.Behaviours.SessionRegistry.Horde` (`:via`, `members: :auto`) and
+    `Normandy.Agents.Turn.Supervisor.Horde` — CRDT-backed distributed registry +
+    dynamic supervisor that route to / own `Turn.Server`s across a cluster (Tier-2).
+  - `Normandy.Agents.Turn.ResumeReaper` — selective **eager handoff** on
+    `:nodedown`. Because `Horde.DynamicSupervisor` does not redistribute a dead
+    node's children, the reaper restarts the eager, unregistered, non-terminal
+    sessions whose server died with the lost node. Lazy rehydrate (route →
+    `whereis` → rehydrate-on-demand) needs no reaper.
+  - `Normandy.Behaviours.AgentTemplate` + a persisted **config template**
+    (`Normandy.Agents.Turn.ConfigTemplate`): the non-secret config
+    (model/temperature/behaviour refs/tools) needed to reconstruct an agent on
+    rehydration; a `template_provider` resolves it. Credentials are never persisted.
+  - `SessionStore` gained `save_config_template/3`, `load_config_template/2`, and
+    `list_resumable/1` (eager session ids); `SessionRegistry` gained the optional
+    `child_name/2` (`{:via, …}`) for atomic, supervisor-driven start that closes the
+    start-time race. `InMemory` / `ETS` / `Native` impls were extended to match.
+  - `Normandy.Cluster.child_specs/1` — one-call wiring of the Horde registry +
+    supervisor + reaper (plus an optional `libcluster` `Cluster.Supervisor` when
+    `:topologies` are supplied and `libcluster` is loaded).
+  - Tier model: **Tier-0** in-memory/ETS single-node default (unchanged);
+    **Tier-1** durable store + lazy rehydrate; **Tier-2** distributed
+    registry/supervisor + eager reaper.
+  - Drop-in backends behind the same `SessionStore` / `SessionRegistry` seam:
+    `SessionStore.Mnesia` (OTP-native distributed store, transactional appends, no
+    external DB), `SessionStore.Redis` (Redis Streams), `SessionRegistry.Redis`
+    (`:via` registry using Redis as the name table), and the
+    `Normandy.Cluster.setup_mnesia_store!/1` / `redis_child_specs/1` wiring helpers.
+
+- **Guardrails — pre-charge admission, threaded context, fail-open, semantic scope.**
+  - `Normandy.Agents.BaseAgent.admit/2,3` runs input guardrails as a **pre-charge
+    filter** (no turn, memory, or circuit breaker), returning
+    `:ok | {:block, violations}` instead of raising — reject disallowed input
+    before paying for a turn.
+  - `Normandy.Guardrails.run/3` threads a caller-supplied `context` map to guards
+    implementing the optional `Guard.check/3` callback (`check/2`-only guards are
+    unaffected) — host data a guard needs but the framework must not interpret
+    (ids, locale, conversation history).
+  - Per-guard `:on_error` policy: `:reraise` (default — a config bug stays a crash),
+    `:open` (rescue the guard's raise and treat as a pass, for a guard fronting a
+    flaky external service), `:closed` (rescue and turn it into a `:guard_error`
+    violation). Only the `check` call is rescued; a malformed return always raises.
+  - `Normandy.Guardrails.Builtins.SemanticScope` — a provider-agnostic hybrid scope
+    guard: a cheap injected `fast_path` in front of an injected `classifier`
+    (`(value, context) -> :allow | {:block, reason}`); the `:block` reason becomes
+    the violation's machine-readable `:constraint`. (#31)
 
 - **Phase 6 — AgentProcess durable turn engine (`:server` mode).**
   - `Normandy.Coordination.AgentProcess` opt-in `:server` mode (`turn_engine: :server`)
@@ -39,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Flaky `Turn.Supervisor.Horde` test: a `start_server` racing the `:via`
+  registration could observe a transient `{:error, {:already_started, _}}`; the
+  test now retries the start through the via race. (#36)
 - `convert_turn_output/3` previously returned the empty output-schema struct for
   tool-using turns with non-`chat_message` output schemas, dropping the final-
   response content. Non-`chat_message`-schema agents using tools were affected.
