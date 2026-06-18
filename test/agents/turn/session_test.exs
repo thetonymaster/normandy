@@ -141,4 +141,41 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # A store fault must surface as run/2's error tuple, not a caller crash.
     assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
   end
+
+  test "concurrent ensure-server for one session resolves to a single pid (Horde via)" do
+    alias Normandy.Behaviours.SessionRegistry.Horde
+    alias Normandy.Behaviours.SessionStore.InMemory
+
+    reg = Horde.new()
+    store = InMemory.new()
+    {:ok, sup} = Normandy.Agents.Turn.Supervisor.start_link([])
+    sid = "race-\#{System.unique_integer([:positive])}"
+
+    opts = [
+      session_id: sid,
+      config: session_config(),
+      store: {InMemory, store},
+      registry: {Horde, reg},
+      supervisor: sup,
+      handlers: %{
+        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
+      }
+    ]
+
+    results =
+      1..10
+      |> Enum.map(fn _ -> Task.async(fn -> Normandy.Agents.Turn.Session.run(opts, nil) end) end)
+      |> Enum.map(&Task.await(&1, 5000))
+
+    # All callers succeed and route to the one registered server.
+    assert {:ok, pid} = Horde.whereis(reg, sid)
+    assert Enum.all?(results, &match?({:ok, _}, &1))
+    assert [_one] = children_pids(sup) |> Enum.uniq()
+    assert is_pid(pid)
+  end
+
+  defp children_pids(sup) do
+    DynamicSupervisor.which_children(sup) |> Enum.map(fn {_, p, _, _} -> p end)
+  end
 end

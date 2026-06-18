@@ -4,6 +4,19 @@ defmodule Normandy.Agents.Turn.Session do
   `SessionRegistry`; on a miss, rehydrates turn state + conversation memory from
   the `SessionStore` and starts a `Turn.Server` under `Turn.Supervisor` with the
   **caller-supplied** config (the store never holds config/credentials).
+
+  ## Start-time race
+
+  For `:self_register` (Native) registries the race between `whereis` returning
+  `:none` and the new child finishing `register/3` is best-effort: a concurrent
+  caller may start a second child, which then loses the race and keeps running
+  unregistered. This was acceptable for single-router usage (Phase 4b).
+
+  For via-based registries (Horde) the race is **closed**: `Turn.Supervisor`
+  supplies a `:name` computed by `child_name/2`, so the OTP supervisor performs
+  atomic registration at start. Any concurrent caller that loses the start race
+  gets `{:error, {:already_started, pid}}`; `rehydrate_and_start/1` normalises
+  this to `{:ok, pid}` so all callers converge on the single winner.
   """
   alias Normandy.Agents.Turn.{Server, Supervisor}
   alias Normandy.Components.AgentMemory
@@ -42,10 +55,6 @@ defmodule Normandy.Agents.Turn.Session do
   end
 
   defp rehydrate_and_start(opts) do
-    # Race note: between `whereis` returning `:none` and the new child registering,
-    # a concurrent caller could start a second child for the same `session_id`.
-    # `Native.register/3` returns `{:error, :taken}` for the loser. For Phase 4b's
-    # single-router usage this is acceptable; a `:via`-based start is the documented follow-up.
     {store_mod, store_handle} = Keyword.fetch!(opts, :store)
     sid = Keyword.fetch!(opts, :session_id)
     config = Keyword.fetch!(opts, :config)
@@ -84,7 +93,14 @@ defmodule Normandy.Agents.Turn.Session do
           |> Keyword.put(:config, config)
           |> Keyword.put(:turn_state, turn_state)
 
-        Supervisor.start_server(supervisor, server_opts)
+        # Normalize the via-registry start-time race: when two callers both see
+        # `:none` and race to start, the loser gets `{:already_started, pid}`.
+        # Treat this as success — both callers converge on the single live server.
+        case Supervisor.start_server(supervisor, server_opts) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          other -> other
+        end
 
       {:error, reason} ->
         {:error, reason}

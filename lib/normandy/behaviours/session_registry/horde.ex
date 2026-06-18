@@ -60,6 +60,8 @@ defmodule Normandy.Behaviours.SessionRegistry.Horde do
   def child_name(handle, session_id), do: {:via, Horde.Registry, {handle, session_id}}
 
   defp unique_name do
-    String.to_atom("horde_session_registry_" <> Integer.to_string(System.unique_integer([:positive])))
+    String.to_atom(
+      "horde_session_registry_" <> Integer.to_string(System.unique_integer([:positive]))
+    )
   end
 end
