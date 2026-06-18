@@ -156,4 +156,51 @@ defmodule Normandy.ClusterCase do
       5000 -> raise "do_spawn_registered: timeout waiting for registration"
     end
   end
+
+  # --- Redis registry helpers (compiled into the ebin path so peers can call them) ---
+
+  @doc """
+  Start a `Normandy.Behaviours.SessionRegistry.Redis` owner on a remote peer node
+  without letting the erpc transport worker link to it (same unlinking pattern as
+  `start_horde_on_peer/2`).
+  """
+  def start_redis_on_peer(node, opts) do
+    :rpc.call(node, __MODULE__, :start_redis_unlinked, [opts])
+  end
+
+  @doc false
+  def start_redis_unlinked(opts) do
+    {:ok, pid} = Normandy.Behaviours.SessionRegistry.Redis.start_link(opts)
+    Process.unlink(pid)
+    {:ok, pid}
+  end
+
+  @doc """
+  Spawn a long-lived process on `node` that registers itself in the Redis registry
+  `reg_name` under `session_id` and then sleeps. Returns the remote pid.
+
+  Mirrors `do_spawn_registered/2` but for the Redis backend.
+  """
+  def spawn_redis_registered_on_peer(node, reg_name, session_id) do
+    :rpc.call(node, __MODULE__, :do_spawn_redis_registered, [reg_name, session_id])
+  end
+
+  @doc false
+  def do_spawn_redis_registered(reg_name, session_id) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        :ok = Normandy.Behaviours.SessionRegistry.Redis.register(reg_name, session_id, self())
+        send(parent, :registered)
+        Process.sleep(:infinity)
+      end)
+
+    receive do
+      :registered -> pid
+    after
+      5000 ->
+        raise "do_spawn_redis_registered: timeout waiting for registration on #{inspect(reg_name)}"
+    end
+  end
 end
