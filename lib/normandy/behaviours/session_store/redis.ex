@@ -160,19 +160,27 @@ if Code.ensure_loaded?(Redix) do
       ]
     end
 
-    # XRANGE returns [[stream_id, [k1, v1, k2, v2, ...]], ...] in chronological order.
+    # XRANGE is chronological; reconstruct the linear parent chain so a rehydrated
+    # `AgentMemory.from_entries/1` walks head -> parent_id back to the root (the
+    # store models a single linear stream, not a parent graph). Without this, the
+    # chain walk stops at the first nil parent and truncates history to the head.
     defp decode_stream(raw) do
-      Enum.map(raw, fn [stream_id, kv] ->
+      raw
+      |> Enum.reduce({nil, []}, fn [stream_id, kv], {prev_id, acc} ->
         m = kv_to_map(kv)
 
-        %Entry{
+        entry = %Entry{
           id: stream_id,
-          parent_id: nil,
+          parent_id: prev_id,
           turn_id: blank_to_nil(m["turn_id"]),
           role: m["role"],
           content: decode(m["content"])
         }
+
+        {stream_id, [entry | acc]}
       end)
+      |> elem(1)
+      |> Enum.reverse()
     end
 
     defp copy_prefix(conn, dest_stream, prefix) do
@@ -200,6 +208,11 @@ if Code.ensure_loaded?(Redix) do
 
     defp stream_key(ns, sid), do: "#{ns}:{#{sid}}:stream"
     defp meta_key(ns, sid), do: "#{ns}:{#{sid}}:meta"
+
+    # Intentionally a namespace-level (not per-session) key: no `{sid}` hash-tag, so it
+    # lives in a different Redis Cluster slot than the session keys. This is safe because
+    # it is never combined with session keys in a MULTI; the code uses pipelines, not
+    # transactions.
     defp resumable_key(ns), do: "#{ns}:resumable"
 
     defp encode(term), do: :erlang.term_to_binary(term)

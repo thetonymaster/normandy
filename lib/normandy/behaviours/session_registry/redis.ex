@@ -22,6 +22,8 @@ if Code.ensure_loaded?(Redix) do
     # node never evicts a key another node re-claimed after a TTL lapse.
     @del_if_owner ~S{if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end}
 
+    @pexpire_if_owner ~S{if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end}
+
     # --- behaviour API (handle = owner name) ---
 
     @impl Normandy.Behaviours.SessionRegistry
@@ -161,8 +163,8 @@ if Code.ensure_loaded?(Redix) do
     end
 
     def handle_info(:refresh, s) do
-      Enum.each(s.sids, fn {sid, _} ->
-        Redix.command(s.conn, ["PEXPIRE", reg_key(s.ns, sid), to_string(s.ttl)])
+      Enum.each(s.sids, fn {sid, {pid, _ref}} ->
+        pexpire_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid), s.ttl)
       end)
 
       {:noreply, s}
@@ -184,6 +186,10 @@ if Code.ensure_loaded?(Redix) do
 
     defp del_if_owner(conn, key, value) do
       Redix.command(conn, ["EVAL", @del_if_owner, "1", key, value])
+    end
+
+    defp pexpire_if_owner(conn, key, value, ttl) do
+      Redix.command(conn, ["EVAL", @pexpire_if_owner, "1", key, value, to_string(ttl)])
     end
 
     defp drop_existing(s, sid) do

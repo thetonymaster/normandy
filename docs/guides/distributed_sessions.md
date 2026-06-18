@@ -195,6 +195,8 @@ and Redis (no Horde, no Postgres):
       session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
     }
 
+> Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
+
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
 Redis with AOF enabled + `config :normandy, :redis_wait, {numreplicas, timeout_ms}` to
 block boundary writes on replica acks (fail-closed). Ephemeral: `Mnesia(ram_copies)`,
