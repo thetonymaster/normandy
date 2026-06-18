@@ -15,12 +15,46 @@ defmodule Normandy.Behaviours.SessionRegistry.Horde do
     Horde.Registry.start_link(name: name, keys: :unique, members: :auto)
   end
 
-  @doc "Convenience for tests: start a uniquely-named registry and return its name."
+  @doc """
+  Convenience for tests: start a uniquely-named registry and return its name.
+
+  Waits until the registry actually accepts a registration before returning. A
+  fresh `members: :auto` registry transiently rejects registrations (and `:via`
+  starts) with `:process_not_registered_via` until it converges; gating here keeps
+  test setup from racing that window. Production starts the registry in a
+  supervision tree (it is ready long before any session), so this gate is `new/1`
+  only.
+  """
   @spec new(keyword()) :: atom()
   def new(opts \\ []) do
     name = Keyword.get_lazy(opts, :name, fn -> unique_name() end)
     {:ok, _pid} = start_link(name: name)
+    :ok = await_ready(name)
     name
+  end
+
+  defp await_ready(name, retries \\ 200) do
+    probe = {:__ready_probe__, System.unique_integer([:positive])}
+
+    accepted? =
+      try do
+        case Horde.Registry.register(name, probe, nil) do
+          {:ok, _} ->
+            Horde.Registry.unregister(name, probe)
+            true
+
+          _ ->
+            false
+        end
+      catch
+        :exit, _ -> false
+      end
+
+    cond do
+      accepted? -> :ok
+      retries == 0 -> :ok
+      true -> Process.sleep(5) && await_ready(name, retries - 1)
+    end
   end
 
   @impl true

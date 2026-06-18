@@ -101,11 +101,32 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # No :config AND no :template_provider — a Tier-2 thin start can't reconstruct.
+  defp reconstruct_config!(_store, nil, session_id) do
+    raise ArgumentError,
+          "Turn.Server: session #{inspect(session_id)} was started with neither :config " <>
+            "nor :template_provider. A Tier-2 (Horde) thin start requires :template_provider " <>
+            "so the server can reconstruct config from the persisted template."
+  end
+
   defp reconstruct_config!({store_mod, store_handle}, {tp_mod, tp_handle}, session_id) do
     {:ok, tmpl} = store_mod.load_config_template(store_handle, session_id)
     {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
-    {:ok, token} = cred_mod.get_token(token_provider(tmpl), cred_opts)
+
+    token =
+      case cred_mod.get_token(token_provider(tmpl), cred_opts) do
+        {:ok, token} ->
+          token
+
+        {:error, reason} ->
+          # Tier-2 reconstruction needs a node-local provider (env/vault). The default
+          # CredentialProvider.FromClient cannot work here — there is no in-memory client.
+          raise "Turn.Server reconstruct: credential resolution failed for #{inspect(session_id)} " <>
+                  "via #{inspect(cred_mod)}: #{inspect(reason)}. Tier-2 sessions need a node-local " <>
+                  "CredentialProvider (e.g. env/vault), not CredentialProvider.FromClient."
+      end
+
     config = Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
 
     # The thin spec carries no memory; load the conversation graph from the store
