@@ -1,6 +1,7 @@
 defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
   @moduledoc "Tier-2 (Horde reg+sup, lazy) as a cluster-of-one, end to end."
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
 
   alias Normandy.Agents.Turn.{Session, Supervisor}
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
@@ -33,7 +34,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
     ]
 
     assert {:ok, _result} = Session.run(opts, "hello")
-    assert {:ok, _pid} = HReg.whereis(reg, sid)
+    assert wait_until(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end)
     # The template was persisted (reconstruction would work on another node).
     assert {:ok, _tmpl} =
              Normandy.Behaviours.SessionStore.InMemory.load_config_template(store, sid)

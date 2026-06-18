@@ -1,5 +1,6 @@
 defmodule Normandy.Agents.Turn.SessionTest do
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
   alias Normandy.Agents.Turn
 
   # A local response struct for stubbing call_llm in Session tests.
@@ -168,9 +169,11 @@ defmodule Normandy.Agents.Turn.SessionTest do
       |> Enum.map(fn _ -> Task.async(fn -> Normandy.Agents.Turn.Session.run(opts, nil) end) end)
       |> Enum.map(&Task.await(&1, 5000))
 
-    # All callers succeed and route to the one registered server.
-    assert {:ok, pid} = Horde.whereis(reg, sid)
+    # All callers succeed and route to the one registered server (Horde registration
+    # is eventually consistent; poll until visible).
     assert Enum.all?(results, &match?({:ok, _}, &1))
+    assert wait_until(fn -> match?({:ok, _}, Horde.whereis(reg, sid)) end)
+    {:ok, pid} = Horde.whereis(reg, sid)
     assert [_one] = children_pids(sup) |> Enum.uniq()
     assert is_pid(pid)
   end

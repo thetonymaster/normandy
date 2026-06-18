@@ -1,5 +1,6 @@
 defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
 
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
@@ -38,7 +39,8 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
     ]
 
     assert {:ok, pid} = HSup.start_server(sup, opts)
-    assert {:ok, ^pid} = HReg.whereis(reg, sid)
+    # Horde registration is eventually consistent; poll until visible.
+    assert wait_until(fn -> HReg.whereis(reg, sid) == {:ok, pid} end)
   end
 
   defp build_test_config, do: Normandy.Test.TurnConfig.build()

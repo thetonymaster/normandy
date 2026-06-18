@@ -188,6 +188,24 @@ defmodule Normandy.Agents.Turn.ServerTest do
              AssistantAppendFailStore.load_turn_state(store, "s-bypass")
   end
 
+  test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    opts = [
+      session_id: "s-misconfig",
+      store: {InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Native, reg}
+      # deliberately neither :config nor :template_provider
+    ]
+
+    # init raises an ArgumentError → start_link returns {:error, _}; capture the
+    # expected crash report so output stays pristine.
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:error, _reason} = Turn.Server.start_link(opts)
+    end)
+  end
+
   test "a batch with a needs_approval call parks the turn (:awaiting_approval) and persists" do
     store = InMemory.new()
     reg = Normandy.Behaviours.SessionRegistry.Native.new()
@@ -535,13 +553,27 @@ defmodule Normandy.Agents.Turn.ServerTest do
     ]
 
     assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
-    assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid)
 
-    # The via name registers atomically at start: a second start for the same
-    # session is rejected (not a second live process), which is exactly what the
-    # :name/via-start provides over the old self-register path.
+    # Horde reflects a registration through an async CRDT→ETS flush (even on a single
+    # node), so poll `whereis` until the via registration is visible rather than racing
+    # the flush.
+    assert wait_until(fn ->
+             Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid) == {:ok, pid}
+           end)
+
+    # Once the registration is visible, a second start for the same via name is
+    # rejected (not a second live process) — exactly what the :name/via-start
+    # provides over the old self-register path.
     assert {:error, {:already_started, ^pid}} =
              Normandy.Agents.Turn.Server.start_link(opts)
+  end
+
+  defp wait_until(fun, retries \\ 200) do
+    cond do
+      fun.() -> true
+      retries == 0 -> false
+      true -> Process.sleep(10) && wait_until(fun, retries - 1)
+    end
   end
 
   # Part B (Task 7 requirement): proves the Server threads the compacted config2
