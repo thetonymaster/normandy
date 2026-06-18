@@ -35,6 +35,11 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     {:ok, sup} = HSup.start_link(name: :"reapsup_#{System.unique_integer([:positive])}")
     {:ok, cat} = Catalog.start_link([])
 
+    on_exit(fn ->
+      if Process.alive?(sup), do: Process.exit(sup, :kill)
+      if Process.alive?(cat), do: Process.exit(cat, :kill)
+    end)
+
     # Node-local supplement (non-serializable half of config) for template_id "k".
     :ok =
       Catalog.put(cat, "k", %{
@@ -67,7 +72,10 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
 
     # The reaper reconstructed the config from Postgres + the local supplement and
     # started the server under Horde, which registered it.
-    assert eventually(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end)
+    assert eventually(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end),
+           "reaper did not start/register the eager session after :nodedown " <>
+             "(reconstruction may have failed — check the ResumeReaper logs)"
+
     {:ok, pid} = HReg.whereis(reg, sid)
     assert node(pid) == node()
   end
