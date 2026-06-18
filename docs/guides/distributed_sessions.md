@@ -151,3 +151,60 @@ Once nodes are connected, Horde's `members: :auto` converges automatically.
 
 See `docs/superpowers/specs/2026-06-17-phase-7-distributed-sessions-design.md` for
 the full design and rationale.
+
+## More store/registry backends
+
+The store and registry are independent config slots, so these drop in alongside the
+Postgres/Horde defaults:
+
+### `SessionStore.Mnesia` — distributed store, no external DB
+
+OTP-native "distributed ETS". Transactions serialize per-session appends. Configure with
+`{Normandy.Behaviours.SessionStore.Mnesia, entries: :normandy_entries, sessions: :normandy_sessions}`
+and create the tables at boot:
+
+```elixir
+Normandy.Cluster.setup_mnesia_store!(
+  entries: :normandy_entries,
+  sessions: :normandy_sessions,
+  copies: :disc_copies,            # durable across full-cluster restart (default)
+  nodes: [Node.self() | Node.list()]
+)
+```
+
+`copies: :ram_copies` is faster but only durable while ≥1 replica node stays up
+(meaningful only with ≥2 nodes); `:disc_copies` survives a full restart (needs a writable
+Mnesia dir, e.g. `-mnesia dir '"/var/lib/normandy_mnesia"'`).
+
+### Redis combo — Redis as the single distributed dependency
+
+`SessionStore.Redis` (Streams) + `SessionRegistry.Redis` (`:via`) + the local supervisor +
+the reaper give full lazy rehydrate *and* eager auto-resume with only Erlang distribution
+and Redis (no Horde, no Postgres):
+
+```elixir
+children =
+  Normandy.Cluster.redis_child_specs(
+    redix: [name: MyApp.SessionRedix, host: "localhost", port: 6379],
+    namespace: "normandy",
+    registry: MyApp.SessionRegistry,
+    supervisor: MyApp.TurnSupervisor,
+    template_provider: {Normandy.Behaviours.AgentTemplate.Catalog, MyApp.AgentTemplates}
+  )
+```
+
+```elixir
+# then in Config:
+%Normandy.Behaviours.Config{
+  session_store: {Normandy.Behaviours.SessionStore.Redis, {MyApp.SessionRedix, "normandy"}},
+  session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
+}
+```
+
+> Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
+
+**Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
+Redis with AOF enabled + `config :normandy, :redis_wait, {numreplicas, timeout_ms}` to
+block boundary writes on replica acks (fail-closed). Ephemeral: `Mnesia(ram_copies)`,
+`ETS`, `InMemory`. Redis can lose recent writes on a hard crash — durable, not bulletproof;
+do not use it for audit-grade history.

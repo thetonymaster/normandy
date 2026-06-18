@@ -129,7 +129,7 @@ defmodule Normandy.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :mnesia]
     ]
   end
 
@@ -145,6 +145,7 @@ defmodule Normandy.MixProject do
       {:ecto_sql, "~> 3.12", optional: true},
       {:postgrex, "~> 0.19", optional: true},
       {:horde, "~> 0.9", optional: true},
+      {:redix, "~> 1.5", optional: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
@@ -155,7 +156,7 @@ defmodule Normandy.MixProject do
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).
   def cli do
-    [preferred_envs: ["test.postgres": :test]]
+    [preferred_envs: ["test.postgres": :test, "test.redis": :test]]
   end
 
   defp aliases do
@@ -166,7 +167,8 @@ defmodule Normandy.MixProject do
       # alias so it can flag test_helper to start the Repo (argv only shows the alias
       # name, not the expanded `--include postgres`).
       "ecto.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
-      "test.postgres": &run_postgres_tests/1
+      "test.postgres": &run_postgres_tests/1,
+      "test.redis": &run_redis_tests/1
     ]
   end
 
@@ -174,6 +176,13 @@ defmodule Normandy.MixProject do
     System.put_env("NORMANDY_POSTGRES", "true")
     Mix.Task.run("ecto.setup")
     Mix.Task.run("test", ["--include", "postgres" | args])
+  end
+
+  # No DB setup step (unlike test.postgres): Redis needs no schema/migrations,
+  # just a reachable server at :redis_url.
+  defp run_redis_tests(args) do
+    System.put_env("NORMANDY_REDIS", "true")
+    Mix.Task.run("test", ["--include", "redis" | args])
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

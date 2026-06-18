@@ -18,3 +18,5 @@ config :normandy, Normandy.TestRepo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10,
   priv: "priv/test_repo"
+
+config :normandy, :redis_url, System.get_env("REDIS_URL", "redis://localhost:6379")
