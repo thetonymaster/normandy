@@ -26,6 +26,7 @@ defmodule Normandy.Behaviours.SessionStore.Postgres.Schemas do
       field(:head_id, :binary_id)
       field(:current_turn_id, :string)
       field(:turn_state, :binary)
+      field(:config_template, :binary)
       timestamps(type: :utc_datetime_usec)
     end
   end

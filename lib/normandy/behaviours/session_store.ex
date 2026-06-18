@@ -32,4 +32,8 @@ defmodule Normandy.Behaviours.SessionStore do
               {:ok, session_id()} | {:error, term()}
   @callback save_turn_state(handle(), session_id(), state :: term()) :: :ok | {:error, term()}
   @callback load_turn_state(handle(), session_id()) :: {:ok, term()} | :error
+
+  @callback save_config_template(handle(), session_id(), template :: term()) ::
+              :ok | {:error, term()}
+  @callback load_config_template(handle(), session_id()) :: {:ok, term()} | :error
 end

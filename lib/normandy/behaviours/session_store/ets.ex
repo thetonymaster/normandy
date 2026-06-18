@@ -55,6 +55,14 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
     GenServer.call(pid, {:load_turn_state, session_id})
   end
 
+  @impl Normandy.Behaviours.SessionStore
+  def save_config_template(pid, session_id, tmpl),
+    do: GenServer.call(pid, {:save_config_template, session_id, tmpl})
+
+  @impl Normandy.Behaviours.SessionStore
+  def load_config_template(pid, session_id),
+    do: GenServer.call(pid, {:load_config_template, session_id})
+
   # ── server ───────────────────────────────────────────────────────────────────
 
   @impl GenServer
@@ -107,6 +115,21 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
     reply =
       case :ets.lookup(table, {:turn_state, session_id}) do
         [{_, term}] -> {:ok, term}
+        [] -> :error
+      end
+
+    {:reply, reply, table}
+  end
+
+  def handle_call({:save_config_template, session_id, tmpl}, _from, table) do
+    :ets.insert(table, {{:config_template, session_id}, tmpl})
+    {:reply, :ok, table}
+  end
+
+  def handle_call({:load_config_template, session_id}, _from, table) do
+    reply =
+      case :ets.lookup(table, {:config_template, session_id}) do
+        [{_, tmpl}] -> {:ok, tmpl}
         [] -> :error
       end
 

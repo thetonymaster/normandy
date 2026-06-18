@@ -15,7 +15,7 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
   @spec start_link(keyword()) :: Agent.on_start()
   def start_link(_opts \\ []) do
-    Agent.start_link(fn -> %{sessions: %{}, turn_states: %{}} end)
+    Agent.start_link(fn -> %{sessions: %{}, turn_states: %{}, config_templates: %{}} end)
   end
 
   @doc "Start a fresh store and return its handle (pid)."
@@ -74,6 +74,21 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
     Agent.get(pid, fn state ->
       case Map.fetch(state.turn_states, session_id) do
         {:ok, term} -> {:ok, term}
+        :error -> :error
+      end
+    end)
+  end
+
+  @impl true
+  def save_config_template(pid, session_id, tmpl) do
+    Agent.update(pid, fn state -> put_in(state.config_templates[session_id], tmpl) end)
+  end
+
+  @impl true
+  def load_config_template(pid, session_id) do
+    Agent.get(pid, fn state ->
+      case Map.fetch(state.config_templates, session_id) do
+        {:ok, tmpl} -> {:ok, tmpl}
         :error -> :error
       end
     end)

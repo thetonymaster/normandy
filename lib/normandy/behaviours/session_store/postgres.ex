@@ -119,6 +119,30 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
     end
   end
 
+  @impl true
+  def save_config_template(repo, session_id, tmpl) do
+    blob = encode(tmpl)
+
+    %Session{session_id: session_id}
+    |> Ecto.Changeset.change(config_template: blob)
+    |> repo.insert(
+      on_conflict: [set: [config_template: blob, updated_at: DateTime.utc_now()]],
+      conflict_target: :session_id
+    )
+    |> case do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @impl true
+  def load_config_template(repo, session_id) do
+    case repo.get(Session, session_id) do
+      %Session{config_template: blob} when is_binary(blob) -> {:ok, decode(blob)}
+      _ -> :error
+    end
+  end
+
   # --- Private helpers ---
 
   defp ancestor_of_head?(repo, session_id, entry_id) do

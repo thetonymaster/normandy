@@ -82,6 +82,13 @@ defmodule Normandy.SessionStoreContract do
         assert :error = @store.load_turn_state(h, "never-saved")
       end
 
+      test "config template round-trips an opaque term; missing is :error", %{handle: h} do
+        tmpl = %{template_id: "k", model: "m", behaviours_refs: %{policy: {Foo, []}}}
+        assert :ok = @store.save_config_template(h, "s1", tmpl)
+        assert {:ok, ^tmpl} = @store.load_config_template(h, "s1")
+        assert :error = @store.load_config_template(h, "never")
+      end
+
       test "implements the SessionStore behaviour" do
         behaviours = @store.module_info(:attributes)[:behaviour] || []
         assert Normandy.Behaviours.SessionStore in behaviours
