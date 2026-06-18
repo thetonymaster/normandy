@@ -21,9 +21,18 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
   @impl true
   def append_entry(repo, session_id, %{__struct__: _} = entry) do
     repo.transaction(fn ->
+      # Ensure the session row exists so the FOR UPDATE below always locks a real
+      # row. This serializes concurrent first-appends to a new session: two callers
+      # cannot both create the row and lose an entry (the standard get-or-create-
+      # with-lock idiom — INSERT ON CONFLICT DO NOTHING, then SELECT FOR UPDATE).
+      repo.insert(%Session{session_id: session_id},
+        on_conflict: :nothing,
+        conflict_target: :session_id
+      )
+
       session = lock_session(repo, session_id)
       id = entry.id || Ecto.UUID.generate()
-      parent_id = entry.parent_id || (session && session.head_id)
+      parent_id = entry.parent_id || session.head_id
       now = DateTime.utc_now()
 
       {:ok, _} =
@@ -36,7 +45,10 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
           inserted_at: now
         })
 
-      upsert_head(repo, session, session_id, id, entry.turn_id)
+      session
+      |> Ecto.Changeset.change(head_id: id, current_turn_id: entry.turn_id)
+      |> repo.update!()
+
       id
     end)
     |> case do
@@ -75,20 +87,6 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
     |> where([s], s.session_id == ^session_id)
     |> lock("FOR UPDATE")
     |> repo.one()
-  end
-
-  defp upsert_head(repo, nil, session_id, head_id, turn_id) do
-    repo.insert!(%Session{
-      session_id: session_id,
-      head_id: head_id,
-      current_turn_id: turn_id
-    })
-  end
-
-  defp upsert_head(repo, %Session{} = session, _session_id, head_id, turn_id) do
-    session
-    |> Ecto.Changeset.change(head_id: head_id, current_turn_id: turn_id)
-    |> repo.update!()
   end
 
   # Walk parent_id from head -> root via a recursive CTE; return chronological.
