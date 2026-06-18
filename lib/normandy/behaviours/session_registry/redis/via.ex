@@ -10,8 +10,18 @@ if Code.ensure_loaded?(Redix) do
 
     def register_name({owner, sid}, pid) do
       case Reg.register(owner, sid, pid) do
-        :ok -> :yes
-        {:error, :taken} -> :no
+        :ok ->
+          :yes
+
+        {:error, :taken} ->
+          :no
+
+        {:error, reason} ->
+          # A transport/Redis failure is not contention. Returning :no would
+          # masquerade an outage as a lost race and route to a nonexistent
+          # winner — crash loud and diagnosable instead of a silent fallback.
+          raise "SessionRegistry.Redis.Via: register failed for " <>
+                  "#{inspect({owner, sid})}: #{inspect(reason)}"
       end
     end
 

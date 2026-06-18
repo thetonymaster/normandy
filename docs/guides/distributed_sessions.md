@@ -163,12 +163,14 @@ OTP-native "distributed ETS". Transactions serialize per-session appends. Config
 `{Normandy.Behaviours.SessionStore.Mnesia, entries: :normandy_entries, sessions: :normandy_sessions}`
 and create the tables at boot:
 
-    Normandy.Cluster.setup_mnesia_store!(
-      entries: :normandy_entries,
-      sessions: :normandy_sessions,
-      copies: :disc_copies,            # durable across full-cluster restart (default)
-      nodes: [Node.self() | Node.list()]
-    )
+```elixir
+Normandy.Cluster.setup_mnesia_store!(
+  entries: :normandy_entries,
+  sessions: :normandy_sessions,
+  copies: :disc_copies,            # durable across full-cluster restart (default)
+  nodes: [Node.self() | Node.list()]
+)
+```
 
 `copies: :ram_copies` is faster but only durable while ≥1 replica node stays up
 (meaningful only with ≥2 nodes); `:disc_copies` survives a full restart (needs a writable
@@ -180,20 +182,24 @@ Mnesia dir, e.g. `-mnesia dir '"/var/lib/normandy_mnesia"'`).
 the reaper give full lazy rehydrate *and* eager auto-resume with only Erlang distribution
 and Redis (no Horde, no Postgres):
 
-    children =
-      Normandy.Cluster.redis_child_specs(
-        redix: [name: MyApp.SessionRedix, host: "localhost", port: 6379],
-        namespace: "normandy",
-        registry: MyApp.SessionRegistry,
-        supervisor: MyApp.TurnSupervisor,
-        template_provider: {Normandy.Behaviours.AgentTemplate.Catalog, MyApp.AgentTemplates}
-      )
+```elixir
+children =
+  Normandy.Cluster.redis_child_specs(
+    redix: [name: MyApp.SessionRedix, host: "localhost", port: 6379],
+    namespace: "normandy",
+    registry: MyApp.SessionRegistry,
+    supervisor: MyApp.TurnSupervisor,
+    template_provider: {Normandy.Behaviours.AgentTemplate.Catalog, MyApp.AgentTemplates}
+  )
+```
 
-    # then in Config:
-    %Normandy.Behaviours.Config{
-      session_store: {Normandy.Behaviours.SessionStore.Redis, {MyApp.SessionRedix, "normandy"}},
-      session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
-    }
+```elixir
+# then in Config:
+%Normandy.Behaviours.Config{
+  session_store: {Normandy.Behaviours.SessionStore.Redis, {MyApp.SessionRedix, "normandy"}},
+  session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
+}
+```
 
 > Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
 

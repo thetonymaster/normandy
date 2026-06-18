@@ -1,8 +1,11 @@
 defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
   use ExUnit.Case, async: false
-  # Needs BOTH a reachable Redis and a second node.
+  # Needs BOTH a reachable Redis and a second node. Tagged ONLY :distributed (NOT
+  # :redis): a :redis tag would make `mix test.redis` pull this in via ExUnit's
+  # include-overrides-exclude rule, where the setup below starts distribution
+  # mid-suite and corrupts unrelated tests. Run it with:
+  #   elixir --name primary@127.0.0.1 -S mix test.redis <file> --include distributed
   @moduletag :distributed
-  @moduletag :redis
 
   alias Normandy.Behaviours.SessionRegistry.Redis, as: Reg
   alias Normandy.ClusterCase
@@ -50,13 +53,27 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
     {:ok, _} = Reg.start_link(name: :reg_a, url: url, namespace: ns)
     {:ok, _} = ClusterCase.start_redis_on_peer(peer_node, name: :reg_b, url: url, namespace: ns)
 
-    a = Reg.register(:reg_a, "race", self())
-    b = :rpc.call(peer_node, Reg, :register, [:reg_b, "race", self_on_peer(peer_node)])
+    # Stable, long-lived owner pids on each node. A registrant dying triggers the
+    # registry's DOWN cleanup, which releases the SET NX lock — so both owners must
+    # outlive the register calls, else the second registration sees a freed lock and
+    # also wins. (The previous peer pid was a transient rpc-worker, hence the spawn.)
+    local_pid = spawn(fn -> Process.sleep(:infinity) end)
+    peer_pid = :rpc.call(peer_node, :erlang, :spawn, [Process, :sleep, [:infinity]])
+    on_exit(fn -> Process.exit(local_pid, :kill) end)
+
+    # Fire both registrations concurrently so they genuinely contend for the
+    # SET NX lock, rather than the local one always winning by completing first.
+    local = Task.async(fn -> Reg.register(:reg_a, "race", local_pid) end)
+
+    remote =
+      Task.async(fn -> :rpc.call(peer_node, Reg, :register, [:reg_b, "race", peer_pid]) end)
+
+    a = Task.await(local, 5_000)
+    b = Task.await(remote, 5_000)
 
     assert Enum.sort([a, elem_tag(b)]) == [:ok, :taken]
   end
 
-  defp self_on_peer(node), do: :rpc.call(node, :erlang, :self, [])
   defp elem_tag(:ok), do: :ok
   defp elem_tag({:error, :taken}), do: :taken
 
