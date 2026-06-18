@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SessionStore.Mnesia` — distributed, durable session store over OTP Mnesia (no external DB).
+- `SessionStore.Redis` — durable session store over Redis Streams.
+- `SessionRegistry.Redis` — `:via`-based distributed registry using Redis as the name table.
+- `Normandy.Cluster.setup_mnesia_store!/1` and `Normandy.Cluster.redis_child_specs/1` wiring helpers.
+
 - **Phase 6 — AgentProcess durable turn engine (`:server` mode).**
   - `Normandy.Coordination.AgentProcess` opt-in `:server` mode (`turn_engine: :server`)
     routing turns through the durable `Turn.Session`/`Turn.Server` engine: approval
