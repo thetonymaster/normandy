@@ -81,6 +81,10 @@ defmodule Normandy.Agents.Turn.Driver do
         handlers.guard.(acc, value)
         advance(acc, state, {:output_guarded, value}, handlers)
 
+      {:persist, _turn_state} ->
+        # Inline driver has no SessionStore/passivation; persistence is a no-op.
+        run(acc, state, rest, handlers)
+
       {:finalize, _value} ->
         {acc, state}
 

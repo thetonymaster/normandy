@@ -28,6 +28,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:persist, s2},
                {:maybe_compact, %{iterations_left: 4}}
              ]
     end

@@ -277,7 +277,8 @@ defmodule Normandy.Agents.Turn do
         held_results: []
     }
 
-    {s2, append_effects ++ [steering, {:maybe_compact, %{iterations_left: new_left}}]}
+    {s2,
+     append_effects ++ [steering, {:persist, s2}, {:maybe_compact, %{iterations_left: new_left}}]}
   end
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by

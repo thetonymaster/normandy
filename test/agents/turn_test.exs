@@ -201,6 +201,7 @@ defmodule Normandy.Agents.TurnTest do
                {:append_message, "tool", Enum.at(results, 0)},
                {:append_message, "tool", Enum.at(results, 1)},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:persist, s2},
                {:maybe_compact, %{iterations_left: 4}}
              ]
 
@@ -237,6 +238,7 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
                {:emit_event, :steering, %{iterations_left: 0}},
+               {:persist, s2},
                {:maybe_compact, %{iterations_left: 0}}
              ]
 
@@ -274,6 +276,31 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.last_response == resp
 
       assert effects == [{:validate_output, resp}]
+    end
+  end
+
+  describe "step/2 persist at the steering boundary" do
+    test "a completed tool batch persists the steering state before compaction" do
+      s = %State{
+        status: :tool_dispatch,
+        iterations_left: 3,
+        max_iterations: 5,
+        pending_calls: []
+      }
+
+      {s2, effects} = Turn.step(s, {:tool_results, []})
+
+      assert s2.status == :steering
+
+      assert Enum.any?(
+               effects,
+               &match?({:persist, %State{status: :steering}}, &1)
+             )
+
+      # persist comes before maybe_compact
+      persist_idx = Enum.find_index(effects, &match?({:persist, _}, &1))
+      compact_idx = Enum.find_index(effects, &match?({:maybe_compact, _}, &1))
+      assert persist_idx < compact_idx
     end
   end
 

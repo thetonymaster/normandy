@@ -93,6 +93,10 @@ defmodule Normandy.Agents.Turn.Inline do
         deps.guard.(value)
         advance(state, {:output_guarded, value}, deps)
 
+      {:persist, _turn_state} ->
+        # Inline shell has no SessionStore/passivation; persistence is a no-op.
+        process(state, rest, deps)
+
       {:finalize, _response} ->
         {:ok, state}
 
