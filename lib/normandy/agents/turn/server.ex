@@ -304,10 +304,16 @@ defmodule Normandy.Agents.Turn.Server do
         end)
 
       {:finalize, value} ->
+        # Persist the terminal (:stopped) turn state so the resume reaper can tell a
+        # completed session from a mid-turn one. Best-effort: the turn already
+        # succeeded, so a failed marker-persist must not fail it.
+        _ = persist_turn_state(data, data.turn_state)
         reply(data, {:ok, value})
         {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
 
       {:fail, reason} ->
+        # Persist the terminal (:failed) turn state (best-effort) for the same reason.
+        _ = persist_turn_state(data, data.turn_state)
         reply(data, {:error, reason})
         {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
     end

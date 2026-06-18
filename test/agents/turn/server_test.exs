@@ -94,6 +94,55 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert %Resp{content: "hi"} = final
   end
 
+  test "a completed turn persists a terminal :stopped turn state (for the resume reaper)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _config, _state, _req -> %Resp{content: "done", tool_calls: nil} end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-fin",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "hello")
+    assert {:ok, %Turn.State{status: :stopped}} = InMemory.load_turn_state(store, "s-fin")
+  end
+
+  test "a failed turn persists a terminal :failed turn state (for the resume reaper)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _config, _state, _req -> raise "boom" end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-fail",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    # The spawned LLM task crashes by design; capture the expected error report
+    # so test output stays pristine.
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:error, _} = Turn.Server.run(srv, "hello")
+    end)
+
+    assert {:ok, %Turn.State{status: :failed}} = InMemory.load_turn_state(store, "s-fail")
+  end
+
   test "a batch with a needs_approval call parks the turn (:awaiting_approval) and persists" do
     store = InMemory.new()
     reg = Normandy.Behaviours.SessionRegistry.Native.new()
