@@ -34,7 +34,9 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaDistributedTest do
     :ok = Mnesia.create_tables(entries: et, sessions: st, copies: :ram_copies, nodes: nodes)
 
     handle = %{entries: et, sessions: st}
-    {:ok, _} = Mnesia.append_entry(handle, "s1", %Entry{turn_id: "t", role: "user", content: "hi"})
+
+    {:ok, _} =
+      Mnesia.append_entry(handle, "s1", %Entry{turn_id: "t", role: "user", content: "hi"})
 
     # Read the same session through mnesia on the peer node.
     remote_history =
