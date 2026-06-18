@@ -27,6 +27,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       prompt_specification: c.prompt_specification,
       input_schema: c.input_schema,
       output_schema: c.output_schema,
+      max_messages: (c.memory && c.memory.max_messages) || nil,
       behaviours_refs: %{
         policy: b.policy,
         budget: b.budget,
@@ -69,7 +70,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       tool_registry: supplement.tool_registry,
       client: supplement.client_builder.(token),
       behaviours: behaviours,
-      memory: Normandy.Components.AgentMemory.new_memory()
+      memory: Normandy.Components.AgentMemory.new_memory(tmpl[:max_messages])
     }
   end
 end

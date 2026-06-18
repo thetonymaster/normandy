@@ -89,7 +89,24 @@ defmodule Normandy.Agents.Turn.Server do
     {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
     {:ok, token} = cred_mod.get_token(token_provider(tmpl), cred_opts)
-    Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
+    config = Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
+
+    # The thin spec carries no memory; load the conversation graph from the store
+    # so a rehydrated/redistributed Tier-2 session resumes with its history (Tier-0/1
+    # does this in Turn.Session; the thin path has no Session to inject it).
+    case store_mod.history(store_handle, session_id) do
+      {:ok, entries} ->
+        memory = %{
+          Normandy.Components.AgentMemory.from_entries(entries)
+          | max_messages: config.memory.max_messages
+        }
+
+        %{config | memory: memory}
+
+      {:error, reason} ->
+        # Fail-closed: cannot safely reconstruct without the conversation.
+        raise "Turn.Server reconstruct: history load failed for #{session_id}: #{inspect(reason)}"
+    end
   end
 
   defp session_id_template_id(%{template_id: id}), do: id

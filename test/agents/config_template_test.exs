@@ -25,8 +25,68 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     assert tmpl.model == "claude-x"
     refute Map.has_key?(tmpl, :client)
     refute Map.has_key?(tmpl, :tool_registry)
+    # max_messages nil when memory has no cap configured
+    assert tmpl.max_messages == nil
     # term_to_binary must succeed: no closures, no pids.
     assert is_binary(:erlang.term_to_binary(tmpl))
+  end
+
+  test "from_config carries the configured memory cap into max_messages" do
+    config = %BaseAgentConfig{
+      model: "claude-x",
+      temperature: 0.3,
+      max_tokens: 100,
+      max_tool_iterations: 4,
+      max_tool_concurrency: 2,
+      name: "support",
+      prompt_specification: %Normandy.Components.PromptSpecification{},
+      input_schema: SomeInput,
+      output_schema: SomeOutput,
+      memory: Normandy.Components.AgentMemory.new_memory(42),
+      client: %{api_key: "SECRET", base_url: "https://api"},
+      tool_registry: %Normandy.Tools.Registry{tools: %{"t" => %{}}},
+      behaviours: %Config{}
+    }
+
+    tmpl = ConfigTemplate.from_config(config, "capped-agent")
+
+    assert tmpl.max_messages == 42
+  end
+
+  test "rebuild uses the template's max_messages to create capped memory" do
+    tmpl = %{
+      template_id: "support-agent",
+      model: "claude-x",
+      temperature: 0.3,
+      max_tokens: 100,
+      max_tool_iterations: 4,
+      max_tool_concurrency: 2,
+      name: "support",
+      max_messages: 5,
+      prompt_specification: %Normandy.Components.PromptSpecification{},
+      input_schema: SomeInput,
+      output_schema: SomeOutput,
+      behaviours_refs: %{
+        policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
+        budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
+        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        compactor: {Normandy.Behaviours.Compactor.NoOp, []},
+        model_catalog: {Normandy.Behaviours.ModelCatalog.Static, []},
+        session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
+        session_registry: {Normandy.Behaviours.SessionRegistry.Native, []}
+      }
+    }
+
+    supp = %{
+      tool_registry: %Normandy.Tools.Registry{tools: %{}},
+      before_hooks: [],
+      after_hooks: [],
+      client_builder: fn token -> %{api_key: token} end
+    }
+
+    config = ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
+
+    assert config.memory.max_messages == 5
   end
 
   test "rebuild merges template + supplement + token into a full config" do
