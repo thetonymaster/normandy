@@ -41,18 +41,22 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
   ## Tag behaviour note
 
-  This module carries both @moduletag :distributed and @moduletag :postgres.
-  ExUnit's include logic means `--include distributed` alone causes this test to
-  be included even though :postgres is in the default exclude list. The setup
-  block guards against this by checking whether Normandy.TestRepo is started and
-  failing fast with an actionable message if not (ExUnit setup cannot skip at
-  runtime — returning `{:skip, _}` raises) — so the test runs meaningfully only in
-  the intended `--include distributed --include postgres` configuration.
+  Tagged ONLY @moduletag :distributed (NOT :postgres). A :postgres tag would make
+  `mix test.postgres` pull this distributed test into the non-distributed full
+  suite (ExUnit's include-overrides-exclude rule), where the `setup_all` below
+  starts distribution mid-suite and intermittently corrupts node-identity-sensitive
+  Mnesia tests (flaky 60s timeouts). Run it explicitly with:
+
+      elixir --name primary@127.0.0.1 -S mix test.postgres <file> --include distributed
+
+  `mix test.postgres` sets NORMANDY_POSTGRES, which starts Normandy.TestRepo
+  (independent of the :postgres tag); the setup guard below still fails fast with an
+  actionable message if the Repo isn't running (ExUnit setup cannot skip at runtime —
+  returning `{:skip, _}` raises).
   """
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed
-  @moduletag :postgres
 
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
