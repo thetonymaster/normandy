@@ -240,6 +240,10 @@ defmodule Normandy.Coordination.AgentProcess do
       store: nil,
       registry: nil,
       supervisor: nil,
+      supervisor_mod: Keyword.get(opts, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
+      template_provider: Keyword.get(opts, :template_provider),
+      resume_policy: Keyword.get(opts, :resume_policy, :lazy),
+      template_id: Keyword.get(opts, :template_id),
       extra_session_opts: [],
       owned: [],
       pending_runs: %{},
@@ -336,7 +340,11 @@ defmodule Normandy.Coordination.AgentProcess do
       config: state.agent,
       store: state.store,
       registry: state.registry,
-      supervisor: state.supervisor
+      supervisor: state.supervisor,
+      supervisor_mod: Map.get(state, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
+      template_provider: Map.get(state, :template_provider),
+      resume_policy: Map.get(state, :resume_policy, :lazy),
+      template_id: Map.get(state, :template_id)
     ] ++ state.extra_session_opts
   end
 
