@@ -34,6 +34,10 @@ defmodule Normandy.Cluster do
   alias Normandy.Agents.Turn.ResumeReaper
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Normandy.Agents.Turn.Supervisor, as: LocalSup
+  alias Normandy.Behaviours.SessionRegistry.Redis, as: RedisReg
+  alias Normandy.Behaviours.SessionStore.Mnesia, as: MnesiaStore
+  alias Normandy.Behaviours.SessionStore.Redis, as: RedisStore
 
   @doc """
   Build the distributed-session child specs. Required: `:registry`, `:supervisor`
@@ -51,6 +55,66 @@ defmodule Normandy.Cluster do
         %{id: sup, start: {HSup, :start_link, [[name: sup]]}}
       ] ++
       reaper_specs(opts, reg, sup)
+  end
+
+  @doc """
+  Create the Mnesia store tables (host setup, not a child spec). Thin pass-through to
+  `SessionStore.Mnesia.create_tables/1` — call once at boot before serving sessions.
+  See that function for opts (`:entries`, `:sessions`, `:copies`, `:nodes`).
+  """
+  @spec setup_mnesia_store!(keyword()) :: :ok
+  def setup_mnesia_store!(opts), do: MnesiaStore.create_tables(opts)
+
+  @doc """
+  Child specs for the **Redis combo** (Redis registry + Redis store + local supervisor +
+  reaper) — Redis as the single distributed dependency. Required: `:redix` (keyword for
+  the Redix connection, must include `:name`), `:namespace`, `:registry` (owner name),
+  `:supervisor` (local supervisor name). Optional: `:template_provider` (enables the
+  `ResumeReaper` for eager handoff). Cross-node routing still uses Erlang distribution.
+  """
+  @spec redis_child_specs(keyword()) :: [Supervisor.child_spec() | map()]
+  def redis_child_specs(opts) do
+    redix = Keyword.fetch!(opts, :redix)
+    conn_name = Keyword.fetch!(redix, :name)
+    ns = Keyword.fetch!(opts, :namespace)
+    registry = Keyword.fetch!(opts, :registry)
+    supervisor = Keyword.fetch!(opts, :supervisor)
+
+    [
+      {Redix, redix},
+      %{
+        id: registry,
+        start: {RedisReg, :start_link, [[name: registry, conn: conn_name, namespace: ns]]}
+      },
+      %{id: supervisor, start: {LocalSup, :start_link, [[name: supervisor]]}}
+    ] ++ redis_reaper_specs(opts, conn_name, ns, registry, supervisor)
+  end
+
+  defp redis_reaper_specs(opts, conn_name, ns, registry, supervisor) do
+    case Keyword.get(opts, :template_provider) do
+      nil ->
+        []
+
+      template_provider ->
+        store = {RedisStore, {conn_name, ns}}
+
+        [
+          %{
+            id: ResumeReaper,
+            start:
+              {ResumeReaper, :start_link,
+               [
+                 [
+                   store: store,
+                   registry: {RedisReg, registry},
+                   supervisor: supervisor,
+                   supervisor_mod: LocalSup,
+                   template_provider: template_provider
+                 ]
+               ]}
+          }
+        ]
+    end
   end
 
   defp libcluster_specs(opts, reg) do
