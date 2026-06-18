@@ -426,6 +426,24 @@ defmodule Normandy.Agents.Turn.ServerTest do
     refute_receive {:tool_ran, "billing"}, 100
   end
 
+  test "starts under a Horde :via name and is discoverable via whereis" do
+    reg = Normandy.Behaviours.SessionRegistry.Horde.new()
+    sid = "via-#{System.unique_integer([:positive])}"
+    name = Normandy.Behaviours.SessionRegistry.Horde.child_name(reg, sid)
+    store = Normandy.Behaviours.SessionStore.InMemory.new()
+
+    opts = [
+      session_id: sid,
+      config: base_config(),
+      store: {Normandy.Behaviours.SessionStore.InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Horde, reg},
+      name: name
+    ]
+
+    assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
+    assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid)
+  end
+
   # Part B (Task 7 requirement): proves the Server threads the compacted config2
   # (returned by the compact handler) into the NEXT blocking effect, not the stale
   # pre-compaction config. A regression where the Server discards config2 and keeps

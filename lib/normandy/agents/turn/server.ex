@@ -30,7 +30,12 @@ defmodule Normandy.Agents.Turn.Server do
   # ---- public API ----
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts), do: :gen_statem.start_link(__MODULE__, opts, [])
+  def start_link(opts) do
+    case Keyword.get(opts, :name) do
+      nil -> :gen_statem.start_link(__MODULE__, opts, [])
+      name -> :gen_statem.start_link(name, __MODULE__, opts, [])
+    end
+  end
 
   @doc "Run a turn synchronously; replies once the turn finalizes or fails."
   @spec run(:gen_statem.server_ref(), term()) :: {:ok, term()} | {:error, term()}
@@ -263,8 +268,20 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp idle_timeout(%Data{idle_timeout_ms: ms}), do: {:state_timeout, ms, :passivate}
 
-  defp register_self(%Data{registry: {mod, handle}, session_id: sid}),
-    do: mod.register(handle, sid, self())
+  # When the server was started under a `{:via, _, _}` name, the via callback
+  # already registered it; only self-register otherwise.
+  defp register_self(%Data{registry: {mod, handle}, session_id: sid}) do
+    case child_name_for(mod, handle, sid) do
+      :self_register -> mod.register(handle, sid, self())
+      {:via, _via_mod, _term} -> :ok
+    end
+  end
+
+  defp child_name_for(mod, handle, sid) do
+    if function_exported?(mod, :child_name, 2),
+      do: mod.child_name(handle, sid),
+      else: :self_register
+  end
 
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
     do: mod.save_turn_state(handle, sid, turn_state)
