@@ -96,10 +96,28 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
   end
 
   @impl true
-  def save_turn_state(_repo, _session_id, _term), do: {:error, :not_implemented}
+  def save_turn_state(repo, session_id, term) do
+    blob = encode(term)
+
+    %Session{session_id: session_id}
+    |> Ecto.Changeset.change(turn_state: blob)
+    |> repo.insert(
+      on_conflict: [set: [turn_state: blob, updated_at: DateTime.utc_now()]],
+      conflict_target: :session_id
+    )
+    |> case do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @impl true
-  def load_turn_state(_repo, _session_id), do: :error
+  def load_turn_state(repo, session_id) do
+    case repo.get(Session, session_id) do
+      %Session{turn_state: blob} when is_binary(blob) -> {:ok, decode(blob)}
+      _ -> :error
+    end
+  end
 
   # --- Private helpers ---
 

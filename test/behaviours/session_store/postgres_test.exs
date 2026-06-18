@@ -64,4 +64,19 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
   test "fork on unknown session errors" do
     assert {:error, _} = Postgres.fork(Normandy.TestRepo, "nope", Ecto.UUID.generate())
   end
+
+  test "turn state round-trips an opaque term; missing is :error" do
+    term = {:turn, %{step: 3, calls: [:a, :b]}, "opaque"}
+    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", term)
+    assert {:ok, ^term} = Postgres.load_turn_state(Normandy.TestRepo, "s1")
+    assert :error = Postgres.load_turn_state(Normandy.TestRepo, "never")
+  end
+
+  test "save_turn_state on a session created by appends keeps both" do
+    {:ok, _} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("user", "a"))
+    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", %{x: 1})
+    assert {:ok, %{x: 1}} = Postgres.load_turn_state(Normandy.TestRepo, "s1")
+    assert {:ok, [e]} = Postgres.history(Normandy.TestRepo, "s1")
+    assert e.content == "a"
+  end
 end
