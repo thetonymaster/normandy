@@ -19,6 +19,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   start wins; the losers get `{:error, {:already_started, _}}`, treated as success.
   """
   use GenServer
+  require Logger
 
   alias Normandy.Agents.Turn
 
@@ -109,6 +110,21 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
 
     # Race-safe: a concurrent reaper on another survivor may start the same session;
     # the registry's atomic registration makes the loser get {:error, {:already_started, _}}.
-    state.supervisor_mod.start_server(state.supervisor, opts)
+    # Surface genuinely unexpected failures rather than swallowing them silently.
+    case state.supervisor_mod.start_server(state.supervisor, opts) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("ResumeReaper: failed to resume #{sid}: #{inspect(reason)}")
+
+      other ->
+        Logger.warning(
+          "ResumeReaper: unexpected start_server result for #{sid}: #{inspect(other)}"
+        )
+    end
   end
 end

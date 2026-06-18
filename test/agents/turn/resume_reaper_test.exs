@@ -47,11 +47,16 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
 
     :ok = InMemory.save_turn_state(store, "s-lazy", %Turn.State{status: :steering})
 
-    # s-done: eager but terminal turn state -> SKIP
+    # s-done / s-failed: eager but terminal turn state (:stopped / :failed) -> SKIP
     :ok =
       InMemory.save_config_template(store, "s-done", %{template_id: "k", resume_policy: :eager})
 
     :ok = InMemory.save_turn_state(store, "s-done", %Turn.State{status: :stopped})
+
+    :ok =
+      InMemory.save_config_template(store, "s-failed", %{template_id: "k", resume_policy: :eager})
+
+    :ok = InMemory.save_turn_state(store, "s-failed", %Turn.State{status: :failed})
 
     # s-live: eager + non-terminal but already registered -> SKIP
     :ok =
@@ -66,6 +71,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     assert_receive {:reaper_started, "s-eager", _opts}, 1_000
     refute_received {:reaper_started, "s-lazy", _}
     refute_received {:reaper_started, "s-done", _}
+    refute_received {:reaper_started, "s-failed", _}
     refute_received {:reaper_started, "s-live", _}
   end
 
