@@ -33,6 +33,21 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
   end
 
+  # A store that fails the assistant-message append (delegating everything else to
+  # InMemory). Used to drive the server's `fail/2` bypass with a NON-terminal turn
+  # state (the :tool_dispatch `{:append_message, "assistant", _}`), proving the
+  # terminal state persisted on failure is :failed.
+  defmodule AssistantAppendFailStore do
+    @moduledoc false
+    alias Normandy.Behaviours.SessionStore.InMemory
+    def new, do: InMemory.new()
+    def append_entry(_h, _sid, %{role: "assistant"}), do: {:error, :boom}
+    def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
+    def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
+    def history(h, sid), do: InMemory.history(h, sid)
+  end
+
   # Minimal config the reused BaseAgent helpers tolerate for a no-tools turn.
   # `client` is a fake the call_llm helper will hit; for the unit test we inject
   # the LLM via a stub handler set rather than a real client (see Step 3 note).
@@ -141,6 +156,36 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end)
 
     assert {:ok, %Turn.State{status: :failed}} = InMemory.load_turn_state(store, "s-fail")
+  end
+
+  test "fail/2 bypass (mid-turn append failure) persists a terminal :failed turn state" do
+    # A tool turn enters :tool_dispatch and emits {:append_message, "assistant", resp};
+    # failing that append invokes the server's fail/2 helper with a NON-terminal
+    # turn_state (:tool_dispatch). The terminal state persisted for the reaper must
+    # still be :failed (not :tool_dispatch).
+    store = AssistantAppendFailStore.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r ->
+          %Resp{content: "", tool_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]}
+        end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-bypass",
+        config: base_config_with_tools(),
+        store: {AssistantAppendFailStore, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:error, {:persist_failed, _}} = Turn.Server.run(srv, "do stuff")
+
+    assert {:ok, %Turn.State{status: :failed}} =
+             AssistantAppendFailStore.load_turn_state(store, "s-bypass")
   end
 
   test "a batch with a needs_approval call parks the turn (:awaiting_approval) and persists" do

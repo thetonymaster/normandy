@@ -352,6 +352,13 @@ defmodule Normandy.Agents.Turn.Server do
     {:next_state, :running, %{data | task_ref: ref}}
   end
 
+  # The shell-level bypass to the terminal :fail effect (used when an append/persist
+  # side-effect fails mid-turn, NOT via Turn.step). Force the turn_state to :failed so
+  # the terminal state persisted in the {:fail, _} clause is genuinely terminal — the
+  # resume reaper must not see a mid-turn status (e.g. :tool_dispatch, :steering) here.
+  defp fail(%Data{turn_state: %Turn.State{} = ts} = data, reason),
+    do: interpret([{:fail, reason}], %{data | turn_state: %{ts | status: :failed, error: reason}})
+
   defp fail(data, reason), do: interpret([{:fail, reason}], data)
 
   # ---- side-effect helpers ----
