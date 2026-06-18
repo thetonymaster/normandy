@@ -27,7 +27,8 @@ defmodule Normandy.MixProject do
         extras: [
           "README.md",
           "CHANGELOG.md",
-          "ROADMAP.md"
+          "ROADMAP.md",
+          "docs/guides/distributed_sessions.md"
           # TODO: Add guides
           # "guides/getting_started.md",
           # "guides/multi_agent_coordination.md",
