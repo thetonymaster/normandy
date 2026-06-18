@@ -46,11 +46,14 @@ defmodule Normandy.SessionRegistryContract do
 
         Process.exit(pid, :kill)
         assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
-        # Registry cleanup is async on owner death; poll briefly.
+        # Registry cleanup is async on owner death; poll until it lands. Horde's
+        # CRDT cleanup can exceed a few hundred ms under full-suite load, so the
+        # budget is generous (the poll returns as soon as the condition holds, so
+        # a fast impl like Native pays nothing).
         assert wait_until(fn -> @reg.whereis(h, "s1") == :none end)
       end
 
-      defp wait_until(fun, retries \\ 50) do
+      defp wait_until(fun, retries \\ 300) do
         cond do
           fun.() ->
             true
