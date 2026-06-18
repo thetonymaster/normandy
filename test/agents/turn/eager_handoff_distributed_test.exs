@@ -2,20 +2,22 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   @moduledoc """
   End-to-end distributed session handoff test (design §7.6).
 
-  ## Status: PARTIAL — lazy rehydration proven; eager redistribution BLOCKED
+  ## Status: lazy rehydration proven here; eager handoff delivered by the reaper
 
   The HordeRedistributionTest (task 7d Step 1) determined that Horde 0.10.0 with
   `members: :auto` does NOT redistribute `:transient` children on node-down. The
   `NodeListener` removes dead members from the CRDT entirely rather than marking
   them `:dead`, so the redistribution path in `DynamicSupervisorImpl.update_process/2`
-  never triggers.
+  never triggers — and the reclaim path ignores `restart` type anyway (design §7.6).
 
-  Consequence: the `:eager` → `restart: :transient` mapping in
-  `Turn.Supervisor.Horde` does not currently cause Turn.Server processes to
-  auto-resume on a survivor when their peer dies. Implementing true eager auto-
-  resume requires either (a) switching to `members: :static`/`:manual` so Horde
-  uses the `:dead` path, or (b) a separate session-watcher process that monitors
-  for `:nodedown` and calls `Turn.Session.ensure_server/1` proactively.
+  Consequence: the `:eager` → `restart: :transient` idea does not work. Eager
+  auto-resume is instead delivered by `Normandy.Agents.Turn.ResumeReaper` (the
+  "session-watcher" option) — a per-node GenServer that monitors `:nodedown` and
+  restarts eager, unregistered, non-terminal sessions from the store. The full
+  reaper → reconstruct → resume path with real Postgres + Horde is verified in
+  `Normandy.Agents.Turn.ResumeReaperIntegrationTest` (`:postgres`). THIS test still
+  covers the LAZY cross-node path (peer dies → a caller's `Turn.Session.run/2`
+  rehydrates the session on the survivor from Postgres).
 
   ## What IS tested here
 
