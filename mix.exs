@@ -141,6 +141,7 @@ defmodule Normandy.MixProject do
       {:claudio, "~> 0.5.0"},
       {:ecto_sql, "~> 3.12"},
       {:postgrex, "~> 0.19"},
+      {:horde, "~> 0.9"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
