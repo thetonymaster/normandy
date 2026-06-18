@@ -1,5 +1,9 @@
-# Postgres-backed tests are opt-in: run with `mix test --include postgres`.
-postgres? = "--include" in System.argv() and "postgres" in System.argv()
+# Postgres-backed tests are opt-in. Run them with `mix test.postgres` (sets the env
+# var below and `--include postgres`), or directly with
+# `MIX_ENV=test mix test --include postgres` (matched via argv).
+postgres? =
+  System.get_env("NORMANDY_POSTGRES") == "true" or
+    ("--include" in System.argv() and "postgres" in System.argv())
 
 if postgres? do
   {:ok, _} = Normandy.TestRepo.start_link()
