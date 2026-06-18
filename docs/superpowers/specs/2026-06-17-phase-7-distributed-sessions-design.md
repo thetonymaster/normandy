@@ -212,22 +212,45 @@ The `handle` is the Ecto Repo module (callbacks read/write through it).
 
 ### 7.6 — Lazy vs eager resume policy
 
-Per-session `resume_policy` (`:lazy` default | `:eager`), persisted on the session
-and mapped to the Horde child's `restart` value:
+Per-session `resume_policy` (`:lazy` default | `:eager`), persisted on the session.
 
-- **`:lazy` → `restart: :temporary`.** On node loss the process is gone and **not**
-  redistributed; the session is rebuilt on the next inbound request via the existing
-  `whereis → :none → rehydrate` path (now durable cross-node). No restart storm for
-  idle sessions. This is the baseline for request-driven sessions.
-- **`:eager` → `restart: :transient`.** On node loss Horde redistributes the child to
-  a surviving node; `init/1` reconstructs config (7.4), loads turn state, and resumes
-  the in-flight turn — no external request needed. For autonomous/long-running agents.
-  (`:transient` still does **not** restart on a `:normal` passivation stop.)
+- **`:lazy`.** On node loss the process is gone and the session is rebuilt on the next
+  inbound request via `whereis → :none → rehydrate` (now durable cross-node). No restart
+  storm for idle sessions. Baseline for request-driven sessions.
+- **`:eager`.** On node loss the session is auto-resumed on a surviving node — no
+  external request — by reconstructing config (7.4), loading turn state, and resuming
+  the in-flight turn (`Turn.resume/1`). For autonomous/long-running agents.
 
-> **To verify during 7d:** that `Horde.DynamicSupervisor` honors `restart: :temporary`
-> (no redistribution) vs `:transient` (redistribute on node-down) exactly as assumed.
-> This is the load-bearing assumption for selective resume; confirm against Horde's
-> redistribution semantics before relying on it.
+> **VERIFIED FINDING (was the §7.6 open question; resolved during 7d):** the original
+> design — map `:eager`/`:lazy` to the Horde child's `restart: :transient`/`:temporary`
+> and let Horde redistribute on node-down — **does not work**, for two independent
+> reasons proven against Horde 0.10 source + a `:peer` test
+> (`test/agents/turn/horde_redistribution_test.exs`):
+>
+> 1. **`members: :auto` removes dead members, defeating redistribution.**
+>    `Horde.NodeListener` handles `:nodedown` by `Horde.Cluster.set_members(live_nodes)`;
+>    `set_members` `DeltaCrdt.drop`s the dead member's `{:member}`/`{:member_node_info}`
+>    entries. Horde's reclaim (`handoff_processes`) only re-creates a dead node's children
+>    when it finds `current_member.status == :dead`; once the member is *removed* (nil),
+>    no reclaim runs. The removal races with and defeats the `{:DOWN}`→`mark_dead` path.
+> 2. **Horde cross-node reclaim ignores `restart` type** — it `add_child`s *every* child
+>    of a `:dead` member unconditionally. `restart` governs only local crash restarts, so
+>    `:transient` vs `:temporary` can never give eager/lazy selectivity. Horde
+>    redistribution is **all-or-nothing per supervisor**.
+>
+> **Adopted mechanism — explicit node-down resume reaper (`Turn.ResumeReaper`):** keep
+> the single Horde supervisor on `members: :auto` (no Horde redistribution). A
+> `ResumeReaper` GenServer per node monitors `:net_kernel.monitor_nodes`; on `:nodedown`
+> it lists `:eager` sessions (`SessionStore.list_resumable/1`), and for each whose
+> `whereis == :none` and whose persisted turn state is **non-terminal**, starts the thin
+> spec under the Horde supervisor → which fires the (already-built) reconstruct-on-init +
+> `Turn.resume/1`. The `:via`/`{:already_started}` registry atomicity (7b) makes
+> concurrent reapers on multiple survivors safe — no leader election. To distinguish a
+> completed session from a mid-turn one, the **terminal turn state (`:stopped`/`:failed`)
+> is persisted on finalize/fail** (so `list_resumable`/the reaper skips it; a `:steering`
+> persisted state alone cannot tell "done" from "mid-turn"). `resume_policy` is persisted
+> as a **queryable column** (not only inside the opaque template blob) so `list_resumable`
+> can filter without decoding every blob.
 
 ### 7.7 — Wiring
 
@@ -256,8 +279,10 @@ nodes remains the host's responsibility.
 - **Node loss, lazy:** registration drops; next request anywhere → `:none` →
   rehydrate from Postgres (turn state + history) + reconstructed config → start on the
   handling node.
-- **Node loss, eager:** Horde redistributes the `:transient` child → `init/1`
-  reconstructs config + loads turn state → resumes the in-flight turn, no request.
+- **Node loss, eager:** the surviving nodes' `Turn.ResumeReaper` observes `:nodedown`,
+  lists `:eager` non-terminal sessions whose `whereis == :none`, and starts each under the
+  Horde supervisor → `init/1` reconstructs config + loads turn state → `Turn.resume/1`
+  resumes the in-flight turn, no request. (Horde does NOT auto-redistribute — see §7.6.)
 - **Netsplit:** AP system — single-active is **best-effort**. A partition can
   transiently run two servers for one `session_id`; per-session serialized Postgres
   writes prevent corruption. On heal, Horde's name-conflict resolution terminates the
@@ -315,11 +340,17 @@ Dependency-respecting; each phase is independently shippable.
    reconstruction (7.4); `Config`/`AgentProcess` wiring; lazy recovery
    (`restart: :temporary`). Single-node Tier-2 integration → multi-node. Delivers
    Tier 2 (lazy).
-4. **Phase 7d — Eager handoff.** `resume_policy` (`:eager` → `restart: :transient`),
-   `init/1` auto-resume, node-down auto-resume `:distributed` tests, and verification
-   of Horde's restart-strategy redistribution semantics (7.6).
-5. **Docs** — optional `Normandy.Cluster` helper + libcluster topology / supervision
-   example (7.8).
+4. **Phase 7d — Eager handoff.** Building blocks: `resume_policy`, steering-boundary
+   persistence, pure `Turn.resume/1`, reconstruct-on-init eager auto-resume (all done).
+   The §7.6 verification disproved Horde restart-based redistribution, so eager handoff is
+   delivered by an **explicit node-down resume reaper** (Phase 7d-reaper below).
+5. **Phase 7d-reaper — `Turn.ResumeReaper`.** (a) persist terminal turn state on
+   finalize/fail; (b) `SessionStore.list_resumable/1` + queryable `resume_policy` column;
+   (c) `ResumeReaper` GenServer (node-monitor → restart eager/non-terminal/unregistered
+   sessions, idempotent via registry atomicity); (d) host-supervision wiring + `:distributed`
+   end-to-end test (node-down → reaper → eager resume on survivor).
+6. **Docs** — optional `Normandy.Cluster` helper (incl. the reaper) + libcluster topology /
+   supervision example (7.8).
 
 ## Resolved (during this design)
 
@@ -336,8 +367,9 @@ Dependency-respecting; each phase is independently shippable.
 
 ## Open questions (verify during implementation, not blockers)
 
-- **Horde restart-strategy redistribution** (7.6) — confirm `:temporary` is not
-  redistributed and `:transient` is, on node-down.
+- **Horde restart-strategy redistribution** (7.6) — ✅ RESOLVED (disproved): Horde does
+  not redistribute by `restart` type, and `members: :auto` removes dead members so it does
+  not redistribute at all. Eager handoff is now done via `Turn.ResumeReaper` (see §7.6).
 - **Netsplit conflict callback** — confirm Horde's name-conflict resolution terminates
   the loser cleanly and that our `Turn.Server` tolerates being told to stop mid-turn
   with durable state already written.
