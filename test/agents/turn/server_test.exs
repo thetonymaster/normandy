@@ -1,9 +1,3 @@
-defmodule Normandy.Test.StubCreds do
-  @behaviour Normandy.Behaviours.CredentialProvider
-  @impl true
-  def get_token(_provider, _opts), do: {:ok, "TEST-TOKEN"}
-end
-
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
 

@@ -30,7 +30,10 @@ defmodule Normandy.Behaviours.AgentTemplate do
     def start_link(opts) do
       name = Keyword.get(opts, :name)
       init = Keyword.get(opts, :templates, %{})
-      if name, do: Agent.start_link(fn -> init end, name: name), else: Agent.start_link(fn -> init end)
+
+      if name,
+        do: Agent.start_link(fn -> init end, name: name),
+        else: Agent.start_link(fn -> init end)
     end
 
     @spec put(Agent.agent(), String.t(), Normandy.Behaviours.AgentTemplate.supplement()) :: :ok

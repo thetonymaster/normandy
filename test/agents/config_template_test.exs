@@ -53,8 +53,13 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     }
 
     tr = %Normandy.Tools.Registry{tools: %{"t" => %{}}}
-    supp = %{tool_registry: tr, before_hooks: [:bh], after_hooks: [:ah],
-             client_builder: fn token -> %{api_key: token, base_url: "https://api"} end}
+
+    supp = %{
+      tool_registry: tr,
+      before_hooks: [:bh],
+      after_hooks: [:ah],
+      client_builder: fn token -> %{api_key: token, base_url: "https://api"} end
+    }
 
     config = ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
 
