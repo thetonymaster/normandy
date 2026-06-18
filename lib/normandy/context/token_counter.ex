@@ -32,14 +32,23 @@ defmodule Normandy.Context.TokenCounter do
   """
   @spec count_message(ClaudioAdapter.t(), String.t(), String.t()) ::
           {:ok, map()} | {:error, term()}
-  def count_message(client, text, model \\ "claude-3-5-sonnet-20241022") do
-    # Build minimal request for token counting
+  def count_message(client, text, model \\ "claude-haiku-4-5-20251001")
+
+  def count_message(_client, text, _model) when text in [nil, ""] do
+    # Empty input has no tokens; short-circuit rather than send a request the
+    # count_tokens endpoint rejects ("user messages must have non-empty content").
+    {:ok, %{"input_tokens" => 0}}
+  end
+
+  def count_message(client, text, model) do
+    # Build minimal request for token counting. The /v1/messages/count_tokens
+    # endpoint rejects `max_tokens` ("Extra inputs are not permitted"), so it
+    # is intentionally omitted.
     payload = %{
       "model" => model,
       "messages" => [
         %{"role" => "user", "content" => text}
-      ],
-      "max_tokens" => 1
+      ]
     }
 
     count_tokens(client, payload)
@@ -57,23 +66,29 @@ defmodule Normandy.Context.TokenCounter do
           {:ok, map()} | {:error, term()}
   def count_conversation(client, agent) do
     try do
-      model = Map.get(agent, :model, "claude-3-5-sonnet-20241022")
+      model = Map.get(agent, :model, "claude-haiku-4-5-20251001")
       messages = build_messages_payload(agent.memory)
 
-      payload = %{
-        "model" => model,
-        "messages" => messages,
-        "max_tokens" => 1
-      }
+      if messages == [] do
+        # No messages → no tokens; short-circuit rather than send a request the
+        # count_tokens endpoint rejects ("at least one message is required").
+        {:ok, %{"input_tokens" => 0}}
+      else
+        # `max_tokens` intentionally omitted: the count_tokens endpoint rejects it.
+        payload = %{
+          "model" => model,
+          "messages" => messages
+        }
 
-      # Add system prompt if present
-      payload =
-        case get_system_prompt(agent) do
-          nil -> payload
-          system -> Map.put(payload, "system", system)
-        end
+        # Add system prompt if present
+        payload =
+          case get_system_prompt(agent) do
+            nil -> payload
+            system -> Map.put(payload, "system", system)
+          end
 
-      count_tokens(client, payload)
+        count_tokens(client, payload)
+      end
     rescue
       e -> {:error, {:malformed_agent, e}}
     end

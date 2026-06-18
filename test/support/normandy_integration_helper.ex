@@ -6,6 +6,23 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
 
+  @default_model "claude-haiku-4-5-20251001"
+
+  @doc """
+  Resolves the model for integration tests.
+
+  Honors the `NORMANDY_TEST_MODEL` env override, falling back to a current
+  default, so the whole real-API suite can run on one valid model.
+  """
+  def default_model(fallback \\ @default_model) do
+    # Treat an unset OR empty env var as absent — CI passes `${{ vars.X }}` as an
+    # empty string when the variable is unset, and "" is truthy in Elixir.
+    case System.get_env("NORMANDY_TEST_MODEL") do
+      blank when blank in [nil, ""] -> fallback
+      model -> model
+    end
+  end
+
   @doc """
   Gets the Anthropic API key from environment.
   Checks both API_KEY (local) and ANTHROPIC_API_KEY (standard).
@@ -50,7 +67,7 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
 
     config = %{
       client: client,
-      model: Keyword.get(opts, :model, "claude-sonnet-4-20250514"),
+      model: Keyword.get(opts, :model, default_model()),
       temperature: Keyword.get(opts, :temperature, 0.7),
       max_tokens: Keyword.get(opts, :max_tokens, 1024)
     }
