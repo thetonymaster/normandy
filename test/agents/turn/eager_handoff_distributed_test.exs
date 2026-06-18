@@ -45,8 +45,9 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   ExUnit's include logic means `--include distributed` alone causes this test to
   be included even though :postgres is in the default exclude list. The setup
   block guards against this by checking whether Normandy.TestRepo is started and
-  skipping if not — ensuring the test only runs in the intended `--include
-  distributed --include postgres` configuration.
+  failing fast with an actionable message if not (ExUnit setup cannot skip at
+  runtime — returning `{:skip, _}` raises) — so the test runs meaningfully only in
+  the intended `--include distributed --include postgres` configuration.
   """
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
@@ -64,10 +65,11 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   end
 
   setup do
-    # Guard: skip if TestRepo is not running (happens when --include distributed is used
-    # without --include postgres; test_helper.exs only starts the Repo for postgres runs).
+    # This test needs the Postgres TestRepo (only started for postgres runs). ExUnit
+    # setup cannot skip at runtime — returning {:skip, _} raises a merge error — so fail
+    # fast with an actionable message when run without postgres.
     if Process.whereis(Normandy.TestRepo) == nil do
-      {:skip, "Normandy.TestRepo not started; run with --include postgres"}
+      raise "Normandy.TestRepo not started; run with: mix test --include distributed --include postgres"
     else
       # Non-sandboxed checkout so committed writes are visible across nodes.
       # Then set :auto mode so all spawned processes get their own connections.
@@ -170,13 +172,13 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     end
 
     # Wait for Horde membership to converge.
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = Horde.Cluster.members(reg_name)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
            "Horde registry membership did not converge"
 
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = Horde.Cluster.members(sup_name)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
@@ -218,7 +220,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
         # Server is on the peer — proceed to kill and test lazy rehydration.
         :peer.stop(peer)
 
-        assert eventually(fn -> HReg.whereis(reg_name, sid) == :none end, 150),
+        assert wait_until(fn -> HReg.whereis(reg_name, sid) == :none end, 300),
                "Horde did not drop the session registration after peer stopped"
 
         result = Normandy.Agents.Turn.Session.run(session_opts, "continue")
@@ -237,20 +239,6 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
         assert match?({:ok, ^server_pid}, HReg.whereis(reg_name, sid)),
                "session must be registered on primary"
-    end
-  end
-
-  defp eventually(fun, retries \\ 100) do
-    cond do
-      fun.() ->
-        true
-
-      retries == 0 ->
-        false
-
-      true ->
-        Process.sleep(20)
-        eventually(fun, retries - 1)
     end
   end
 end

@@ -12,4 +12,5 @@ end
 
 ExUnit.start(exclude: [:integration, :normandy_integration, :postgres, :distributed])
 
-if postgres?, do: ExUnit.configure(exclude: [:integration, :normandy_integration])
+if postgres?,
+  do: ExUnit.configure(exclude: [:integration, :normandy_integration, :distributed])

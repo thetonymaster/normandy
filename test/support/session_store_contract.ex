@@ -86,6 +86,13 @@ defmodule Normandy.SessionStoreContract do
         tmpl = %{template_id: "k", model: "m", behaviours_refs: %{policy: {Foo, []}}}
         assert :ok = @store.save_config_template(h, "s1", tmpl)
         assert {:ok, ^tmpl} = @store.load_config_template(h, "s1")
+
+        # The template is an opaque term (behaviour: `term()`), not necessarily a map —
+        # a backend must not assume map shape (e.g. Postgres mirroring resume_policy).
+        opaque = {:opaque, [:not, :a, :map]}
+        assert :ok = @store.save_config_template(h, "s2", opaque)
+        assert {:ok, ^opaque} = @store.load_config_template(h, "s2")
+
         assert :error = @store.load_config_template(h, "never")
       end
 

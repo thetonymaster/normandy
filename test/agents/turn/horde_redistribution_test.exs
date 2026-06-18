@@ -44,7 +44,7 @@ defmodule Normandy.Agents.Turn.HordeRedistributionTest do
     {peer, node} = start_peer(~c"redistpeer")
     {:ok, _} = start_horde_dsup_on_peer(node, sup)
 
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = Horde.Cluster.members(sup)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
@@ -80,7 +80,7 @@ defmodule Normandy.Agents.Turn.HordeRedistributionTest do
     # After the peer dies, children that were running on it do NOT appear on the
     # primary, regardless of restart: :transient or restart: :temporary.
     # The primary's own local count must stay stable (no redistribution occurs).
-    assert eventually(fn -> local_child_count(sup) == primary_count_before end, 150),
+    assert wait_until(fn -> local_child_count(sup) == primary_count_before end, 300),
            "expected no new children on primary after peer stop " <>
              "(neither :transient nor :temporary causes redistribution in members: :auto)"
 
@@ -106,19 +106,5 @@ defmodule Normandy.Agents.Turn.HordeRedistributionTest do
     Process.alive?(pid)
   rescue
     ArgumentError -> false
-  end
-
-  defp eventually(fun, retries \\ 100) do
-    cond do
-      fun.() ->
-        true
-
-      retries == 0 ->
-        false
-
-      true ->
-        Process.sleep(20)
-        eventually(fun, retries - 1)
-    end
   end
 end

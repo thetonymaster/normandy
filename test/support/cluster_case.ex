@@ -8,6 +8,8 @@ defmodule Normandy.ClusterCase do
   using do
     quote do
       import Normandy.ClusterCase
+      # Shared eventually-consistent polling helper for distributed assertions.
+      import Normandy.Test.Eventually
     end
   end
 
@@ -112,7 +114,9 @@ defmodule Normandy.ClusterCase do
     Application.put_env(:normandy, Normandy.TestRepo, repo_opts)
     Application.put_env(:normandy, :ecto_repos, [Normandy.TestRepo])
 
-    # Start with a pool_size: 1 and no sandbox (direct DB access).
+    # Start with pool_size: 1 and the Sandbox pool in :auto mode (set below): spawned
+    # processes get implicit checkouts, so cross-node writes are visible without an
+    # explicit checkout on this peer.
     clean_opts = Keyword.merge(repo_opts, pool_size: 1, pool: Ecto.Adapters.SQL.Sandbox)
 
     {:ok, pid} = Normandy.TestRepo.start_link(clean_opts)

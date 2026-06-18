@@ -23,7 +23,7 @@ defmodule Normandy.Agents.Turn.HordeDistributedTest do
     {:ok, _} = start_horde_on_peer(node, name: reg)
 
     # Wait for :auto membership to converge (both nodes see each other in Horde).
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = @horde_cluster.members(reg)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
@@ -35,7 +35,7 @@ defmodule Normandy.Agents.Turn.HordeDistributedTest do
     # happen from inside the spawned process, not via an erpc wrapper.
     remote = spawn_registered_on_peer(node, reg, sid)
 
-    assert eventually(fn -> match?({:ok, ^remote}, HordeReg.whereis(reg, sid)) end),
+    assert wait_until(fn -> match?({:ok, ^remote}, HordeReg.whereis(reg, sid)) end),
            "cross-node whereis did not resolve in time"
 
     :peer.stop(peer)
@@ -48,7 +48,7 @@ defmodule Normandy.Agents.Turn.HordeDistributedTest do
     {:ok, _} = start_horde_on_peer(node, name: reg)
 
     # Wait for :auto membership to converge before registering.
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = @horde_cluster.members(reg)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
@@ -59,7 +59,7 @@ defmodule Normandy.Agents.Turn.HordeDistributedTest do
 
     # Wait for the CRDT sync (sync_interval: 300ms) to propagate the registration
     # to the peer before attempting a duplicate registration there.
-    assert eventually(fn ->
+    assert wait_until(fn ->
              case rpc(node, HordeReg, :whereis, [reg, sid]) do
                {:ok, _} -> true
                :none -> false
@@ -70,19 +70,5 @@ defmodule Normandy.Agents.Turn.HordeDistributedTest do
     assert {:error, :taken} = rpc(node, HordeReg, :register, [reg, sid, self()])
 
     :peer.stop(peer)
-  end
-
-  defp eventually(fun, retries \\ 50) do
-    cond do
-      fun.() ->
-        true
-
-      retries == 0 ->
-        false
-
-      true ->
-        Process.sleep(20)
-        eventually(fun, retries - 1)
-    end
   end
 end

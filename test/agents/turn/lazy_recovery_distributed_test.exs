@@ -20,7 +20,7 @@ defmodule Normandy.Agents.Turn.LazyRecoveryDistributedTest do
     {:ok, _} = start_horde_on_peer(node, name: reg)
 
     # Wait for Horde :auto membership to converge before registering.
-    assert eventually(fn ->
+    assert wait_until(fn ->
              members = Horde.Cluster.members(reg)
              Enum.any?(members, fn {_name, n} -> n == node end)
            end),
@@ -32,7 +32,7 @@ defmodule Normandy.Agents.Turn.LazyRecoveryDistributedTest do
     # happen inside the spawned process on the peer node.
     _remote = spawn_registered_on_peer(node, reg, sid)
 
-    assert eventually(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end),
+    assert wait_until(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end),
            "registration did not propagate from peer in time"
 
     :peer.stop(peer)
@@ -40,21 +40,7 @@ defmodule Normandy.Agents.Turn.LazyRecoveryDistributedTest do
     # Horde drops the registration when the owning node leaves the cluster.
     # This :none result is the lazy-recovery precondition: the next
     # Turn.Session.start_server/2 call hits :none and triggers rehydration.
-    assert eventually(fn -> HReg.whereis(reg, sid) == :none end, 150),
+    assert wait_until(fn -> HReg.whereis(reg, sid) == :none end, 300),
            "Horde did not drop the registration after peer stopped"
-  end
-
-  defp eventually(fun, retries \\ 50) do
-    cond do
-      fun.() ->
-        true
-
-      retries == 0 ->
-        false
-
-      true ->
-        Process.sleep(20)
-        eventually(fun, retries - 1)
-    end
   end
 end
