@@ -9,13 +9,17 @@ defmodule Normandy.Integration.MultiAgentTest do
   @moduletag :api
   @moduletag timeout: 120_000
 
+  # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
+  # whole module at compile time: skipped when no API key is present (shown as
+  # skipped, not failed), run when one is.
+  unless NormandyIntegrationHelper.api_key_available?() do
+    @moduletag skip:
+                 "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."
+  end
+
   setup do
-    unless NormandyIntegrationHelper.api_key_available?() do
-      {:skip, "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."}
-    else
-      agent = NormandyIntegrationHelper.create_real_agent(temperature: 0.3)
-      {:ok, agent: agent}
-    end
+    agent = NormandyIntegrationHelper.create_real_agent(temperature: 0.3)
+    {:ok, agent: agent}
   end
 
   describe "Sequential orchestration" do

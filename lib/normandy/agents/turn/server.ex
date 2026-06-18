@@ -24,13 +24,20 @@ defmodule Normandy.Agents.Turn.Server do
               task_ref: nil,
               pending_reply: nil,
               approval_timeout_ms: 300_000,
-              idle_timeout_ms: 60_000
+              idle_timeout_ms: 60_000,
+              template_provider: nil,
+              resume_policy: :lazy
   end
 
   # ---- public API ----
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts), do: :gen_statem.start_link(__MODULE__, opts, [])
+  def start_link(opts) do
+    case Keyword.get(opts, :name) do
+      nil -> :gen_statem.start_link(__MODULE__, opts, [])
+      name -> :gen_statem.start_link(name, __MODULE__, opts, [])
+    end
+  end
 
   @doc "Run a turn synchronously; replies once the turn finalizes or fails."
   @spec run(:gen_statem.server_ref(), term()) :: {:ok, term()} | {:error, term()}
@@ -47,21 +54,122 @@ defmodule Normandy.Agents.Turn.Server do
 
   @impl true
   def init(opts) do
+    store = Keyword.fetch!(opts, :store)
+    registry = Keyword.fetch!(opts, :registry)
+    session_id = Keyword.fetch!(opts, :session_id)
+    template_provider = Keyword.get(opts, :template_provider)
+
+    config =
+      if Keyword.has_key?(opts, :config) do
+        Keyword.fetch!(opts, :config)
+      else
+        reconstruct_config!(store, template_provider, session_id)
+      end
+
+    turn_state =
+      case Keyword.fetch(opts, :turn_state) do
+        {:ok, ts} when not is_nil(ts) -> ts
+        _ -> load_turn_state(store, session_id)
+      end
+
+    resume_policy =
+      case Keyword.get(opts, :config) do
+        nil -> template_resume_policy(store, session_id, Keyword.get(opts, :resume_policy, :lazy))
+        _ -> Keyword.get(opts, :resume_policy, :lazy)
+      end
+
     data = %Data{
-      session_id: Keyword.fetch!(opts, :session_id),
-      config: Keyword.fetch!(opts, :config),
-      store: Keyword.fetch!(opts, :store),
-      registry: Keyword.fetch!(opts, :registry),
+      session_id: session_id,
+      config: config,
+      store: store,
+      registry: registry,
+      template_provider: template_provider,
+      resume_policy: resume_policy,
       subscriber: Keyword.get(opts, :subscriber),
       handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
-      turn_state: Keyword.get(opts, :turn_state),
+      turn_state: turn_state,
       approval_timeout_ms: Keyword.get(opts, :approval_timeout_ms, 300_000),
       idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000)
     }
 
     register_self(data)
-    {:ok, :idle, data, idle_timeout(data)}
+
+    if data.resume_policy == :eager and resumable?(data.turn_state) do
+      {:ok, :idle, data, [{:next_event, :internal, :resume}]}
+    else
+      {:ok, :idle, data, idle_timeout(data)}
+    end
   end
+
+  # No :config AND no :template_provider — a Tier-2 thin start can't reconstruct.
+  defp reconstruct_config!(_store, nil, session_id) do
+    raise ArgumentError,
+          "Turn.Server: session #{inspect(session_id)} was started with neither :config " <>
+            "nor :template_provider. A Tier-2 (Horde) thin start requires :template_provider " <>
+            "so the server can reconstruct config from the persisted template."
+  end
+
+  defp reconstruct_config!({store_mod, store_handle}, {tp_mod, tp_handle}, session_id) do
+    {:ok, tmpl} = store_mod.load_config_template(store_handle, session_id)
+    {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
+    {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
+
+    token =
+      case cred_mod.get_token(token_provider(tmpl), cred_opts) do
+        {:ok, token} ->
+          token
+
+        {:error, reason} ->
+          # Tier-2 reconstruction needs a node-local provider (env/vault). The default
+          # CredentialProvider.FromClient cannot work here — there is no in-memory client.
+          raise "Turn.Server reconstruct: credential resolution failed for #{inspect(session_id)} " <>
+                  "via #{inspect(cred_mod)}: #{inspect(reason)}. Tier-2 sessions need a node-local " <>
+                  "CredentialProvider (e.g. env/vault), not CredentialProvider.FromClient."
+      end
+
+    config = Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
+
+    # The thin spec carries no memory; load the conversation graph from the store
+    # so a rehydrated/redistributed Tier-2 session resumes with its history (Tier-0/1
+    # does this in Turn.Session; the thin path has no Session to inject it).
+    case store_mod.history(store_handle, session_id) do
+      {:ok, entries} ->
+        memory = %{
+          Normandy.Components.AgentMemory.from_entries(entries)
+          | max_messages: config.memory.max_messages
+        }
+
+        %{config | memory: memory}
+
+      {:error, reason} ->
+        # Fail-closed: cannot safely reconstruct without the conversation.
+        raise "Turn.Server reconstruct: history load failed for #{session_id}: #{inspect(reason)}"
+    end
+  end
+
+  defp load_turn_state({mod, handle}, sid) do
+    case mod.load_turn_state(handle, sid) do
+      {:ok, ts} -> ts
+      _ -> nil
+    end
+  end
+
+  defp template_resume_policy({mod, handle}, sid, default) do
+    case mod.load_config_template(handle, sid) do
+      {:ok, %{resume_policy: rp}} -> rp
+      _ -> default
+    end
+  end
+
+  defp resumable?(%Turn.State{status: status}) when status not in [:stopped, :failed], do: true
+  defp resumable?(_), do: false
+
+  defp session_id_template_id(%{template_id: id}), do: id
+
+  # FromClient needs a client carrying :api_key; env/vault providers ignore the
+  # first arg. For reconstruction the token must come from a node-local provider,
+  # so we pass a minimal provider map derived from the template's model.
+  defp token_provider(%{model: model}), do: %{model: model}
 
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   @impl true
@@ -84,6 +192,14 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} ->
         {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
     end
+  end
+
+  # Eager auto-resume: drive the persisted in-flight turn to completion. No caller
+  # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
+  # silently while persisting at each boundary.
+  def handle_event(:internal, :resume, :idle, data) do
+    {state, effects} = Turn.resume(data.turn_state)
+    interpret(effects, %{data | turn_state: state})
   end
 
   # :running — a monitored Task delivered the outcome of a blocking effect.
@@ -209,10 +325,16 @@ defmodule Normandy.Agents.Turn.Server do
         end)
 
       {:finalize, value} ->
+        # Persist the terminal (:stopped) turn state so the resume reaper can tell a
+        # completed session from a mid-turn one. Best-effort: the turn already
+        # succeeded, so a failed marker-persist must not fail it.
+        _ = persist_turn_state(data, data.turn_state)
         reply(data, {:ok, value})
         {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
 
       {:fail, reason} ->
+        # Persist the terminal (:failed) turn state (best-effort) for the same reason.
+        _ = persist_turn_state(data, data.turn_state)
         reply(data, {:error, reason})
         {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
     end
@@ -251,6 +373,13 @@ defmodule Normandy.Agents.Turn.Server do
     {:next_state, :running, %{data | task_ref: ref}}
   end
 
+  # The shell-level bypass to the terminal :fail effect (used when an append/persist
+  # side-effect fails mid-turn, NOT via Turn.step). Force the turn_state to :failed so
+  # the terminal state persisted in the {:fail, _} clause is genuinely terminal — the
+  # resume reaper must not see a mid-turn status (e.g. :tool_dispatch, :steering) here.
+  defp fail(%Data{turn_state: %Turn.State{} = ts} = data, reason),
+    do: interpret([{:fail, reason}], %{data | turn_state: %{ts | status: :failed, error: reason}})
+
   defp fail(data, reason), do: interpret([{:fail, reason}], data)
 
   # ---- side-effect helpers ----
@@ -263,8 +392,20 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp idle_timeout(%Data{idle_timeout_ms: ms}), do: {:state_timeout, ms, :passivate}
 
-  defp register_self(%Data{registry: {mod, handle}, session_id: sid}),
-    do: mod.register(handle, sid, self())
+  # When the server was started under a `{:via, _, _}` name, the via callback
+  # already registered it; only self-register otherwise.
+  defp register_self(%Data{registry: {mod, handle}, session_id: sid}) do
+    case child_name_for(mod, handle, sid) do
+      :self_register -> mod.register(handle, sid, self())
+      {:via, _via_mod, _term} -> :ok
+    end
+  end
+
+  defp child_name_for(mod, handle, sid) do
+    if function_exported?(mod, :child_name, 2),
+      do: mod.child_name(handle, sid),
+      else: :self_register
+  end
 
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
     do: mod.save_turn_state(handle, sid, turn_state)

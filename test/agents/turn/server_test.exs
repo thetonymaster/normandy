@@ -33,6 +33,21 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
   end
 
+  # A store that fails the assistant-message append (delegating everything else to
+  # InMemory). Used to drive the server's `fail/2` bypass with a NON-terminal turn
+  # state (the :tool_dispatch `{:append_message, "assistant", _}`), proving the
+  # terminal state persisted on failure is :failed.
+  defmodule AssistantAppendFailStore do
+    @moduledoc false
+    alias Normandy.Behaviours.SessionStore.InMemory
+    def new, do: InMemory.new()
+    def append_entry(_h, _sid, %{role: "assistant"}), do: {:error, :boom}
+    def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
+    def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
+    def history(h, sid), do: InMemory.history(h, sid)
+  end
+
   # Minimal config the reused BaseAgent helpers tolerate for a no-tools turn.
   # `client` is a fake the call_llm helper will hit; for the unit test we inject
   # the LLM via a stub handler set rather than a real client (see Step 3 note).
@@ -92,6 +107,103 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     assert {:ok, final} = Turn.Server.run(srv, "hello")
     assert %Resp{content: "hi"} = final
+  end
+
+  test "a completed turn persists a terminal :stopped turn state (for the resume reaper)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _config, _state, _req -> %Resp{content: "done", tool_calls: nil} end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-fin",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "hello")
+    assert {:ok, %Turn.State{status: :stopped}} = InMemory.load_turn_state(store, "s-fin")
+  end
+
+  test "a failed turn persists a terminal :failed turn state (for the resume reaper)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _config, _state, _req -> raise "boom" end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-fail",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    # The spawned LLM task crashes by design; capture the expected error report
+    # so test output stays pristine.
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:error, _} = Turn.Server.run(srv, "hello")
+    end)
+
+    assert {:ok, %Turn.State{status: :failed}} = InMemory.load_turn_state(store, "s-fail")
+  end
+
+  test "fail/2 bypass (mid-turn append failure) persists a terminal :failed turn state" do
+    # A tool turn enters :tool_dispatch and emits {:append_message, "assistant", resp};
+    # failing that append invokes the server's fail/2 helper with a NON-terminal
+    # turn_state (:tool_dispatch). The terminal state persisted for the reaper must
+    # still be :failed (not :tool_dispatch).
+    store = AssistantAppendFailStore.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r ->
+          %Resp{content: "", tool_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]}
+        end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-bypass",
+        config: base_config_with_tools(),
+        store: {AssistantAppendFailStore, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    assert {:error, {:persist_failed, _}} = Turn.Server.run(srv, "do stuff")
+
+    assert {:ok, %Turn.State{status: :failed}} =
+             AssistantAppendFailStore.load_turn_state(store, "s-bypass")
+  end
+
+  test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    opts = [
+      session_id: "s-misconfig",
+      store: {InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Native, reg}
+      # deliberately neither :config nor :template_provider
+    ]
+
+    # init raises an ArgumentError → start_link returns {:error, _}; capture the
+    # expected crash report so output stays pristine.
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:error, _reason} = Turn.Server.start_link(opts)
+    end)
   end
 
   test "a batch with a needs_approval call parks the turn (:awaiting_approval) and persists" do
@@ -426,6 +538,69 @@ defmodule Normandy.Agents.Turn.ServerTest do
     refute_receive {:tool_ran, "billing"}, 100
   end
 
+  test "starts under a Horde :via name and is discoverable via whereis" do
+    reg = Normandy.Behaviours.SessionRegistry.Horde.new()
+    sid = "via-#{System.unique_integer([:positive])}"
+    name = Normandy.Behaviours.SessionRegistry.Horde.child_name(reg, sid)
+    store = Normandy.Behaviours.SessionStore.InMemory.new()
+
+    opts = [
+      session_id: sid,
+      config: base_config(),
+      store: {Normandy.Behaviours.SessionStore.InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Horde, reg},
+      name: name
+    ]
+
+    # A bare start_link under a Horde :via name can lose Horde's eventually-consistent
+    # registration race: OTP's gen.erl exits {:process_not_registered_via, _} when the
+    # via register_name returns :no and whereis_name is not yet visible. Production never
+    # hits the linked crash because it starts under the Horde DynamicSupervisor and
+    # Turn.Session.start_with_retry contains+retries it. Mirror that containment here:
+    # trap the exit so start_link returns the error (instead of killing us), then retry.
+    Process.flag(:trap_exit, true)
+    pid = start_via_with_retry(opts)
+
+    # Horde reflects a registration through an async CRDT→ETS flush (even on a single
+    # node), so poll `whereis` until the via registration is visible rather than racing
+    # the flush.
+    assert wait_until(fn ->
+             Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid) == {:ok, pid}
+           end)
+
+    # Once the registration is visible, a second start for the same via name is
+    # rejected (not a second live process) — exactly what the :name/via-start
+    # provides over the old self-register path.
+    assert {:error, {:already_started, ^pid}} =
+             Normandy.Agents.Turn.Server.start_link(opts)
+  end
+
+  defp wait_until(fun, retries \\ 200) do
+    cond do
+      fun.() -> true
+      retries == 0 -> false
+      true -> Process.sleep(10) && wait_until(fun, retries - 1)
+    end
+  end
+
+  # Direct-start analogue of Turn.Session.start_with_retry: with trap_exit on, a via
+  # registration race returns {:error, {:process_not_registered_via, _}} instead of
+  # killing the caller, so we can retry until Horde's registration converges.
+  defp start_via_with_retry(opts, retries \\ 50) do
+    case Normandy.Agents.Turn.Server.start_link(opts) do
+      {:ok, pid} ->
+        pid
+
+      {:error, {:process_not_registered_via, _}} = err ->
+        if retries > 0 do
+          Process.sleep(10)
+          start_via_with_retry(opts, retries - 1)
+        else
+          flunk("Horde via registration never converged: #{inspect(err)}")
+        end
+    end
+  end
+
   # Part B (Task 7 requirement): proves the Server threads the compacted config2
   # (returned by the compact handler) into the NEXT blocking effect, not the stale
   # pre-compaction config. A regression where the Server discards config2 and keeps
@@ -501,5 +676,42 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     assert Enum.any?(history, fn msg -> msg.content == sentinel end),
            "Second LLM call did not see the compacted config2 — Server threaded stale config"
+  end
+
+  test "Tier-2 server reconstructs config from a persisted template (no :config in opts)" do
+    store = Normandy.Behaviours.SessionStore.InMemory.new()
+    sid = "recon-#{System.unique_integer([:positive])}"
+
+    base = base_config()
+
+    tmpl =
+      put_in(
+        Normandy.Agents.ConfigTemplate.from_config(base, "kind-a").behaviours_refs.credential,
+        {Normandy.Test.StubCreds, []}
+      )
+
+    :ok = Normandy.Behaviours.SessionStore.InMemory.save_config_template(store, sid, tmpl)
+
+    {:ok, cat} = Normandy.Behaviours.AgentTemplate.Catalog.start_link([])
+
+    :ok =
+      Normandy.Behaviours.AgentTemplate.Catalog.put(cat, "kind-a", %{
+        tool_registry: base.tool_registry,
+        before_hooks: [],
+        after_hooks: [],
+        client_builder: fn _token -> base.client end
+      })
+
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+    opts = [
+      session_id: sid,
+      store: {Normandy.Behaviours.SessionStore.InMemory, store},
+      registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+      template_provider: {Normandy.Behaviours.AgentTemplate.Catalog, cat}
+    ]
+
+    assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
+    assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Native.whereis(reg, sid)
   end
 end

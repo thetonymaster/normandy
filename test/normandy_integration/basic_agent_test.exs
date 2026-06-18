@@ -9,16 +9,20 @@ defmodule Normandy.Integration.BasicAgentTest do
   @moduletag :api
   @moduletag timeout: 60_000
 
-  setup do
-    unless NormandyIntegrationHelper.api_key_available?() do
-      {:skip, "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."}
-    else
-      # Configure Claudio timeout for API requests
-      Application.put_env(:claudio, Claudio.Client, timeout: 60_000, recv_timeout: 120_000)
+  # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
+  # whole module at compile time: skipped when no API key is present (shown as
+  # skipped, not failed), run when one is.
+  unless NormandyIntegrationHelper.api_key_available?() do
+    @moduletag skip:
+                 "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."
+  end
 
-      agent = NormandyIntegrationHelper.create_real_agent(temperature: 0.3)
-      {:ok, agent: agent}
-    end
+  setup do
+    # Configure Claudio timeout for API requests
+    Application.put_env(:claudio, Claudio.Client, timeout: 60_000, recv_timeout: 120_000)
+
+    agent = NormandyIntegrationHelper.create_real_agent(temperature: 0.3)
+    {:ok, agent: agent}
   end
 
   describe "Basic agent conversation" do

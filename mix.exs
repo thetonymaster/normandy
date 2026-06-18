@@ -10,6 +10,7 @@ defmodule Normandy.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
       consolidate_protocols: Mix.env() != :test,
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
@@ -26,7 +27,8 @@ defmodule Normandy.MixProject do
         extras: [
           "README.md",
           "CHANGELOG.md",
-          "ROADMAP.md"
+          "ROADMAP.md",
+          "docs/guides/distributed_sessions.md"
           # TODO: Add guides
           # "guides/getting_started.md",
           # "guides/multi_agent_coordination.md",
@@ -138,12 +140,40 @@ defmodule Normandy.MixProject do
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.0"},
       {:claudio, "~> 0.5.0"},
+      # Tier-1/2 session infra. Optional: Tier-0 (default) users pull in none of these.
+      # The Postgres/Horde modules are conditionally compiled on their presence.
+      {:ecto_sql, "~> 3.12", optional: true},
+      {:postgrex, "~> 0.19", optional: true},
+      {:horde, "~> 0.9", optional: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:opentelemetry, "~> 1.5", only: :test},
       {:opentelemetry_api, "~> 1.4", only: :test}
     ]
+  end
+
+  # Run the `test.postgres` alias in the :test env (it invokes `test`).
+  def cli do
+    [preferred_envs: ["test.postgres": :test]]
+  end
+
+  defp aliases do
+    [
+      # DB setup is NOT in the default `test` alias, so `mix test` runs without
+      # Postgres (the :postgres tests are excluded by default). Run the durable-store
+      # tests with `mix test.postgres` (requires a reachable Postgres) — a function
+      # alias so it can flag test_helper to start the Repo (argv only shows the alias
+      # name, not the expanded `--include postgres`).
+      "ecto.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
+      "test.postgres": &run_postgres_tests/1
+    ]
+  end
+
+  defp run_postgres_tests(args) do
+    System.put_env("NORMANDY_POSTGRES", "true")
+    Mix.Task.run("ecto.setup")
+    Mix.Task.run("test", ["--include", "postgres" | args])
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

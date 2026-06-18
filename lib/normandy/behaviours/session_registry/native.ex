@@ -57,6 +57,9 @@ defmodule Normandy.Behaviours.SessionRegistry.Native do
     :ok
   end
 
+  @impl true
+  def child_name(_handle, _session_id), do: :self_register
+
   defp unique_name do
     String.to_atom("session_registry_" <> Integer.to_string(System.unique_integer([:positive])))
   end

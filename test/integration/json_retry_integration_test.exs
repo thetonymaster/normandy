@@ -9,20 +9,23 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
   @moduletag :integration
   @moduletag :json_retry
 
+  # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
+  # whole module at compile time: skipped when no API key is present (shown as
+  # skipped, not failed), run when one is.
+  unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
+    @moduletag skip: "API_KEY or ANTHROPIC_API_KEY not set"
+  end
+
   describe "JSON retry integration with real LLM" do
     setup do
       api_key = System.get_env("API_KEY") || System.get_env("ANTHROPIC_API_KEY")
 
-      if is_nil(api_key) do
-        {:skip, "API_KEY or ANTHROPIC_API_KEY not set"}
-      else
-        client = %ClaudioAdapter{
-          api_key: api_key,
-          options: %{timeout: 60_000, enable_caching: false}
-        }
+      client = %ClaudioAdapter{
+        api_key: api_key,
+        options: %{timeout: 60_000, enable_caching: false}
+      }
 
-        {:ok, client: client}
-      end
+      {:ok, client: client}
     end
 
     @tag timeout: 120_000

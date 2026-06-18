@@ -467,10 +467,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     setup do
-      # Every test in this block exercises SleepyTool, which reports into the
-      # probe; start it once (idempotent) and reset its peak before each test.
-      ensure_probe_started()
-      NormandyTest.Agents.SleepyProbe.reset()
+      # SleepyTool reports into the probe. Start it under ExUnit's supervisor so its
+      # lifetime is owned per-test — deterministically torn down before the next test
+      # begins — instead of link-coupling a globally-named process to the bare test
+      # process. The old `start_link`-in-setup idiom raced under load: a prior test's
+      # probe could still be unregistering when the next test called reset/1 on the
+      # (dead) name, crashing with "no process". A fresh supervised probe starts zeroed.
+      start_supervised!(NormandyTest.Agents.SleepyProbe)
       :ok
     end
 
@@ -496,13 +499,6 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
 
       {elapsed_us, response, NormandyTest.Agents.SleepyProbe.max_observed()}
-    end
-
-    defp ensure_probe_started do
-      case NormandyTest.Agents.SleepyProbe.start_link(nil) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-      end
     end
 
     test "max_tool_concurrency: 1 runs tools sequentially" do

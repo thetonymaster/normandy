@@ -256,6 +256,29 @@ defmodule Normandy.Agents.Turn do
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}
   end
 
+  @doc """
+  Re-derives the effects to continue a turn from a **persisted, non-terminal**
+  state (used by an eager shell after passivation/handoff). Pure.
+
+  Only states the core persists are resumable: `:steering` (per-batch boundary)
+  re-issues compaction then continues; `:awaiting_approval` waits for a decision
+  (no effects). Terminal states yield no effects.
+  """
+  @spec resume(State.t()) :: {State.t(), [tuple()]}
+  def resume(%State{status: :steering, iterations_left: left} = s) do
+    {s, [{:maybe_compact, %{iterations_left: left}}]}
+  end
+
+  def resume(%State{status: :awaiting_approval} = s), do: {s, []}
+  def resume(%State{status: status} = s) when status in [:stopped, :failed], do: {s, []}
+
+  # Any other persisted status is not a durable resume point; surface as failed so
+  # an eager shell does not silently hang on an unresumable state.
+  def resume(%State{} = s) do
+    reason = {:unresumable_state, s.status}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
   # The batch-results transition, shared by the normal `:tool_dispatch` path and
   # the approval-resume paths. Appends each result, decrements the iteration
   # counter exactly once per batch, emits the steering boundary event, then parks
@@ -277,7 +300,8 @@ defmodule Normandy.Agents.Turn do
         held_results: []
     }
 
-    {s2, append_effects ++ [steering, {:maybe_compact, %{iterations_left: new_left}}]}
+    {s2,
+     append_effects ++ [steering, {:persist, s2}, {:maybe_compact, %{iterations_left: new_left}}]}
   end
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by

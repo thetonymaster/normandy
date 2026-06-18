@@ -240,6 +240,10 @@ defmodule Normandy.Coordination.AgentProcess do
       store: nil,
       registry: nil,
       supervisor: nil,
+      supervisor_mod: Keyword.get(opts, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
+      template_provider: Keyword.get(opts, :template_provider),
+      resume_policy: Keyword.get(opts, :resume_policy, :lazy),
+      template_id: Keyword.get(opts, :template_id),
       extra_session_opts: [],
       owned: [],
       pending_runs: %{},
@@ -320,7 +324,15 @@ defmodule Normandy.Coordination.AgentProcess do
   @impl true
   def terminate(_reason, %{owned: owned}) when is_list(owned) do
     Enum.each(owned, fn pid ->
-      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :shutdown)
+      if is_pid(pid) and Process.alive?(pid) do
+        # Unlink BEFORE killing: these owned infra pids are linked to us (started
+        # via start_link in server_infra/1). Without the unlink, their `:shutdown`
+        # death bounces back through the link and re-exits this process with
+        # `:shutdown` (we don't trap exits) — which then propagates to whoever
+        # `start_link`ed US (e.g. a caller that just invoked `stop/1`), killing it.
+        Process.unlink(pid)
+        Process.exit(pid, :shutdown)
+      end
     end)
 
     :ok
@@ -336,7 +348,11 @@ defmodule Normandy.Coordination.AgentProcess do
       config: state.agent,
       store: state.store,
       registry: state.registry,
-      supervisor: state.supervisor
+      supervisor: state.supervisor,
+      supervisor_mod: Map.get(state, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
+      template_provider: Map.get(state, :template_provider),
+      resume_policy: Map.get(state, :resume_policy, :lazy),
+      template_id: Map.get(state, :template_id)
     ] ++ state.extra_session_opts
   end
 

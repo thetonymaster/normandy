@@ -82,6 +82,30 @@ defmodule Normandy.SessionStoreContract do
         assert :error = @store.load_turn_state(h, "never-saved")
       end
 
+      test "config template round-trips an opaque term; missing is :error", %{handle: h} do
+        tmpl = %{template_id: "k", model: "m", behaviours_refs: %{policy: {Foo, []}}}
+        assert :ok = @store.save_config_template(h, "s1", tmpl)
+        assert {:ok, ^tmpl} = @store.load_config_template(h, "s1")
+
+        # The template is an opaque term (behaviour: `term()`), not necessarily a map —
+        # a backend must not assume map shape (e.g. Postgres mirroring resume_policy).
+        opaque = {:opaque, [:not, :a, :map]}
+        assert :ok = @store.save_config_template(h, "s2", opaque)
+        assert {:ok, ^opaque} = @store.load_config_template(h, "s2")
+
+        assert :error = @store.load_config_template(h, "never")
+      end
+
+      test "list_resumable returns only sessions whose template resume_policy is :eager",
+           %{handle: h} do
+        :ok = @store.save_config_template(h, "eager1", %{template_id: "k", resume_policy: :eager})
+        :ok = @store.save_config_template(h, "lazy1", %{template_id: "k", resume_policy: :lazy})
+        :ok = @store.save_config_template(h, "eager2", %{template_id: "k", resume_policy: :eager})
+
+        assert {:ok, ids} = @store.list_resumable(h)
+        assert Enum.sort(ids) == ["eager1", "eager2"]
+      end
+
       test "implements the SessionStore behaviour" do
         behaviours = @store.module_info(:attributes)[:behaviour] || []
         assert Normandy.Behaviours.SessionStore in behaviours

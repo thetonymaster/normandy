@@ -74,6 +74,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool",
                 %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:persist, ^s2},
                {:maybe_compact, %{iterations_left: 4}}
              ] = effects
 
@@ -168,6 +169,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
                {:emit_event, :steering, %{iterations_left: 4}},
+               {:persist, ^s2},
                {:maybe_compact, %{iterations_left: 4}}
              ] = effects
 
@@ -206,6 +208,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
                {:emit_event, :steering, %{iterations_left: 0}},
+               {:persist, ^s2},
                {:maybe_compact, %{iterations_left: 0}}
              ] = effects
 
