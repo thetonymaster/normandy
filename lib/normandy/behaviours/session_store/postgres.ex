@@ -72,7 +72,28 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
   end
 
   @impl true
-  def fork(_repo, _session_id, _from_entry_id), do: {:error, :not_implemented}
+  def fork(repo, session_id, from_entry_id) do
+    repo.transaction(fn ->
+      cond do
+        repo.get(Session, session_id) == nil ->
+          repo.rollback(:no_such_session)
+
+        not ancestor_of_head?(repo, session_id, from_entry_id) ->
+          repo.rollback(:no_such_entry)
+
+        true ->
+          new_id = Ecto.UUID.generate()
+
+          repo.insert!(%Session{
+            session_id: new_id,
+            head_id: from_entry_id,
+            current_turn_id: nil
+          })
+
+          new_id
+      end
+    end)
+  end
 
   @impl true
   def save_turn_state(_repo, _session_id, _term), do: {:error, :not_implemented}
@@ -81,6 +102,16 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
   def load_turn_state(_repo, _session_id), do: :error
 
   # --- Private helpers ---
+
+  defp ancestor_of_head?(repo, session_id, entry_id) do
+    case repo.get(Session, session_id) do
+      %Session{head_id: head_id} when not is_nil(head_id) ->
+        chain(repo, head_id) |> Enum.any?(&(&1.id == entry_id))
+
+      _ ->
+        false
+    end
+  end
 
   defp lock_session(repo, session_id) do
     Session

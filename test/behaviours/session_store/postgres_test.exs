@@ -39,4 +39,29 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
     assert {:ok, [e]} = Postgres.history(Normandy.TestRepo, "s1")
     assert e.content == %{a: [1, 2]}
   end
+
+  test "fork yields the ancestor chain and isolates appends" do
+    {:ok, _} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("user", "a"))
+    {:ok, at} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("assistant", "b"))
+    {:ok, _} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("user", "c"))
+
+    {:ok, forked} = Postgres.fork(Normandy.TestRepo, "s1", at)
+    assert {:ok, fe} = Postgres.history(Normandy.TestRepo, forked)
+    assert Enum.map(fe, & &1.content) == ["a", "b"]
+
+    {:ok, _} = Postgres.append_entry(Normandy.TestRepo, forked, entry("assistant", "d"))
+    assert {:ok, oe} = Postgres.history(Normandy.TestRepo, "s1")
+    assert Enum.map(oe, & &1.content) == ["a", "b", "c"]
+    assert {:ok, fe2} = Postgres.history(Normandy.TestRepo, forked)
+    assert Enum.map(fe2, & &1.content) == ["a", "b", "d"]
+  end
+
+  test "fork on unknown entry errors" do
+    {:ok, _} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("user", "a"))
+    assert {:error, _} = Postgres.fork(Normandy.TestRepo, "s1", Ecto.UUID.generate())
+  end
+
+  test "fork on unknown session errors" do
+    assert {:error, _} = Postgres.fork(Normandy.TestRepo, "nope", Ecto.UUID.generate())
+  end
 end
