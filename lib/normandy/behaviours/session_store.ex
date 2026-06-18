@@ -36,4 +36,13 @@ defmodule Normandy.Behaviours.SessionStore do
   @callback save_config_template(handle(), session_id(), template :: term()) ::
               :ok | {:error, term()}
   @callback load_config_template(handle(), session_id()) :: {:ok, term()} | :error
+
+  @doc """
+  Lists the `session_id`s whose persisted config template has `resume_policy: :eager`.
+
+  Used by `Turn.ResumeReaper` on node-down to find candidate eager sessions; the
+  reaper further filters by liveness (`whereis`) and non-terminal turn state, so
+  this returns *eager* sessions regardless of their turn state.
+  """
+  @callback list_resumable(handle()) :: {:ok, [session_id()]} | {:error, term()}
 end

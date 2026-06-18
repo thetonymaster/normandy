@@ -94,6 +94,19 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
     end)
   end
 
+  @impl true
+  def list_resumable(pid) do
+    Agent.get(pid, fn state ->
+      ids =
+        for {sid, tmpl} <- state.config_templates,
+            is_map(tmpl),
+            Map.get(tmpl, :resume_policy) == :eager,
+            do: sid
+
+      {:ok, ids}
+    end)
+  end
+
   # Append an entry, minting an id and linking to the current head when absent.
   defp put_entry(%AgentMemory{} = memory, %Entry{} = entry) do
     id = entry.id || UUID.uuid4()

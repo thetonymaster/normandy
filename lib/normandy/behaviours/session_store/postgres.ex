@@ -122,17 +122,33 @@ defmodule Normandy.Behaviours.SessionStore.Postgres do
   @impl true
   def save_config_template(repo, session_id, tmpl) do
     blob = encode(tmpl)
+    # Mirror resume_policy into a queryable column so list_resumable/1 can filter
+    # without decoding every opaque template blob.
+    rp = tmpl |> Map.get(:resume_policy, :lazy) |> to_string()
 
     %Session{session_id: session_id}
-    |> Ecto.Changeset.change(config_template: blob)
+    |> Ecto.Changeset.change(config_template: blob, resume_policy: rp)
     |> repo.insert(
-      on_conflict: [set: [config_template: blob, updated_at: DateTime.utc_now()]],
+      on_conflict: [
+        set: [config_template: blob, resume_policy: rp, updated_at: DateTime.utc_now()]
+      ],
       conflict_target: :session_id
     )
     |> case do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @impl true
+  def list_resumable(repo) do
+    ids =
+      Session
+      |> where([s], s.resume_policy == "eager")
+      |> select([s], s.session_id)
+      |> repo.all()
+
+    {:ok, ids}
   end
 
   @impl true

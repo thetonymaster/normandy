@@ -63,6 +63,9 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   def load_config_template(pid, session_id),
     do: GenServer.call(pid, {:load_config_template, session_id})
 
+  @impl Normandy.Behaviours.SessionStore
+  def list_resumable(pid), do: GenServer.call(pid, :list_resumable)
+
   # ── server ───────────────────────────────────────────────────────────────────
 
   @impl GenServer
@@ -134,6 +137,18 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
       end
 
     {:reply, reply, table}
+  end
+
+  def handle_call(:list_resumable, _from, table) do
+    ids =
+      table
+      |> :ets.match_object({{:config_template, :_}, :_})
+      |> Enum.filter(fn {{:config_template, _sid}, tmpl} ->
+        is_map(tmpl) and Map.get(tmpl, :resume_policy) == :eager
+      end)
+      |> Enum.map(fn {{:config_template, sid}, _tmpl} -> sid end)
+
+    {:reply, {:ok, ids}, table}
   end
 
   defp lookup_memory(table, session_id) do

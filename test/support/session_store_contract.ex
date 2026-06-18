@@ -89,6 +89,16 @@ defmodule Normandy.SessionStoreContract do
         assert :error = @store.load_config_template(h, "never")
       end
 
+      test "list_resumable returns only sessions whose template resume_policy is :eager",
+           %{handle: h} do
+        :ok = @store.save_config_template(h, "eager1", %{template_id: "k", resume_policy: :eager})
+        :ok = @store.save_config_template(h, "lazy1", %{template_id: "k", resume_policy: :lazy})
+        :ok = @store.save_config_template(h, "eager2", %{template_id: "k", resume_policy: :eager})
+
+        assert {:ok, ids} = @store.list_resumable(h)
+        assert Enum.sort(ids) == ["eager1", "eager2"]
+      end
+
       test "implements the SessionStore behaviour" do
         behaviours = @store.module_info(:attributes)[:behaviour] || []
         assert Normandy.Behaviours.SessionStore in behaviours
