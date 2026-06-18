@@ -442,6 +442,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
     assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid)
+
+    # The via name registers atomically at start: a second start for the same
+    # session is rejected (not a second live process), which is exactly what the
+    # :name/via-start provides over the old self-register path.
+    assert {:error, {:already_started, ^pid}} =
+             Normandy.Agents.Turn.Server.start_link(opts)
   end
 
   # Part B (Task 7 requirement): proves the Server threads the compacted config2
