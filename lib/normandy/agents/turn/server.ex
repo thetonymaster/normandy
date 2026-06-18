@@ -66,22 +66,39 @@ defmodule Normandy.Agents.Turn.Server do
         reconstruct_config!(store, template_provider, session_id)
       end
 
+    turn_state =
+      case Keyword.fetch(opts, :turn_state) do
+        {:ok, ts} when not is_nil(ts) -> ts
+        _ -> load_turn_state(store, session_id)
+      end
+
+    resume_policy =
+      case Keyword.get(opts, :config) do
+        nil -> template_resume_policy(store, session_id, Keyword.get(opts, :resume_policy, :lazy))
+        _ -> Keyword.get(opts, :resume_policy, :lazy)
+      end
+
     data = %Data{
       session_id: session_id,
       config: config,
       store: store,
       registry: registry,
       template_provider: template_provider,
-      resume_policy: Keyword.get(opts, :resume_policy, :lazy),
+      resume_policy: resume_policy,
       subscriber: Keyword.get(opts, :subscriber),
       handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
-      turn_state: Keyword.get(opts, :turn_state),
+      turn_state: turn_state,
       approval_timeout_ms: Keyword.get(opts, :approval_timeout_ms, 300_000),
       idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000)
     }
 
     register_self(data)
-    {:ok, :idle, data, idle_timeout(data)}
+
+    if data.resume_policy == :eager and resumable?(data.turn_state) do
+      {:ok, :idle, data, [{:next_event, :internal, :resume}]}
+    else
+      {:ok, :idle, data, idle_timeout(data)}
+    end
   end
 
   defp reconstruct_config!({store_mod, store_handle}, {tp_mod, tp_handle}, session_id) do
@@ -108,6 +125,23 @@ defmodule Normandy.Agents.Turn.Server do
         raise "Turn.Server reconstruct: history load failed for #{session_id}: #{inspect(reason)}"
     end
   end
+
+  defp load_turn_state({mod, handle}, sid) do
+    case mod.load_turn_state(handle, sid) do
+      {:ok, ts} -> ts
+      _ -> nil
+    end
+  end
+
+  defp template_resume_policy({mod, handle}, sid, default) do
+    case mod.load_config_template(handle, sid) do
+      {:ok, %{resume_policy: rp}} -> rp
+      _ -> default
+    end
+  end
+
+  defp resumable?(%Turn.State{status: status}) when status not in [:stopped, :failed], do: true
+  defp resumable?(_), do: false
 
   defp session_id_template_id(%{template_id: id}), do: id
 
@@ -137,6 +171,14 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} ->
         {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
     end
+  end
+
+  # Eager auto-resume: drive the persisted in-flight turn to completion. No caller
+  # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
+  # silently while persisting at each boundary.
+  def handle_event(:internal, :resume, :idle, data) do
+    {state, effects} = Turn.resume(data.turn_state)
+    interpret(effects, %{data | turn_state: state})
   end
 
   # :running — a monitored Task delivered the outcome of a blocking effect.

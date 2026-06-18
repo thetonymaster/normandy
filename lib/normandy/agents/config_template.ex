@@ -18,6 +18,7 @@ defmodule Normandy.Agents.ConfigTemplate do
 
     %{
       template_id: template_id,
+      resume_policy: :lazy,
       model: c.model,
       temperature: c.temperature,
       max_tokens: c.max_tokens,
@@ -38,6 +39,11 @@ defmodule Normandy.Agents.ConfigTemplate do
         session_registry: b.session_registry
       }
     }
+  end
+
+  @spec from_config(BaseAgentConfig.t(), String.t(), :lazy | :eager) :: map()
+  def from_config(%BaseAgentConfig{} = c, template_id, resume_policy) do
+    from_config(c, template_id) |> Map.put(:resume_policy, resume_policy)
   end
 
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
