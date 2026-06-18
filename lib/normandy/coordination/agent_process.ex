@@ -324,7 +324,15 @@ defmodule Normandy.Coordination.AgentProcess do
   @impl true
   def terminate(_reason, %{owned: owned}) when is_list(owned) do
     Enum.each(owned, fn pid ->
-      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :shutdown)
+      if is_pid(pid) and Process.alive?(pid) do
+        # Unlink BEFORE killing: these owned infra pids are linked to us (started
+        # via start_link in server_infra/1). Without the unlink, their `:shutdown`
+        # death bounces back through the link and re-exits this process with
+        # `:shutdown` (we don't trap exits) — which then propagates to whoever
+        # `start_link`ed US (e.g. a caller that just invoked `stop/1`), killing it.
+        Process.unlink(pid)
+        Process.exit(pid, :shutdown)
+      end
     end)
 
     :ok
