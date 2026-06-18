@@ -11,6 +11,9 @@ defmodule Normandy.ClusterCase do
     end
   end
 
+  @doc "A named initial-state function for `Agent.start_link/3` that works across nodes."
+  def agent_initial_state, do: :idle
+
   @doc "Start a connected peer node with this node's code paths loaded."
   def start_peer(name) do
     {:ok, pid, node} =
@@ -46,6 +49,78 @@ defmodule Normandy.ClusterCase do
     {:ok, pid} = Normandy.Behaviours.SessionRegistry.Horde.start_link(opts)
     Process.unlink(pid)
     {:ok, pid}
+  end
+
+  @doc """
+  Start a `Horde.DynamicSupervisor` on a remote peer node without letting the
+  erpc transport process link to it.
+
+  Same unlinking technique as `start_horde_on_peer/2` but for
+  `Horde.DynamicSupervisor` rather than `Normandy.Behaviours.SessionRegistry.Horde`.
+  """
+  def start_horde_dsup_on_peer(node, name) do
+    :erpc.call(node, __MODULE__, :start_horde_dsup_unlinked, [name])
+  end
+
+  @doc false
+  def start_horde_dsup_unlinked(name) do
+    {:ok, pid} =
+      Horde.DynamicSupervisor.start_link(name: name, strategy: :one_for_one, members: :auto)
+
+    Process.unlink(pid)
+    {:ok, pid}
+  end
+
+  @doc """
+  Start a child directly in `Horde.ProcessesSupervisor` on a peer node, bypassing
+  Horde's distribution-strategy placement. This guarantees the process lands on the
+  peer regardless of consistent-hashing outcomes.
+
+  The child spec must use a named function (not a closure) for its `start` MFA so
+  it can be serialised and called on the remote node.
+  """
+  def start_child_on_peer(node, horde_dsup_name, child_spec) do
+    :erpc.call(node, __MODULE__, :do_start_child_direct, [horde_dsup_name, child_spec])
+  end
+
+  @doc false
+  def do_start_child_direct(horde_dsup_name, child_spec) do
+    processes_sup = :"#{horde_dsup_name}.ProcessesSupervisor"
+    Horde.ProcessesSupervisor.start_child(processes_sup, child_spec)
+  end
+
+  @doc """
+  Start `Normandy.TestRepo` on a peer node without linking it to the erpc
+  transport worker. Pass explicit `repo_opts` (from the primary's application env)
+  so the peer does not need Mix or compiled config available.
+
+  Used in `:postgres` + `:distributed` tests to give the peer node database
+  access for thin-config reconstruction.
+  """
+  def start_test_repo_on_peer(node, repo_opts) do
+    :erpc.call(node, __MODULE__, :start_test_repo_unlinked, [repo_opts])
+  end
+
+  @doc false
+  def start_test_repo_unlinked(repo_opts) do
+    # Ensure ecto_sql and postgrex are started on the peer.
+    Application.ensure_all_started(:ecto_sql)
+    Application.ensure_all_started(:postgrex)
+
+    # Write the repo config into the application env on the peer node so the
+    # Repo process can find its connection parameters at startup.
+    Application.put_env(:normandy, Normandy.TestRepo, repo_opts)
+    Application.put_env(:normandy, :ecto_repos, [Normandy.TestRepo])
+
+    # Start with a pool_size: 1 and no sandbox (direct DB access).
+    clean_opts = Keyword.merge(repo_opts, pool_size: 1, pool: Ecto.Adapters.SQL.Sandbox)
+
+    {:ok, pid} = Normandy.TestRepo.start_link(clean_opts)
+    Process.unlink(pid)
+    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
+    {:ok, pid}
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   @doc """
