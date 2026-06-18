@@ -32,7 +32,7 @@ if Code.ensure_loaded?(Redix) do
         )
 
       {:ok, conn} = Redix.start_link(url)
-      ns = Keyword.get(opts, :namespace, "normandy_test_#{System.unique_integer([:positive])}")
+      ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")
       {conn, ns}
     end
 

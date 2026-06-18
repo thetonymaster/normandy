@@ -56,7 +56,7 @@ if Code.ensure_loaded?(Redix) do
           Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
         )
 
-      ns = Keyword.get(opts, :namespace, "normandy_reg_#{System.unique_integer([:positive])}")
+      ns = Keyword.get(opts, :namespace, "normandy_reg_#{UUID.uuid4()}")
       {:ok, _pid} = start_link(name: name, url: url, namespace: ns)
       name
     end
