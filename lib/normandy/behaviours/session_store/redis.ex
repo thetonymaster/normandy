@@ -61,8 +61,11 @@ if Code.ensure_loaded?(Redix) do
            true <- Enum.any?(raw, fn [id, _fields] -> id == from_entry_id end) do
         prefix = take_through(raw, from_entry_id)
         new_id = "fork_#{System.unique_integer([:positive])}"
-        copy_prefix(conn, stream_key(ns, new_id), prefix)
-        {:ok, new_id}
+
+        case copy_prefix(conn, stream_key(ns, new_id), prefix) do
+          :ok -> {:ok, new_id}
+          {:error, _reason} = err -> err
+        end
       else
         {:ok, []} -> {:error, :no_such_session}
         false -> {:error, :no_such_entry}
@@ -173,8 +176,11 @@ if Code.ensure_loaded?(Redix) do
     end
 
     defp copy_prefix(conn, dest_stream, prefix) do
-      Enum.each(prefix, fn [_old_id, kv] ->
-        Redix.command!(conn, ["XADD", dest_stream, "*" | kv])
+      Enum.reduce_while(prefix, :ok, fn [_old_id, kv], :ok ->
+        case Redix.command(conn, ["XADD", dest_stream, "*" | kv]) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
       end)
     end
 
