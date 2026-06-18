@@ -10,6 +10,7 @@ defmodule Normandy.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
       consolidate_protocols: Mix.env() != :test,
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
@@ -138,11 +139,20 @@ defmodule Normandy.MixProject do
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.0"},
       {:claudio, "~> 0.5.0"},
+      {:ecto_sql, "~> 3.12"},
+      {:postgrex, "~> 0.19"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:opentelemetry, "~> 1.5", only: :test},
       {:opentelemetry_api, "~> 1.4", only: :test}
+    ]
+  end
+
+  defp aliases do
+    [
+      "ecto.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
+      test: ["ecto.setup", "test"]
     ]
   end
 
