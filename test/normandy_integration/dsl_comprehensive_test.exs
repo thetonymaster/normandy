@@ -11,6 +11,14 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
 
   alias Normandy.Coordination.Pattern
 
+  # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
+  # whole module at compile time: skipped when no API key is present (shown as
+  # skipped, not failed), run when one is.
+  unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
+    @moduletag skip:
+                 "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."
+  end
+
   # Define agents for testing using the DSL
   defmodule ResearchAgent do
     use Normandy.DSL.Agent
@@ -191,40 +199,35 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
   end
 
   setup do
-    # Check if API key is available
-    unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
-      {:skip, "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."}
-    else
-      # Create real client for agents
-      client = NormandyTest.Support.NormandyIntegrationHelper.create_real_client()
+    # Create real client for agents
+    client = NormandyTest.Support.NormandyIntegrationHelper.create_real_client()
 
-      # Create all agent instances
-      {:ok, research_agent} = ResearchAgent.new(client: client)
-      {:ok, analyzer_agent} = AnalyzerAgent.new(client: client)
-      {:ok, summarizer_agent} = SummarizerAgent.new(client: client)
-      {:ok, sentiment_agent} = SentimentAgent.new(client: client)
-      {:ok, topic_agent} = TopicAgent.new(client: client)
-      {:ok, quality_agent} = QualityAgent.new(client: client)
-      {:ok, fast_agent} = FastAgent.new(client: client)
-      {:ok, validation_agent} = ValidationAgent.new(client: client)
-      {:ok, processor_agent} = ProcessorAgent.new(client: client)
-      {:ok, structured_agent} = StructuredAgent.new(client: client)
+    # Create all agent instances
+    {:ok, research_agent} = ResearchAgent.new(client: client)
+    {:ok, analyzer_agent} = AnalyzerAgent.new(client: client)
+    {:ok, summarizer_agent} = SummarizerAgent.new(client: client)
+    {:ok, sentiment_agent} = SentimentAgent.new(client: client)
+    {:ok, topic_agent} = TopicAgent.new(client: client)
+    {:ok, quality_agent} = QualityAgent.new(client: client)
+    {:ok, fast_agent} = FastAgent.new(client: client)
+    {:ok, validation_agent} = ValidationAgent.new(client: client)
+    {:ok, processor_agent} = ProcessorAgent.new(client: client)
+    {:ok, structured_agent} = StructuredAgent.new(client: client)
 
-      agents_map = %{
-        ResearchAgent => research_agent,
-        AnalyzerAgent => analyzer_agent,
-        SummarizerAgent => summarizer_agent,
-        SentimentAgent => sentiment_agent,
-        TopicAgent => topic_agent,
-        QualityAgent => quality_agent,
-        FastAgent => fast_agent,
-        ValidationAgent => validation_agent,
-        ProcessorAgent => processor_agent,
-        StructuredAgent => structured_agent
-      }
+    agents_map = %{
+      ResearchAgent => research_agent,
+      AnalyzerAgent => analyzer_agent,
+      SummarizerAgent => summarizer_agent,
+      SentimentAgent => sentiment_agent,
+      TopicAgent => topic_agent,
+      QualityAgent => quality_agent,
+      FastAgent => fast_agent,
+      ValidationAgent => validation_agent,
+      ProcessorAgent => processor_agent,
+      StructuredAgent => structured_agent
+    }
 
-      {:ok, client: client, agents: agents_map}
-    end
+    {:ok, client: client, agents: agents_map}
   end
 
   @tag :normandy_integration
