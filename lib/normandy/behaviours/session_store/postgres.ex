@@ -38,21 +38,26 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
         parent_id = entry.parent_id || session.head_id
         now = DateTime.utc_now()
 
-        {:ok, _} =
-          repo.insert(%Entry{
-            id: id,
-            parent_id: parent_id,
-            turn_id: entry.turn_id,
-            role: entry.role,
-            content: encode(entry.content),
-            inserted_at: now
-          })
-
-        session
-        |> Ecto.Changeset.change(head_id: id, current_turn_id: entry.turn_id)
-        |> repo.update!()
-
-        id
+        # Abort the transaction with {:error, reason} on a DB failure rather than
+        # raising into the caller — the store contract returns error tuples, and the
+        # server's fail/2 path depends on that to fail gracefully instead of crashing.
+        with {:ok, _} <-
+               repo.insert(%Entry{
+                 id: id,
+                 parent_id: parent_id,
+                 turn_id: entry.turn_id,
+                 role: entry.role,
+                 content: encode(entry.content),
+                 inserted_at: now
+               }),
+             {:ok, _} <-
+               session
+               |> Ecto.Changeset.change(head_id: id, current_turn_id: entry.turn_id)
+               |> repo.update() do
+          id
+        else
+          {:error, reason} -> repo.rollback(reason)
+        end
       end)
       |> case do
         {:ok, id} -> {:ok, id}
@@ -126,8 +131,14 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     def save_config_template(repo, session_id, tmpl) do
       blob = encode(tmpl)
       # Mirror resume_policy into a queryable column so list_resumable/1 can filter
-      # without decoding every opaque template blob.
-      rp = tmpl |> Map.get(:resume_policy, :lazy) |> to_string()
+      # without decoding every opaque template blob. The template is an opaque term
+      # (behaviour: `term()`), so guard non-map terms (and non-atom/binary policies)
+      # instead of assuming a map — matches the is_map guards in the ETS/InMemory stores.
+      rp =
+        case tmpl do
+          %{resume_policy: v} when is_atom(v) or is_binary(v) -> to_string(v)
+          _ -> "lazy"
+        end
 
       %Session{session_id: session_id}
       |> Ecto.Changeset.change(config_template: blob, resume_policy: rp)

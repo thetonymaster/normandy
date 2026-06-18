@@ -87,7 +87,10 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           end
         end)
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        # Don't let a store failure silently suppress eager handoff on :nodedown —
+        # surface it so operators can detect and triage missed reaps.
+        Logger.warning("ResumeReaper: list_resumable failed: #{inspect(reason)}")
         :ok
     end
   end
