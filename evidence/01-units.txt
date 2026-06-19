@@ -1,8 +1,8 @@
 
 18:12:13.552 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
@@ -1238,7 +1238,7 @@ Excluding tags: [:integration, :normandy_integration, :postgres, :distributed, :
 
 18:12:14.511 [info] normandy llm call start
 
-18:12:14.514 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Resilience.CircuitBreaker, :execute_and_record, 2, [file: ~c"lib/normandy/resilience/circuit_breaker.ex", line: 320]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, ...}, ...]}. Retrying in 9ms...
+18:12:14.514 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Resilience.CircuitBreaker, :execute_and_record, 2, [file: ~c"lib/normandy/resilience/circuit_breaker.ex", line: 320]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"~/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, ...}, ...]}. Retrying in 9ms...
 .........
 18:12:14.524 [info] Retry succeeded on attempt 2
 
@@ -1250,7 +1250,7 @@ Excluding tags: [:integration, :normandy_integration, :postgres, :distributed, :
 
 18:12:14.524 [info] normandy llm call start
 
-18:12:14.527 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.BaseAgentResilienceTest, :"test retry integration uses custom retry options", ...}, ...]}. Retrying in 9ms...
+18:12:14.527 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"~/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, 3, [file: ~c"~/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.BaseAgentResilienceTest, :"test retry integration uses custom retry options", ...}, ...]}. Retrying in 9ms...
 
 18:12:14.527 [info] normandy tool execute stop
 
@@ -2478,18 +2478,18 @@ https://hexdocs.pm/telemetry/telemetry.html#attach/4
 18:12:18.440 [info] normandy tool execute stop
 
 18:12:18.557 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
 18:12:18.557 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
 
 18:12:18.557 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 

@@ -1,8 +1,8 @@
 
 22:07:36.076 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
@@ -48,7 +48,7 @@ warning: Agent output guardrail violation: Validation failed:
   (normandy 1.0.0) lib/normandy/agents/base_agent.ex:491: Normandy.Agents.BaseAgent.run_turn/2
   (normandy 1.0.0) lib/normandy/agents/base_agent.ex:366: anonymous fn/4 in Normandy.Agents.BaseAgent.run/2
   (normandy 1.0.0) lib/normandy/agents/base_agent.ex:1188: anonymous fn/2 in Normandy.Agents.BaseAgent.with_agent_run_span/3
-  (telemetry 1.4.1) /Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  (telemetry 1.4.1) ~/personal/normandy/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
 
 response text: "Waves crash on the shore,\nSalt spray kisses weathered rocks,\nOcean's ancient song."
 
@@ -114,18 +114,18 @@ https://hexdocs.pm/telemetry/telemetry.html#attach/4
 22:07:40.225 [info] normandy llm call start
 
 22:07:41.081 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
 22:07:41.081 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
 
 22:07:41.081 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 

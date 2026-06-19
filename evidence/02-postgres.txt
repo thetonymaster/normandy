@@ -1,8 +1,8 @@
 
 18:12:29.107 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
@@ -5607,18 +5607,18 @@ https://hexdocs.pm/telemetry/telemetry.html#attach/4
 18:12:34.011 [info] Starting Horde.RegistryImpl with name :horde_session_registry_15748
 .
 18:12:34.111 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
 18:12:34.111 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
 
 18:12:34.111 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
-  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
-  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
-  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in function  otel_exporter:init/1 (~/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (~/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
   in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
   in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
 
