@@ -20,6 +20,14 @@ jobs:
           .github/scripts/install-cog.sh "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Configure git identity
+        # cog verify reads git user.name/email for its author field and panics
+        # (SIGABRT, exit 134) if unset. GitHub runners have no git identity by
+        # default, so set a local one before verifying.
+        run: |
+          git config user.name "normandy-pr-title-lint"
+          git config user.email "pr-title-lint@users.noreply.github.com"
+
       - name: Verify PR title is a conventional commit
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
