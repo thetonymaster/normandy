@@ -1,0 +1,2596 @@
+
+18:12:13.552 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+18:12:13.556 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+Running ExUnit with seed: 568815, max_cases: 28
+Excluding tags: [:integration, :normandy_integration, :postgres, :distributed, :redis]
+
+..........    warning: unused alias Supervisor
+    │
+  6 │   alias Normandy.Agents.Turn.{Session, Supervisor}
+    │   ~
+    │
+    └─ test/agents/turn/tier2_integration_test.exs:6:3
+
+    warning: unused alias StringManipulator
+    │
+  5 │   alias Normandy.Tools.Examples.{Calculator, StringManipulator}
+    │   ~
+    │
+    └─ test/integration/agent_tool_execution_flow_test.exs:5:3
+
+......................    warning: unused alias BaseAgent
+    │
+  4 │   alias Normandy.Agents.BaseAgent
+    │   ~
+    │
+    └─ test/integration/batch_coordination_integration_test.exs:4:3
+
+..............................................................................................................................     warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 111 │     test "returns error for non-existent agent", %{agent: agent} do
+     │                                                           ~~~~~
+     │
+     └─ test/coordination/agent_supervisor_test.exs:111:59: Normandy.Coordination.AgentSupervisorTest."test terminate_agent/2 returns error for non-existent agent"/1
+
+....................................................    warning: unused alias AgentProcess
+    │
+  6 │   alias Normandy.Coordination.{
+    │   ~
+    │
+    └─ test/integration/multi_agent_workflows_test.exs:6:3
+
+    warning: unused alias AgentSupervisor
+    │
+  6 │   alias Normandy.Coordination.{
+    │   ~
+    │
+    └─ test/integration/multi_agent_workflows_test.exs:6:3
+
+    warning: unused alias BaseAgent
+    │
+  4 │   alias Normandy.Agents.BaseAgent
+    │   ~
+    │
+    └─ test/integration/multi_agent_workflows_test.exs:4:3
+
+..........
+18:12:13.801 [info] normandy agent run start
+.........    warning: function compute_total/1 is unused
+    │
+ 81 │       defp compute_total(%{price: price, tax_rate: rate}) do
+    │            ~
+    │
+    └─ test/schema_virtual_fields_test.exs:81:12: NormandyTest.SchemaVirtualFieldsTest.ComputedFields (module)
+
+...........
+18:12:13.838 [error] normandy agent exception
+.........
+18:12:13.843 [info] normandy agent run start
+.
+18:12:13.843 [info] normandy llm call start
+.     warning: function compute_full_name/1 is unused
+     │
+ 119 │       defp compute_full_name(%{first_name: first, last_name: last}) do
+     │            ~
+     │
+     └─ test/schema_virtual_fields_test.exs:119:12: NormandyTest.SchemaVirtualFieldsTest.ComputedIncludedInSchema (module)
+
+.......................
+18:12:13.916 [info] normandy llm call stop
+
+18:12:13.916 [info] normandy agent run stop
+................................................................................
+18:12:13.956 [warning] Circuit breaker threshold reached (1/1), opening circuit
+....
+18:12:13.973 [info] normandy agent run start
+
+18:12:13.974 [info] normandy llm call start
+
+18:12:13.974 [info] normandy llm call stop
+
+18:12:13.974 [info] normandy agent run stop
+.........
+18:12:13.997 [info] normandy agent run start
+
+18:12:13.997 [info] normandy llm call start
+.
+18:12:13.997 [info] normandy llm call stop
+
+18:12:13.997 [info] normandy agent run stop
+
+18:12:13.997 [info] normandy agent run start
+
+18:12:13.997 [info] normandy llm call start
+.
+18:12:13.997 [info] normandy llm call stop
+.
+18:12:13.997 [info] normandy agent run stop
+
+18:12:13.997 [info] normandy agent run start
+
+18:12:13.997 [info] normandy llm call start
+
+18:12:13.997 [info] normandy llm call stop
+
+18:12:13.997 [info] normandy agent run stop
+
+18:12:13.997 [debug] normandy agent iteration
+
+18:12:13.997 [info] normandy llm call start
+.................................................     warning: function compute_value/1 is unused
+     │
+ 234 │       defp compute_value(_), do: 3.14
+     │            ~
+     │
+     └─ test/schema_virtual_fields_test.exs:234:12: NormandyTest.SchemaVirtualFieldsTest.MultipleVirtual (module)
+
+.
+18:12:14.025 [info] normandy llm call stop
+
+18:12:14.025 [info] normandy tool execute start
+
+18:12:14.025 [info] normandy tool execute stop
+..................
+18:12:14.034 [debug] normandy agent iteration
+
+18:12:14.034 [info] normandy llm call start
+..........
+18:12:14.057 [info] Circuit breaker timeout elapsed, transitioning to half-open
+
+18:12:14.062 [info] normandy llm call stop
+.......
+18:12:14.070 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "temporary error"}, [{Normandy.Resilience.RetryTest, :"-test with_retry/2 handles exceptions/1-fun-3-", 1, [file: ~c"test/resilience/retry_test.exs", line: 150, error_info: %{module: Exception}]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Resilience.RetryTest, :"test with_retry/2 handles exceptions", 1, [file: ~c"test/resilience/retry_test.exs", line: 145]}, {ExUnit.Runner, :exec_test, 2, [file: ~c"lib/ex_unit/runner.ex", line: 528]}, {:timer, :tc, 2, [file: ~c"timer.erl", line: 599]}, {ExUnit.Runner, :"-spawn_test_monitor/4-fun-1-", 6, [file: ~c"lib/ex_unit/runner.ex", line: 450]}]}. Retrying in 9ms...
+......
+18:12:14.080 [info] Retry succeeded on attempt 2
+.
+18:12:14.080 [warning] Retry attempt 1/5 failed: :network_error. Retrying in 10ms...
+
+18:12:14.091 [warning] Retry attempt 2/5 failed: :network_error. Retrying in 19ms...
+.................................................
+18:12:14.101 [info] normandy agent run start
+.
+18:12:14.101 [info] normandy llm call start
+.
+18:12:14.101 [info] normandy llm call stop
+.
+18:12:14.101 [info] normandy agent run stop
+.
+18:12:14.101 [info] normandy agent run start
+.
+18:12:14.101 [info] normandy llm call start
+.
+18:12:14.101 [info] normandy llm call stop
+.
+18:12:14.101 [info] normandy agent run stop
+....................................................
+18:12:14.108 [warning] Circuit breaker threshold reached (1/1), opening circuit
+.
+18:12:14.108 [warning] Circuit breaker threshold reached (2/2), opening circuit
+.
+18:12:14.111 [info] Retry succeeded on attempt 3
+..
+18:12:14.111 [warning] Retry attempt 1/3 failed: :network_error. Retrying in 9ms...
+....
+18:12:14.121 [warning] Retry attempt 2/3 failed: :network_error. Retrying in 23ms...
+.............................................    warning: variable "generator" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+    │
+ 62 │       {generator, draft} = BaseAgent.run(generator, topic)
+    │        ~~~~~~~~~
+    │
+    └─ test/integration/end_to_end_scenarios_test.exs:62:8: Normandy.Integration.EndToEndScenariosTest."test Content generation pipeline generate and refine content"/1
+
+.................
+18:12:14.145 [warning] Non-retryable error: :validation_error
+.
+18:12:14.145 [warning] Retry attempt 1/3 failed: {:network_error, "connection refused"}. Retrying in 12ms...
+    warning: unused alias ParallelOrchestrator
+    │
+  6 │   alias Normandy.Coordination.{SequentialOrchestrator, ParallelOrchestrator}
+    │   ~
+    │
+    └─ test/integration/end_to_end_scenarios_test.exs:6:3
+
+    warning: unused alias Processor
+    │
+  5 │   alias Normandy.Batch.Processor
+    │   ~
+    │
+    └─ test/integration/end_to_end_scenarios_test.exs:5:3
+
+    warning: unused alias SequentialOrchestrator
+    │
+  6 │   alias Normandy.Coordination.{SequentialOrchestrator, ParallelOrchestrator}
+    │   ~
+    │
+    └─ test/integration/end_to_end_scenarios_test.exs:6:3
+
+     warning: redefining module Normandy.Schema.IntrospectionTest.PlainSchema (current version defined in memory)
+     │
+ 271 │     defmodule PlainSchema do
+     │     ~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/schema/introspection_test.exs:271: Normandy.Schema.IntrospectionTest.PlainSchema (module)
+
+.................
+18:12:14.158 [warning] Retry attempt 2/3 failed: {:network_error, "connection refused"}. Retrying in 16ms...
+    warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │     test "agent handles transient failures with retry", %{agent: agent} do
+    │                                                                  ~~~~~
+    │
+    └─ test/integration/agent_resilience_integration_test.exs:19:66: Normandy.Integration.AgentResilienceIntegrationTest."test Retry logic with real LLM agent handles transient failures with retry"/1
+
+    warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 40 │     test "retry configuration affects behavior", %{agent: agent} do
+    │                                                           ~~~~~
+    │
+    └─ test/integration/agent_resilience_integration_test.exs:40:59: Normandy.Integration.AgentResilienceIntegrationTest."test Retry logic with real LLM retry configuration affects behavior"/1
+
+.
+18:12:14.176 [warning] Retry attempt 1/2 failed: :network_error. Retrying in 117ms...
+    warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 56 │     test "circuit breaker allows normal operation when closed", %{agent: agent} do
+    │                                                                          ~~~~~
+    │
+    └─ test/integration/agent_resilience_integration_test.exs:56:74: Normandy.Integration.AgentResilienceIntegrationTest."test Circuit breaker integration circuit breaker allows normal operation when closed"/1
+
+    warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 74 │     test "multiple successful calls keep circuit closed", %{agent: agent} do
+    │                                                                    ~~~~~
+    │
+    └─ test/integration/agent_resilience_integration_test.exs:74:68: Normandy.Integration.AgentResilienceIntegrationTest."test Circuit breaker integration multiple successful calls keep circuit closed"/1
+
+     warning: variable "response2" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 129 │       {agent2, response2} =
+     │                ~~~~~~~~~
+     │
+     └─ test/integration/agent_resilience_integration_test.exs:129:16: Normandy.Integration.AgentResilienceIntegrationTest."test Error handling and recovery memory persists after errors"/1
+
+     warning: variable "agent" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 140 │     test "agent respects timeout configuration", %{agent: agent} do
+     │                                                           ~~~~~
+     │
+     └─ test/integration/agent_resilience_integration_test.exs:140:59: Normandy.Integration.AgentResilienceIntegrationTest."test Timeout handling agent respects timeout configuration"/1
+
+...................................................................     warning: variable "agent_pid" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 540 │       {:ok, agent_pid} = AgentPool.checkout(pool)
+     │             ~~~~~~~~~
+     │
+     └─ test/coordination/agent_pool_test.exs:540:13: Normandy.Coordination.AgentPoolTest."test stop/1 terminates all agents on stop"/1
+
+
+18:12:14.247 [debug] normandy agent iteration
+
+18:12:14.247 [info] normandy llm call start
+.
+18:12:14.255 [info] normandy agent run start
+.
+18:12:14.255 [info] normandy llm call start
+
+18:12:14.255 [info] normandy llm call stop
+.
+18:12:14.255 [info] normandy agent run stop
+.
+18:12:14.255 [info] normandy agent run start
+.
+18:12:14.255 [info] normandy llm call start
+.
+18:12:14.255 [info] normandy llm call stop
+
+18:12:14.255 [info] normandy agent run stop
+
+18:12:14.256 [info] normandy llm call stop
+
+18:12:14.256 [info] normandy tool execute start
+.
+18:12:14.256 [info] normandy tool execute stop
+.
+18:12:14.256 [debug] normandy agent iteration
+.warning: Streaming error: "Stream failed"
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:720: Normandy.Agents.BaseAgent.run_stream_turn/3
+  test/agents/base_agent_streaming_test.exs:543: Normandy.Agents.BaseAgentStreamingTest."test stream error handling handles streaming errors gracefully"/1
+  (ex_unit 1.19.5) lib/ex_unit/runner.ex:528: ExUnit.Runner.exec_test/2
+  (stdlib 7.3) timer.erl:599: :timer.tc/2
+  (ex_unit 1.19.5) lib/ex_unit/runner.ex:450: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+
+18:12:14.256 [info] normandy llm call start
+..
+18:12:14.256 [info] normandy llm call stop
+.
+18:12:14.257 [info] normandy llm call start
+.
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [info] normandy llm call start
+.
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [debug] normandy agent iteration
+
+18:12:14.257 [info] normandy llm call start
+.
+18:12:14.257 [info] normandy llm call stop
+.
+18:12:14.257 [info] normandy tool execute start
+
+18:12:14.257 [info] normandy tool execute stop
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.257 [info] normandy llm call stop
+
+18:12:14.257 [debug] normandy agent iteration
+
+18:12:14.257 [info] normandy llm call start
+
+18:12:14.258 [info] normandy llm call stop
+
+18:12:14.258 [info] normandy tool execute start
+
+18:12:14.258 [info] normandy tool execute stop
+
+18:12:14.258 [debug] normandy agent iteration
+
+18:12:14.258 [info] normandy llm call start
+
+18:12:14.258 [info] normandy llm call stop
+
+18:12:14.258 [debug] normandy agent iteration
+
+18:12:14.258 [info] normandy llm call start
+
+18:12:14.258 [info] normandy llm call stop
+
+18:12:14.258 [info] normandy tool execute start
+
+18:12:14.258 [info] normandy tool execute stop
+
+18:12:14.258 [info] normandy llm call start
+
+18:12:14.258 [info] normandy llm call stop
+
+18:12:14.258 [debug] normandy agent iteration
+.
+18:12:14.258 [info] normandy llm call start
+.
+18:12:14.258 [info] normandy llm call stop
+.
+18:12:14.258 [info] normandy tool execute start
+.
+18:12:14.258 [info] normandy tool execute stop
+.
+18:12:14.258 [debug] normandy agent iteration
+.
+18:12:14.258 [info] normandy llm call start
+.
+18:12:14.258 [info] normandy llm call stop
+.
+18:12:14.259 [info] Circuit breaker timeout elapsed, transitioning to half-open
+.
+18:12:14.261 [warning] Circuit breaker manually tripped to open state
+
+18:12:14.262 [warning] Circuit breaker threshold reached (1/1), opening circuit
+
+18:12:14.262 [warning] Circuit breaker threshold reached (2/2), opening circuit
+..
+18:12:14.270 [info] normandy agent run start
+.
+18:12:14.270 [info] normandy llm call start
+.
+18:12:14.270 [info] normandy llm call stop
+.
+18:12:14.270 [info] normandy agent run stop
+.
+18:12:14.270 [info] normandy agent run start
+.
+18:12:14.270 [info] normandy llm call start
+.
+18:12:14.270 [info] normandy llm call stop
+.
+18:12:14.270 [info] normandy agent run stop
+.
+18:12:14.270 [info] normandy agent run start
+.
+18:12:14.270 [info] normandy llm call start
+.
+18:12:14.270 [info] normandy llm call stop
+.
+18:12:14.270 [info] normandy agent run stop
+...............
+18:12:14.282 [info] Processing 10 items in chunks of 3
+
+18:12:14.282 [info] Processing chunk 1
+
+18:12:14.282 [info] Starting batch processing: 3 items with concurrency 10
+
+18:12:14.282 [info] normandy agent run start
+
+18:12:14.282 [info] normandy llm call start
+
+18:12:14.282 [info] normandy agent run start
+
+18:12:14.282 [info] normandy llm call start
+
+18:12:14.282 [info] normandy llm call stop
+
+18:12:14.282 [info] normandy llm call stop
+
+18:12:14.282 [info] normandy agent run stop
+
+18:12:14.282 [info] normandy agent run stop
+
+18:12:14.282 [info] normandy agent run start
+
+18:12:14.282 [info] normandy llm call start
+
+18:12:14.282 [info] normandy llm call stop
+
+18:12:14.282 [info] normandy agent run stop
+
+18:12:14.282 [info] Batch processing complete
+.....
+18:12:14.293 [warning] Retry attempt 1/2 failed: :network_error. Retrying in 92ms...
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run stop
+.
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+.
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call start
+.
+18:12:14.295 [info] normandy agent run start
+.
+18:12:14.295 [info] normandy llm call stop
+.
+18:12:14.295 [info] normandy agent run stop
+..
+18:12:14.295 [info] normandy agent run start
+.
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy agent run start
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy agent run stop
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call start
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.295 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy agent run start
+
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call start
+.
+18:12:14.296 [info] normandy llm call start
+
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy llm call stop
+.
+18:12:14.296 [info] normandy llm call stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run stop
+
+18:12:14.296 [info] normandy agent run start
+.
+18:12:14.296 [info] normandy agent run start
+.
+18:12:14.301 [info] normandy llm call start
+.
+18:12:14.301 [info] normandy llm call start
+.
+18:12:14.301 [info] normandy llm call stop
+......
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call start
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy llm call start
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy llm call start
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy llm call stop
+
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy llm call stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.301 [info] normandy agent run stop
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy llm call stop
+.
+18:12:14.302 [info] normandy llm call stop
+.
+18:12:14.302 [info] normandy llm call stop
+.
+18:12:14.302 [info] normandy agent run stop
+.
+18:12:14.302 [info] normandy agent run stop
+.
+18:12:14.302 [info] normandy agent run stop
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call stop
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy agent run stop
+.
+18:12:14.302 [info] normandy agent run start
+.
+18:12:14.302 [info] normandy llm call start
+.
+18:12:14.302 [info] normandy llm call stop
+.
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call start
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy llm call stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.302 [info] normandy agent run stop
+
+18:12:14.303 [info] normandy agent run start
+
+18:12:14.303 [info] normandy agent run start
+.
+18:12:14.303 [info] normandy llm call start
+.
+18:12:14.303 [info] normandy llm call start
+
+18:12:14.303 [info] normandy llm call stop
+.
+18:12:14.303 [info] normandy llm call stop
+
+18:12:14.303 [info] normandy agent run stop
+
+18:12:14.303 [info] normandy agent run stop
+.
+18:12:14.303 [info] normandy agent run start
+
+18:12:14.303 [info] normandy agent run start
+.
+18:12:14.316 [info] normandy llm call start
+.
+18:12:14.316 [info] normandy llm call start
+
+18:12:14.316 [info] normandy llm call stop
+
+18:12:14.316 [info] normandy llm call stop
+..
+18:12:14.316 [info] normandy agent run stop
+
+18:12:14.316 [info] normandy agent run stop
+
+18:12:14.316 [info] normandy agent run start
+
+18:12:14.316 [info] normandy llm call start
+
+18:12:14.316 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run start
+.
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy agent run start
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy llm call stop
+
+18:12:14.317 [info] normandy llm call start
+
+18:12:14.317 [info] normandy agent run stop
+
+18:12:14.317 [info] normandy llm call stop
+.
+18:12:14.317 [info] normandy llm call stop
+.
+18:12:14.318 [info] normandy agent run stop
+.
+18:12:14.317 [info] normandy agent run stop
+.
+18:12:14.318 [info] normandy agent run start
+.
+18:12:14.318 [info] normandy llm call start
+.
+18:12:14.318 [info] normandy agent run start
+.
+18:12:14.318 [info] normandy llm call start
+.
+18:12:14.318 [info] normandy llm call stop
+.
+18:12:14.318 [info] normandy llm call stop
+.
+18:12:14.318 [info] normandy agent run stop
+.
+18:12:14.318 [info] normandy agent run stop
+.
+18:12:14.318 [info] normandy agent run start
+.
+18:12:14.318 [info] normandy llm call start
+
+18:12:14.318 [info] normandy agent run start
+...........................    warning: unused alias BaseAgent
+    │
+  4 │   alias Normandy.Agents.BaseAgent
+    │   ~
+    │
+    └─ test/coordination/agent_pool_test.exs:4:3
+
+...................     warning: variable "agent" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+     │
+ 216 │           {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+     │            ~
+     │
+     └─ test/integration/llm_caching_integration_test.exs:216:12: Normandy.Integration.LLMCachingIntegrationTest."test Cache performance comparison requests complete with caching enabled"/1
+
+     warning: variable "agent" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+     │
+ 232 │           {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+     │            ~
+     │
+     └─ test/integration/llm_caching_integration_test.exs:232:12: Normandy.Integration.LLMCachingIntegrationTest."test Cache performance comparison requests complete with caching disabled"/1
+
+..................................................................    warning: unused alias BaseAgent
+    │
+  4 │   alias Normandy.Agents.BaseAgent
+    │   ~
+    │
+    └─ test/normandy_integration/multi_agent_test.exs:4:3
+
+......................................................................
+18:12:14.500 [debug] normandy agent compaction
+.............
+18:12:14.510 [info] Retry succeeded on attempt 2
+.
+18:12:14.510 [info] normandy llm call stop
+.
+18:12:14.510 [info] normandy agent run stop
+.
+18:12:14.510 [info] normandy agent run start
+.
+18:12:14.510 [info] normandy llm call start
+
+18:12:14.510 [error] normandy llm call exception
+
+18:12:14.510 [error] normandy agent exception
+
+18:12:14.510 [info] normandy agent run start
+
+18:12:14.510 [info] normandy llm call start
+
+18:12:14.510 [warning] Circuit breaker threshold reached (2/2), opening circuit
+
+18:12:14.510 [error] normandy llm call exception
+
+18:12:14.511 [error] normandy agent exception
+
+18:12:14.511 [info] normandy agent run start
+
+18:12:14.511 [info] normandy llm call start
+
+18:12:14.511 [error] normandy llm call exception
+
+18:12:14.511 [error] normandy agent exception
+
+18:12:14.511 [info] normandy agent run start
+
+18:12:14.511 [info] normandy llm call start
+
+18:12:14.514 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Resilience.CircuitBreaker, :execute_and_record, 2, [file: ~c"lib/normandy/resilience/circuit_breaker.ex", line: 320]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, ...}, ...]}. Retrying in 9ms...
+.........
+18:12:14.524 [info] Retry succeeded on attempt 2
+
+18:12:14.524 [info] normandy llm call stop
+.
+18:12:14.524 [info] normandy agent run stop
+
+18:12:14.524 [info] normandy agent run start
+
+18:12:14.524 [info] normandy llm call start
+
+18:12:14.527 [warning] Retry attempt 1/3 failed: {:exception, %RuntimeError{message: "Temporary network error"}, [{Normandy.Agents.Model.Normandy.Agents.BaseAgentResilienceTest.RetryableClient, :converse, 7, [file: ~c"test/agents/base_agent_resilience_test.exs", line: 26, error_info: %{module: Exception}]}, {Normandy.Agents.BaseAgent, :"-call_llm_with_resilience/4-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 294]}, {Normandy.Resilience.Retry, :execute_with_timeout, 1, [file: ~c"lib/normandy/resilience/retry.ex", line: 190]}, {Normandy.Resilience.Retry, :do_retry, 4, [file: ~c"lib/normandy/resilience/retry.ex", line: 146]}, {Normandy.Agents.BaseAgent, :call_llm_with_resilience, 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 343]}, {Normandy.Agents.BaseAgent, :"-call_turn_llm/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 563]}, {Normandy.Agents.BaseAgent, :"-with_llm_call_span/3-fun-0-", 3, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1222]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.Turn.Driver, :run, 4, [file: ~c"lib/normandy/agents/turn/driver.ex", line: 58]}, {Normandy.Agents.BaseAgent, :run_turn, 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 491]}, {Normandy.Agents.BaseAgent, :"-run/2-fun-0-", 4, [file: ~c"lib/normandy/agents/base_agent.ex", line: 366]}, {Normandy.Agents.BaseAgent, :"-with_agent_run_span/3-fun-0-", 2, [file: ~c"lib/normandy/agents/base_agent.ex", line: 1188]}, {:telemetry, :span, 3, [file: ~c"/Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl", line: 359]}, {Normandy.Agents.BaseAgentResilienceTest, :"test retry integration uses custom retry options", ...}, ...]}. Retrying in 9ms...
+
+18:12:14.527 [info] normandy tool execute stop
+
+18:12:14.527 [info] normandy tool execute start
+....................
+18:12:14.533 [info] The function passed as a handler with ID "recovery-telemetry-test-7107" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+..................
+18:12:14.536 [info] Retry succeeded on attempt 2
+
+18:12:14.536 [info] normandy llm call stop
+
+18:12:14.536 [info] normandy agent run stop
+.
+18:12:14.536 [info] normandy agent run start
+
+18:12:14.536 [info] normandy llm call start
+
+18:12:14.536 [warning] Circuit breaker threshold reached (1/1), opening circuit
+
+18:12:14.536 [error] normandy llm call exception
+
+18:12:14.536 [error] normandy agent exception
+...........
+18:12:14.557 [info] The function passed as a handler with ID "test-handler" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+18:12:14.557 [info] normandy agent run start
+.
+18:12:14.557 [info] normandy llm call start
+.
+18:12:14.557 [info] normandy llm call stop
+.
+18:12:14.557 [info] normandy agent run stop
+.
+18:12:14.558 [info] normandy agent run start
+.
+18:12:14.558 [info] normandy llm call start
+....
+18:12:14.558 [info] normandy llm call stop
+.
+18:12:14.558 [info] normandy agent run stop
+......
+18:12:14.561 [warning] Retry attempt 1/2 failed: :network_error. Retrying in 94ms...
+.
+18:12:14.571 [info] normandy agent run start
+.
+18:12:14.571 [info] normandy llm call start
+.
+18:12:14.571 [info] normandy llm call stop
+.
+18:12:14.571 [info] normandy agent run stop
+.
+18:12:14.571 [info] normandy agent run start
+.
+18:12:14.571 [info] normandy llm call start
+
+18:12:14.571 [info] normandy llm call stop
+
+18:12:14.571 [info] normandy agent run stop
+
+18:12:14.571 [info] normandy agent run start
+
+18:12:14.571 [info] normandy llm call start
+
+18:12:14.571 [info] normandy llm call stop
+.
+18:12:14.571 [info] normandy agent run stop
+
+18:12:14.571 [info] normandy agent run start
+.
+18:12:14.571 [info] normandy llm call start
+
+18:12:14.571 [info] normandy llm call stop
+
+18:12:14.571 [info] normandy agent run stop
+.
+18:12:14.571 [info] normandy agent run start
+
+18:12:14.571 [info] normandy llm call start
+.
+18:12:14.571 [info] normandy llm call stop
+
+18:12:14.571 [info] normandy agent run stop
+
+18:12:14.571 [info] normandy agent run start
+
+18:12:14.571 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.572 [info] normandy agent run stop
+
+18:12:14.572 [info] normandy agent run start
+
+18:12:14.572 [info] normandy llm call start
+
+18:12:14.572 [info] normandy llm call stop
+
+18:12:14.573 [info] normandy agent run stop
+
+18:12:14.573 [info] normandy agent run start
+.
+18:12:14.573 [info] normandy agent run start
+
+18:12:14.573 [info] normandy llm call start
+
+18:12:14.573 [info] normandy llm call start
+
+18:12:14.573 [info] normandy llm call stop
+.
+18:12:14.574 [info] normandy agent run stop
+
+18:12:14.574 [info] normandy llm call stop
+
+18:12:14.574 [info] normandy agent run stop
+............
+18:12:14.585 [info] Processing chunk 4
+
+18:12:14.585 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.585 [info] normandy agent run start
+.
+18:12:14.585 [info] normandy llm call start
+
+18:12:14.585 [info] normandy llm call stop
+.
+18:12:14.585 [info] normandy agent run stop
+
+18:12:14.585 [info] Batch processing complete
+
+18:12:14.585 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.585 [info] normandy agent run start
+
+18:12:14.585 [info] normandy llm call start
+
+18:12:14.585 [info] normandy llm call stop
+
+18:12:14.585 [info] normandy agent run stop
+
+18:12:14.585 [info] Batch processing complete
+
+18:12:14.585 [info] Starting batch processing: 2 items with concurrency 10
+
+18:12:14.585 [info] normandy agent run start
+
+18:12:14.585 [info] normandy agent run start
+
+18:12:14.585 [info] normandy llm call start
+
+18:12:14.585 [info] normandy llm call start
+    warning: variable "current_step_input" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │       step :first do
+    │       ~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:37: Normandy.DSL.WorkflowTest.SequentialWorkflow (module)
+
+    warning: variable "current_step_input" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+    │
+ 42 │       step :second do
+    │       ~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:42: Normandy.DSL.WorkflowTest.SequentialWorkflow (module)
+
+.......
+18:12:14.623 [info] normandy agent run start
+
+18:12:14.623 [info] normandy llm call start
+
+18:12:14.623 [info] normandy llm call stop
+
+18:12:14.623 [info] normandy agent run stop
+..
+18:12:14.628 [info] normandy tool execute stop
+
+18:12:14.628 [debug] normandy agent iteration
+
+18:12:14.628 [info] normandy llm call start
+
+18:12:14.629 [info] normandy llm call stop
+.
+18:12:14.629 [debug] normandy agent iteration
+
+18:12:14.629 [info] normandy llm call start
+
+18:12:14.630 [info] normandy llm call stop
+
+18:12:14.630 [info] normandy tool execute start
+
+18:12:14.630 [info] normandy tool execute start
+
+18:12:14.630 [info] normandy tool execute start
+    warning: this clause cannot match because a previous clause at line 33 matches the same pattern as this clause
+    │
+ 33 │   defmodule SequentialWorkflow do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:33
+
+    warning: variable "current_step_input" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 54 │       step :gather do
+    │       ~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:54: Normandy.DSL.WorkflowTest.ParallelWorkflow (module)
+
+
+18:12:14.634 [info] normandy agent run start
+    warning: variable "current_step_input" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+    │
+ 59 │       parallel :process do
+    │       ~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:59: Normandy.DSL.WorkflowTest.ParallelWorkflow (module)
+
+
+18:12:14.634 [info] normandy llm call start
+
+18:12:14.634 [info] normandy llm call stop
+.
+18:12:14.634 [info] normandy agent run stop
+
+18:12:14.637 [info] normandy agent run start
+
+18:12:14.637 [info] normandy llm call start
+
+18:12:14.637 [info] Circuit breaker timeout elapsed, transitioning to half-open
+.
+18:12:14.637 [info] Circuit breaker recovered, transitioning to closed
+
+18:12:14.637 [info] normandy llm call stop
+
+18:12:14.637 [info] normandy agent run stop
+
+18:12:14.637 [info] normandy agent run start
+
+18:12:14.637 [info] normandy llm call start
+
+18:12:14.639 [error] normandy llm call exception
+
+18:12:14.639 [error] normandy agent exception
+
+18:12:14.640 [info] normandy agent run start
+
+18:12:14.640 [info] normandy llm call start
+.
+18:12:14.640 [error] normandy llm call exception
+.
+18:12:14.640 [error] normandy agent exception
+
+18:12:14.640 [info] normandy agent run start
+
+18:12:14.640 [info] normandy llm call start
+
+18:12:14.640 [warning] Circuit breaker threshold reached (3/3), opening circuit
+
+18:12:14.640 [error] normandy llm call exception
+
+18:12:14.640 [error] normandy agent exception
+
+18:12:14.640 [info] normandy agent run start
+
+18:12:14.640 [info] normandy llm call start
+
+18:12:14.640 [error] normandy llm call exception
+
+18:12:14.640 [error] normandy agent exception
+
+18:12:14.640 [info] normandy agent run start
+
+18:12:14.640 [info] normandy llm call start
+
+18:12:14.640 [info] normandy llm call stop
+
+18:12:14.640 [info] normandy agent run stop
+...................
+18:12:14.656 [warning] Retry attempt 1/3 failed: :network_error. Retrying in 100ms...
+..    warning: this clause cannot match because a previous clause at line 50 matches the same pattern as this clause
+    │
+ 50 │   defmodule ParallelWorkflow do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:50
+
+    warning: variable "current_step_input" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 72 │       race :fastest do
+    │       ~~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:72: Normandy.DSL.WorkflowTest.RaceWorkflow (module)
+
+.......
+18:12:14.680 [info] normandy tool execute stop
+
+18:12:14.680 [info] normandy tool execute stop
+
+18:12:14.680 [info] normandy tool execute stop
+
+18:12:14.680 [debug] normandy agent iteration
+
+18:12:14.680 [info] normandy llm call start
+
+18:12:14.680 [info] normandy llm call stop
+.
+18:12:14.680 [debug] normandy agent iteration
+.
+18:12:14.680 [info] normandy llm call start
+
+18:12:14.680 [info] normandy llm call stop
+
+18:12:14.680 [info] normandy tool execute start
+
+18:12:14.680 [info] normandy tool execute stop
+.
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+.
+18:12:14.681 [info] normandy tool execute start
+.
+18:12:14.681 [info] normandy tool execute stop
+
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+
+18:12:14.681 [info] normandy tool execute start
+
+18:12:14.681 [info] normandy tool execute stop
+
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.681 [info] normandy llm call stop
+.
+18:12:14.681 [debug] normandy agent iteration
+
+18:12:14.681 [info] normandy llm call start
+
+18:12:14.682 [info] normandy llm call stop
+
+18:12:14.682 [info] normandy tool execute start
+.
+18:12:14.686 [info] Starting batch processing: 10 items with concurrency 10
+.....
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] normandy llm call start
+
+18:12:14.686 [info] normandy llm call stop
+
+18:12:14.686 [info] normandy agent run stop
+
+18:12:14.686 [info] Batch processing complete
+
+18:12:14.686 [info] Starting batch processing: 3 items with concurrency 10
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.686 [info] normandy agent run start
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Starting batch processing: 0 items with concurrency 10
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Starting batch processing: 2 items with concurrency 10
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [error] normandy llm call exception
+
+18:12:14.687 [error] normandy agent exception
+    warning: this clause cannot match because a previous clause at line 68 matches the same pattern as this clause
+    │
+ 68 │   defmodule RaceWorkflow do
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ test/dsl/workflow_test.exs:68
+
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [error] normandy llm call exception
+
+18:12:14.687 [error] normandy agent exception
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Starting batch processing: 3 items with concurrency 10
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Processing 5 items in chunks of 1
+
+18:12:14.687 [info] Processing chunk 1
+
+18:12:14.687 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Processing chunk 2
+
+18:12:14.687 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.687 [info] normandy agent run start
+
+18:12:14.687 [info] normandy llm call start
+
+18:12:14.687 [info] normandy llm call stop
+
+18:12:14.687 [info] normandy agent run stop
+
+18:12:14.687 [info] Batch processing complete
+
+18:12:14.687 [info] Processing chunk 3
+
+18:12:14.687 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.687 [info] normandy agent run start
+.
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] Batch processing complete
+
+18:12:14.690 [info] Processing chunk 4
+
+18:12:14.690 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] Batch processing complete
+
+18:12:14.690 [info] Processing chunk 5
+
+18:12:14.690 [info] Starting batch processing: 1 items with concurrency 10
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] Batch processing complete
+
+18:12:14.690 [info] Processing 100 items in chunks of 25
+
+18:12:14.690 [info] Processing chunk 1
+
+18:12:14.690 [info] Starting batch processing: 25 items with concurrency 5
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call start
+     warning: variable "current_step_input" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+     │
+ 148 │       step :analyze do
+     │       ~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:148: NormandyIntegration.DSLComprehensiveTest.ResearchWorkflow (module)
+
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+     warning: variable "current_step_input" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+     │
+ 153 │       step :summarize do
+     │       ~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:153: NormandyIntegration.DSLComprehensiveTest.ResearchWorkflow (module)
+
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy agent run stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy llm call start
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.690 [info] normandy llm call stop
+
+18:12:14.690 [info] normandy agent run start
+
+18:12:14.692 [info] normandy agent run stop
+
+18:12:14.692 [info] normandy agent run stop
+
+18:12:14.692 [info] normandy llm call start
+
+18:12:14.692 [info] normandy llm call stop
+
+18:12:14.692 [info] normandy llm call stop
+
+18:12:14.692 [info] normandy agent run stop
+
+18:12:14.692 [info] normandy agent run stop
+
+18:12:14.692 [info] normandy agent run start
+
+18:12:14.692 [info] normandy llm call start
+
+18:12:14.692 [info] normandy llm call stop
+
+18:12:14.692 [info] normandy agent run start
+
+18:12:14.692 [info] normandy agent run stop
+
+18:12:14.692 [info] normandy llm call start
+
+18:12:14.692 [info] normandy llm call start
+
+18:12:14.692 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] Batch processing complete
+
+18:12:14.693 [info] Processing chunk 2
+
+18:12:14.693 [info] Starting batch processing: 25 items with concurrency 5
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call start
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy llm call stop
+
+18:12:14.693 [info] normandy agent run start
+
+18:12:14.693 [info] normandy agent run stop
+
+18:12:14.693 [info] normandy agent run start
+..............................     warning: this clause cannot match because a previous clause at line 139 matches the same pattern as this clause
+     │
+ 139 │   defmodule ResearchWorkflow do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:139
+
+..............     warning: this clause cannot match because a previous clause at line 160 matches the same pattern as this clause
+     │
+ 160 │   defmodule ParallelAnalysisWorkflow do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:160
+
+     warning: this clause cannot match because a previous clause at line 173 matches the same pattern as this clause
+     │
+ 173 │   defmodule RaceWorkflow do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:173
+
+     warning: variable "current_step_input" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)
+     │
+ 194 │       step :process do
+     │       ~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:194: NormandyIntegration.DSLComprehensiveTest.ConditionalWorkflow (module)
+
+......     warning: this clause cannot match because a previous clause at line 185 matches the same pattern as this clause
+     │
+ 185 │   defmodule ConditionalWorkflow do
+     │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ test/normandy_integration/dsl_comprehensive_test.exs:185
+
+...........................warning: NormandyTest.SchemaVirtualFieldsTest.MultipleVirtual.compute_value/1 is undefined or private
+└─ test/schema_virtual_fields_test.exs: NormandyTest.SchemaVirtualFieldsTest.MultipleVirtual.__schema__/1
+
+warning: NormandyTest.SchemaVirtualFieldsTest.ComputedFields.compute_total/1 is undefined or private
+└─ test/schema_virtual_fields_test.exs: NormandyTest.SchemaVirtualFieldsTest.ComputedFields.__schema__/1
+
+    warning: expected a 1-arity function on call:
+
+        transform.(value)
+
+    but got type:
+
+        nil
+
+    where "transform" was given the type:
+
+        # type: nil
+        # from: test/dsl/workflow_transform_integration_test.exs:82:15
+        transform = nil
+
+    typing violation found at:
+    │
+ 85 │     result = if transform && is_function(transform, 1), do: transform.(value), else: value
+    │                                                                      ~
+    │
+    └─ test/dsl/workflow_transform_integration_test.exs:85:70: Normandy.DSL.WorkflowTransformIntegrationTest."test maybe_transform returns value unchanged when transform is nil"/1
+
+warning: NormandyTest.SchemaVirtualFieldsTest.ComputedIncludedInSchema.compute_full_name/1 is undefined or private
+└─ test/schema_virtual_fields_test.exs: NormandyTest.SchemaVirtualFieldsTest.ComputedIncludedInSchema.__schema__/1
+
+..........................
+18:12:15.260 [info] Starting Horde.RegistryImpl with name :horde_session_registry_9227
+
+18:12:15.292 [info] Starting Horde.DynamicSupervisorImpl with name :t2_3854
+.........
+18:12:15.315 [info] Starting Horde.RegistryImpl with name :horde_session_registry_17032
+..
+18:12:15.317 [info] normandy llm call start
+.
+18:12:15.317 [info] normandy llm call stop
+
+18:12:15.319 [info] The function passed as a handler with ID "test-accumulate-#Reference<0.344690526.1746403336.65246>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+18:12:15.319 [info] normandy llm call start
+
+18:12:15.319 [info] normandy llm call stop
+
+18:12:15.320 [info] normandy llm call start
+.
+18:12:15.320 [info] normandy llm call stop
+.
+18:12:15.320 [info] normandy llm call start
+
+18:12:15.320 [info] normandy llm call stop
+.
+18:12:15.320 [info] normandy llm call start
+.
+18:12:15.320 [info] normandy llm call stop
+.
+18:12:15.320 [info] normandy llm call start
+.
+18:12:15.320 [info] normandy llm call stop
+.
+18:12:15.320 [info] normandy llm call start
+
+18:12:15.320 [info] normandy llm call stop
+.
+18:12:15.321 [info] normandy llm call start
+
+18:12:15.321 [info] normandy llm call stop
+.
+18:12:15.321 [info] normandy llm call start
+
+18:12:15.321 [info] normandy llm call stop
+.
+18:12:15.321 [info] The function passed as a handler with ID "test-incremental-#Reference<0.344690526.1746403338.64307>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+18:12:15.321 [info] normandy llm call start
+
+18:12:15.321 [info] normandy llm call stop
+..
+18:12:15.321 [info] The function passed as a handler with ID "admit-telemetry-17224" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+....
+18:12:15.321 [info] The function passed as a handler with ID "admit-telemetry-9355" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+.
+18:12:15.321 [info] The function passed as a handler with ID "admit-telemetry-9419" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+...
+18:12:15.321 [info] The function passed as a handler with ID "admit-telemetry-4046" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+..
+18:12:15.321 [info] normandy agent run start
+
+18:12:15.321 [info] normandy llm call start
+
+18:12:15.322 [info] normandy llm call stop
+
+18:12:15.322 [info] normandy agent run stop
+.
+18:12:15.372 [info] normandy agent run start
+
+18:12:15.372 [debug] normandy agent iteration
+
+18:12:15.372 [info] normandy llm call start
+
+18:12:15.372 [info] normandy llm call stop
+
+18:12:15.372 [info] normandy tool execute start
+
+18:12:15.372 [info] normandy tool execute stop
+
+18:12:15.372 [debug] normandy agent iteration
+
+18:12:15.372 [info] normandy llm call start
+
+18:12:15.372 [info] normandy llm call stop
+
+18:12:15.372 [info] normandy agent run stop
+............
+18:12:17.923 [info] normandy tool execute start
+
+18:12:17.923 [info] normandy tool execute stop
+.
+18:12:17.985 [info] Starting Horde.RegistryImpl with name :horde_session_registry_9358
+......
+18:12:18.288 [info] normandy tool execute start
+
+18:12:18.288 [info] normandy tool execute stop
+
+18:12:18.288 [info] normandy tool execute start
+
+18:12:18.288 [info] normandy tool execute stop
+.
+18:12:18.288 [info] normandy tool execute start
+
+18:12:18.288 [info] normandy tool execute stop
+.
+18:12:18.288 [info] normandy tool execute start
+
+18:12:18.288 [info] normandy tool execute stop
+.
+18:12:18.440 [info] normandy tool execute start
+
+18:12:18.440 [info] normandy tool execute stop
+
+18:12:18.440 [info] normandy tool execute start
+
+18:12:18.440 [info] normandy tool execute stop
+
+18:12:18.557 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+18:12:18.557 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+
+18:12:18.557 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+18:12:18.557 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+....
+18:12:18.694 [info] normandy tool execute start
+
+18:12:18.694 [info] normandy tool execute stop
+..
+18:12:18.700 [info] Starting Horde.DynamicSupervisorImpl with name :hsup_10702
+
+18:12:18.700 [info] Starting Horde.RegistryImpl with name :horde_session_registry_14411
+..
+18:12:18.701 [info] normandy agent run start
+
+18:12:18.701 [debug] normandy agent iteration
+
+18:12:18.701 [info] normandy llm call start
+
+18:12:18.701 [info] normandy llm call stop
+
+18:12:18.701 [info] normandy tool execute start
+
+18:12:18.701 [info] normandy tool execute stop
+
+18:12:18.701 [info] normandy llm call start
+
+18:12:18.701 [info] normandy llm call stop
+
+18:12:18.702 [info] normandy agent run stop
+..
+18:12:18.702 [info] normandy agent run start
+
+18:12:18.702 [info] normandy llm call start
+
+18:12:18.702 [info] normandy llm call stop
+
+18:12:18.702 [info] normandy agent run stop
+.
+18:12:18.702 [info] normandy agent run start
+
+18:12:18.702 [error] normandy agent exception
+.
+18:12:18.702 [info] normandy agent run start
+
+18:12:18.702 [info] normandy llm call start
+
+18:12:18.702 [info] normandy llm call stop
+
+18:12:18.702 [info] normandy agent run stop
+.
+18:12:18.702 [info] The function passed as a handler with ID "guardrail-test-14667" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+18:12:18.702 [info] normandy agent run start
+
+18:12:18.702 [error] normandy agent exception
+.
+18:12:18.702 [info] normandy llm call start
+
+18:12:18.702 [info] normandy llm call stop
+.
+18:12:18.703 [info] normandy agent run start
+.
+18:12:18.703 [error] normandy agent exception
+.
+18:12:18.703 [info] normandy agent run start
+
+18:12:18.703 [info] normandy llm call start
+
+18:12:18.703 [info] normandy llm call stop
+
+18:12:18.703 [info] normandy agent run stop
+..
+18:12:18.703 [info] normandy agent run start
+
+18:12:18.703 [info] normandy llm call start
+
+18:12:18.703 [info] normandy llm call stop
+.
+18:12:18.703 [info] normandy agent run stop
+.
+18:12:18.703 [info] Starting Horde.RegistryImpl with name :horde_session_registry_14731
+.
+18:12:18.703 [info] Starting Horde.RegistryImpl with name :horde_session_registry_6538
+.
+18:12:18.704 [info] Starting Horde.RegistryImpl with name :horde_session_registry_14923
+.
+18:12:18.704 [info] Starting Horde.RegistryImpl with name :horde_session_registry_6730
+..
+18:12:18.704 [info] normandy tool execute start
+
+18:12:18.704 [info] normandy tool execute stop
+.....
+18:12:19.217 [warning] AgentProcess b93ff7c8-af03-465b-b108-cf03712bed62: update_agent memory mutation ignored in :server mode (SessionStore is authoritative)
+.
+18:12:19.217 [debug] AgentProcess ed1e3b67-eb0e-41f0-a50e-4cc2b801cef0 ignoring unexpected message: {:totally_unexpected, :stray}
+......
+18:12:19.218 [debug] AgentProcess 02d6eda7-f13f-4278-862a-970322b379b5 ignoring unexpected message: {:totally_unexpected, :stray}
+.
+Finished in 5.6 seconds (1.6s async, 3.9s sync)
+71 doctests, 26 properties, 1330 tests, 0 failures (126 excluded)
