@@ -2,6 +2,16 @@ defmodule Normandy.LLM.JsonDeserializer do
   @moduledoc """
   JSON deserialization helper with automatic error recovery.
 
+  This module is a thin facade over five focused units under `Normandy.LLM.Json.*`:
+
+  | Unit | Responsibility |
+  |------|----------------|
+  | `Normandy.LLM.Json.Scanner` | Truncated top-level-string recovery: scans raw bytes to find the safe truncation point and produces a closed-string fragment with balancing closers |
+  | `Normandy.LLM.Json.ContentCleaner` | Markdown fence-strip, whitespace trim, and balanced-brace prose extraction via `extract_balanced/1` — isolates the first well-formed JSON object embedded in prose |
+  | `Normandy.LLM.Json.Decoder` | Adapter decode with optional truncated-string recovery (delegates to `Scanner`) and a `:max_input_bytes` size guard that short-circuits before any parsing attempt |
+  | `Normandy.LLM.Json.SchemaBinder` | Normalises decoded maps, casts and validates against the target schema, and unwraps tool-use `"arguments"` envelopes |
+  | `Normandy.LLM.Json.RetryFeedback` | Builds an adapter-encoded corrective retry prompt from the parse error and augments the message history before the next LLM call |
+
   This module provides robust JSON deserialization with:
   - Automatic retry on JSON parse errors
   - Error feedback to LLM via system prompt augmentation
@@ -56,12 +66,34 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   ## Configuration
 
-  Options:
+  ### Call-site options
+
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:tools` - Tool schemas to include in retry
-  - `:adapter` - JSON adapter module (default: from :normandy app config)
+  - `:adapter` - JSON adapter module (default: from `:normandy` app config)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
     string truncation (default: `false`). See `parse_and_validate/3`.
+  - `:max_input_bytes` - Maximum byte size of the raw content accepted before
+    any parsing is attempted (default: `10_000_000`). When the content exceeds
+    this limit, `Decoder.decode/3` returns
+    `{:error, {:input_too_large, actual_size, limit}}` immediately, skipping
+    all JSON parsing and schema binding.
+
+  ### Application config
+
+  - `:on_parse_failure` - Controls the behaviour of `Normandy.LLM.ClaudioAdapter`
+    when JSON deserialization fails after all retries are exhausted.
+    Configured under the `:normandy` application key:
+
+        config :normandy, :on_parse_failure, :fallback   # default
+
+    Accepted values:
+
+    - `:fallback` (default) — Returns the raw LLM text as-is, emits a
+      `Logger.warning` describing the failure, and fires
+      `[:normandy, :json_deserializer, :fallback]` telemetry.
+    - `:error` — Returns `{:error, reason}` directly to the caller; no
+      fallback text is produced.
   """
 
   alias Normandy.LLM.Json.ContentCleaner
