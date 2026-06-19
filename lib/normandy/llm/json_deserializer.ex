@@ -64,11 +64,10 @@ defmodule Normandy.LLM.JsonDeserializer do
     string truncation (default: `false`). See `parse_and_validate/3`.
   """
 
-  alias Normandy.Components.Message
   alias Normandy.LLM.Json.ContentCleaner
   alias Normandy.LLM.Json.Decoder
+  alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.LLM.Json.SchemaBinder
-  alias Normandy.Validate
 
   @default_max_retries 2
 
@@ -264,10 +263,10 @@ defmodule Normandy.LLM.JsonDeserializer do
          max_retries
        ) do
     # Build error feedback message
-    error_message = build_error_feedback(error, failed_content, schema)
+    error_message = RetryFeedback.build(error, failed_content, schema)
 
     # Augment system prompt with error feedback
-    augmented_messages = augment_messages_with_error(messages, error_message)
+    augmented_messages = RetryFeedback.augment_messages(messages, error_message)
 
     # Call LLM again
     tools = Keyword.get(opts, :tools, [])
@@ -318,152 +317,6 @@ defmodule Normandy.LLM.JsonDeserializer do
       _ ->
         {:error, {:unexpected_parse_result, content}}
     end
-  end
-
-  # Build error feedback message for LLM
-  defp build_error_feedback(
-         {:validation_error, changeset, content},
-         _failed_content,
-         schema
-       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
-
-    # Extract detailed field-level errors using traverse_errors
-    error_details =
-      Validate.traverse_errors(changeset, fn {msg, opts} ->
-        # Format error message with interpolated values
-        Enum.reduce(opts, msg, fn {key, value}, acc ->
-          String.replace(acc, "%{#{key}}", to_string(value))
-        end)
-      end)
-      |> format_validation_errors()
-
-    """
-    # JSON VALIDATION ERROR
-
-    Your previous response was valid JSON, but failed validation.
-
-    ## Validation Errors
-    #{error_details}
-
-    ## Your Previous Response
-    ```json
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
-    ```
-
-    ## Required Schema
-    ```json
-    #{schema_json}
-    ```
-
-    ## Instructions for Correction
-
-    1. You MUST provide ALL required fields
-    2. Ensure field types match the schema (string, integer, etc.)
-    3. Ensure field values meet validation requirements
-    4. Do NOT wrap your JSON in markdown code blocks
-    5. Do NOT add any text before or after the JSON
-
-    Please provide a corrected JSON response addressing all validation errors above.
-    """
-  end
-
-  defp build_error_feedback(
-         {:json_parse_error, reason, content},
-         _failed_content,
-         schema
-       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
-
-    """
-    # JSON DESERIALIZATION ERROR
-
-    Your previous response could not be parsed as valid JSON.
-
-    ## Error Details
-    #{format_json_error(reason)}
-
-    ## Your Previous Response
-    ```
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
-    ```
-
-    ## Required Schema
-    ```json
-    #{schema_json}
-    ```
-
-    ## Instructions for Correction
-
-    1. You MUST respond with ONLY valid JSON
-    2. Do NOT wrap your JSON in markdown code blocks
-    3. Do NOT add any text before or after the JSON
-    4. Ensure all field names exactly match the schema
-    5. Ensure proper JSON escaping (quotes, newlines, etc.)
-    6. Do NOT nest the response in extra JSON objects
-
-    Example of CORRECT response:
-    {"chat_message": "This is my response"}
-
-    Example of INCORRECT responses:
-    - {"chat_message": "{\\"chat_message\\": \\"nested\\"}"}  ❌ Double nesting
-    - ```json\\n{"chat_message": "response"}\\n```  ❌ Code blocks
-    - Some text {"chat_message": "response"}  ❌ Extra text
-
-    Please provide a corrected JSON response now.
-    """
-  end
-
-  defp build_error_feedback(reason, content, _schema) do
-    """
-    # RESPONSE FORMAT ERROR
-
-    Error: #{inspect(reason)}
-
-    Your previous response:
-    ```
-    #{String.slice(content, 0, 500)}
-    ```
-
-    Please provide a valid JSON response.
-    """
-  end
-
-  # Format validation errors for LLM feedback
-  defp format_validation_errors(error_map) when is_map(error_map) do
-    error_map
-    |> Enum.map(fn {field, errors} ->
-      formatted_errors = errors |> Enum.map(&"  - #{&1}") |> Enum.join("\n")
-      "• Field `#{field}`:\n#{formatted_errors}"
-    end)
-    |> Enum.join("\n\n")
-  end
-
-  # Format JSON error for human readability
-  defp format_json_error({:invalid, reason, position}) do
-    "Invalid JSON at position #{position}: #{reason}"
-  end
-
-  defp format_json_error({:invalid, reason}) do
-    "Invalid JSON: #{reason}"
-  end
-
-  defp format_json_error(reason) do
-    "JSON parsing failed: #{inspect(reason)}"
-  end
-
-  # Augment messages with error feedback
-  defp augment_messages_with_error(messages, error_message) do
-    # Find system message and append error feedback
-    Enum.map(messages, fn msg ->
-      case msg do
-        %Message{role: "system", content: content} = message ->
-          %Message{message | content: content <> "\n\n" <> error_message}
-
-        other ->
-          other
-      end
-    end)
   end
 
   # Extract content from response struct
