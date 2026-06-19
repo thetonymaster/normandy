@@ -1,0 +1,172 @@
+
+22:07:36.076 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+22:07:36.080 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+
+========================================================================
+  1. non-streaming, MaxLength(limit: 500, field: :chat_message) — passes
+========================================================================
+
+22:07:36.132 [info] The function passed as a handler with ID "smoke-scenario-1-#Reference<0.3334311019.172752899.115618>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:36.132 [info] normandy agent run start
+
+22:07:36.135 [info] normandy llm call start
+
+22:07:37.206 [info] normandy llm call stop
+response text: "Hello, how are you?"
+
+22:07:37.208 [info] normandy agent run stop
+telemetry events received: 0
+
+========================================================================
+  2. non-streaming, MaxLength(limit: 5, field: :chat_message) — violation
+========================================================================
+
+22:07:37.208 [info] The function passed as a handler with ID "smoke-scenario-2-#Reference<0.3334311019.172752899.116180>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:37.208 [info] normandy agent run start
+
+22:07:37.208 [info] normandy llm call start
+
+22:07:38.200 [info] normandy llm call stop
+warning: Agent output guardrail violation: Validation failed:
+  - chat_message: must be at most 5 characters
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:1718: Normandy.Agents.BaseAgent.run_output_guardrails/2
+  (normandy 1.0.0) lib/normandy/agents/turn/driver.ex:81: Normandy.Agents.Turn.Driver.run/4
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:491: Normandy.Agents.BaseAgent.run_turn/2
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:366: anonymous fn/4 in Normandy.Agents.BaseAgent.run/2
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:1188: anonymous fn/2 in Normandy.Agents.BaseAgent.with_agent_run_span/3
+  (telemetry 1.4.1) /Users/antonio/personal/normandy/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+
+response text: "Waves crash on the shore,\nSalt spray kisses weathered rocks,\nOcean's ancient song."
+
+22:07:38.203 [info] normandy agent run stop
+response length: 82 chars
+  telemetry: count=1 mode=nil streaming=nil
+telemetry events received: 1
+
+========================================================================
+  3. streaming :accumulate, MaxLength(limit: 2000) — no violation
+========================================================================
+
+22:07:38.204 [info] The function passed as a handler with ID "smoke-scenario-3-#Reference<0.3334311019.172752899.116280>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:38.204 [info] normandy llm call start
+
+22:07:38.920 [info] normandy llm call stop
+streamed text: "```json\n{\n  \"response\": \"Here's the count from 1 to 3:\",\n  \"count\": [1, 2, 3]\n}\n```"
+final response text: "```json\n{\n  \"response\": \"Here's the count from 1 to 3:\",\n  \"count\": [1, 2, 3]\n}\n```"
+guardrail_violations: []
+telemetry events received: 0
+
+========================================================================
+  4. streaming :accumulate, MaxLength(limit: 5) — violation, log-and-continue
+========================================================================
+
+22:07:38.922 [info] The function passed as a handler with ID "smoke-scenario-4-#Reference<0.3334311019.172752898.110244>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:38.922 [info] normandy llm call start
+warning: Agent streaming output guardrail violation: Validation failed:
+  - : must be at most 5 characters
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:1816: Normandy.Agents.BaseAgent.run_streaming_output_guardrails/3
+  (normandy 1.0.0) lib/normandy/agents/turn/driver.ex:78: Normandy.Agents.Turn.Driver.run/4
+  (normandy 1.0.0) lib/normandy/agents/base_agent.ex:716: Normandy.Agents.BaseAgent.run_stream_turn/3
+  verify/guardrails_live.exs:155: Smoke.scenario_4/0
+  verify/guardrails_live.exs:324: (file)
+  (elixir 1.19.5) src/elixir_compiler.erl:81: :elixir_compiler.dispatch/4
+
+
+22:07:40.222 [info] normandy llm call stop
+streamed text: "```json\n{\n  \"haiku\": \"Soft patter on leaves,\\nEarth drinks the silver water—\\nNew life awakens.\",\n  \"theme\": \"rain\",\n  \"structure\": {\n    \"line_1\": \"Soft patter on leaves (5 syllables)\",\n    \"line_2\": \"Earth drinks the silver water (7 syllables)\",\n    \"line_3\": \"New life awakens (5 syllables)\"\n  }\n}\n```"
+final text length: 304 chars
+callback :guardrail_violation payload: %{mode: :accumulate, violations: [%{message: "must be at most 5 characters", path: [], guard: Normandy.Guardrails.Builtins.MaxLength, constraint: :max_length, limit: 5}], stage: :output}
+response.guardrail_violations count: 1
+  telemetry: count=1 mode=:accumulate streaming=true
+telemetry events received: 1
+
+========================================================================
+  5. streaming :incremental, chunk=50, MaxLength(limit: 2000) — no violation
+========================================================================
+
+22:07:40.225 [info] The function passed as a handler with ID "smoke-scenario-5-#Reference<0.3334311019.172752899.116397>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:40.225 [info] normandy llm call start
+
+22:07:41.081 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:212)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+22:07:41.081 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+
+22:07:41.081 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+22:07:41.081 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+streamed text: "```json\n{\n  \"response\": \"Here's the count from 1 to 3:\",\n  \"count\": [1, 2, 3]\n}\n```"
+
+22:07:41.082 [info] normandy llm call stop
+final text: "```json\n{\n  \"response\": \"Here's the count from 1 to 3:\",\n  \"count\": [1, 2, 3]\n}\n```"
+guardrail_violations: []
+telemetry events received: 0
+
+========================================================================
+  6. streaming :incremental, chunk=20, MaxLength(limit: 10) — halts mid-stream
+========================================================================
+
+22:07:41.083 [info] The function passed as a handler with ID "smoke-scenario-6-#Reference<0.3334311019.172752899.116481>" is a local function.
+This means that it is either an anonymous function or a capture of a function without a module specified. That may cause a performance penalty when calling that handler. For more details see the note in `telemetry:attach/4` documentation.
+
+https://hexdocs.pm/telemetry/telemetry.html#attach/4
+
+22:07:41.083 [info] normandy llm call start
+
+22:07:44.043 [info] normandy llm call stop
+streamed text (117 chars): "```json\n{\n  \"story\": {\n    \"title\": \"The Lighthouse Keeper's Secret\",\n    \"narrative\": \"On a rocky island where waves"
+callback :guardrail_violation payload: %{mode: :incremental, violations: [%{message: "must be at most 10 characters", path: [], guard: Normandy.Guardrails.Builtins.MaxLength, constraint: :max_length, limit: 10}], stage: :output}
+text deltas received AFTER violation fired: 0
+response.guardrail_violations count: 1
+  telemetry: count=1 mode=:incremental streaming=true
+telemetry events received: 1
+  ok: incremental halt: no text deltas after violation fired
+  ok: incremental halt: violation recorded on response
+
+========================================================================
+  DONE
+========================================================================
+
+LIVE CALLS USED: 6
+    warning: unused alias ForbiddenSubstrings
+    │
+  6 │   alias Normandy.Guardrails.Builtins.{MaxLength, ForbiddenSubstrings}
+    │   ~
+    │
+    └─ verify/guardrails_live.exs:6:3
+
