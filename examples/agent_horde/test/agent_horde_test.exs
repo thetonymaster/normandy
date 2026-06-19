@@ -65,6 +65,30 @@ defmodule AgentHordeTest do
     end
   end
 
+  describe "FirecrawlScrape.parse/2" do
+    test "pulls markdown + title from nested body" do
+      body = %{"data" => %{"markdown" => "# Hi", "metadata" => %{"title" => "Hi Page"}}}
+
+      assert AgentHorde.Tools.FirecrawlScrape.parse("https://x.com", body) ==
+               %{url: "https://x.com", title: "Hi Page", markdown: "# Hi"}
+    end
+
+    test "returns empty strings for missing keys" do
+      assert AgentHorde.Tools.FirecrawlScrape.parse("https://x.com", %{}) ==
+               %{url: "https://x.com", title: "", markdown: ""}
+    end
+  end
+
+  @tag :live
+  test "FirecrawlScrape live run returns markdown" do
+    result =
+      Normandy.Tools.BaseTool.run(%AgentHorde.Tools.FirecrawlScrape{
+        url: "https://example.com"
+      })
+
+    assert {:ok, %{markdown: _}} = result
+  end
+
   @tag :live
   test "ExaSearch live run returns results" do
     result =
