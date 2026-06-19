@@ -38,7 +38,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 128,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 500, field: :chat_message}]
       })
 
@@ -62,7 +62,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 128,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 5, field: :chat_message}]
       })
 
@@ -88,7 +88,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 128,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 2000}]
         # :accumulate is default
       })
@@ -129,7 +129,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 128,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 5}]
       })
 
@@ -175,7 +175,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 128,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 2000}],
         output_guardrails_streaming_mode: :incremental,
         output_guardrails_chunk_size: 50
@@ -217,7 +217,7 @@ defmodule Smoke do
         client: client(),
         model: model(),
         temperature: 0.0,
-        max_tokens: 256,
+        max_tokens: 64,
         output_guardrails: [{MaxLength, limit: 10}],
         output_guardrails_streaming_mode: :incremental,
         output_guardrails_chunk_size: 20

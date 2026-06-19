@@ -5,6 +5,7 @@ Smoke.Support.start()
 
 alias Normandy.Coordination.AgentProcess
 
+# NOTE: production code must build config via BaseAgent.init/1; this raw struct intentionally sets output_schema/input_schema because it bypasses init's defaults.
 agent =
   %Normandy.Agents.BaseAgentConfig{
     client: Smoke.Support.client(),
