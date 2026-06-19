@@ -91,4 +91,17 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert match?(%ClaudioAdapter{api_key: "sk-secret"}, adapter)
     end
   end
+
+  describe "on_parse_failure policy" do
+    test "defaults to :fallback" do
+      assert :fallback = Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{})
+    end
+
+    test "honors a per-call override" do
+      assert :error =
+               Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{
+                 on_parse_failure: :error
+               })
+    end
+  end
 end

@@ -74,6 +74,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
     alias Normandy.Components.ContentBlock.Image, as: ImageBlock
     alias Normandy.Components.ContentBlock.Text, as: TextBlock
 
+    require Logger
+
     @doc """
     Legacy completion function (not used with Claudio).
     """
@@ -844,14 +846,37 @@ defmodule Normandy.LLM.ClaudioAdapter do
         {:ok, validated_schema} ->
           validated_schema
 
-        {:error, _reason} when is_binary(content) ->
-          # Fallback: treat as plain text if JSON parsing/validation fails after retries
-          # This handles cases where the LLM returns plain text instead of JSON
-          Map.put(schema, :chat_message, content)
+        {:error, reason} ->
+          case Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(context) do
+            :error ->
+              {:error, reason}
 
-        {:error, _reason} ->
-          # Unknown error, return schema unchanged
-          schema
+            :fallback when is_binary(content) ->
+              Logger.warning(
+                "JSON parse failed after retries; falling back to raw text. reason=#{inspect(reason)}"
+              )
+
+              :telemetry.execute(
+                [:normandy, :json_deserializer, :fallback],
+                %{count: 1},
+                %{reason: reason}
+              )
+
+              Map.put(schema, :chat_message, content)
+
+            :fallback ->
+              Logger.warning(
+                "JSON parse failed after retries; returning schema unchanged. reason=#{inspect(reason)}"
+              )
+
+              :telemetry.execute(
+                [:normandy, :json_deserializer, :fallback],
+                %{count: 1},
+                %{reason: reason}
+              )
+
+              schema
+          end
       end
     end
 
@@ -868,4 +893,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
       response_model
     end
   end
+
+  @doc false
+  def __on_parse_failure_policy__(context),
+    do:
+      Map.get(context, :on_parse_failure) ||
+        Application.get_env(:normandy, :on_parse_failure, :fallback)
 end
