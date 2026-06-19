@@ -21,6 +21,25 @@ defmodule Normandy.Agents.DispatchSplitTest do
     def run(tool), do: {:ok, "weather in #{tool.city}"}
   end
 
+  # Schema-based tool (has a generated validate/1) with required + enum constraints.
+  # execute/1's return value ("did <op>") is the only way to produce a non-error
+  # ToolResult, so observing it proves the tool ran; a validation deny produces a
+  # structurally different (denied) result, proving it did NOT run. (We assert on
+  # the returned ToolResult rather than a sent message because the Executor runs
+  # execute/1 in a separate Task process — a send(self(), ...) would never reach
+  # the test process.)
+  defmodule SchemaTool do
+    use Normandy.Tools.SchemaBaseTool
+
+    tool_schema "schema_tool", "enum + required constrained tool" do
+      field(:operation, :string, required: true, enum: ["add", "subtract"])
+    end
+
+    def execute(%__MODULE__{operation: op}) do
+      {:ok, "did #{op}"}
+    end
+  end
+
   defp config_with_tools(tools) do
     %{name: "test-agent", tool_registry: Registry.new(tools)}
   end
@@ -106,6 +125,56 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       assert {:execute, %FakeTool{city: "LA"}, %ToolCall{id: "c6"}} =
                Dispatch.classify(config, raw, Dispatch.default_pipeline())
+    end
+  end
+
+  describe "classify/3 input validation (schema-based tools)" do
+    test "malformed input (enum violation) → {:deny, validation error}, never classified to :execute" do
+      config = config_with_tools([%SchemaTool{}])
+      call = %ToolCall{id: "v1", name: "schema_tool", input: %{"operation" => "power"}}
+
+      assert {:deny, %ToolResult{tool_call_id: "v1", is_error: true} = result} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      assert result.output.denied == true
+      assert [%{constraint: :enum, path: [:operation]}] = result.output.validation_errors
+    end
+
+    test "missing required field → {:deny, validation error}" do
+      config = config_with_tools([%SchemaTool{}])
+      call = %ToolCall{id: "v2", name: "schema_tool", input: %{}}
+
+      assert {:deny, %ToolResult{tool_call_id: "v2", is_error: true} = result} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      assert [%{constraint: :required, path: [:operation]}] = result.output.validation_errors
+    end
+
+    test "valid input still classifies to {:execute, prepared, call}" do
+      config = config_with_tools([%SchemaTool{}])
+      call = %ToolCall{id: "v3", name: "schema_tool", input: %{"operation" => "add"}}
+
+      assert {:execute, %SchemaTool{operation: "add"}, %ToolCall{id: "v3"}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+    end
+
+    test "dispatch_one: malformed call never reaches execute/1 (result is the deny, not execute output)" do
+      config = config_with_tools([%SchemaTool{}])
+      call = %ToolCall{id: "v4", name: "schema_tool", input: %{"operation" => "power"}}
+
+      result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert %ToolResult{tool_call_id: "v4", is_error: true, output: %{denied: true}} = result
+      # execute/1 would have produced the string "did power"; a map proves it never ran.
+      refute result.output == "did power"
+    end
+
+    test "dispatch_one: valid call runs execute/1 (its return value is the result)" do
+      config = config_with_tools([%SchemaTool{}])
+      call = %ToolCall{id: "v5", name: "schema_tool", input: %{"operation" => "add"}}
+
+      assert %ToolResult{is_error: false, output: "did add"} =
+               Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
     end
   end
 

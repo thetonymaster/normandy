@@ -93,16 +93,55 @@ defmodule Normandy.Agents.Dispatch do
     if function_exported?(tool.__struct__, :prepare_input, 2) do
       tool.__struct__.prepare_input(tool, input)
     else
-      input_with_atom_keys =
-        Enum.reduce(input, %{}, fn {key, value}, acc ->
-          case normalize_tool_field_key(tool, key) do
-            {:ok, atom_key} -> Map.put(acc, atom_key, value)
-            :error -> acc
-          end
-        end)
-
-      struct(tool, input_with_atom_keys)
+      struct(tool, atomize_known_keys(tool, input))
     end
+  end
+
+  @doc """
+  Validates LLM-supplied input against a schema-based tool's schema BEFORE any
+  side effect, so a malformed call is rejected at classify-time rather than
+  blowing up inside (or three steps after) the tool's `execute/1`.
+
+  Returns `:ok` when the input passes, or when the tool has no generated
+  `validate/1` (plain-schema or hand-rolled tools — current behavior preserved);
+  `{:error, errors}` with path-based validation errors otherwise.
+
+  The LLM payload is string-keyed, but the schema validator looks up atom field
+  names, so input is first mapped onto known field atoms using the same
+  DoS-safe normalization `prepare_tool/2` uses (never `String.to_atom/1` on
+  untrusted input). A tool that defines its own `prepare_input/2` owns its
+  validation and is skipped here.
+  """
+  @spec validate_input(struct(), map()) :: :ok | {:error, list()}
+  def validate_input(tool, input) when is_map(input) do
+    mod = tool.__struct__
+
+    cond do
+      function_exported?(mod, :prepare_input, 2) ->
+        :ok
+
+      function_exported?(mod, :validate, 1) ->
+        case mod.validate(atomize_known_keys(tool, input)) do
+          {:ok, _validated} -> :ok
+          {:error, errors} -> {:error, errors}
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  # Map LLM-supplied input (string- or atom-keyed) onto the tool's struct-field
+  # atoms, dropping any key that isn't a real field. Shared by prepare_tool/2
+  # (to build the struct) and validate_input/2 (to feed the atom-key-expecting
+  # schema validator).
+  defp atomize_known_keys(tool, input) do
+    Enum.reduce(input, %{}, fn {key, value}, acc ->
+      case normalize_tool_field_key(tool, key) do
+        {:ok, atom_key} -> Map.put(acc, atom_key, value)
+        :error -> acc
+      end
+    end)
   end
 
   @doc """
@@ -134,10 +173,16 @@ defmodule Normandy.Agents.Dispatch do
           {:cont, call} ->
             prepared = prepare_tool(tool, call.input)
 
-            case apply_policy(pipeline, config, call, prepared) do
-              {:allow, _meta} -> {:execute, prepared, call}
-              {:deny, info} -> {:deny, denial_result(call, info, false)}
-              {:needs_approval, info} -> {:needs_approval, prepared, call, info}
+            case validate_input(tool, call.input) do
+              {:error, errors} ->
+                {:deny, validation_error_result(call, errors)}
+
+              :ok ->
+                case apply_policy(pipeline, config, call, prepared) do
+                  {:allow, _meta} -> {:execute, prepared, call}
+                  {:deny, info} -> {:deny, denial_result(call, info, false)}
+                  {:needs_approval, info} -> {:needs_approval, prepared, call, info}
+                end
             end
         end
 
@@ -242,6 +287,18 @@ defmodule Normandy.Agents.Dispatch do
         rule_id: Map.get(info, :rule_id),
         denied: true,
         pending_approval: pending?
+      },
+      is_error: true
+    }
+  end
+
+  defp validation_error_result(call, errors) do
+    %ToolResult{
+      tool_call_id: call.id,
+      output: %{
+        error: "tool input failed schema validation",
+        validation_errors: errors,
+        denied: true
       },
       is_error: true
     }
