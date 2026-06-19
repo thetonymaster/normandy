@@ -1,0 +1,158 @@
+
+21:47:19.995 [debug] OTLP exporter failed to initialize: exception error: undefined function opentelemetry_exporter:init/1
+  in function  otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+21:47:20.000 [warning] OTLP exporter module `opentelemetry_exporter` not found. Verify you have included the `opentelemetry_exporter` dependency.
+Running ExUnit with seed: 10852, max_cases: 28
+Excluding tags: [:integration, :normandy_integration, :distributed, :redis]
+Including tags: [:postgres]
+
+    warning: default values for the optional arguments in the private function final_handlers/1 are never used
+    │
+ 37 │   defp final_handlers(text \\ "ok") do
+    │        ~
+    │
+    └─ test/agents/turn/server_postgres_e2e_test.exs:37:8: Normandy.Agents.Turn.ServerPostgresE2ETest (module)
+
+
+21:47:20.068 [debug] QUERY OK source="normandy_sessions" db=0.8ms queue=1.6ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.069 [debug] QUERY OK source="normandy_sessions" db=1.4ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.071 [debug] QUERY OK source="normandy_sessions" db=0.8ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.074 [debug] QUERY OK db=0.5ms
+begin []
+
+21:47:20.088 [debug] QUERY OK source="normandy_sessions" db=2.6ms
+INSERT INTO "normandy_sessions" ("session_id","inserted_at","updated_at") VALUES ($1,$2,$3) ON CONFLICT ("session_id") DO NOTHING ["pg-e2e-72", ~U[2026-06-19 03:47:20.083190Z], ~U[2026-06-19 03:47:20.083190Z]]
+
+21:47:20.089 [debug] QUERY OK source="normandy_sessions" db=0.4ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) FOR UPDATE ["pg-e2e-72"]
+
+21:47:20.094 [debug] QUERY OK source="normandy_session_entries" db=0.7ms
+INSERT INTO "normandy_session_entries" ("id","role","inserted_at","content","turn_id") VALUES ($1,$2,$3,$4,$5) ["6fb1bc3c-0eec-4d7e-9ae6-84369d776fc0", "user", ~U[2026-06-19 03:47:20.092049Z], <<131, 109, 0, 0, 0, 5, 104, 101, 108, 108, 111>>, "live"]
+
+21:47:20.095 [debug] QUERY OK source="normandy_sessions" db=0.6ms
+UPDATE "normandy_sessions" SET "current_turn_id" = $1, "head_id" = $2, "updated_at" = $3 WHERE "session_id" = $4 ["live", "6fb1bc3c-0eec-4d7e-9ae6-84369d776fc0", ~U[2026-06-19 03:47:20.094307Z], "pg-e2e-72"]
+
+21:47:20.095 [debug] QUERY OK db=0.4ms
+commit []
+
+21:47:20.097 [debug] QUERY OK db=0.5ms
+begin []
+
+21:47:20.097 [debug] QUERY OK source="normandy_sessions" db=0.4ms
+INSERT INTO "normandy_sessions" ("session_id","inserted_at","updated_at") VALUES ($1,$2,$3) ON CONFLICT ("session_id") DO NOTHING ["pg-e2e-72", ~U[2026-06-19 03:47:20.097292Z], ~U[2026-06-19 03:47:20.097292Z]]
+
+21:47:20.098 [debug] QUERY OK source="normandy_sessions" db=0.4ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) FOR UPDATE ["pg-e2e-72"]
+
+21:47:20.099 [debug] QUERY OK source="normandy_session_entries" db=0.3ms
+INSERT INTO "normandy_session_entries" ("id","role","inserted_at","content","turn_id","parent_id") VALUES ($1,$2,$3,$4,$5,$6) ["a8f7eb0e-e4e4-498d-bdc7-76fcc27af954", "assistant", ~U[2026-06-19 03:47:20.098346Z], <<131, 116, 0, 0, 0, 3, 119, 10, 95, 95, 115, 116, 114, 117, 99, 116, 95, 95, 119, 54, 69, 108, 105, 120, 105, 114, 46, 78, 111, 114, 109, 97, 110, 100, 121, 46, 65, 103, 101, 110, 116, 115, 46, 84, 117, 114, 110, 46, 83, 101, 114, 118, 101, 114, 80, 111, 115, 116, 103, 114, 101, 115, 69, 50, 69, 84, 101, 115, 116, 46, 82, 101, 115, 112, 119, 7, 99, 111, 110, 116, 101, 110, 116, 109, 0, 0, 0, 5, 102, 105, 114, 115, 116, 119, 10, 116, ...>>, ...]
+
+21:47:20.099 [debug] QUERY OK source="normandy_sessions" db=0.4ms
+UPDATE "normandy_sessions" SET "head_id" = $1, "updated_at" = $2 WHERE "session_id" = $3 ["a8f7eb0e-e4e4-498d-bdc7-76fcc27af954", ~U[2026-06-19 03:47:20.099080Z], "pg-e2e-72"]
+
+21:47:20.100 [debug] QUERY OK db=0.3ms
+commit []
+
+21:47:20.103 [debug] QUERY OK source="normandy_sessions" db=0.9ms queue=0.8ms
+INSERT INTO "normandy_sessions" AS n0 ("session_id","turn_state","inserted_at","updated_at") VALUES ($1,$2,$3,$4) ON CONFLICT ("session_id") DO UPDATE SET "turn_state" = $5, "updated_at" = $6 ["pg-e2e-72", <<131, 116, 0, 0, 0, 14, 119, 5, 101, 114, 114, 111, 114, 119, 3, 110, 105, 108, 119, 6, 115, 116, 97, 116, 117, 115, 119, 7, 115, 116, 111, 112, 112, 101, 100, 119, 10, 95, 95, 115, 116, 114, 117, 99, 116, 95, 95, 119, 33, 69, 108, 105, 120, 105, 114, 46, 78, 111, 114, 109, 97, 110, 100, 121, 46, 65, 103, 101, 110, 116, 115, 46, 84, 117, 114, 110, 46, 83, 116, 97, 116, 101, 119, 13, 111, 117, 116, 112, 117, 116, 95, 115, 99, 104, 101, 109, 97, 116, ...>>, ...]
+
+21:47:20.104 [debug] QUERY OK source="normandy_sessions" db=0.8ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.106 [debug] QUERY OK db=1.0ms queue=0.9ms
+WITH RECURSIVE branch(id, parent_id, turn_id, role, content, depth) AS (
+  SELECT id, parent_id, turn_id, role, content, 0
+  FROM normandy_session_entries WHERE id = $1
+  UNION ALL
+  SELECT e.id, e.parent_id, e.turn_id, e.role, e.content, b.depth + 1
+  FROM normandy_session_entries e
+  JOIN branch b ON e.id = b.parent_id
+)
+SELECT id, parent_id, turn_id, role, content FROM branch ORDER BY depth DESC
+ [<<168, 247, 235, 14, 228, 228, 73, 141, 189, 199, 118, 252, 194, 122, 249, 84>>]
+
+21:47:20.258 [debug] QUERY OK source="normandy_sessions" db=0.9ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.258 [debug] QUERY OK source="normandy_sessions" db=0.4ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.259 [debug] QUERY OK db=0.6ms queue=0.4ms
+WITH RECURSIVE branch(id, parent_id, turn_id, role, content, depth) AS (
+  SELECT id, parent_id, turn_id, role, content, 0
+  FROM normandy_session_entries WHERE id = $1
+  UNION ALL
+  SELECT e.id, e.parent_id, e.turn_id, e.role, e.content, b.depth + 1
+  FROM normandy_session_entries e
+  JOIN branch b ON e.id = b.parent_id
+)
+SELECT id, parent_id, turn_id, role, content FROM branch ORDER BY depth DESC
+ [<<168, 247, 235, 14, 228, 228, 73, 141, 189, 199, 118, 252, 194, 122, 249, 84>>]
+
+21:47:20.261 [debug] QUERY OK db=1.4ms
+begin []
+
+21:47:20.262 [debug] QUERY OK source="normandy_sessions" db=0.6ms
+INSERT INTO "normandy_sessions" ("session_id","inserted_at","updated_at") VALUES ($1,$2,$3) ON CONFLICT ("session_id") DO NOTHING ["pg-e2e-72", ~U[2026-06-19 03:47:20.261397Z], ~U[2026-06-19 03:47:20.261397Z]]
+
+21:47:20.263 [debug] QUERY OK source="normandy_sessions" db=0.6ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) FOR UPDATE ["pg-e2e-72"]
+
+21:47:20.263 [debug] QUERY OK source="normandy_session_entries" db=0.4ms
+INSERT INTO "normandy_session_entries" ("id","role","inserted_at","content","turn_id","parent_id") VALUES ($1,$2,$3,$4,$5,$6) ["4fd8c345-7d4b-42ff-9b21-96ad175d51bf", "user", ~U[2026-06-19 03:47:20.263428Z], <<131, 109, 0, 0, 0, 5, 97, 103, 97, 105, 110>>, "live", "a8f7eb0e-e4e4-498d-bdc7-76fcc27af954"]
+
+21:47:20.264 [debug] QUERY OK source="normandy_sessions" db=0.3ms
+UPDATE "normandy_sessions" SET "head_id" = $1, "updated_at" = $2 WHERE "session_id" = $3 ["4fd8c345-7d4b-42ff-9b21-96ad175d51bf", ~U[2026-06-19 03:47:20.263948Z], "pg-e2e-72"]
+
+21:47:20.264 [debug] QUERY OK db=0.2ms
+commit []
+
+21:47:20.264 [debug] QUERY OK db=0.2ms
+begin []
+
+21:47:20.265 [debug] QUERY OK source="normandy_sessions" db=0.2ms
+INSERT INTO "normandy_sessions" ("session_id","inserted_at","updated_at") VALUES ($1,$2,$3) ON CONFLICT ("session_id") DO NOTHING ["pg-e2e-72", ~U[2026-06-19 03:47:20.264971Z], ~U[2026-06-19 03:47:20.264971Z]]
+
+21:47:20.265 [debug] QUERY OK source="normandy_sessions" db=0.3ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) FOR UPDATE ["pg-e2e-72"]
+
+21:47:20.265 [debug] QUERY OK source="normandy_session_entries" db=0.2ms
+INSERT INTO "normandy_session_entries" ("id","role","inserted_at","content","turn_id","parent_id") VALUES ($1,$2,$3,$4,$5,$6) ["ac6fe113-74bf-4db3-a96d-7dde4f20c6f0", "assistant", ~U[2026-06-19 03:47:20.265627Z], <<131, 116, 0, 0, 0, 3, 119, 10, 95, 95, 115, 116, 114, 117, 99, 116, 95, 95, 119, 54, 69, 108, 105, 120, 105, 114, 46, 78, 111, 114, 109, 97, 110, 100, 121, 46, 65, 103, 101, 110, 116, 115, 46, 84, 117, 114, 110, 46, 83, 101, 114, 118, 101, 114, 80, 111, 115, 116, 103, 114, 101, 115, 69, 50, 69, 84, 101, 115, 116, 46, 82, 101, 115, 112, 119, 7, 99, 111, 110, 116, 101, 110, 116, 109, 0, 0, 0, 6, 115, 101, 99, 111, 110, 100, 119, 10, ...>>, ...]
+
+21:47:20.266 [debug] QUERY OK source="normandy_sessions" db=0.5ms
+UPDATE "normandy_sessions" SET "head_id" = $1, "updated_at" = $2 WHERE "session_id" = $3 ["ac6fe113-74bf-4db3-a96d-7dde4f20c6f0", ~U[2026-06-19 03:47:20.265964Z], "pg-e2e-72"]
+
+21:47:20.266 [debug] QUERY OK db=0.2ms
+commit []
+
+21:47:20.267 [debug] QUERY OK source="normandy_sessions" db=0.2ms queue=0.2ms
+INSERT INTO "normandy_sessions" AS n0 ("session_id","turn_state","inserted_at","updated_at") VALUES ($1,$2,$3,$4) ON CONFLICT ("session_id") DO UPDATE SET "turn_state" = $5, "updated_at" = $6 ["pg-e2e-72", <<131, 116, 0, 0, 0, 14, 119, 5, 101, 114, 114, 111, 114, 119, 3, 110, 105, 108, 119, 6, 115, 116, 97, 116, 117, 115, 119, 7, 115, 116, 111, 112, 112, 101, 100, 119, 10, 95, 95, 115, 116, 114, 117, 99, 116, 95, 95, 119, 33, 69, 108, 105, 120, 105, 114, 46, 78, 111, 114, 109, 97, 110, 100, 121, 46, 65, 103, 101, 110, 116, 115, 46, 84, 117, 114, 110, 46, 83, 116, 97, 116, 101, 119, 13, 111, 117, 116, 112, 117, 116, 95, 115, 99, 104, 101, 109, 97, 116, ...>>, ...]
+
+21:47:20.267 [debug] QUERY OK source="normandy_sessions" db=0.2ms
+SELECT n0."session_id", n0."head_id", n0."current_turn_id", n0."turn_state", n0."config_template", n0."resume_policy", n0."inserted_at", n0."updated_at" FROM "normandy_sessions" AS n0 WHERE (n0."session_id" = $1) ["pg-e2e-72"]
+
+21:47:20.268 [debug] QUERY OK db=0.3ms queue=0.2ms
+WITH RECURSIVE branch(id, parent_id, turn_id, role, content, depth) AS (
+  SELECT id, parent_id, turn_id, role, content, 0
+  FROM normandy_session_entries WHERE id = $1
+  UNION ALL
+  SELECT e.id, e.parent_id, e.turn_id, e.role, e.content, b.depth + 1
+  FROM normandy_session_entries e
+  JOIN branch b ON e.id = b.parent_id
+)
+SELECT id, parent_id, turn_id, role, content FROM branch ORDER BY depth DESC
+ [<<172, 111, 225, 19, 116, 191, 77, 179, 169, 109, 125, 222, 79, 32, 198, 240>>]
+.
+Finished in 0.2 seconds (0.00s async, 0.2s sync)
+1 test, 0 failures
