@@ -6,8 +6,21 @@ defmodule Normandy.LLM.Json.Decoder do
 
   alias Normandy.LLM.Json.Scanner
 
+  @default_max_input_bytes 10_000_000
+
   @spec decode(binary(), module(), keyword()) :: {:ok, map()} | {:error, term()}
-  def decode(cleaned_content, adapter, opts) do
+  def decode(content, adapter, opts) when is_binary(content) do
+    limit = Keyword.get(opts, :max_input_bytes, @default_max_input_bytes)
+    size = byte_size(content)
+
+    if size > limit do
+      {:error, {:input_too_large, size, limit}}
+    else
+      decode_inner(content, adapter, opts)
+    end
+  end
+
+  defp decode_inner(cleaned_content, adapter, opts) do
     case adapter.decode(cleaned_content) do
       {:ok, parsed} ->
         {:ok, parsed}
