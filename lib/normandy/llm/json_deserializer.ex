@@ -65,6 +65,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   """
 
   alias Normandy.Components.Message
+  alias Normandy.LLM.Json.ContentCleaner
   alias Normandy.LLM.Json.Scanner
   alias Normandy.Validate
 
@@ -306,7 +307,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   # Parse JSON and validate using Normandy.Validate
   defp parse_and_populate(content, schema, adapter, opts) do
     # Clean content (remove markdown code fences, etc.)
-    cleaned_content = clean_content(content)
+    cleaned_content = ContentCleaner.clean(content)
 
     case decode_with_optional_recovery(cleaned_content, adapter, opts) do
       {:ok, parsed} when is_map(parsed) ->
@@ -465,18 +466,6 @@ defmodule Normandy.LLM.JsonDeserializer do
       end)
     end)
   end
-
-  # Clean content by removing code fences and trimming
-  defp clean_content(content) when is_binary(content) do
-    content
-    |> String.trim()
-    |> String.replace(~r/^```json\n/, "")
-    |> String.replace(~r/^```\n/, "")
-    |> String.replace(~r/\n```$/, "")
-    |> String.trim()
-  end
-
-  defp clean_content(content), do: content
 
   # Normalize field names (response/message/text -> chat_message)
   defp normalize_field_names(parsed_map) when is_map(parsed_map) do
