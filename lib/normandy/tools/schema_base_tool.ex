@@ -42,8 +42,13 @@ defmodule Normandy.Tools.SchemaBaseTool do
 
   ## Validation
 
-  Input validation happens automatically when tools are executed through
-  `Normandy.Tools.Executor`. Invalid inputs return `{:error, validation_errors}`.
+  Input validation happens automatically at the tool-call chokepoint
+  (`Normandy.Agents.Dispatch`) BEFORE the tool's side effect runs: `classify/3`
+  validates the LLM-supplied input against this schema and, on failure, denies
+  the call with an error `ToolResult` carrying `validation_errors` — `execute/1`
+  is never reached. (A tool that overrides `prepare_input/2` owns its own
+  validation and is skipped at the chokepoint; the `Executor` runs an
+  already-validated struct.)
 
   You can also manually validate:
 
