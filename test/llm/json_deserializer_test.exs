@@ -565,6 +565,20 @@ defmodule Normandy.LLM.JsonDeserializerTest do
     end
   end
 
+  describe "hardening — prose-wrapped JSON extraction" do
+    test "extracts and parses JSON wrapped in explanatory prose" do
+      content = ~s(Sure! Here is the result: {"chat_message": "ok"} — anything else?)
+
+      assert {:ok, %MultiField{chat_message: "ok"}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
+    end
+
+    test "bare valid JSON is unaffected (happy path unchanged)" do
+      assert {:ok, %MultiField{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{})
+    end
+  end
+
   describe "characterization — validation error detail is preserved" do
     test "changeset exposes the missing required field for feedback formatting" do
       assert {:error, {:validation_error, changeset, _}} =

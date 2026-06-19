@@ -312,7 +312,16 @@ defmodule Normandy.LLM.JsonDeserializer do
         SchemaBinder.bind(parsed, schema, content)
 
       {:error, reason} ->
-        {:error, {:json_parse_error, reason, content}}
+        case ContentCleaner.extract_balanced(cleaned_content) do
+          {:ok, extracted} ->
+            case Decoder.decode(extracted, adapter, opts) do
+              {:ok, parsed} when is_map(parsed) -> SchemaBinder.bind(parsed, schema, content)
+              _ -> {:error, {:json_parse_error, reason, content}}
+            end
+
+          :error ->
+            {:error, {:json_parse_error, reason, content}}
+        end
 
       _ ->
         {:error, {:unexpected_parse_result, content}}
