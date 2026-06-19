@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release to Hex.pm
+    runs-on: ubuntu-latest
+    # Only when the whole CI workflow (incl. integration-tests via all-checks-complete) succeeded,
+    # AND it was a push to main — never a PR-triggered CI run. `branches: [main]` above already
+    # filters by head_branch, but the explicit event=='push' guard closes the edge of a PR whose
+    # head branch is itself named `main`.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    env:
+      ELIXIR_VERSION: '1.17'
+      OTP_VERSION: '27'
+    steps:
+      # Deliberate: we release the TIP of main, not workflow_run.head_sha.
+      # The bump commit must fast-forward main, so the job must sit on main's
+      # tip; checking out head_sha would make the push fail (and leave Hex/git
+      # inconsistent) whenever main advanced. This repo uses serial squash
+      # merges, so tip-of-main == the commit CI validated. Under bursty parallel
+      # merges this publishes tip-of-main (a chosen tradeoff, not an accident).
+      - name: Checkout main (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Install cocogitto
+        run: |
+          .github/scripts/install-cog.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "normandy-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+      - name: Determine next version
+        id: bump_check
+        run: |
+          # No pipe in the `if` condition: the exit status must be cog's, not
+          # tail's. Piping here would mask a non-zero cog exit unless pipefail
+          # is set, breaking the clean no-op when nothing is releasable.
+          if version="$(cog bump --auto --dry-run 2>/dev/null)"; then
+            version="$(printf '%s\n' "$version" | tail -n1)"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "Releasable change detected: ${version}"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No releasable commits since last tag; skipping release."
+          fi
+
+      - name: Bump version, changelog, and tag
+        if: steps.bump_check.outputs.release == 'true'
+        run: cog bump --auto
+
+      - name: Resolve created tag
+        id: tag
+        if: steps.bump_check.outputs.release == 'true'
+        run: echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch dependencies
+        if: steps.bump_check.outputs.release == 'true'
+        run: mix deps.get
+
+      - name: Publish to Hex.pm
+        if: steps.bump_check.outputs.release == 'true'
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish --yes
+
+      # Publish has already succeeded by this point (it runs first, by design).
+      # If THIS push fails, Hex has the new version but the tag/commit are
+      # unpushed. Recover by manually pushing the tag + bump commit — do NOT
+      # re-run this workflow: it would recompute the same version and
+      # `mix hex.publish` would fail as already-published. See Task 5 of
+      # docs/superpowers/plans/2026-06-19-cocogitto-autopublish-pipeline.md.
+      - name: Push bump commit and tag
+        if: steps.bump_check.outputs.release == 'true'
+        run: |
+          git push origin main
+          git push origin "${{ steps.tag.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.bump_check.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ steps.tag.outputs.tag }}" --title "${{ steps.tag.outputs.tag }}" --generate-notes

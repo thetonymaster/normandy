@@ -1,0 +1,19 @@
+# Cocogitto configuration — drives automatic versioning, changelog, and release.
+# Reference: https://docs.cocogitto.io/reference/config.html
+tag_prefix = "v"
+ignore_merge_commits = true
+
+# Rewrite the Elixir package version into mix.exs before the version commit.
+# Files modified by pre_bump_hooks are included in cocogitto's bump commit.
+# {{version}} expands to the version being bumped to (e.g. "1.1.0").
+# sed -i.bak is portable across GNU (CI) and BSD (macOS) sed.
+pre_bump_hooks = [
+  "sed -i.bak -E 's/@version \"[^\"]+\"/@version \"{{version}}\"/' mix.exs && rm -f mix.exs.bak",
+]
+
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+owner = "thetonymaster"
+repository = "normandy"
