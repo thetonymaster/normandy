@@ -1,44 +1,11 @@
-defmodule Normandy.LLM.JsonDeserializerTest.WrapperFixtures do
-  @moduledoc false
-
-  defmodule MultiField do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "multi-field schema for wrapper tests" do
-      field(:chat_message, :string, description: "message")
-      field(:count, :integer, description: "count", default: 0)
-    end
-  end
-
-  defmodule RequiredField do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "schema with a required field" do
-      field(:chat_message, :string, description: "required message", required: true)
-    end
-  end
-
-  defmodule RecoveryFixture do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "fixture for truncated-string recovery tests" do
-      field(:page_text, :string, description: "transcribed text", default: "")
-      field(:facts, {:array, :string}, description: "facts", default: [])
-    end
-  end
-end
-
 defmodule Normandy.LLM.JsonDeserializerTest do
   use ExUnit.Case, async: true
 
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.MultiField
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RequiredField
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RecoveryFixture
+  alias Normandy.LLM.Json.TestFixtures.MultiField
+  alias Normandy.LLM.Json.TestFixtures.RequiredField
+  alias Normandy.LLM.Json.TestFixtures.RecoveryFixture
 
   describe "deserialize_with_retry/8" do
     test "parses valid JSON and populates schema" do
@@ -569,6 +536,42 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       after
         :telemetry.detach(handler_id)
       end
+    end
+  end
+
+  describe "characterization — return shapes (parse_and_validate/3)" do
+    test "valid JSON returns {:ok, struct}" do
+      assert {:ok, %MultiField{chat_message: "hi", count: 0}} =
+               JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{})
+    end
+
+    test "unparseable content returns {:error, {:json_parse_error, reason, content}}" do
+      assert {:error, {:json_parse_error, _reason, "not json"}} =
+               JsonDeserializer.parse_and_validate("not json", %MultiField{})
+    end
+
+    test "missing required field returns {:error, {:validation_error, changeset, content}}" do
+      content = ~s({"count": 5})
+
+      assert {:error, {:validation_error, changeset, ^content}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+
+      refute changeset.valid?
+    end
+
+    test "non-map top-level JSON returns an unexpected_parse_result tuple" do
+      assert {:error, {:unexpected_parse_result, "[1, 2, 3]"}} =
+               JsonDeserializer.parse_and_validate("[1, 2, 3]", %MultiField{})
+    end
+  end
+
+  describe "characterization — validation error detail is preserved" do
+    test "changeset exposes the missing required field for feedback formatting" do
+      assert {:error, {:validation_error, changeset, _}} =
+               JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
+
+      errors = Normandy.Validate.traverse_errors(changeset, fn {msg, _opts} -> msg end)
+      assert Map.has_key?(errors, :chat_message)
     end
   end
 end
