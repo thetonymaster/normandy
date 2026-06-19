@@ -8,7 +8,21 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaDistributedTest do
   setup do
     # `:peer` requires this node to be alive (distributed). Tests are run with
     # `--name`/`--sname`; skip cleanly if not distributed.
-    unless Node.alive?(), do: :ok = :net_kernel.start([:"primary@127.0.0.1", :longnames])
+    unless Node.alive?() do
+      {:ok, _} = :net_kernel.start([:"primary@127.0.0.1", :longnames])
+    end
+
+    # Isolate Mnesia global state: stop any running instance (clearing all RAM
+    # tables and schema locks left by previous tests) then start fresh before
+    # we attempt to cluster with a peer.
+    :mnesia.stop()
+    :ok = :mnesia.start()
+
+    on_exit(fn ->
+      # Tear down Mnesia on exit so the next test (or next run) starts clean.
+      :mnesia.stop()
+    end)
+
     :ok
   end
 
@@ -28,7 +42,6 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaDistributedTest do
     # Cluster mnesia across both nodes, then create ram_copies replicas on both.
     # NOTE: :mnesia.start/0 returns :ok (not {:atomic, :ok}) — corrected from brief.
     :ok = :rpc.call(peer_node, :mnesia, :start, [])
-    :ok = :mnesia.start()
     {:ok, _} = :mnesia.change_config(:extra_db_nodes, [peer_node])
 
     :ok = Mnesia.create_tables(entries: et, sessions: st, copies: :ram_copies, nodes: nodes)
