@@ -11,7 +11,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
   alias Normandy.ClusterCase
 
   setup do
-    unless Node.alive?(), do: :ok = :net_kernel.start([:"primary@127.0.0.1", :longnames])
+    unless Node.alive?(), do: {:ok, _} = :net_kernel.start([:"primary@127.0.0.1", :longnames])
     url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
     ns = "reg_dist_#{System.unique_integer([:positive])}"
     {:ok, url: url, ns: ns}
