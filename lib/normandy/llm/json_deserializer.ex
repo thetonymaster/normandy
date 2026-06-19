@@ -66,7 +66,7 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   alias Normandy.Components.Message
   alias Normandy.LLM.Json.ContentCleaner
-  alias Normandy.LLM.Json.Scanner
+  alias Normandy.LLM.Json.Decoder
   alias Normandy.Validate
 
   @default_max_retries 2
@@ -309,7 +309,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     # Clean content (remove markdown code fences, etc.)
     cleaned_content = ContentCleaner.clean(content)
 
-    case decode_with_optional_recovery(cleaned_content, adapter, opts) do
+    case Decoder.decode(cleaned_content, adapter, opts) do
       {:ok, parsed} when is_map(parsed) ->
         permitted_fields = get_permitted_fields(schema)
         required_fields = get_required_fields(schema)
@@ -332,52 +332,6 @@ defmodule Normandy.LLM.JsonDeserializer do
       _ ->
         {:error, {:unexpected_parse_result, content}}
     end
-  end
-
-  # Decode JSON, optionally retrying once via truncated-string recovery.
-  #
-  # When :recover_truncated_strings is true AND the cleaned content looks like a
-  # single top-level object AND the strict decode fails AND the failure mode is
-  # "unclosed top-level string at depth 1 with a \n-escape runaway tail" (as
-  # determined by recover_truncated_string/1), we synthesize a closing quote and
-  # balance the brace stack, then re-decode once. On success we emit a recovery
-  # telemetry event. On any failure we return the original adapter error so the
-  # caller's existing {:json_parse_error, _, _} contract is preserved.
-  defp decode_with_optional_recovery(cleaned_content, adapter, opts) do
-    case adapter.decode(cleaned_content) do
-      {:ok, parsed} ->
-        {:ok, parsed}
-
-      {:error, _reason} = original_error ->
-        with true <- Keyword.get(opts, :recover_truncated_strings, false),
-             true <- top_level_object?(cleaned_content),
-             {:ok, recovered} <- Scanner.recover_truncated_string(cleaned_content),
-             {:ok, parsed} <- adapter.decode(recovered) do
-          emit_recovery_telemetry(byte_size(cleaned_content), byte_size(recovered))
-          {:ok, parsed}
-        else
-          _ -> original_error
-        end
-    end
-  end
-
-  defp top_level_object?(content) when is_binary(content) do
-    case String.trim_leading(content) do
-      "{" <> _ -> true
-      _ -> false
-    end
-  end
-
-  defp emit_recovery_telemetry(byte_size_before, byte_size_after) do
-    :telemetry.execute(
-      [:normandy, :json_deserializer, :recovery],
-      %{recovered: 1},
-      %{
-        strategy: :truncated_string,
-        byte_size_before: byte_size_before,
-        byte_size_after: byte_size_after
-      }
-    )
   end
 
   # Cast a map of params against the schema and return either a populated
