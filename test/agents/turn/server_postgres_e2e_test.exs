@@ -62,8 +62,10 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     first_count = length(entries)
 
     # Let the server passivate (idle timeout), then rehydrate via a second run.
-    Process.sleep(150)
-    assert :none = Native.whereis(reg, sid)
+    # Bounded polling, not a fixed sleep: passivation is async and a fixed delay
+    # is flaky under slow CI. Assert eventual passivation within a deadline.
+    assert wait_until(fn -> Native.whereis(reg, sid) == :none end, 1_000),
+           "server did not passivate (registry still holds the pid) within 1s"
 
     assert {:ok, %Resp{content: "second"}} =
              Turn.Session.run(Keyword.put(opts, :handlers, final_handlers("second")), "again")
@@ -73,5 +75,19 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
 
     assert length(entries2) > first_count,
            "rehydrated history did not grow; passivation may have dropped persisted state"
+  end
+
+  # Poll `fun` until it returns true or the monotonic deadline passes.
+  defp wait_until(fun, timeout_ms, interval_ms \\ 10) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_until(fun, deadline, interval_ms)
+  end
+
+  defp do_wait_until(fun, deadline, interval_ms) do
+    cond do
+      fun.() -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> Process.sleep(interval_ms) && do_wait_until(fun, deadline, interval_ms)
+    end
   end
 end
