@@ -41,13 +41,13 @@ defmodule Normandy.Behaviours.SessionStore.ConcurrentAppendMnesiaTest do
     assert length(oks) == @n, "lost writes: #{@n - length(oks)} appends did not return {:ok, id}"
     assert length(Enum.uniq(oks)) == @n, "duplicate ids returned — id generation is not unique"
 
-    # Observation (not a hard invariant): under the parent-linked model the active
-    # chain may be < @n because concurrent appends branch off the same head. If so,
-    # note it here. That divergence is a finding to log, not a crash.
+    # append_entry reads-then-writes the session head inside one :mnesia.transaction,
+    # which serializes concurrent appends to a single session — so the active chain is
+    # always linear and complete (no branching). (Chain-completeness is also covered by
+    # the shared SessionStoreContract; asserted here for the concurrent path explicitly.)
     {:ok, chain} = Mnesia.history(store, sid)
 
-    if length(chain) < @n do
-      IO.puts("NOTE: Mnesia active chain length #{length(chain)} < #{@n} (concurrent branching).")
-    end
+    assert length(chain) == @n,
+           "active chain not linear/complete under concurrency: #{length(chain)} != #{@n}"
   end
 end

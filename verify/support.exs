@@ -40,11 +40,13 @@ defmodule Smoke.Support do
   end
 
   @doc "Hard invariant: print and exit non-zero on break so a re-run catches regressions."
-  def assert!(label, true, _msg), do: IO.puts("  ok: #{label}")
-
-  def assert!(label, false, msg) do
-    IO.puts("INVARIANT FAILED: #{label} — #{msg}")
-    System.halt(2)
+  def assert!(label, cond, msg) do
+    if cond do
+      IO.puts("  ok: #{label}")
+    else
+      IO.puts("INVARIANT FAILED: #{label} — #{msg}")
+      System.halt(2)
+    end
   end
 
   def report do

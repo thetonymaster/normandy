@@ -34,7 +34,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     }
   end
 
-  defp final_handlers(text \\ "ok") do
+  defp final_handlers(text) do
     %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
   end
 
