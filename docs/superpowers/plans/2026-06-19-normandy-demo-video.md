@@ -14,7 +14,8 @@
 - Only the example app's **presentation layer** is touched (`examples/customer_support_app/lib/customer_support/cli.ex`) — NOT the public `send_message/2` `{:ok, response}` contract, NOT agent prompts, NOT routing logic, NOT Normandy core.
 - Outputs live in `marketing/demo-1.0/` (consistent with existing `marketing/linkedin-1.0/`).
 - `vhs` is always invoked **from the repository root** so `Output` paths resolve correctly.
-- Live API: `ANTHROPIC_API_KEY` must be exported in the render shell. Each full render makes 4 real Claude calls — capture a known-good run before re-tuning.
+- Live API: the app reads `System.get_env("ANTHROPIC_API_KEY")`, but the key is present in the environment as **`API_KEY`** (len 108, visible to Bash). Bridge it at render time in the same command: `ANTHROPIC_API_KEY="$API_KEY" vhs …` (env does not persist across separate Bash calls). Each full render makes ~4 real Claude calls — capture a known-good run before re-tuning.
+- VHS 0.11.0 confirmed installed (with `ffmpeg` + `ttyd`); `vhs validate`, `Require`, and `Wait[+Screen][@<timeout>] /<regexp>/` are all supported. Task 1 install steps are already satisfied.
 - Agent display-name mapping is the single source of truth: `:greeter`→`"Greeter"`, `:order_support`→`"Order Support"`, `:technical_support`→`"Technical Support"`, `:billing_support`→`"Billing Support"`, anything else→`"Agent"`.
 
 ---
@@ -42,13 +43,13 @@ vhs --version && ffmpeg -version | head -1 && ttyd --version
 ```
 Expected: a VHS version line, an ffmpeg version line, and a ttyd version line — no "command not found".
 
-- [ ] **Step 3: Verify the API key is present**
+- [ ] **Step 3: Verify the API key is present (as `API_KEY`)**
 
 Run:
 ```bash
-[ -n "$ANTHROPIC_API_KEY" ] && echo "key present (len ${#ANTHROPIC_API_KEY})" || echo "MISSING"
+[ -n "$API_KEY" ] && echo "API_KEY present (len ${#API_KEY})" || echo "MISSING"
 ```
-Expected: `key present …`. If `MISSING`, STOP and ask Q to export `ANTHROPIC_API_KEY` — the live-API render cannot proceed without it.
+Expected: `API_KEY present (len 108)`. The app reads `ANTHROPIC_API_KEY`, so Task 6 bridges `API_KEY`→`ANTHROPIC_API_KEY` inline at render time. If `MISSING`, STOP and ask Q — the live-API render cannot proceed without it.
 
 - [ ] **Step 4: Build the example app**
 
@@ -444,19 +445,19 @@ git commit -m "feat(marketing): trimmed VHS tape for Normandy demo gif"
 **Interfaces:**
 - Consumes: both tapes, the modified CLI, a valid `ANTHROPIC_API_KEY`. This is the only task that makes live Claude calls.
 
-- [ ] **Step 1: Confirm key is exported, render the mp4 from repo root**
+- [ ] **Step 1: Render the mp4 from repo root (bridging the key inline)**
 
 Run:
 ```bash
-[ -n "$ANTHROPIC_API_KEY" ] && vhs marketing/demo-1.0/normandy-demo.tape
+[ -n "$API_KEY" ] && ANTHROPIC_API_KEY="$API_KEY" vhs marketing/demo-1.0/normandy-demo.tape
 ```
 Expected: VHS boots the app, drives all five beats, writes `marketing/demo-1.0/normandy-demo.mp4`. If a `Wait+Screen` times out, the agent label for that turn never appeared — STOP and inspect (wrong routing keyword, API error, or label mismatch) rather than re-running blindly.
 
-- [ ] **Step 2: Render the gif from repo root**
+- [ ] **Step 2: Render the gif from repo root (bridging the key inline)**
 
 Run:
 ```bash
-vhs marketing/demo-1.0/normandy-demo-short.tape
+ANTHROPIC_API_KEY="$API_KEY" vhs marketing/demo-1.0/normandy-demo-short.tape
 ```
 Expected: writes `marketing/demo-1.0/normandy-demo.gif`.
 
