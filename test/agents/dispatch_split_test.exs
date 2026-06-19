@@ -40,6 +40,72 @@ defmodule Normandy.Agents.DispatchSplitTest do
     end
   end
 
+  # Exports validate/1 but NOT validate!/1, so it is not shaped like a
+  # SchemaBaseTool tool (the macro emits both). The hardened classify-time guard
+  # requires both, so this must be OUT of scope and bypass validation. Its
+  # validate/1 always errors, so if it were (wrongly) in scope, classify would
+  # deny — observing :execute proves the bypass.
+  defmodule ValidateOnlyTool do
+    use Normandy.Schema
+
+    schema do
+      field(:n, :integer)
+    end
+
+    def validate(_params),
+      do: {:error, [%{path: [:n], message: "always rejects", constraint: :custom}]}
+  end
+
+  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchSplitTest.ValidateOnlyTool do
+    def tool_name(_), do: "validate_only"
+    def tool_description(_), do: "exports validate/1 but not validate!/1"
+    def input_schema(_), do: %{}
+    def run(_tool), do: {:ok, "ran validate_only"}
+  end
+
+  # Exports BOTH validate/1 and validate!/1 (passes the scope guard), but its
+  # validate/1 returns a value outside the {:ok, _} / {:error, list} contract.
+  # The chokepoint must turn that into a fail-closed deny, not a CaseClauseError
+  # crash (validate_input/2 runs outside apply_policy's rescue/catch).
+  defmodule GarbageValidatorTool do
+    use Normandy.Schema
+
+    schema do
+      field(:n, :integer)
+    end
+
+    def validate(_params), do: :totally_unexpected
+    def validate!(_params), do: :unused
+  end
+
+  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchSplitTest.GarbageValidatorTool do
+    def tool_name(_), do: "garbage_validator"
+    def tool_description(_), do: "validate/1 returns a non-contract value"
+    def input_schema(_), do: %{}
+    def run(_tool), do: {:ok, "ran garbage"}
+  end
+
+  # A SchemaBaseTool tool (has validate/1 AND validate!/1) that ALSO defines a
+  # custom prepare_input/2. Because the prepare_input/2 branch wins in the cond,
+  # the tool owns its own validation and classify must skip the enum/required
+  # schema pre-validation it would otherwise apply.
+  defmodule PrepareInputTool do
+    use Normandy.Tools.SchemaBaseTool
+
+    tool_schema "prepare_input_tool", "owns its validation via prepare_input/2" do
+      field(:operation, :string, required: true, enum: ["add"])
+    end
+
+    def prepare_input(tool, input) do
+      op = Map.get(input, "operation") || Map.get(input, :operation)
+      struct(tool, %{operation: op})
+    end
+
+    def execute(%__MODULE__{operation: op}) do
+      {:ok, "did #{op}"}
+    end
+  end
+
   defp config_with_tools(tools) do
     %{name: "test-agent", tool_registry: Registry.new(tools)}
   end
@@ -175,6 +241,53 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       assert %ToolResult{is_error: false, output: "did add"} =
                Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+    end
+  end
+
+  describe "classify/3 validator-contract hardening" do
+    test "tool exporting validate/1 without validate!/1 is out of scope → bypasses validation" do
+      config = config_with_tools([%ValidateOnlyTool{}])
+      call = %ToolCall{id: "h1", name: "validate_only", input: %{"n" => "not-an-int"}}
+
+      assert {:execute, %ValidateOnlyTool{}, %ToolCall{id: "h1"}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+    end
+
+    test "validator returning a non-contract value → fail-closed deny, not a crash" do
+      config = config_with_tools([%GarbageValidatorTool{}])
+      call = %ToolCall{id: "h2", name: "garbage_validator", input: %{"n" => 1}}
+
+      assert {:deny, %ToolResult{tool_call_id: "h2", is_error: true} = result} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      assert result.output.denied == true
+      assert [%{constraint: :internal}] = result.output.validation_errors
+    end
+  end
+
+  # Locks the stated scope contract: classify-time validation applies ONLY to
+  # SchemaBaseTool-shaped tools. Non-schema tools and tools that own validation
+  # via prepare_input/2 must keep their pre-existing behavior (no deny on
+  # validation grounds), so the seam can't silently widen later.
+  describe "classify/3 validation scope (non-schema & prepare_input tools)" do
+    test "non-schema tool (no generated validate/1) bypasses validation entirely" do
+      config = config_with_tools([%FakeTool{}])
+      # city: 123 would fail strict string validation IF FakeTool were validated;
+      # it is a plain Normandy.Schema tool (no validate/1), so it must pass through.
+      call = %ToolCall{id: "b1", name: "weather", input: %{"city" => 123, "bogus" => "x"}}
+
+      assert {:execute, %FakeTool{}, %ToolCall{id: "b1"}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+    end
+
+    test "tool with custom prepare_input/2 owns validation → classify skips schema pre-validation" do
+      config = config_with_tools([%PrepareInputTool{}])
+      # "power" violates the enum; a plain schema tool WOULD deny, but this tool's
+      # prepare_input/2 owns validation, so classify must route it to :execute.
+      call = %ToolCall{id: "b2", name: "prepare_input_tool", input: %{"operation" => "power"}}
+
+      assert {:execute, %PrepareInputTool{operation: "power"}, %ToolCall{id: "b2"}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
     end
   end
 

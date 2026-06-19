@@ -120,10 +120,29 @@ defmodule Normandy.Agents.Dispatch do
       function_exported?(mod, :prepare_input, 2) ->
         :ok
 
-      function_exported?(mod, :validate, 1) ->
+      # Scope: only SchemaBaseTool-shaped tools, which the macro gives BOTH
+      # validate/1 and validate!/1. Requiring both keeps a hand-rolled validate/1
+      # with a different contract out of the chokepoint. validate_input/2 runs
+      # before apply_policy's rescue/catch, so a validator returning anything
+      # outside the {:ok, _} / {:error, list} contract must fail closed here
+      # rather than crash classify/3.
+      function_exported?(mod, :validate, 1) and function_exported?(mod, :validate!, 1) ->
         case mod.validate(atomize_known_keys(tool, input)) do
-          {:ok, _validated} -> :ok
-          {:error, errors} -> {:error, errors}
+          {:ok, _validated} ->
+            :ok
+
+          {:error, errors} when is_list(errors) ->
+            {:error, errors}
+
+          _other ->
+            {:error,
+             [
+               %{
+                 path: [],
+                 message: "validator returned an unexpected value",
+                 constraint: :internal
+               }
+             ]}
         end
 
       true ->
