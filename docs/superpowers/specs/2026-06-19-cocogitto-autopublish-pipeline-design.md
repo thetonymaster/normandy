@@ -49,10 +49,11 @@ No human in the loop for the publish itself ("fully automatic"). Releases only h
   2. `git add mix.exs` (belt-and-suspenders so the change is staged into cog's bump commit).
 - Bump rules (cog defaults): `fix:` → patch, `feat:` → minor, `feat!`/`fix!`/`BREAKING CHANGE` → major. Other types alone → no bump.
 
-### 2. `pr-title` job in `ci.yml`
+### 2. `pr-title.yml` (dedicated workflow)
 
-- Trigger: existing `on: pull_request`.
-- Steps: install cog, then `cog verify "${{ github.event.pull_request.title }}"`.
+- Lives in its own `.github/workflows/pr-title.yml`, **not** a job inside `ci.yml`, so the `edited` trigger re-lints title changes without re-running the test matrix.
+- Trigger: `on: pull_request` with `types: [opened, edited, synchronize, reopened]`.
+- Steps: install cog, configure a git identity (cog 7.0.0's `verify` reads `user.name`/`email` and panics if unset), then `cog verify "$PR_TITLE"` — the title is passed via an `env` var, never interpolated into the shell.
 - Effect: PR check fails if the title is not a valid conventional commit. Required for merge.
 
 ### 3. `release.yml`

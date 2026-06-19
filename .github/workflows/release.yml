@@ -17,8 +17,14 @@ jobs:
   release:
     name: Release to Hex.pm
     runs-on: ubuntu-latest
-    # Only when the whole CI workflow (incl. integration-tests via all-checks-complete) succeeded.
-    if: github.event.workflow_run.conclusion == 'success'
+    # Only when the whole CI workflow (incl. integration-tests via all-checks-complete) succeeded,
+    # AND it was a push to main — never a PR-triggered CI run. `branches: [main]` above already
+    # filters by head_branch, but the explicit event=='push' guard closes the edge of a PR whose
+    # head branch is itself named `main`.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     env:
       ELIXIR_VERSION: '1.17'
       OTP_VERSION: '27'

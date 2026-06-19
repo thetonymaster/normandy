@@ -14,6 +14,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # This job only reads the repo (cog verify is a local string check);
+          # it never pushes, so don't leave the auth token in .git/config.
+          persist-credentials: false
 
       - name: Install cocogitto
         run: |
