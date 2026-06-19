@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v1.1.0](https://github.com/thetonymaster/normandy/compare/931ce1418e0259cb66c563bce8ce019a16d6b77a..v1.1.0) - 2026-06-19
+#### Features
+- (**tools**) validate tool input at the Dispatch chokepoint before side effects (#40) - ([931ce14](https://github.com/thetonymaster/normandy/commit/931ce1418e0259cb66c563bce8ce019a16d6b77a)) - Antonio Cabrera
+#### Continuous Integration
+- add cocogitto autopublish pipeline (#41) - ([56b995c](https://github.com/thetonymaster/normandy/commit/56b995cf413c06731a030d8745ecce010a5c169c)) - Antonio Cabrera
+
+- - -
+
 
 ## [1.0.0] - 2026-06-17
 
