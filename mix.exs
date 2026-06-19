@@ -198,9 +198,10 @@ defmodule Normandy.MixProject do
 
   defp description do
     """
-    Build AI agents with structured schemas, validation, and LLM integration.
-    Supports multi-agent coordination, conversational memory, batch processing,
-    and resilience patterns for production-ready AI applications.
+    Elixir framework for building production-ready AI agents and LLM applications:
+    type-safe schemas with JSON Schema generation, tool calling, streaming,
+    multi-agent coordination, guardrails, and distributed fault-tolerant sessions,
+    with first-class Anthropic Claude support.
     """
   end
 
