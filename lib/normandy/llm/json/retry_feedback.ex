@@ -7,13 +7,14 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   alias Normandy.Components.Message
   alias Normandy.Validate
 
-  @spec build(term(), binary(), struct()) :: String.t()
+  @spec build(term(), binary(), struct(), module()) :: String.t()
   def build(
         {:validation_error, changeset, content},
         _failed_content,
-        schema
+        schema,
+        adapter
       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
+    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
 
     # Extract detailed field-level errors using traverse_errors
     error_details =
@@ -58,9 +59,10 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   def build(
         {:json_parse_error, reason, content},
         _failed_content,
-        schema
+        schema,
+        adapter
       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
+    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
 
     """
     # JSON DESERIALIZATION ERROR
@@ -101,7 +103,7 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     """
   end
 
-  def build(reason, content, _schema) do
+  def build(reason, content, _schema, _adapter) do
     """
     # RESPONSE FORMAT ERROR
 

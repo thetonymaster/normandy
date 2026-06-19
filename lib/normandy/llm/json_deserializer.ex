@@ -263,7 +263,7 @@ defmodule Normandy.LLM.JsonDeserializer do
          max_retries
        ) do
     # Build error feedback message
-    error_message = RetryFeedback.build(error, failed_content, schema)
+    error_message = RetryFeedback.build(error, failed_content, schema, adapter)
 
     # Augment system prompt with error feedback
     augmented_messages = RetryFeedback.augment_messages(messages, error_message)
