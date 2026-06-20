@@ -94,6 +94,19 @@ defmodule Normandy.LLM.JsonDeserializer do
       `[:normandy, :json_deserializer, :fallback]` telemetry.
     - `:error` — Returns `{:error, reason}` directly to the caller; no
       fallback text is produced.
+
+  ## Retry raw-completion contract
+
+  On a parse-failure retry, the loop calls `Normandy.Agents.Model.converse/7`
+  with `raw: true` in its options to request raw model text rather than a
+  deserialized struct. Clients that do not recognise the `raw` option may
+  ignore it and return their normal shape; the return value is always
+  normalised via `Normandy.Agents.ConverseResult.normalize/1` before the
+  loop inspects it. A `ClaudioAdapter` that honours `raw: true` returns the
+  model's text directly, bypassing its own JSON deserialization path, so the
+  content flows back into `deserialize_loop/11` without double-decoding. This
+  makes `JsonDeserializer` the single parse-and-retry authority: every JSON
+  attempt — initial or corrective — passes through `parse_and_populate/4`.
   """
 
   alias Normandy.Agents.ConverseResult
