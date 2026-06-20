@@ -2,6 +2,9 @@ defmodule Normandy.LLM.ClaudioStructuredDepTest do
   use ExUnit.Case, async: true
 
   test "Claudio exposes set_output_format/2 for structured outputs" do
+    # function_exported?/3 returns false for a not-yet-loaded module; force-load
+    # so the check is deterministic regardless of async test ordering (seed).
+    Code.ensure_loaded!(Claudio.Messages.Request)
     assert function_exported?(Claudio.Messages.Request, :set_output_format, 2)
   end
 
