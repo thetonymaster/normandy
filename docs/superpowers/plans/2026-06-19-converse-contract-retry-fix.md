@@ -370,7 +370,7 @@ with:
 
 ```elixir
     tools = Keyword.get(opts, :tools, [])
-    llm_opts = [raw: true | if(tools != [], do: [tools: tools], else: [])]
+    llm_opts = [raw: true] ++ if(tools != [], do: [tools: tools], else: [])
 
     {response, _usage} =
       ConverseResult.normalize(
