@@ -302,4 +302,47 @@ defmodule AgentHordeTest do
       assert AgentHorde.Text.of(value) == inspect(value)
     end
   end
+
+  describe "AgentHorde.CLI.format_event/1" do
+    test ":plan event contains Planner and query count" do
+      result = AgentHorde.CLI.format_event({:plan, %{queries: ["a", "b", "c"]}})
+      assert result =~ "Planner"
+      assert result =~ "3"
+    end
+
+    test ":search event contains search engine names and source count" do
+      result = AgentHorde.CLI.format_event({:search, %{count: 12}})
+      assert result =~ "Search"
+      assert result =~ "12"
+    end
+
+    test ":curate event contains Curator and URL count" do
+      result = AgentHorde.CLI.format_event({:curate, %{urls: ["https://a.com", "https://b.com"]}})
+      assert result =~ "Curator"
+      assert result =~ "2"
+    end
+
+    test ":scrape event contains Scraping and page count" do
+      result = AgentHorde.CLI.format_event({:scrape, %{count: 4}})
+      assert result =~ "Scrap"
+      assert result =~ "4"
+    end
+
+    test ":analyze event contains provider names and count" do
+      result = AgentHorde.CLI.format_event({:analyze, %{count: 3}})
+      assert result =~ "Analyz"
+      assert result =~ "3"
+    end
+
+    test ":edit event contains Editor" do
+      result = AgentHorde.CLI.format_event({:edit, %{length: 2048}})
+      assert result =~ "Editor"
+    end
+
+    test ":write event contains path and Wrote" do
+      result = AgentHorde.CLI.format_event({:write, %{path: "/tmp/report.md"}})
+      assert result =~ "Wrote"
+      assert result =~ "/tmp/report.md"
+    end
+  end
 end
