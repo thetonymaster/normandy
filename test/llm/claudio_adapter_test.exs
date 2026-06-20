@@ -123,4 +123,33 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert {:error, :boom} = ClaudioAdapter.__raw_completion__({:error, :boom})
     end
   end
+
+  describe "apply_parse_failure/4" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    test ":fallback policy with binary content returns schema with chat_message set" do
+      result =
+        ClaudioAdapter.apply_parse_failure(%MultiField{}, "raw text", :some_reason, %{
+          on_parse_failure: :fallback
+        })
+
+      assert %MultiField{chat_message: "raw text"} = result
+    end
+
+    test ":fallback policy with non-binary content returns the schema unchanged" do
+      result =
+        ClaudioAdapter.apply_parse_failure(%MultiField{}, nil, :some_reason, %{
+          on_parse_failure: :fallback
+        })
+
+      assert %MultiField{chat_message: nil} = result
+    end
+
+    test ":error policy returns {:error, reason}" do
+      assert {:error, :some_reason} =
+               ClaudioAdapter.apply_parse_failure(%MultiField{}, "raw", :some_reason, %{
+                 on_parse_failure: :error
+               })
+    end
+  end
 end

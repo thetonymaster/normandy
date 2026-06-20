@@ -74,8 +74,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
     alias Normandy.Components.ContentBlock.Image, as: ImageBlock
     alias Normandy.Components.ContentBlock.Text, as: TextBlock
 
-    require Logger
-
     @doc """
     Legacy completion function (not used with Claudio).
     """
@@ -863,36 +861,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           validated_schema
 
         {:error, reason} ->
-          case Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(context) do
-            :error ->
-              {:error, reason}
-
-            :fallback when is_binary(content) ->
-              Logger.warning(
-                "JSON parse failed after retries; falling back to raw text. reason=#{inspect(reason)}"
-              )
-
-              :telemetry.execute(
-                [:normandy, :json_deserializer, :fallback],
-                %{count: 1},
-                %{reason: reason}
-              )
-
-              Map.put(schema, :chat_message, content)
-
-            :fallback ->
-              Logger.warning(
-                "JSON parse failed after retries; returning schema unchanged. reason=#{inspect(reason)}"
-              )
-
-              :telemetry.execute(
-                [:normandy, :json_deserializer, :fallback],
-                %{count: 1},
-                %{reason: reason}
-              )
-
-              schema
-          end
+          Normandy.LLM.ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
       end
     end
 
@@ -901,6 +870,34 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # In production, you might want more sophisticated error handling
       IO.warn("Claudio API error: #{inspect(error)}")
       response_model
+    end
+  end
+
+  @doc false
+  def apply_parse_failure(schema, content, reason, context) do
+    case __on_parse_failure_policy__(context) do
+      :error ->
+        {:error, reason}
+
+      :fallback when is_binary(content) ->
+        require Logger
+        Logger.warning("JSON parse failed; falling back to raw text. reason=#{inspect(reason)}")
+
+        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
+          reason: reason
+        })
+
+        Map.put(schema, :chat_message, content)
+
+      :fallback ->
+        require Logger
+        Logger.warning("JSON parse failed; returning schema unchanged. reason=#{inspect(reason)}")
+
+        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
+          reason: reason
+        })
+
+        schema
     end
   end
 
