@@ -94,6 +94,9 @@ defmodule AgentHorde.Pipeline do
 
   @doc false
   def search(queries, tools, on_event) do
+    # Demo simplification: drive all three engines with the single strongest
+    # (first) query so the parallel fan-out stays one clean beat on camera.
+    # The Planner's other queries are intentionally not searched here.
     first_query = List.first(queries, "")
 
     results =
