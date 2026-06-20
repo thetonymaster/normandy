@@ -118,4 +118,50 @@ defmodule AgentHordeTest do
 
     assert {:ok, [_ | _]} = result
   end
+
+  describe "AgentHorde.Clients" do
+    test "openai/0 has correct base_url" do
+      assert AgentHorde.Clients.openai().base_url == "https://api.openai.com/v1"
+    end
+
+    test "do_client/0 base_url comes from DO_INFERENCE_URL env var" do
+      assert AgentHorde.Clients.do_client().base_url == System.get_env("DO_INFERENCE_URL")
+    end
+
+    test "providers/0 returns list of 3 tuples" do
+      providers = AgentHorde.Clients.providers()
+      assert length(providers) == 3
+
+      Enum.each(providers, fn {label, client, model} ->
+        assert is_binary(label)
+        assert is_struct(client)
+        assert is_binary(model)
+      end)
+    end
+
+    test "providers/0 labels are Claude, GPT-4o, Llama (DO)" do
+      labels = AgentHorde.Clients.providers() |> Enum.map(&elem(&1, 0))
+      assert labels == ["Claude", "GPT-4o", "Llama (DO)"]
+    end
+  end
+
+  describe "AgentHorde.Text.of/1" do
+    test "binary passes through unchanged" do
+      assert AgentHorde.Text.of("hi") == "hi"
+    end
+
+    test "map with :chat_message returns the message" do
+      assert AgentHorde.Text.of(%{chat_message: "hi"}) == "hi"
+    end
+
+    test "map with :content list joins text blocks" do
+      response = %{content: [%{text: "a"}, %{type: "text", text: "b"}]}
+      assert AgentHorde.Text.of(response) == "a\nb"
+    end
+
+    test "unknown shape falls back to inspect" do
+      value = %{other: "thing"}
+      assert AgentHorde.Text.of(value) == inspect(value)
+    end
+  end
 end
