@@ -240,6 +240,49 @@ defmodule AgentHordeTest do
     end
   end
 
+  describe "AgentHorde.Pipeline" do
+    test "run/2 returns {:ok, %{path, report, stats}} with offline stubs" do
+      tmp_dir =
+        System.tmp_dir!() |> Path.join("agent_horde_test_#{System.unique_integer([:positive])}")
+
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+      events = :ets.new(:test_events, [:ordered_set, :public])
+
+      on_event = fn {stage, _payload} ->
+        :ets.insert(events, {stage, true})
+      end
+
+      result =
+        AgentHorde.Pipeline.run(
+          "test question about elixir",
+          search_tools: [%AgentHorde.Support.StubSearch{}],
+          scrape_tool: %AgentHorde.Support.StubScrape{},
+          claude_client: %AgentHorde.Support.StubModel{},
+          providers: [{"Stub", %AgentHorde.Support.StubModel{}, "stub-model"}],
+          reports_dir: tmp_dir,
+          on_event: on_event
+        )
+
+      assert {:ok, %{path: path, report: report, stats: stats}} = result
+      assert File.exists?(path)
+      assert is_binary(report) and report != ""
+      assert is_map(stats)
+
+      # Verify on_event fired for each stage
+      fired = :ets.tab2list(events) |> Enum.map(&elem(&1, 0))
+      assert :plan in fired
+      assert :search in fired
+      assert :curate in fired
+      assert :scrape in fired
+      assert :analyze in fired
+      assert :edit in fired
+      assert :write in fired
+
+      :ets.delete(events)
+    end
+  end
+
   describe "AgentHorde.Text.of/1" do
     test "binary passes through unchanged" do
       assert AgentHorde.Text.of("hi") == "hi"
