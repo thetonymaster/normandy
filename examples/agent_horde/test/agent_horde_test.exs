@@ -1,7 +1,101 @@
+defmodule AgentHorde.Support.StubModel do
+  @moduledoc "Stub LLM client for offline agent tests — returns stubbed prose."
+  defstruct []
+
+  defimpl Normandy.Agents.Model, for: __MODULE__ do
+    def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
+      response_model
+    end
+
+    def converse(_config, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
+      {Map.put(response_model, :chat_message, "stubbed prose"), nil}
+    end
+  end
+end
+
 defmodule AgentHordeTest do
   use ExUnit.Case
 
+  alias AgentHorde.Support.StubModel
+
   test "app module loads", do: assert(Code.ensure_loaded?(AgentHorde))
+
+  describe "Agents.Planner" do
+    test "config/0 has correct model and temperature" do
+      cfg = AgentHorde.Agents.Planner.config()
+      assert cfg.model == "claude-sonnet-4-6"
+      assert cfg.temperature == 0.5
+    end
+
+    test "new/1 returns {:ok, agent} with stub client" do
+      assert {:ok, _agent} = AgentHorde.Agents.Planner.new(client: %StubModel{})
+    end
+
+    test "run/2 returns stubbed prose via Text.of/1" do
+      {:ok, agent} = AgentHorde.Agents.Planner.new(client: %StubModel{})
+      {_agent2, response} = AgentHorde.Agents.Planner.run(agent, "test question")
+      assert AgentHorde.Text.of(response) == "stubbed prose"
+    end
+  end
+
+  describe "Agents.Curator" do
+    test "config/0 has correct model and temperature" do
+      cfg = AgentHorde.Agents.Curator.config()
+      assert cfg.model == "claude-sonnet-4-6"
+      assert cfg.temperature == 0.3
+    end
+
+    test "new/1 returns {:ok, agent} with stub client" do
+      assert {:ok, _agent} = AgentHorde.Agents.Curator.new(client: %StubModel{})
+    end
+
+    test "run/2 returns stubbed prose via Text.of/1" do
+      {:ok, agent} = AgentHorde.Agents.Curator.new(client: %StubModel{})
+      {_agent2, response} = AgentHorde.Agents.Curator.run(agent, "test question")
+      assert AgentHorde.Text.of(response) == "stubbed prose"
+    end
+  end
+
+  describe "Agents.Analyst" do
+    test "config/0 has correct baked model and temperature" do
+      cfg = AgentHorde.Agents.Analyst.config()
+      assert cfg.model == "claude-sonnet-4-6"
+      assert cfg.temperature == 0.4
+    end
+
+    test "new/1 returns {:ok, agent} with stub client" do
+      assert {:ok, _agent} = AgentHorde.Agents.Analyst.new(client: %StubModel{})
+    end
+
+    test "new/1 accepts model override at top level" do
+      assert {:ok, _agent} = AgentHorde.Agents.Analyst.new(client: %StubModel{}, model: "gpt-4o")
+    end
+
+    test "run/2 returns stubbed prose via Text.of/1" do
+      {:ok, agent} = AgentHorde.Agents.Analyst.new(client: %StubModel{})
+      {_agent2, response} = AgentHorde.Agents.Analyst.run(agent, "test question")
+      assert AgentHorde.Text.of(response) == "stubbed prose"
+    end
+  end
+
+  describe "Agents.Editor" do
+    test "config/0 has correct model, temperature, and max_tokens" do
+      cfg = AgentHorde.Agents.Editor.config()
+      assert cfg.model == "claude-sonnet-4-6"
+      assert cfg.temperature == 0.4
+      assert cfg.max_tokens == 4096
+    end
+
+    test "new/1 returns {:ok, agent} with stub client" do
+      assert {:ok, _agent} = AgentHorde.Agents.Editor.new(client: %StubModel{})
+    end
+
+    test "run/2 returns stubbed prose via Text.of/1" do
+      {:ok, agent} = AgentHorde.Agents.Editor.new(client: %StubModel{})
+      {_agent2, response} = AgentHorde.Agents.Editor.run(agent, "test question")
+      assert AgentHorde.Text.of(response) == "stubbed prose"
+    end
+  end
 
   describe "ExaSearch.parse/1" do
     test "normalizes results using text field" do
