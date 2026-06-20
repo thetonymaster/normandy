@@ -8,10 +8,6 @@
 # the legacy path. Struct-type checks run in both modes; field-value checks are live-only.
 Code.require_file("support.exs", __DIR__)
 
-alias Normandy.Agents.BaseAgent
-alias Normandy.LLM.Json.TestFixtures.MultiField
-alias Normandy.LLM.Json.TestFixtures.RecoveryFixture
-
 defmodule JsonSmoke.OpenMapField do
   use Normandy.Schema
 
