@@ -12,7 +12,7 @@ defmodule AgentHorde.Pipeline do
   - `:scrape_tool` — a `BaseTool` struct (default: FirecrawlScrape)
   - `:claude_client` — a `Model` client used for Planner, Curator, Editor (default: `Clients.claude/0`)
   - `:providers` — list of `{label, client, model}` triples for analysts (default: `Clients.providers/0`)
-  - `:reports_dir` — directory to write the report (default: `priv/reports`)
+  - `:reports_dir` — directory to write the report (default: `reports/`, relative to cwd)
   - `:on_event` — `fn {stage_atom, payload} -> :ok end` called at each stage boundary
 
   ## Return value
@@ -277,11 +277,12 @@ defmodule AgentHorde.Pipeline do
   defp timestamp do
     DateTime.utc_now()
     |> DateTime.to_iso8601(:basic)
-    |> String.replace(~r/[T:Z\-]/, "")
-    |> String.slice(0, 15)
+    |> String.replace(~r/[T:Z.\-]/, "")
+    |> String.slice(0, 14)
   end
 
-  defp default_reports_dir do
-    Path.join(Application.app_dir(:agent_horde), "priv/reports")
-  end
+  # Relative to the current working directory so a demo run from
+  # `examples/agent_horde/` writes to the clean, git-ignored `reports/`
+  # dir (not buried under `_build/.../priv`).
+  defp default_reports_dir, do: "reports"
 end
