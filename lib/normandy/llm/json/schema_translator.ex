@@ -47,11 +47,17 @@ defmodule Normandy.LLM.Json.SchemaTranslator do
     |> with_description(spec)
   end
 
-  defp node(%{type: type} = spec, _depth) do
-    %{"type" => to_string(type)}
+  defp node(%{type: t} = spec, _depth)
+       when t in [:integer, :float, :number, :boolean, :string] do
+    scalar_type = if t == :float, do: "number", else: to_string(t)
+
+    %{"type" => scalar_type}
     |> with_description(spec)
     |> with_enum(spec)
   end
+
+  defp node(%{type: other}, _depth),
+    do: throw({:incompatible, {:unsupported_type, other}})
 
   defp node(_spec, _depth), do: throw({:incompatible, :unsupported_node})
 

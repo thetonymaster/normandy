@@ -80,4 +80,20 @@ defmodule Normandy.LLM.Json.SchemaTranslatorTest do
 
     assert {:incompatible, :too_deep} = SchemaTranslator.translate(deep)
   end
+
+  test "allowlisted scalar :number (a float field) translates to a JSON Schema number" do
+    spec = %{type: :object, properties: %{price: %{type: :number}}, required: [:price]}
+    assert {:ok, schema} = SchemaTranslator.translate(spec)
+    assert schema["properties"]["price"] == %{"type" => "number"}
+  end
+
+  test "an unsupported scalar type (:map) is incompatible" do
+    spec = %{type: :object, properties: %{meta: %{type: :map}}, required: [:meta]}
+    assert {:incompatible, {:unsupported_type, :map}} = SchemaTranslator.translate(spec)
+  end
+
+  test "an unsupported scalar type (:date) is incompatible" do
+    spec = %{type: :object, properties: %{when: %{type: :date}}, required: [:when]}
+    assert {:incompatible, {:unsupported_type, :date}} = SchemaTranslator.translate(spec)
+  end
 end
