@@ -92,6 +92,14 @@ defmodule Normandy.LLM.ClaudioAdapter do
     and converts response back to Normandy schema.
     """
     def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
+      if Keyword.get(opts, :raw, false) do
+        converse_raw(client, model, temperature, max_tokens, messages, opts)
+      else
+        do_converse(client, model, temperature, max_tokens, messages, response_model, opts)
+      end
+    end
+
+    defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
       # Extract tools and MCP servers from opts if provided
       tools = Keyword.get(opts, :tools, [])
       mcp_servers = Keyword.get(opts, :mcp_servers, nil)
@@ -126,11 +134,34 @@ defmodule Normandy.LLM.ClaudioAdapter do
           }
 
           normalized_response = convert_response_to_normandy(response, response_model, context)
-          {normalized_response, extract_usage(response)}
+          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response)}
 
         {:error, error} ->
           handle_error(error, response_model)
       end
+    end
+
+    # Raw completion: one Claudio call returning {raw_text, usage}, with no
+    # schema deserialization. Used by JsonDeserializer's retry loop so it owns
+    # parsing+retry without ClaudioAdapter re-entering deserialize_with_retry.
+    defp converse_raw(client, model, temperature, max_tokens, messages, opts) do
+      claudio_client = build_claudio_client(client)
+      enable_caching = Map.get(client.options, :enable_caching, false)
+      tools = Keyword.get(opts, :tools, [])
+      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
+
+      request =
+        Claudio.Messages.Request.new(model)
+        |> add_temperature(temperature)
+        |> add_max_tokens(max_tokens)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
+        |> add_mcp_servers(mcp_servers)
+        |> add_client_options(client.options)
+
+      Normandy.LLM.ClaudioAdapter.__raw_completion__(
+        Claudio.Messages.create(claudio_client, request)
+      )
     end
 
     @doc """
@@ -732,7 +763,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
-      content = extract_content(claudio_response)
+      content = Normandy.LLM.ClaudioAdapter.extract_content(claudio_response)
 
       # If response_model has specific fields, populate them
       case response_model do
@@ -745,21 +776,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
           content
       end
     end
-
-    defp extract_content(%{content: content_blocks}) when is_list(content_blocks) do
-      # Combine all text blocks
-      # Note: Claudio.Messages.Response uses atom keys (:type, :text) not string keys
-      content_blocks
-      |> Enum.filter(fn block ->
-        Map.get(block, :type) == :text || Map.get(block, "type") == "text"
-      end)
-      |> Enum.map(fn block ->
-        Map.get(block, :text) || Map.get(block, "text") || ""
-      end)
-      |> Enum.join("\n")
-    end
-
-    defp extract_content(_response), do: ""
 
     defp populate_schema(schema, content, claudio_response, context) do
       # Handle ToolCallResponse specially
@@ -880,12 +896,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    defp extract_usage(response) when is_map(response) do
-      Map.get(response, :usage) || Map.get(response, "usage")
-    end
-
-    defp extract_usage(_response), do: nil
-
     defp handle_error(error, response_model) do
       # Log error and return empty response_model
       # In production, you might want more sophisticated error handling
@@ -899,4 +909,34 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do:
       Map.get(context, :on_parse_failure) ||
         Application.get_env(:normandy, :on_parse_failure, :fallback)
+
+  @doc false
+  def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> Enum.filter(fn block ->
+      Map.get(block, :type) == :text || Map.get(block, "type") == "text"
+    end)
+    |> Enum.map(fn block ->
+      Map.get(block, :text) || Map.get(block, "text") || ""
+    end)
+    |> Enum.join("\n")
+  end
+
+  def extract_content(_response), do: ""
+
+  @doc false
+  def extract_usage(response) when is_map(response),
+    do: Map.get(response, :usage) || Map.get(response, "usage")
+
+  def extract_usage(_response), do: nil
+
+  @doc false
+  # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
+  # by the deserializer retry loop. Reuses extract_content/1 + extract_usage/1
+  # (the same logic the normal path uses). Lives in the outer module so it is
+  # unit-testable without a live Claudio call.
+  def __raw_completion__({:ok, response}),
+    do: {extract_content(response), extract_usage(response)}
+
+  def __raw_completion__({:error, error}), do: {:error, error}
 end

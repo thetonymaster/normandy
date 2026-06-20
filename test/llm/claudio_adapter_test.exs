@@ -104,4 +104,23 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                })
     end
   end
+
+  describe "raw completion mapping" do
+    test "__raw_completion__ maps a successful Claudio response to {content, usage}" do
+      response = %{content: [%{type: :text, text: "hello"}], usage: %{input_tokens: 5}}
+      assert {"hello", %{input_tokens: 5}} = ClaudioAdapter.__raw_completion__({:ok, response})
+    end
+
+    test "__raw_completion__ joins multiple text blocks and ignores non-text blocks" do
+      response = %{
+        content: [%{type: :text, text: "a"}, %{type: :tool_use}, %{type: :text, text: "b"}]
+      }
+
+      assert {"a\nb", nil} = ClaudioAdapter.__raw_completion__({:ok, response})
+    end
+
+    test "__raw_completion__ passes a Claudio API error straight through" do
+      assert {:error, :boom} = ClaudioAdapter.__raw_completion__({:error, :boom})
+    end
+  end
 end
