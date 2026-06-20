@@ -438,7 +438,7 @@ git commit -m "fix(llm): retry loop requests raw completion and normalizes conve
 ### Task 4: `ClaudioAdapter` raw-completion branch
 
 **Files:**
-- Modify: `lib/normandy/llm/claudio_adapter.ex` (`converse/7` ~line 94; add `converse_raw/6` in the `defimpl`; add `__raw_completion__/1`, `__raw_text__/1`, `__raw_usage__/1` in the outer module near `__on_parse_failure_policy__/1` ~line 898)
+- Modify: `lib/normandy/llm/claudio_adapter.ex` (`converse/7` ~line 94; add `converse_raw/6` in the `defimpl`; **move** `extract_content/1` + `extract_usage/1` from the `defimpl` to the outer module and add `__raw_completion__/1` near `__on_parse_failure_policy__/1` ~line 898)
 - Test: `test/llm/claudio_adapter_test.exs` (append)
 
 **Interfaces:**
@@ -475,36 +475,50 @@ Append to `test/llm/claudio_adapter_test.exs` (inside `defmodule NormandyTest.LL
 Run: `mix test test/llm/claudio_adapter_test.exs`
 Expected: FAIL — `ClaudioAdapter.__raw_completion__/1` is undefined.
 
-- [ ] **Step 3: Add the pure mapping helpers in the outer module**
+- [ ] **Step 3: Move extraction to the outer module (single source) and add the raw mapping**
 
-In `lib/normandy/llm/claudio_adapter.ex`, in the OUTER `defmodule Normandy.LLM.ClaudioAdapter do` block (next to `__on_parse_failure_policy__/1`, ~line 898 — NOT inside `defimpl`, so the public test hook resolves as `Normandy.LLM.ClaudioAdapter.__raw_completion__/1`), add:
+In `lib/normandy/llm/claudio_adapter.ex`:
+
+**(a)** MOVE `extract_content/1` (both clauses, the `defp` at ~line 749) and `extract_usage/1` (both clauses, ~line 883) OUT of the `defimpl Normandy.Agents.Model` block and INTO the OUTER `defmodule Normandy.LLM.ClaudioAdapter do` block (next to `__on_parse_failure_policy__/1`, ~line 898), changing them from `defp` to `@doc false def` so both the impl and tests can call them (verbatim bodies — only the head changes from `defp` to `def`):
+
+```elixir
+  @doc false
+  def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> Enum.filter(fn block ->
+      Map.get(block, :type) == :text || Map.get(block, "type") == "text"
+    end)
+    |> Enum.map(fn block ->
+      Map.get(block, :text) || Map.get(block, "text") || ""
+    end)
+    |> Enum.join("\n")
+  end
+
+  def extract_content(_response), do: ""
+
+  @doc false
+  def extract_usage(response) when is_map(response),
+    do: Map.get(response, :usage) || Map.get(response, "usage")
+
+  def extract_usage(_response), do: nil
+```
+
+**(b)** Update EVERY call site of `extract_content(` and `extract_usage(` that is INSIDE the `defimpl` block to the qualified `Normandy.LLM.ClaudioAdapter.extract_content(...)` / `Normandy.LLM.ClaudioAdapter.extract_usage(...)`. Find them all first:
+
+Run: `grep -n "extract_content(\|extract_usage(" lib/normandy/llm/claudio_adapter.ex`
+
+Expected sites in the impl include at least `convert_response_to_normandy/3` (the `content = extract_content(claudio_response)` line ~735) and the normal `converse`/`do_converse` return (`{normalized_response, extract_usage(response)}` ~line 129). Rewire ALL of them; after the move, an unqualified call would fail to compile (the impl no longer defines these).
+
+**(c)** Add the raw mapping in the outer module (next to the moved functions). It reuses the moved `extract_content/1` + `extract_usage/1`, so there is NO duplication:
 
 ```elixir
   @doc false
   # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
-  # by the deserializer retry loop. Kept in the outer module (mirroring
-  # __on_parse_failure_policy__/1) so it is unit-testable without a live
-  # Claudio call. __raw_text__/1 and __raw_usage__/1 mirror the impl's private
-  # extract_content/1 and extract_usage/1 for the raw path, kept separate so
-  # the normal (un-unit-tested) converse path is untouched.
-  def __raw_completion__({:ok, response}), do: {__raw_text__(response), __raw_usage__(response)}
+  # by the deserializer retry loop. Reuses extract_content/1 + extract_usage/1
+  # (the same logic the normal path uses). Lives in the outer module so it is
+  # unit-testable without a live Claudio call.
+  def __raw_completion__({:ok, response}), do: {extract_content(response), extract_usage(response)}
   def __raw_completion__({:error, error}), do: {:error, error}
-
-  @doc false
-  def __raw_text__(%{content: blocks}) when is_list(blocks) do
-    blocks
-    |> Enum.filter(fn b -> Map.get(b, :type) == :text || Map.get(b, "type") == "text" end)
-    |> Enum.map(fn b -> Map.get(b, :text) || Map.get(b, "text") || "" end)
-    |> Enum.join("\n")
-  end
-
-  def __raw_text__(_response), do: ""
-
-  @doc false
-  def __raw_usage__(response) when is_map(response),
-    do: Map.get(response, :usage) || Map.get(response, "usage")
-
-  def __raw_usage__(_response), do: nil
 ```
 
 - [ ] **Step 4: Run the unit tests**
@@ -570,7 +584,7 @@ Then add `converse_raw/6` immediately after `do_converse/7` closes:
 - [ ] **Step 6: Run the file then the whole suite**
 
 Run: `mix format && mix test test/llm/claudio_adapter_test.exs && mix test`
-Expected: PASS (baseline + Task 4 unit tests, 0 failures). The normal `converse` path is unchanged (only its body moved into `do_converse/7`); the raw branch's live HTTP path is exercised by the Phase 2 harness, while `__raw_completion__/1` covers its mapping logic offline.
+Expected: PASS (baseline + Task 4 unit tests, 0 failures). The normal `converse` path keeps identical behavior (its body moved into `do_converse/7`; `extract_content`/`extract_usage` calls now qualified to the outer module, same functions); the raw branch's live HTTP path is exercised by the Phase 2 harness, while `__raw_completion__/1` covers its mapping logic offline.
 
 - [ ] **Step 7: Commit**
 
