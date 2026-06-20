@@ -96,6 +96,7 @@ defmodule Normandy.LLM.JsonDeserializer do
       fallback text is produced.
   """
 
+  alias Normandy.Agents.ConverseResult
   alias Normandy.LLM.Json.ContentCleaner
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.RetryFeedback
@@ -302,23 +303,25 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     # Call LLM again
     tools = Keyword.get(opts, :tools, [])
-    llm_opts = if tools != [], do: [tools: tools], else: []
+    llm_opts = [raw: true] ++ if(tools != [], do: [tools: tools], else: [])
 
-    case Normandy.Agents.Model.converse(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           augmented_messages,
-           schema,
-           llm_opts
-         ) do
-      response when is_struct(response) ->
-        # Got response, try to extract content again
-        new_content = extract_content_from_response(response)
+    {response, _usage} =
+      ConverseResult.normalize(
+        Normandy.Agents.Model.converse(
+          client,
+          model,
+          temperature,
+          max_tokens,
+          augmented_messages,
+          schema,
+          llm_opts
+        )
+      )
 
+    cond do
+      is_binary(response) ->
         deserialize_loop(
-          new_content,
+          response,
           schema,
           client,
           model,
@@ -331,7 +334,22 @@ defmodule Normandy.LLM.JsonDeserializer do
           max_retries
         )
 
-      _ ->
+      is_struct(response) ->
+        deserialize_loop(
+          extract_content_from_response(response),
+          schema,
+          client,
+          model,
+          temperature,
+          max_tokens,
+          messages,
+          opts,
+          adapter,
+          attempt,
+          max_retries
+        )
+
+      true ->
         {:error, :llm_call_failed}
     end
   end
