@@ -343,6 +343,9 @@ defmodule Normandy.LLM.JsonDeserializer do
       {:ok, parsed} when is_map(parsed) ->
         SchemaBinder.bind(parsed, schema, content)
 
+      {:error, {:input_too_large, _, _} = reason} ->
+        {:error, reason}
+
       {:error, reason} ->
         case ContentCleaner.extract_balanced(cleaned_content) do
           {:ok, extracted} ->

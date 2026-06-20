@@ -588,4 +588,19 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       assert Map.has_key?(errors, :chat_message)
     end
   end
+
+  describe "hardening — size guard is not bypassed by prose extraction" do
+    test "over-limit input surfaces :input_too_large at the top level without prose recovery" do
+      # A 22-byte valid object embedded in prose; total ~81 bytes, well over the 30-byte limit.
+      # Before the fix, extract_balanced recovers the embedded object (22 < 30) and returns
+      # {:ok, _}, silently defeating the limit. After the fix, the guard short-circuits.
+      embedded = ~s({"chat_message": "ok"})
+      big = "Result: " <> embedded <> " " <> String.duplicate("x", 50)
+
+      assert {:error, {:input_too_large, size, 30}} =
+               JsonDeserializer.parse_and_validate(big, %MultiField{}, max_input_bytes: 30)
+
+      assert size > 30
+    end
+  end
 end
