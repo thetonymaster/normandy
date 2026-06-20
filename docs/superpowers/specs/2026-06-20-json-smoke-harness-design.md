@@ -44,8 +44,10 @@ A single script, `verify/json_smoke_live.exs`, structured like `guardrails_live.
 ### 4.1 `verify/json_smoke_live.exs` (new)
 The smoke script. Owns the four scenarios and their assertions. Defines the open-`:map` schema inline (`defmodule … do use Normandy.Schema; io_schema … end`), reuses `Normandy.LLM.Json.TestFixtures.{MultiField, RecoveryFixture}` for the others.
 
-### 4.2 `Smoke.Support.client/1` (additive change to `verify/support.exs`)
-Extend the existing `client/0` to `client(extra_options \\ %{})` that merges `extra_options` into the live client's `options` map (and is ignored for the stub). Used by the kill-switch scenario to pass `%{structured_outputs: false}`. Backward-compatible: `client()` keeps its current behavior; the two existing smokes are untouched.
+### 4.2 `Smoke.Support` additive changes (to `verify/support.exs`)
+Two additive, backward-compatible additions (the two existing smokes are untouched):
+- `client(extra_options \\ %{})` — extends `client/0` to merge `extra_options` into the **live** client's `options` map (ignored for the stub). Used by the kill-switch scenario to pass `%{structured_outputs: false}`.
+- `live?/0` — returns `System.get_env("NORMANDY_SMOKE_STUB") != "true"`. The canonical stub/live check, used by the smoke to gate field-value assertions (see §6).
 
 ### 4.3 Schemas used
 - `MultiField` — `chat_message :string`, `count :integer` (default 0). Happy-path + a typed scalar.
@@ -54,20 +56,24 @@ Extend the existing `client/0` to `client(extra_options \\ %{})` that merges `ex
 
 ## 5. Scenarios & invariants
 
-| # | Scenario | Setup | Invariant (`assert!`) | Calls |
-|---|----------|-------|-----------------------|-------|
-| 1 | Structured happy path | `output_schema: %MultiField{}`, structured on (default) | response is `%MultiField{chat_message: m}` with `is_binary(m)` and `count` an integer | 1 |
-| 2 | Structured typed fields | `output_schema: %RecoveryFixture{}` | response is `%RecoveryFixture{page_text: p, facts: f}` with `is_binary(p)`, `is_list(f)`, every element of `f` a binary; plus a live-only `length(f) >= 1` (skipped under stub, see §6) | 1 |
-| 3 | Legacy via kill-switch | `client(%{structured_outputs: false})`, `output_schema: %MultiField{}` | response is `%MultiField{chat_message: m}` with `is_binary(m)` | 1 |
-| 4 | Incompatible-schema fallback | `output_schema: %OpenMapField{}` (open `:map`) | response is `%OpenMapField{}` (legacy populated the struct; the call did not crash and degraded to legacy) | 1 |
+Every scenario asserts the response **struct type** in both modes (proves `run/2` returned the right struct and the script flow works). The **field-value** assertions run **live-only** (`Smoke.Support.live?/0`), because the stub (`ModelMockup`) returns the seed `output_schema` with fields at their defaults — see §6.
 
-Prompts are short, deterministic-leaning instructions (temperature 0.0) that give the model content to fill the schema, e.g. scenario 1: `"Reply with a friendly one-line greeting."` The assertions check **shape and types**, not exact content (the model's wording is free).
+| # | Scenario | Setup | Struct-type invariant (both modes) | Field-value invariants (live-only) | Calls |
+|---|----------|-------|-----------------------|-----------------------|-------|
+| 1 | Structured happy path | `output_schema: %MultiField{}`, structured on (default) | `match?(%MultiField{}, resp)` | `is_binary(resp.chat_message)`; `is_integer(resp.count)` | 1 |
+| 2 | Structured typed fields | `output_schema: %RecoveryFixture{}` | `match?(%RecoveryFixture{}, resp)` | `is_binary(resp.page_text)`; `is_list(resp.facts)`; `Enum.all?(resp.facts, &is_binary/1)`; `length(resp.facts) >= 1` | 1 |
+| 3 | Legacy via kill-switch | `client(%{structured_outputs: false})`, `output_schema: %MultiField{}` | `match?(%MultiField{}, resp)` | `is_binary(resp.chat_message)` | 1 |
+| 4 | Incompatible-schema fallback | `output_schema: %OpenMapField{}` (open `:map`) | `match?(%OpenMapField{}, resp)` (legacy populated the struct; the call did not crash and degraded to legacy) | — (struct-type is the invariant; the `:map` field's contents are free) | 1 |
+
+Prompts are short, deterministic-leaning instructions (temperature 0.0) that give the model content to fill the schema, e.g. scenario 1: `"Reply with a friendly one-line greeting and the number 3."` The assertions check **shape and types**, not exact content (the model's wording is free).
 
 ## 6. Stub dry-run behavior
 
-Under `NORMANDY_SMOKE_STUB=true` the client is `ModelMockup`, whose own `Model` protocol impl returns a canned response (the structured gate lives only in the `ClaudioAdapter` impl, so the stub never exercises it — by design; the stub validates **script flow**, the live run validates **behavior**).
+Under `NORMANDY_SMOKE_STUB=true` the client is `ModelMockup`, whose `Model` protocol impl returns the `response_model` **unchanged** (verified: `test/support/model_mockup.ex` `converse/7` → `response_model`). So in stub mode `BaseAgent.run` returns the **seed** `output_schema` with every field at its default (`%MultiField{chat_message: nil, count: 0}`, `%RecoveryFixture{page_text: "", facts: []}`). The structured gate lives only in the `ClaudioAdapter` impl, so the stub never exercises it — by design: **the stub validates script flow + struct type; the live run validates field values/behavior.**
 
-All **type/shape** assertions are written to hold in both modes: a struct returned by `BaseAgent.run` is always the `output_schema` type with its fields at their defaults unless populated (`count` default `0` is an integer; `facts` default `[]` is a list; `page_text`/`chat_message` populate from any model's content). The per-element check `Enum.all?(facts, &is_binary/1)` is vacuously true on the stub's empty list and strict on real elements — so it needs no guard. The **only** stub-incompatible assertion is scenario 2's non-empty check (`length(facts) >= 1`), which proves the array actually round-tripped real data; it is guarded to run live-only (prints `skipped (stub)` under `NORMANDY_SMOKE_STUB`). This keeps the dry-run green while keeping the live run strict.
+Therefore each scenario splits its assertions:
+- **Struct-type assertion** (`match?(%Schema{}, resp)`) runs in **both** modes — it is the dry-run's real check (the script executed and `run/2` returned the correct struct).
+- **Field-value assertions** (binary `chat_message`/`page_text`, integer `count`, non-empty list-of-binaries `facts`) run **live-only**, gated by `Smoke.Support.live?/0`. Under stub they are not asserted; the smoke prints `<label>: skipped (stub)` so the dry-run stays green while the live run stays strict. (We do not rely on default values coincidentally satisfying a check — all field-value checks are uniformly live-gated, which is simpler and honest.)
 
 ## 7. Error handling & safety
 
@@ -89,6 +95,6 @@ Add one line to `docs/release/1.0.0-e2e-runbook.md` (step 5, live smokes) listin
 
 ## 10. Open questions / risks
 
-- **10.1 Stub-mode strictness (resolved):** every type/shape assertion holds in both modes (defaults make them vacuously true on the stub; the per-element binary check is vacuous on an empty list). The single live-only assertion is scenario-2's non-empty `length(facts) >= 1`, guarded to skip under `NORMANDY_SMOKE_STUB` (prints `skipped (stub)`), per §6.
+- **10.1 Stub-mode strictness (resolved, empirically grounded):** `ModelMockup.converse` returns the seed `output_schema` unchanged (verified by probe), so the stub cannot satisfy field-value checks. Resolution: struct-type assertions run in both modes; ALL field-value assertions are live-gated via `Smoke.Support.live?/0` (print `skipped (stub)` under `NORMANDY_SMOKE_STUB`), per §6. The dry-run proves flow + struct type for free; the live run proves the field values.
 - **10.2 Model nondeterminism:** assertions are shape/type-only, never exact content, so a free-wording Haiku response still passes. Temperature 0.0 reduces variance further.
 - **10.3 `count`/`facts` population on the legacy path:** for the structured scenarios the schema is enforced by constrained decoding; for any legacy scenario that asserts a non-`chat_message` field, the model is instructed (via the system prompt) to fill it, but the assertion for legacy scenarios (3) is limited to `chat_message` to avoid coupling to legacy-prompt-following fidelity. Structured scenarios (1, 2) assert the richer fields because constrained decoding guarantees them.
