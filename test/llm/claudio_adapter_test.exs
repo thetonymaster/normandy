@@ -153,6 +153,26 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     end
   end
 
+  describe "structured-vs-legacy routing decision (__structured_schema_for__/3)" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    defp routing_client, do: %Normandy.LLM.ClaudioAdapter{api_key: "k", options: %{}}
+
+    test "uses structured outputs for a compatible schema with no tools" do
+      assert {:ok, _schema} =
+               ClaudioAdapter.__structured_schema_for__(routing_client(), %MultiField{}, [])
+    end
+
+    test "skips structured outputs when tools are present (tool_use needs the legacy loop)" do
+      assert :skip =
+               ClaudioAdapter.__structured_schema_for__(
+                 routing_client(),
+                 %MultiField{},
+                 tools: [%{name: "lookup"}]
+               )
+    end
+  end
+
   describe "structured response interpretation" do
     alias Normandy.LLM.Json.TestFixtures.MultiField
 

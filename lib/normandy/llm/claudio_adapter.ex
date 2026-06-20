@@ -98,7 +98,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
-      case Normandy.LLM.StructuredOutputs.schema_for(client, response_model) do
+      case Normandy.LLM.ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
         {:ok, json_schema} ->
           converse_structured(
             client,
@@ -1016,6 +1016,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do: Map.get(response, :usage) || Map.get(response, "usage")
 
   def extract_usage(_response), do: nil
+
+  @doc false
+  # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
+  # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
+  # mid-turn tool call the legacy path handles, not a structured-output result.
+  def __structured_schema_for__(client, response_model, opts) do
+    case Keyword.get(opts, :tools, []) do
+      [] -> Normandy.LLM.StructuredOutputs.schema_for(client, response_model)
+      _ -> :skip
+    end
+  end
 
   @doc false
   def __handle_structured_response__(response, response_model, context) do
