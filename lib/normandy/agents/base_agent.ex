@@ -360,7 +360,10 @@ defmodule Normandy.Agents.BaseAgent do
     with_agent_run_span(config, metadata, fn ->
       result =
         if tool_registry != nil && Registry.count(tool_registry) > 0 do
-          run_with_tools(config, user_input)
+          # Call the private run_turn/2 directly, NOT the public run_with_tools/2:
+          # run_with_tools/2 now opens its own agent.run span, so routing through
+          # it here would double-wrap and emit two nested agent.run spans.
+          run_turn(config, user_input)
         else
           # No tools registered, use simple response
           run_without_tools(config, user_input)
@@ -451,7 +454,11 @@ defmodule Normandy.Agents.BaseAgent do
   @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
           {BaseAgentConfig.t(), struct()}
   def run_with_tools(config, user_input \\ nil) do
-    run_turn(config, user_input)
+    metadata = %{model: config.model, agent_name: config.name}
+
+    with_agent_run_span(config, metadata, fn ->
+      {run_turn(config, user_input), metadata}
+    end)
   end
 
   @doc false
