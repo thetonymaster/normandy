@@ -32,7 +32,7 @@ defmodule AgentHorde.Text do
 
   def of(response), do: inspect(response)
 
-  defp extract_block(%{text: text}), do: text
   defp extract_block(%{type: "text", text: text}), do: text
+  defp extract_block(%{text: text}), do: text
   defp extract_block(_), do: ""
 end
