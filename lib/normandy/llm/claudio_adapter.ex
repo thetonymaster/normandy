@@ -43,6 +43,24 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:thinking_budget` - Token budget for extended thinking mode
   - `:base_url` - Custom API base URL (for testing)
 
+  ## Structured Outputs
+
+  By default, this adapter uses Anthropic native constrained decoding (structured outputs) to obtain
+  schema-valid JSON from the model without relying on the legacy parse-retry loop. The structured
+  output path is skipped — and the legacy parse-retry path is used instead — when any of the
+  following conditions are true:
+
+  - The kill-switch is off: `config :normandy, :structured_outputs, false` (global) or
+    `client.options[:structured_outputs] = false` (per-client, overrides the global setting).
+  - The response schema is incompatible with constrained decoding: contains an open `:map` field,
+    a non-JSON-Schema scalar type (e.g. `:date`, `:binary`, `:any`), or exceeds the nesting depth
+    guard.
+  - The call carries tools — a `stop_reason: :tool_use` response requires the legacy tool-handling
+    loop.
+  - The model returns `refusal`, `max_tokens`, or context-exceeded, or the API rejects the
+    structured-output request — these route through the existing `:on_parse_failure` policy and
+    legacy fallback.
+
   """
 
   use Normandy.Schema
