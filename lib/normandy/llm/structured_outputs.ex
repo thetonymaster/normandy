@@ -20,6 +20,7 @@ defmodule Normandy.LLM.StructuredOutputs do
   def schema_for(client, response_model) do
     with true <- enabled?(client),
          true <- is_struct(response_model),
+         true <- function_exported?(response_model.__struct__, :get_json_schema, 0),
          spec <- response_model.__struct__.get_json_schema(),
          {:ok, schema} <- SchemaTranslator.translate(spec) do
       {:ok, schema}

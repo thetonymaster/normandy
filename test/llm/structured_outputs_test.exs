@@ -12,6 +12,10 @@ defmodule Normandy.LLM.StructuredOutputsTest do
     end
   end
 
+  defmodule PlainStruct do
+    defstruct [:x]
+  end
+
   defp client(opts \\ %{}), do: %Normandy.LLM.ClaudioAdapter{api_key: "k", options: opts}
 
   test "enabled? defaults to true" do
@@ -39,5 +43,9 @@ defmodule Normandy.LLM.StructuredOutputsTest do
 
   test "schema_for skips a non-struct response_model" do
     assert :skip = StructuredOutputs.schema_for(client(), %{})
+  end
+
+  test "schema_for skips a struct that is not a Normandy io_schema" do
+    assert :skip = StructuredOutputs.schema_for(client(), %PlainStruct{})
   end
 end

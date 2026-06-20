@@ -96,4 +96,10 @@ defmodule Normandy.LLM.Json.SchemaTranslatorTest do
     spec = %{type: :object, properties: %{when: %{type: :date}}, required: [:when]}
     assert {:incompatible, {:unsupported_type, :date}} = SchemaTranslator.translate(spec)
   end
+
+  test "a :float-typed node translates to a JSON Schema number" do
+    spec = %{type: :object, properties: %{ratio: %{type: :float}}, required: [:ratio]}
+    assert {:ok, schema} = SchemaTranslator.translate(spec)
+    assert schema["properties"]["ratio"] == %{"type" => "number"}
+  end
 end
