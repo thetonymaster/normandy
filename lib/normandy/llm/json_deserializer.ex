@@ -408,7 +408,8 @@ defmodule Normandy.LLM.JsonDeserializer do
   defp extract_content_from_response(_), do: ""
 
   # Get JSON adapter from application config
-  defp get_json_adapter do
+  @doc false
+  def get_json_adapter do
     Application.get_env(:normandy, :adapter, Poison)
   end
 end

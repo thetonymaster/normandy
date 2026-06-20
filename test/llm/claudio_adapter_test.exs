@@ -152,4 +152,42 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                })
     end
   end
+
+  describe "structured response interpretation" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    defp text_response(stop_reason, text) do
+      %{stop_reason: stop_reason, content: [%{type: :text, text: text}], usage: %{}}
+    end
+
+    test "normal stop with valid JSON decodes and binds to the schema" do
+      resp = text_response(:end_turn, ~s({"chat_message": "hi", "count": 2}))
+
+      assert %MultiField{chat_message: "hi", count: 2} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "refusal routes to the parse-failure policy (default :fallback)" do
+      resp = text_response(:refusal, "I can't help with that.")
+
+      assert %MultiField{chat_message: "I can't help with that."} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "max_tokens routes to the parse-failure policy" do
+      resp = text_response(:max_tokens, ~s({"chat_message": "trunca))
+
+      assert %MultiField{chat_message: ~s({"chat_message": "trunca)} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "non-conforming content under :error policy returns an error tuple" do
+      resp = text_response(:refusal, "nope")
+
+      assert {:error, {:structured_output_incomplete, :refusal}} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+                 on_parse_failure: :error
+               })
+    end
+  end
 end

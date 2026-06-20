@@ -98,6 +98,41 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
+      case Normandy.LLM.StructuredOutputs.schema_for(client, response_model) do
+        {:ok, json_schema} ->
+          converse_structured(
+            client,
+            model,
+            temperature,
+            max_tokens,
+            messages,
+            response_model,
+            opts,
+            json_schema
+          )
+
+        :skip ->
+          do_converse_legacy(
+            client,
+            model,
+            temperature,
+            max_tokens,
+            messages,
+            response_model,
+            opts
+          )
+      end
+    end
+
+    defp do_converse_legacy(
+           client,
+           model,
+           temperature,
+           max_tokens,
+           messages,
+           response_model,
+           opts
+         ) do
       # Extract tools and MCP servers from opts if provided
       tools = Keyword.get(opts, :tools, [])
       mcp_servers = Keyword.get(opts, :mcp_servers, nil)
@@ -136,6 +171,61 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
         {:error, error} ->
           handle_error(error, response_model)
+      end
+    end
+
+    defp converse_structured(
+           client,
+           model,
+           temperature,
+           max_tokens,
+           messages,
+           response_model,
+           opts,
+           json_schema
+         ) do
+      claudio_client = build_claudio_client(client)
+      enable_caching = Map.get(client.options, :enable_caching, false)
+      tools = Keyword.get(opts, :tools, [])
+      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
+
+      request =
+        Claudio.Messages.Request.new(model)
+        |> add_temperature(temperature)
+        |> add_max_tokens(max_tokens)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
+        |> add_mcp_servers(mcp_servers)
+        |> add_client_options(client.options)
+        |> Claudio.Messages.Request.set_output_format(json_schema)
+
+      case Claudio.Messages.create(claudio_client, request) do
+        {:ok, response} ->
+          context = %{
+            client: client,
+            model: model,
+            temperature: temperature,
+            max_tokens: max_tokens,
+            messages: messages,
+            tools: tools
+          }
+
+          {Normandy.LLM.ClaudioAdapter.__handle_structured_response__(
+             response,
+             response_model,
+             context
+           ), Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+
+        {:error, _error} ->
+          do_converse_legacy(
+            client,
+            model,
+            temperature,
+            max_tokens,
+            messages,
+            response_model,
+            opts
+          )
       end
     end
 
@@ -926,6 +1016,46 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do: Map.get(response, :usage) || Map.get(response, "usage")
 
   def extract_usage(_response), do: nil
+
+  @doc false
+  def __handle_structured_response__(response, response_model, context) do
+    content = extract_content(response)
+
+    case Map.get(response, :stop_reason) do
+      reason
+      when reason in [
+             :refusal,
+             "refusal",
+             :max_tokens,
+             "max_tokens",
+             :model_context_window_exceeded,
+             "model_context_window_exceeded"
+           ] ->
+        apply_parse_failure(
+          response_model,
+          content,
+          {:structured_output_incomplete, reason},
+          context
+        )
+
+      _ ->
+        adapter = Normandy.LLM.JsonDeserializer.get_json_adapter()
+
+        with {:ok, parsed} when is_map(parsed) <-
+               Normandy.LLM.Json.Decoder.decode(content, adapter, []),
+             {:ok, bound} <- Normandy.LLM.Json.SchemaBinder.bind(parsed, response_model, content) do
+          bound
+        else
+          _ ->
+            apply_parse_failure(
+              response_model,
+              content,
+              {:structured_output_unparseable, content},
+              context
+            )
+        end
+    end
+  end
 
   @doc false
   # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
