@@ -15,7 +15,8 @@ defmodule AgentHorde.Agents.Editor do
 
     output_instructions("""
     Produce a well-structured Markdown report: a title, a 2-3 sentence summary,
-    key findings as bullets, and a Sources section listing the URLs. Markdown only.
+    key findings as bullets, and a Sources section listing the URLs. Output raw Markdown
+    only — do NOT output JSON, and do NOT wrap the entire response in a code fence.
     """)
   end
 end

@@ -14,7 +14,7 @@ defmodule AgentHorde.Agents.Curator do
 
     output_instructions("""
     Given numbered search results, output ONLY the URLs worth scraping, one per line —
-    at most 4, highest-signal first. No commentary, no JSON.
+    at most 4, highest-signal first. No commentary, no JSON, no code fences.
     """)
   end
 end

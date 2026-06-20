@@ -68,7 +68,8 @@ defmodule AgentHordeTest do
     end
 
     test "new/1 accepts model override at top level" do
-      assert {:ok, _agent} = AgentHorde.Agents.Analyst.new(client: %StubModel{}, model: "gpt-4o")
+      assert {:ok, agent} = AgentHorde.Agents.Analyst.new(client: %StubModel{}, model: "gpt-4o")
+      assert agent.model == "gpt-4o"
     end
 
     test "run/2 returns stubbed prose via Text.of/1" do
