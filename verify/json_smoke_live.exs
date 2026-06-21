@@ -61,7 +61,7 @@ defmodule JsonSmoke.Runner do
       run.(
         %RecoveryFixture{},
         Smoke.Support.client(),
-        "Set page_text to a one-sentence summary about the ocean, and put three short ocean facts in facts."
+        "List exactly three short, distinct facts about the ocean, putting each fact as its own separate string in the `facts` array (the `facts` array must contain three items). Then write a one-sentence summary about the ocean in `page_text`."
       )
 
     Smoke.Support.assert!("s2 returns a RecoveryFixture struct", match?(%RecoveryFixture{}, r2), inspect(r2))
