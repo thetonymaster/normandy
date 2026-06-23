@@ -11,17 +11,27 @@ defmodule Smoke.Support do
 
   def model, do: @model
 
-  @doc "Stub client when NORMANDY_SMOKE_STUB=true (free), else the live Claudio adapter."
-  def client do
+  @doc """
+  Stub client when NORMANDY_SMOKE_STUB=true (free), else the live Claudio adapter.
+  `extra_options` is merged into the live client's options (ignored for the stub),
+  e.g. `client(%{structured_outputs: false})` to force the legacy path.
+  """
+  def client(extra_options \\ %{}) do
     if System.get_env("NORMANDY_SMOKE_STUB") == "true" do
       %NormandyTest.Support.ModelMockup{}
     else
       %Normandy.LLM.ClaudioAdapter{
-        api_key: System.fetch_env!("API_KEY"),
-        options: %{timeout: 60_000, max_retries: 1}
+        api_key:
+          System.get_env("API_KEY") ||
+            System.get_env("ANTHROPIC_API_KEY") ||
+            raise("Missing API key: set API_KEY or ANTHROPIC_API_KEY"),
+        options: Map.merge(%{timeout: 60_000, max_retries: 1}, extra_options)
       }
     end
   end
+
+  @doc "True for a real (paid) run, false under NORMANDY_SMOKE_STUB=true."
+  def live?, do: System.get_env("NORMANDY_SMOKE_STUB") != "true"
 
   @doc "Count a live call and abort the run if the hard cap is exceeded."
   def record_call! do

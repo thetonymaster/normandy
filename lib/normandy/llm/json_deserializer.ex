@@ -2,6 +2,16 @@ defmodule Normandy.LLM.JsonDeserializer do
   @moduledoc """
   JSON deserialization helper with automatic error recovery.
 
+  This module is a thin facade over five focused units under `Normandy.LLM.Json.*`:
+
+  | Unit | Responsibility |
+  |------|----------------|
+  | `Normandy.LLM.Json.Scanner` | Truncated top-level-string recovery: scans raw bytes to find the safe truncation point and produces a closed-string fragment with balancing closers |
+  | `Normandy.LLM.Json.ContentCleaner` | Markdown fence-strip, whitespace trim, and balanced-brace prose extraction via `extract_balanced/1` — isolates the first well-formed JSON object embedded in prose |
+  | `Normandy.LLM.Json.Decoder` | Adapter decode with optional truncated-string recovery (delegates to `Scanner`) and a `:max_input_bytes` size guard that short-circuits before any parsing attempt |
+  | `Normandy.LLM.Json.SchemaBinder` | Normalises decoded maps, casts and validates against the target schema, and unwraps tool-use `"arguments"` envelopes |
+  | `Normandy.LLM.Json.RetryFeedback` | Builds an adapter-encoded corrective retry prompt from the parse error and augments the message history before the next LLM call |
+
   This module provides robust JSON deserialization with:
   - Automatic retry on JSON parse errors
   - Error feedback to LLM via system prompt augmentation
@@ -56,16 +66,54 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   ## Configuration
 
-  Options:
+  ### Call-site options
+
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:tools` - Tool schemas to include in retry
-  - `:adapter` - JSON adapter module (default: from :normandy app config)
+  - `:adapter` - JSON adapter module (default: from `:normandy` app config)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
     string truncation (default: `false`). See `parse_and_validate/3`.
+  - `:max_input_bytes` - Maximum byte size of the raw content accepted before
+    any parsing is attempted (default: `10_000_000`). When the content exceeds
+    this limit, `Decoder.decode/3` returns
+    `{:error, {:input_too_large, actual_size, limit}}` immediately, skipping
+    all JSON parsing and schema binding.
+
+  ### Application config
+
+  - `:on_parse_failure` - Controls the behaviour of `Normandy.LLM.ClaudioAdapter`
+    when JSON deserialization fails after all retries are exhausted.
+    Configured under the `:normandy` application key:
+
+        config :normandy, :on_parse_failure, :fallback   # default
+
+    Accepted values:
+
+    - `:fallback` (default) — Returns the raw LLM text as-is, emits a
+      `Logger.warning` describing the failure, and fires
+      `[:normandy, :json_deserializer, :fallback]` telemetry.
+    - `:error` — Returns `{:error, reason}` directly to the caller; no
+      fallback text is produced.
+
+  ## Retry raw-completion contract
+
+  On a parse-failure retry, the loop calls `Normandy.Agents.Model.converse/7`
+  with `raw: true` in its options to request raw model text rather than a
+  deserialized struct. Clients that do not recognise the `raw` option may
+  ignore it and return their normal shape; the return value is always
+  normalised via `Normandy.Agents.ConverseResult.normalize/1` before the
+  loop inspects it. A `ClaudioAdapter` that honours `raw: true` returns the
+  model's text directly, bypassing its own JSON deserialization path, so the
+  content flows back into `deserialize_loop/11` without double-decoding. This
+  makes `JsonDeserializer` the single parse-and-retry authority: every JSON
+  attempt — initial or corrective — passes through `parse_and_populate/4`.
   """
 
-  alias Normandy.Components.Message
-  alias Normandy.Validate
+  alias Normandy.Agents.ConverseResult
+  alias Normandy.LLM.Json.ContentCleaner
+  alias Normandy.LLM.Json.Decoder
+  alias Normandy.LLM.Json.RetryFeedback
+  alias Normandy.LLM.Json.SchemaBinder
 
   @default_max_retries 2
 
@@ -261,30 +309,32 @@ defmodule Normandy.LLM.JsonDeserializer do
          max_retries
        ) do
     # Build error feedback message
-    error_message = build_error_feedback(error, failed_content, schema)
+    error_message = RetryFeedback.build(error, failed_content, schema, adapter)
 
     # Augment system prompt with error feedback
-    augmented_messages = augment_messages_with_error(messages, error_message)
+    augmented_messages = RetryFeedback.augment_messages(messages, error_message)
 
     # Call LLM again
     tools = Keyword.get(opts, :tools, [])
-    llm_opts = if tools != [], do: [tools: tools], else: []
+    llm_opts = [raw: true] ++ if(tools != [], do: [tools: tools], else: [])
 
-    case Normandy.Agents.Model.converse(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           augmented_messages,
-           schema,
-           llm_opts
-         ) do
-      response when is_struct(response) ->
-        # Got response, try to extract content again
-        new_content = extract_content_from_response(response)
+    {response, _usage} =
+      ConverseResult.normalize(
+        Normandy.Agents.Model.converse(
+          client,
+          model,
+          temperature,
+          max_tokens,
+          augmented_messages,
+          schema,
+          llm_opts
+        )
+      )
 
+    cond do
+      is_binary(response) ->
         deserialize_loop(
-          new_content,
+          response,
           schema,
           client,
           model,
@@ -297,512 +347,89 @@ defmodule Normandy.LLM.JsonDeserializer do
           max_retries
         )
 
-      _ ->
+      is_struct(response) ->
+        deserialize_loop(
+          extract_content_from_response(response),
+          schema,
+          client,
+          model,
+          temperature,
+          max_tokens,
+          messages,
+          opts,
+          adapter,
+          attempt,
+          max_retries
+        )
+
+      true ->
         {:error, :llm_call_failed}
     end
   end
 
-  # Parse JSON and validate using Normandy.Validate
   defp parse_and_populate(content, schema, adapter, opts) do
-    # Clean content (remove markdown code fences, etc.)
-    cleaned_content = clean_content(content)
+    cleaned_content = ContentCleaner.clean(content)
 
-    case decode_with_optional_recovery(cleaned_content, adapter, opts) do
+    case Decoder.decode(cleaned_content, adapter, opts) do
       {:ok, parsed} when is_map(parsed) ->
-        permitted_fields = get_permitted_fields(schema)
-        required_fields = get_required_fields(schema)
+        SchemaBinder.bind(parsed, schema, content)
 
-        outer = cast_map(parsed, schema, permitted_fields, required_fields, content)
-
-        maybe_unwrap_arguments(
-          outer,
-          parsed,
-          schema,
-          permitted_fields,
-          required_fields,
-          content
-        )
+      {:error, {:input_too_large, _, _} = reason} ->
+        {:error, reason}
 
       {:error, reason} ->
-        # JSON parse failed
-        {:error, {:json_parse_error, reason, content}}
+        try_extracted_regions(cleaned_content, 0, adapter, opts, schema, content, reason)
 
       _ ->
         {:error, {:unexpected_parse_result, content}}
     end
   end
 
-  # Decode JSON, optionally retrying once via truncated-string recovery.
-  #
-  # When :recover_truncated_strings is true AND the cleaned content looks like a
-  # single top-level object AND the strict decode fails AND the failure mode is
-  # "unclosed top-level string at depth 1 with a \n-escape runaway tail" (as
-  # determined by recover_truncated_string/1), we synthesize a closing quote and
-  # balance the brace stack, then re-decode once. On success we emit a recovery
-  # telemetry event. On any failure we return the original adapter error so the
-  # caller's existing {:json_parse_error, _, _} contract is preserved.
-  defp decode_with_optional_recovery(cleaned_content, adapter, opts) do
-    case adapter.decode(cleaned_content) do
-      {:ok, parsed} ->
-        {:ok, parsed}
+  # Walk successive balanced regions in prose, returning the first that decodes
+  # AND binds. A region is skipped when it fails to decode (e.g. a balanced but
+  # non-JSON `{note}`) or decodes as valid JSON but fails schema binding (valid
+  # JSON of the wrong shape) — so a later valid object is still found. If a
+  # region produced a validation error and nothing later binds, that error is
+  # preserved rather than masked as a generic json_parse_error.
+  defp try_extracted_regions(cleaned_content, offset, adapter, opts, schema, content, reason) do
+    case ContentCleaner.extract_balanced(cleaned_content, offset) do
+      {:ok, extracted, start} ->
+        case Decoder.decode(extracted, adapter, opts) do
+          {:ok, parsed} when is_map(parsed) ->
+            case SchemaBinder.bind(parsed, schema, content) do
+              {:ok, _populated} = ok ->
+                ok
 
-      {:error, _reason} = original_error ->
-        with true <- Keyword.get(opts, :recover_truncated_strings, false),
-             true <- top_level_object?(cleaned_content),
-             {:ok, recovered} <- recover_truncated_string(cleaned_content),
-             {:ok, parsed} <- adapter.decode(recovered) do
-          emit_recovery_telemetry(byte_size(cleaned_content), byte_size(recovered))
-          {:ok, parsed}
-        else
-          _ -> original_error
-        end
-    end
-  end
+              {:error, bind_reason} ->
+                try_extracted_regions(
+                  cleaned_content,
+                  start + 1,
+                  adapter,
+                  opts,
+                  schema,
+                  content,
+                  bind_reason
+                )
+            end
 
-  defp top_level_object?(content) when is_binary(content) do
-    case String.trim_leading(content) do
-      "{" <> _ -> true
-      _ -> false
-    end
-  end
-
-  defp emit_recovery_telemetry(byte_size_before, byte_size_after) do
-    :telemetry.execute(
-      [:normandy, :json_deserializer, :recovery],
-      %{recovered: 1},
-      %{
-        strategy: :truncated_string,
-        byte_size_before: byte_size_before,
-        byte_size_after: byte_size_after
-      }
-    )
-  end
-
-  # Cast a map of params against the schema and return either a populated
-  # struct or a validation error in the same shape as parse_and_populate/4.
-  defp cast_map(params, schema, permitted_fields, required_fields, content) do
-    normalized_params = normalize_field_names(params)
-
-    changeset =
-      schema
-      |> Validate.cast(normalized_params, permitted_fields)
-      |> Validate.validate_required(required_fields)
-
-    case Validate.apply_action(changeset, :parse) do
-      {:ok, validated_schema} -> {:ok, validated_schema}
-      {:error, changeset} -> {:error, {:validation_error, changeset, content}}
-    end
-  end
-
-  # Opportunistically retry the cast against `parsed["arguments"]` when the
-  # outer payload looks like a tool-use envelope and the outer cast either
-  # produced nothing or already failed. One level only — no recursion.
-  #
-  # Rules:
-  #   * Outer succeeded with populated data → keep outer; don't unwrap.
-  #   * No "arguments" map → keep outer (success or error).
-  #   * Inner cast succeeds with populated data → return inner.
-  #   * Inner cast succeeds with all-defaults → keep outer (the envelope is
-  #     unrelated to this schema; preserve the existing shape).
-  #   * Inner cast errors → propagate the error if the inner map carried any
-  #     permitted key (the data was meant for us and is invalid); otherwise
-  #     keep outer so unrelated envelopes don't manufacture new errors.
-  defp maybe_unwrap_arguments(
-         outer,
-         parsed,
-         schema,
-         permitted_fields,
-         required_fields,
-         content
-       ) do
-    inner = Map.get(parsed, "arguments")
-    should_try? = outer_eligible?(outer, schema, permitted_fields) and is_map(inner)
-
-    if should_try? do
-      inner_result = cast_map(inner, schema, permitted_fields, required_fields, content)
-      resolve_inner(outer, inner_result, inner, schema, permitted_fields)
-    else
-      outer
-    end
-  end
-
-  defp outer_eligible?({:ok, populated}, schema, permitted_fields),
-    do: all_defaults?(populated, schema, permitted_fields)
-
-  defp outer_eligible?({:error, _}, _schema, _permitted_fields), do: true
-
-  defp resolve_inner(outer, {:ok, inner_schema}, _inner_map, schema, permitted_fields) do
-    if all_defaults?(inner_schema, schema, permitted_fields),
-      do: outer,
-      else: {:ok, inner_schema}
-  end
-
-  defp resolve_inner(outer, {:error, _} = inner_error, inner_map, _schema, permitted_fields) do
-    if inner_targets_schema?(inner_map, permitted_fields),
-      do: inner_error,
-      else: outer
-  end
-
-  # True when every permitted field on the populated struct still matches the
-  # corresponding field on the input schema — i.e. the cast didn't change anything.
-  defp all_defaults?(populated, schema, permitted_fields) do
-    Enum.all?(permitted_fields, fn field ->
-      Map.get(populated, field) == Map.get(schema, field)
-    end)
-  end
-
-  # True when the inner map has at least one key that corresponds to a
-  # permitted field (atom or string form). Used to decide whether an inner
-  # cast error is the user's data being invalid (propagate) versus an
-  # unrelated envelope (suppress).
-  defp inner_targets_schema?(inner_map, permitted_fields) when is_map(inner_map) do
-    inner_keys = Map.keys(inner_map)
-
-    Enum.any?(permitted_fields, fn field ->
-      Enum.any?(inner_keys, fn key ->
-        key == field or key == Atom.to_string(field)
-      end)
-    end)
-  end
-
-  # Attempt to recover a truncated JSON payload whose failure mode is "unclosed
-  # top-level string at depth 1 with a \n-escape runaway tail" (Nemotron-VL
-  # vision worker page_text case). Returns {:ok, recovered_string} on success
-  # or :error if the truncation doesn't match this specific shape.
-  #
-  # Algorithm:
-  #   1. Single-pass byte scan tracking a stack of :object/:array opens, an
-  #      in_string flag, and a "safe_until" byte index — the byte index just
-  #      past the most recent character that is NOT part of a \n escape
-  #      sequence and is inside the currently-open string at depth 1.
-  #   2. At EOF, recover iff in_string AND opener_depth == 1 AND safe_until
-  #      is set AND the stack is non-empty.
-  #   3. Recovered string = first safe_until bytes of input + "\"" + closers
-  #      derived from the stack (head = innermost, so reverse for output is
-  #      not needed — head is the LAST opened container, which closes FIRST).
-  defp recover_truncated_string(content) when is_binary(content) do
-    case scan(content, 0, [], false, false, nil, nil) do
-      {:unclosed_top_level_string, safe_until, stack}
-      when is_integer(safe_until) and stack != [] ->
-        prefix = binary_part(content, 0, safe_until)
-        {:ok, prefix <> "\"" <> build_closers(stack)}
-
-      _ ->
-        :error
-    end
-  end
-
-  # scan(rest, pos, stack, in_string?, escape_pending?, opener_depth, safe_until)
-  #
-  # stack head = innermost open container. List head close char closes the
-  # innermost open first — exactly the order JSON needs.
-  #
-  # escape_pending? is true for exactly one byte: the byte immediately after a
-  # \ inside a string. That byte is consumed unconditionally.
-  #
-  # safe_until is updated only inside the string opened at depth 1, and only
-  # for characters that are not part of a \n escape sequence. It marks the
-  # byte position just past the last "safe to truncate after" character.
-
-  # EOF inside an unclosed string at depth-1 opener with at least one safe
-  # boundary recorded → recovery possible.
-  defp scan(<<>>, _pos, stack, true, _esc, 1, safe_until)
-       when is_integer(safe_until) and stack != [] do
-    {:unclosed_top_level_string, safe_until, stack}
-  end
-
-  # EOF in any other state → no recovery.
-  defp scan(<<>>, _pos, _stack, _in_string, _esc, _opener_depth, _safe_until) do
-    :no_recovery
-  end
-
-  # Inside string, escape pending: consume the escaped byte. If it is "n" (or
-  # "r"), it is part of a runaway sequence — do NOT advance safe_until. For
-  # every other escape (\" \\ \t \b \f \/ \uXXXX), the escape represents a
-  # legitimate character — advance safe_until past the two bytes.
-  defp scan(<<byte, rest::binary>>, pos, stack, true, true, opener_depth, safe_until) do
-    new_safe_until =
-      cond do
-        opener_depth != 1 -> safe_until
-        byte == ?n or byte == ?r -> safe_until
-        true -> pos + 1
-      end
-
-    scan(rest, pos + 1, stack, true, false, opener_depth, new_safe_until)
-  end
-
-  # Inside string, backslash starts an escape — next byte handled by the
-  # escape_pending? clause above.
-  defp scan(<<?\\, rest::binary>>, pos, stack, true, false, opener_depth, safe_until) do
-    scan(rest, pos + 1, stack, true, true, opener_depth, safe_until)
-  end
-
-  # Inside string, closing unescaped quote: exit string, reset opener tracking.
-  defp scan(<<?", rest::binary>>, pos, stack, true, false, _opener_depth, _safe_until) do
-    scan(rest, pos + 1, stack, false, false, nil, nil)
-  end
-
-  # Inside string, any other byte (including literal \n, \r — which JSON
-  # technically forbids unescaped, but we don't reject; the surrounding decode
-  # will). Advance safe_until only at depth 1.
-  defp scan(<<_byte, rest::binary>>, pos, stack, true, false, opener_depth, safe_until) do
-    new_safe_until = if opener_depth == 1, do: pos + 1, else: safe_until
-    scan(rest, pos + 1, stack, true, false, opener_depth, new_safe_until)
-  end
-
-  # Outside string, opening quote: enter string. opener_depth = current stack
-  # depth. Initialize safe_until at the byte AFTER the opener so an immediately
-  # truncated empty string `{"k": "` recovers to {"k": ""}.
-  defp scan(<<?", rest::binary>>, pos, stack, false, _esc, _opener_depth, _safe_until) do
-    depth = length(stack)
-    initial_safe_until = if depth == 1, do: pos + 1, else: nil
-    scan(rest, pos + 1, stack, true, false, depth, initial_safe_until)
-  end
-
-  # Outside string, object/array openers push onto the stack.
-  defp scan(<<?{, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
-    scan(rest, pos + 1, [:object | stack], false, false, opener_depth, safe_until)
-  end
-
-  defp scan(<<?[, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
-    scan(rest, pos + 1, [:array | stack], false, false, opener_depth, safe_until)
-  end
-
-  # Outside string, matching closers pop the stack. Mismatches fall through to
-  # the catch-all below, which keeps walking; the surrounding decode will have
-  # already failed for the right reason if the input is malformed in a way the
-  # scanner can't help with.
-  defp scan(<<?}, rest::binary>>, pos, [:object | tail], false, _esc, opener_depth, safe_until) do
-    scan(rest, pos + 1, tail, false, false, opener_depth, safe_until)
-  end
-
-  defp scan(<<?], rest::binary>>, pos, [:array | tail], false, _esc, opener_depth, safe_until) do
-    scan(rest, pos + 1, tail, false, false, opener_depth, safe_until)
-  end
-
-  # Outside string, any other byte (whitespace, structural chars like : , ,
-  # mismatched closers): walk on. We don't validate structure; that's the
-  # adapter's job. We only need enough state to know "are we inside a top-level
-  # string at EOF, and where's the last safe byte."
-  defp scan(<<_byte, rest::binary>>, pos, stack, false, _esc, opener_depth, safe_until) do
-    scan(rest, pos + 1, stack, false, false, opener_depth, safe_until)
-  end
-
-  # Build the closer string for a stack. Head of stack = innermost open =
-  # closes first.
-  defp build_closers(stack) do
-    stack
-    |> Enum.map(fn
-      :object -> "}"
-      :array -> "]"
-    end)
-    |> Enum.join()
-  end
-
-  # Clean content by removing code fences and trimming
-  defp clean_content(content) when is_binary(content) do
-    content
-    |> String.trim()
-    |> String.replace(~r/^```json\n/, "")
-    |> String.replace(~r/^```\n/, "")
-    |> String.replace(~r/\n```$/, "")
-    |> String.trim()
-  end
-
-  defp clean_content(content), do: content
-
-  # Normalize field names (response/message/text -> chat_message)
-  defp normalize_field_names(parsed_map) when is_map(parsed_map) do
-    Enum.reduce(parsed_map, %{}, fn {key, value}, acc ->
-      normalized_key =
-        case key do
-          "response" -> "chat_message"
-          "message" -> "chat_message"
-          "text" -> "chat_message"
-          other -> other
+          _ ->
+            try_extracted_regions(
+              cleaned_content,
+              start + 1,
+              adapter,
+              opts,
+              schema,
+              content,
+              reason
+            )
         end
 
-      Map.put(acc, normalized_key, value)
-    end)
-  end
-
-  # Get permitted fields from schema specification
-  defp get_permitted_fields(schema) do
-    schema.__struct__.__specification__()
-    |> Map.keys()
-  end
-
-  # Get required fields from schema specification.
-  # Prefer the dedicated `__schema__(:required)` entry produced by
-  # Normandy.Schema; fall back to scanning `__specification__/0` for
-  # any schema whose spec stores per-field metadata maps.
-  defp get_required_fields(schema) do
-    module = schema.__struct__
-
-    cond do
-      function_exported?(module, :__schema__, 1) ->
-        case module.__schema__(:required) do
-          fields when is_list(fields) -> fields
-          _ -> required_from_specification(module)
+      :error ->
+        case reason do
+          {:validation_error, _changeset, _content} -> {:error, reason}
+          _ -> {:error, {:json_parse_error, reason, content}}
         end
-
-      true ->
-        required_from_specification(module)
     end
-  end
-
-  defp required_from_specification(module) do
-    module.__specification__()
-    |> Enum.filter(fn {_key, field_spec} ->
-      is_map(field_spec) && Map.get(field_spec, :required, false)
-    end)
-    |> Enum.map(fn {key, _} -> key end)
-  end
-
-  # Build error feedback message for LLM
-  defp build_error_feedback(
-         {:validation_error, changeset, content},
-         _failed_content,
-         schema
-       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
-
-    # Extract detailed field-level errors using traverse_errors
-    error_details =
-      Validate.traverse_errors(changeset, fn {msg, opts} ->
-        # Format error message with interpolated values
-        Enum.reduce(opts, msg, fn {key, value}, acc ->
-          String.replace(acc, "%{#{key}}", to_string(value))
-        end)
-      end)
-      |> format_validation_errors()
-
-    """
-    # JSON VALIDATION ERROR
-
-    Your previous response was valid JSON, but failed validation.
-
-    ## Validation Errors
-    #{error_details}
-
-    ## Your Previous Response
-    ```json
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
-    ```
-
-    ## Required Schema
-    ```json
-    #{schema_json}
-    ```
-
-    ## Instructions for Correction
-
-    1. You MUST provide ALL required fields
-    2. Ensure field types match the schema (string, integer, etc.)
-    3. Ensure field values meet validation requirements
-    4. Do NOT wrap your JSON in markdown code blocks
-    5. Do NOT add any text before or after the JSON
-
-    Please provide a corrected JSON response addressing all validation errors above.
-    """
-  end
-
-  defp build_error_feedback(
-         {:json_parse_error, reason, content},
-         _failed_content,
-         schema
-       ) do
-    schema_json = Poison.encode!(schema.__struct__.__specification__(), pretty: true)
-
-    """
-    # JSON DESERIALIZATION ERROR
-
-    Your previous response could not be parsed as valid JSON.
-
-    ## Error Details
-    #{format_json_error(reason)}
-
-    ## Your Previous Response
-    ```
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
-    ```
-
-    ## Required Schema
-    ```json
-    #{schema_json}
-    ```
-
-    ## Instructions for Correction
-
-    1. You MUST respond with ONLY valid JSON
-    2. Do NOT wrap your JSON in markdown code blocks
-    3. Do NOT add any text before or after the JSON
-    4. Ensure all field names exactly match the schema
-    5. Ensure proper JSON escaping (quotes, newlines, etc.)
-    6. Do NOT nest the response in extra JSON objects
-
-    Example of CORRECT response:
-    {"chat_message": "This is my response"}
-
-    Example of INCORRECT responses:
-    - {"chat_message": "{\\"chat_message\\": \\"nested\\"}"}  ❌ Double nesting
-    - ```json\\n{"chat_message": "response"}\\n```  ❌ Code blocks
-    - Some text {"chat_message": "response"}  ❌ Extra text
-
-    Please provide a corrected JSON response now.
-    """
-  end
-
-  defp build_error_feedback(reason, content, _schema) do
-    """
-    # RESPONSE FORMAT ERROR
-
-    Error: #{inspect(reason)}
-
-    Your previous response:
-    ```
-    #{String.slice(content, 0, 500)}
-    ```
-
-    Please provide a valid JSON response.
-    """
-  end
-
-  # Format validation errors for LLM feedback
-  defp format_validation_errors(error_map) when is_map(error_map) do
-    error_map
-    |> Enum.map(fn {field, errors} ->
-      formatted_errors = errors |> Enum.map(&"  - #{&1}") |> Enum.join("\n")
-      "• Field `#{field}`:\n#{formatted_errors}"
-    end)
-    |> Enum.join("\n\n")
-  end
-
-  # Format JSON error for human readability
-  defp format_json_error({:invalid, reason, position}) do
-    "Invalid JSON at position #{position}: #{reason}"
-  end
-
-  defp format_json_error({:invalid, reason}) do
-    "Invalid JSON: #{reason}"
-  end
-
-  defp format_json_error(reason) do
-    "JSON parsing failed: #{inspect(reason)}"
-  end
-
-  # Augment messages with error feedback
-  defp augment_messages_with_error(messages, error_message) do
-    # Find system message and append error feedback
-    Enum.map(messages, fn msg ->
-      case msg do
-        %Message{role: "system", content: content} = message ->
-          %Message{message | content: content <> "\n\n" <> error_message}
-
-        other ->
-          other
-      end
-    end)
   end
 
   # Extract content from response struct
@@ -819,7 +446,8 @@ defmodule Normandy.LLM.JsonDeserializer do
   defp extract_content_from_response(_), do: ""
 
   # Get JSON adapter from application config
-  defp get_json_adapter do
+  @doc false
+  def get_json_adapter do
     Application.get_env(:normandy, :adapter, Poison)
   end
 end

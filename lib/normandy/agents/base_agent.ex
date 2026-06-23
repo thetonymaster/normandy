@@ -22,6 +22,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
+  alias Normandy.Agents.ConverseResult
 
   @type config_input :: %{
           required(:client) => struct(),
@@ -341,8 +342,8 @@ defmodule Normandy.Agents.BaseAgent do
     # Execute and unwrap result
     result =
       case protected_call.() do
-        {:ok, {:ok, response}} -> normalize_model_response(response)
-        {:ok, response} -> normalize_model_response(response)
+        {:ok, {:ok, response}} -> ConverseResult.normalize(response)
+        {:ok, response} -> ConverseResult.normalize(response)
         {:error, {reason, _attempts, _errors}} -> raise_llm_call_error(reason)
         {:error, reason} -> raise_llm_call_error(reason)
       end
@@ -1349,12 +1350,6 @@ defmodule Normandy.Agents.BaseAgent do
   defp log_lifecycle(level, message, metadata) do
     Logger.log(level, message, metadata)
   end
-
-  defp normalize_model_response({response, usage}) when is_map(usage) or is_nil(usage) do
-    {response, usage}
-  end
-
-  defp normalize_model_response(response), do: {response, nil}
 
   defp elapsed_ms(started_at) do
     (System.monotonic_time() - started_at)

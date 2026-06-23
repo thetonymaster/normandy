@@ -1,44 +1,11 @@
-defmodule Normandy.LLM.JsonDeserializerTest.WrapperFixtures do
-  @moduledoc false
-
-  defmodule MultiField do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "multi-field schema for wrapper tests" do
-      field(:chat_message, :string, description: "message")
-      field(:count, :integer, description: "count", default: 0)
-    end
-  end
-
-  defmodule RequiredField do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "schema with a required field" do
-      field(:chat_message, :string, description: "required message", required: true)
-    end
-  end
-
-  defmodule RecoveryFixture do
-    @moduledoc false
-    use Normandy.Schema
-
-    io_schema "fixture for truncated-string recovery tests" do
-      field(:page_text, :string, description: "transcribed text", default: "")
-      field(:facts, {:array, :string}, description: "facts", default: [])
-    end
-  end
-end
-
 defmodule Normandy.LLM.JsonDeserializerTest do
   use ExUnit.Case, async: true
 
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.MultiField
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RequiredField
-  alias Normandy.LLM.JsonDeserializerTest.WrapperFixtures.RecoveryFixture
+  alias Normandy.LLM.Json.TestFixtures.MultiField
+  alias Normandy.LLM.Json.TestFixtures.RequiredField
+  alias Normandy.LLM.Json.TestFixtures.RecoveryFixture
 
   describe "deserialize_with_retry/8" do
     test "parses valid JSON and populates schema" do
@@ -569,6 +536,94 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       after
         :telemetry.detach(handler_id)
       end
+    end
+  end
+
+  describe "characterization — return shapes (parse_and_validate/3)" do
+    test "valid JSON returns {:ok, struct}" do
+      assert {:ok, %MultiField{chat_message: "hi", count: 0}} =
+               JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{})
+    end
+
+    test "unparseable content returns {:error, {:json_parse_error, reason, content}}" do
+      assert {:error, {:json_parse_error, _reason, "not json"}} =
+               JsonDeserializer.parse_and_validate("not json", %MultiField{})
+    end
+
+    test "missing required field returns {:error, {:validation_error, changeset, content}}" do
+      content = ~s({"count": 5})
+
+      assert {:error, {:validation_error, changeset, ^content}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+
+      refute changeset.valid?
+    end
+
+    test "non-map top-level JSON returns an unexpected_parse_result tuple" do
+      assert {:error, {:unexpected_parse_result, "[1, 2, 3]"}} =
+               JsonDeserializer.parse_and_validate("[1, 2, 3]", %MultiField{})
+    end
+  end
+
+  describe "hardening — prose-wrapped JSON extraction" do
+    test "extracts and parses JSON wrapped in explanatory prose" do
+      content = ~s(Sure! Here is the result: {"chat_message": "ok"} — anything else?)
+
+      assert {:ok, %MultiField{chat_message: "ok"}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
+    end
+
+    test "bare valid JSON is unaffected (happy path unchanged)" do
+      assert {:ok, %MultiField{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{})
+    end
+
+    test "skips a balanced non-JSON fragment and parses a later valid object" do
+      content = ~s(Note: {nope} then {"chat_message": "real"})
+
+      assert {:ok, %MultiField{chat_message: "real"}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
+    end
+
+    test "skips a valid-JSON-but-unbindable object and parses a later valid one" do
+      # First object is valid JSON but fails RequiredField binding (no chat_message);
+      # the later object binds. Recovery must not stop at the first bind failure.
+      content = ~s(First {"count": 1} then {"chat_message": "real"})
+
+      assert {:ok, %RequiredField{chat_message: "real"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
+
+    test "preserves the validation error when no extracted region binds" do
+      content = ~s(Only: {"count": 1} here)
+
+      assert {:error, {:validation_error, _changeset, _}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
+  end
+
+  describe "characterization — validation error detail is preserved" do
+    test "changeset exposes the missing required field for feedback formatting" do
+      assert {:error, {:validation_error, changeset, _}} =
+               JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
+
+      errors = Normandy.Validate.traverse_errors(changeset, fn {msg, _opts} -> msg end)
+      assert Map.has_key?(errors, :chat_message)
+    end
+  end
+
+  describe "hardening — size guard is not bypassed by prose extraction" do
+    test "over-limit input surfaces :input_too_large at the top level without prose recovery" do
+      # A 22-byte valid object embedded in prose; total ~81 bytes, well over the 30-byte limit.
+      # Before the fix, extract_balanced recovers the embedded object (22 < 30) and returns
+      # {:ok, _}, silently defeating the limit. After the fix, the guard short-circuits.
+      embedded = ~s({"chat_message": "ok"})
+      big = "Result: " <> embedded <> " " <> String.duplicate("x", 50)
+
+      assert {:error, {:input_too_large, size, 30}} =
+               JsonDeserializer.parse_and_validate(big, %MultiField{}, max_input_bytes: 30)
+
+      assert size > 30
     end
   end
 end

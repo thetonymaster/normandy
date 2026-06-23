@@ -162,6 +162,7 @@ end
 - `config/config.exs` - Imports environment-specific config
 - `config/dev.exs` and `config/test.exs` - Environment configs
 - Application config requires `:adapter` (JSON encoder/decoder, e.g., Poison)
+- `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, and refusal/max_tokens/API-rejection
 - `consolidate_protocols: false` in test environment for faster compilation
 
 ## Dependencies

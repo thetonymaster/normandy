@@ -190,16 +190,20 @@ defmodule Normandy.Context.Summarizer do
     # Create a proper struct response model for text output
     response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
-    # Call the Model protocol directly - clients must implement this protocol
-    case Normandy.Agents.Model.converse(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages,
-           response_model,
-           []
-         ) do
+    {response, _usage} =
+      Normandy.Agents.ConverseResult.normalize(
+        Normandy.Agents.Model.converse(
+          client,
+          model,
+          temperature,
+          max_tokens,
+          messages,
+          response_model,
+          []
+        )
+      )
+
+    case response do
       %{chat_message: summary} when is_binary(summary) ->
         {:ok, summary}
 

@@ -43,6 +43,24 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:thinking_budget` - Token budget for extended thinking mode
   - `:base_url` - Custom API base URL (for testing)
 
+  ## Structured Outputs
+
+  By default, this adapter uses Anthropic native constrained decoding (structured outputs) to obtain
+  schema-valid JSON from the model without relying on the legacy parse-retry loop. The structured
+  output path is skipped — and the legacy parse-retry path is used instead — when any of the
+  following conditions are true:
+
+  - The kill-switch is off: `config :normandy, :structured_outputs, false` (global) or
+    `client.options[:structured_outputs] = false` (per-client, overrides the global setting).
+  - The response schema is incompatible with constrained decoding: contains an open `:map` field,
+    a non-JSON-Schema scalar type (e.g. `:date`, `:binary`, `:any`), or exceeds the nesting depth
+    guard.
+  - The call carries tools — a `stop_reason: :tool_use` response requires the legacy tool-handling
+    loop.
+  - The model returns `refusal`, `max_tokens`, or context-exceeded, or the API rejects the
+    structured-output request — these route through the existing `:on_parse_failure` policy and
+    legacy fallback.
+
   """
 
   use Normandy.Schema
@@ -90,6 +108,49 @@ defmodule Normandy.LLM.ClaudioAdapter do
     and converts response back to Normandy schema.
     """
     def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
+      if Keyword.get(opts, :raw, false) do
+        converse_raw(client, model, temperature, max_tokens, messages, opts)
+      else
+        do_converse(client, model, temperature, max_tokens, messages, response_model, opts)
+      end
+    end
+
+    defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
+      case Normandy.LLM.ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
+        {:ok, json_schema} ->
+          converse_structured(
+            client,
+            model,
+            temperature,
+            max_tokens,
+            messages,
+            response_model,
+            opts,
+            json_schema
+          )
+
+        :skip ->
+          do_converse_legacy(
+            client,
+            model,
+            temperature,
+            max_tokens,
+            messages,
+            response_model,
+            opts
+          )
+      end
+    end
+
+    defp do_converse_legacy(
+           client,
+           model,
+           temperature,
+           max_tokens,
+           messages,
+           response_model,
+           opts
+         ) do
       # Extract tools and MCP servers from opts if provided
       tools = Keyword.get(opts, :tools, [])
       mcp_servers = Keyword.get(opts, :mcp_servers, nil)
@@ -124,11 +185,95 @@ defmodule Normandy.LLM.ClaudioAdapter do
           }
 
           normalized_response = convert_response_to_normandy(response, response_model, context)
-          {normalized_response, extract_usage(response)}
+          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response)}
 
         {:error, error} ->
           handle_error(error, response_model)
       end
+    end
+
+    defp converse_structured(
+           client,
+           model,
+           temperature,
+           max_tokens,
+           messages,
+           response_model,
+           opts,
+           json_schema
+         ) do
+      claudio_client = build_claudio_client(client)
+      enable_caching = Map.get(client.options, :enable_caching, false)
+      tools = Keyword.get(opts, :tools, [])
+      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
+
+      request =
+        Claudio.Messages.Request.new(model)
+        |> add_temperature(temperature)
+        |> add_max_tokens(max_tokens)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
+        |> add_mcp_servers(mcp_servers)
+        |> add_client_options(client.options)
+        |> Claudio.Messages.Request.set_output_format(json_schema)
+
+      case Claudio.Messages.create(claudio_client, request) do
+        {:ok, response} ->
+          context = %{
+            client: client,
+            model: model,
+            temperature: temperature,
+            max_tokens: max_tokens,
+            messages: messages,
+            tools: tools
+          }
+
+          {Normandy.LLM.ClaudioAdapter.__handle_structured_response__(
+             response,
+             response_model,
+             context
+           ), Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+
+        {:error, error} ->
+          case Normandy.LLM.ClaudioAdapter.__structured_error_action__(error) do
+            :fallback ->
+              do_converse_legacy(
+                client,
+                model,
+                temperature,
+                max_tokens,
+                messages,
+                response_model,
+                opts
+              )
+
+            :propagate ->
+              {handle_error(error, response_model), nil}
+          end
+      end
+    end
+
+    # Raw completion: one Claudio call returning {raw_text, usage}, with no
+    # schema deserialization. Used by JsonDeserializer's retry loop so it owns
+    # parsing+retry without ClaudioAdapter re-entering deserialize_with_retry.
+    defp converse_raw(client, model, temperature, max_tokens, messages, opts) do
+      claudio_client = build_claudio_client(client)
+      enable_caching = Map.get(client.options, :enable_caching, false)
+      tools = Keyword.get(opts, :tools, [])
+      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
+
+      request =
+        Claudio.Messages.Request.new(model)
+        |> add_temperature(temperature)
+        |> add_max_tokens(max_tokens)
+        |> add_messages(messages, enable_caching)
+        |> add_tools(tools, enable_caching)
+        |> add_mcp_servers(mcp_servers)
+        |> add_client_options(client.options)
+
+      Normandy.LLM.ClaudioAdapter.__raw_completion__(
+        Claudio.Messages.create(claudio_client, request)
+      )
     end
 
     @doc """
@@ -730,7 +875,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
-      content = extract_content(claudio_response)
+      content = Normandy.LLM.ClaudioAdapter.extract_content(claudio_response)
 
       # If response_model has specific fields, populate them
       case response_model do
@@ -743,21 +888,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
           content
       end
     end
-
-    defp extract_content(%{content: content_blocks}) when is_list(content_blocks) do
-      # Combine all text blocks
-      # Note: Claudio.Messages.Response uses atom keys (:type, :text) not string keys
-      content_blocks
-      |> Enum.filter(fn block ->
-        Map.get(block, :type) == :text || Map.get(block, "type") == "text"
-      end)
-      |> Enum.map(fn block ->
-        Map.get(block, :text) || Map.get(block, "text") || ""
-      end)
-      |> Enum.join("\n")
-    end
-
-    defp extract_content(_response), do: ""
 
     defp populate_schema(schema, content, claudio_response, context) do
       # Handle ToolCallResponse specially
@@ -844,22 +974,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
         {:ok, validated_schema} ->
           validated_schema
 
-        {:error, _reason} when is_binary(content) ->
-          # Fallback: treat as plain text if JSON parsing/validation fails after retries
-          # This handles cases where the LLM returns plain text instead of JSON
-          Map.put(schema, :chat_message, content)
-
-        {:error, _reason} ->
-          # Unknown error, return schema unchanged
-          schema
+        {:error, reason} ->
+          Normandy.LLM.ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
       end
     end
-
-    defp extract_usage(response) when is_map(response) do
-      Map.get(response, :usage) || Map.get(response, "usage")
-    end
-
-    defp extract_usage(_response), do: nil
 
     defp handle_error(error, response_model) do
       # Log error and return empty response_model
@@ -868,4 +986,132 @@ defmodule Normandy.LLM.ClaudioAdapter do
       response_model
     end
   end
+
+  @doc false
+  def apply_parse_failure(schema, content, reason, context) do
+    case __on_parse_failure_policy__(context) do
+      :error ->
+        {:error, reason}
+
+      :fallback when is_binary(content) ->
+        require Logger
+        Logger.warning("JSON parse failed; falling back to raw text. reason=#{inspect(reason)}")
+
+        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
+          reason: reason
+        })
+
+        Map.put(schema, :chat_message, content)
+
+      :fallback ->
+        require Logger
+        Logger.warning("JSON parse failed; returning schema unchanged. reason=#{inspect(reason)}")
+
+        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
+          reason: reason
+        })
+
+        schema
+    end
+  end
+
+  @doc false
+  def __on_parse_failure_policy__(context),
+    do:
+      Map.get(context, :on_parse_failure) ||
+        Application.get_env(:normandy, :on_parse_failure, :fallback)
+
+  @doc false
+  def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> Enum.filter(fn block ->
+      Map.get(block, :type) == :text || Map.get(block, "type") == "text"
+    end)
+    |> Enum.map(fn block ->
+      Map.get(block, :text) || Map.get(block, "text") || ""
+    end)
+    |> Enum.join("\n")
+  end
+
+  def extract_content(_response), do: ""
+
+  @doc false
+  def extract_usage(response) when is_map(response),
+    do: Map.get(response, :usage) || Map.get(response, "usage")
+
+  def extract_usage(_response), do: nil
+
+  @doc false
+  # Decides what to do when the structured-outputs call errors. A request-shape
+  # rejection (the API not accepting the output_format/schema) is recoverable via
+  # the legacy parse-retry path, which sends no output_format — so fall back.
+  # Auth/permission/rate-limit/overload/transport errors are NOT recoverable that
+  # way (the legacy call hits the same endpoint with the same credentials), so
+  # surface them via handle_error instead of duplicating the request.
+  @spec __structured_error_action__(term()) :: :fallback | :propagate
+  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error}), do: :fallback
+  def __structured_error_action__(_error), do: :propagate
+
+  @doc false
+  # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
+  # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
+  # mid-turn tool call the legacy path handles, not a structured-output result.
+  def __structured_schema_for__(client, response_model, opts) do
+    case Keyword.get(opts, :tools, []) do
+      [] -> Normandy.LLM.StructuredOutputs.schema_for(client, response_model)
+      _ -> :skip
+    end
+  end
+
+  @doc false
+  def __handle_structured_response__(response, response_model, context) do
+    content = extract_content(response)
+
+    stop_reason = Map.get(response, :stop_reason) || Map.get(response, "stop_reason")
+
+    case stop_reason do
+      reason
+      when reason in [
+             :refusal,
+             "refusal",
+             :max_tokens,
+             "max_tokens",
+             :model_context_window_exceeded,
+             "model_context_window_exceeded"
+           ] ->
+        apply_parse_failure(
+          response_model,
+          content,
+          {:structured_output_incomplete, reason},
+          context
+        )
+
+      _ ->
+        adapter = Normandy.LLM.JsonDeserializer.get_json_adapter()
+
+        with {:ok, parsed} when is_map(parsed) <-
+               Normandy.LLM.Json.Decoder.decode(content, adapter, []),
+             {:ok, bound} <- Normandy.LLM.Json.SchemaBinder.bind(parsed, response_model, content) do
+          bound
+        else
+          _ ->
+            apply_parse_failure(
+              response_model,
+              content,
+              {:structured_output_unparseable, content},
+              context
+            )
+        end
+    end
+  end
+
+  @doc false
+  # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
+  # by the deserializer retry loop. Reuses extract_content/1 + extract_usage/1
+  # (the same logic the normal path uses). Lives in the outer module so it is
+  # unit-testable without a live Claudio call.
+  def __raw_completion__({:ok, response}),
+    do: {extract_content(response), extract_usage(response)}
+
+  def __raw_completion__({:error, error}), do: {:error, error}
 end

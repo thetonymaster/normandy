@@ -1,3 +1,21 @@
+defmodule Normandy.Test.TupleSummarizerClient do
+  @moduledoc false
+  use Normandy.Schema
+
+  schema do
+  end
+
+  defimpl Normandy.Agents.Model do
+    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
+      do: response_model
+
+    def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
+      # Mirrors ClaudioAdapter: returns {struct, usage} tuple on success.
+      {%{response_model | chat_message: "tuple-summary"}, %{tokens: 1}}
+    end
+  end
+end
+
 defmodule Normandy.Context.SummarizerTest do
   use ExUnit.Case, async: true
 
@@ -53,6 +71,18 @@ defmodule Normandy.Context.SummarizerTest do
         Summarizer.summarize_messages(client, agent, messages, prompt: custom_prompt)
 
       assert is_binary(summary)
+    end
+
+    test "succeeds when the client returns a {struct, usage} tuple (ClaudioAdapter shape)" do
+      client = %Normandy.Test.TupleSummarizerClient{}
+      agent = BaseAgent.init(%{client: client, model: "test-model", temperature: 0.7})
+
+      messages = [
+        %{role: "user", content: "Hello"},
+        %{role: "assistant", content: "Hi there!"}
+      ]
+
+      assert {:ok, "tuple-summary"} = Summarizer.summarize_messages(client, agent, messages)
     end
 
     test "handles client errors gracefully" do

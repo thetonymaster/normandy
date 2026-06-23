@@ -91,4 +91,169 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert match?(%ClaudioAdapter{api_key: "sk-secret"}, adapter)
     end
   end
+
+  describe "on_parse_failure policy" do
+    test "defaults to :fallback" do
+      assert :fallback = Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{})
+    end
+
+    test "honors a per-call override" do
+      assert :error =
+               Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{
+                 on_parse_failure: :error
+               })
+    end
+  end
+
+  describe "raw completion mapping" do
+    test "__raw_completion__ maps a successful Claudio response to {content, usage}" do
+      response = %{content: [%{type: :text, text: "hello"}], usage: %{input_tokens: 5}}
+      assert {"hello", %{input_tokens: 5}} = ClaudioAdapter.__raw_completion__({:ok, response})
+    end
+
+    test "__raw_completion__ joins multiple text blocks and ignores non-text blocks" do
+      response = %{
+        content: [%{type: :text, text: "a"}, %{type: :tool_use}, %{type: :text, text: "b"}]
+      }
+
+      assert {"a\nb", nil} = ClaudioAdapter.__raw_completion__({:ok, response})
+    end
+
+    test "__raw_completion__ passes a Claudio API error straight through" do
+      assert {:error, :boom} = ClaudioAdapter.__raw_completion__({:error, :boom})
+    end
+  end
+
+  describe "apply_parse_failure/4" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    test ":fallback policy with binary content returns schema with chat_message set" do
+      result =
+        ClaudioAdapter.apply_parse_failure(%MultiField{}, "raw text", :some_reason, %{
+          on_parse_failure: :fallback
+        })
+
+      assert %MultiField{chat_message: "raw text"} = result
+    end
+
+    test ":fallback policy with non-binary content returns the schema unchanged" do
+      result =
+        ClaudioAdapter.apply_parse_failure(%MultiField{}, nil, :some_reason, %{
+          on_parse_failure: :fallback
+        })
+
+      assert %MultiField{chat_message: nil} = result
+    end
+
+    test ":error policy returns {:error, reason}" do
+      assert {:error, :some_reason} =
+               ClaudioAdapter.apply_parse_failure(%MultiField{}, "raw", :some_reason, %{
+                 on_parse_failure: :error
+               })
+    end
+  end
+
+  describe "structured-vs-legacy routing decision (__structured_schema_for__/3)" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    defp routing_client, do: %Normandy.LLM.ClaudioAdapter{api_key: "k", options: %{}}
+
+    test "uses structured outputs for a compatible schema with no tools" do
+      assert {:ok, _schema} =
+               ClaudioAdapter.__structured_schema_for__(routing_client(), %MultiField{}, [])
+    end
+
+    test "skips structured outputs when tools are present (tool_use needs the legacy loop)" do
+      assert :skip =
+               ClaudioAdapter.__structured_schema_for__(
+                 routing_client(),
+                 %MultiField{},
+                 tools: [%{name: "lookup"}]
+               )
+    end
+  end
+
+  describe "structured response interpretation" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    defp text_response(stop_reason, text) do
+      %{stop_reason: stop_reason, content: [%{type: :text, text: text}], usage: %{}}
+    end
+
+    test "normal stop with valid JSON decodes and binds to the schema" do
+      resp = text_response(:end_turn, ~s({"chat_message": "hi", "count": 2}))
+
+      assert %MultiField{chat_message: "hi", count: 2} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "refusal routes to the parse-failure policy (default :fallback)" do
+      resp = text_response(:refusal, "I can't help with that.")
+
+      assert %MultiField{chat_message: "I can't help with that."} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "max_tokens routes to the parse-failure policy" do
+      resp = text_response(:max_tokens, ~s({"chat_message": "trunca))
+
+      assert %MultiField{chat_message: ~s({"chat_message": "trunca)} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+    end
+
+    test "non-conforming content under :error policy returns an error tuple" do
+      resp = text_response(:refusal, "nope")
+
+      assert {:error, {:structured_output_incomplete, :refusal}} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+                 on_parse_failure: :error
+               })
+    end
+
+    test "string-keyed stop_reason is classified like the atom-keyed form" do
+      resp = %{
+        "stop_reason" => "refusal",
+        "content" => [%{"type" => "text", "text" => "nope"}],
+        "usage" => %{}
+      }
+
+      assert {:error, {:structured_output_incomplete, "refusal"}} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+                 on_parse_failure: :error
+               })
+    end
+  end
+
+  describe "__structured_error_action__/1" do
+    test "request-shape rejection (invalid_request_error) falls back to legacy" do
+      err = %Claudio.APIError{
+        type: :invalid_request_error,
+        message: "schema rejected",
+        status_code: 400
+      }
+
+      assert :fallback = ClaudioAdapter.__structured_error_action__(err)
+    end
+
+    test "auth/permission/rate-limit/overload/api errors propagate (no duplicate call)" do
+      for type <- [
+            :authentication_error,
+            :permission_error,
+            :rate_limit_error,
+            :overloaded_error,
+            :api_error,
+            :not_found_error
+          ] do
+        err = %Claudio.APIError{type: type, message: "x", status_code: 500}
+        assert :propagate = ClaudioAdapter.__structured_error_action__(err)
+      end
+    end
+
+    test "transport errors (non-APIError) propagate" do
+      assert :propagate = ClaudioAdapter.__structured_error_action__(:timeout)
+
+      assert :propagate =
+               ClaudioAdapter.__structured_error_action__({:transport_error, :nxdomain})
+    end
+  end
 end
