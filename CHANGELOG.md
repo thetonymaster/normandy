@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v1.3.0](https://github.com/thetonymaster/normandy/compare/6416cea35d8b120370c644dcd9a297dec67df829..v1.3.0) - 2026-06-23
+#### Features
+- (**llm**) JSON pipeline refactor, converse-contract fix, and native structured outputs (#44) - ([6416cea](https://github.com/thetonymaster/normandy/commit/6416cea35d8b120370c644dcd9a297dec67df829)) - Antonio Cabrera
+
+- - -
+
 ## [v1.2.0](https://github.com/thetonymaster/normandy/compare/5dbc6ecf1c354015b8d49a2893de68d72f8231bc..v1.2.0) - 2026-06-20
 #### Features
 - (**agent_horde**) multi-agent multi-provider research pipeline + OpenAI-compatible adapter (#43) - ([5dbc6ec](https://github.com/thetonymaster/normandy/commit/5dbc6ecf1c354015b8d49a2893de68d72f8231bc)) - Antonio Cabrera
