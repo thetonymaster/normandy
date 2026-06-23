@@ -57,7 +57,7 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
     assert feedback =~ "<<ENCODED-BY-FAKE>>"
   end
 
-  test "build/4 with Poison is byte-identical to the unchanged default path" do
+  test "build/4 with Poison includes the required schema section" do
     err = {:json_parse_error, :invalid, "oops"}
     assert RetryFeedback.build(err, "oops", %RequiredField{}, Poison) =~ "Required Schema"
   end

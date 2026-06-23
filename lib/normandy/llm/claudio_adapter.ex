@@ -234,16 +234,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
              context
            ), Normandy.LLM.ClaudioAdapter.extract_usage(response)}
 
-        {:error, _error} ->
-          do_converse_legacy(
-            client,
-            model,
-            temperature,
-            max_tokens,
-            messages,
-            response_model,
-            opts
-          )
+        {:error, error} ->
+          case Normandy.LLM.ClaudioAdapter.__structured_error_action__(error) do
+            :fallback ->
+              do_converse_legacy(
+                client,
+                model,
+                temperature,
+                max_tokens,
+                messages,
+                response_model,
+                opts
+              )
+
+            :propagate ->
+              {handle_error(error, response_model), nil}
+          end
       end
     end
 
@@ -1036,6 +1042,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def extract_usage(_response), do: nil
 
   @doc false
+  # Decides what to do when the structured-outputs call errors. A request-shape
+  # rejection (the API not accepting the output_format/schema) is recoverable via
+  # the legacy parse-retry path, which sends no output_format — so fall back.
+  # Auth/permission/rate-limit/overload/transport errors are NOT recoverable that
+  # way (the legacy call hits the same endpoint with the same credentials), so
+  # surface them via handle_error instead of duplicating the request.
+  @spec __structured_error_action__(term()) :: :fallback | :propagate
+  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error}), do: :fallback
+  def __structured_error_action__(_error), do: :propagate
+
+  @doc false
   # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
   # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
   # mid-turn tool call the legacy path handles, not a structured-output result.
@@ -1050,7 +1067,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def __handle_structured_response__(response, response_model, context) do
     content = extract_content(response)
 
-    case Map.get(response, :stop_reason) do
+    stop_reason = Map.get(response, :stop_reason) || Map.get(response, "stop_reason")
+
+    case stop_reason do
       reason
       when reason in [
              :refusal,

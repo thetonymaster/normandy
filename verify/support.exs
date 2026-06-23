@@ -21,7 +21,10 @@ defmodule Smoke.Support do
       %NormandyTest.Support.ModelMockup{}
     else
       %Normandy.LLM.ClaudioAdapter{
-        api_key: System.fetch_env!("API_KEY"),
+        api_key:
+          System.get_env("API_KEY") ||
+            System.get_env("ANTHROPIC_API_KEY") ||
+            raise("Missing API key: set API_KEY or ANTHROPIC_API_KEY"),
         options: Map.merge(%{timeout: 60_000, max_retries: 1}, extra_options)
       }
     end

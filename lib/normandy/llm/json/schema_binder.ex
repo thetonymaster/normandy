@@ -21,7 +21,7 @@ defmodule Normandy.LLM.Json.SchemaBinder do
 
     changeset =
       schema
-      |> Validate.cast(normalized_params, permitted_fields)
+      |> Validate.cast(normalized_params, permitted_fields, [])
       |> Validate.validate_required(required_fields)
 
     case Validate.apply_action(changeset, :parse) do
@@ -92,7 +92,10 @@ defmodule Normandy.LLM.Json.SchemaBinder do
   # cast error is the user's data being invalid (propagate) versus an
   # unrelated envelope (suppress).
   defp inner_targets_schema?(inner_map, permitted_fields) when is_map(inner_map) do
-    inner_keys = Map.keys(inner_map)
+    # Match against normalized keys so aliased inputs (response/message/text ->
+    # chat_message) are recognized as targeting the schema — the cast in
+    # cast_map/5 normalizes too, so the targeting check must agree with it.
+    inner_keys = inner_map |> normalize_field_names() |> Map.keys()
 
     Enum.any?(permitted_fields, fn field ->
       Enum.any?(inner_keys, fn key ->

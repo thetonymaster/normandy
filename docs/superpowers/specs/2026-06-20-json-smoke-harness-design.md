@@ -11,12 +11,14 @@ The structured-outputs effort left one surface unverified offline: `ClaudioAdapt
 This design adds a **live smoke** — `verify/json_smoke_live.exs` — that drives a small, fixed set of real Haiku calls through the production path and asserts the structured-vs-legacy invariants, closing that gap. It follows the repo's existing `verify/*.exs` smoke pattern exactly.
 
 ### Goals
+
 - Verify, against the live API, that the **structured** path returns schema-valid, correctly-typed, bound structs.
 - Verify that the **legacy** path still works live, and that the **kill-switch** and **incompatible-schema fallback** route to it correctly.
 - Reuse the existing `Smoke.Support` scaffolding (Haiku, call cap, stub mode, assert-or-exit, call report) — no new harness infrastructure.
 - Bounded, observable cost: ≤ ~4 live Haiku calls, inside the shared 15-call hard cap; a free stubbed dry-run before any spend.
 
 ### Non-goals
+
 - A first-class `mix normandy.json_smoke` Mix task (rejected in favor of the established `verify/*.exs` convention — zero new infra, reuses `Smoke.Support`).
 - Tool-use and refusal scenarios (the tools-gate routing decision is already offline-tested; tool-use is hard to assert observably without instrumentation, and refusals are nondeterministic).
 - Any change to product code under `lib/` (the harness only consumes the existing public path). The single shared-scaffolding change is an additive option on `Smoke.Support.client/1`.
@@ -42,14 +44,17 @@ A single script, `verify/json_smoke_live.exs`, structured like `guardrails_live.
 ## 4. Components
 
 ### 4.1 `verify/json_smoke_live.exs` (new)
+
 The smoke script. Owns the four scenarios and their assertions. Defines the open-`:map` schema inline (`defmodule … do use Normandy.Schema; io_schema … end`), reuses `Normandy.LLM.Json.TestFixtures.{MultiField, RecoveryFixture}` for the others.
 
 ### 4.2 `Smoke.Support` additive changes (to `verify/support.exs`)
+
 Two additive, backward-compatible additions (the two existing smokes are untouched):
 - `client(extra_options \\ %{})` — extends `client/0` to merge `extra_options` into the **live** client's `options` map (ignored for the stub). Used by the kill-switch scenario to pass `%{structured_outputs: false}`.
 - `live?/0` — returns `System.get_env("NORMANDY_SMOKE_STUB") != "true"`. The canonical stub/live check, used by the smoke to gate field-value assertions (see §6).
 
 ### 4.3 Schemas used
+
 - `MultiField` — `chat_message :string`, `count :integer` (default 0). Happy-path + a typed scalar.
 - `RecoveryFixture` — `page_text :string`, `facts {:array, :string}`. Array + typed-field assertion.
 - Inline `OpenMapField` — `io_schema` with a single `field :meta, :map`. Produces a `{:incompatible, {:unsupported_type, :map}}` translation → gate `:skip` → legacy.

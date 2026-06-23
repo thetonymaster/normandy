@@ -577,6 +577,13 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       assert {:ok, %MultiField{chat_message: "hi"}} =
                JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{})
     end
+
+    test "skips a balanced non-JSON fragment and parses a later valid object" do
+      content = ~s(Note: {nope} then {"chat_message": "real"})
+
+      assert {:ok, %MultiField{chat_message: "real"}} =
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
+    end
   end
 
   describe "characterization — validation error detail is preserved" do

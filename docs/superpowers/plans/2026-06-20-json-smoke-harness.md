@@ -76,25 +76,31 @@ with:
 - [ ] **Step 2: Verify `live?/0` + stub branch of `client/1` (free)**
 
 Run:
+
 ```bash
 NORMANDY_SMOKE_STUB=true MIX_ENV=test mix run -e 'Code.require_file("verify/support.exs"); IO.inspect({Smoke.Support.live?(), Smoke.Support.client(%{structured_outputs: false}).__struct__})'
 ```
+
 Expected (ignore any OTLP/exporter log noise): the tuple `{false, NormandyTest.Support.ModelMockup}` — `live?` is `false` under stub, and `client/1` accepts the extra-options arg and returns the stub struct.
 
 - [ ] **Step 3: Verify the live-branch option merge (free — no API call, dummy key)**
 
 Run:
+
 ```bash
 API_KEY=dummy MIX_ENV=test mix run -e 'Code.require_file("verify/support.exs"); c = Smoke.Support.client(%{structured_outputs: false}); true = c.options.structured_outputs == false; true = c.options.timeout == 60_000; IO.puts("MERGE OK")'
 ```
+
 Expected: prints `MERGE OK`. This constructs the live `ClaudioAdapter` struct (no network call) and asserts `structured_outputs: false` merged in while the existing `timeout` is preserved. (If `API_KEY` is unset the script raises on `fetch_env!`; the dummy value is only used to build the struct.)
 
 - [ ] **Step 4: Confirm the two existing smokes still load (backward compat)**
 
 Run:
+
 ```bash
 NORMANDY_SMOKE_STUB=true MIX_ENV=test mix run verify/guardrails_live.exs 2>&1 | tail -3
 ```
+
 Expected: the guardrails smoke runs against the stub and prints `LIVE CALLS USED: 0` (its `client()` no-arg calls still work — `client/1`'s default arg preserves the old behavior). It is fine if guardrails prints its own scenario output; the point is it does not crash on a `client/0` arity error.
 
 - [ ] **Step 5: Commit**
@@ -234,9 +240,11 @@ Smoke.Support.report()
 - [ ] **Step 2: Stub dry-run (free) — must be green**
 
 Run:
+
 ```bash
 NORMANDY_SMOKE_STUB=true MIX_ENV=test mix run verify/json_smoke_live.exs 2>&1 | grep -vE "OTLP|opentelemetry|normandy (agent|llm)" | tail -25
 ```
+
 Expected: each scenario prints its `ok: s* returns a … struct` line and `s* field values: skipped (stub)`, ending with `LIVE CALLS USED: 0`. No `INVARIANT FAILED`. Exit code 0.
 
 If any struct-type assertion fails here, the script's call/return wiring is wrong — fix it (this is the dry-run's job) before moving on. (OTLP/opentelemetry exporter warnings and `normandy agent/llm` info lines are expected noise, filtered above.)
@@ -254,9 +262,11 @@ and update that section's note to read that the JSON smoke adds **≤ 4** Haiku 
 - [ ] **Step 4: Re-run the stub dry-run after the edit (free) — still green**
 
 Run:
+
 ```bash
 NORMANDY_SMOKE_STUB=true MIX_ENV=test mix run verify/json_smoke_live.exs 2>&1 | tail -3
 ```
+
 Expected: unchanged — ends with `LIVE CALLS USED: 0`, exit 0. (The runbook edit is docs-only; this just confirms nothing in the script regressed.)
 
 - [ ] **Step 5: Commit**

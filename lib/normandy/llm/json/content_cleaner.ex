@@ -17,21 +17,55 @@ defmodule Normandy.LLM.Json.ContentCleaner do
 
   def clean(content), do: content
 
-  @doc "Locate the outermost balanced JSON object/array within surrounding prose."
+  @doc "Locate the first balanced JSON object/array within surrounding prose."
   @spec extract_balanced(binary()) :: {:ok, binary()} | :error
   def extract_balanced(content) when is_binary(content) do
-    case :binary.match(content, ["{", "["]) do
-      {start, 1} ->
+    case find_balanced_from(content, 0) do
+      {:ok, region, _start} -> {:ok, region}
+      :error -> :error
+    end
+  end
+
+  def extract_balanced(_content), do: :error
+
+  @doc """
+  Like `extract_balanced/1` but begins scanning at byte offset `from` and also
+  returns the byte offset where the located region started. Lets a caller
+  iterate over successive balanced regions — retry the next one when a region
+  fails to decode — by passing `start + 1` as the next `from`.
+  """
+  @spec extract_balanced(binary(), non_neg_integer()) ::
+          {:ok, binary(), non_neg_integer()} | :error
+  def extract_balanced(content, from)
+      when is_binary(content) and is_integer(from) and from >= 0 do
+    find_balanced_from(content, from)
+  end
+
+  def extract_balanced(_content, _from), do: :error
+
+  # Find the next balanced region at or after `from`. An opener whose region
+  # never closes is skipped and the next opener tried, so a stray unbalanced
+  # brace in prose doesn't hide a valid region later in the string.
+  defp find_balanced_from(content, from) when from >= byte_size(content), do: :error
+
+  defp find_balanced_from(content, from) do
+    rest = binary_part(content, from, byte_size(content) - from)
+
+    case :binary.match(rest, ["{", "["]) do
+      {rel, 1} ->
+        start = from + rel
         opener = :binary.at(content, start)
         closer = if opener == ?{, do: ?}, else: ?]
-        scan_balanced(content, start + 1, opener, closer, 1, false, false, start)
+
+        case scan_balanced(content, start + 1, opener, closer, 1, false, false, start) do
+          {:ok, region} -> {:ok, region, start}
+          :error -> find_balanced_from(content, start + 1)
+        end
 
       :nomatch ->
         :error
     end
   end
-
-  def extract_balanced(_content), do: :error
 
   # scan(content, pos, opener, closer, depth, in_string?, escape?, start)
   defp scan_balanced(content, pos, _opener, _closer, 0, _in_str, _esc, start) do

@@ -378,19 +378,37 @@ defmodule Normandy.LLM.JsonDeserializer do
         {:error, reason}
 
       {:error, reason} ->
-        case ContentCleaner.extract_balanced(cleaned_content) do
-          {:ok, extracted} ->
-            case Decoder.decode(extracted, adapter, opts) do
-              {:ok, parsed} when is_map(parsed) -> SchemaBinder.bind(parsed, schema, content)
-              _ -> {:error, {:json_parse_error, reason, content}}
-            end
-
-          :error ->
-            {:error, {:json_parse_error, reason, content}}
-        end
+        try_extracted_regions(cleaned_content, 0, adapter, opts, schema, content, reason)
 
       _ ->
         {:error, {:unexpected_parse_result, content}}
+    end
+  end
+
+  # Walk successive balanced regions in prose, returning the first that decodes
+  # and binds. A balanced-but-non-JSON fragment (e.g. `{note}`) before the real
+  # object is skipped instead of aborting the whole recovery on the first miss.
+  defp try_extracted_regions(cleaned_content, offset, adapter, opts, schema, content, reason) do
+    case ContentCleaner.extract_balanced(cleaned_content, offset) do
+      {:ok, extracted, start} ->
+        case Decoder.decode(extracted, adapter, opts) do
+          {:ok, parsed} when is_map(parsed) ->
+            SchemaBinder.bind(parsed, schema, content)
+
+          _ ->
+            try_extracted_regions(
+              cleaned_content,
+              start + 1,
+              adapter,
+              opts,
+              schema,
+              content,
+              reason
+            )
+        end
+
+      :error ->
+        {:error, {:json_parse_error, reason, content}}
     end
   end
 

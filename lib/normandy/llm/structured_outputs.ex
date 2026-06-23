@@ -10,7 +10,16 @@ defmodule Normandy.LLM.StructuredOutputs do
 
   @spec enabled?(struct()) :: boolean()
   def enabled?(client) do
-    case Map.get(client.options || %{}, :structured_outputs) do
+    opts = client.options || %{}
+
+    override =
+      cond do
+        is_map(opts) -> Map.get(opts, :structured_outputs)
+        is_list(opts) -> Keyword.get(opts, :structured_outputs)
+        true -> nil
+      end
+
+    case override do
       nil -> Application.get_env(:normandy, :structured_outputs, true)
       value -> value
     end

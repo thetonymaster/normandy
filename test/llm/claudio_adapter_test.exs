@@ -209,5 +209,51 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                  on_parse_failure: :error
                })
     end
+
+    test "string-keyed stop_reason is classified like the atom-keyed form" do
+      resp = %{
+        "stop_reason" => "refusal",
+        "content" => [%{"type" => "text", "text" => "nope"}],
+        "usage" => %{}
+      }
+
+      assert {:error, {:structured_output_incomplete, "refusal"}} =
+               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+                 on_parse_failure: :error
+               })
+    end
+  end
+
+  describe "__structured_error_action__/1" do
+    test "request-shape rejection (invalid_request_error) falls back to legacy" do
+      err = %Claudio.APIError{
+        type: :invalid_request_error,
+        message: "schema rejected",
+        status_code: 400
+      }
+
+      assert :fallback = ClaudioAdapter.__structured_error_action__(err)
+    end
+
+    test "auth/permission/rate-limit/overload/api errors propagate (no duplicate call)" do
+      for type <- [
+            :authentication_error,
+            :permission_error,
+            :rate_limit_error,
+            :overloaded_error,
+            :api_error,
+            :not_found_error
+          ] do
+        err = %Claudio.APIError{type: type, message: "x", status_code: 500}
+        assert :propagate = ClaudioAdapter.__structured_error_action__(err)
+      end
+    end
+
+    test "transport errors (non-APIError) propagate" do
+      assert :propagate = ClaudioAdapter.__structured_error_action__(:timeout)
+
+      assert :propagate =
+               ClaudioAdapter.__structured_error_action__({:transport_error, :nxdomain})
+    end
   end
 end
