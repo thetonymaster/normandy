@@ -416,7 +416,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           _enable_caching
         )
         when role in ["user", "assistant"] and is_list(content) do
-      ensure_non_empty_content!(content)
+      _ = ensure_non_empty_content!(content)
       role_atom = String.to_existing_atom(role)
       dispatch_multimodal(request, role_atom, content)
     end

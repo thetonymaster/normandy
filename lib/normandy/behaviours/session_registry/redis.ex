@@ -121,7 +121,7 @@ if Code.ensure_loaded?(Redix) do
             if alive?(pid) do
               {:ok, pid}
             else
-              del_if_owner(s.conn, reg_key(s.ns, sid), blob)
+              _ = del_if_owner(s.conn, reg_key(s.ns, sid), blob)
               :none
             end
 
@@ -137,7 +137,7 @@ if Code.ensure_loaded?(Redix) do
         case Map.pop(s.sids, sid) do
           {{pid, ref}, sids} ->
             Process.demonitor(ref, [:flush])
-            del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
+            _ = del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
             %{s | sids: sids, mons: Map.delete(s.mons, ref)}
 
           {nil, _} ->
@@ -155,7 +155,7 @@ if Code.ensure_loaded?(Redix) do
             s
 
           {sid, mons} ->
-            del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
+            _ = del_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid))
             %{s | mons: mons, sids: Map.delete(s.sids, sid)}
         end
 

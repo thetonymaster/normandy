@@ -1028,7 +1028,7 @@ defmodule Normandy.Agents.BaseAgent do
     # so a cold-start stream call would fail with "Client does not support
     # streaming" even when the adapter does implement stream_converse/7.
     # Ensure the module is loaded before probing.
-    if impl, do: Code.ensure_loaded(impl)
+    _ = if impl, do: Code.ensure_loaded(impl)
 
     if impl && function_exported?(impl, :stream_converse, 7) do
       case impl.stream_converse(
@@ -1390,6 +1390,7 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  @spec raise_llm_call_error(term()) :: no_return()
   defp raise_llm_call_error({:exception, error, stacktrace}) do
     if Kernel.is_exception(error) do
       reraise(error, stacktrace)

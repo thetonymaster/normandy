@@ -54,9 +54,15 @@ if Code.ensure_loaded?(Horde.Registry) do
         end
 
       cond do
-        accepted? -> :ok
-        retries == 0 -> :ok
-        true -> Process.sleep(5) && await_ready(name, retries - 1)
+        accepted? ->
+          :ok
+
+        retries == 0 ->
+          :ok
+
+        true ->
+          Process.sleep(5)
+          await_ready(name, retries - 1)
       end
     end
 
