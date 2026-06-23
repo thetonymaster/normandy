@@ -469,28 +469,29 @@ defmodule Normandy.Coordination.AgentProcess do
     agent_id = state.agent_id
     user_input = prepare_input(input)
 
-    Task.start(fn ->
-      # Guarantee reply_to always hears back: a raised/exited turn must not be
-      # lost silently. Mirrors the inline path's handle_async_run/3 error shape,
-      # plus a catch for exits/throws (Turn.Session.run can crash the turn).
-      result =
-        try do
-          case Turn.Session.run(opts, user_input) do
-            {:ok, value} -> {:ok, extract_result(value)}
-            {:error, _} = err -> err
+    _ =
+      Task.start(fn ->
+        # Guarantee reply_to always hears back: a raised/exited turn must not be
+        # lost silently. Mirrors the inline path's handle_async_run/3 error shape,
+        # plus a catch for exits/throws (Turn.Session.run can crash the turn).
+        result =
+          try do
+            case Turn.Session.run(opts, user_input) do
+              {:ok, value} -> {:ok, extract_result(value)}
+              {:error, _} = err -> err
+            end
+          rescue
+            e ->
+              Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
+              {:error, {:exception, e, __STACKTRACE__}}
+          catch
+            kind, reason ->
+              Logger.error("Async agent #{agent_id} #{kind}: #{inspect(reason)}")
+              {:error, {kind, reason}}
           end
-        rescue
-          e ->
-            Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
-            {:error, {:exception, e, __STACKTRACE__}}
-        catch
-          kind, reason ->
-            Logger.error("Async agent #{agent_id} #{kind}: #{inspect(reason)}")
-            {:error, {kind, reason}}
-        end
 
-      if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
-    end)
+        if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
+      end)
 
     {:noreply, %{state | run_count: state.run_count + 1, last_run: DateTime.utc_now()}}
   end

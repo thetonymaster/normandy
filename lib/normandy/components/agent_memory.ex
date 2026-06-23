@@ -261,19 +261,19 @@ defmodule Normandy.Components.AgentMemory do
   # visited ids so a corrupt parent cycle (same vector `chain_newest_first/1`
   # guards against) terminates instead of looping forever.
   defp surviving_ancestor(id, entries, deleted),
-    do: surviving_ancestor(id, entries, deleted, MapSet.new())
+    do: surviving_ancestor(id, entries, deleted, %{})
 
   defp surviving_ancestor(nil, _entries, _deleted, _visited), do: nil
 
   defp surviving_ancestor(id, entries, deleted, visited) do
     cond do
-      MapSet.member?(visited, id) ->
+      Map.has_key?(visited, id) ->
         nil
 
       MapSet.member?(deleted, id) ->
         case Map.get(entries, id) do
           %Entry{parent_id: parent_id} ->
-            surviving_ancestor(parent_id, entries, deleted, MapSet.put(visited, id))
+            surviving_ancestor(parent_id, entries, deleted, Map.put(visited, id, true))
 
           nil ->
             nil

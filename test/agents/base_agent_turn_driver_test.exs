@@ -52,6 +52,42 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     end
   end
 
+  # A "misbehaving / generic" client: it returns tool_calls in its response even
+  # though the agent has no tools (and the requested response_model is the plain
+  # output schema). This is the exact scenario call_turn_llm's no-tools strip
+  # guards against. Dialyzer flags that strip as dead code because, within its
+  # type model, r conforms to response_model and so cannot carry tool_calls when
+  # has_tools?/1 is false — but a non-conforming client breaks that assumption at
+  # runtime, which is what this client simulates.
+  defmodule MisbehavingNoToolsClient do
+    use Normandy.Schema
+
+    schema do
+      field(:content, :string, default: "done")
+    end
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
+        response_model
+      end
+
+      def converse(
+            config,
+            _model,
+            _temperature,
+            _max_tokens,
+            _messages,
+            _response_model,
+            _opts \\ []
+          ) do
+        %ToolCallResponse{
+          content: config.content,
+          tool_calls: [%ToolCall{id: "spurious_1", name: "ghost_tool", input: %{}}]
+        }
+      end
+    end
+  end
+
   defp with_tools_agent do
     calc = %Calculator{operation: "add", a: 0, b: 0}
     registry = Registry.new([calc])
@@ -117,6 +153,35 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       history = AgentMemory.history(updated.memory)
       roles = Enum.map(history, & &1.role)
       assert roles == ["assistant"]
+    end
+  end
+
+  describe "no-tools agent strips spurious tool_calls (call_turn_llm defensive clause)" do
+    # Regression test for the Dialyzer-flagged dead clause in call_turn_llm/3
+    # (suppressed in .dialyzer_ignore.exs as base_agent.ex:1 pattern_match).
+    # Proves the clause is reachable AND load-bearing at runtime: without the
+    # strip the FSM would see tool_calls and dispatch against a nil registry.
+    test "a no-tools agent whose LLM returns tool_calls finalizes without dispatching" do
+      config =
+        BaseAgent.init(%{
+          client: %MisbehavingNoToolsClient{},
+          model: "test-model",
+          temperature: 0.7
+          # no :tool_registry -> has_tools?/1 is false
+        })
+
+      input = %BaseAgentInputSchema{chat_message: "hi"}
+
+      {updated, response} = BaseAgent.run(config, input)
+
+      # The strip emptied tool_calls before the FSM saw the response, so the turn
+      # finalized to the output schema and never appended a "tool" role (no
+      # dispatch against the nil registry).
+      assert %BaseAgentOutputSchema{} = response
+
+      roles = updated.memory |> AgentMemory.history() |> Enum.map(& &1.role)
+      assert roles == ["user", "assistant"]
+      refute "tool" in roles
     end
   end
 
