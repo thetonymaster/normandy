@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v1.2.0](https://github.com/thetonymaster/normandy/compare/5dbc6ecf1c354015b8d49a2893de68d72f8231bc..v1.2.0) - 2026-06-20
+#### Features
+- (**agent_horde**) multi-agent multi-provider research pipeline + OpenAI-compatible adapter (#43) - ([5dbc6ec](https://github.com/thetonymaster/normandy/commit/5dbc6ecf1c354015b8d49a2893de68d72f8231bc)) - Antonio Cabrera
+
+- - -
+
+## [v1.1.1](https://github.com/thetonymaster/normandy/compare/c655a054b67a0931fcd8ab1434393fd648cb3d12..v1.1.1) - 2026-06-20
+#### Bug Fixes
+- (**telemetry**) emit agent.run span from run_with_tools/2 entry point (#42) - ([c655a05](https://github.com/thetonymaster/normandy/commit/c655a054b67a0931fcd8ab1434393fd648cb3d12)) - Antonio Cabrera
+
+- - -
+
 ## [v1.1.0](https://github.com/thetonymaster/normandy/compare/931ce1418e0259cb66c563bce8ce019a16d6b77a..v1.1.0) - 2026-06-19
 #### Features
 - (**tools**) validate tool input at the Dispatch chokepoint before side effects (#40) - ([931ce14](https://github.com/thetonymaster/normandy/commit/931ce1418e0259cb66c563bce8ce019a16d6b77a)) - Antonio Cabrera
