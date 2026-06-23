@@ -120,6 +120,9 @@ jobs:
   dialyzer:
     name: Dialyzer (Type Checking)
     runs-on: ubuntu-latest
+    # Only checks out the repo and runs Dialyzer — restrict the token to read-only.
+    permissions:
+      contents: read
     # Pinned to the toolchain the ignore set was verified against (Elixir 1.19 /
     # OTP 28); Dialyzer warning sets vary across versions, so the gate runs on a
     # single modern version rather than the full test matrix. MIX_ENV=dev keeps the
