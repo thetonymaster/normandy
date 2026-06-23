@@ -584,6 +584,22 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       assert {:ok, %MultiField{chat_message: "real"}} =
                JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
+
+    test "skips a valid-JSON-but-unbindable object and parses a later valid one" do
+      # First object is valid JSON but fails RequiredField binding (no chat_message);
+      # the later object binds. Recovery must not stop at the first bind failure.
+      content = ~s(First {"count": 1} then {"chat_message": "real"})
+
+      assert {:ok, %RequiredField{chat_message: "real"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
+
+    test "preserves the validation error when no extracted region binds" do
+      content = ~s(Only: {"count": 1} here)
+
+      assert {:error, {:validation_error, _changeset, _}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
   end
 
   describe "characterization — validation error detail is preserved" do
