@@ -784,6 +784,7 @@ git commit -m "feat(demo): agent config, client_builder switch, eager template +
 
 **Files:**
 - Modify: `examples/autoresume_demo/lib/autoresume_demo/application.ex` (full version)
+- Modify: `examples/autoresume_demo/config/test.exs` (add `config :autoresume_demo, role: :test` so the app starts NO infra under test — tests own setup; otherwise app-managed Repo/Catalog/registry collide with `test_helper`/`start_supervised` as `:already_started`)
 - Create: `examples/autoresume_demo/lib/autoresume_demo/topology.ex` (shared names/handles)
 - Create: `examples/autoresume_demo/lib/autoresume_demo/seeds.ex`
 - Test: `examples/autoresume_demo/test/single_node_integration_test.exs`
@@ -834,11 +835,19 @@ defmodule AutoresumeDemo.Application do
     role = Application.get_env(:autoresume_demo, :role, :standalone)
     Logger.info("autoresume_demo starting role=#{role} mode=#{Application.get_env(:autoresume_demo, :demo_mode)}")
 
-    children = common_children() ++ role_children(role)
+    # Under :test the app starts NOTHING — each test starts exactly the infra it
+    # needs (Repo via test_helper; Catalog/registry/supervisor via start_supervised),
+    # which would otherwise collide with app-managed children (:already_started).
+    children =
+      case role do
+        :test -> []
+        _ -> common_children() ++ role_children(role)
+      end
+
     {:ok, sup} = Supervisor.start_link(children, strategy: :one_for_one, name: AutoresumeDemo.Supervisor)
 
-    # Populate the node-local Catalog now that it is running.
-    AutoresumeDemo.Agent.register_supplement(Topology.catalog())
+    # Populate the node-local Catalog now that it is running (not under :test).
+    if role != :test, do: AutoresumeDemo.Agent.register_supplement(Topology.catalog())
     {:ok, sup}
   end
 
