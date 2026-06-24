@@ -17,3 +17,5 @@ config :autoresume_demo,
   dashboard_port: String.to_integer(System.get_env("DASHBOARD_PORT", "4000")),
   worker_node_count: String.to_integer(System.get_env("WORKER_NODES", "3")),
   sim_step_delay_ms: String.to_integer(System.get_env("SIM_STEP_DELAY_MS", "1500"))
+
+import_config "#{config_env()}.exs"
