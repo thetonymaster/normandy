@@ -1064,8 +1064,12 @@ defmodule AutoresumeDemo.ClusterLauncher do
     case entry do
       {slot, %{pid: pid}} when is_pid(pid) ->
         Logger.warning("ClusterLauncher: killing #{node}")
-        # Notify the collector first so the dashboard records the reason.
-        AutoresumeDemo.DemoCollector.note_kill(node)
+        # Notify the collector (only if it's running) so the dashboard records the
+        # reason. Guarded so the launcher does not depend on Task 9 / the observer
+        # role having started the collector — kill must work in the bare test too.
+        if Process.whereis(AutoresumeDemo.DemoCollector),
+          do: AutoresumeDemo.DemoCollector.note_kill(node)
+
         :peer.stop(pid)
         peers = Map.put(state.peers, slot, %{node: node, pid: :down})
         {:reply, :ok, %{state | peers: peers}}
