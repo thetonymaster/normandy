@@ -27,4 +27,19 @@ defmodule AutoresumeDemo.AgentTest do
     assert tmpl.behaviours_refs.credential == {AutoresumeDemo.EnvCredentialProvider, []}
     assert tmpl.template_id == Agent.template_id()
   end
+
+  test "a stored closure reads demo_mode at invocation time, not build time" do
+    prev = Application.get_env(:autoresume_demo, :demo_mode)
+    on_exit(fn -> Application.put_env(:autoresume_demo, :demo_mode, prev) end)
+
+    # Build the closure under :real mode (as a Catalog supplement would at boot).
+    Application.put_env(:autoresume_demo, :demo_mode, :real)
+    builder = Agent.client_builder()
+    assert %ClaudioAdapter{api_key: "tok"} = builder.("tok")
+
+    # Switch the mode AFTER the closure was built, then invoke the SAME closure.
+    # It must reflect the new mode (handoff reconstruction reads current env).
+    Application.put_env(:autoresume_demo, :demo_mode, :simulated)
+    assert %SimClient{} = builder.("tok")
+  end
 end

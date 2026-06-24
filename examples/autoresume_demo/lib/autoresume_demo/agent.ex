@@ -24,12 +24,16 @@ defmodule AutoresumeDemo.Agent do
 
   @doc "The single real/sim switch. Carried through Tier-2 reconstruction."
   def client_builder do
-    mode = Application.get_env(:autoresume_demo, :demo_mode, :real)
-    delay = Application.get_env(:autoresume_demo, :sim_step_delay_ms, 1500)
     topic = @topic
     steps = total_steps()
 
+    # Read the runtime env INSIDE the closure: this closure is stored in the
+    # Catalog supplement and invoked later during a handoff, so it must reflect
+    # the env at INVOCATION time, not at the moment client_builder/0 was called.
     fn token ->
+      mode = Application.get_env(:autoresume_demo, :demo_mode, :real)
+      delay = Application.get_env(:autoresume_demo, :sim_step_delay_ms, 1500)
+
       case mode do
         :simulated ->
           %SimClient{topic: topic, total_steps: steps, step_delay_ms: delay}
