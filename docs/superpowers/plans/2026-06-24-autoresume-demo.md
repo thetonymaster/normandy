@@ -444,14 +444,10 @@ defmodule AutoresumeDemo.Tools.ResearchStepTest do
              BaseTool.run(%ResearchStep{topic: "raft", n: 3})
     assert finding =~ "raft"
   end
-
-  test "run tolerates a plain map with string keys" do
-    assert {:ok, %{"step" => 2}} = BaseTool.run(%{"topic" => "paxos", "n" => 2})
-  end
 end
 ```
 
-Note: the third test exercises the fallback clause for when the dispatch pipeline passes a raw input map rather than a built struct.
+Note: `Normandy.Agents.Dispatch.prepare_tool/2` (`@spec (struct(), map()) :: struct()`) always builds a `%ResearchStep{}` struct before `BaseTool.run/1` is called — the pipeline never passes a raw map to a tool. So `run/1` only needs to handle the struct; do NOT add a Map/Any protocol impl (that would be a library-wide change).
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -484,13 +480,11 @@ defmodule AutoresumeDemo.Tools.ResearchStep do
       }
     end
 
-    def run(%{topic: topic, n: n}) when not is_nil(topic) and not is_nil(n) do
-      {:ok, %{"step" => n, "finding" => "Finding ##{n} about #{topic}."}}
-    end
-
-    def run(params) when is_map(params) do
-      topic = Map.get(params, :topic) || Map.get(params, "topic") || "unknown"
-      n = Map.get(params, :n) || Map.get(params, "n") || 0
+    # Dispatch only routes a %ResearchStep{} struct here, so the arg is always
+    # the struct; tolerate nil fields defensively.
+    def run(tool) do
+      topic = tool.topic || "unknown"
+      n = tool.n || 0
       {:ok, %{"step" => n, "finding" => "Finding ##{n} about #{topic}."}}
     end
   end
