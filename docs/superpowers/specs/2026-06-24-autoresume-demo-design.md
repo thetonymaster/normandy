@@ -92,7 +92,7 @@ Shared state: **one Postgres instance** reachable by all worker nodes
 
 Each agent runs a multi-iteration tool loop modeled on `examples/agent_horde` — e.g.
 "research topic X in N steps", calling an instrumented tool each iteration
-(`research_step`, `summarize`). Multi-step is required: turn state is persisted at each
+(`research_step`), then a tool-less closing synthesis. Multi-step is required: turn state is persisted at each
 `:steering` boundary, so a node kill leaves genuine accumulated progress (history +
 iteration count) to resume from, not just a single re-issued call. Agents are started
 **eager + Tier-2** (template + credential provider) so the reaper can reconstruct them.
@@ -119,7 +119,7 @@ NORMANDY · Autoresume Live                    cluster: 2 up · 1 down       14:
 │ ┌ research-a3f2 ──────────┐ │ │ ┌ research-9b71 ──────────┐ │ │                             │
 │ │ ▶ running   step 12/20  │ │ │ │ ▶ running   step  7/20  │ │ │  (no agents — node down)    │
 │ │ ███████████░░░░░░░ 60%  │ │ │ │ ██████░░░░░░░░░░░░ 35%   │ │ │                             │
-│ │ tool: research_step(…)  │ │ │ │ tool: summarize(…)      │ │ │                             │
+│ │ tool: research_step(…)  │ │ │ │ tool: research_step(…)  │ │ │                             │
 │ └─────────────────────────┘ │ │ └─────────────────────────┘ │ │                             │
 │ ┌ research-c1d8 ──────────┐ │ │                             │ │                             │
 │ │ ↻ RESUMED from node_c   │ │ │                             │ │                             │
@@ -140,16 +140,24 @@ Columns = nodes; cards = agents with a live step counter + progress bar + curren
 (the "agents are still running" proof); a **Kill node** button per column; an **event log**
 narrating the handoff. A killed node's column offers **Restart node** to re-add capacity.
 
-## 5. Event flow (survives handoff)
+## 5. Event flow (pull-based — survives handoff for free)
 
-- Every instrumented tool casts `{:agent_step, session_id, node(), step, total, tool_name}`
-  to the globally-registered `DemoCollector` on the observer, once per iteration. Because
-  the reconstructed agent re-runs the same tools on the new node, the heartbeat resumes
-  automatically — the node field flips and the counter continues.
-- `DemoCollector` also runs `:net_kernel.monitor_nodes(true)` for authoritative
-  `node down/up` events (the "reason" an agent went offline).
-- `DemoCollector` folds these into per-agent state and pushes diffs to the browser over SSE
-  (`GET /events`).
+The dashboard reads the **same durable state the resume mechanism relies on**, rather than
+having agents push events. This is authoritative and survives a handoff with no extra wiring.
+
+- `DemoCollector` on the observer polls every 500ms: `store.list_resumable` → for each
+  session `load_turn_state` (status; `iterations_left` → step/total; `pending_calls` →
+  current tool) and `registry.whereis` → which node it currently runs on.
+- It also runs `:net_kernel.monitor_nodes(true)` for authoritative `node up/down` events,
+  and records manual kills (the "reason" an agent went offline) via `note_kill/1`.
+- It folds these into per-agent state — detecting when a session's node changed after a
+  down (→ `resumed_from`) — and serves the snapshot to the browser over SSE (`GET /events`).
+
+Why pull, not push: a tool's `run/1` cannot know its own `session_id` without fragile
+prompt coupling, and the reaper's thin restart carries **no** subscriber/handlers — so a
+per-tool heartbeat cast would not survive a handoff. Polling the store + registry knows the
+session id natively, needs zero library-internal coupling, and naturally tracks the agent
+across nodes.
 
 ## 6. Project layout
 
@@ -166,8 +174,8 @@ examples/autoresume_demo/
     cluster_launcher.ex         # spawns :peer nodes; wires Normandy.Cluster.child_specs per node; kill/restart
     repo.ex                     # Ecto repo for the Postgres session store
     env_credential_provider.ex  # ~10 lines: {:ok, System.fetch_env!("ANTHROPIC_API_KEY")}
-    tools/research_step.ex       # instrumented BaseTool — real work (real or simulated) + heartbeat cast
-    collector.ex                # DemoCollector GenServer (node monitor + per-agent state + SSE pub)
+    tools/research_step.ex       # BaseTool — the per-step work the agent calls each iteration
+    collector.ex                # DemoCollector GenServer (polls store+registry, node monitor, per-agent state)
     web/router.ex               # Plug.Router: GET / (HTML), GET /events (SSE), POST /kill/:node, POST /restart/:node
     web/page.ex                 # the dashboard HTML/JS (SSE client; columns + cards + log)
     seeds.ex                    # starts the demo agents (eager, Tier-2) distributed across the cluster
