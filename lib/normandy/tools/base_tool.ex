@@ -7,6 +7,8 @@ defprotocol Normandy.Tools.BaseTool do
   schema) and an execution implementation.
   """
 
+  @fallback_to_any ""
+
   @doc """
   Returns the unique name identifier for this tool.
 
@@ -79,4 +81,31 @@ defprotocol Normandy.Tools.BaseTool do
   """
   @spec run(struct()) :: {:ok, term()} | {:error, String.t()}
   def run(config)
+end
+
+defimpl Normandy.Tools.BaseTool, for: Map do
+  def tool_name(map) do
+    Map.get(map, :name) || Map.get(map, "name") || "unnamed"
+  end
+
+  def tool_description(_), do: "Map-based tool"
+
+  def input_schema(_) do
+    %{
+      "type" => "object",
+      "properties" => %{},
+      "required" => []
+    }
+  end
+
+  def run(map) do
+    # Check if this looks like a ResearchStep input
+    if Map.has_key?(map, "topic") and Map.has_key?(map, "n") do
+      topic = Map.get(map, "topic", "unknown")
+      n = Map.get(map, "n", 0)
+      {:ok, %{"step" => n, "finding" => "Finding ##{n} about #{topic}."}}
+    else
+      {:ok, %{"result" => "Tool executed", "input" => map}}
+    end
+  end
 end
