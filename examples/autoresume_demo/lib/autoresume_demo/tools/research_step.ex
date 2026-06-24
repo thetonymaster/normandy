@@ -21,13 +21,9 @@ defmodule AutoresumeDemo.Tools.ResearchStep do
       }
     end
 
-    def run(%{topic: topic, n: n}) when not is_nil(topic) and not is_nil(n) do
-      {:ok, %{"step" => n, "finding" => "Finding ##{n} about #{topic}."}}
-    end
-
-    def run(params) when is_map(params) do
-      topic = Map.get(params, :topic) || Map.get(params, "topic") || "unknown"
-      n = Map.get(params, :n) || Map.get(params, "n") || 0
+    def run(tool) do
+      topic = tool.topic || "unknown"
+      n = tool.n || 0
       {:ok, %{"step" => n, "finding" => "Finding ##{n} about #{topic}."}}
     end
   end

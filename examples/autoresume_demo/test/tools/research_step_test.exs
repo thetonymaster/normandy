@@ -19,8 +19,4 @@ defmodule AutoresumeDemo.Tools.ResearchStepTest do
 
     assert finding =~ "raft"
   end
-
-  test "run tolerates a plain map with string keys" do
-    assert {:ok, %{"step" => 2}} = BaseTool.run(%{"topic" => "paxos", "n" => 2})
-  end
 end
