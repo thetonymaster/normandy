@@ -189,7 +189,7 @@ examples/autoresume_demo/
 docker compose -f docker-compose.verify.yml up -d postgres
 export ANTHROPIC_API_KEY=sk-...            # required for DEMO_MODE=real
 cd examples/autoresume_demo && mix deps.get && mix ecto.setup
-iex --sname observer -S mix                # boots cluster + dashboard, prints http://localhost:4000
+iex --name observer@127.0.0.1 --cookie demo -S mix   # boots cluster + dashboard at http://localhost:4000
 # open the page, watch agents run, click "Kill node_c", watch the handoff
 ```
 

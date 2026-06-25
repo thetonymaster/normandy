@@ -1041,7 +1041,9 @@ defmodule AutoresumeDemo.ClusterLauncher do
 
   @impl true
   def init(:ok) do
-    # Ensure this (observer) node is distributed; iex --sname observer does this.
+    # Ensure this (observer) node is distributed; `iex --name observer@127.0.0.1` does this.
+    # NOTE: must be a LONG name (--name @127.0.0.1), not --sname — the :peer workers are
+    # at @127.0.0.1 and short-name and IP-name nodes cannot cluster.
     count = Application.get_env(:autoresume_demo, :worker_node_count, 3)
     peers = for i <- 1..count, into: %{}, do: {slot(i), start_worker(slot(i))}
     # Seed on the first live worker so Horde distributes children across workers.
@@ -1204,7 +1206,7 @@ end
 Run:
 ```bash
 docker compose -f ../../docker-compose.verify.yml up -d postgres
-MIX_ENV=test elixir --sname demotest --cookie demo -S mix test --only distributed test/distributed_handoff_test.exs
+MIX_ENV=test elixir --name demotest@127.0.0.1 --cookie demo -S mix test --only distributed test/distributed_handoff_test.exs
 ```
 Expected: PASS — the session re-registers on a surviving node and continues. This is the core proof of the demo.
 
@@ -1718,7 +1720,7 @@ docker compose -f ../../docker-compose.verify.yml up -d postgres
 export ANTHROPIC_API_KEY=sk-...
 mix deps.get
 mix ecto.setup
-iex --sname observer --cookie demo -S mix
+iex --name observer@127.0.0.1 --cookie demo -S mix
 # open http://localhost:4000
 ```
 
@@ -1727,7 +1729,7 @@ iex --sname observer --cookie demo -S mix
 docker compose -f ../../docker-compose.verify.yml up -d postgres
 export DEMO_MODE=simulated
 mix deps.get && mix ecto.setup
-iex --sname observer --cookie demo -S mix
+iex --name observer@127.0.0.1 --cookie demo -S mix
 # open http://localhost:4000
 ```
 
@@ -1775,7 +1777,7 @@ Run:
 ```bash
 docker compose -f ../../docker-compose.verify.yml up -d postgres
 cd examples/autoresume_demo && export DEMO_MODE=simulated && mix deps.get && mix ecto.reset
-iex --sname observer --cookie demo -S mix
+iex --name observer@127.0.0.1 --cookie demo -S mix
 ```
 Then open `http://localhost:4000`. Verify against spec acceptance criteria:
 - Columns appear for ~3 workers with agent cards whose step counters advance.
@@ -1792,7 +1794,7 @@ Run the same with `export DEMO_MODE=real` and a valid `ANTHROPIC_API_KEY` (and `
 Run:
 ```bash
 MIX_ENV=test mix test
-MIX_ENV=test elixir --sname demotest --cookie demo -S mix test --only distributed
+MIX_ENV=test elixir --name demotest@127.0.0.1 --cookie demo -S mix test --only distributed
 ```
 Expected: all unit + integration tests PASS; the distributed handoff test PASSES.
 
