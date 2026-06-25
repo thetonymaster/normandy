@@ -72,6 +72,44 @@ defmodule AutoresumeDemo.Agent do
 
   def build_template, do: ConfigTemplate.from_config(base_config(), @template_id, :eager)
 
+  @doc """
+  Warm a node so any `[:safe]` decode of a persisted demo blob can succeed there.
+
+  The Postgres `SessionStore` decodes both the persisted **ConfigTemplate** (in
+  `Turn.Server.reconstruct_config!/3`) and the persisted **Turn.State** (in
+  `load_turn_state/2`) with `:erlang.binary_to_term(blob, [:safe])`. `[:safe]`
+  rejects any atom not already interned on the decoding node. A node that has only
+  run `Application.ensure_all_started/1` (a freshly-booted worker peer) — or the
+  observer/test VM that merely starts the Repo + registry — has NOT lazily loaded
+  every Normandy module, so the struct-field/map-key atoms minted by those modules
+  are absent and the decode raises `:badarg`. Examples seen in practice:
+
+    * ConfigTemplate keys: `:behaviours_refs`, `:max_messages`,
+      `:max_tool_concurrency`, `:output_schema`, `:chat_message`
+    * Turn.State keys: `:iterations_left`, `:awaiting_final`, `:stop_reason`, ...
+
+  Building the template + base config + a sample Turn.State here force-loads those
+  modules and interns the atoms; the round-trip `[:safe]` decodes assert the
+  postcondition (they raise if any reachable atom is still missing), so callers can
+  treat `:ok` as a hard guarantee that this node can decode demo blobs.
+
+  Idempotent and cheap; safe to call on every node (workers AND observer) at boot.
+  """
+  @spec warmup() :: :ok
+  def warmup do
+    tmpl = build_template()
+    _ = base_config()
+    # A sample Turn.State exercises every Turn.State field atom (the persisted shape
+    # the observer/reaper later decode under [:safe]).
+    state = %Normandy.Agents.Turn.State{}
+
+    # Round-trip through the SAME [:safe] path the store uses; raises if any reachable
+    # atom is still un-interned on this node.
+    ^tmpl = :erlang.binary_to_term(:erlang.term_to_binary(tmpl), [:safe])
+    ^state = :erlang.binary_to_term(:erlang.term_to_binary(state), [:safe])
+    :ok
+  end
+
   def supplement do
     %{
       tool_registry: tool_registry(),
