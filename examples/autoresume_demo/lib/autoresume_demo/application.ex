@@ -73,8 +73,16 @@ defmodule AutoresumeDemo.Application do
     ]
   end
 
-  # Filled in by Tasks 9 & 10 (DemoCollector, Bandit, ClusterLauncher).
-  defp observer_children, do: [AutoresumeDemo.DemoCollector]
+  defp observer_children do
+    port = Application.get_env(:autoresume_demo, :dashboard_port, 4000)
+
+    [
+      AutoresumeDemo.DemoCollector,
+      {Bandit, plug: AutoresumeDemo.Web.Router, scheme: :http, port: port},
+      AutoresumeDemo.ClusterLauncher
+    ]
+  end
+
   # DemoCollector so a single-node dev VM also has the dashboard.
   defp standalone_extras, do: [AutoresumeDemo.DemoCollector]
 end
