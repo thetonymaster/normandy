@@ -32,4 +32,20 @@ defmodule AutoresumeDemo.DemoCollectorTest do
     view = C.agent_view("s1", :unlocated, {:ok, ts}, %{})
     assert view.status == "done"
   end
+
+  test "an unreadable turn state reads offline even when the session is located" do
+    view = C.agent_view("s1", {:located, :worker_2@h}, {:error, :not_found}, %{})
+    assert view.status == "offline"
+    assert view.current_tool == nil
+    assert view.step == nil
+    assert view.total == nil
+  end
+
+  test "current_tool is the pending tool name, and nil when no tool is pending" do
+    base = %Turn.State{status: :steering, iterations_left: 2, max_iterations: 7}
+    pending = %{base | pending_calls: [%{name: "research_step"}]}
+    located = {:located, :worker_2@h}
+    assert C.agent_view("s1", located, {:ok, pending}, %{}).current_tool == "research_step"
+    assert C.agent_view("s1", located, {:ok, base}, %{}).current_tool == nil
+  end
 end

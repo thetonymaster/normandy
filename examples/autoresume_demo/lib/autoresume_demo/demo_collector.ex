@@ -25,9 +25,13 @@ defmodule AutoresumeDemo.DemoCollector do
     {status, step, total, tool} = derive(turn_state_result)
 
     {node, status} =
-      case located do
-        {:located, n} -> {n, if(status == "done", do: "done", else: "running")}
-        :unlocated -> {nil, if(status == "done", do: "done", else: "offline")}
+      case {located, status} do
+        # Unreadable turn state (store error / not found) always reads offline,
+        # regardless of whether the registry located the session.
+        {{:located, n}, "unreadable"} -> {n, "offline"}
+        {:unlocated, "unreadable"} -> {nil, "offline"}
+        {{:located, n}, _} -> {n, if(status == "done", do: "done", else: "running")}
+        {:unlocated, _} -> {nil, if(status == "done", do: "done", else: "offline")}
       end
 
     resumed_from =
@@ -57,19 +61,19 @@ defmodule AutoresumeDemo.DemoCollector do
     tool =
       case ts.pending_calls do
         [%{name: n} | _] -> n
-        _ -> Atom.to_string(ts.status)
+        _ -> nil
       end
 
     {"active", step, total, tool}
   end
 
-  defp derive(_), do: {"unknown", nil, nil, nil}
+  defp derive(_), do: {"unreadable", nil, nil, nil}
 
   # ---- GenServer ----
   @impl true
   def init(:ok) do
     :net_kernel.monitor_nodes(true)
-    state = %{agents: [], nodes: %{}, events: [], prev_nodes: %{}, killed: MapSet.new()}
+    state = %{agents: [], nodes: %{}, events: [], prev_nodes: %{}}
     send(self(), :poll)
     {:ok, state}
   end
@@ -81,9 +85,7 @@ defmodule AutoresumeDemo.DemoCollector do
 
   @impl true
   def handle_cast({:note_kill, node}, state) do
-    {:noreply,
-     %{state | killed: MapSet.put(state.killed, node)}
-     |> add_event("kill", "#{node} killed (manual)")}
+    {:noreply, add_event(state, "kill", "#{node} killed (manual)")}
   end
 
   @impl true
@@ -122,9 +124,11 @@ defmodule AutoresumeDemo.DemoCollector do
     {:noreply, %{state | agents: agents, prev_nodes: prev_nodes, events: events}}
   end
 
+  @impl true
   def handle_info({:nodeup, node}, state),
     do: {:noreply, state |> put_node(node, "up") |> add_event("nodeup", "#{node} up")}
 
+  @impl true
   def handle_info({:nodedown, node}, state),
     do: {:noreply, state |> put_node(node, "down") |> add_event("nodedown", "#{node} down")}
 
