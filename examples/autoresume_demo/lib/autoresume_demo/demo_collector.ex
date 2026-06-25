@@ -91,6 +91,36 @@ defmodule AutoresumeDemo.DemoCollector do
   @impl true
   def handle_info(:poll, state) do
     Process.send_after(self(), :poll, @poll_ms)
+
+    # A poll touches the Horde registry ETS table and the store — both can be
+    # transiently unavailable (e.g. registry membership churns during a node
+    # kill, exactly when the dashboard is polling). A single bad cycle must skip
+    # and KEEP the last good state, never crash the collector (the dashboard's
+    # only data source).
+    new_state =
+      try do
+        do_poll(state)
+      rescue
+        _ -> state
+      catch
+        _, _ -> state
+      end
+
+    {:noreply, new_state}
+  end
+
+  @impl true
+  def handle_info({:nodeup, node}, state),
+    do: {:noreply, state |> put_node(node, "up") |> add_event("nodeup", "#{node} up")}
+
+  @impl true
+  def handle_info({:nodedown, node}, state),
+    do: {:noreply, state |> put_node(node, "down") |> add_event("nodedown", "#{node} down")}
+
+  # The work of one poll cycle. Touches the registry/store and can raise on
+  # transient unavailability; handle_info(:poll, _) wraps it so a bad cycle is
+  # skipped (last good state retained) rather than crashing the collector.
+  defp do_poll(state) do
     {store_mod, store_handle} = Topology.store()
     {reg_mod, reg_handle} = Topology.registry_handle()
 
@@ -121,16 +151,8 @@ defmodule AutoresumeDemo.DemoCollector do
         prepend_event(evs, "resume", "#{a.id} resumed on #{a.node} (was #{a.resumed_from})")
       end)
 
-    {:noreply, %{state | agents: agents, prev_nodes: prev_nodes, events: events}}
+    %{state | agents: agents, prev_nodes: prev_nodes, events: events}
   end
-
-  @impl true
-  def handle_info({:nodeup, node}, state),
-    do: {:noreply, state |> put_node(node, "up") |> add_event("nodeup", "#{node} up")}
-
-  @impl true
-  def handle_info({:nodedown, node}, state),
-    do: {:noreply, state |> put_node(node, "down") |> add_event("nodedown", "#{node} down")}
 
   defp put_node(state, node, status),
     do: %{state | nodes: Map.put(state.nodes, node, status)}
