@@ -73,8 +73,8 @@ defmodule AutoresumeDemo.Application do
     ]
   end
 
-  # Filled in by Tasks 9 & 10 (DemoCollector, Bandit, ClusterLauncher). Empty for now.
-  defp observer_children, do: []
-  # Filled in by Task 9 (DemoCollector) so a single-node dev VM also has the dashboard.
-  defp standalone_extras, do: []
+  # Filled in by Tasks 9 & 10 (DemoCollector, Bandit, ClusterLauncher).
+  defp observer_children, do: [AutoresumeDemo.DemoCollector]
+  # DemoCollector so a single-node dev VM also has the dashboard.
+  defp standalone_extras, do: [AutoresumeDemo.DemoCollector]
 end
