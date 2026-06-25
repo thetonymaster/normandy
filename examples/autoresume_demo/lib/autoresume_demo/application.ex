@@ -78,7 +78,7 @@ defmodule AutoresumeDemo.Application do
 
     [
       AutoresumeDemo.DemoCollector,
-      {Bandit, plug: AutoresumeDemo.Web.Router, scheme: :http, port: port},
+      {Bandit, plug: AutoresumeDemo.Web.Router, scheme: :http, ip: {127, 0, 0, 1}, port: port},
       AutoresumeDemo.ClusterLauncher
     ]
   end

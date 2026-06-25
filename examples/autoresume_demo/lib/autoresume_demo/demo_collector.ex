@@ -73,7 +73,7 @@ defmodule AutoresumeDemo.DemoCollector do
   @impl true
   def init(:ok) do
     :net_kernel.monitor_nodes(true)
-    state = %{agents: [], nodes: %{}, events: [], prev_nodes: %{}}
+    state = %{agents: [], nodes: %{}, events: [], prev_nodes: %{}, logged_resumes: MapSet.new()}
     send(self(), :poll)
     {:ok, state}
   end
@@ -101,9 +101,29 @@ defmodule AutoresumeDemo.DemoCollector do
       try do
         do_poll(state)
       rescue
-        _ -> state
+        # Expected during node-kill churn: the Horde registry ETS table is
+        # transiently absent (ArgumentError). Skip the cycle, keep last good
+        # state. Logged at :debug so a real kill does not spam — but never silent.
+        e in [ArgumentError] ->
+          Logger.debug("DemoCollector poll skipped (transient): #{Exception.message(e)}")
+          state
+
+        # Anything else is unexpected. Keep the collector alive (it is the
+        # dashboard's only data source) but surface it loudly so a real bug is
+        # not hidden behind the resilience guard.
+        e ->
+          Logger.warning(
+            "DemoCollector poll error (kept last good state): #{Exception.message(e)}"
+          )
+
+          state
       catch
-        _, _ -> state
+        kind, reason ->
+          Logger.warning(
+            "DemoCollector poll exit (kept last good state): #{inspect({kind, reason})}"
+          )
+
+          state
       end
 
     {:noreply, new_state}
@@ -144,14 +164,29 @@ defmodule AutoresumeDemo.DemoCollector do
     prev_nodes =
       for %{id: id, node: n} <- agents, not is_nil(n), into: %{}, do: {id, n}
 
+    # Dedup by {sid, from, to} so flapping registry lookups during Horde
+    # convergence don't log the same migration repeatedly, while a genuine
+    # second migration still produces a new line.
+    new_resumes =
+      for %{id: id, node: to, resumed_from: from} when not is_nil(from) <- agents,
+          not MapSet.member?(state.logged_resumes, {id, from, to}),
+          do: {id, from, to}
+
     events =
-      agents
-      |> Enum.filter(& &1.resumed_from)
-      |> Enum.reduce(state.events, fn a, evs ->
-        prepend_event(evs, "resume", "#{a.id} resumed on #{a.node} (was #{a.resumed_from})")
+      Enum.reduce(new_resumes, state.events, fn {id, from, to}, evs ->
+        prepend_event(evs, "resume", "#{id} resumed on #{to} (was #{from})")
       end)
 
-    %{state | agents: agents, prev_nodes: prev_nodes, events: events}
+    logged_resumes =
+      Enum.reduce(new_resumes, state.logged_resumes, fn key, set -> MapSet.put(set, key) end)
+
+    %{
+      state
+      | agents: agents,
+        prev_nodes: prev_nodes,
+        events: events,
+        logged_resumes: logged_resumes
+    }
   end
 
   defp put_node(state, node, status),
