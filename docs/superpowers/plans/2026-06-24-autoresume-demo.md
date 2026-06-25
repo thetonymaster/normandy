@@ -1611,10 +1611,8 @@ defmodule AutoresumeDemo.Web.Router do
   end
 
   post "/kill/:node" do
-    target = String.to_atom(node)
-
     status =
-      case AutoresumeDemo.ClusterLauncher.kill(target) do
+      case safe_launcher(fn -> AutoresumeDemo.ClusterLauncher.kill(String.to_atom(node)) end) do
         :ok -> 202
         _ -> 404
       end
@@ -1623,12 +1621,26 @@ defmodule AutoresumeDemo.Web.Router do
   end
 
   post "/restart/:slot" do
-    _ = AutoresumeDemo.ClusterLauncher.restart(String.to_atom(slot))
-    send_resp(conn, 202, "")
+    status =
+      case safe_launcher(fn -> AutoresumeDemo.ClusterLauncher.restart(String.to_atom(slot)) end) do
+        :ok -> 202
+        _ -> 404
+      end
+
+    send_resp(conn, status, "")
   end
 
   match _ do
     send_resp(conn, 404, "not found")
+  end
+
+  # The ClusterLauncher runs only in the :observer role (it spawns :peer nodes and
+  # needs a distributed VM). When it isn't running (e.g. the router unit test), don't
+  # let a GenServer.call to a missing process 500 the request — report 404 instead.
+  defp safe_launcher(fun) do
+    fun.()
+  catch
+    :exit, _ -> {:error, :launcher_unavailable}
   end
 
   defp stream_loop(conn) do
