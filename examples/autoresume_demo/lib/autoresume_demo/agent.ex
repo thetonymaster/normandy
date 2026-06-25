@@ -86,27 +86,55 @@ defmodule AutoresumeDemo.Agent do
 
     * ConfigTemplate keys: `:behaviours_refs`, `:max_messages`,
       `:max_tool_concurrency`, `:output_schema`, `:chat_message`
-    * Turn.State keys: `:iterations_left`, `:awaiting_final`, `:stop_reason`, ...
+    * Turn.State field keys: `:iterations_left`, `:awaiting_final`, `:stop_reason`, ...
+    * Turn.State `status` VALUES: `:steering`, `:tool_dispatch`, `:finalizing`, ...
+      (a default `%Turn.State{}` only interns `:provisioning`, so these need help)
 
-  Building the template + base config + a sample Turn.State here force-loads those
-  modules and interns the atoms; the round-trip `[:safe]` decodes assert the
-  postcondition (they raise if any reachable atom is still missing), so callers can
-  treat `:ok` as a hard guarantee that this node can decode demo blobs.
+  Force-loading the Turn modules + building the template/base config + round-tripping
+  a Turn.State for every `status`/`stop_reason` here interns all those atoms (field
+  AND value); the round-trip `[:safe]` decodes assert the postcondition (they raise if
+  any reachable atom is still missing), so callers can treat `:ok` as a hard guarantee
+  that this node can decode demo blobs.
 
   Idempotent and cheap; safe to call on every node (workers AND observer) at boot.
   """
   @spec warmup() :: :ok
   def warmup do
+    # A nested `defmodule State` compiles to its OWN BEAM, so building a
+    # %Turn.State{} interns only the struct's FIELD atoms — not the FSM `status`
+    # and `stop_reason` VALUE atoms literaled in Turn / Turn.Server. Force-load
+    # those modules so every such atom is interned on this node too.
+    Code.ensure_loaded!(Normandy.Agents.Turn)
+    Code.ensure_loaded!(Normandy.Agents.Turn.Server)
+
     tmpl = build_template()
     _ = base_config()
-    # A sample Turn.State exercises every Turn.State field atom (the persisted shape
-    # the observer/reaper later decode under [:safe]).
-    state = %Normandy.Agents.Turn.State{}
 
-    # Round-trip through the SAME [:safe] path the store uses; raises if any reachable
-    # atom is still un-interned on this node.
+    # Round-trip the template through the SAME [:safe] path the store uses; raises
+    # if any reachable atom is still un-interned on this node.
     ^tmpl = :erlang.binary_to_term(:erlang.term_to_binary(tmpl), [:safe])
-    ^state = :erlang.binary_to_term(:erlang.term_to_binary(state), [:safe])
+
+    # Round-trip a Turn.State for EVERY status (Normandy.Agents.Turn.State.@type
+    # status) crossed with every stop_reason. Writing each status as a literal here
+    # bakes it into this module's atom table — interned on any node that loads the
+    # demo app — and the pinned match asserts the [:safe] decode reproduces it.
+    # Without this, a fresh peer that persisted e.g. a :steering Turn.State and
+    # rehydrated it raised :badarg (the seed-path error in the distributed run).
+    for status <- [
+          :provisioning,
+          :assistant_streaming,
+          :tool_dispatch,
+          :finalizing,
+          :awaiting_approval,
+          :steering,
+          :stopped,
+          :failed
+        ],
+        stop_reason <- [nil, :completed, :max_iterations] do
+      state = %Normandy.Agents.Turn.State{status: status, stop_reason: stop_reason}
+      ^state = :erlang.binary_to_term(:erlang.term_to_binary(state), [:safe])
+    end
+
     :ok
   end
 

@@ -28,6 +28,21 @@ defmodule AutoresumeDemo.AgentTest do
     assert tmpl.template_id == Agent.template_id()
   end
 
+  test "warmup/0 round-trips a Turn.State for every status and is idempotent" do
+    # warmup must not raise: each constructed status/stop_reason Turn.State has to
+    # survive the [:safe] round-trip (the pinned matches inside warmup/0 raise
+    # MatchError on mismatch or :badarg on an un-interned atom). Idempotent — safe
+    # to call on every node at boot, possibly more than once.
+    assert :ok = Agent.warmup()
+    assert :ok = Agent.warmup()
+
+    # Guard against regressing the value-atom interning gap: a non-default status
+    # (the :steering state whose decode raised :badarg on a fresh peer) must
+    # survive the same [:safe] path the store uses after warmup has run.
+    state = %Normandy.Agents.Turn.State{status: :steering, stop_reason: :max_iterations}
+    assert ^state = :erlang.binary_to_term(:erlang.term_to_binary(state), [:safe])
+  end
+
   test "a stored closure reads demo_mode at invocation time, not build time" do
     prev = Application.get_env(:autoresume_demo, :demo_mode)
     on_exit(fn -> Application.put_env(:autoresume_demo, :demo_mode, prev) end)
