@@ -31,6 +31,15 @@ Then run:
 CustomerSupport.CLI.start()
 ```
 
+### 2. Autoresume Demo (distributed node-kill handoff)
+
+**Location**: `autoresume_demo/`
+
+A live web dashboard demonstrating agents surviving a full BEAM node kill —
+the ResumeReaper reconstructs and resumes them on a surviving node.
+
+**[View Documentation](./autoresume_demo/README.md)**
+
 ## Phoenix LiveView Integration
 
 While we don't have a complete Phoenix example yet, here's how to integrate Normandy with Phoenix LiveView:
