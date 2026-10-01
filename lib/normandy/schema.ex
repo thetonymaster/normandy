@@ -155,7 +155,8 @@ defmodule Normandy.Schema do
       defmodule Product do
         use Normandy.Schema
 
-        defp compute_total(%{price: price, tax_rate: rate}) do
+        # Must be public: the capture is called from outside the module.
+        def compute_total(%{price: price, tax_rate: rate}) do
           price * (1 + rate)
         end
 
@@ -172,7 +173,8 @@ defmodule Normandy.Schema do
   Virtual field options:
 
   - `:virtual` - Mark field as virtual (excluded from JSON Schema by default)
-  - `:compute` - Function to compute the field value from the struct
+  - `:compute` - Function to compute the field value from the struct, applied by
+    `Normandy.Schema.compute/1` and by `Normandy.Validate.apply_changes/1`
   - `:include_in_json_schema` - Include virtual field in JSON Schema
 
   Note: Virtual fields cannot be marked as `:required` since they are computed or runtime-only.
@@ -253,6 +255,22 @@ defmodule Normandy.Schema do
 
   @type schema :: %{optional(atom) => any, __struct__: atom, __meta__: Metadata.t()}
   @type t :: schema
+
+  @doc """
+  Fills every `compute:` field of a schema struct, in declaration order. Each
+  compute function receives the struct, including fields computed before it.
+  `Normandy.Validate.apply_changes/1` calls this, so cast results are computed.
+  """
+  @spec compute(struct()) :: struct()
+  def compute(%mod{} = struct) do
+    if function_exported?(mod, :__schema__, 1) do
+      Enum.reduce(mod.__schema__(:computed_fields), struct, fn {field, fun}, acc ->
+        Map.put(acc, field, fun.(acc))
+      end)
+    else
+      struct
+    end
+  end
 
   @doc false
   defmacro __using__(_) do

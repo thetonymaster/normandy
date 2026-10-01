@@ -316,11 +316,12 @@ defmodule Normandy.Validate do
 
   @spec apply_changes(t) :: Normandy.Schema.t() | data
   def apply_changes(%Validate{changes: changes, data: data}) when changes == %{} do
-    data
+    maybe_compute(data)
   end
 
   def apply_changes(%Validate{changes: changes, data: data, types: types}) do
-    Enum.reduce(changes, data, fn {key, value}, acc ->
+    changes
+    |> Enum.reduce(data, fn {key, value}, acc ->
       case Map.fetch(types, key) do
         {:ok, _} ->
           Map.put(acc, key, value)
@@ -329,7 +330,12 @@ defmodule Normandy.Validate do
           acc
       end
     end)
+    |> maybe_compute()
   end
+
+  # Schema structs get their compute: fields filled; schemaless {data, types} maps don't.
+  defp maybe_compute(data) when is_struct(data), do: Normandy.Schema.compute(data)
+  defp maybe_compute(data), do: data
 
   @spec validate_required(t, list | atom, Keyword.t()) :: t
   def validate_required(%Validate{} = changeset, fields, opts \\ []) when not is_nil(fields) do
