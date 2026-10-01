@@ -269,8 +269,41 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Checkout the only agent
       {:ok, _agent_pid} = AgentPool.checkout(pool)
 
-      # With short timeout, GenServer.call will exit with timeout
-      catch_exit(AgentPool.checkout(pool, timeout: 50, block: true))
+      assert {:error, :timeout} = AgentPool.checkout(pool, timeout: 50, block: true)
+      assert AgentPool.stats(pool).waiting == 0
+
+      AgentPool.stop(pool)
+    end
+
+    test "a timed-out checkout does not take the next checked-in agent" do
+      agent_config = create_agent_config()
+
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      assert {:error, :timeout} = AgentPool.checkout(pool, timeout: 50)
+
+      :ok = AgentPool.checkin(pool, agent_pid)
+
+      assert %{available: 1, in_use: 0} = AgentPool.stats(pool)
+      assert {:ok, ^agent_pid} = AgentPool.checkout(pool, block: false)
+
+      AgentPool.stop(pool)
+    end
+
+    test "transaction returns {:error, :timeout} when no agent frees up in time" do
+      agent_config = create_agent_config()
+
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 0)
+
+      {:ok, _agent_pid} = AgentPool.checkout(pool)
+
+      assert {:error, :timeout} =
+               AgentPool.transaction(pool, [timeout: 50], fn _ ->
+                 flunk("ran without an agent")
+               end)
 
       AgentPool.stop(pool)
     end

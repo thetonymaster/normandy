@@ -112,7 +112,7 @@ defmodule Normandy.Coordination.AgentPool do
   Executes a function with an agent from the pool.
 
   Automatically checks out an agent, executes the function, and checks it back in.
-  Handles errors gracefully and ensures the agent is always returned to the pool.
+  The agent is returned to the pool even when the function raises.
 
   ## Options
 
@@ -131,10 +131,14 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Returns
 
-  - `{:ok, result}` - Function result
-  - `{:error, :timeout}` - Checkout timeout
-  - `{:error, :pool_exhausted}` - No agents available and max overflow reached
-  - `{:error, reason}` - Function raised an error
+  - `{:ok, result}` - the function's return value, whatever it is: a function
+    that returns `{:error, reason}` gives `{:ok, {:error, reason}}`
+  - `{:error, :timeout}` - no agent became available within `:timeout`
+  - `{:error, :failed_to_start_agent}` - the pool tried to start an overflow
+    agent and could not
+
+  A function that raises or exits is not caught: the error propagates to the
+  caller after the agent is checked back in.
   """
   @spec transaction(GenServer.server(), keyword(), (pid() -> term())) ::
           {:ok, term()} | {:error, term()}
@@ -163,6 +167,14 @@ defmodule Normandy.Coordination.AgentPool do
   - `:timeout` - Maximum time to wait in ms (default: 5000)
   - `:block` - Whether to block if no agents available (default: true)
 
+  ## Returns
+
+  - `{:ok, agent_pid}`
+  - `{:error, :timeout}` - blocking, and no agent became available within `:timeout`
+  - `{:error, :no_agents}` - non-blocking, and every agent is in use with the
+    overflow limit reached
+  - `{:error, :failed_to_start_agent}` - the pool could not start an overflow agent
+
   ## Examples
 
       {:ok, agent_pid} = AgentPool.checkout(pool)
@@ -180,7 +192,9 @@ defmodule Normandy.Coordination.AgentPool do
     timeout = Keyword.get(opts, :timeout, 5000)
     block = Keyword.get(opts, :block, true)
 
-    GenServer.call(pool, {:checkout, block}, timeout)
+    # The pool enforces the timeout and always replies, so a caller never exits
+    # on a busy pool and an agent is never handed to a caller that gave up.
+    GenServer.call(pool, {:checkout, block, timeout}, :infinity)
   end
 
   @doc """
@@ -259,7 +273,7 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   @impl true
-  def handle_call({:checkout, block}, from, state) do
+  def handle_call({:checkout, block, timeout}, from, state) do
     case do_checkout(state) do
       {:ok, agent_pid, new_state} ->
         # Monitor the checking out process
@@ -269,9 +283,8 @@ defmodule Normandy.Coordination.AgentPool do
         {:reply, {:ok, agent_pid}, new_state}
 
       {:error, :no_agents} when block ->
-        # Add to waiting queue
-        new_state = %{state | waiting: :queue.in(from, state.waiting)}
-        {:noreply, new_state}
+        timer = Process.send_after(self(), {:checkout_timeout, from}, timeout)
+        {:noreply, %{state | waiting: :queue.in({from, timer}, state.waiting)}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -303,6 +316,17 @@ defmodule Normandy.Coordination.AgentPool do
       new_state = handle_agent_death(agent_pid, state)
       {:noreply, new_state}
     end
+  end
+
+  @impl true
+  def handle_info({:checkout_timeout, from}, state) do
+    # A waiter served just before its timer fired is no longer in the queue.
+    waiting = :queue.filter(fn {waiter, _timer} -> waiter != from end, state.waiting)
+
+    if :queue.len(waiting) < :queue.len(state.waiting),
+      do: GenServer.reply(from, {:error, :timeout})
+
+    {:noreply, %{state | waiting: waiting}}
   end
 
   @impl true
@@ -399,10 +423,7 @@ defmodule Normandy.Coordination.AgentPool do
     cond do
       # There are waiting checkouts
       not :queue.is_empty(new_state.waiting) ->
-        {{:value, from}, new_waiting} = :queue.out(new_state.waiting)
-        GenServer.reply(from, {:ok, agent_pid})
-
-        %{new_state | waiting: new_waiting, in_use: MapSet.put(new_state.in_use, agent_pid)}
+        hand_to_waiter(agent_pid, new_state)
 
       # Return to pool if not overflow
       not is_overflow ->
@@ -439,15 +460,20 @@ defmodule Normandy.Coordination.AgentPool do
           if :queue.is_empty(state.waiting) do
             %{state | available: [new_pid | state.available]}
           else
-            {{:value, from}, new_waiting} = :queue.out(state.waiting)
-            GenServer.reply(from, {:ok, new_pid})
-
-            %{state | waiting: new_waiting, in_use: MapSet.put(state.in_use, new_pid)}
+            hand_to_waiter(new_pid, state)
           end
       end
     else
       # It was an overflow agent
       %{state | overflow_count: max(0, state.overflow_count - 1)}
     end
+  end
+
+  defp hand_to_waiter(agent_pid, state) do
+    {{:value, {from, timer}}, waiting} = :queue.out(state.waiting)
+    _ = Process.cancel_timer(timer)
+    GenServer.reply(from, {:ok, agent_pid})
+
+    %{state | waiting: waiting, in_use: MapSet.put(state.in_use, agent_pid)}
   end
 end
