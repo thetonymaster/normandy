@@ -58,6 +58,32 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     assert_raise LLMError, "LLM call failed: stream: Overloaded", fn -> stream(agent) end
   end
 
+  test "a failed stream emits an llm_call :exception span, not :stop" do
+    id = {__MODULE__, self(), make_ref()}
+    test_pid = self()
+
+    :telemetry.attach_many(
+      id,
+      [
+        [:normandy, :agent, :llm_call, :stop],
+        [:normandy, :agent, :llm_call, :exception]
+      ],
+      fn event, _measurements, _metadata, _config ->
+        # Handlers are global and the module is async: only report this test's own process.
+        if self() == test_pid, do: send(test_pid, {:llm_call_event, event})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    agent = agent([start(), block(), delta("Hel"), error_event()])
+    assert_raise LLMError, fn -> stream(agent) end
+
+    assert_received {:llm_call_event, [:normandy, :agent, :llm_call, :exception]}
+    refute_received {:llm_call_event, [:normandy, :agent, :llm_call, :stop]}
+  end
+
   test "an {:error, _} item in the stream raises" do
     agent = agent([start(), block(), delta("Hel"), {:error, :closed}])
 

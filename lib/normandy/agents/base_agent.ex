@@ -370,7 +370,6 @@ defmodule Normandy.Agents.BaseAgent do
   defp default_retry_if({:error, %LLMError{retryable?: retryable?}}), do: retryable?
   defp default_retry_if({:error, {:exception, _, _}}), do: true
   defp default_retry_if({:error, :open}), do: false
-  defp default_retry_if({:error, error}) when is_atom(error), do: true
   defp default_retry_if(_), do: false
 
   @spec run(BaseAgentConfig.t(), struct() | map() | nil) :: {BaseAgentConfig.t(), struct()}
@@ -912,38 +911,34 @@ defmodule Normandy.Agents.BaseAgent do
   # so the pure FSM (which branches on .tool_calls) can dispatch. Tool calls are
   # stripped for no-tools agents (parity: stream_response never executed tools),
   # mirroring call_turn_llm's no-tools strip. A stream failure is thrown past the
-  # driver and caught in run_stream_turn/3 (parity: non-raising early return).
+  # driver (from inside the llm_call span, so the span emits :exception) and
+  # caught in run_stream_turn/3, which raises the wrapped LLMError.
   defp call_stream_llm(config, state, callback) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
-    result =
+    final_message =
       with_llm_call_span(config, llm_metadata, fn ->
-        r =
-          stream_response_from_llm(
-            config,
-            build_stream_messages(config),
-            stream_opts(config, callback) ++ task_budget_call_opts(config, state)
-          )
-
-        stop_metadata =
-          case r do
-            {:ok, final_message} ->
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
-              Map.merge(llm_metadata, %{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
-
-            {:error, _error} ->
-              Map.merge(llm_metadata, %{has_tool_calls: false, tool_call_count: 0})
-          end
-
-        {r, stop_metadata}
+        stream_llm_attempt(config, state, callback, llm_metadata)
       end)
 
-    case result do
+    tool_calls = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
+    Map.put(final_message, :tool_calls, tool_calls)
+  end
+
+  # Runs inside the llm_call span: a failed stream throws here so the span emits
+  # :exception rather than :stop.
+  defp stream_llm_attempt(config, state, callback, llm_metadata) do
+    case stream_response_from_llm(
+           config,
+           build_stream_messages(config),
+           stream_opts(config, callback) ++ task_budget_call_opts(config, state)
+         ) do
       {:ok, final_message} ->
-        tool_calls = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
-        Map.put(final_message, :tool_calls, tool_calls)
+        tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
+
+        {final_message,
+         Map.merge(llm_metadata, %{has_tool_calls: tcs != [], tool_call_count: length(tcs)})}
 
       {:error, error} ->
         throw({:stream_turn_error, error, config})
