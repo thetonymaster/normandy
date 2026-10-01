@@ -51,7 +51,9 @@ defmodule Normandy.Agents.Turn.Server do
   holds for tool results written during a turn: a rejected write is not adopted into
   memory. A crash in the `:emit` handler while re-announcing a resumed parked turn
   fails that turn (no caller is waiting), and the next turn closes its batch with
-  interrupted results.
+  interrupted results. An eagerly resumed `:steering` turn closes the batch the same
+  way before its next LLM call; a resumed parked turn is left alone, since its
+  unanswered calls await a decision.
   """
   @behaviour :gen_statem
 
@@ -247,8 +249,14 @@ defmodule Normandy.Agents.Turn.Server do
   # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
   # silently while persisting at each boundary.
   def handle_event(:internal, :resume, :idle, data) do
-    {state, effects} = Turn.resume(data.turn_state)
-    interpret(effects, %{data | turn_state: state})
+    case close_resumed_batch(data) do
+      {:ok, data} ->
+        {state, effects} = Turn.resume(data.turn_state)
+        interpret(effects, %{data | turn_state: state})
+
+      {:error, data, reason} ->
+        fail(data, reason)
+    end
   end
 
   # :running — a monitored Task delivered the outcome of a blocking effect.
@@ -394,6 +402,24 @@ defmodule Normandy.Agents.Turn.Server do
       repairs
     end)
   end
+
+  # :steering is persisted once per tool batch, so a server killed while a later
+  # batch ran restarts from a :steering state whose history already ends in that
+  # batch's unanswered tool_use. Close it before resuming the LLM call. A parked
+  # turn (:awaiting_approval) is left alone: its unanswered calls await a decision.
+  defp close_resumed_batch(%Data{turn_state: %Turn.State{status: :steering}} = data) do
+    missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
+
+    with {:ok, repairs} <- close_batch(data, missing),
+         {:ok, repaired} <- persist_interrupted(data, repairs) do
+      {:ok, %{data | config: repaired}}
+    else
+      {:crashed, reason} -> {:error, data, reason}
+      {:error, stored, reason} -> {:error, %{data | config: stored}, {:persist_failed, reason}}
+    end
+  end
+
+  defp close_resumed_batch(data), do: {:ok, data}
 
   defp interrupted_result(call) do
     %Normandy.Components.ToolResult{

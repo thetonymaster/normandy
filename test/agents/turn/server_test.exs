@@ -1301,7 +1301,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   end
 
   describe "dangling tool_use repair" do
-    defp dangling_memory(ids \\ ["t1"]) do
+    defp dangling_memory(ids) do
       AgentMemory.new_memory()
       |> AgentMemory.add_message("user", "charge me")
       |> AgentMemory.add_message("assistant", %Resp{
@@ -1347,13 +1347,15 @@ defmodule Normandy.Agents.Turn.ServerTest do
         Map.merge(%{BaseAgent.non_streaming_handlers() | call_llm: call_llm}, handler_overrides)
 
       {:ok, srv} =
-        Turn.Server.start_link(
+        [
           session_id: sid,
           config: Map.merge(%{base_config() | memory: memory}, config_overrides),
           store: {store_mod, server_store},
           registry: {Native, Native.new()},
           handlers: handlers
-        )
+        ]
+        |> Keyword.merge(Keyword.get(opts, :server_opts, []))
+        |> Turn.Server.start_link()
 
       {srv, store}
     end
@@ -1512,6 +1514,86 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       assert {_, %ToolResult{output: %{interrupted: true}}} =
                Enum.find(results, &(elem(&1, 0) == "c1"))
+    end
+
+    defp parked_or_steering(status) do
+      call = %ToolCall{id: "t1", name: "billing", input: %{}}
+
+      base = %Turn.State{
+        status: status,
+        iterations_left: 4,
+        max_iterations: 5,
+        response_model: %Resp{},
+        output_schema: %Resp{}
+      }
+
+      if status == :awaiting_approval,
+        do: %{base | pending_calls: [call], parked_calls: [call], held_results: []},
+        else: base
+    end
+
+    defp tool_ids(store, sid) do
+      {:ok, entries} = InMemory.history(store, sid)
+      for %{role: "tool", content: %ToolResult{tool_call_id: id}} <- entries, do: id
+    end
+
+    test "an eagerly resumed :steering turn closes the unanswered tool_use before the LLM call" do
+      sid = "s-resume-dangling"
+
+      {_srv, store} =
+        start_dangling_server(sid, %{}, %{},
+          server_opts: [turn_state: parked_or_steering(:steering), resume_policy: :eager]
+        )
+
+      assert_receive {:llm_messages, messages}, 1_000
+
+      assert [
+               %Message{role: "user", content: "charge me"},
+               %Message{role: "assistant"},
+               %Message{
+                 role: "tool",
+                 content: %ToolResult{tool_call_id: "t1", output: %{interrupted: true}}
+               }
+             ] = messages
+
+      assert tool_ids(store, sid) == ["t1"]
+    end
+
+    test "an append crash while repairing a resumed turn fails it without calling the LLM" do
+      sid = "s-resume-dangling-crash"
+
+      {srv, store} =
+        start_dangling_server(
+          sid,
+          %{},
+          %{append: fn _config, _role, _content -> raise "append boom" end},
+          server_opts: [turn_state: parked_or_steering(:steering), resume_policy: :eager]
+        )
+
+      :sys.get_state(srv)
+      refute_received {:llm_messages, _}
+
+      assert {:ok,
+              %Turn.State{
+                status: :failed,
+                error: {:handler_crashed, :append, %RuntimeError{message: "append boom"}}
+              }} = InMemory.load_turn_state(store, sid)
+
+      assert tool_ids(store, sid) == []
+      assert Process.alive?(srv)
+    end
+
+    test "a resumed parked turn is not repaired (its calls await a decision)" do
+      sid = "s-resume-parked-dangling"
+
+      {srv, store} =
+        start_dangling_server(sid, %{}, %{},
+          server_opts: [turn_state: parked_or_steering(:awaiting_approval), resume_policy: :eager]
+        )
+
+      :sys.get_state(srv)
+      assert {:awaiting_approval, _} = :sys.get_state(srv)
+      assert tool_ids(store, sid) == []
     end
   end
 end
