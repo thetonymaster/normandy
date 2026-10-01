@@ -44,6 +44,7 @@ defmodule Normandy.InvalidChangesetError do
   defexception [:action, :changeset]
 
   def message(%{action: action, changeset: changeset}) do
+    changeset = redact(changeset)
     changes = extract_changes(changeset)
     errors = Normandy.Validate.traverse_errors(changeset, & &1)
 
@@ -67,6 +68,33 @@ defmodule Normandy.InvalidChangesetError do
     #{pretty(changeset)}
     """
   end
+
+  # Exception messages reach logs and error trackers: a redact: true field's
+  # value is replaced in the params and changes before anything is printed.
+  defp redact(%{data: %mod{}} = changeset) do
+    fields =
+      if function_exported?(mod, :__schema__, 1), do: mod.__schema__(:redact_fields), else: []
+
+    %{
+      changeset
+      | params: redact_keys(changeset.params, fields),
+        changes: redact_keys(changeset.changes, fields)
+    }
+  end
+
+  defp redact(changeset), do: changeset
+
+  defp redact_keys(map, []), do: map
+
+  defp redact_keys(map, fields) when is_map(map) do
+    names = MapSet.new(fields, &Atom.to_string/1)
+
+    Map.new(map, fn {key, value} ->
+      if to_string(key) in names, do: {key, "**redacted**"}, else: {key, value}
+    end)
+  end
+
+  defp redact_keys(other, _fields), do: other
 
   defp pretty(term) do
     inspect(term, pretty: true)

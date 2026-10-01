@@ -17,7 +17,10 @@ defmodule Normandy.Schema do
   - Field-level validation with JSON Schema constraints
   - Automatic struct generation
   - Metadata tracking
-  - Field redaction support
+  - Field redaction: a `redact: true` field is left out of `inspect/1`, of the
+    JSON an `io_schema` sends to the model (`to_json/1`, `__str__/1`,
+    `__rich__/1`) and of `Normandy.InvalidChangesetError` messages. Do not
+    redact a value the model needs to see.
   - JSON Schema export for LLM tool calling
 
   ## Example
@@ -370,12 +373,17 @@ defmodule Normandy.Schema do
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
             @adapter Application.compile_env(:normandy, :adapter, Poison)
-            # __meta__ is internal bookkeeping (module name, load state): it is
-            # not part of the schema, so it never goes to the model or out.
-            # Removing the key keeps a @derive'd encoder in charge of the fields.
-            def __str__(str), do: @adapter.encode!(Map.delete(str, :__meta__))
-            def __rich__(str), do: @adapter.encode!(Map.delete(str, :__meta__), pretty: true)
-            def to_json(str), do: @adapter.encode!(Map.delete(str, :__meta__))
+            def __str__(str), do: @adapter.encode!(serializable(str))
+            def __rich__(str), do: @adapter.encode!(serializable(str), pretty: true)
+            def to_json(str), do: @adapter.encode!(serializable(str))
+
+            # __meta__ is internal bookkeeping (module name, load state) and a
+            # redact: true field is hidden everywhere, so neither goes to the
+            # model or out. Removing the keys keeps a @derive'd encoder in
+            # charge of the remaining fields.
+            defp serializable(str),
+              do: Map.drop(str, [:__meta__ | str.__struct__.__schema__(:redact_fields)])
+
             def get_schema(str), do: str.__struct__.get_json_schema()
           end
 
