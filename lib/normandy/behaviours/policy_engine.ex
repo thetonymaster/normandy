@@ -21,6 +21,14 @@ defmodule Normandy.Behaviours.PolicyEngine do
 
   @callback check(call(), ctx()) :: decision()
 
+  @doc """
+  Optional: checks the `opts` half of the policy ref when the agent is built
+  (`BaseAgent.init/1`), raising `ArgumentError` on a malformed policy, so a
+  mistake surfaces at configuration instead of on the first tool call.
+  """
+  @callback validate_opts!(keyword()) :: :ok
+  @optional_callbacks validate_opts!: 1
+
   defmodule AllowAll do
     @moduledoc "Default PolicyEngine: allows every call (back-compat)."
     @behaviour Normandy.Behaviours.PolicyEngine
@@ -36,28 +44,78 @@ defmodule Normandy.Behaviours.PolicyEngine do
     **keyword list** on `ctx.opts` (the `opts` half of the bundle's
     `{module, opts}` ref — always a keyword list by construction):
 
-      * `:rules` — list of `%{match, action, rule_id, rationale}` maps. `match`
-        is a tool-name glob: `"*"` (matches all), `"prefix_*"` (trailing `*`
-        only — prefix match), or an exact name. `action` is
-        `:allow | :deny | :require_approval`.
-      * `:default_action` — action when no rule matches (default `:allow`).
+      * `:rules` (required) — list of `%{match, action, rule_id, rationale}`
+        maps. `match` (required) is a tool-name glob: `"*"` (matches all),
+        `"prefix_*"` (trailing `*` only — prefix match), or an exact name.
+        `action` (required) is `:allow | :deny | :require_approval`.
+      * `:default_action` (required) — action when no rule matches. There is no
+        implicit `:allow`: a policy states what an unmatched call gets.
+
+    A malformed ruleset raises `ArgumentError`: when the agent is built
+    (`validate_opts!/1`), and again in `check/2`, which the dispatch chokepoint
+    turns into a denial. It never fails open.
 
     A YAML-file loader is intentionally deferred — YAML is only a serialization
     of this in-memory shape.
     """
     @behaviour Normandy.Behaviours.PolicyEngine
 
+    @actions [:allow, :deny, :require_approval]
+
     @impl true
     def check(call, ctx) do
       opts = Map.get(ctx, :opts, [])
-      rules = Keyword.get(opts, :rules, [])
-      default_action = Keyword.get(opts, :default_action, :allow)
+      :ok = validate_opts!(opts)
       name = call_name(call)
 
-      case Enum.find(rules, fn rule -> matches?(rule[:match], name) end) do
-        nil -> decide(default_action, empty_meta())
-        rule -> decide(rule[:action] || :allow, rule_meta(rule))
+      case Enum.find(Keyword.fetch!(opts, :rules), fn rule -> matches?(rule.match, name) end) do
+        nil -> decide(Keyword.fetch!(opts, :default_action), empty_meta())
+        rule -> decide(rule.action, rule_meta(rule))
       end
+    end
+
+    @impl true
+    def validate_opts!(opts) do
+      rules =
+        case Keyword.fetch(opts, :rules) do
+          {:ok, rules} when is_list(rules) ->
+            rules
+
+          _ ->
+            raise ArgumentError, "PolicyEngine.Ruleset: :rules is required (a list of rule maps)"
+        end
+
+      case Keyword.fetch(opts, :default_action) do
+        {:ok, action} when action in @actions ->
+          :ok
+
+        {:ok, other} ->
+          raise ArgumentError,
+                "PolicyEngine.Ruleset: :default_action must be one of #{inspect(@actions)}, " <>
+                  "got: #{inspect(other)}"
+
+        :error ->
+          raise ArgumentError,
+                "PolicyEngine.Ruleset: :default_action is required (one of #{inspect(@actions)})"
+      end
+
+      rules |> Enum.with_index() |> Enum.each(fn {rule, index} -> validate_rule!(rule, index) end)
+    end
+
+    defp validate_rule!(%{match: match, action: action}, _index)
+         when is_binary(match) and action in @actions,
+         do: :ok
+
+    defp validate_rule!(%{match: match} = rule, index) when is_binary(match) do
+      raise ArgumentError,
+            "PolicyEngine.Ruleset: rule #{index} needs :action (one of #{inspect(@actions)}), " <>
+              "got: #{inspect(rule)}"
+    end
+
+    defp validate_rule!(rule, index) do
+      raise ArgumentError,
+            "PolicyEngine.Ruleset: rule #{index} needs :match (a tool-name glob string), " <>
+              "got: #{inspect(rule)}"
     end
 
     defp call_name(%{name: name}) when is_binary(name), do: name
@@ -78,7 +136,6 @@ defmodule Normandy.Behaviours.PolicyEngine do
     defp decide(:require_approval, meta), do: {:needs_approval, meta}
 
     defp matches?("*", _name), do: true
-    defp matches?(nil, _name), do: false
 
     defp matches?(pattern, name) when is_binary(pattern) do
       if String.ends_with?(pattern, "*") do
@@ -87,7 +144,5 @@ defmodule Normandy.Behaviours.PolicyEngine do
         pattern == name
       end
     end
-
-    defp matches?(_pattern, _name), do: false
   end
 end

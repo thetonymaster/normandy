@@ -102,6 +102,7 @@ defmodule Normandy.Agents.BaseAgent do
       })
 
     _ = validate_client_options!(Map.get(config, :client))
+    :ok = validate_policy_opts!(Map.get(config, :behaviours))
 
     # Initialize circuit breaker if enabled
     circuit_breaker =
@@ -749,6 +750,16 @@ defmodule Normandy.Agents.BaseAgent do
     do: ClaudioAdapter.validate_options!(client)
 
   def validate_client_options!(client), do: client
+
+  # A policy whose module checks its opts (the optional
+  # PolicyEngine.validate_opts!/1) raises here, where the config is made.
+  defp validate_policy_opts!(%Normandy.Behaviours.Config{policy: {mod, opts}}) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :validate_opts!, 1),
+      do: mod.validate_opts!(opts),
+      else: :ok
+  end
+
+  defp validate_policy_opts!(_behaviours), do: :ok
 
   @doc false
   # A real compactor sizes against the model's context window. With no pinned
