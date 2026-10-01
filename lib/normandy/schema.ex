@@ -218,10 +218,6 @@ defmodule Normandy.Schema do
   @field_opts [
     :default,
     :redact,
-    :defaults,
-    :type,
-    :where,
-    :references,
     :skip_default_validation,
     :description,
     :required,
@@ -414,6 +410,7 @@ defmodule Normandy.Schema do
     type = check_field_type!(mod, name, type, opts)
 
     check_options!(type, opts, @field_opts, "field/3")
+    check_option_values!(name, opts)
     Module.put_attribute(mod, :schema_specification_fields, {name, type})
     validate_default!(type, opts[:default], opts[:skip_default_validation])
     define_field(mod, name, type, opts)
@@ -847,6 +844,75 @@ defmodule Normandy.Schema do
       nil -> :ok
     end
   end
+
+  # Value checks for the options Normandy reads, so a wrong type fails the
+  # schema's compilation instead of making every validation fail (or pass).
+  @option_kinds [
+    min_length: :non_neg_integer,
+    max_length: :non_neg_integer,
+    min_items: :non_neg_integer,
+    max_items: :non_neg_integer,
+    minimum: :number,
+    maximum: :number,
+    exclusive_minimum: :number,
+    exclusive_maximum: :number,
+    pattern: :regex,
+    format: :string,
+    description: :string,
+    enum: :list,
+    examples: :list,
+    any_of: :list,
+    one_of: :list,
+    all_of: :list,
+    required: :boolean,
+    redact: :boolean,
+    virtual: :boolean,
+    unique_items: :boolean,
+    include_in_json_schema: :boolean,
+    skip_default_validation: :boolean
+  ]
+
+  defp check_option_values!(name, opts) do
+    for {key, kind} <- @option_kinds, Keyword.has_key?(opts, key) do
+      check_option_value!(name, key, kind, Keyword.fetch!(opts, key))
+    end
+
+    :ok
+  end
+
+  defp check_option_value!(name, :pattern, :regex, value) when is_binary(value) do
+    case Regex.compile(value) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "field/3: option :pattern for field #{inspect(name)} is not a valid regex " <>
+                "(#{inspect(reason)}): #{inspect(value)}"
+    end
+  end
+
+  defp check_option_value!(name, key, kind, value) do
+    unless option_kind?(kind, value) do
+      raise ArgumentError,
+            "field/3: option #{inspect(key)} for field #{inspect(name)} must be " <>
+              "#{option_kind_text(kind)}, got: #{inspect(value)}"
+    end
+  end
+
+  defp option_kind?(:non_neg_integer, value), do: is_integer(value) and value >= 0
+  defp option_kind?(:number, value), do: is_number(value)
+  defp option_kind?(:string, value), do: is_binary(value)
+  defp option_kind?(:list, value), do: is_list(value)
+  defp option_kind?(:boolean, value), do: is_boolean(value)
+  defp option_kind?(:regex, _value), do: false
+
+  defp option_kind_text(:non_neg_integer), do: "a non-negative integer"
+  defp option_kind_text(:number), do: "a number"
+  defp option_kind_text(:string), do: "a string"
+  defp option_kind_text(:list), do: "a list"
+  defp option_kind_text(:boolean), do: "a boolean"
+  defp option_kind_text(:regex), do: "a regex string (JSON Schema patterns are strings)"
 
   defp check_options!({:parameterized, _}, _opts, _valid, _fun_arity) do
     :ok
