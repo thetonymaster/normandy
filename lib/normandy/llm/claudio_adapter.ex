@@ -39,7 +39,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
   The adapter reads these keys from `options` (a map). Nothing below is sent unless set:
 
   - `:timeout` - Request timeout in milliseconds (default: 30_000)
-  - `:enable_caching` - Enable prompt caching (default: false)
+  - `:enable_caching` - Prompt caching (default: false): an explicit breakpoint on the
+    system prompt and the last tool, plus the API's automatic breakpoint for the
+    conversation. Keep context-provider output stable across calls, or the cache
+    stops at the system prompt
   - `:thinking` - `:adaptive` (Claude 4.6 and later) or `:disabled`
   - `:thinking_display` - `:summarized | :omitted | :updates`; requires `thinking: :adaptive`
   - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
@@ -521,12 +524,19 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     @doc false
     # Public (not `defp`) so tests can exercise the full message pipeline
-    # — auto-cache strategy + per-message dispatch — directly without
-    # round-tripping through `converse/7` and a live Claudio HTTP client.
-    # Not part of the adapter's supported surface.
+    # directly without round-tripping through `converse/7` and a live Claudio
+    # HTTP client. Not part of the adapter's supported surface.
+    #
+    # Conversation caching: with `enable_caching`, set Claudio's top-level
+    # automatic breakpoint. The API places it on the last cacheable block of any
+    # role (tool results included) and moves it forward as the conversation
+    # grows. Together with the explicit system and last-tool breakpoints that's 3
+    # of the 4 allowed. Normandy marks no message block itself.
     def add_messages(request, messages, enable_caching) do
-      messages =
-        if enable_caching, do: annotate_last_user_message(messages), else: messages
+      request =
+        if enable_caching,
+          do: Claudio.Messages.Request.set_cache_control(request),
+          else: request
 
       Enum.reduce(messages, request, fn msg, req ->
         add_single_message(req, msg, enable_caching)
@@ -717,50 +727,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
               "Expected a Normandy.Components.ContentBlock.* struct or a " <>
               "pre-shaped Anthropic block map."
     end
-
-    # Conversation-breakpoint cache strategy: when `enable_caching: true`,
-    # find the last `role: "user"` message and annotate its final content
-    # block with `cache_control`. Anthropic's prompt cache is cumulative,
-    # so a breakpoint at the latest user turn caches the entire system +
-    # tools + history up to that point.
-    #
-    # Only multimodal/list-form content (or a single ContentBlock struct)
-    # is annotated — plain string user content is left as-is so we don't
-    # silently change the wire shape for chat-text callers.
-    defp annotate_last_user_message(messages) do
-      case last_user_index(messages) do
-        nil -> messages
-        idx -> List.update_at(messages, idx, &auto_cache_user_message/1)
-      end
-    end
-
-    defp last_user_index(messages) do
-      messages
-      |> Enum.with_index()
-      |> Enum.reduce(nil, fn
-        {%Message{role: "user"}, idx}, _acc -> idx
-        _, acc -> acc
-      end)
-    end
-
-    # List-form content: convert to wire-shape and cache the last block.
-    defp auto_cache_user_message(%Message{content: content} = msg)
-         when is_list(content) and content != [] do
-      raw = Enum.map(content, &block_to_claudio/1)
-      %{msg | content: cache_last_block(raw)}
-    end
-
-    # Single ContentBlock struct: treat as a one-element list.
-    defp auto_cache_user_message(%Message{content: %mod{} = block} = msg)
-         when mod in [TextBlock, ImageBlock, DocumentBlock] do
-      %{msg | content: cache_last_block([block_to_claudio(block)])}
-    end
-
-    # String, opaque structs (I/O schema, ToolResult), or empty list:
-    # leave the message unchanged. The empty-list case is rejected later
-    # by `ensure_non_empty_content!/1` in the dispatch path with a clear
-    # ArgumentError; we don't want to mask that here.
-    defp auto_cache_user_message(msg), do: msg
 
     # Annotate the last block of a wire-shape list with a default ephemeral
     # cache breakpoint. If the caller already annotated it (via

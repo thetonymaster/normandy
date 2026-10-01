@@ -5,48 +5,26 @@ defmodule NormandyTest.Components.DateTimeProviderTest do
   alias Normandy.Components.DateTimeProvider
 
   describe "DateTimeProvider" do
-    test "returns correct title" do
-      provider = %DateTimeProvider{}
-      assert ContextProvider.title(provider) == "Current Date and Time"
+    test "returns the title" do
+      assert ContextProvider.title(%DateTimeProvider{}) == "Current Date"
     end
 
-    test "get_info returns current UTC datetime as string" do
-      provider = %DateTimeProvider{}
-      info = ContextProvider.get_info(provider)
+    test "get_info is today's UTC date in ISO 8601, with no time (stable across calls)" do
+      info = ContextProvider.get_info(%DateTimeProvider{})
 
-      # Verify it's a string
-      assert is_binary(info)
-
-      # Verify it contains date components (YYYY-MM-DD)
-      assert info =~ ~r/\d{4}-\d{2}-\d{2}/
-
-      # Verify it contains time components (HH:MM:SS)
-      assert info =~ ~r/\d{2}:\d{2}:\d{2}/
-
-      # Verify it contains the Z suffix (UTC)
-      assert String.ends_with?(info, "Z")
+      assert info =~ ~r/\A\d{4}-\d{2}-\d{2}\z/
+      date = Date.from_iso8601!(info)
+      # Tolerate a run that straddles midnight UTC.
+      assert Date.diff(Date.utc_today(), date) in [0, 1]
     end
 
-    test "get_info returns valid DateTime string that can be parsed" do
+    test "two calls in a row return the same text (the prompt prefix stays cacheable)" do
       provider = %DateTimeProvider{}
-      info = ContextProvider.get_info(provider)
+      first = ContextProvider.get_info(provider)
+      second = ContextProvider.get_info(provider)
 
-      # The string should be parseable back to a DateTime
-      # DateTime.from_iso8601/1 returns {:ok, datetime, offset}
-      assert {:ok, _datetime, _offset} = DateTime.from_iso8601(info)
-    end
-
-    test "multiple calls return different times" do
-      provider = %DateTimeProvider{}
-
-      info1 = ContextProvider.get_info(provider)
-      Process.sleep(10)
-      info2 = ContextProvider.get_info(provider)
-
-      # Times should be different (though very close)
-      # We just verify both are valid strings
-      assert is_binary(info1)
-      assert is_binary(info2)
+      assert first == second or
+               Date.diff(Date.from_iso8601!(second), Date.from_iso8601!(first)) == 1
     end
   end
 
@@ -67,7 +45,7 @@ defmodule NormandyTest.Components.DateTimeProviderTest do
       retrieved = BaseAgent.get_context_provider(agent, :datetime)
 
       assert retrieved == provider
-      assert ContextProvider.title(retrieved) == "Current Date and Time"
+      assert ContextProvider.title(retrieved) == "Current Date"
     end
 
     test "datetime context is included in system prompt" do
@@ -97,7 +75,7 @@ defmodule NormandyTest.Components.DateTimeProviderTest do
       system_prompt = SystemPromptGenerator.generate_prompt(prompt_spec)
 
       # Verify the datetime context is included
-      assert String.contains?(system_prompt, "Current Date and Time")
+      assert String.contains?(system_prompt, "Current Date")
       assert system_prompt =~ ~r/\d{4}-\d{2}-\d{2}/
     end
   end

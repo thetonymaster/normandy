@@ -14,47 +14,78 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
     @impl_module.add_single_message(new_request(), message, enable_caching)
   end
 
-  describe "prompt caching" do
-    test "uses set_system_with_cache when caching is enabled" do
+  describe "prompt caching on the wire" do
+    @reply %{
+      "id" => "msg_1",
+      "type" => "message",
+      "role" => "assistant",
+      "model" => "claude-opus-5-5",
+      "content" => [%{"type" => "text", "text" => ~s({"chat_message": "ok"})}],
+      "stop_reason" => "end_turn",
+      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+    }
+
+    defp sent_body(name, enable_caching) do
+      test_pid = self()
+
+      Req.Test.stub(name, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:body, Jason.decode!(body)})
+        Req.Test.json(conn, @reply)
+      end)
+
       client = %ClaudioAdapter{
-        api_key: "test-key",
-        options: %{enable_caching: true}
+        api_key: "k",
+        options: %{
+          enable_caching: enable_caching,
+          req_options: [plug: {Req.Test, name}, retry: false]
+        }
       }
 
-      # Mock Claudio.Messages.create to capture the request
-      # We can't easily test this without mocking, but we can verify the code path
-      # compiles and the logic is correct by inspection
+      messages = [
+        %Message{role: "system", content: "You are terse."},
+        %Message{role: "user", content: [TextBlock.new("hi")]}
+      ]
 
-      # This test validates that the code compiles and the pattern matching works
-      assert client.options[:enable_caching] == true
+      tool = fn name ->
+        %{name: name, description: "d", input_schema: %{"type" => "object", "properties" => %{}}}
+      end
+
+      Normandy.Agents.Model.converse(
+        client,
+        "claude-opus-5-5",
+        nil,
+        1024,
+        messages,
+        %Normandy.Agents.BaseAgentOutputSchema{},
+        tools: [tool.("lookup"), tool.("search")]
+      )
+
+      assert_received {:body, body}
+      body
     end
 
-    test "uses regular set_system when caching is disabled" do
-      client = %ClaudioAdapter{
-        api_key: "test-key",
-        options: %{enable_caching: false}
-      }
+    test "caching on: top-level, system and last-tool breakpoints; no message markers" do
+      body = sent_body(__MODULE__.On, true)
 
-      assert client.options[:enable_caching] == false
+      assert body["cache_control"] == %{"type" => "ephemeral"}
+      assert List.last(body["system"])["cache_control"] == %{"type" => "ephemeral"}
+      assert [first_tool, last_tool] = body["tools"]
+      refute Map.has_key?(first_tool, "cache_control")
+      assert last_tool["cache_control"] == %{"type" => "ephemeral"}
+
+      for message <- body["messages"], is_list(message["content"]), block <- message["content"] do
+        refute Map.has_key?(block, "cache_control"), "unexpected marker in #{inspect(message)}"
+      end
     end
 
-    test "caching defaults to false when not specified" do
-      client = %ClaudioAdapter{
-        api_key: "test-key",
-        options: %{}
-      }
+    test "caching off: no breakpoints at all" do
+      body = sent_body(__MODULE__.Off, false)
 
-      assert Map.get(client.options, :enable_caching, false) == false
-    end
-
-    test "tool caching is applied when enabled" do
-      client = %ClaudioAdapter{
-        api_key: "test-key",
-        options: %{enable_caching: true}
-      }
-
-      # Tools should be cached when enable_caching is true
-      assert client.options[:enable_caching] == true
+      refute Map.has_key?(body, "cache_control")
+      refute Enum.any?(body["tools"], &Map.has_key?(&1, "cache_control"))
+      # Without caching the system prompt goes out as a plain string (set_system/2).
+      assert body["system"] == "You are terse."
     end
   end
 
@@ -94,7 +125,7 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
       # 1. System prompts (string) use set_system_with_cache
       # 2. System prompts (list-form) get cache_control on the last block
       # 3. Last tool in list uses add_tool_with_cache
-      # 4. Last user message's last block gets cache_control (multimodal only)
+      # 4. The top-level automatic cache_control covers the conversation
       # 5. Cache provides up to 90% cost reduction
 
       # This is documented behavior that should be maintained
@@ -169,6 +200,38 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
                  "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
                }
              ]
+    end
+
+    test "string-keyed cache_control: nil on the last system block gets the default annotation" do
+      raw_with_nil = %{"type" => "text", "text" => "tail", "cache_control" => nil}
+      req = add(%Message{role: "system", content: [TextBlock.new("head"), raw_with_nil]}, true)
+
+      assert List.last(req.system) == %{
+               "type" => "text",
+               "text" => "tail",
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "atom-keyed :cache_control nil on the last system block gets the default annotation" do
+      raw = %{type: "text", text: "tail", cache_control: nil}
+      req = add(%Message{role: "system", content: [TextBlock.new("head"), raw]}, true)
+
+      tail = List.last(req.system)
+      refute Map.has_key?(tail, :cache_control)
+      assert tail["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "a string-keyed nil does not shadow an atom-keyed TTL on the last system block" do
+      raw = %{
+        :type => "text",
+        :text => "tail",
+        "cache_control" => nil,
+        :cache_control => %{type: "ephemeral", ttl: "1h"}
+      }
+
+      req = add(%Message{role: "system", content: [TextBlock.new("head"), raw]}, true)
+      assert List.last(req.system) == raw
     end
   end
 end
