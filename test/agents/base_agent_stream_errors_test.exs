@@ -93,7 +93,16 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
   test "incremental guardrails: an {:error, _} item raises" do
     agent = agent([start(), block(), delta("Hello there"), {:error, :closed}], @incremental)
 
-    assert_raise LLMError, fn -> stream(agent) end
+    assert %LLMError{type: :stream, reason: :closed} =
+             assert_raise(LLMError, fn -> stream(agent) end)
+  end
+
+  test "incremental guardrails: a tail-check violation does not mask a stream error" do
+    config = Map.put(@incremental, :output_guardrails, [{ForbiddenSubstrings, terms: ["badwd"]}])
+    config = Map.put(config, :output_guardrails_chunk_size, 100)
+    agent = agent([start(), block(), delta("badwd"), error_event()], config)
+
+    assert_raise LLMError, ~r/Overloaded/, fn -> stream(agent) end
   end
 
   test "incremental guardrails: a violation halt is not an error" do

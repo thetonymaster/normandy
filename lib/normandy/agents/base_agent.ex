@@ -1235,7 +1235,7 @@ defmodule Normandy.Agents.BaseAgent do
     guards = config.output_guardrails
     chunk_size = config.output_guardrails_chunk_size
 
-    initial = %{events: [], accumulated: "", since_last_check: 0, violations: []}
+    initial = %{events: [], accumulated: "", since_last_check: 0, violations: [], halted?: false}
 
     final_acc =
       Enum.reduce_while(stream, initial, fn event, acc ->
@@ -1258,7 +1258,7 @@ defmodule Normandy.Agents.BaseAgent do
 
             {:error, violations} ->
               report_incremental_violation(config, guards, violations, callback)
-              {:halt, %{base_acc | violations: violations}}
+              {:halt, %{base_acc | violations: violations, halted?: true}}
           end
         else
           {:cont, base_acc}
@@ -1285,11 +1285,15 @@ defmodule Normandy.Agents.BaseAgent do
 
     events = Enum.reverse(final_acc.events)
 
-    case final_acc.violations == [] and StreamProcessor.stream_error(events) do
+    # A guardrail halt is a deliberate stop (no message_stop); anything else
+    # that failed is an error even if the tail check also found a violation.
+    stream_error = if final_acc.halted?, do: nil, else: StreamProcessor.stream_error(events)
+
+    case stream_error do
       %LLMError{} = error ->
         {:error, error}
 
-      _no_error_or_halted ->
+      nil ->
         build_incremental_final_message(events, final_acc)
     end
   end

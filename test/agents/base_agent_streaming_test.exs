@@ -543,9 +543,10 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       callback = fn _, _ -> :ok end
       user_input = %{chat_message: "Hello"}
 
-      assert_raise Normandy.LLMError, fn ->
-        BaseAgent.stream_response(config, user_input, callback)
-      end
+      assert %Normandy.LLMError{type: :unknown, reason: "Stream failed"} =
+               assert_raise(Normandy.LLMError, fn ->
+                 BaseAgent.stream_response(config, user_input, callback)
+               end)
     end
   end
 
