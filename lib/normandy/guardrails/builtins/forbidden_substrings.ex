@@ -14,6 +14,8 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
   see the full set of offending phrases.
   """
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
@@ -28,7 +30,7 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
             "#{inspect(__MODULE__)} :terms must be a non-empty list of strings, got: #{inspect(terms)}"
     end
 
-    case extract(value, field) do
+    case Field.extract!(__MODULE__, value, field) do
       nil ->
         :ok
 
@@ -68,14 +70,6 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
         raise ArgumentError,
               "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
     end
-  end
-
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
-
-  defp extract(value, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a map or struct when using :field #{inspect(field)}, got: #{inspect(value)}"
   end
 
   defp field_suffix(nil), do: ""

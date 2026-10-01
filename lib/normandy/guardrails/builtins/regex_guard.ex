@@ -20,6 +20,8 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
   be present in missing text.
   """
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
@@ -38,7 +40,7 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
             "#{inspect(__MODULE__)} :mode must be :deny or :require, got: #{inspect(mode)}"
     end
 
-    check_value(extract(value, field), patterns, mode, field)
+    check_value(Field.extract!(__MODULE__, value, field), patterns, mode, field)
   end
 
   defp check_value(nil, patterns, :require, field) do
@@ -103,14 +105,6 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
   defp check_value(other, _patterns, _mode, field) do
     raise ArgumentError,
           "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
-  end
-
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
-
-  defp extract(value, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a map or struct when using :field #{inspect(field)}, got: #{inspect(value)}"
   end
 
   defp field_suffix(nil), do: ""

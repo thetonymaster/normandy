@@ -14,6 +14,8 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
   configuration bug, not a runtime violation.
   """
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
@@ -26,7 +28,7 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
             "#{inspect(__MODULE__)} :limit must be a positive integer, got: #{inspect(limit)}"
     end
 
-    case extract(value, field) do
+    case Field.extract!(__MODULE__, value, field) do
       nil ->
         :ok
 
@@ -54,10 +56,6 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
               "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
     end
   end
-
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
-  defp extract(_value, _field), do: nil
 
   defp field_suffix(nil), do: ""
   defp field_suffix(field), do: " at field #{inspect(field)}"
