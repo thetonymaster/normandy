@@ -255,10 +255,15 @@ defmodule Normandy.Resilience.Retry do
     end
   end
 
-  # Add random jitter (±25% of delay)
-  defp add_jitter(delay) do
+  # Add random jitter (±25% of delay). Below 4ms the range rounds to 0, and
+  # :rand.uniform/1 rejects 0, so the delay is returned unchanged.
+  @doc false
+  @spec add_jitter(non_neg_integer()) :: non_neg_integer()
+  def add_jitter(delay) when delay < 4, do: delay
+
+  def add_jitter(delay) do
     jitter_range = div(delay, 4)
-    delay + :rand.uniform(jitter_range * 2) - jitter_range
+    delay + :rand.uniform(jitter_range * 2 + 1) - 1 - jitter_range
   end
 
   @doc """

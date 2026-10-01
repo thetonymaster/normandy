@@ -278,5 +278,43 @@ defmodule Normandy.Resilience.RetryTest do
       assert length(unique_delays) > 1
       Agent.stop(delay_agent)
     end
+
+    test "retries with a delay under 4ms when enabled" do
+      {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+      result =
+        Retry.with_retry(
+          fn ->
+            case Agent.get_and_update(agent, &{&1, &1 + 1}) do
+              0 -> {:error, :network_error}
+              _ -> {:ok, :done}
+            end
+          end,
+          max_attempts: 2,
+          base_delay: 1,
+          jitter: true
+        )
+
+      assert result == {:ok, :done}
+      Agent.stop(agent)
+    end
+  end
+
+  describe "add_jitter/1" do
+    use ExUnitProperties
+
+    property "stays within ±25% of the delay" do
+      check all(delay <- integer(0..100_000)) do
+        range = div(delay, 4)
+        jittered = Retry.add_jitter(delay)
+        assert jittered >= delay - range
+        assert jittered <= delay + range
+      end
+    end
+
+    test "reaches both ends of the range" do
+      results = MapSet.new(1..2_000, fn _ -> Retry.add_jitter(8) end)
+      assert results == MapSet.new(6..10)
+    end
   end
 end
