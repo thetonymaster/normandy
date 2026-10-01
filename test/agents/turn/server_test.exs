@@ -22,6 +22,13 @@ defmodule Normandy.Agents.Turn.ServerTest do
     defstruct content: "", tool_calls: nil
   end
 
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def __str__(resp), do: resp.content
+    def __rich__(resp), do: resp.content
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   # Parameterized fake tool for testing tool dispatch/classification.
   # `notify` is a pid that receives `{:tool_ran, name}` when the tool runs,
   # letting tests assert whether a tool was executed or silently rejected.

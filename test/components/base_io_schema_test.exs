@@ -28,10 +28,29 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
     end
   end
 
-  describe "Any fallback regression" do
-    test "to_json/1 returns \"\" for non-list, non-map, non-binary input" do
-      assert BaseIOSchema.to_json(:atom_value) == ""
-      assert BaseIOSchema.to_json(42) == ""
+  describe "content with no implementation" do
+    test "to_json/1 raises instead of sending an empty message" do
+      assert_raise Protocol.UndefinedError, fn -> BaseIOSchema.to_json(:atom_value) end
+      assert_raise Protocol.UndefinedError, fn -> BaseIOSchema.to_json(42) end
+    end
+  end
+
+  describe "content blocks" do
+    alias Normandy.Components.AgentMemory
+    alias Normandy.Components.ContentBlock.{Image, Text}
+
+    test "a single block is sent as a one-block list" do
+      block = %Text{text: "hi"}
+      assert BaseIOSchema.to_json(block) == [block]
+    end
+
+    test "a single image message survives history/1" do
+      image = %Image{source: :url, url: "https://example.com/a.png"}
+
+      assert [%{role: "user", content: [^image]}] =
+               AgentMemory.new_memory()
+               |> AgentMemory.add_message("user", image)
+               |> AgentMemory.history()
     end
   end
 

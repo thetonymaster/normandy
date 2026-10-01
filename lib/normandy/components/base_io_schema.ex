@@ -7,7 +7,6 @@ defprotocol Normandy.Components.BaseIOSchema do
   """
 
   @dialyzer {:nowarn_function, __protocol__: 1}
-  @fallback_to_any ""
 
   @doc "Converts the struct to a plain string representation"
   @spec __str__(struct()) :: String.t()
@@ -53,9 +52,16 @@ defimpl Normandy.Components.BaseIOSchema, for: List do
   def get_schema(_list), do: %{}
 end
 
-defimpl Normandy.Components.BaseIOSchema, for: Any do
-  def __str__(_), do: ""
-  def __rich__(_), do: ""
-  def to_json(_), do: ""
-  def get_schema(_struct), do: ""
+# A single content block is sent as a one-block list, the same shape as
+# multimodal list content, which the adapter turns into wire blocks.
+defimpl Normandy.Components.BaseIOSchema,
+  for: [
+    Normandy.Components.ContentBlock.Text,
+    Normandy.Components.ContentBlock.Image,
+    Normandy.Components.ContentBlock.Document
+  ] do
+  def __str__(block), do: inspect(block.__struct__)
+  def __rich__(block), do: inspect(block.__struct__)
+  def to_json(block), do: [block]
+  def get_schema(_block), do: %{}
 end
