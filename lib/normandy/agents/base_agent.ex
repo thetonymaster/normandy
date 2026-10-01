@@ -254,21 +254,7 @@ defmodule Normandy.Agents.BaseAgent do
     system_prompt = SystemPromptGenerator.generate_prompt(prompt_specification)
 
     # Add output schema if available
-    system_prompt_with_schema =
-      if response_model do
-        try do
-          schema_json =
-            Poison.encode!(response_model.__struct__.__specification__(), pretty: true)
-
-          system_prompt <>
-            "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"
-        rescue
-          _ ->
-            system_prompt
-        end
-      else
-        system_prompt
-      end
+    system_prompt_with_schema = with_output_schema(system_prompt, response_model)
 
     # Convert history plain maps to Message structs
     history_messages =
@@ -1123,6 +1109,24 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp build_streaming_assistant_response(other, _), do: other
+
+  # Appends the response schema's JSON Schema to the system prompt. A struct with
+  # no schema adds nothing; an encoding failure raises rather than silently
+  # sending the prompt without its schema.
+  defp with_output_schema(system_prompt, nil), do: system_prompt
+
+  defp with_output_schema(system_prompt, response_model) do
+    case Normandy.Schema.json_schema(response_model) do
+      nil ->
+        system_prompt
+
+      schema ->
+        schema_json = Poison.encode!(schema, pretty: true)
+
+        system_prompt <>
+          "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"
+    end
+  end
 
   # Build the [system | history] message list for a streaming LLM call.
   # History plain maps are converted to %Message{} structs so the adapter's

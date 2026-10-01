@@ -14,7 +14,7 @@ defmodule Normandy.LLM.Json.RetryFeedback do
         schema,
         adapter
       ) do
-    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
+    schema_json = adapter.encode!(Normandy.Schema.json_schema(schema), pretty: true)
 
     # Extract detailed field-level errors using traverse_errors
     error_details =
@@ -55,7 +55,7 @@ defmodule Normandy.LLM.Json.RetryFeedback do
         schema,
         adapter
       ) do
-    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
+    schema_json = adapter.encode!(Normandy.Schema.json_schema(schema), pretty: true)
 
     """
     # JSON DESERIALIZATION ERROR

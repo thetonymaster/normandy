@@ -256,6 +256,20 @@ defmodule Normandy.Schema do
   @type schema :: %{optional(atom) => any, __struct__: atom, __meta__: Metadata.t()}
   @type t :: schema
 
+  @doc false
+  # The JSON Schema to show a model for a response struct: the full
+  # `__schema__(:specification)` (types, descriptions, required) for a Normandy
+  # schema; `__specification__/0` for a struct that only defines that; nil when
+  # the struct has no schema at all.
+  @spec json_schema(struct()) :: map() | nil
+  def json_schema(%mod{}) do
+    cond do
+      function_exported?(mod, :__schema__, 1) -> mod.__schema__(:specification)
+      function_exported?(mod, :__specification__, 0) -> mod.__specification__()
+      true -> nil
+    end
+  end
+
   @doc """
   Fills every `compute:` field of a schema struct, in declaration order. Each
   compute function receives the struct, including fields computed before it.
