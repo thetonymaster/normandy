@@ -508,40 +508,38 @@ defmodule Normandy.Schema do
   end
 
   # Get base JSON Schema type specification
-  defp get_base_type_spec({:array, inner_type}, description) do
-    if schema_module?(inner_type) do
-      # Array of nested schemas - inline the schema
-      %{type: :array, description: description, items: inline_nested_schema(inner_type)}
-    else
-      %{type: :array, description: description, items: %{type: normalize_type(inner_type)}}
-    end
-  end
-
-  defp get_base_type_spec({:map, _type}, description) do
-    %{type: :object, description: description}
-  end
-
-  defp get_base_type_spec(:float, description) do
-    %{type: :number, description: description}
-  end
-
-  defp get_base_type_spec(type, description) when is_atom(type) do
-    if schema_module?(type) do
-      # Single nested schema - inline it
-      inline_nested_schema(type)
-      |> Map.put(:description, description)
-    else
-      %{type: normalize_type(type), description: description}
-    end
-  end
-
   defp get_base_type_spec(type, description) do
-    %{type: normalize_type(type), description: description}
+    Map.put(json_type(type), :description, description)
   end
 
-  # Normalize Elixir types to JSON Schema types
-  defp normalize_type(:float), do: :number
-  defp normalize_type(type), do: type
+  # Maps a Normandy field type to its JSON Schema fragment. A custom or
+  # parameterized type uses the base type it declares; a type with no JSON
+  # equivalent (`:any`, or a custom type/0 that is not a base type) gets no
+  # `type` key, which JSON Schema reads as "any value".
+  defp json_type({:array, inner}), do: %{type: :array, items: json_type(inner)}
+  defp json_type({:map, inner}), do: %{type: :object, additionalProperties: json_type(inner)}
+  defp json_type({:parameterized, {mod, params}}), do: json_type(mod.type(params))
+  defp json_type(:float), do: %{type: :number}
+  defp json_type(:map), do: %{type: :object}
+  defp json_type(:struct), do: %{type: :object}
+  defp json_type(t) when t in [:binary, :bitstring], do: %{type: :string}
+  defp json_type(:date), do: %{type: :string, format: "date"}
+  defp json_type(:time), do: %{type: :string, format: "time"}
+  defp json_type(:duration), do: %{type: :string, format: "duration"}
+  defp json_type(t) when t in [:string, :integer, :boolean], do: %{type: t}
+
+  defp json_type(mod) when is_atom(mod) do
+    cond do
+      schema_module?(mod) ->
+        inline_nested_schema(mod)
+
+      Code.ensure_compiled(mod) == {:module, mod} and function_exported?(mod, :type, 0) ->
+        json_type(mod.type())
+
+      true ->
+        %{}
+    end
+  end
 
   # Add JSON Schema constraints based on field options
   defp add_constraints(spec, _type, opts) do
@@ -739,8 +737,6 @@ defmodule Normandy.Schema do
     Code.ensure_compiled(type) == {:module, type} and
       function_exported?(type, :__schema__, 1)
   end
-
-  defp schema_module?(_), do: false
 
   defp check_field_type!(_mod, name, :datetime, _opts) do
     raise ArgumentError,

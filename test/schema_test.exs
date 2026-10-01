@@ -75,7 +75,8 @@ defmodule Normandy.SchemaTest do
                map: %{
                  description: "",
                  type: :object,
-                 default: nil
+                 default: nil,
+                 additionalProperties: %{type: :string}
                },
                array: %{
                  description: "",
@@ -112,7 +113,8 @@ defmodule Normandy.SchemaTest do
                map: %{
                  description: "",
                  type: :object,
-                 default: nil
+                 default: nil,
+                 additionalProperties: %{type: :string}
                },
                array: %{
                  description: "",

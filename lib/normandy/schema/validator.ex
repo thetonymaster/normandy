@@ -35,6 +35,8 @@ defmodule Normandy.Schema.Validator do
   This validator supports the following JSON Schema validations:
 
   - **Type validation** - Ensures values match their declared types
+    (`:date`, `:time` and `:duration` fields are JSON strings with a `format`;
+    the matching `Date`, `Time` or `Duration` value is accepted too)
   - **Required fields** - Validates required fields are present
   - **String constraints**
     - `minLength` / `min_length` - Minimum string length
@@ -147,7 +149,7 @@ defmodule Normandy.Schema.Validator do
       is_nil(type) ->
         errors
 
-      valid_type?(data, type) ->
+      valid_type?(data, type) or formatted_value?(data, type, spec[:format]) ->
         errors
 
       true ->
@@ -176,6 +178,13 @@ defmodule Normandy.Schema.Validator do
   defp valid_type?(%NaiveDateTime{}, :naive_datetime), do: true
   defp valid_type?(%DateTime{}, :datetime), do: true
   defp valid_type?(_, _), do: false
+
+  # `:date`, `:time` and `:duration` fields are JSON strings with a format; the
+  # data may hold the Elixir value itself rather than its string form.
+  defp formatted_value?(%Date{}, :string, "date"), do: true
+  defp formatted_value?(%Time{}, :string, "time"), do: true
+  defp formatted_value?(%Duration{}, :string, "duration"), do: true
+  defp formatted_value?(_, _, _), do: false
 
   defp actual_type(data) when is_binary(data), do: :string
   defp actual_type(data) when is_integer(data), do: :integer
