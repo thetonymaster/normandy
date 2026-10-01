@@ -120,6 +120,12 @@ set. Its fallback named a retired model.
 Claudio 0.7's `Response.usage` adds keys and returns `nil` for absent documented fields. The
 usage maps in telemetry and those returned to callers change shape.
 
+## 10. Postgrex 0.22.4 or later
+
+If your app uses the optional Postgres session store, Normandy now requires `postgrex`
+`>= 0.22.4` (was `~> 0.19`). Earlier releases carry EEF-CVE-2026-66838 and
+EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

@@ -14,6 +14,19 @@ defmodule Normandy.MixProject do
       consolidate_protocols: Mix.env() != :test,
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
+      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy). 43966 and 43969 have no fix in
+      # any release; 43971 is fixed in 2.20.0, which is pinned out (see deps/0: OTP 26).
+      # decimal arrives only with the optional ecto/postgrex deps; its fix (3.0.0) is blocked
+      # by poison 6.0.0, the latest release, which declares an optional `decimal ~> 2.1`.
+      # Hex warns once an entry no longer matches the lock.
+      hex: [
+        ignore_advisories: [
+          "EEF-CVE-2026-43966",
+          "EEF-CVE-2026-43969",
+          "EEF-CVE-2026-43971",
+          "EEF-CVE-2026-32686"
+        ]
+      ],
       test_coverage: [summary: [threshold: 60]],
 
       # Hex.pm metadata
@@ -144,10 +157,18 @@ defmodule Normandy.MixProject do
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:bypass, "~> 2.1", only: :test},
+      # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
+      # fails to compile on OTP 26, which CI still tests. Lift these pins when OTP 26 leaves
+      # the matrix.
+      {:cowboy, "~> 2.18.0", only: :test},
+      {:cowlib, "~> 2.19.0", only: :test},
       # Tier-1/2 session infra. Optional: Tier-0 (default) users pull in none of these.
       # The Postgres/Horde modules are conditionally compiled on their presence.
       {:ecto_sql, "~> 3.12", optional: true},
-      {:postgrex, "~> 0.19", optional: true},
+      # >= 0.22.4: earlier releases carry EEF-CVE-2026-66838 (SQL injection via the
+      # :comment option, fixed in 0.22.4) and EEF-CVE-2026-58225 (Notifications reconnect
+      # replay, fixed in 0.22.3).
+      {:postgrex, "~> 0.22 and >= 0.22.4", optional: true},
       {:horde, "~> 0.9", optional: true},
       {:redix, "~> 1.5", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
