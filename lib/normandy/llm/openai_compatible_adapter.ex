@@ -43,9 +43,9 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   - Anything else → wrapped via `LLMError.wrap/1`
   """
 
-  alias Normandy.Components.ContentBlock.Describe
   use Normandy.Schema
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLMError
 
