@@ -1,6 +1,8 @@
 defmodule Normandy.Coordination.StatefulContextTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Coordination.StatefulContext
 
   describe "start_link/1" do
@@ -246,13 +248,14 @@ defmodule Normandy.Coordination.StatefulContextTest do
 
       StatefulContext.subscribe(ctx, pid1)
       StatefulContext.subscribe(ctx, pid2)
+      ref1 = Process.monitor(pid1)
+      ref2 = Process.monitor(pid2)
 
       StatefulContext.put(ctx, "key", "value")
 
-      # Both should receive notification
-      Process.sleep(10)
-      refute Process.alive?(pid1)
-      refute Process.alive?(pid2)
+      # Each subscriber exits once it receives the notification.
+      assert_receive {:DOWN, ^ref1, :process, ^pid1, :normal}
+      assert_receive {:DOWN, ^ref2, :process, ^pid2, :normal}
     end
 
     test "unsubscribe stops notifications", %{context: ctx} do
@@ -286,12 +289,10 @@ defmodule Normandy.Coordination.StatefulContextTest do
       StatefulContext.put(ctx, "key", "value")
       assert :ets.info(table) != :undefined
 
-      # Stop the process
+      # Stop the process; its table goes with it.
       GenServer.stop(ctx)
-      Process.sleep(10)
 
-      # Table should be deleted
-      assert :ets.info(table) == :undefined
+      assert wait_until(fn -> :ets.info(table) == :undefined end)
     end
   end
 end

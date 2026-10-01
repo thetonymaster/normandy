@@ -612,14 +612,16 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Native.new()
     parent = self()
 
-    # Blocking call_llm that signals the test when it has started, then sleeps
-    # to keep the server :running while the second turn request arrives.
+    # call_llm reports that it started, then holds the server :running until the
+    # test releases it, so the second turn request is sure to arrive meanwhile.
     handlers = %{
       BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
-          send(parent, :llm_started)
-          Process.sleep(150)
-          %Resp{content: "x"}
+          send(parent, {:llm_started, self()})
+
+          receive do
+            :release -> %Resp{content: "x"}
+          end
         end
     }
 
@@ -635,11 +637,19 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # First turn: arrives while server is :idle → starts immediately.
     spawn(fn -> send(parent, {:a, Turn.Server.run(srv, "first")}) end)
     # Wait for the LLM task to actually start (deterministic: server is now :running).
-    assert_receive :llm_started, 1_000
+    assert_receive {:llm_started, first_llm}, 1_000
     # Second turn: arrives while server is :running → postponed, replayed on :idle entry.
-    spawn(fn -> send(parent, {:b, Turn.Server.run(srv, "second")}) end)
+    second = spawn(fn -> send(parent, {:b, Turn.Server.run(srv, "second")}) end)
+    # Once the caller waits on its reply, its request is in the server's mailbox.
+    assert wait_until(fn -> Process.info(second, :status) == {:status, :waiting} end)
+    refute_received {:b, _}
 
+    send(first_llm, :release)
     assert_receive {:a, {:ok, %Resp{}}}, 2_000
+
+    # The postponed turn runs only now, after the first one finished.
+    assert_receive {:llm_started, second_llm}, 1_000
+    send(second_llm, :release)
     assert_receive {:b, {:ok, %Resp{}}}, 2_000
   end
 
@@ -892,8 +902,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {:ok, pid} ->
         pid
 
-      {:error, {:process_not_registered_via, _}} = err ->
-        if retries > 0 do
+      # The race arrives bare or nested with the child spec.
+      {:error, reason} = err ->
+        if via_race?(reason) and retries > 0 do
           Process.sleep(10)
           start_via_with_retry(opts, retries - 1)
         else
@@ -901,6 +912,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
         end
     end
   end
+
+  defp via_race?({:process_not_registered_via, _}), do: true
+  defp via_race?({{:process_not_registered_via, _}, _child}), do: true
+  defp via_race?(_), do: false
 
   # Part B (Task 7 requirement): proves the Server threads the compacted config2
   # (returned by the compact handler) into the NEXT blocking effect, not the stale

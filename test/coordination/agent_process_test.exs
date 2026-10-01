@@ -1,6 +1,8 @@
 defmodule Normandy.Coordination.AgentProcessTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
 
@@ -105,11 +107,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       AgentProcess.cast(pid, "Test 1")
       AgentProcess.cast(pid, "Test 2")
 
-      # Give tasks time to complete
-      Process.sleep(50)
-
-      stats = AgentProcess.get_stats(pid)
-      assert stats.run_count == 2
+      # The casts run asynchronously; wait for both to be counted.
+      assert wait_until(fn -> AgentProcess.get_stats(pid).run_count == 2 end)
     end
   end
 
@@ -157,7 +156,6 @@ defmodule Normandy.Coordination.AgentProcessTest do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       AgentProcess.run(pid, "Test 1")
-      Process.sleep(10)
       AgentProcess.run(pid, "Test 2")
 
       stats = AgentProcess.get_stats(pid)
@@ -200,9 +198,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       assert Process.alive?(pid)
+      # GenServer.stop/2 returns once the process has terminated.
       assert :ok = AgentProcess.stop(pid)
-
-      Process.sleep(10)
       refute Process.alive?(pid)
     end
   end
