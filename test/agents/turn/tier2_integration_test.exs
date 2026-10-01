@@ -4,7 +4,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Agents.Turn.{Session, Supervisor}
+  alias Normandy.Agents.Turn.Session
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg

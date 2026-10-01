@@ -1,9 +1,11 @@
 defmodule Normandy.Agents.Turn.Session do
   @moduledoc """
   Router in front of `Turn.Server`. Resolves `session_id` to a live pid via the
-  `SessionRegistry`; on a miss, rehydrates turn state + conversation memory from
-  the `SessionStore` and starts a `Turn.Server` under `Turn.Supervisor` with the
-  **caller-supplied** config (the store never holds config/credentials).
+  `SessionRegistry`; on a miss, starts a `Turn.Server` under `Turn.Supervisor` with
+  the **caller-supplied** config (the store never holds config/credentials). The
+  server loads its turn state and conversation memory from the `SessionStore` on
+  every start, so a supervisor restart resumes from the store, not from the
+  state captured when the session first started.
 
   ## Tier-2 thin start (when `opts[:template_provider]` is set)
 
@@ -30,7 +32,6 @@ defmodule Normandy.Agents.Turn.Session do
   """
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.{Server, Supervisor}
-  alias Normandy.Components.AgentMemory
 
   # Plain-data server options saved with a Tier-2 template, so a server started
   # without them (e.g. by ResumeReaper) restores them. Functions (:subscriber,
@@ -70,6 +71,10 @@ defmodule Normandy.Agents.Turn.Session do
     end
   end
 
+  # Turn.Server.init/1 loads the turn state and rebuilds memory from the store
+  # itself (on every start, including supervisor restarts), so the server opts
+  # carry only the caller's config and options. A store fault in that load
+  # comes back as the start's {:error, reason}.
   defp rehydrate_and_start(opts) do
     {store_mod, store_handle} = Keyword.fetch!(opts, :store)
     sid = Keyword.fetch!(opts, :session_id)
@@ -79,70 +84,35 @@ defmodule Normandy.Agents.Turn.Session do
     template_provider = Keyword.get(opts, :template_provider)
     resume_policy = Keyword.get(opts, :resume_policy, :lazy)
 
-    turn_state =
-      case store_mod.load_turn_state(store_handle, sid) do
-        {:ok, term} -> term
-        :error -> nil
+    server_opts =
+      if template_provider do
+        tmpl =
+          config
+          |> ConfigTemplate.from_config(template_id_of(opts, config))
+          |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
+
+        :ok = store_mod.save_config_template(store_handle, sid, tmpl)
+
+        opts
+        |> Keyword.take([
+          :session_id,
+          :store,
+          :registry,
+          :subscriber,
+          :handlers,
+          :template_provider
+        ])
+        |> Keyword.merge(Keyword.take(opts, @stored_server_options))
+        |> Keyword.put(:resume_policy, resume_policy)
+      else
+        opts
+        |> Keyword.take([:session_id, :store, :registry, :subscriber, :handlers])
+        |> Keyword.merge(Keyword.take(opts, @stored_server_options))
+        |> Keyword.put(:config, config)
       end
 
-    # `history/2` may return a contract-permitted `{:error, _}` on a genuine
-    # store fault; propagate it as run/2's error tuple instead of crashing.
-    case store_mod.history(store_handle, sid) do
-      {:ok, entries} ->
-        # `from_entries/1` rebuilds with `max_messages: nil`; restore the caller's
-        # configured cap so passivation/rehydration doesn't silently uncap memory.
-        rebuilt_memory = %{
-          AgentMemory.from_entries(entries)
-          | max_messages: config.memory.max_messages
-        }
-
-        config = %{config | memory: rebuilt_memory}
-
-        server_opts =
-          if template_provider do
-            tmpl =
-              config
-              |> ConfigTemplate.from_config(template_id_of(opts, config))
-              |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
-
-            :ok = store_mod.save_config_template(store_handle, sid, tmpl)
-
-            opts
-            |> Keyword.take([
-              :session_id,
-              :store,
-              :registry,
-              :subscriber,
-              :handlers,
-              :approval_timeout_ms,
-              :on_approval_timeout,
-              :idle_timeout_ms,
-              :template_provider
-            ])
-            |> Keyword.put(:resume_policy, resume_policy)
-            |> Keyword.put(:turn_state, turn_state)
-          else
-            opts
-            |> Keyword.take([
-              :session_id,
-              :store,
-              :registry,
-              :subscriber,
-              :handlers,
-              :approval_timeout_ms,
-              :on_approval_timeout,
-              :idle_timeout_ms
-            ])
-            |> Keyword.put(:config, config)
-            |> Keyword.put(:turn_state, turn_state)
-          end
-
-        {reg_mod, reg_handle} = Keyword.fetch!(opts, :registry)
-        start_with_retry(supervisor_mod, supervisor, server_opts, reg_mod, reg_handle, sid)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    {reg_mod, reg_handle} = Keyword.fetch!(opts, :registry)
+    start_with_retry(supervisor_mod, supervisor, server_opts, reg_mod, reg_handle, sid)
   end
 
   # Start the server, tolerating Horde's eventually-consistent `:via` registration.

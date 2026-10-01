@@ -599,13 +599,15 @@ defmodule Normandy.Agents.Turn.ServerTest do
       held_results: []
     }
 
+    store = InMemory.new()
+    :ok = InMemory.save_turn_state(store, "s-resume-announce", parked)
+
     {:ok, _srv} =
       Turn.Server.start_link(
         session_id: "s-resume-announce",
         config: base_config(),
-        store: {InMemory, InMemory.new()},
+        store: {InMemory, store},
         registry: {Native, Native.new()},
-        turn_state: parked,
         resume_policy: :eager,
         subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
       )
@@ -1395,6 +1397,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
           })
       end
 
+      # The server reads its turn state from the store, so seed it there.
+      {turn_state, server_opts} = Keyword.pop(Keyword.get(opts, :server_opts, []), :turn_state)
+      if turn_state, do: :ok = InMemory.save_turn_state(store, sid, turn_state)
+
       test_pid = self()
 
       call_llm = fn config, _s, _r ->
@@ -1413,7 +1419,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           registry: {Native, Native.new()},
           handlers: handlers
         ]
-        |> Keyword.merge(Keyword.get(opts, :server_opts, []))
+        |> Keyword.merge(server_opts)
         |> Turn.Server.start_link()
 
       {srv, store}

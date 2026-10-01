@@ -90,6 +90,59 @@ defmodule Normandy.Agents.Turn.SessionTest do
     assert length(DynamicSupervisor.which_children(sup)) == 1
   end
 
+  describe "a supervisor restart after a crash" do
+    @describetag :capture_log
+
+    test "the restarted server reads turn state and memory from the store, not its first start" do
+      store = InMemory.new()
+      reg = Native.new()
+      {:ok, sup} = Turn.Supervisor.start_link([])
+      test_pid = self()
+
+      opts = [
+        session_id: "restart-#{System.unique_integer([:positive])}",
+        config: session_config(),
+        store: {InMemory, store},
+        registry: {Native, reg},
+        supervisor: sup,
+        handlers: %{
+          BaseAgent.non_streaming_handlers()
+          | call_llm: fn c, _s, _r ->
+              send(test_pid, {:llm_memory, c.memory})
+              %Resp{content: "ok"}
+            end
+        }
+      ]
+
+      sid = opts[:session_id]
+      # A turn state that exists before the first start, so a restart that reuses
+      # the first start's arguments would bring this one back.
+      :ok = InMemory.save_turn_state(store, sid, %Turn.State{})
+      assert {:ok, _} = Turn.Session.run(opts, "first message")
+      assert_receive {:llm_memory, _}
+      {:ok, pid} = Native.whereis(reg, sid)
+
+      Process.exit(pid, :kill)
+
+      assert wait_until(fn ->
+               match?({:ok, new} when new != pid, Native.whereis(reg, sid))
+             end)
+
+      {:ok, restarted} = Native.whereis(reg, sid)
+      {:ok, stored_state} = InMemory.load_turn_state(store, sid)
+      refute stored_state == %Turn.State{}
+      {_state, data} = :sys.get_state(restarted)
+      assert data.turn_state == stored_state
+
+      assert {:ok, _} = Turn.Session.run(opts, "second message")
+      assert_receive {:llm_memory, memory}
+      contents = memory |> AgentMemory.messages() |> Enum.map(& &1.content)
+
+      assert "first message" in contents,
+             "restarted server lost the first turn; memory had #{inspect(contents)}"
+    end
+  end
+
   test "approve/2 returns {:error, :no_session} for an unknown session" do
     alias Normandy.Behaviours.SessionRegistry.Native
 

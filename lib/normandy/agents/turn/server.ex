@@ -117,7 +117,6 @@ defmodule Normandy.Agents.Turn.Server do
   @impl true
   def init(opts) do
     store = Keyword.fetch!(opts, :store)
-    registry = Keyword.fetch!(opts, :registry)
     session_id = Keyword.fetch!(opts, :session_id)
     template_provider = Keyword.get(opts, :template_provider)
 
@@ -128,11 +127,20 @@ defmodule Normandy.Agents.Turn.Server do
         reconstruct_config!(store, template_provider, session_id)
       end
 
-    turn_state =
-      case Keyword.fetch(opts, :turn_state) do
-        {:ok, ts} when not is_nil(ts) -> ts
-        _ -> load_turn_state(store, session_id)
-      end
+    # The store is the only source of durable state, on a first start and on a
+    # supervisor restart alike: the start arguments are captured once and would
+    # bring back the memory and turn state of the first start.
+    case with_stored_memory(config, store, session_id) do
+      {:ok, config} -> init_data(opts, config, load_turn_state(store, session_id))
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp init_data(opts, config, turn_state) do
+    store = Keyword.fetch!(opts, :store)
+    registry = Keyword.fetch!(opts, :registry)
+    session_id = Keyword.fetch!(opts, :session_id)
+    template_provider = Keyword.get(opts, :template_provider)
 
     resume_policy =
       case Keyword.get(opts, :config) do
@@ -192,23 +200,23 @@ defmodule Normandy.Agents.Turn.Server do
                   "CredentialProvider (e.g. env/vault), not CredentialProvider.FromClient."
       end
 
-    config = ConfigTemplate.rebuild(tmpl, supplement, token)
+    ConfigTemplate.rebuild(tmpl, supplement, token)
+  end
 
-    # The thin spec carries no memory; load the conversation graph from the store
-    # so a rehydrated/redistributed Tier-2 session resumes with its history (Tier-0/1
-    # does this in Turn.Session; the thin path has no Session to inject it).
-    case store_mod.history(store_handle, session_id) do
+  # Rebuild the conversation from the store's history, keeping the configured
+  # memory cap (from_entries/1 builds an uncapped memory).
+  defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil}
+
+  defp with_stored_memory(config, {mod, handle}, session_id) do
+    case mod.history(handle, session_id) do
       {:ok, entries} ->
-        memory = %{
-          AgentMemory.from_entries(entries)
-          | max_messages: config.memory.max_messages
-        }
+        max_messages = config.memory && config.memory.max_messages
 
-        %{config | memory: memory}
+        {:ok,
+         %{config | memory: %{AgentMemory.from_entries(entries) | max_messages: max_messages}}}
 
       {:error, reason} ->
-        # Fail-closed: cannot safely reconstruct without the conversation.
-        raise "Turn.Server reconstruct: history load failed for #{session_id}: #{inspect(reason)}"
+        {:error, reason}
     end
   end
 
