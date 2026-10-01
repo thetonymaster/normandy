@@ -90,3 +90,19 @@ defmodule Normandy.InvalidChangesetError do
   defp extract_changes(other),
     do: other
 end
+
+defmodule Normandy.ModelCatalogError do
+  @moduledoc """
+  Raised when the model catalog can't produce a context window for a turn that
+  needs one (an agent with a real compactor and no pinned `:max_tokens`). The
+  turn fails; nothing is memoised, so the next turn retries the lookup.
+  """
+  defexception [:model, :reason]
+
+  @impl true
+  def message(%__MODULE__{model: model, reason: reason}) do
+    "model catalog lookup failed for #{inspect(model)}: #{inspect(reason)}. " <>
+      "Compaction needs the model's context window; pin it with the compactor's " <>
+      ":max_tokens option to skip the lookup (required for non-Claude clients)."
+  end
+end

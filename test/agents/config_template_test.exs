@@ -71,7 +71,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
         credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
         compactor: {Normandy.Behaviours.Compactor.NoOp, []},
-        model_catalog: {Normandy.Behaviours.ModelCatalog.Static, []},
+        model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
         session_registry: {Normandy.Behaviours.SessionRegistry.Native, []}
       }
@@ -106,7 +106,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
         credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
         compactor: {Normandy.Behaviours.Compactor.NoOp, []},
-        model_catalog: {Normandy.Behaviours.ModelCatalog.Static, []},
+        model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
         session_registry: {Normandy.Behaviours.SessionRegistry.Native, []}
       }
@@ -128,5 +128,15 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     assert config.client.api_key == "TOKEN"
     assert config.behaviours.before_hooks == [:bh]
     assert config.behaviours.policy == {Normandy.Behaviours.PolicyEngine.AllowAll, []}
+  end
+
+  test "a 1.x template naming ModelCatalog.Static still decodes with [:safe] (D18)" do
+    # Code.ensure_loaded!: in a release every module is loaded at boot, so the atom
+    # exists; in mix test, modules load lazily. The stub must exist for either.
+    Code.ensure_loaded!(Normandy.Behaviours.ModelCatalog.Static)
+    blob = :erlang.term_to_binary({Normandy.Behaviours.ModelCatalog.Static, []})
+
+    assert {Normandy.Behaviours.ModelCatalog.Static, []} ==
+             :erlang.binary_to_term(blob, [:safe])
   end
 end

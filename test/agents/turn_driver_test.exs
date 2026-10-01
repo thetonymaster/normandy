@@ -129,4 +129,26 @@ defmodule Normandy.Agents.Turn.DriverTest do
     refute_received {:compacted, _}
     assert :compacted in acc
   end
+
+  test "drive/3 lets a compact-handler exception (e.g. ModelCatalogError) propagate" do
+    {:ok, responses} =
+      Agent.start_link(fn ->
+        [%{content: nil, tool_calls: [%{id: "c1"}]}, %{content: "final", tool_calls: []}]
+      end)
+
+    handlers = %{
+      recording_handlers(self())
+      | call_llm: fn _acc, _state, _req ->
+          Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
+        end,
+        dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{result: :ok} end) end,
+        compact: fn _acc, _state, _info ->
+          raise Normandy.ModelCatalogError, model: "m", reason: :boom
+        end
+    }
+
+    assert_raise Normandy.ModelCatalogError, fn ->
+      Driver.drive(Turn.new(response_model: :rm, output_schema: :rm), handlers, [])
+    end
+  end
 end

@@ -686,14 +686,16 @@ defmodule Normandy.Agents.BaseAgent do
   defp emit_turn_event(_config, _name, _meta), do: :ok
 
   # Compaction at the :steering boundary. Resolves the configured Compactor and
-  # the model's context window (via the configured ModelCatalog), compacts the
-  # running config.memory, and logs when it actually shrinks the conversation.
+  # the model's context window (pinned `:max_tokens`, else the configured
+  # ModelCatalog, memoised on the config), compacts the running config.memory,
+  # and logs when it actually shrinks the conversation.
   # The default config selects Compactor.NoOp, so this is observably a no-op
   # unless an agent opts into a real compactor.
   @doc false
   def compact_turn_memory(%BaseAgentConfig{} = config, %Turn.State{} = _state, info) do
     {mod, opts} = compactor_ref(config)
-    ctx = %{model: config.model, window: context_window_for(config)}
+    {config, window} = resolve_context_window(config, mod, opts)
+    ctx = %{model: config.model, window: window}
     {config2, meta} = mod.maybe_compact(config, ctx, opts)
 
     if Map.get(meta, :compacted) do
@@ -715,16 +717,51 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
 
-  defp context_window_for(%BaseAgentConfig{model: model} = config) do
-    {catalog_mod, _opts} = catalog_ref(config)
-    catalog_mod.context_window(model)
+  # The window the compactor sizes against. NoOp needs none; a pinned
+  # :max_tokens wins without a lookup (offline use, non-Claude clients);
+  # otherwise the catalog, memoised per model on the config. A failed lookup
+  # fails the turn: the agent asked for compaction and can't size it.
+  defp resolve_context_window(config, Normandy.Behaviours.Compactor.NoOp, _opts),
+    do: {config, nil}
+
+  defp resolve_context_window(config, _compactor, opts) do
+    case Keyword.fetch(opts, :max_tokens) do
+      {:ok, pinned} -> {config, pinned}
+      :error -> lookup_context_window(config)
+    end
   end
+
+  defp lookup_context_window(
+         %BaseAgentConfig{model: model, resolved_context_window: {model, window}} = config
+       ),
+       do: {config, window}
+
+  defp lookup_context_window(%BaseAgentConfig{model: model} = config) do
+    {catalog_mod, catalog_opts} = catalog_ref(config)
+
+    case catalog_mod.context_window(model, with_catalog_client(config, catalog_opts)) do
+      # Map.put: a BaseAgentConfig built under 1.x has no :resolved_context_window key.
+      {:ok, window} -> {Map.put(config, :resolved_context_window, {model, window}), window}
+      {:error, reason} -> raise Normandy.ModelCatalogError, model: model, reason: reason
+    end
+  end
+
+  defp with_catalog_client(
+         %BaseAgentConfig{client: %Normandy.LLM.ClaudioAdapter{} = client},
+         opts
+       ),
+       do:
+         Keyword.put_new_lazy(opts, :client, fn ->
+           Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+         end)
+
+  defp with_catalog_client(_config, opts), do: opts
 
   defp catalog_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{model_catalog: ref}})
        when not is_nil(ref),
        do: ref
 
-  defp catalog_ref(_config), do: {Normandy.Behaviours.ModelCatalog.Static, []}
+  defp catalog_ref(_config), do: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
 
   # ── End Turn FSM production interpreter ──────────────────────────────────────
 

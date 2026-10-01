@@ -714,4 +714,135 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
     assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Native.whereis(reg, sid)
   end
+
+  test "a ModelCatalogError in the compact handler fails the turn with an error reply" do
+    store = InMemory.new()
+    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _config, _state, _req ->
+      if Agent.get_and_update(counter, fn n -> {n, n + 1} end) == 0 do
+        %Resp{content: "", tool_calls: [%ToolCall{id: "tc1", name: "weather", input: %{}}]}
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    compact = fn _config, _state, _info ->
+      raise Normandy.ModelCatalogError, model: "test", reason: :boom
+    end
+
+    handlers = %{
+      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      | call_llm: call_llm,
+        compact: compact
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-catalog-failure",
+        config: %{base_config_with_tools() | max_tool_iterations: 3},
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+        handlers: handlers
+      )
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      send(self(), {:result, Turn.Server.run(srv, "go")})
+    end)
+
+    assert_received {:result,
+                     {:error, {:task_down, {%Normandy.ModelCatalogError{model: "test"}, _stack}}}}
+  end
+
+  describe "context window memoisation across a real turn" do
+    # Three tool rounds per drive log at :info/:debug; keep the run output clean.
+    @describetag :capture_log
+
+    defmodule MemoCatalog do
+      @behaviour Normandy.Behaviours.ModelCatalog
+
+      @impl true
+      def context_window(model, opts) do
+        send(Keyword.fetch!(opts, :notify), {:catalog_lookup, model})
+        {:ok, 200_000}
+      end
+    end
+
+    # The real BaseAgent compact handler with an unpinned compactor, so every
+    # steering boundary resolves the window; call_llm makes three tool rounds,
+    # then answers.
+    defp memo_config do
+      %{
+        base_config_with_tools()
+        | max_tool_iterations: 5,
+          behaviours: %Normandy.Behaviours.Config{
+            compactor: {Normandy.Behaviours.Compactor.WindowManager, [reserved_tokens: 16]},
+            model_catalog: {MemoCatalog, [notify: self()]}
+          }
+      }
+    end
+
+    defp three_tool_rounds do
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      fn _config, _state, _req ->
+        if Agent.get_and_update(counter, fn n -> {n, n + 1} end) < 3 do
+          %Resp{content: "", tool_calls: [%ToolCall{id: "tc", name: "weather", input: %{}}]}
+        else
+          %Resp{content: "done", tool_calls: nil}
+        end
+      end
+    end
+
+    defp drive_once(config) do
+      alias Normandy.Agents.BaseAgent
+
+      config = BaseAgent.admit_turn_input(config, "go")
+
+      state =
+        Turn.new(
+          max_iterations: config.max_tool_iterations,
+          response_model: BaseAgent.turn_response_model(config),
+          output_schema: config.output_schema
+        )
+
+      handlers = %{BaseAgent.non_streaming_handlers() | call_llm: three_tool_rounds()}
+      {config2, _state} = Turn.Driver.drive(state, handlers, config)
+      config2
+    end
+
+    test "Driver: one lookup for three steering boundaries; none on the next turn" do
+      config2 = drive_once(memo_config())
+      assert_received {:catalog_lookup, "test"}
+      refute_received {:catalog_lookup, _}
+      assert config2.resolved_context_window == {"test", 200_000}
+
+      _config3 = drive_once(config2)
+      refute_received {:catalog_lookup, _}
+    end
+
+    test "Turn.Server: one lookup for three steering boundaries; none on the next run" do
+      store = InMemory.new()
+      reg = Normandy.Behaviours.SessionRegistry.Native.new()
+
+      handlers = %{
+        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        | call_llm: three_tool_rounds()
+      }
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: "s-catalog-memo",
+          config: memo_config(),
+          store: {InMemory, store},
+          registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
+          handlers: handlers
+        )
+
+      {:ok, _} = Turn.Server.run(srv, "go")
+      assert_receive {:catalog_lookup, "test"}
+      refute_received {:catalog_lookup, _}
+    end
+  end
 end

@@ -36,7 +36,7 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert b.before_hooks == []
       assert b.after_hooks == []
       assert b.credential == {Normandy.Behaviours.CredentialProvider.FromClient, []}
-      assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.Static, []}
+      assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
       assert b.session_store == {Normandy.Behaviours.SessionStore.InMemory, []}
     end
 

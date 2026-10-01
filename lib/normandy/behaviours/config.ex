@@ -47,7 +47,7 @@ defmodule Normandy.Behaviours.Config do
             after_hooks: [],
             credential: {CredentialProvider.FromClient, []},
             compactor: {Compactor.NoOp, []},
-            model_catalog: {ModelCatalog.Static, []},
+            model_catalog: {ModelCatalog.ModelsAPI, []},
             session_store: {SessionStore.InMemory, []},
             session_registry: {SessionRegistry.Native, []}
 
