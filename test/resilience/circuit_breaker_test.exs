@@ -359,4 +359,13 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       GenServer.stop(cb)
     end
   end
+
+  describe "a non-tuple return" do
+    test "counts as a failure, as Retry treats it" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 5)
+
+      assert {:error, {:unexpected_return, :weird}} = CircuitBreaker.call(cb, fn -> :weird end)
+      assert %{failure_count: 1} = CircuitBreaker.metrics(cb)
+    end
+  end
 end

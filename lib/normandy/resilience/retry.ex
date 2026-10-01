@@ -78,10 +78,15 @@ defmodule Normandy.Resilience.Retry do
   - `:retry_on` - List of error types to retry on (default: network errors, timeouts, rate limits)
   - `:retry_if` - Custom retry condition function
 
+  An unknown option or a bad value raises `ArgumentError`.
+
   ## Returns
 
   - `{:ok, result}` - Success after 1 or more attempts
-  - `{:error, {reason, attempts, errors}}` - Failed after all attempts
+  - `{:error, {reason, attempts, errors}}` - every failure: `reason` is the last
+    error, `attempts` how many were made (1 for a non-retryable error), and
+    `errors` all of them in order. A return that is neither `{:ok, _}` nor
+    `{:error, _}` is the error `{:unexpected_return, value}`.
 
   ## Examples
 
@@ -109,41 +114,75 @@ defmodule Normandy.Resilience.Retry do
   @spec with_retry(function(), retry_options()) ::
           {:ok, term()} | {:error, {term(), pos_integer(), [term()]}}
   def with_retry(fun, opts \\ []) when is_function(fun, 0) do
-    max_attempts = Keyword.get(opts, :max_attempts, @default_max_attempts)
-    base_delay = Keyword.get(opts, :base_delay, @default_base_delay)
-    max_delay = Keyword.get(opts, :max_delay, @default_max_delay)
-    backoff_factor = Keyword.get(opts, :backoff_factor, @default_backoff_factor)
-    jitter = Keyword.get(opts, :jitter, @default_jitter)
-    retry_on = Keyword.get(opts, :retry_on, @default_retry_on)
-    retry_if = Keyword.get(opts, :retry_if)
-
-    retry_config = %{
-      max_attempts: max_attempts,
-      base_delay: base_delay,
-      max_delay: max_delay,
-      backoff_factor: backoff_factor,
-      jitter: jitter,
-      retry_on: retry_on,
-      retry_if: retry_if
-    }
-
-    do_retry(fun, retry_config, 1, [])
+    do_retry(fun, retry_config!(opts), 1, [])
   end
 
-  # Private retry loop
-  defp do_retry(_fun, config, attempt, errors) when attempt > config.max_attempts do
-    # Max attempts reached
-    last_error = List.first(errors) || :unknown_error
+  @option_defaults [
+    max_attempts: @default_max_attempts,
+    base_delay: @default_base_delay,
+    max_delay: @default_max_delay,
+    backoff_factor: @default_backoff_factor,
+    jitter: @default_jitter,
+    retry_on: @default_retry_on,
+    retry_if: nil
+  ]
 
-    Logger.warning(
-      "Retry failed after #{config.max_attempts} attempts. Last error: #{inspect(last_error)}"
+  @doc """
+  Checks retry options without running anything, raising `ArgumentError` on an
+  unknown option or a bad value. `BaseAgent.init/1` calls it for
+  `:retry_options`, so a mistake surfaces when the agent is built.
+  """
+  @spec validate_options!(retry_options()) :: :ok
+  def validate_options!(opts) do
+    _ = retry_config!(opts)
+    :ok
+  end
+
+  # An unknown option or a bad value raises: a typo such as max_attemps: must
+  # not silently fall back to the default.
+  defp retry_config!(opts) do
+    case Keyword.keys(opts) -- Keyword.keys(@option_defaults) do
+      [] ->
+        :ok
+
+      [key | _] ->
+        raise ArgumentError,
+              "Retry.with_retry/2: unknown option #{inspect(key)}; supported: " <>
+                Enum.map_join(Keyword.keys(@option_defaults), ", ", &inspect/1)
+    end
+
+    config = Map.new(Keyword.merge(@option_defaults, opts))
+
+    check_option!(config, :max_attempts, &(is_integer(&1) and &1 > 0), "a positive integer")
+    check_option!(config, :base_delay, &(is_integer(&1) and &1 >= 0), "a non-negative integer")
+    check_option!(config, :max_delay, &(is_integer(&1) and &1 >= 0), "a non-negative integer")
+    check_option!(config, :backoff_factor, &(is_number(&1) and &1 >= 1), "a number >= 1")
+    check_option!(config, :jitter, &is_boolean/1, "a boolean")
+
+    check_option!(
+      config,
+      :retry_on,
+      &(is_list(&1) and Enum.all?(&1, fn a -> is_atom(a) end)),
+      "a list of atoms"
     )
 
-    {:error, {last_error, config.max_attempts, Enum.reverse(errors)}}
+    check_option!(config, :retry_if, &(is_nil(&1) or is_function(&1, 1)), "a 1-arity function")
+
+    config
   end
 
+  defp check_option!(config, key, valid?, expected) do
+    value = Map.fetch!(config, key)
+
+    unless valid?.(value) do
+      raise ArgumentError,
+            "Retry.with_retry/2: #{inspect(key)} must be #{expected}, got: #{inspect(value)}"
+    end
+  end
+
+  # Private retry loop (retry_or_fail/5 only re-enters below max_attempts)
   defp do_retry(fun, config, attempt, errors) do
-    case execute_with_timeout(fun) do
+    case execute_safely(fun) do
       {:ok, result} ->
         if attempt > 1 do
           Logger.info("Retry succeeded on attempt #{attempt}")
@@ -152,41 +191,37 @@ defmodule Normandy.Resilience.Retry do
         {:ok, result}
 
       {:error, error} ->
-        # Check if we should retry (and haven't exceeded max attempts)
-        if attempt < config.max_attempts and retryable?(error, config) do
-          delay = calculate_delay(attempt, config)
+        retry_or_fail(fun, config, attempt, errors, error)
 
-          Logger.warning(
-            "Retry attempt #{attempt}/#{config.max_attempts} failed: #{inspect(error)}. " <>
-              "Retrying in #{delay}ms..."
-          )
-
-          Process.sleep(delay)
-          do_retry(fun, config, attempt + 1, [error | errors])
-        else
-          # Either non-retryable or max attempts reached
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if attempt >= config.max_attempts do
-            # Return the accumulated errors
-            {:error, {error, config.max_attempts, Enum.reverse([error | errors])}}
-          else
-            Logger.warning("Non-retryable error: #{inspect(error)}")
-            {:error, error}
-          end
-        end
-
+      # A value that is neither {:ok, _} nor {:error, _} is a failure like any
+      # other (CircuitBreaker treats it the same way).
       other ->
-        # Unexpected return value, treat as error
-        Logger.warning(
-          "Unexpected return value (expected {:ok, _} or {:error, _}): #{inspect(other)}"
-        )
-
-        {:error, {:unexpected_return, other}}
+        retry_or_fail(fun, config, attempt, errors, {:unexpected_return, other})
     end
   end
 
-  # Execute function with safety wrapper
-  defp execute_with_timeout(fun) do
+  # Every failure returns {:error, {last_error, attempts_made, errors}}.
+  defp retry_or_fail(fun, config, attempt, errors, error) do
+    if attempt < config.max_attempts and retryable?(error, config) do
+      delay = calculate_delay(attempt, config)
+
+      Logger.warning(
+        "Retry attempt #{attempt}/#{config.max_attempts} failed: #{inspect(error)}. " <>
+          "Retrying in #{delay}ms..."
+      )
+
+      Process.sleep(delay)
+      do_retry(fun, config, attempt + 1, [error | errors])
+    else
+      if attempt < config.max_attempts,
+        do: Logger.warning("Non-retryable error: #{inspect(error)}")
+
+      {:error, {error, attempt, Enum.reverse([error | errors])}}
+    end
+  end
+
+  # Runs the function, turning a raise, exit or throw into an error value.
+  defp execute_safely(fun) do
     fun.()
   rescue
     error ->
@@ -229,11 +264,10 @@ defmodule Normandy.Resilience.Retry do
         retryable_error?(reason, retry_on)
 
       # Exception struct
+      # Exception struct, matched by its underscored name (no atom is created)
       %{__exception__: true, __struct__: module} ->
-        error_type =
-          module |> Module.split() |> List.last() |> Macro.underscore() |> String.to_atom()
-
-        error_type in retry_on
+        name = module |> Module.split() |> List.last() |> Macro.underscore()
+        Enum.any?(retry_on, &(Atom.to_string(&1) == name))
 
       _ ->
         false
@@ -317,5 +351,9 @@ defmodule Normandy.Resilience.Retry do
     ]
   end
 
-  def preset(_), do: preset(:standard)
+  def preset(other) do
+    raise ArgumentError,
+          "Retry.preset/1: unknown preset #{inspect(other)}; expected :quick, :standard, " <>
+            ":persistent or :patient"
+  end
 end

@@ -325,10 +325,11 @@ defmodule Normandy.Resilience.CircuitBreaker do
         GenServer.call(server, {:record_failure})
         error
 
+      # Neither {:ok, _} nor {:error, _}: a failure, as Retry treats it, so
+      # composing the two cannot change the outcome.
       other ->
-        # Unexpected return, treat as success
-        GenServer.call(server, {:record_success})
-        {:ok, other}
+        GenServer.call(server, {:record_failure})
+        {:error, {:unexpected_return, other}}
     end
   rescue
     error ->

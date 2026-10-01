@@ -1,6 +1,7 @@
 defmodule Normandy.Resilience.RetryTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Resilience.Retry
 
   describe "with_retry/2" do
@@ -69,8 +70,8 @@ defmodule Normandy.Resilience.RetryTest do
       assert error == :network_error
       assert attempts == 3
 
-      # Should not retry validation_error
-      {:error, :validation_error} =
+      # Should not retry validation_error; the failure has the same shape
+      {:error, {:validation_error, 1, [:validation_error]}} =
         Retry.with_retry(
           fn -> {:error, :validation_error} end,
           max_attempts: 3,
@@ -106,7 +107,7 @@ defmodule Normandy.Resilience.RetryTest do
     end
 
     test "does not retry on non-retryable error with custom retry_if" do
-      {:error, %{status: 400}} =
+      {:error, {%{status: 400}, 1, [%{status: 400}]}} =
         Retry.with_retry(
           fn -> {:error, %{status: 400}} end,
           max_attempts: 3,
@@ -221,9 +222,10 @@ defmodule Normandy.Resilience.RetryTest do
       assert opts[:base_delay] == 2_000
     end
 
-    test "unknown preset defaults to standard" do
-      opts = Retry.preset(:unknown)
-      assert opts[:max_attempts] == 3
+    test "an unknown preset raises instead of becoming :standard" do
+      assert_raise ArgumentError, ~r/unknown preset :persistant/, fn ->
+        Retry.preset(:persistant)
+      end
     end
 
     test "can use preset in with_retry" do
@@ -315,6 +317,41 @@ defmodule Normandy.Resilience.RetryTest do
     test "reaches both ends of the range" do
       results = MapSet.new(1..2_000, fn _ -> Retry.add_jitter(8) end)
       assert results == MapSet.new(6..10)
+    end
+  end
+
+  describe "option checks" do
+    test "an unknown option raises, naming it" do
+      assert_raise ArgumentError, ~r/Retry.with_retry\/2: unknown option :max_attemps/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, max_attemps: 5)
+      end
+    end
+
+    test "BaseAgent.init checks :retry_options when the agent is built" do
+      assert_raise ArgumentError, ~r/unknown option :max_attemps/, fn ->
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "m",
+          retry_options: [max_attemps: 3]
+        })
+      end
+    end
+
+    test "an invalid value raises, naming the option and value" do
+      assert_raise ArgumentError, ~r/:max_attempts must be a positive integer, got: 0/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, max_attempts: 0)
+      end
+
+      assert_raise ArgumentError, ~r/:base_delay must be a non-negative integer, got: -1/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, base_delay: -1)
+      end
+    end
+  end
+
+  describe "return shapes" do
+    test "a non-tuple return is a failure in the same {reason, attempts, errors} shape" do
+      assert {:error, {{:unexpected_return, :weird}, 1, [{:unexpected_return, :weird}]}} =
+               Retry.with_retry(fn -> :weird end, max_attempts: 3, base_delay: 1)
     end
   end
 end

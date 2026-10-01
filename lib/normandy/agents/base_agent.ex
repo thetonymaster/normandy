@@ -104,6 +104,11 @@ defmodule Normandy.Agents.BaseAgent do
     _ = validate_client_options!(Map.get(config, :client))
     :ok = validate_policy_opts!(Map.get(config, :behaviours))
 
+    case Map.get(config, :retry_options) do
+      nil -> :ok
+      retry_options -> Retry.validate_options!(retry_options)
+    end
+
     # Initialize circuit breaker if enabled
     circuit_breaker =
       if Map.get(config, :enable_circuit_breaker, false) do
