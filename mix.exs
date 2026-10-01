@@ -27,6 +27,7 @@ defmodule Normandy.MixProject do
         extras: [
           "README.md",
           "CHANGELOG.md",
+          "MIGRATING-2.0.md",
           "ROADMAP.md",
           "docs/guides/distributed_sessions.md"
           # TODO: Add guides

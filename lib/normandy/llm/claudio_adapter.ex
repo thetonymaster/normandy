@@ -19,17 +19,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Initialize Claudio client
       client = %Normandy.LLM.ClaudioAdapter{
         api_key: System.get_env("ANTHROPIC_API_KEY"),
-        options: [
+        options: %{
           timeout: 60_000,
           enable_caching: true
-        ]
+        }
       }
 
       # Use with Normandy agent
       agent = Normandy.Agents.BaseAgent.init(%{
         client: client,
-        model: "claude-3-5-sonnet-20241022",
-        temperature: 0.7
+        model: "claude-opus-5-5"
       })
 
       {agent, response} = Normandy.Agents.BaseAgent.run(agent, user_input)
@@ -42,7 +41,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:enable_caching` - Prompt caching (default: false): an explicit breakpoint on the
     system prompt and the last tool, plus the API's automatic breakpoint for the
     conversation. Keep context-provider output stable across calls, or the cache
-    stops at the system prompt
+    stops at the system prompt. Normandy uses 3 of the API's 4 cache breakpoints (system,
+    last tool, automatic); callers who add their own `cache_control` markers can add at
+    most one more, or the API rejects the request
   - `:thinking` - `:adaptive` (Claude 4.6 and later) or `:disabled`
   - `:thinking_display` - `:summarized | :omitted | :updates`; requires `thinking: :adaptive`
   - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
@@ -85,7 +86,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   @type t :: %__MODULE__{
           api_key: String.t(),
           base_url: String.t() | nil,
-          options: keyword(),
+          options: map(),
           finch: atom() | nil
         }
 

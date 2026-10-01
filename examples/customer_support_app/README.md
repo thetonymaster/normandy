@@ -249,8 +249,7 @@ You can customize agent behavior in each agent module:
 ```elixir
 # lib/customer_support/agents/greeter_agent.ex
 agent do
-  model("claude-3-5-sonnet-20241022")
-  temperature(0.7)  # Adjust for creativity vs consistency
+  model("claude-sonnet-4-6")
   # ...
 end
 ```

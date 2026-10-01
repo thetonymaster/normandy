@@ -90,8 +90,7 @@ defmodule Normandy.Coordination.AgentPool do
         name: :research_pool,
         agent_config: %{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
-          temperature: 0.7
+          model: "claude-opus-5-5"
         },
         size: 10,
         max_overflow: 5,

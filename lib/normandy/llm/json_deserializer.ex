@@ -23,8 +23,7 @@ defmodule Normandy.LLM.JsonDeserializer do
       # Enable in agent config
       agent = BaseAgent.init(%{
         client: client,
-        model: "claude-3-5-sonnet-20241022",
-        temperature: 0.7,
+        model: "claude-opus-5-5",
         enable_json_retry: true,           # Enable automatic retry
         json_retry_max_attempts: 3         # Optional: default is 2
       })

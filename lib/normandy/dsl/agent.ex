@@ -14,7 +14,7 @@ defmodule Normandy.DSL.Agent do
           name "Research Agent"
           description "Conducts research and analysis"
 
-          model "claude-3-5-sonnet-20241022"
+          model "claude-opus-5-5"
           max_tokens 4096
 
           system_prompt \"\"\"
@@ -38,7 +38,7 @@ defmodule Normandy.DSL.Agent do
 
       config = %{
         client: my_client,
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-opus-5-5",
         max_tokens: 4096
       }
 
@@ -88,8 +88,7 @@ defmodule Normandy.DSL.Agent do
 
       agent do
         name "My Agent"
-        model "claude-3-5-sonnet-20241022"
-        temperature 0.8
+        model "claude-opus-5-5"
 
         system_prompt "You are helpful."
       end

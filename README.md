@@ -33,10 +33,12 @@ Add `normandy` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:normandy, "~> 1.0"}
+    {:normandy, "~> 2.0"}
   ]
 end
 ```
+
+Upgrading from 1.x? See [MIGRATING-2.0.md](MIGRATING-2.0.md).
 
 Then fetch dependencies:
 
@@ -59,8 +61,7 @@ client = %Normandy.LLM.ClaudioAdapter{
 agent =
   Normandy.Agents.BaseAgent.init(%{
     client: client,
-    model: "claude-sonnet-4-6",
-    temperature: 0.7
+    model: "claude-sonnet-4-6"
   })
 
 # 3. Run a turn

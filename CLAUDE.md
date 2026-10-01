@@ -48,17 +48,17 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 ### Agent System
 
 - **`Normandy.Agents.BaseAgent`** - Core agent implementation
-  - `init/1` - Initialize agent with `BaseAgentConfig` (requires `:client`, `:model`, `:temperature`)
+  - `init/1` - Initialize agent with `BaseAgentConfig` (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters)
   - `run/2` - Execute agent turn with optional user input, returns `{updated_config, response}`
   - `get_response/2` - Get LLM response using prompt specification
   - `reset_memory/1` - Reset conversation to initial state
   - Context provider management: `register_context_provider/3`, `get_context_provider/2`, `delete_context_provider/2`
 
 - **`Normandy.Agents.BaseAgentConfig`** - Agent state container
-  - Stores: input/output schemas, memory, prompt specification, LLM client/model, temperature, max_tokens
+  - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window
 
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
-  - Requires: `converse/6` and `completitions/6` implementations
+  - Requires: `converse/7` and `completitions/6` implementations; `converse/7` may return a bare response, `{response, usage}` or `{response, usage, meta}`
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
 ### Memory & Messages
@@ -79,7 +79,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Takes `PromptSpecification` and builds structured prompt with sections:
     - "IDENTITY and PURPOSE" (background)
     - "INTERNAL ASSISTANT STEPS" (steps)
-    - "OUTPUT INSTRUCTIONS" (output_instructions + auto-added JSON schema requirement)
+    - "OUTPUT INSTRUCTIONS" (output_instructions; BaseAgent appends the output schema)
     - "EXTRA INFORMATION AND CONTEXT" (from context providers)
 
 - **`Normandy.Components.PromptSpecification`** - Defines prompt structure
@@ -163,11 +163,12 @@ end
 - `config/dev.exs` and `config/test.exs` - Environment configs
 - Application config requires `:adapter` (JSON encoder/decoder, e.g., Poison)
 - `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, and refusal/max_tokens/API-rejection
+- `client.options` request settings (`:thinking`, `:effort`, `:speed`, `:inference_geo`, `:fallbacks`, `:task_budget`, `:thinking_budget`, `:enable_caching`, `:req_options`) are documented on `Normandy.LLM.ClaudioAdapter`; nothing is sent unless set
 - `consolidate_protocols: false` in test environment for faster compilation
 
 ## Dependencies
 
-- **Claudio** - LLM client library (private git dependency)
+- **Claudio** - LLM client library (Hex package `~> 0.7.0`; a `path: "../Claudio"` dependency until 0.7.0 is published)
 - **Poison** - JSON encoding/decoding
 - **elixir_uuid** - UUID generation for conversation turns
 

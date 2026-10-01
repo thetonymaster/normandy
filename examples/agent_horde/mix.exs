@@ -15,6 +15,6 @@ defmodule AgentHorde.MixProject do
   def application, do: [extra_applications: [:logger]]
 
   defp deps do
-    [{:normandy, path: "../../"}, {:claudio, "~> 0.5.0"}, {:req, "~> 0.5"}, {:jason, "~> 1.4"}]
+    [{:normandy, path: "../../"}, {:req, "~> 0.5"}, {:jason, "~> 1.4"}]
   end
 end

@@ -24,7 +24,7 @@ defmodule AgentHordeTest do
     test "config/0 has correct model and temperature" do
       cfg = AgentHorde.Agents.Planner.config()
       assert cfg.model == "claude-sonnet-4-6"
-      assert cfg.temperature == 0.5
+      assert cfg.temperature == nil
     end
 
     test "new/1 returns {:ok, agent} with stub client" do
@@ -42,7 +42,7 @@ defmodule AgentHordeTest do
     test "config/0 has correct model and temperature" do
       cfg = AgentHorde.Agents.Curator.config()
       assert cfg.model == "claude-sonnet-4-6"
-      assert cfg.temperature == 0.3
+      assert cfg.temperature == nil
     end
 
     test "new/1 returns {:ok, agent} with stub client" do
@@ -60,7 +60,7 @@ defmodule AgentHordeTest do
     test "config/0 has correct baked model and temperature" do
       cfg = AgentHorde.Agents.Analyst.config()
       assert cfg.model == "claude-sonnet-4-6"
-      assert cfg.temperature == 0.4
+      assert cfg.temperature == nil
     end
 
     test "new/1 returns {:ok, agent} with stub client" do
@@ -83,7 +83,7 @@ defmodule AgentHordeTest do
     test "config/0 has correct model, temperature, and max_tokens" do
       cfg = AgentHorde.Agents.Editor.config()
       assert cfg.model == "claude-sonnet-4-6"
-      assert cfg.temperature == 0.4
+      assert cfg.temperature == nil
       assert cfg.max_tokens == 4096
     end
 

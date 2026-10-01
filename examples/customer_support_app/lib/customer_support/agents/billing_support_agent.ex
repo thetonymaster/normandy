@@ -14,8 +14,7 @@ defmodule CustomerSupport.Agents.BillingSupportAgent do
   alias CustomerSupport.Tools.TicketCreationTool
 
   agent do
-    model("claude-3-5-sonnet-20241022")
-    temperature(0.4)
+    model("claude-sonnet-4-6")
 
     background("""
     You are a billing specialist for TechStore's customer support team.

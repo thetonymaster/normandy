@@ -22,8 +22,7 @@ defmodule CustomerSupport.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:normandy, path: "../../"},
-      {:claudio, "~> 0.1.1"}
+      {:normandy, path: "../../"}
     ]
   end
 end

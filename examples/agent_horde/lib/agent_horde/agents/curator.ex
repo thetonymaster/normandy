@@ -8,7 +8,6 @@ defmodule AgentHorde.Agents.Curator do
 
   agent do
     model("claude-sonnet-4-6")
-    temperature(0.3)
 
     background("You select the most relevant sources to read in full.")
 

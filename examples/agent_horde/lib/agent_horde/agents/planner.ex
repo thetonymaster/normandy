@@ -8,7 +8,6 @@ defmodule AgentHorde.Agents.Planner do
 
   agent do
     model("claude-sonnet-4-6")
-    temperature(0.5)
 
     background("You plan web research. Given a question, produce focused search queries.")
 

@@ -11,8 +11,7 @@ defmodule CustomerSupport.Agents.GreeterAgent do
   alias CustomerSupport.Tools.KnowledgeBaseTool
 
   agent do
-    model("claude-3-5-sonnet-20241022")
-    temperature(0.7)
+    model("claude-sonnet-4-6")
 
     background("""
     You are a friendly customer service greeter for TechStore, an online electronics retailer.

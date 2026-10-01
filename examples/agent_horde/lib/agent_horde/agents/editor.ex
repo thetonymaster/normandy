@@ -8,7 +8,6 @@ defmodule AgentHorde.Agents.Editor do
 
   agent do
     model("claude-sonnet-4-6")
-    temperature(0.4)
     max_tokens(4096)
 
     background("You are an editor synthesizing analyst findings into one report.")

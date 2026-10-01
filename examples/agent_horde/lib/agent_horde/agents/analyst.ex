@@ -13,7 +13,6 @@ defmodule AgentHorde.Agents.Analyst do
 
   agent do
     model("claude-sonnet-4-6")
-    temperature(0.4)
 
     background("You are a rigorous research analyst.")
 

@@ -14,8 +14,7 @@ defmodule CustomerSupport.Agents.TechnicalSupportAgent do
   alias CustomerSupport.Tools.OrderLookupTool
 
   agent do
-    model("claude-3-5-sonnet-20241022")
-    temperature(0.5)
+    model("claude-sonnet-4-6")
 
     background("""
     You are a technical support specialist for TechStore's customer support team.
