@@ -17,14 +17,16 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     end
   end
 
-  defp reaper(store, reg, cat) do
+  defp reaper(store, reg, cat, extra \\ []) do
     {:ok, pid} =
       ResumeReaper.start_link(
-        store: {InMemory, store},
-        registry: {Native, reg},
-        supervisor: self(),
-        supervisor_mod: RecordingSup,
-        template_provider: {Catalog, cat}
+        [
+          store: {InMemory, store},
+          registry: {Native, reg},
+          supervisor: self(),
+          supervisor_mod: RecordingSup,
+          template_provider: {Catalog, cat}
+        ] ++ extra
       )
 
     pid
@@ -93,5 +95,39 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     assert opts[:template_provider] == {Catalog, cat}
     # Thin spec: no :config is forwarded (the server reconstructs it).
     refute Keyword.has_key?(opts, :config)
+  end
+
+  test "the reaped session gets the host's :subscriber and :handlers" do
+    store = InMemory.new()
+    reg = Native.new()
+    {:ok, cat} = Catalog.start_link([])
+    handlers = %{call_llm: fn _, _, _ -> :stub end}
+    subscriber = fn _event, _meta -> :ok end
+
+    :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})
+    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :awaiting_approval})
+
+    r = reaper(store, reg, cat, subscriber: subscriber, handlers: handlers)
+    send(r, {:nodedown, :"gone@127.0.0.1"})
+
+    assert_receive {:reaper_started, "s1", opts}, 1_000
+    assert opts[:subscriber] == subscriber
+    assert opts[:handlers] == handlers
+  end
+
+  test "without :subscriber or :handlers the reaper passes neither" do
+    store = InMemory.new()
+    reg = Native.new()
+    {:ok, cat} = Catalog.start_link([])
+
+    :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})
+    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :steering})
+
+    r = reaper(store, reg, cat)
+    send(r, {:nodedown, :"gone@127.0.0.1"})
+
+    assert_receive {:reaper_started, "s1", opts}, 1_000
+    refute Keyword.has_key?(opts, :subscriber)
+    refute Keyword.has_key?(opts, :handlers)
   end
 end

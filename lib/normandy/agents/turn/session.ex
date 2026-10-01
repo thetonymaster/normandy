@@ -32,6 +32,11 @@ defmodule Normandy.Agents.Turn.Session do
   alias Normandy.Agents.Turn.{Server, Supervisor}
   alias Normandy.Components.AgentMemory
 
+  # Plain-data server options saved with a Tier-2 template, so a server started
+  # without them (e.g. by ResumeReaper) restores them. Functions (:subscriber,
+  # :handlers) cannot be stored; the starter must pass those.
+  @stored_server_options [:approval_timeout_ms, :on_approval_timeout, :idle_timeout_ms]
+
   @spec run(keyword(), term()) :: {:ok, term()} | {:error, term()}
   def run(opts, user_input) do
     with {:ok, pid} <- ensure_server(opts), do: Server.run(pid, user_input)
@@ -96,7 +101,9 @@ defmodule Normandy.Agents.Turn.Session do
         server_opts =
           if template_provider do
             tmpl =
-              ConfigTemplate.from_config(config, template_id_of(opts, config))
+              config
+              |> ConfigTemplate.from_config(template_id_of(opts, config))
+              |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
 
             :ok = store_mod.save_config_template(store_handle, sid, tmpl)
 

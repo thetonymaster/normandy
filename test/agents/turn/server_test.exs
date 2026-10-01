@@ -790,6 +790,65 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:ok, ^pid} = Native.whereis(reg, sid)
   end
 
+  describe "server options saved with the template" do
+    defp thin_start_with_saved_options(start_opts) do
+      store = InMemory.new()
+      sid = "saved-opts-#{System.unique_integer([:positive])}"
+      base = base_config()
+
+      tmpl =
+        base
+        |> ConfigTemplate.from_config("kind-a")
+        |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
+        |> Map.put(:server_options, %{
+          approval_timeout_ms: 1_234,
+          on_approval_timeout: :fail,
+          idle_timeout_ms: 5_000
+        })
+
+      :ok = InMemory.save_config_template(store, sid, tmpl)
+      {:ok, cat} = Catalog.start_link([])
+
+      :ok =
+        Catalog.put(cat, "kind-a", %{
+          tool_registry: base.tool_registry,
+          before_hooks: [],
+          after_hooks: [],
+          client_builder: fn _token -> base.client end
+        })
+
+      {:ok, pid} =
+        Turn.Server.start_link(
+          [
+            session_id: sid,
+            store: {InMemory, store},
+            registry: {Native, Native.new()},
+            template_provider: {Catalog, cat}
+          ] ++ start_opts
+        )
+
+      {_state, data} = :sys.get_state(pid)
+      data
+    end
+
+    test "a thin start restores them" do
+      data = thin_start_with_saved_options([])
+
+      assert data.approval_timeout_ms == 1_234
+      assert data.on_approval_timeout == :fail
+      assert data.idle_timeout_ms == 5_000
+    end
+
+    test "explicit start options win over the saved ones" do
+      data =
+        thin_start_with_saved_options(approval_timeout_ms: 99, on_approval_timeout: :continue)
+
+      assert data.approval_timeout_ms == 99
+      assert data.on_approval_timeout == :continue
+      assert data.idle_timeout_ms == 5_000
+    end
+  end
+
   test "a ModelCatalogError in the compact handler fails the turn with an error reply" do
     store = InMemory.new()
     reg = Native.new()

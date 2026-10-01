@@ -3,6 +3,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   import Normandy.Test.Eventually
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -169,6 +170,33 @@ defmodule Normandy.Agents.Turn.SessionTest do
     assert Keyword.fetch!(server_opts, :on_approval_timeout) == :fail
   end
 
+  test "a Tier-2 start saves the server options with the config template" do
+    store = InMemory.new()
+    {:ok, cat} = Catalog.start_link([])
+
+    opts = [
+      session_id: "s-server-opts",
+      config: session_config(),
+      store: {InMemory, store},
+      registry: {Native, Native.new()},
+      supervisor: self(),
+      supervisor_mod: CapturingSupervisor,
+      template_provider: {Catalog, cat},
+      approval_timeout_ms: 1_234,
+      on_approval_timeout: :fail,
+      idle_timeout_ms: 5_000
+    ]
+
+    assert {:error, :captured} = Turn.Session.run(opts, "hi")
+    assert {:ok, tmpl} = InMemory.load_config_template(store, "s-server-opts")
+
+    assert tmpl.server_options == %{
+             approval_timeout_ms: 1_234,
+             on_approval_timeout: :fail,
+             idle_timeout_ms: 5_000
+           }
+  end
+
   test "concurrent ensure-server for one session resolves to a single pid (Horde via)" do
     alias Normandy.Behaviours.SessionRegistry.Horde
     alias Normandy.Behaviours.SessionStore.InMemory
@@ -210,7 +238,6 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # Without Part B (the history load in reconstruct_config!/3) the captured
     # memory would have 0 messages and the assertion below would fail — that is
     # the RED justification for this test.
-    alias Normandy.Behaviours.AgentTemplate.Catalog
     alias Normandy.Behaviours.SessionRegistry.Native
     alias Normandy.Behaviours.SessionStore.InMemory
     alias Normandy.Test.TurnConfig

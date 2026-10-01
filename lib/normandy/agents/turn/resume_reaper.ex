@@ -14,6 +14,12 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   under the supervisor, where `Turn.Server.init/1` reconstructs config from the
   persisted template and `Turn.resume/1`s the in-flight turn — no inbound request.
 
+  The restarted server restores the plain-data options saved with the template
+  (`:approval_timeout_ms`, `:on_approval_timeout`, `:idle_timeout_ms`). Functions
+  and pids can't be saved, so pass `:subscriber` and `:handlers` to the reaper; it
+  forwards them to every session it restarts. Without them, a revived session runs
+  the default handlers and has no subscriber to tell about a pending approval.
+
   Run one reaper per node (host supervision tree). Concurrent reapers on multiple
   survivors are safe: the registry's atomic `:via` registration means only one
   start wins; the losers get `{:error, {:already_started, _}}`, treated as success.
@@ -29,7 +35,9 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           registry: {module(), term()},
           supervisor: term(),
           supervisor_mod: module(),
-          template_provider: {module(), term()}
+          template_provider: {module(), term()},
+          subscriber: (atom(), map() -> any()) | nil,
+          handlers: map() | nil
         ]
 
   @spec start_link(opts()) :: GenServer.on_start()
@@ -49,7 +57,10 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       registry: Keyword.fetch!(opts, :registry),
       supervisor: Keyword.fetch!(opts, :supervisor),
       supervisor_mod: Keyword.get(opts, :supervisor_mod, Normandy.Agents.Turn.Supervisor.Horde),
-      template_provider: Keyword.fetch!(opts, :template_provider)
+      template_provider: Keyword.fetch!(opts, :template_provider),
+      # Functions and pids can't be saved with the session, so the host supplies
+      # them here for every session this reaper restarts.
+      host_server_opts: Keyword.take(opts, [:subscriber, :handlers])
     }
 
     {:ok, state}
@@ -111,6 +122,9 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       template_provider: state.template_provider,
       resume_policy: :eager
     ]
+
+    # reap/1 is public and callers may build `state` by hand, so the key is optional.
+    opts = opts ++ Map.get(state, :host_server_opts, [])
 
     # Race-safe: a concurrent reaper on another survivor may start the same session;
     # the registry's atomic registration makes the loser get {:error, {:already_started, _}}.

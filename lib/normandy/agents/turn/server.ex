@@ -21,6 +21,12 @@ defmodule Normandy.Agents.Turn.Server do
       model; `:fail` ends the turn with `{:error, {:approval_timeout, ids}}`.
     * `:idle_timeout_ms` — idle time before passivation (default 60_000).
 
+  A Tier-2 `Turn.Session` saves `:approval_timeout_ms`, `:on_approval_timeout` and
+  `:idle_timeout_ms` with the config template. A thin start (no `:config`) restores
+  them; explicit start options still win. `:handlers` and `:subscriber` are
+  functions and are never saved, so whoever restarts the server passes them (see
+  `ResumeReaper`).
+
   ## Events (`:subscriber`)
 
     * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
@@ -134,6 +140,8 @@ defmodule Normandy.Agents.Turn.Server do
         _ -> Keyword.get(opts, :resume_policy, :lazy)
       end
 
+    timeouts = timeout_options(opts, store, session_id)
+
     data = %Data{
       session_id: session_id,
       config: config,
@@ -144,9 +152,9 @@ defmodule Normandy.Agents.Turn.Server do
       subscriber: Keyword.get(opts, :subscriber),
       handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
       turn_state: turn_state,
-      approval_timeout_ms: Keyword.get(opts, :approval_timeout_ms, 300_000),
-      on_approval_timeout: Keyword.get(opts, :on_approval_timeout, :continue),
-      idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000)
+      approval_timeout_ms: timeouts.approval_timeout_ms,
+      on_approval_timeout: timeouts.on_approval_timeout,
+      idle_timeout_ms: timeouts.idle_timeout_ms
     }
 
     register_self(data)
@@ -215,6 +223,38 @@ defmodule Normandy.Agents.Turn.Server do
     case mod.load_config_template(handle, sid) do
       {:ok, %{resume_policy: rp}} -> rp
       _ -> default
+    end
+  end
+
+  # A thin start restores the server options saved with the template;
+  # explicit start options still win.
+  defp timeout_options(opts, store, session_id) do
+    saved =
+      if Keyword.has_key?(opts, :config),
+        do: %{},
+        else: template_server_options(store, session_id)
+
+    on_approval_timeout = server_option(opts, saved, :on_approval_timeout, :continue)
+    validate_on_approval_timeout!(on_approval_timeout)
+
+    %{
+      approval_timeout_ms: server_option(opts, saved, :approval_timeout_ms, 300_000),
+      on_approval_timeout: on_approval_timeout,
+      idle_timeout_ms: server_option(opts, saved, :idle_timeout_ms, 60_000)
+    }
+  end
+
+  defp template_server_options({mod, handle}, sid) do
+    case mod.load_config_template(handle, sid) do
+      {:ok, %{server_options: saved}} when is_map(saved) -> saved
+      _ -> %{}
+    end
+  end
+
+  defp server_option(opts, saved, key, default) do
+    case Keyword.fetch(opts, key) do
+      {:ok, value} -> value
+      :error -> Map.get(saved, key, default)
     end
   end
 
