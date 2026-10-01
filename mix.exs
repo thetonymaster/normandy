@@ -147,7 +147,13 @@ defmodule Normandy.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :mnesia]
+      # No :mnesia: OTP starts every listed application (optional ones too, when
+      # available), and only SessionStore.Mnesia needs it; that store starts it.
+      # Not :mnesia for consumers (a dependency builds in :prod): OTP starts every
+      # listed application, optional ones too when available, and only
+      # SessionStore.Mnesia needs it. Apps that use that store add :mnesia
+      # themselves; Normandy's own dev and test builds load it here.
+      extra_applications: [:logger] ++ if(Mix.env() in [:dev, :test], do: [:mnesia], else: [])
     ]
   end
 
@@ -231,7 +237,7 @@ defmodule Normandy.MixProject do
       # Under _build (cached in CI), not priv/: package files include priv/.
       plt_core_path: "_build/plts",
       plt_local_path: "_build/plts",
-      plt_add_apps: [:ex_unit],
+      plt_add_apps: [:ex_unit, :mnesia],
       flags: [:unmatched_returns, :error_handling, :underspecs]
     ]
   end

@@ -11,8 +11,15 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   survival (the production default); `ram_copies` (test/default `new/0`) is faster but
   only meaningful with ≥2 nodes. Configure via
   `{Normandy.Behaviours.SessionStore.Mnesia, entries: :..., sessions: :...}`.
+
+  Normandy does not start Mnesia with the application; this store starts it on
+  first use. A release that uses this store must include Mnesia: add `:mnesia`
+  to your application's `extra_applications`.
   """
   @behaviour Normandy.Behaviours.SessionStore
+
+  # :mnesia is not a declared application dependency (see the moduledoc).
+  @compile {:no_warn_undefined, :mnesia}
 
   alias Normandy.Components.AgentMemory.Entry
 
