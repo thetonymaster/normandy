@@ -184,12 +184,10 @@ defmodule Normandy.Agents.Turn.Server do
   @impl true
   def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
-    interrupted = Enum.map(missing, &interrupted_result/1)
 
-    with {:ok, repaired} <- close_batch(data, interrupted),
-         {:ok, config} <- admit(repaired, user_input) do
-      log_repair(data, missing)
-      start_turn(from, user_input, config, interrupted, data)
+    with {:ok, repairs} <- close_batch(data, missing),
+         {:ok, config} <- admit(last_config(repairs, data.config), user_input) do
+      start_turn(from, user_input, config, repairs, data)
     else
       {:rejected, exception} ->
         {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
@@ -305,9 +303,11 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Store order mirrors memory order: interrupted results, then the user message.
-  defp start_turn(from, user_input, config, interrupted, data) do
-    with :ok <- persist_interrupted(data, interrupted),
-         :ok <- persist_user_message(data, config, user_input) do
+  # Memory must end up holding exactly what reached the store: a failed write keeps
+  # the config as of the last stored result, so the next turn repairs only the rest.
+  defp start_turn(from, user_input, config, repairs, data) do
+    with {:ok, repaired} <- persist_interrupted(data, repairs),
+         :ok <- persist_user_message(data, config, user_input, repaired) do
       state =
         Turn.new(
           max_iterations: config.max_tool_iterations,
@@ -319,20 +319,33 @@ defmodule Normandy.Agents.Turn.Server do
       {state, effects} = Turn.step(state, :start)
       interpret(effects, %{data | turn_state: state})
     else
-      {:error, reason} ->
-        {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
+      {:error, stored, reason} ->
+        {:keep_state, %{data | config: stored}, [{:reply, from, persist_failed(reason)}]}
     end
   end
+
+  defp persist_failed(reason), do: {:error, {:persist_failed, reason}}
+
+  defp last_config([], default), do: default
+  defp last_config(repairs, _default), do: repairs |> List.last() |> elem(2)
 
   # A failed or killed turn can leave the last assistant tool_use without results;
   # the Claude API rejects the next request unless every tool_use is answered. Fold
   # an interrupted result per missing call into memory (no turn exists yet, so a
-  # crashing append replies instead of going through fail/2).
-  defp close_batch(%Data{config: config}, []), do: {:ok, config}
+  # crashing append replies instead of going through fail/2). Returns one
+  # {call, result, config_after_this_result} per missing call.
+  defp close_batch(_data, []), do: {:ok, []}
 
-  defp close_batch(data, interrupted) do
+  defp close_batch(data, missing) do
     call_handler(data, :append, fn ->
-      Enum.reduce(interrupted, data.config, &data.handlers.append.(&2, "tool", &1))
+      {repairs, _config} =
+        Enum.map_reduce(missing, data.config, fn call, config ->
+          result = interrupted_result(call)
+          folded = data.handlers.append.(config, "tool", result)
+          {{call, result, folded}, folded}
+        end)
+
+      repairs
     end)
   end
 
@@ -349,22 +362,28 @@ defmodule Normandy.Agents.Turn.Server do
     }
   end
 
-  defp persist_interrupted(data, interrupted) do
-    Enum.reduce_while(interrupted, :ok, fn result, :ok ->
-      case append_to_store(data, "tool", result) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
+  # Returns {:ok, config} with every result folded, or {:error, config, reason} where
+  # config holds only the results that reached the store.
+  defp persist_interrupted(data, repairs) do
+    result =
+      Enum.reduce_while(repairs, {:ok, data.config}, fn {_call, result, folded}, acc ->
+        case append_to_store(data, "tool", result) do
+          :ok -> {:cont, {:ok, folded}}
+          {:error, reason} -> {:halt, {:error, elem(acc, 1), reason}}
+        end
+      end)
+
+    if match?({:ok, _}, result), do: log_repair(data, repairs)
+    result
   end
 
   defp log_repair(_data, []), do: :ok
 
-  defp log_repair(data, missing) do
+  defp log_repair(data, repairs) do
     Logger.warning(
-      "Turn.Server closed #{length(missing)} interrupted tool call(s) left by a previous " <>
+      "Turn.Server closed #{length(repairs)} interrupted tool call(s) left by a previous " <>
         "turn (session #{inspect(data.session_id)}): " <>
-        Enum.map_join(missing, ", ", &to_string(Map.get(&1, :name)))
+        Enum.map_join(repairs, ", ", fn {call, _, _} -> to_string(Map.get(call, :name)) end)
     )
   end
 
@@ -637,10 +656,13 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  defp persist_user_message(_data, _config, nil), do: :ok
+  # On failure, carries the repaired config so memory keeps matching the store.
+  defp persist_user_message(_data, _config, nil, _repaired), do: :ok
 
-  defp persist_user_message(data, _config, user_input),
-    do: append_to_store(data, "user", user_input)
+  defp persist_user_message(data, _config, user_input, repaired) do
+    with {:error, reason} <- append_to_store(data, "user", user_input),
+         do: {:error, repaired, reason}
+  end
 
   # Classify every call; execute the allowed ones concurrently (mirrors
   # BaseAgent.dispatch_turn_tools/2's Task.async_stream); collect held results.

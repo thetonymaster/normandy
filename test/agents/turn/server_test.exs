@@ -71,6 +71,31 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def history(h, sid), do: InMemory.history(h, sid)
   end
 
+  # InMemory wrapper whose Nth append (counted from the first append through this
+  # wrapper) fails once, then behaves normally. Handle: {inmem, counter_agent, n}.
+  defmodule FlakyAppendStore do
+    @moduledoc false
+    alias Normandy.Behaviours.SessionStore.InMemory
+
+    def new(fail_at) do
+      inmem = InMemory.new()
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+      {inmem, counter, fail_at}
+    end
+
+    def append_entry({inmem, counter, fail_at}, sid, entry) do
+      n = Agent.get_and_update(counter, &{&1 + 1, &1 + 1})
+
+      if n == fail_at,
+        do: {:error, :disk_full},
+        else: InMemory.append_entry(inmem, sid, entry)
+    end
+
+    def save_turn_state({h, _, _}, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def load_turn_state({h, _, _}, sid), do: InMemory.load_turn_state(h, sid)
+    def history({h, _, _}, sid), do: InMemory.history(h, sid)
+  end
+
   # Minimal config the reused BaseAgent helpers tolerate for a no-tools turn.
   # `client` is a fake the call_llm helper will hit; for the unit test we inject
   # the LLM via a stub handler set rather than a real client (see Step 3 note).
@@ -1276,19 +1301,31 @@ defmodule Normandy.Agents.Turn.ServerTest do
   end
 
   describe "dangling tool_use repair" do
-    defp dangling_memory do
+    defp dangling_memory(ids \\ ["t1"]) do
       AgentMemory.new_memory()
       |> AgentMemory.add_message("user", "charge me")
       |> AgentMemory.add_message("assistant", %Resp{
         content: "",
-        tool_calls: [%ToolCall{id: "t1", name: "billing", input: %{}}]
+        tool_calls: Enum.map(ids, &%ToolCall{id: &1, name: "billing", input: %{}})
       })
     end
 
     # Store and memory both end in a tool_use with no result, as after a crash.
-    defp start_dangling_server(sid, config_overrides, handler_overrides \\ %{}) do
+    defp start_dangling_server(sid, config_overrides, handler_overrides \\ %{}, opts \\ []) do
       store = InMemory.new()
-      memory = dangling_memory()
+      memory = dangling_memory(Keyword.get(opts, :calls, ["t1"]))
+
+      # With :fail_append_at the server writes through a wrapper whose Nth append
+      # (counted after this seeding) fails once.
+      {store_mod, server_store} =
+        case Keyword.get(opts, :fail_append_at) do
+          nil ->
+            {InMemory, store}
+
+          n ->
+            {_, counter, _} = FlakyAppendStore.new(n)
+            {FlakyAppendStore, {store, counter, n}}
+        end
 
       for %Message{role: role, content: content} <- AgentMemory.messages(memory) do
         {:ok, _} =
@@ -1313,7 +1350,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         Turn.Server.start_link(
           session_id: sid,
           config: Map.merge(%{base_config() | memory: memory}, config_overrides),
-          store: {InMemory, store},
+          store: {store_mod, server_store},
           registry: {Native, Native.new()},
           handlers: handlers
         )
@@ -1391,6 +1428,41 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert Process.alive?(srv)
       {:ok, entries} = InMemory.history(store, "s-dangling-crash")
       assert Enum.map(entries, & &1.role) == ["user", "assistant"]
+    end
+
+    test "a user-message write failure after a repair keeps memory in step with the store" do
+      # Appends: 1 = interrupted t1 (ok), 2 = user message (fails), then all succeed.
+      {srv, store} = start_dangling_server("s-dangling-ufail", %{}, %{}, fail_append_at: 2)
+
+      capture_log(fn ->
+        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "next")
+        assert {:ok, _} = Turn.Server.run(srv, "again")
+      end)
+
+      {:ok, entries} = InMemory.history(store, "s-dangling-ufail")
+      tools = Enum.filter(entries, &(&1.role == "tool"))
+      assert [%{content: %ToolResult{tool_call_id: "t1"}}] = tools
+    end
+
+    test "a partial write failure in a batch of two repairs only the remainder later" do
+      # Appends: 1 = interrupted t1 (ok), 2 = interrupted t2 (fails), then all succeed.
+      {srv, store} =
+        start_dangling_server("s-dangling-partial", %{}, %{},
+          calls: ["t1", "t2"],
+          fail_append_at: 2
+        )
+
+      capture_log(fn ->
+        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "next")
+        assert {:ok, _} = Turn.Server.run(srv, "again")
+      end)
+
+      {:ok, entries} = InMemory.history(store, "s-dangling-partial")
+
+      ids =
+        for %{role: "tool", content: %ToolResult{tool_call_id: id}} <- entries, do: id
+
+      assert Enum.sort(ids) == ["t1", "t2"]
     end
   end
 end
