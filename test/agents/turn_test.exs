@@ -4,6 +4,7 @@ defmodule Normandy.Agents.TurnTest do
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.State
+  alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
 
@@ -365,6 +366,63 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [
                {:fail, {:unexpected_event, :finalizing, {:llm_response, %ToolCallResponse{}}}}
              ]
+    end
+  end
+
+  describe "unanswered_tool_calls/1" do
+    defp call(id), do: %ToolCall{id: id, name: "tool_#{id}", input: %{}}
+
+    defp assistant_msg(calls),
+      do: %Message{role: "assistant", content: %{content: "", tool_calls: calls}}
+
+    defp tool_msg(id),
+      do: %Message{role: "tool", content: %ToolResult{tool_call_id: id, output: "x"}}
+
+    defp user_msg(text), do: %Message{role: "user", content: text}
+
+    test "an empty history has none" do
+      assert Turn.unanswered_tool_calls([]) == []
+    end
+
+    test "a latest assistant message without tool calls has none" do
+      assert Turn.unanswered_tool_calls([
+               user_msg("hi"),
+               %Message{role: "assistant", content: "hello"}
+             ]) == []
+
+      assert Turn.unanswered_tool_calls([user_msg("hi"), assistant_msg(nil)]) == []
+    end
+
+    test "a fully answered batch has none" do
+      messages = [
+        user_msg("go"),
+        assistant_msg([call("a"), call("b")]),
+        tool_msg("b"),
+        tool_msg("a")
+      ]
+
+      assert Turn.unanswered_tool_calls(messages) == []
+    end
+
+    test "an unanswered batch returns every call in tool_use order" do
+      messages = [user_msg("go"), assistant_msg([call("a"), call("b")])]
+      assert Turn.unanswered_tool_calls(messages) == [call("a"), call("b")]
+    end
+
+    test "a partly answered batch returns the missing calls" do
+      messages = [user_msg("go"), assistant_msg([call("a"), call("b")]), tool_msg("a")]
+      assert Turn.unanswered_tool_calls(messages) == [call("b")]
+    end
+
+    test "results for an earlier batch do not answer the latest one" do
+      messages = [
+        user_msg("go"),
+        assistant_msg([call("a")]),
+        tool_msg("a"),
+        assistant_msg([call("b")])
+      ]
+
+      assert Turn.unanswered_tool_calls(messages) == [call("b")]
     end
   end
 end

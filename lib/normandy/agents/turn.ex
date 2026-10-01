@@ -20,6 +20,7 @@ defmodule Normandy.Agents.Turn do
   """
 
   alias Normandy.Agents.Turn.State
+  alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
 
@@ -327,6 +328,37 @@ defmodule Normandy.Agents.Turn do
   def resume(%State{} = s) do
     reason = {:unresumable_state, s.status}
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  @doc """
+  The tool calls of the latest assistant message that have no `%ToolResult{}` in a
+  later `"tool"` message, in `tool_use` order; `[]` when the latest assistant message
+  made no tool calls.
+
+  A turn that fails or is killed between appending the assistant's `tool_use` and
+  appending its results leaves such calls behind, and the Claude API rejects a
+  request with an unanswered `tool_use`. `Turn.Server` uses this to close the batch
+  at the start of the next turn.
+  """
+  @spec unanswered_tool_calls([Message.t()]) :: [ToolCall.t() | map()]
+  def unanswered_tool_calls(messages) when is_list(messages) do
+    {later, rest} =
+      messages
+      |> Enum.reverse()
+      |> Enum.split_while(&(not match?(%Message{role: "assistant"}, &1)))
+
+    case rest do
+      [%Message{content: content} | _] ->
+        answered =
+          for %Message{role: "tool", content: %ToolResult{tool_call_id: id}} <- later,
+              into: MapSet.new(),
+              do: id
+
+        content |> tool_calls() |> Enum.reject(&MapSet.member?(answered, Map.get(&1, :id)))
+
+      [] ->
+        []
+    end
   end
 
   # The batch-results transition, shared by the normal `:tool_dispatch` path and
