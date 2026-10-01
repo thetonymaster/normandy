@@ -40,6 +40,7 @@ defmodule Normandy.MixProject do
         extras: [
           "README.md",
           "CHANGELOG.md",
+          "LICENSE",
           "MIGRATING-2.0.md",
           "ROADMAP.md",
           "docs/guides/distributed_sessions.md"
@@ -134,6 +135,9 @@ defmodule Normandy.MixProject do
             Normandy.LLM.ClaudioAdapter
           ]
         ],
+        # Old entries name functions since removed (e.g. Normandy.Type.load/1); cocogitto
+        # owns the file, so its history is not rewritten.
+        skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
         source_ref: "v#{@version}",
         formatters: ["html"]
       ]
@@ -182,7 +186,7 @@ defmodule Normandy.MixProject do
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).
   def cli do
-    [preferred_envs: ["test.postgres": :test, "test.redis": :test]]
+    [preferred_envs: [precommit: :test, "test.postgres": :test, "test.redis": :test]]
   end
 
   defp aliases do
@@ -193,6 +197,14 @@ defmodule Normandy.MixProject do
       # alias so it can flag test_helper to start the Repo (argv only shows the alias
       # name, not the expanded `--include postgres`).
       "ecto.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --check-unused",
+        "format",
+        "credo --strict",
+        "dialyzer",
+        "test"
+      ],
       "test.postgres": &run_postgres_tests/1,
       "test.redis": &run_redis_tests/1
     ]

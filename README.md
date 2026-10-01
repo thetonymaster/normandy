@@ -103,8 +103,10 @@ Generate the docs locally with `mix docs` and open `doc/index.html`.
 ## Development
 
 ```bash
+mix precommit       # compile (warnings as errors), unused deps, format, credo, dialyzer, test
 mix test            # run the default suite (integration tests skipped)
 mix test --cover    # run with coverage
+mix credo --strict  # lint
 mix dialyzer        # static type analysis
 mix format          # format code
 ```

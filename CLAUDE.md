@@ -9,11 +9,14 @@ Normandy is an Elixir library for building AI agents with structured schemas, va
 ## Common Commands
 
 ### Development
+- `mix precommit` - Run before committing: `compile --warnings-as-errors`, `deps.unlock --check-unused`, `format`, `credo --strict`, `dialyzer`, `test` (runs in MIX_ENV=test)
 - `mix compile` - Compile the project
 - `mix format` - Format code according to .formatter.exs
 - `mix test` - Run all tests
 - `mix test test/path/to/test.exs` - Run a specific test file
 - `mix test test/path/to/test.exs:42` - Run a specific test at line 42
+- `mix credo --strict` - Lint; stock `.credo.exs`. Complexity/nesting findings get an inline `# credo:disable-for-next-line`, never a global threshold change
+- `mix dialyzer` - Type analysis; PLTs live in `_build/plts`, accepted warnings in `.dialyzer_ignore.exs` (each with a reason)
 
 ### Dependencies
 - `mix deps.get` - Fetch dependencies

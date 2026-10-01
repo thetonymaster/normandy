@@ -26,10 +26,17 @@ jobs:
             otp: '27'
           - elixir: '1.16'
             otp: '27'
+        include:
+          - elixir: '1.18'
+            otp: '27'
+          - elixir: '1.19'
+            otp: '28'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -79,6 +86,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -117,25 +126,23 @@ jobs:
             exit 0
           fi
 
-  dialyzer:
-    name: Dialyzer (Type Checking)
+  quality:
+    name: Code Quality
     runs-on: ubuntu-latest
-    # Only checks out the repo and runs Dialyzer — restrict the token to read-only.
     permissions:
       contents: read
-    # Pinned to the toolchain the ignore set was verified against (Elixir 1.19 /
-    # OTP 28); Dialyzer warning sets vary across versions, so the gate runs on a
-    # single modern version rather than the full test matrix. MIX_ENV=dev keeps the
-    # analysis scope to lib/ (matches local verification); test/support is out of
-    # scope for now.
+    # Pinned to the toolchain the Dialyzer ignore set was verified against (Elixir 1.19 /
+    # OTP 28); warning sets vary across versions, so these gates run on one modern version.
+    # MIX_ENV=test (workflow env) matches `mix precommit`, so one PLT serves both.
     env:
-      MIX_ENV: dev
       ELIXIR_VERSION: '1.19'
       OTP_VERSION: '28'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -143,74 +150,91 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
 
+      # _build includes the Dialyzer PLTs (plt_core_path/plt_local_path: "_build/plts").
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-dialyzer-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-mix-quality-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-mix-dialyzer-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
+            ${{ runner.os }}-mix-quality-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
 
       - name: Install dependencies
         run: mix deps.get
 
-      - name: Restore PLT cache
-        uses: actions/cache@v4
-        id: plt-cache
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
-
-      - name: Create PLTs directory
-        run: mkdir -p priv/plts
-
-      - name: Build PLT
-        if: steps.plt-cache.outputs.cache-hit != 'true'
-        run: mix dialyzer --plt
-
-      - name: Run Dialyzer
-        run: mix dialyzer --format github
-
-  dependency-audit:
-    name: Dependency Audit
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Check for unused dependencies
+      - name: Check unused dependencies
         run: mix deps.unlock --check-unused
+
+      - name: Audit dependencies (retirements and security advisories)
+        run: mix hex.audit
 
       - name: Check for outdated dependencies
         run: mix hex.outdated
         continue-on-error: true
 
+      # Tier-0 users install none of the optional deps (ecto_sql, postgrex, horde, redix);
+      # lib/ must compile without them. MIX_ENV=dev: test/support needs them.
+      - name: Compile without optional dependencies
+        env:
+          MIX_ENV: dev
+        run: mix compile --no-optional-deps --warnings-as-errors
+
+      - name: Credo
+        run: mix credo --strict
+
+      - name: Dialyzer
+        run: mix dialyzer --format github
+
+      # ex_doc is a :dev-only dependency.
+      - name: Docs build without warnings
+        env:
+          MIX_ENV: dev
+        run: mix docs --warnings-as-errors
+
+  # Consumers ignore our mix.lock: test against the newest versions our requirements allow.
+  unlocked-deps:
+    name: Test with unlocked dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '28'
+
+      - name: Unlock and fetch latest dependencies
+        run: |
+          mix deps.unlock --all
+          mix deps.get
+
+      - name: Compile with warnings as errors
+        run: mix compile --warnings-as-errors
+
+      - name: Run unit tests
+        run: mix test
+
   all-checks-complete:
     name: All Checks Passed
     if: always()
-    needs: [test, integration-tests, dialyzer, dependency-audit]
+    needs: [test, integration-tests, quality, unlocked-deps]
     runs-on: ubuntu-latest
 
     steps:
       - name: Check all job results
         run: |
           if [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.dialyzer.result }}" != "success" ] || \
-             [ "${{ needs.dependency-audit.result }}" != "success" ]; then
+             [ "${{ needs.quality.result }}" != "success" ] || \
+             [ "${{ needs.unlocked-deps.result }}" != "success" ]; then
             echo "❌ Some required checks failed"
             exit 1
           fi
