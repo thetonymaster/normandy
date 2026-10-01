@@ -1,11 +1,11 @@
 defmodule NormandyTest.Components.AgentMemoryTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.ToolCallResponse
+  alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
-  alias Normandy.Agents.ToolCallResponse
-  alias Normandy.Agents.Turn
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias NormandyTest.IOTest

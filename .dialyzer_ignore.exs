@@ -17,10 +17,6 @@
   {"lib/normandy/a2a/server.ex", :guard_fail},
   {"lib/normandy/a2a/server.ex", :pattern_match_cov},
 
-  # agents/turn/server.ex fail/2 (line 383): turn_state is always a %Turn.State{} at every call
-  # site, so the bare `fail(data, reason)` fallback clause is unreachable defense.
-  {"lib/normandy/agents/turn/server.ex", :pattern_match_cov},
-
   # --- Tooling false positives ---
 
   # behaviours/session_store/postgres/migration.ex up/0 + down/0 (lines 15, 24, 36): idiomatic
