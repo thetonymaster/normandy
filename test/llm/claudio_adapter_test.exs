@@ -332,4 +332,121 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert request.thinking == %{"type" => "enabled", "budget_tokens" => 2048}
     end
   end
+
+  describe "server-side fallback responses" do
+    @fallback %{
+      type: :fallback,
+      from: %{"model" => "a"},
+      to: %{"model" => "b"},
+      trigger: nil,
+      raw: %{}
+    }
+
+    test "content_after_last_fallback/1 without a fallback block is unchanged" do
+      blocks = [%{type: :text, text: "x"}]
+      assert ClaudioAdapter.content_after_last_fallback(blocks) == blocks
+      assert ClaudioAdapter.content_after_last_fallback([]) == []
+    end
+
+    test "content_after_last_fallback/1 keeps only blocks after the last fallback" do
+      blocks = [
+        %{type: :text, text: "declined-1"},
+        @fallback,
+        %{type: :text, text: "declined-2"},
+        %{"type" => "fallback"},
+        %{type: :text, text: "served"}
+      ]
+
+      assert ClaudioAdapter.content_after_last_fallback(blocks) == [
+               %{type: :text, text: "served"}
+             ]
+    end
+
+    # Defensive: per the fallback doc a non-streaming response puts the fallback
+    # block first and omits the declined model's output, so text *before* it
+    # shouldn't occur. These pin the helper's contract anyway.
+    test "extract_content/1 ignores text from the declining model" do
+      response = %{
+        content: [%{type: :text, text: "declined"}, @fallback, %{type: :text, text: "served"}]
+      }
+
+      assert ClaudioAdapter.extract_content(response) == "served"
+    end
+
+    test "extract_content/1 is empty when nothing follows the fallback block" do
+      response = %{content: [%{type: :text, text: "I can't help with that"}, @fallback]}
+      assert ClaudioAdapter.extract_content(response) == ""
+    end
+
+    test "extract_tool_uses/1 ignores tool calls from the declining model" do
+      response = %{
+        content: [
+          %{type: :tool_use, id: "t1", name: "rm_rf", input: %{}},
+          @fallback,
+          %{type: :tool_use, id: "t2", name: "search", input: %{"q" => "x"}}
+        ]
+      }
+
+      assert [%Normandy.Components.ToolCall{id: "t2", name: "search"}] =
+               ClaudioAdapter.extract_tool_uses(response)
+    end
+
+    test "response_meta/1 names the model that served the message" do
+      response = %Claudio.Messages.Response{model: "claude-opus-5-5", content: [@fallback]}
+      assert ClaudioAdapter.response_meta(response) == %{served_by: "b"}
+
+      no_fallback = %Claudio.Messages.Response{model: "claude-opus-5-5", content: []}
+      assert ClaudioAdapter.response_meta(no_fallback) == %{served_by: "claude-opus-5-5"}
+
+      assert ClaudioAdapter.response_meta(%{content: []}) == %{}
+
+      no_model = %Claudio.Messages.Response{model: nil, content: []}
+      assert ClaudioAdapter.response_meta(no_model) == %{}
+    end
+
+    test "converse returns served_by from a fallback reply on the wire" do
+      Req.Test.stub(__MODULE__.FallbackStub, fn conn ->
+        Req.Test.json(conn, %{
+          "id" => "msg_1",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-opus-5-5",
+          "content" => [
+            %{
+              "type" => "fallback",
+              "from" => %{"model" => "claude-opus-5-5"},
+              "to" => %{"model" => "claude-opus-5"}
+            },
+            %{"type" => "text", "text" => ~s({"chat_message": "served"})}
+          ],
+          "stop_reason" => "end_turn",
+          "usage" => %{"input_tokens" => 3, "output_tokens" => 2}
+        })
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{
+          structured_outputs: false,
+          fallbacks: :default,
+          req_options: [plug: {Req.Test, __MODULE__.FallbackStub}, retry: false]
+        }
+      }
+
+      messages = [%Normandy.Components.Message{role: "user", content: "hi"}]
+
+      assert {response, _usage, %{served_by: "claude-opus-5"}} =
+               Normandy.Agents.Model.converse(
+                 client,
+                 "claude-opus-5-5",
+                 nil,
+                 1024,
+                 messages,
+                 %Normandy.Agents.BaseAgentOutputSchema{},
+                 []
+               )
+
+      assert response.chat_message == "served"
+    end
+  end
 end

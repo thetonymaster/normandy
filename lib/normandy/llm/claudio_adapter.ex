@@ -199,7 +199,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
           }
 
           normalized_response = convert_response_to_normandy(response, response_model, context)
-          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+
+          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response),
+           Normandy.LLM.ClaudioAdapter.response_meta(response)}
 
         {:error, error} ->
           handle_error(error, response_model)
@@ -246,7 +248,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
              response,
              response_model,
              context
-           ), Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+           ), Normandy.LLM.ClaudioAdapter.extract_usage(response),
+           Normandy.LLM.ClaudioAdapter.response_meta(response)}
 
         {:error, error} ->
           case Normandy.LLM.ClaudioAdapter.__structured_error_action__(error) do
@@ -892,49 +895,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp populate_tool_call_response(schema, content, claudio_response) do
       # Extract tool_use blocks from Claudio response
-      tool_calls = extract_tool_uses(claudio_response)
+      tool_calls = Normandy.LLM.ClaudioAdapter.extract_tool_uses(claudio_response)
 
       schema
       |> Map.put(:content, content)
       |> Map.put(:tool_calls, tool_calls)
     end
-
-    defp extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
-      content_blocks
-      |> Enum.filter(fn block ->
-        type = Map.get(block, :type) || Map.get(block, "type")
-        type in [:tool_use, :mcp_tool_use, "tool_use", "mcp_tool_use"]
-      end)
-      |> Enum.map(fn tool_use ->
-        type = Map.get(tool_use, :type) || Map.get(tool_use, "type")
-
-        tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
-
-        name =
-          cond do
-            type in [:mcp_tool_use, "mcp_tool_use"] ->
-              server_name =
-                Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
-
-              if server_name do
-                "#{server_name}__#{tool_name}"
-              else
-                tool_name
-              end
-
-            true ->
-              tool_name
-          end
-
-        %Normandy.Components.ToolCall{
-          id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
-          name: name,
-          input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
-        }
-      end)
-    end
-
-    defp extract_tool_uses(_), do: []
 
     defp populate_standard_schema(schema, content, context) do
       # Use JsonDeserializer with retry for robust parsing and validation
@@ -1014,6 +980,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   @doc false
   def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
     content_blocks
+    |> content_after_last_fallback()
     |> Enum.filter(fn block ->
       Map.get(block, :type) == :text || Map.get(block, "type") == "text"
     end)
@@ -1024,6 +991,82 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   def extract_content(_response), do: ""
+
+  @doc false
+  # Blocks after the last `fallback` block (server-side refusal fallback, Claudio 0.7
+  # `Request.set_fallbacks/2`). Earlier blocks came from a model that declined:
+  # Normandy must not surface their text or run their tool calls. Unchanged when
+  # there is no fallback block.
+  @spec content_after_last_fallback(list()) :: list()
+  def content_after_last_fallback(blocks) when is_list(blocks) do
+    last =
+      blocks
+      |> Enum.with_index()
+      |> Enum.filter(fn {block, _index} -> fallback_block?(block) end)
+      |> List.last()
+
+    case last do
+      nil -> blocks
+      {_block, index} -> Enum.drop(blocks, index + 1)
+    end
+  end
+
+  defp fallback_block?(block) when is_map(block),
+    do: (Map.get(block, :type) || Map.get(block, "type")) in [:fallback, "fallback"]
+
+  defp fallback_block?(_block), do: false
+
+  @doc false
+  # Per-call facts that are not token usage, returned as the third element of
+  # `converse/7` (see `Normandy.Agents.ConverseResult`).
+  @spec response_meta(term()) :: map()
+  def response_meta(%Claudio.Messages.Response{} = response) do
+    case Claudio.Messages.Response.served_by(response) do
+      model when is_binary(model) -> %{served_by: model}
+      _ -> %{}
+    end
+  end
+
+  def response_meta(_response), do: %{}
+
+  @doc false
+  def extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> content_after_last_fallback()
+    |> Enum.filter(fn block ->
+      type = Map.get(block, :type) || Map.get(block, "type")
+      type in [:tool_use, :mcp_tool_use, "tool_use", "mcp_tool_use"]
+    end)
+    |> Enum.map(fn tool_use ->
+      type = Map.get(tool_use, :type) || Map.get(tool_use, "type")
+
+      tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
+
+      name =
+        cond do
+          type in [:mcp_tool_use, "mcp_tool_use"] ->
+            server_name =
+              Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
+
+            if server_name do
+              "#{server_name}__#{tool_name}"
+            else
+              tool_name
+            end
+
+          true ->
+            tool_name
+        end
+
+      %Normandy.Components.ToolCall{
+        id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
+        name: name,
+        input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
+      }
+    end)
+  end
+
+  def extract_tool_uses(_), do: []
 
   @doc false
   def extract_usage(response) when is_map(response),

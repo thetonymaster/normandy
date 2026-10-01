@@ -572,7 +572,7 @@ defmodule Normandy.Agents.BaseAgent do
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
     with_llm_call_span(config, llm_metadata, fn ->
-      {r, usage, _response_meta} = get_response_with_usage(config, response_model)
+      {r, usage, response_meta} = get_response_with_usage(config, response_model)
 
       # When this agent has no tools, strip any tool_calls the LLM may have
       # returned (e.g. a misbehaving or generic mock). Old run_without_tools
@@ -587,11 +587,13 @@ defmodule Normandy.Agents.BaseAgent do
       tool_calls = Map.get(r, :tool_calls) || []
 
       meta =
-        Map.merge(llm_metadata, %{
+        llm_metadata
+        |> Map.merge(%{
           has_tool_calls: tool_calls != [],
           tool_call_count: length(tool_calls),
           usage: usage
         })
+        |> Map.merge(Map.take(response_meta, [:served_by]))
 
       {r, meta}
     end)
@@ -1235,7 +1237,7 @@ defmodule Normandy.Agents.BaseAgent do
         duration_ms = elapsed_ms(started_at)
         {input_tokens, output_tokens} = token_counts(Map.get(stop_metadata, :usage) || result)
 
-        log_lifecycle(:info, "normandy llm call stop",
+        log_metadata = [
           agent: log_agent_name(config),
           model: config.model,
           iteration: telemetry_metadata.iteration,
@@ -1243,7 +1245,15 @@ defmodule Normandy.Agents.BaseAgent do
           input_tokens: input_tokens,
           output_tokens: output_tokens,
           has_tool_calls: Map.get(stop_metadata, :has_tool_calls, false)
-        )
+        ]
+
+        log_metadata =
+          case Map.fetch(stop_metadata, :served_by) do
+            {:ok, served_by} -> log_metadata ++ [served_by: served_by]
+            :error -> log_metadata
+          end
+
+        log_lifecycle(:info, "normandy llm call stop", log_metadata)
 
         {result, stop_metadata}
       rescue
