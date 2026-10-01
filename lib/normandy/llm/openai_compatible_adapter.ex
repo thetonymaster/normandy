@@ -26,10 +26,26 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
         api_key: "test",
         options: %{req_options: [adapter: adapter_fn]}
       }
+
+  ## Errors
+
+  `converse/7` returns `{:error, %Normandy.LLMError{}}` on non-2xx responses
+  or transport failures, classified as follows:
+
+  - 429 → `:rate_limit`, retryable
+  - 408, 5xx → `:server`, retryable
+  - 401 → `:authentication`, not retryable
+  - 403 → `:permission`, not retryable
+  - 404 → `:not_found`, not retryable
+  - Other 4xx → `:invalid_request`, not retryable
+  - Other status → `:unknown`, not retryable
+  - `Req.TransportError`, `Mint.TransportError`, `Mint.HTTPError` → `:transport`, retryable
+  - Anything else → wrapped via `LLMError.wrap/1`
   """
   use Normandy.Schema
 
   alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLMError
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -79,6 +95,44 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   defp put_unless_nil(map, _key, nil), do: map
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
+  @doc false
+  # Classifies a non-2xx chat-completions response (spec §2).
+  @spec __to_llm_error__(integer(), term()) :: LLMError.t()
+  def __to_llm_error__(status, body) when is_integer(status) do
+    {type, retryable?} = classify_status(status)
+
+    LLMError.new(
+      type: type,
+      status: status,
+      retryable?: retryable?,
+      detail: error_detail(body, status),
+      reason: body
+    )
+  end
+
+  @doc false
+  @spec __to_llm_error__(term()) :: LLMError.t()
+  def __to_llm_error__(%module{} = e)
+      when module in [Req.TransportError, Mint.TransportError, Mint.HTTPError] do
+    LLMError.new(type: :transport, retryable?: true, detail: Exception.message(e), reason: e)
+  end
+
+  def __to_llm_error__(other), do: LLMError.wrap(other)
+
+  defp classify_status(429), do: {:rate_limit, true}
+  defp classify_status(408), do: {:server, true}
+  defp classify_status(status) when status in 500..599, do: {:server, true}
+  defp classify_status(401), do: {:authentication, false}
+  defp classify_status(403), do: {:permission, false}
+  defp classify_status(404), do: {:not_found, false}
+  defp classify_status(status) when status in 400..499, do: {:invalid_request, false}
+  defp classify_status(_status), do: {:unknown, false}
+
+  defp error_detail(%{"error" => %{"message" => message}}, _status) when is_binary(message),
+    do: message
+
+  defp error_detail(_body, status), do: "HTTP #{status}"
+
   defimpl Normandy.Agents.Model do
     alias Normandy.LLM.OpenAICompatibleAdapter, as: A
 
@@ -111,12 +165,10 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
           {populated, Map.get(resp_body, "usage")}
 
         {:ok, %Req.Response{status: status, body: resp_body}} ->
-          IO.warn("OpenAI-compatible API error #{status}: #{inspect(resp_body)}")
-          {response_model, nil}
+          {:error, A.__to_llm_error__(status, resp_body)}
 
         {:error, error} ->
-          IO.warn("OpenAI-compatible transport error: #{inspect(error)}")
-          {response_model, nil}
+          {:error, A.__to_llm_error__(error)}
       end
     end
 

@@ -116,4 +116,70 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       refute Map.has_key?(body, "temperature")
     end
   end
+
+  describe "converse/7 failures" do
+    @key "sk-openai-test-canary"
+
+    defp failing_client(adapter_fn) do
+      %Adapter{
+        api_key: @key,
+        base_url: "https://example.test/v1",
+        options: %{req_options: [adapter: adapter_fn, retry: false]}
+      }
+    end
+
+    defp call(client) do
+      Model.converse(
+        client,
+        "gpt-4o",
+        nil,
+        1024,
+        [%Message{role: "user", content: "hi"}],
+        %Normandy.Agents.BaseAgentOutputSchema{},
+        []
+      )
+    end
+
+    for {status, type, retryable?} <- [
+          {401, :authentication, false},
+          {403, :permission, false},
+          {404, :not_found, false},
+          {422, :invalid_request, false},
+          {429, :rate_limit, true},
+          {408, :server, true},
+          {500, :server, true},
+          {503, :server, true}
+        ] do
+      test "HTTP #{status} -> #{type}, retryable?: #{retryable?}" do
+        adapter_fn = fn request ->
+          {request,
+           Req.Response.new(
+             status: unquote(status),
+             body: %{"error" => %{"message" => "provider says no"}}
+           )}
+        end
+
+        assert {:error, %Normandy.LLMError{} = e} = call(failing_client(adapter_fn))
+        assert e.type == unquote(type)
+        assert e.status == unquote(status)
+        assert e.retryable? == unquote(retryable?)
+        assert e.message =~ "provider says no"
+        refute inspect(e) =~ @key
+      end
+    end
+
+    test "a body without an error message falls back to HTTP <status>" do
+      adapter_fn = fn request -> {request, Req.Response.new(status: 502, body: "")} end
+
+      assert {:error, %Normandy.LLMError{message: "LLM call failed: server (502): HTTP 502"}} =
+               call(failing_client(adapter_fn))
+    end
+
+    test "a transport error -> :transport, retryable" do
+      adapter_fn = fn request -> {request, %Req.TransportError{reason: :timeout}} end
+
+      assert {:error, %Normandy.LLMError{type: :transport, retryable?: true, status: nil}} =
+               call(failing_client(adapter_fn))
+    end
+  end
 end
