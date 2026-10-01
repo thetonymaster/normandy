@@ -166,6 +166,15 @@ Branch feat/claudio-0.7-migration, HEAD 78ca1ab. Read-only audit; nothing was ex
 - Fix: delete the dead clauses and function. Rescue in `run_agent` to deliver the documented error path. Correct the moduledocs.
 - Confidence: verified
 
+### AGENTS-16. ResumeReaper restarts a session with none of its server options
+- Severity: MEDIUM
+- Category: 1 (silent loss of config), 6
+- Location: lib/normandy/agents/turn/resume_reaper.ex:106-113; compare lib/normandy/agents/turn/session.ex:102-127
+- Evidence: `start_session/2` builds `[session_id, store, registry, template_provider, resume_policy: :eager]`. `Turn.Session` forwards `:subscriber`, `:handlers`, `:approval_timeout_ms` and `:idle_timeout_ms`; the reaper forwards none of them, and none are persisted with the session or its config template.
+- Why it's a problem: a session the reaper revives runs on defaults. A turn parked in `:awaiting_approval` gets no subscriber (nobody can be told an approval is pending), the default 5-minute expiry instead of the configured one, and the default handlers instead of custom ones. The same will apply to `on_approval_timeout` (approval-expiry spec, 2026-09-30). Distinct from AGENTS-2 (ConfigTemplate drops agent config); same class of loss, one layer up.
+- Fix: persist the serialisable server options (`approval_timeout_ms`, `idle_timeout_ms`, `on_approval_timeout`) alongside the config template and have the reaper restore them; let the reaper take host-supplied `:subscriber`/`:handlers` (functions cannot be persisted). Fix together with AGENTS-2.
+- Confidence: verified (read both start paths)
+
 ## Known (from prior audit)
 - A3 (dangling tool_use across crash): still present, turn.ex:134 (append before dispatch) and server.ex:290-292 (store append per effect), no repair on resume.
 - A4 (transient restart replays work with stale child args): still present, supervisor.ex:20-25, session.ex:96-129 (bakes `turn_state` and `config`), server.ex:72-76 (opts win over store). No catch-all `:info` clause (server.ex:208-257): still present.

@@ -251,6 +251,15 @@ Branch feat/claudio-0.7-migration @ 78ca1ab. Read-only; no `mix` run. "Verified"
 - Fix: validate opts with `Keyword.validate!/2`, make `preset/1` raise on unknown names, return one shape from `with_retry`, align the non-tuple handling between the two modules.
 - Confidence: verified.
 
+### OTP-16. `Turn.Supervisor` runs on DynamicSupervisor default restart intensity
+- Severity: MEDIUM
+- Category: 6
+- Location: lib/normandy/agents/turn/supervisor.ex:13 (`DynamicSupervisor.init(strategy: :one_for_one)`), :20-25 (`restart: :transient`)
+- Evidence: no `max_restarts`/`max_seconds`, so the defaults (3 restarts in 5 s) apply across all sessions under one supervisor.
+- Why it's a problem: restart intensity is shared by every live session. Any 4 abnormal `Turn.Server` exits within 5 s, from unrelated sessions, terminate `Turn.Supervisor` and every session with it. AGENTS-1 removes the known crash sources (rejected input, raising handlers/subscribers), but a library that hosts many independent sessions should not let unrelated failures cascade. Not addressed by the AGENTS-1 fix.
+- Fix: decide the policy explicitly: expose `:max_restarts`/`:max_seconds` on `Turn.Supervisor.start_link/1` with documented defaults sized for many sessions, or use `restart: :temporary` and rely on store-backed resume (ResumeReaper) instead of supervisor restarts. Public decision.
+- Confidence: verified (code); not load-tested
+
 ## Known (from prior audit, `investigations/performance-race-audit.md`)
 - A1 AgentPool leaks agents (stale waiters, no client monitor, double replacement): still present. lib/normandy/coordination/agent_pool.ex:233-248 (checkout parks `from` with no monitor), 253-262 (monitors the agent, not the client), agent_supervisor.ex:79-90 (default `:transient`).
 - A2 CircuitBreaker wedges in half-open: still present. circuit_breaker.ex:318-339 (`rescue` only, no `catch`), 205-212 (`:try_half_open_call` never checks `state.state`).

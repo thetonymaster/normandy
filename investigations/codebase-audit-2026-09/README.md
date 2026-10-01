@@ -7,6 +7,10 @@ finding). Excludes anything Credo `--strict` / Dialyzer now catch, and the races
 
 **75 findings: 20 HIGH, 33 MEDIUM, 22 LOW.** Nothing fixed here.
 
+Added after the audit (2026-09-30, while designing approval expiry): AGENTS-16 (ResumeReaper
+restarts sessions without their server options) and OTP-16 (`Turn.Supervisor` default restart
+intensity), both MEDIUM.
+
 ## How much to trust each finding
 
 | Mark | Meaning | Findings |
