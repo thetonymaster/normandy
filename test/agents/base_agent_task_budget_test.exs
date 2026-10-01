@@ -47,7 +47,7 @@ defmodule Normandy.Agents.BaseAgentTaskBudgetTest do
   defp streaming_call(config, state) do
     handlers = BaseAgent.streaming_handlers(fn _event, _data -> :ok end)
 
-    {:stream_turn_error, :stop_after_capture, _config} =
+    {:stream_turn_error, %Normandy.LLMError{reason: :stop_after_capture}, _config} =
       catch_throw(handlers.call_llm.(config, state, %{response_model: config.output_schema}))
 
     assert_received {:stream_opts, opts}

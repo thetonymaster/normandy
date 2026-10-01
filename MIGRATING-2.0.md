@@ -145,6 +145,9 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
   response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and raise from
   `run/2`. `on_parse_failure: :error` returns `type: :invalid_output`.
+- `stream_response/3` and `stream_with_tools/3` raise `Normandy.LLMError` when the stream
+  fails. They used to return `{config, %{error: reason}}`. A stream that ends without
+  `message_stop` is now a failure, not a complete message.
 
 ## New, non-breaking
 

@@ -850,7 +850,7 @@ defmodule Normandy.Agents.BaseAgent do
   # NO schema validation — streaming parity) before Turn.step(:start), then drive
   # the FSM with the streaming handler set. Returns {config, final_response}; the
   # synthetic :tool_calls key (added so the FSM could branch) is stripped from the
-  # returned response. A thrown stream error becomes the non-raising early return.
+  # returned response. A thrown stream error is raised as a Normandy.LLMError.
   defp run_stream_turn(config, user_input, callback) when is_function(callback, 2) do
     config = admit_stream_turn_input(config, user_input)
 
@@ -865,9 +865,8 @@ defmodule Normandy.Agents.BaseAgent do
       {config, final_state} = Driver.drive(state, streaming_handlers(callback), config)
       {config, Map.delete(final_state.final_response, :tool_calls)}
     catch
-      {:stream_turn_error, error, config_at_failure} ->
-        IO.warn("Streaming error: #{inspect(error)}")
-        {config_at_failure, %{error: error}}
+      {:stream_turn_error, error, _config_at_failure} ->
+        raise LLMError.wrap(error)
     end
   end
 
@@ -1012,6 +1011,10 @@ defmodule Normandy.Agents.BaseAgent do
   ## Returns
     `{config, final_response}` - Updated config and accumulated response
 
+  ## Raises
+    `Normandy.LLMError` when the stream fails to start, carries an `error` event
+    or `{:error, _}` item, or ends without `message_stop`. Streams are not retried.
+
   ## Example
 
       callback = fn
@@ -1050,6 +1053,10 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Returns
     `{config, final_response}` - Updated config and accumulated response
+
+  ## Raises
+    `Normandy.LLMError` when the stream fails to start, carries an `error` event
+    or `{:error, _}` item, or ends without `message_stop`. Streams are not retried.
 
   ## Guardrail Semantics
 
@@ -1158,6 +1165,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Private helper to stream from LLM
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp stream_response_from_llm(config, messages, opts) do
     # Check if client protocol implements stream_converse
     impl = Model.impl_for(config.client)
@@ -1194,15 +1202,24 @@ defmodule Normandy.Agents.BaseAgent do
 
             _ ->
               events = Enum.to_list(stream)
-              final_message = StreamProcessor.build_final_message(events)
-              {:ok, final_message}
+
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+              case StreamProcessor.stream_error(events) do
+                nil -> {:ok, StreamProcessor.build_final_message(events)}
+                %LLMError{} = error -> {:error, error}
+              end
           end
 
-        {:error, _} = error ->
-          error
+        {:error, reason} ->
+          {:error, LLMError.wrap(reason)}
       end
     else
-      {:error, "Client does not support streaming"}
+      {:error,
+       LLMError.new(
+         type: :unknown,
+         retryable?: false,
+         detail: "client does not implement stream_converse/7"
+       )}
     end
   end
 
@@ -1210,7 +1227,9 @@ defmodule Normandy.Agents.BaseAgent do
   # `output_guardrails_chunk_size` bytes of accumulated text. On violation,
   # halts consumption, emits telemetry + the :guardrail_violation callback
   # event, strips any partial tool-use block from the response, and returns
-  # `{:ok, final_message_with_violations}`.
+  # `{:ok, final_message_with_violations}`. A stream that failed (error event,
+  # {:error, _} item, no message_stop) without a guardrail halt returns
+  # `{:error, %LLMError{}}`; a guardrail halt is a deliberate stop, not a failure.
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp consume_stream_with_incremental_guards(stream, config, callback) do
     guards = config.output_guardrails
@@ -1265,6 +1284,17 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     events = Enum.reverse(final_acc.events)
+
+    case final_acc.violations == [] and StreamProcessor.stream_error(events) do
+      %LLMError{} = error ->
+        {:error, error}
+
+      _no_error_or_halted ->
+        build_incremental_final_message(events, final_acc)
+    end
+  end
+
+  defp build_incremental_final_message(events, final_acc) do
     final_message = StreamProcessor.build_final_message(events)
 
     final_message =

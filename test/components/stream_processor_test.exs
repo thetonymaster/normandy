@@ -233,4 +233,50 @@ defmodule Normandy.Components.StreamProcessorTest do
       assert length(result.content) == 1
     end
   end
+
+  describe "stream_error/1" do
+    @complete [
+      %{type: "message_start", message: %{"id" => "m"}},
+      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "hi"}, index: 0},
+      %{type: "message_stop"}
+    ]
+
+    test "nil for a complete stream" do
+      assert StreamProcessor.stream_error(@complete) == nil
+    end
+
+    test "an error event becomes a :stream LLMError carrying the API message" do
+      events = [
+        %{type: "message_start", message: %{}},
+        %{type: "error", error: %{"type" => "overloaded_error", "message" => "Overloaded"}}
+      ]
+
+      assert %Normandy.LLMError{
+               type: :stream,
+               retryable?: false,
+               message: message,
+               reason: reason
+             } =
+               StreamProcessor.stream_error(events)
+
+      assert message == "LLM call failed: stream: Overloaded"
+      assert reason == %{"type" => "overloaded_error", "message" => "Overloaded"}
+    end
+
+    test "an {:error, reason} item becomes a :stream LLMError" do
+      assert %Normandy.LLMError{type: :stream, reason: :closed} =
+               StreamProcessor.stream_error([
+                 %{type: "message_start", message: %{}},
+                 {:error, :closed}
+               ])
+    end
+
+    test "a stream that ends without message_stop is an error" do
+      assert %Normandy.LLMError{
+               type: :stream,
+               message: "LLM call failed: stream: stream ended before message_stop"
+             } =
+               StreamProcessor.stream_error(Enum.drop(@complete, -1))
+    end
+  end
 end

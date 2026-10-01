@@ -530,7 +530,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       end
     end
 
-    test "handles streaming errors gracefully" do
+    test "a failed stream_converse raises LLMError" do
       client = %FailingStreamClient{}
 
       config =
@@ -543,10 +543,9 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       callback = fn _, _ -> :ok end
       user_input = %{chat_message: "Hello"}
 
-      {_config, response} = BaseAgent.stream_response(config, user_input, callback)
-
-      # Should return error response
-      assert response.error == "Stream failed"
+      assert_raise Normandy.LLMError, fn ->
+        BaseAgent.stream_response(config, user_input, callback)
+      end
     end
   end
 

@@ -7,6 +7,45 @@ defmodule Normandy.Components.StreamProcessor do
   """
 
   alias Normandy.Components.StreamEvent
+  alias Normandy.LLMError
+
+  @doc """
+  Returns the failure a collected stream carries, or `nil` for a complete stream.
+
+  A stream fails when it contains an `error` event (e.g. a mid-stream `overloaded_error`),
+  an `{:error, reason}` item (a transport failure after the stream started), or ends
+  without a `message_stop` event. The result is a `Normandy.LLMError` with `type: :stream`,
+  `retryable?: false` (callbacks have already received partial output).
+  """
+  @spec stream_error([term()]) :: LLMError.t() | nil
+  def stream_error(events) when is_list(events) do
+    case Enum.find_value(events, &event_error/1) do
+      %LLMError{} = error ->
+        error
+
+      nil ->
+        if Enum.any?(events, &message_stop?/1),
+          do: nil,
+          else: stream_failure("stream ended before message_stop", nil)
+    end
+  end
+
+  defp event_error(%{type: "error", error: error}),
+    do: stream_failure(error_event_detail(error), error)
+
+  defp event_error({:error, reason}), do: stream_failure("stream transport error", reason)
+  defp event_error(_event), do: nil
+
+  defp error_event_detail(%{"message" => message}) when is_binary(message), do: message
+  defp error_event_detail(%{message: message}) when is_binary(message), do: message
+  defp error_event_detail(_error), do: "error event in stream"
+
+  defp message_stop?(%{type: "message_stop"}), do: true
+  defp message_stop?(%StreamEvent{type: :message_stop}), do: true
+  defp message_stop?(_event), do: false
+
+  defp stream_failure(detail, reason),
+    do: LLMError.new(type: :stream, retryable?: false, detail: detail, reason: reason)
 
   @doc """
   Accumulates text deltas from a stream of events.
