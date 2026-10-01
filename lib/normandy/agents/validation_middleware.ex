@@ -90,9 +90,9 @@ defmodule Normandy.Agents.ValidationMiddleware do
             {:error, format_validation_errors("Input", errors)}
         end
 
-      # Schema doesn't support validation, return as-is
+      # Schema doesn't support validation: keep the caller's input as-is
       true ->
-        {:ok, input_schema}
+        {:ok, input_map}
     end
   end
 
@@ -151,9 +151,9 @@ defmodule Normandy.Agents.ValidationMiddleware do
             {:error, format_validation_errors("Output", errors)}
         end
 
-      # Schema doesn't support validation, return as-is
+      # Schema doesn't support validation: keep the output as-is
       true ->
-        {:ok, output_schema}
+        {:ok, output_map}
     end
   end
 
@@ -190,21 +190,11 @@ defmodule Normandy.Agents.ValidationMiddleware do
       true
   """
   @spec validation_enabled?(BaseAgentConfig.t()) :: boolean()
-  def validation_enabled?(%BaseAgentConfig{input_schema: nil, output_schema: nil}), do: false
+  def validation_enabled?(%BaseAgentConfig{input_schema: input, output_schema: output}),
+    do: validating_schema?(input) or validating_schema?(output)
 
-  def validation_enabled?(%BaseAgentConfig{input_schema: input_schema})
-      when not is_nil(input_schema) do
-    schema_module = input_schema.__struct__
-    function_exported?(schema_module, :__schema__, 1)
-  end
-
-  def validation_enabled?(%BaseAgentConfig{output_schema: output_schema})
-      when not is_nil(output_schema) do
-    schema_module = output_schema.__struct__
-    function_exported?(schema_module, :__schema__, 1)
-  end
-
-  def validation_enabled?(_config), do: false
+  defp validating_schema?(nil), do: false
+  defp validating_schema?(%mod{}), do: function_exported?(mod, :__schema__, 1)
 
   @doc """
   Validates and returns a sanitized error message for display.
