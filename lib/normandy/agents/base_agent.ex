@@ -868,22 +868,9 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Streaming admission: input guardrails on the RAW user_input + memory init.
-  # Unlike admit_turn_input/2, streaming does NOT schema-validate input.
-  defp admit_stream_turn_input(config, nil), do: config
-
-  defp admit_stream_turn_input(config, user_input) do
-    run_input_guardrails!(config, user_input)
-
-    updated_memory =
-      config.memory
-      |> AgentMemory.initialize_turn()
-      |> AgentMemory.add_message("user", user_input)
-
-    config
-    |> Map.put(:current_user_input, user_input)
-    |> Map.put(:memory, updated_memory)
-  end
+  # Streaming admits input exactly as run/2 does: schema validation, then input
+  # guardrails, then the memory turn.
+  defp admit_stream_turn_input(config, user_input), do: admit_turn_input(config, user_input)
 
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
 

@@ -18,6 +18,15 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
   end
 
+  defmodule Query do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "a query" do
+      field(:query, :string, description: "query", required: true)
+    end
+  end
+
   defp base_config(extra) do
     Map.merge(
       %{
@@ -210,6 +219,17 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       assert_raise Normandy.Guardrails.ViolationError, ~r/input guardrail violation/i, fn ->
         BaseAgent.stream_response(agent, "too long for the guard", callback)
+      end
+    end
+
+    test "stream_response/3 validates input against the input schema, like run/2" do
+      agent =
+        BaseAgent.init(
+          base_config(%{input_schema: %NormandyTest.BaseAgentGuardrailsTest.Query{}})
+        )
+
+      assert_raise Normandy.Schema.ValidationError, fn ->
+        BaseAgent.stream_response(agent, %{}, fn _event, _data -> :ok end)
       end
     end
 
