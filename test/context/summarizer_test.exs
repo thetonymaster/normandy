@@ -35,8 +35,11 @@ end
 defmodule Normandy.Context.SummarizerTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Request
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.Message
   alias Normandy.Context.Summarizer
   alias Normandy.Test.MockSummarizerClient
 
@@ -167,7 +170,7 @@ defmodule Normandy.Context.SummarizerTest do
 
       # First message should be the summary
       summary_msg = List.first(history)
-      assert summary_msg.role == "system"
+      assert summary_msg.role == "user"
       assert String.contains?(summary_msg.content, "Previous conversation summary")
     end
 
@@ -212,6 +215,33 @@ defmodule Normandy.Context.SummarizerTest do
       history = AgentMemory.history(compressed_agent.memory)
       summary_msg = List.first(history)
       assert summary_msg.role == "assistant"
+    end
+
+    test "a compacted conversation still sends the agent's system prompt", %{client: client} do
+      memory =
+        Enum.reduce(1..15, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i}")
+        end)
+
+      agent = %{
+        memory: memory,
+        model: "test-model",
+        config: %{client: client, model: "test-model"}
+      }
+
+      {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 5)
+
+      # The [system | history] list BaseAgent sends after a compaction.
+      messages =
+        [%Message{role: "system", content: "You are the real system prompt."}] ++
+          Enum.map(AgentMemory.history(compressed.memory), fn %{role: role, content: content} ->
+            %Message{role: role, content: content}
+          end)
+
+      request =
+        ClaudioModel.add_messages(Request.new("test-model"), messages, false)
+
+      assert request.system == "You are the real system prompt."
     end
 
     test "preserves most recent messages", %{client: client} do

@@ -77,7 +77,8 @@ defmodule Normandy.Context.Summarizer do
   ## Options
 
   - `:keep_recent` - Number of recent messages to keep (default: 10)
-  - `:summary_role` - Role for summary message (default: "system")
+  - `:summary_role` - Role for summary message (default: "user"). Keep it out of
+    "system": the adapter sends the agent's own system prompt and refuses a second one
   - `:max_summary_tokens` - Max tokens for summary (default: 500)
 
   ## Example
@@ -92,7 +93,7 @@ defmodule Normandy.Context.Summarizer do
           {:ok, struct()} | {:error, term()}
   def compress_conversation(client, agent, opts \\ []) do
     keep_recent = Keyword.get(opts, :keep_recent, 10)
-    summary_role = Keyword.get(opts, :summary_role, "system")
+    summary_role = Keyword.get(opts, :summary_role, "user")
 
     history = AgentMemory.history(agent.memory)
     total_messages = length(history)
