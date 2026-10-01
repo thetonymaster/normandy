@@ -218,12 +218,14 @@ defmodule Normandy.Context.WindowManager do
   Ensures agent's conversation stays within context window limit.
 
   Automatically truncates history if needed using the configured strategy.
+  Returns `{:error, reason}` when the `:summarize` strategy's summarization
+  fails, leaving the agent unchanged.
 
   ## Example
 
       {:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
   """
-  @spec ensure_within_limit(struct(), t()) :: {:ok, struct()}
+  @spec ensure_within_limit(struct(), t()) :: {:ok, struct()} | {:error, term()}
   def ensure_within_limit(agent, %__MODULE__{} = manager) do
     case within_limit?(manager, agent) do
       {:ok, true} ->
@@ -241,7 +243,7 @@ defmodule Normandy.Context.WindowManager do
 
       {:ok, updated_agent} = WindowManager.truncate_conversation(agent, manager)
   """
-  @spec truncate_conversation(struct(), t()) :: {:ok, struct()}
+  @spec truncate_conversation(struct(), t()) :: {:ok, struct()} | {:error, term()}
   def truncate_conversation(agent, %__MODULE__{strategy: strategy} = manager) do
     case strategy do
       :oldest_first ->

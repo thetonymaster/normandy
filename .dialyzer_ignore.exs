@@ -21,10 +21,6 @@
   # site, so the bare `fail(data, reason)` fallback clause is unreachable defense.
   {"lib/normandy/agents/turn/server.ex", :pattern_match_cov},
 
-  # behaviours/compactor/window_manager.ex run/2 (line 56): WindowManager.ensure_within_limit/2
-  # provably returns only {:ok, _} (spec + impl), so the {:error, reason} arm is unreachable defense.
-  {"lib/normandy/behaviours/compactor/window_manager.ex", :pattern_match},
-
   # --- Tooling false positives ---
 
   # behaviours/session_store/postgres/migration.ex up/0 + down/0 (lines 15, 24, 36): idiomatic

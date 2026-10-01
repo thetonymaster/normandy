@@ -198,8 +198,12 @@ defmodule Normandy.Context.Summarizer do
     case ConverseResult.normalize(
            Model.converse(client, model, temperature, max_tokens, messages, response_model, [])
          ) do
-      {:ok, {%{chat_message: summary}, _usage, _meta}} when is_binary(summary) ->
+      {:ok, {%{chat_message: summary}, _usage, _meta}}
+      when is_binary(summary) and summary != "" ->
         {:ok, summary}
+
+      {:ok, {%{chat_message: _empty_or_not_text}, _usage, _meta}} ->
+        {:error, :empty_summary}
 
       {:ok, {other, _usage, _meta}} ->
         {:error, {:unexpected_response, other}}

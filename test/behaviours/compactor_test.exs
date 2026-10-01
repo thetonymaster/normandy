@@ -17,6 +17,38 @@ defmodule Normandy.Test.BadResponseClient do
   end
 end
 
+defmodule Normandy.Test.EmptySummaryClient do
+  @moduledoc "Stub LLM client whose summary comes back empty."
+  use Normandy.Schema
+
+  schema do
+  end
+
+  defimpl Normandy.Agents.Model do
+    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
+      do: response_model
+
+    def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts),
+      do: %{response_model | chat_message: ""}
+  end
+end
+
+defmodule Normandy.Test.LLMErrorCompactionClient do
+  @moduledoc "Stub LLM client whose summarization call fails."
+  use Normandy.Schema
+
+  schema do
+  end
+
+  defimpl Normandy.Agents.Model do
+    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
+      do: response_model
+
+    def converse(_client, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
+      do: {:error, Normandy.LLMError.new(type: :overloaded, status: 529, retryable?: true)}
+  end
+end
+
 defmodule Normandy.Behaviours.CompactorTest do
   use ExUnit.Case, async: true
 
@@ -120,6 +152,44 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert {:unexpected_response, %{}} = meta.error
 
       # The original acc is returned unchanged — no partially-mutated memory.
+      assert AgentMemory.history(returned_acc.memory) == original_history
+    end
+
+    test ":summarize keeps history when the summarization call fails" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+
+      acc = %{
+        memory: mem_with(msgs),
+        client: %Normandy.Test.LLMErrorCompactionClient{},
+        model: "m"
+      }
+
+      original_history = AgentMemory.history(acc.memory)
+
+      {returned_acc, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+          strategy: :summarize,
+          reserved_tokens: 64
+        )
+
+      assert meta.compacted == false
+      assert %Normandy.LLMError{type: :overloaded} = meta.error
+      assert AgentMemory.history(returned_acc.memory) == original_history
+    end
+
+    test ":summarize keeps history when the summary comes back empty" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+      acc = %{memory: mem_with(msgs), client: %Normandy.Test.EmptySummaryClient{}, model: "m"}
+      original_history = AgentMemory.history(acc.memory)
+
+      {returned_acc, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+          strategy: :summarize,
+          reserved_tokens: 64
+        )
+
+      assert meta.compacted == false
+      assert meta.error == :empty_summary
       assert AgentMemory.history(returned_acc.memory) == original_history
     end
 
