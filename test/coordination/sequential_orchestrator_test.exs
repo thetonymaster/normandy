@@ -81,12 +81,34 @@ defmodule Normandy.Coordination.SequentialOrchestratorTest do
     end
   end
 
+  describe "on_error: :continue" do
+    test "the agent after a failure gets the last successful output; the failure stays in results" do
+      specs = [
+        %{id: "a", agent: agent("a")},
+        %{id: "b", agent: agent("b", fail_on: "a(")},
+        %{id: "c", agent: agent("c")}
+      ]
+
+      assert {:ok, %{results: [a, {:error, {:exception, %RuntimeError{}, _}}, c]}} =
+               SequentialOrchestrator.execute(specs, "x", on_error: :continue)
+
+      assert a.chat_message =~ "a("
+      assert c.chat_message =~ ~r/^c\(.*a\(/
+      refute c.chat_message =~ "error"
+    end
+  end
+
   describe "execute/2 with plain agents" do
     test "returns the last agent's result" do
       assert {:ok, %{chat_message: last}} =
                SequentialOrchestrator.execute([agent("a"), agent("b")], "go")
 
       assert last =~ "b("
+    end
+
+    test "a failure is returned as an error, not raised" do
+      assert {:error, %{errors: [%{agent_id: "agent_1"}]}} =
+               SequentialOrchestrator.execute([agent("a"), agent("b", fail_on: "a(")], "go")
     end
   end
 

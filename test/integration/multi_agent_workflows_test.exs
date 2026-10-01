@@ -86,7 +86,7 @@ defmodule Normandy.Integration.MultiAgentWorkflowsTest do
       # Should have results from all agents
       assert is_list(results)
       assert length(results) == 3
-      assert Enum.all?(results, fn r -> Map.has_key?(r, :chat_message) end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: _}}, &1))
     end
   end
 end

@@ -44,13 +44,16 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
 
   Can be called in two ways:
   1. With agent_specs and options: `execute(agent_specs, input, opts)`
-  2. With agents list and input: `execute(agents, input)` - returns final result directly
+  2. With agents list and input: `execute(agents, input)` - returns `{:ok, last_result}`,
+     or the same `{:error, execution_result}` as the first form
 
   ## Options
 
   - `:shared_context` - SharedContext to use (default: new context)
   - `:on_agent_complete` - Callback after each agent: `(agent_id, result, context -> any)`
-  - `:on_error` - Error handling: `:stop` (default) or `:continue`
+  - `:on_error` - Error handling: `:stop` (default) or `:continue`. With
+    `:continue`, a failed agent's entry in `results` is `{:error, reason}` and
+    the next agent receives the last successful output.
   - `:store_intermediate` - Store each result in shared context (default: true)
 
   ## Example
@@ -89,9 +92,10 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
             }
           end)
 
-        # Execute and return just the final result
-        {:ok, %{results: results}} = execute_with_specs(agent_specs, input, [])
-        {:ok, List.last(results)}
+        # Return just the final result
+        with {:ok, %{results: results}} <- execute_with_specs(agent_specs, input, []) do
+          {:ok, List.last(results)}
+        end
     end
   end
 
@@ -146,8 +150,9 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
                 {:halt, {:error, error_result, ctx, results}}
 
               :continue ->
-                # Continue with error as result
-                {:cont, {:ok, {:error, reason}, ctx, results ++ [{:error, reason}]}}
+                # The failure stays in results; the next agent gets the last
+                # successful output (or the initial input), not the error.
+                {:cont, {:ok, input, ctx, results ++ [{:error, reason}]}}
             end
         end
       end)

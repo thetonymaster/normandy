@@ -91,6 +91,17 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
       assert_received {:done, "b"}
     end
 
+    test "an agent past :timeout fails under its id; the others still finish" do
+      specs = [
+        %{id: "fast", agent: tagging("fast"), input: "x"},
+        %{id: "slow", agent: tagging("slow", sleep_ms: 500), input: "x"}
+      ]
+
+      assert {:ok,
+              %{success: false, results: %{"fast" => _}, errors: %{"slow" => {:exit, :timeout}}}} =
+               ParallelOrchestrator.execute(specs, timeout: 100)
+    end
+
     test "agents run concurrently" do
       specs = for n <- 1..4, do: %{id: "#{n}", agent: tagging("#{n}", sleep_ms: 200), input: "x"}
       start = System.monotonic_time(:millisecond)
@@ -104,11 +115,16 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
 
   describe "execute/2 with plain agents" do
     test "returns one result per agent, in agent order" do
-      assert {:ok, [first, second]} =
+      assert {:ok, [{:ok, first}, {:ok, second}]} =
                ParallelOrchestrator.execute([tagging("a"), tagging("b")], "go")
 
       assert first.chat_message =~ "a("
       assert second.chat_message =~ "b("
+    end
+
+    test "a failed agent keeps its place as {:error, reason}" do
+      assert {:ok, [{:error, {:exception, %RuntimeError{}, _}}, {:ok, _}]} =
+               ParallelOrchestrator.execute([tagging("bad", fail_on: "go"), tagging("b")], "go")
     end
   end
 

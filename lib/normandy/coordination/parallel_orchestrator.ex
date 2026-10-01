@@ -46,13 +46,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   Can be called in two ways:
   1. With agent_specs and options: `execute(agent_specs, opts)`
-  2. With agents list and input: `execute(agents, input)` - returns list of results
+  2. With agents list and input: `execute(agents, input)` - returns
+     `{:ok, [{:ok, result} | {:error, reason}]}`, one entry per agent in order
 
   ## Options
 
   - `:shared_context` - SharedContext to use (default: new context)
   - `:max_concurrency` - Maximum concurrent agents (default: 10)
-  - `:timeout` - Timeout per agent in ms (default: 300_000)
+  - `:timeout` - Timeout per agent in ms (default: 300_000). An agent that runs
+    past it is stopped and reported in `errors` as `{:exit, :timeout}`.
   - `:aggregate` - Function to aggregate results: `([{id, result}] -> term())`
   - `:on_agent_complete` - Callback: `(agent_id, result -> any)`
   - `:ordered` - Return results in spec order (default: false)
@@ -107,16 +109,16 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         }
       end)
 
-    # Execute with specs
-    {:ok, %{results: results}} = execute_with_specs(agent_specs, [])
+    {:ok, %{results: results, errors: errors}} = execute_with_specs(agent_specs, [])
 
-    # Convert map of results to ordered list
-    result_list =
-      agent_specs
-      |> Enum.map(fn %{id: id} -> Map.get(results, id) end)
-      |> Enum.filter(&(&1 != nil))
-
-    {:ok, result_list}
+    # One entry per agent, in agent order, so a failure keeps its place.
+    {:ok,
+     Enum.map(agent_specs, fn %{id: id} ->
+       case Map.fetch(results, id) do
+         {:ok, result} -> {:ok, result}
+         :error -> {:error, Map.fetch!(errors, id)}
+       end
+     end)}
   end
 
   defp execute_with_specs(agent_specs, opts) when is_list(agent_specs) do
@@ -159,6 +161,9 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         end,
         max_concurrency: max_concurrency,
         timeout: timeout,
+        # A slow agent fails on its own instead of exiting the caller.
+        on_timeout: :kill_task,
+        zip_input_on_exit: true,
         ordered: ordered
       )
       |> Enum.to_list()
@@ -172,7 +177,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         {:ok, {agent_id, {:error, reason}}}, {succ, err} ->
           {succ, Map.put(err, agent_id, reason)}
 
-        {:exit, {agent_id, reason}}, {succ, err} ->
+        {:exit, {%{id: agent_id}, reason}}, {succ, err} ->
           {succ, Map.put(err, agent_id, {:exit, reason})}
       end)
 

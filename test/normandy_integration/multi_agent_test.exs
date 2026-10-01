@@ -76,7 +76,7 @@ defmodule Normandy.Integration.MultiAgentTest do
 
       assert is_list(results)
       assert length(results) == 2
-      assert Enum.all?(results, fn r -> Map.has_key?(r, :chat_message) end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: _}}, &1))
     end
   end
 end
