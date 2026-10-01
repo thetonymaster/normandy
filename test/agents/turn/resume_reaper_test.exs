@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.Turn.ResumeReaperTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.ResumeReaper

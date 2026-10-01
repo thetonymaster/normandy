@@ -1,4 +1,6 @@
 defmodule NormandyTest.BaseAgentGuardrailsTest do
+  # async: false — captures :stderr (IO.warn) and refutes on it; stderr capture
+  # is global, so another test's warning would break the refute.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

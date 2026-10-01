@@ -39,7 +39,7 @@ defimpl Normandy.Agents.Model, for: Normandy.Test.TupleRecoveryClient do
 end
 
 defmodule Normandy.LLM.JsonDeserializerRetryTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Components.Message
   alias Normandy.LLM.Json.TestFixtures.MultiField

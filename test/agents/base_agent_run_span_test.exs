@@ -9,11 +9,11 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
   `run_with_tools/2` directly) drops `invoke_agent` from traces; a duplicated
   span (double-wrap) corrupts agent timing. Both failure modes are asserted here.
 
-  `async: false` because `:telemetry` handlers are global — a concurrent test
-  emitting `[:normandy, :agent, :run]` would contaminate the exact-count
-  assertions (the `refute_receive` for a second span).
+  `:telemetry` handlers are global, so each run gets an agent name no other
+  test uses and the handler counts only that agent's spans; the exact-count
+  assertions then hold while other tests run concurrently.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Tools.Examples.Calculator
@@ -114,13 +114,14 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
   end
 
-  # Runs `fun` with a temporary handler forwarding every `agent.run` start/stop
-  # to the test process, then asserts EXACTLY ONE of each was emitted. The run is
-  # synchronous, so by the time `fun` returns every span event is already in the
-  # mailbox. Detaches in `after` so a failing assertion still removes the global
-  # handler.
-  defp assert_exactly_one_run_span(fun) do
+  # Runs `fun` on `agent` (renamed uniquely) with a temporary handler forwarding
+  # that agent's `agent.run` start/stop to the test process, then asserts EXACTLY
+  # ONE of each was emitted. The run is synchronous, so by the time `fun` returns
+  # every span event is already in the mailbox. Detaches in `after` so a failing
+  # assertion still removes the global handler.
+  defp assert_exactly_one_run_span(agent, fun) do
     handler_id = "run-span-count-#{System.unique_integer([:positive])}"
+    name = "run-span-#{System.unique_integer([:positive])}"
     parent = self()
     ref = make_ref()
 
@@ -130,12 +131,14 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         [:normandy, :agent, :run, :start],
         [:normandy, :agent, :run, :stop]
       ],
-      fn event, _measurements, _metadata, _ -> send(parent, {ref, event}) end,
+      fn event, _measurements, metadata, _ ->
+        if metadata[:agent_name] == name, do: send(parent, {ref, event})
+      end,
       nil
     )
 
     try do
-      fun.()
+      fun.(%{agent | name: name})
     after
       :telemetry.detach(handler_id)
     end
@@ -155,7 +158,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         temperature: 0.7
       })
 
-    assert_exactly_one_run_span(fn -> BaseAgent.run_with_tools(agent, "hello") end)
+    assert_exactly_one_run_span(agent, &BaseAgent.run_with_tools(&1, "hello"))
   end
 
   test "run/2 with a tool registry emits exactly one agent.run span (no double-wrap)" do
@@ -168,7 +171,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         max_tool_iterations: 5
       })
 
-    assert_exactly_one_run_span(fn -> BaseAgent.run(agent, %{text: "hi"}) end)
+    assert_exactly_one_run_span(agent, &BaseAgent.run(&1, %{text: "hi"}))
   end
 
   test "run/3 streaming emits exactly one agent.run span" do
@@ -181,7 +184,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
 
     callback = fn _type, _payload -> :ok end
 
-    assert_exactly_one_run_span(fn ->
+    assert_exactly_one_run_span(agent, fn agent ->
       BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: callback)
     end)
   end

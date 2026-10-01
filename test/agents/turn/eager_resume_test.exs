@@ -1,6 +1,6 @@
 defmodule Normandy.Agents.Turn.EagerResumeTest do
   @moduledoc "Eager auto-resume on (re)start from a persisted :steering state, no caller."
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.ConfigTemplate

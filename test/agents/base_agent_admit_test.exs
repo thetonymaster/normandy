@@ -1,5 +1,5 @@
 defmodule NormandyTest.BaseAgentAdmitTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Guardrails.Builtins.MaxLength
@@ -111,8 +111,11 @@ defmodule NormandyTest.BaseAgentAdmitTest do
   end
 
   describe "admit telemetry" do
+    # Telemetry is global: each test's agent gets a unique name and the handler
+    # keeps only that agent's events, so the refutes hold under async tests.
     setup do
       handler_id = "admit-telemetry-#{System.unique_integer([:positive])}"
+      name = "admit-agent-#{System.unique_integer([:positive])}"
       test_pid = self()
 
       :telemetry.attach_many(
@@ -122,20 +125,19 @@ defmodule NormandyTest.BaseAgentAdmitTest do
           [:normandy, :agent, :guardrail, :violation]
         ],
         fn event, measurements, metadata, _ ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
+          if metadata[:agent_name] == name,
+            do: send(test_pid, {:telemetry, event, measurements, metadata})
         end,
         nil
       )
 
       on_exit(fn -> :telemetry.detach(handler_id) end)
-      :ok
+      {:ok, name: name}
     end
 
-    test "emits a :decision{outcome: :block} and a :violation event on rejection" do
+    test "emits a :decision{outcome: :block} and a :violation event on rejection", %{name: name} do
       agent =
-        BaseAgent.init(
-          base_config(%{name: "admit-agent", input_guardrails: [{MaxLength, limit: 1}]})
-        )
+        BaseAgent.init(base_config(%{name: name, input_guardrails: [{MaxLength, limit: 1}]}))
 
       assert {:block, _} = BaseAgent.admit(agent, "xx")
 
@@ -144,7 +146,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
 
       assert decision_meta.outcome == :block
       assert decision_meta.stage == :input
-      assert decision_meta.agent_name == "admit-agent"
+      assert decision_meta.agent_name == name
       assert decision_meta.guards == [MaxLength]
       assert measurements.count == 1
 
@@ -152,11 +154,9 @@ defmodule NormandyTest.BaseAgentAdmitTest do
       assert violation_meta.stage == :input
     end
 
-    test "emits a :decision{outcome: :admit} on a pass" do
+    test "emits a :decision{outcome: :admit} on a pass", %{name: name} do
       agent =
-        BaseAgent.init(
-          base_config(%{name: "admit-agent", input_guardrails: [{MaxLength, limit: 100}]})
-        )
+        BaseAgent.init(base_config(%{name: name, input_guardrails: [{MaxLength, limit: 100}]}))
 
       assert BaseAgent.admit(agent, "fine") == :ok
 
@@ -166,19 +166,21 @@ defmodule NormandyTest.BaseAgentAdmitTest do
       refute_received {:telemetry, [:normandy, :agent, :guardrail, :violation], _, _}
     end
 
-    test "emits no telemetry when no guardrails are configured" do
-      agent = BaseAgent.init(base_config(%{}))
+    test "emits no telemetry when no guardrails are configured", %{name: name} do
+      agent = BaseAgent.init(base_config(%{name: name}))
 
       assert BaseAgent.admit(agent, "anything") == :ok
 
       refute_received {:telemetry, [:normandy, :agent, :guardrail, :decision], _, _}
     end
 
-    test "emits a :decision{outcome: :error} when a guard crashes under on_error: :closed" do
+    test "emits a :decision{outcome: :error} when a guard crashes under on_error: :closed", %{
+      name: name
+    } do
       agent =
         BaseAgent.init(
           base_config(%{
-            name: "admit-agent",
+            name: name,
             input_guardrails: [{CrashGuard, on_error: :closed}]
           })
         )

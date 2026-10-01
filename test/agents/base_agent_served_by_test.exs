@@ -1,4 +1,5 @@
 defmodule Normandy.Agents.BaseAgentServedByTest do
+  # async: false — one test sets the global Logger level to :info.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent

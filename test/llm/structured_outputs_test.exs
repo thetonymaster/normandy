@@ -1,5 +1,5 @@
 defmodule Normandy.LLM.StructuredOutputsTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.LLM.Json.TestFixtures.MultiField
   alias Normandy.LLM.StructuredOutputs

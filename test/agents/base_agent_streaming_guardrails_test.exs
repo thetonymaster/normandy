@@ -1,4 +1,6 @@
 defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
+  # async: false — captures :stderr (IO.warn) and refutes on it; stderr capture
+  # is global, so another test's warning would break the refute.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
