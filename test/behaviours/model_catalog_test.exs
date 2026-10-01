@@ -78,16 +78,20 @@ defmodule Normandy.Behaviours.ModelCatalogTest do
   end
 
   describe "deprecated Static stub" do
-    alias Normandy.Behaviours.ModelCatalog.Static
-
-    test "context_window/2 delegates to ModelsAPI", %{opts: opts} do
-      respond(200, @opus)
-      assert Static.context_window("claude-opus-5-5", opts) == {:ok, 1_000_000}
+    # Resolved at runtime with safe_concat (existing atoms only): a compiled atom
+    # literal here would make config_template_test's [:safe] decode test vacuous.
+    setup do
+      {:ok, static: Module.safe_concat(Normandy.Behaviours.ModelCatalog, "Static")}
     end
 
-    test "the static table is gone" do
-      Code.ensure_loaded!(Static)
-      refute function_exported?(Static, :limits, 0)
+    test "context_window/2 delegates to ModelsAPI", %{opts: opts, static: static} do
+      respond(200, @opus)
+      assert static.context_window("claude-opus-5-5", opts) == {:ok, 1_000_000}
+    end
+
+    test "the static table is gone", %{static: static} do
+      Code.ensure_loaded!(static)
+      refute function_exported?(static, :limits, 0)
     end
   end
 end

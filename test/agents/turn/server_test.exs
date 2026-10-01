@@ -822,7 +822,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       refute_received {:catalog_lookup, _}
     end
 
-    test "Turn.Server: one lookup for three steering boundaries; none on the next run" do
+    test "Turn.Server: one lookup for three steering boundaries in a run" do
       store = InMemory.new()
       reg = Normandy.Behaviours.SessionRegistry.Native.new()
 

@@ -131,12 +131,16 @@ defmodule Normandy.Agents.ConfigTemplateTest do
   end
 
   test "a 1.x template naming ModelCatalog.Static still decodes with [:safe] (D18)" do
-    # Code.ensure_loaded!: in a release every module is loaded at boot, so the atom
-    # exists; in mix test, modules load lazily. The stub must exist for either.
-    Code.ensure_loaded!(Normandy.Behaviours.ModelCatalog.Static)
-    blob = :erlang.term_to_binary({Normandy.Behaviours.ModelCatalog.Static, []})
+    # :erlang.term_to_binary({Normandy.Behaviours.ModelCatalog.Static, []}) as a
+    # 1.x store wrote it. A binary literal, and no test module names the atom, so
+    # [:safe] succeeds only because the stub module exists in the app.
+    blob =
+      <<131, 104, 2, 119, 46, 69, 108, 105, 120, 105, 114, 46, 78, 111, 114, 109, 97, 110, 100,
+        121, 46, 66, 101, 104, 97, 118, 105, 111, 117, 114, 115, 46, 77, 111, 100, 101, 108, 67,
+        97, 116, 97, 108, 111, 103, 46, 83, 116, 97, 116, 105, 99, 106>>
 
-    assert {Normandy.Behaviours.ModelCatalog.Static, []} ==
-             :erlang.binary_to_term(blob, [:safe])
+    assert {mod, []} = :erlang.binary_to_term(blob, [:safe])
+    assert Atom.to_string(mod) == "Elixir.Normandy.Behaviours.ModelCatalog.Static"
+    Code.ensure_loaded!(mod)
   end
 end

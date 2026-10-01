@@ -741,8 +741,17 @@ defmodule Normandy.Agents.BaseAgent do
 
     case catalog_mod.context_window(model, with_catalog_client(config, catalog_opts)) do
       # Map.put: a BaseAgentConfig built under 1.x has no :resolved_context_window key.
-      {:ok, window} -> {Map.put(config, :resolved_context_window, {model, window}), window}
-      {:error, reason} -> raise Normandy.ModelCatalogError, model: model, reason: reason
+      {:ok, window} when is_integer(window) and window > 0 ->
+        {Map.put(config, :resolved_context_window, {model, window}), window}
+
+      # A custom catalog's bad value must not be memoised or reach the compactor.
+      {:ok, other} ->
+        raise Normandy.ModelCatalogError,
+          model: model,
+          reason: {:invalid_context_window, other}
+
+      {:error, reason} ->
+        raise Normandy.ModelCatalogError, model: model, reason: reason
     end
   end
 

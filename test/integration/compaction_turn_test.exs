@@ -123,7 +123,17 @@ defmodule Normandy.Integration.CompactionTurnTest do
     assert config2.resolved_context_window == {"claude-opus-5-5", 80}
   end
 
-  test "a lookup failure raises ModelCatalogError and memoises nothing" do
+  test "a catalog returning a non-positive-integer window raises ModelCatalogError" do
+    config = catalog_config("claude-opus-5-5", {:ok, nil})
+
+    assert_raise Normandy.ModelCatalogError,
+                 ~r/claude-opus-5-5.*\{:invalid_context_window, nil\}/s,
+                 fn ->
+                   BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+                 end
+  end
+
+  test "a catalog lookup error raises ModelCatalogError naming the model and reason" do
     config = catalog_config("claude-opus-5-5", {:error, :boom})
 
     assert_raise Normandy.ModelCatalogError, ~r/claude-opus-5-5.*:boom/s, fn ->
