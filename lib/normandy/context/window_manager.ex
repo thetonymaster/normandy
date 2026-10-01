@@ -29,8 +29,14 @@ defmodule Normandy.Context.WindowManager do
   ## Truncation Strategies
 
   - `:oldest_first` - Remove oldest messages first (default)
-  - `:sliding_window` - Keep most recent N messages
+  - `:sliding_window` - Same as `:oldest_first`: keeps the most recent messages
+    that fit
   - `:summarize` - Summarize old messages before removing
+
+  The kept messages always start at a user message, so the conversation stays
+  valid for the API (no leading assistant turn, no tool result without its
+  tool use). If the newest messages alone exceed the limit, their whole turn is
+  kept rather than an empty history.
   """
 
   alias Normandy.Components.AgentMemory
@@ -279,7 +285,18 @@ defmodule Normandy.Context.WindowManager do
       # the same chain in the same order: take the kept suffix's turn ids from
       # messages/1 so each kept message stays in its own turn.
       history = AgentMemory.history(agent.memory)
-      {keep_messages, _removed} = split_to_fit(history, target_tokens)
+      {fitting, _removed} = split_to_fit(history, target_tokens)
+
+      # Start the kept window at a user message (see AgentMemory.keep_count/2);
+      # a newest message larger than the target keeps its turn rather than
+      # emptying the memory.
+      keep =
+        history
+        |> Enum.reverse()
+        |> Enum.map(& &1.role)
+        |> AgentMemory.keep_count(max(length(fitting), 1))
+
+      keep_messages = Enum.take(history, -keep)
 
       kept_turn_ids =
         agent.memory

@@ -260,6 +260,38 @@ defmodule Normandy.Context.WindowManagerTest do
     end
   end
 
+  describe "truncate_conversation/2 keeps a window the API accepts" do
+    test "the kept history starts at a user message" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "First message that is quite long")
+        |> AgentMemory.add_message("assistant", "First response that is quite long")
+        |> AgentMemory.add_message("user", "Second message that is quite long")
+        |> AgentMemory.add_message("assistant", "Second response that is quite long")
+        |> AgentMemory.add_message("tool", "A tool result that is quite long")
+        |> AgentMemory.add_message("assistant", "Third response that is quite long")
+
+      {:ok, %{memory: kept}} = WindowManager.truncate_conversation(%{memory: memory}, manager)
+
+      assert [%{role: "user"} | _] = AgentMemory.history(kept)
+    end
+
+    test "a newest message larger than the target does not empty the memory" do
+      manager = WindowManager.new(max_tokens: 30, reserved_tokens: 0, strategy: :oldest_first)
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "short")
+        |> AgentMemory.add_message("assistant", String.duplicate("long answer ", 50))
+
+      {:ok, %{memory: kept}} = WindowManager.truncate_conversation(%{memory: memory}, manager)
+
+      assert [%{role: "user"}, %{role: "assistant"}] = AgentMemory.history(kept)
+    end
+  end
+
   describe "truncate_conversation/2 with :sliding_window strategy" do
     test "keeps most recent messages" do
       manager =

@@ -67,6 +67,33 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert [%Message{role: "secondary"}] = AgentMemory.messages(memory)
   end
 
+  describe "max_messages keeps a window the API accepts" do
+    defp roles(memory), do: memory |> AgentMemory.messages() |> Enum.map(& &1.role)
+
+    test "the kept window starts at a user message" do
+      memory =
+        AgentMemory.new_memory(3)
+        |> AgentMemory.add_message("user", "u1")
+        |> AgentMemory.add_message("assistant", "a1")
+        |> AgentMemory.add_message("user", "u2")
+        |> AgentMemory.add_message("assistant", "a2")
+
+      assert roles(memory) == ["user", "assistant"]
+    end
+
+    test "a tool loop is not cut between a tool_use and its result" do
+      memory =
+        AgentMemory.new_memory(3)
+        |> AgentMemory.add_message("user", "u1")
+        |> AgentMemory.add_message("assistant", "a1 tool_use")
+        |> AgentMemory.add_message("tool", "t1")
+        |> AgentMemory.add_message("assistant", "a2")
+
+      # No user message fits in 3, so the window keeps the whole turn.
+      assert roles(memory) == ["user", "assistant", "tool", "assistant"]
+    end
+  end
+
   test "history reconstructs the chronological role/content view" do
     content_a = %IOTest{}
     content_b = %IOTest{test_field: "hello there"}

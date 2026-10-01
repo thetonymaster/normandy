@@ -248,12 +248,13 @@ defmodule Normandy.Components.AgentMemory do
 
   defp enforce_max_messages(%__MODULE__{max_messages: max} = memory) do
     chain = chain_newest_first(memory)
+    keep = keep_count(Enum.map(chain, & &1.role), max)
 
-    if length(chain) <= max do
+    if length(chain) <= keep do
       memory
     else
-      kept = Enum.take(chain, max)
-      dropped = Enum.drop(chain, max)
+      kept = Enum.take(chain, keep)
+      dropped = Enum.drop(chain, keep)
       oldest_kept = List.last(kept)
 
       entries =
@@ -262,6 +263,31 @@ defmodule Normandy.Components.AgentMemory do
         |> Map.update!(oldest_kept.id, fn entry -> %{entry | parent_id: nil} end)
 
       %{memory | entries: entries}
+    end
+  end
+
+  # How many of the newest entries to keep (roles are newest first). The API
+  # rejects a conversation that starts with an assistant turn or a tool result
+  # whose tool_use was cut, so the window starts at a user message: the oldest
+  # one within `max`, or, when none fits, the newest one (the window then holds
+  # more than `max` until the turn ends). A memory with no user message at all
+  # is cut at `max`.
+  @doc false
+  def keep_count(roles_newest_first, max) do
+    window = Enum.take(roles_newest_first, max)
+
+    oldest_user_in_window =
+      window |> Enum.with_index() |> Enum.filter(&(elem(&1, 0) == "user")) |> List.last()
+
+    case oldest_user_in_window do
+      {"user", index} ->
+        index + 1
+
+      nil ->
+        case Enum.find_index(roles_newest_first, &(&1 == "user")) do
+          nil -> max
+          index -> index + 1
+        end
     end
   end
 
