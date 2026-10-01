@@ -308,8 +308,8 @@ defmodule Normandy.Agents.Turn do
   state (used by an eager shell after passivation/handoff). Pure.
 
   Only states the core persists are resumable: `:steering` (per-batch boundary)
-  re-issues compaction then continues; `:awaiting_approval` waits for a decision
-  (no effects). Terminal states yield no effects.
+  re-issues compaction then continues; `:awaiting_approval` re-announces
+  itself with an `:awaiting_approval` event (`resumed: true`) and then waits for a decision. Terminal states yield no effects.
   """
   @spec resume(State.t()) :: {State.t(), [tuple()]}
   def resume(%State{status: :steering, iterations_left: left} = s) do

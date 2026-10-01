@@ -46,7 +46,12 @@ defmodule Normandy.Agents.Turn.Server do
   A turn that fails or is killed after the assistant's `tool_use` was appended leaves
   it unanswered. The next turn appends an `interrupted: true` tool result for each
   missing call, in memory and store, before the user message, and logs a warning.
-  If a store write fails part-way, memory keeps only the results the store accepted, so the next turn completes the repair without duplicating any result.
+  If a store write fails part-way, memory keeps only the results the store accepted,
+  so the next turn completes the repair without duplicating any result. The same
+  holds for tool results written during a turn: a rejected write is not adopted into
+  memory. A crash in the `:emit` handler while re-announcing a resumed parked turn
+  fails that turn (no caller is waiting), and the next turn closes its batch with
+  interrupted results.
   """
   @behaviour :gen_statem
 
@@ -456,7 +461,9 @@ defmodule Normandy.Agents.Turn.Server do
             # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case append_to_store(data, role, content) do
               :ok -> interpret(rest, %{data | config: config})
-              {:error, reason} -> fail(%{data | config: config}, {:persist_failed, reason})
+              # Memory must match the store: do not adopt `config` when the write failed,
+              # so the next turn's repair sees exactly what the store lacks.
+              {:error, reason} -> fail(data, {:persist_failed, reason})
             end
           end
         )

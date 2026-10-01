@@ -163,12 +163,12 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 | `{:error, {:handler_crashed, name, exception_or_term}}` — a handler raised, exited or threw | the server crashed |
 | `{:error, {:approval_timeout, ids}}` — only with `on_approval_timeout: :fail` | n/a |
 
-A raising `:subscriber` no longer crashes the session: it is logged and reported as
+A `:subscriber` that raises, exits or throws no longer crashes the session: it is logged and reported as
 `[:normandy, :turn, :subscriber, :exception]`, and the turn continues.
 
 Approval expiry: a parked call that nobody approved now gets
 `%{error: "approval timed out: no approver responded within <ms>ms", denied: true,
-expired: true}` instead of `"tool call rejected by approver"`, and an
+expired: true, pending_approval: false}` instead of `"tool call rejected by approver"`, and an
 `:approval_expired` event plus `[:normandy, :turn, :approval, :expired]` telemetry
 are emitted. Pass `on_approval_timeout: :fail` to end the turn instead of continuing.
 

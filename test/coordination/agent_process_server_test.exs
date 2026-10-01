@@ -1,5 +1,6 @@
 defmodule Normandy.Coordination.AgentProcessServerTest do
   use ExUnit.Case, async: false
+  @moduletag :capture_log
 
   import ExUnit.CaptureLog
 

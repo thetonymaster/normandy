@@ -1268,19 +1268,19 @@ defmodule Normandy.Agents.Turn.ServerTest do
         | tool_registry:
             Normandy.Tools.Registry.new([
               %FakeTool{name: "weather", notify: test_pid},
-              %FakeTool{name: "billing", notify: test_pid, sleep_ms: 600}
+              %FakeTool{name: "billing", notify: test_pid, sleep_ms: 1500}
             ]),
           behaviours: billing_approval_policy()
       }
 
       {srv, _store} =
-        start_approval_server("s-exp-intime", config: config, approval_timeout_ms: 200)
+        start_approval_server("s-exp-intime", config: config, approval_timeout_ms: 500)
 
       run_async(srv, "go")
       assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
       :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
 
-      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 3_000
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 5_000
       assert_received {:tool_ran, "billing"}
       refute_received {:event, :approval_expired, _}
     end
@@ -1463,6 +1463,55 @@ defmodule Normandy.Agents.Turn.ServerTest do
         for %{role: "tool", content: %ToolResult{tool_call_id: id}} <- entries, do: id
 
       assert Enum.sort(ids) == ["t1", "t2"]
+    end
+
+    test "a failed tool-result write mid-batch leaves memory matching the store; the next turn closes it" do
+      # Appends: 1 = user, 2 = assistant tool_use (c1, c2), 3 = tool result c1 (fails once).
+      store = InMemory.new()
+      {_, counter, _} = FlakyAppendStore.new(3)
+      sid = "s-tool-write-fail"
+
+      {:ok, llm_calls} = Agent.start_link(fn -> 0 end)
+
+      call_llm = fn _config, _s, _r ->
+        case Agent.get_and_update(llm_calls, &{&1, &1 + 1}) do
+          0 ->
+            %Resp{
+              content: "",
+              tool_calls: [
+                %ToolCall{id: "c1", name: "weather", input: %{}},
+                %ToolCall{id: "c2", name: "weather", input: %{}}
+              ]
+            }
+
+          _ ->
+            %Resp{content: "done", tool_calls: nil}
+        end
+      end
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: sid,
+          config: base_config_with_tools(),
+          store: {FlakyAppendStore, {store, counter, 3}},
+          registry: {Native, Native.new()},
+          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        )
+
+      capture_log(fn ->
+        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "go")
+        assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "again")
+      end)
+
+      {:ok, entries} = InMemory.history(store, sid)
+
+      results =
+        for %{role: "tool", content: %ToolResult{tool_call_id: id} = r} <- entries, do: {id, r}
+
+      assert results |> Enum.map(&elem(&1, 0)) |> Enum.sort() == ["c1", "c2"]
+
+      assert {_, %ToolResult{output: %{interrupted: true}}} =
+               Enum.find(results, &(elem(&1, 0) == "c1"))
     end
   end
 end
