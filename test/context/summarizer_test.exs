@@ -57,6 +57,14 @@ defmodule Normandy.Context.SummarizerTest do
       assert summary == "This is a test summary of the conversation"
     end
 
+    test "raises when neither opts nor the agent name a model", %{client: client} do
+      messages = [%{role: "user", content: "hello"}]
+
+      assert_raise ArgumentError, ~r/Summarizer needs a model/, fn ->
+        Summarizer.summarize_messages(client, %{}, messages)
+      end
+    end
+
     test "handles empty message list", %{client: client, agent: agent} do
       {:ok, summary} = Summarizer.summarize_messages(client, agent, [])
 
@@ -113,6 +121,7 @@ defmodule Normandy.Context.SummarizerTest do
 
       agent = %{
         memory: memory,
+        model: "test-model",
         config: %{client: client, model: "test-model"}
       }
 
@@ -138,6 +147,7 @@ defmodule Normandy.Context.SummarizerTest do
 
       agent = %{
         memory: memory,
+        model: "test-model",
         config: %{client: client, model: "test-model"}
       }
 
@@ -157,6 +167,7 @@ defmodule Normandy.Context.SummarizerTest do
 
       agent = %{
         memory: memory,
+        model: "test-model",
         config: %{client: client, model: "test-model"}
       }
 
@@ -179,6 +190,7 @@ defmodule Normandy.Context.SummarizerTest do
 
       agent = %{
         memory: memory,
+        model: "test-model",
         config: %{client: client, model: "test-model"}
       }
 
@@ -281,7 +293,7 @@ defmodule Normandy.Context.SummarizerTest do
       {:ok, summary} =
         Summarizer.summarize_messages(
           %MockSummarizerClient{},
-          %{config: %{model: "test"}},
+          %{model: "test", config: %{model: "test"}},
           messages
         )
 

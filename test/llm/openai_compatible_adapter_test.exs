@@ -68,4 +68,50 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       assert usage == %{"total_tokens" => 10}
     end
   end
+
+  describe "build_body/4 with unset sampling parameters" do
+    alias Normandy.LLM.OpenAICompatibleAdapter, as: A
+
+    test "nil temperature and max_tokens are left out (not sent as JSON null)" do
+      body =
+        A.build_body("m", nil, nil, [%Normandy.Components.Message{role: "user", content: "hi"}])
+
+      refute Map.has_key?(body, "temperature")
+      refute Map.has_key?(body, "max_tokens")
+    end
+
+    test "set values are sent" do
+      body =
+        A.build_body("m", 0.2, 64, [%Normandy.Components.Message{role: "user", content: "hi"}])
+
+      assert body["temperature"] == 0.2
+      assert body["max_tokens"] == 64
+    end
+
+    test "an agent built without temperature sends none on the wire (BaseAgent.run → converse)" do
+      test_pid = self()
+
+      adapter_fn = fn request ->
+        send(test_pid, {:openai_body, request.body |> IO.iodata_to_binary() |> Jason.decode!()})
+
+        {request,
+         Req.Response.json(%{
+           "choices" => [%{"message" => %{"content" => "ok"}}],
+           "usage" => %{"total_tokens" => 1}
+         })}
+      end
+
+      client = %A{
+        api_key: "k",
+        base_url: "https://example.test/v1",
+        options: %{req_options: [adapter: adapter_fn]}
+      }
+
+      agent = Normandy.Agents.BaseAgent.init(%{client: client, model: "gpt-4o"})
+      Normandy.Agents.BaseAgent.run(agent, "hi")
+
+      assert_received {:openai_body, body}
+      refute Map.has_key?(body, "temperature")
+    end
+  end
 end

@@ -20,7 +20,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
           prompt_specification: PromptSpecification.t(),
           initial_memory: map(),
           current_user_input: String.t() | nil,
-          temperature: float(),
+          temperature: float() | nil,
           max_tokens: pos_integer() | nil,
           tool_registry: Registry.t() | nil,
           max_tool_iterations: pos_integer(),
@@ -49,7 +49,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:prompt_specification, :struct)
     field(:initial_memory, :map)
     field(:current_user_input, :string, default: nil)
-    field(:temperature, :float, default: 0.9)
+    field(:temperature, :float, default: nil)
     field(:max_tokens, :integer, default: nil)
     field(:tool_registry, :struct, default: nil)
     field(:max_tool_iterations, :integer, default: 5)

@@ -449,4 +449,43 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert response.chat_message == "served"
     end
   end
+
+  describe "temperature on the wire" do
+    test "a nil temperature is left out of the Messages request" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.TemperatureStub, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:request_body, Jason.decode!(body)})
+
+        Req.Test.json(conn, %{
+          "id" => "msg_1",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-opus-5-5",
+          "content" => [%{"type" => "text", "text" => ~s({"chat_message": "hi"})}],
+          "stop_reason" => "end_turn",
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        })
+      end)
+
+      client = %Normandy.LLM.ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.TemperatureStub}, retry: false]}
+      }
+
+      Normandy.Agents.Model.converse(
+        client,
+        "claude-opus-5-5",
+        nil,
+        1024,
+        [%Normandy.Components.Message{role: "user", content: "hi"}],
+        %Normandy.Agents.BaseAgentOutputSchema{},
+        []
+      )
+
+      assert_received {:request_body, body}
+      refute Map.has_key?(body, "temperature")
+    end
+  end
 end

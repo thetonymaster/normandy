@@ -27,7 +27,7 @@ defmodule Normandy.Agents.BaseAgent do
   @type config_input :: %{
           required(:client) => struct(),
           required(:model) => String.t(),
-          required(:temperature) => float(),
+          optional(:temperature) => float() | nil,
           optional(:input_schema) => struct(),
           optional(:output_schema) => struct(),
           optional(:memory) => map(),
@@ -102,7 +102,7 @@ defmodule Normandy.Agents.BaseAgent do
       client: config.client,
       model: config.model,
       current_user_input: nil,
-      temperature: config.temperature,
+      temperature: Map.get(config, :temperature),
       max_tokens: Map.get(config, :max_tokens, nil),
       tool_registry: Map.get(config, :tool_registry, nil),
       max_tool_iterations:

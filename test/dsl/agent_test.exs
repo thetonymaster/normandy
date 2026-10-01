@@ -49,6 +49,13 @@ defmodule Normandy.DSL.AgentTest do
       assert config.system_prompt == "You are a test agent."
     end
 
+    test "an agent without temperature(...) sends none" do
+      assert StructuredAgent.config().temperature == nil
+
+      {:ok, agent} = StructuredAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      assert agent.temperature == nil
+    end
+
     test "config/0 with structured prompt" do
       config = StructuredAgent.config()
 

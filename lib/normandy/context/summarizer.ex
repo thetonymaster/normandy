@@ -55,8 +55,7 @@ defmodule Normandy.Context.Summarizer do
 
     # Build summarization request
     model = get_model(agent, opts)
-    # Lower temperature for more focused summaries
-    temperature = 0.3
+    temperature = nil
 
     # Create a temporary message list for summarization
     summarization_messages = [
@@ -183,7 +182,11 @@ defmodule Normandy.Context.Summarizer do
   defp extract_content(_), do: ""
 
   defp get_model(agent, opts) do
-    Keyword.get(opts, :model) || Map.get(agent, :model, "claude-3-5-sonnet-20241022")
+    Keyword.get(opts, :model) || Map.get(agent, :model) ||
+      raise ArgumentError,
+            "Summarizer needs a model: pass opts[:model] or an agent with :model " <>
+              "(there is no default; a hard-coded model goes stale); got agent keys " <>
+              "#{inspect(Map.keys(agent))}"
   end
 
   defp call_llm_for_summary(client, model, temperature, max_tokens, messages) do

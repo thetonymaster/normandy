@@ -69,13 +69,13 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   @doc false
   def build_body(model, temperature, max_tokens, messages) do
-    %{
-      "model" => model,
-      "messages" => convert_messages(messages),
-      "temperature" => temperature,
-      "max_tokens" => max_tokens
-    }
+    %{"model" => model, "messages" => convert_messages(messages)}
+    |> put_unless_nil("temperature", temperature)
+    |> put_unless_nil("max_tokens", max_tokens)
   end
+
+  defp put_unless_nil(map, _key, nil), do: map
+  defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   defimpl Normandy.Agents.Model do
     alias Normandy.LLM.OpenAICompatibleAdapter, as: A

@@ -15,7 +15,6 @@ defmodule Normandy.DSL.Agent do
           description "Conducts research and analysis"
 
           model "claude-3-5-sonnet-20241022"
-          temperature 0.7
           max_tokens 4096
 
           system_prompt \"\"\"
@@ -40,7 +39,6 @@ defmodule Normandy.DSL.Agent do
       config = %{
         client: my_client,
         model: "claude-3-5-sonnet-20241022",
-        temperature: 0.7,
         max_tokens: 4096
       }
 
@@ -77,7 +75,7 @@ defmodule Normandy.DSL.Agent do
   - `name` - Agent name (optional)
   - `description` - Agent description (optional)
   - `model` - LLM model to use (required)
-  - `temperature` - Sampling temperature 0.0-1.0 (default: 0.7)
+  - `temperature` - Sampling temperature, or omit it to send none (default: none; Opus 4.7+ reject sampling parameters)
   - `max_tokens` - Maximum tokens in response (default: 4096)
   - `system_prompt` - System prompt text (optional)
   - `background` - Background context for prompt (optional)
@@ -296,7 +294,7 @@ defmodule Normandy.DSL.Agent do
       # Store configuration at compile time - MUST come first before any function uses it
       @agent_compile_config %{
         model: Module.get_attribute(__MODULE__, :agent_model),
-        temperature: Module.get_attribute(__MODULE__, :agent_temperature, 0.7),
+        temperature: Module.get_attribute(__MODULE__, :agent_temperature),
         max_tokens: Module.get_attribute(__MODULE__, :agent_max_tokens, 4096),
         max_tool_concurrency:
           Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(

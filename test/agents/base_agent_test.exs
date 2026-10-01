@@ -180,4 +180,20 @@ defmodule NormandyTest.BaseAgentsTest do
       end
     end
   end
+
+  describe "temperature (Opus 4.7+ reject sampling parameters)" do
+    test "init/1 without :temperature leaves it nil" do
+      agent =
+        Normandy.Agents.BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "claude-opus-5-5"
+        })
+
+      assert agent.temperature == nil
+    end
+
+    test "BaseAgentConfig defaults temperature to nil" do
+      assert %Normandy.Agents.BaseAgentConfig{}.temperature == nil
+    end
+  end
 end
