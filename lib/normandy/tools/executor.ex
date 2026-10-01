@@ -79,7 +79,10 @@ defmodule Normandy.Tools.Executor do
   @doc """
   Executes multiple tools in parallel.
 
-  Returns a list of results in the same order as the input tools.
+  Returns a list of results in the same order as the input tools. Each spec is
+  `{label, tool}`: the given tool instance is run (the label is only for the
+  caller), so two instances of the same tool can run with different params. The
+  registry argument is not consulted.
 
   ## Examples
 
@@ -97,14 +100,16 @@ defmodule Normandy.Tools.Executor do
   @spec execute_parallel(Registry.t(), [{String.t(), struct()}], execution_options()) :: [
           execution_result()
         ]
-  def execute_parallel(registry, tool_specs, opts \\ []) do
+  def execute_parallel(_registry, tool_specs, opts \\ []) do
     parent_ctx = OtelCtx.capture()
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
 
     tool_specs
-    |> Enum.map(fn {tool_name, _params} ->
+    |> Enum.map(fn {_label, tool} ->
       Task.async(fn ->
         OtelCtx.restore(parent_ctx)
-        execute(registry, tool_name, opts)
+        execute_with_retries(tool, max_retries, timeout)
       end)
     end)
     |> Enum.map(&Task.await(&1, :infinity))

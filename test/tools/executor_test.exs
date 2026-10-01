@@ -80,24 +80,15 @@ defmodule NormandyTest.Tools.ExecutorTest do
   end
 
   describe "Executor.execute_parallel/3" do
-    test "executes multiple tools in parallel" do
+    test "runs each given tool instance, in order" do
       calc1 = %Calculator{operation: "add", a: 1, b: 2}
       calc2 = %Calculator{operation: "multiply", a: 3, b: 4}
 
-      registry = Registry.new([calc1, calc2])
+      # The registry holds a third, different instance; it must not be the one run.
+      registry = Registry.new([%Calculator{operation: "subtract", a: 9, b: 9}])
 
-      results =
-        Executor.execute_parallel(registry, [
-          {"calculator", calc1},
-          {"calculator", calc2}
-        ])
-
-      assert length(results) == 2
-      # Both should succeed (though they're the same tool name, different instances)
-      assert Enum.all?(results, fn
-               {:ok, _} -> true
-               _ -> false
-             end)
+      assert Executor.execute_parallel(registry, [{"calc1", calc1}, {"calc2", calc2}]) ==
+               [{:ok, 3.0}, {:ok, 12.0}]
     end
   end
 
@@ -121,8 +112,8 @@ defmodule NormandyTest.Tools.ExecutorTest do
       bad_calc = %Calculator{operation: "divide", a: 10, b: 0}
 
       registry = Registry.new([good_calc])
-      # Register bad_calc second (will be looked up by name "calculator")
-      registry = Registry.register(registry, bad_calc)
+      # Replace it with bad_calc (looked up by name "calculator")
+      registry = Registry.register(registry, bad_calc, replace: true)
 
       # The bad calculator will fail, stopping execution
       assert {:error, "Cannot divide by zero"} =
@@ -205,8 +196,8 @@ defmodule NormandyTest.Tools.ExecutorTest do
 
       results =
         Executor.execute_parallel(registry, [
-          {"ctx_capturing_tool", %{}},
-          {"ctx_capturing_tool", %{}}
+          {"ctx_capturing_tool", tool},
+          {"ctx_capturing_tool", tool}
         ])
 
       assert results == [{:ok, :captured}, {:ok, :captured}]

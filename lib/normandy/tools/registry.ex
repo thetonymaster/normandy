@@ -47,7 +47,9 @@ defmodule Normandy.Tools.Registry do
   @doc """
   Registers a tool in the registry.
 
-  The tool is indexed by its `tool_name`.
+  The tool is indexed by its `tool_name`. Registering a second tool with the same
+  name raises `ArgumentError` (the model could only ever reach one of them); pass
+  `replace: true` to replace the existing one.
 
   ## Examples
 
@@ -57,9 +59,16 @@ defmodule Normandy.Tools.Registry do
       %Normandy.Tools.Registry{tools: %{"calculator" => %CalculatorTool{}}}
 
   """
-  @spec register(t(), struct()) :: t()
-  def register(%__MODULE__{tools: tools} = registry, tool) do
+  @spec register(t(), struct(), keyword()) :: t()
+  def register(%__MODULE__{tools: tools} = registry, tool, opts \\ []) do
     tool_name = BaseTool.tool_name(tool)
+
+    if Map.has_key?(tools, tool_name) and not Keyword.get(opts, :replace, false) do
+      raise ArgumentError,
+            "Normandy.Tools.Registry.register/3: a tool named #{inspect(tool_name)} is already " <>
+              "registered; pass replace: true to replace it"
+    end
+
     %{registry | tools: Map.put(tools, tool_name, tool)}
   end
 

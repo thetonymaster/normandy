@@ -3,7 +3,6 @@ defmodule Normandy.MCP.RegistryTest do
 
   alias Normandy.MCP.Registry, as: MCPRegistry
   alias Normandy.MCP.ToolWrapper
-  alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
   defmodule MockAdapter do
@@ -119,18 +118,23 @@ defmodule Normandy.MCP.RegistryTest do
   end
 
   describe "name collision behavior" do
-    test "later tool with same name overwrites earlier one" do
+    test "two tools with the same name raise instead of one silently winning" do
       tool_a = %Claudio.MCP.Client.Tool{name: "search", description: "A", input_schema: %{}}
       tool_b = %Claudio.MCP.Client.Tool{name: "search", description: "B", input_schema: %{}}
 
       wrapper_a = ToolWrapper.new(MockAdapter, :client, tool_a)
       wrapper_b = ToolWrapper.new(MockAdapter, :client, tool_b)
 
-      registry = Registry.new([wrapper_a, wrapper_b])
-      assert Registry.count(registry) == 1
+      assert_raise ArgumentError, ~r/"search" is already registered/, fn ->
+        Registry.new([wrapper_a, wrapper_b])
+      end
+    end
 
-      {:ok, tool} = Registry.get(registry, "search")
-      assert BaseTool.tool_description(tool) == "B"
+    test "discovering a server whose tool names are taken returns an error" do
+      {:ok, registry} = MCPRegistry.discover_and_register(Registry.new(), MockAdapter, :client)
+
+      assert {:error, {:tool_name_taken, "search"}} =
+               MCPRegistry.discover_and_register(registry, MockAdapter, :client)
     end
 
     test "prefix avoids name collisions" do

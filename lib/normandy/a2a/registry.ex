@@ -19,6 +19,7 @@ defmodule Normandy.A2A.Registry do
 
   alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
+  alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
   @doc """
@@ -44,12 +45,7 @@ defmodule Normandy.A2A.Registry do
         endpoint = derive_endpoint(base_url, agent_card)
         tools = from_agent_card(agent_card, endpoint, opts)
 
-        updated_registry =
-          Enum.reduce(tools, registry, fn tool, reg ->
-            Registry.register(reg, tool)
-          end)
-
-        {:ok, updated_registry}
+        register_all(tools, registry)
 
       {:error, _reason} = error ->
         error
@@ -85,5 +81,17 @@ defmodule Normandy.A2A.Registry do
         # Default: append /a2a to base URL
         String.trim_trailing(base_url, "/") <> "/a2a"
     end
+  end
+
+  # A discovered name that is already taken would otherwise raise in
+  # Registry.register/3; report it as this function's error instead.
+  defp register_all(tools, registry) do
+    Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
+      name = BaseTool.tool_name(tool)
+
+      if Registry.has_tool?(reg, name),
+        do: {:halt, {:error, {:tool_name_taken, name}}},
+        else: {:cont, {:ok, Registry.register(reg, tool)}}
+    end)
   end
 end

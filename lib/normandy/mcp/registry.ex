@@ -19,6 +19,7 @@ defmodule Normandy.MCP.Registry do
   """
 
   alias Normandy.MCP.ToolWrapper
+  alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
   @doc """
@@ -36,12 +37,7 @@ defmodule Normandy.MCP.Registry do
       {:ok, tools} ->
         wrappers = wrap_tools(adapter, client, tools, opts)
 
-        updated_registry =
-          Enum.reduce(wrappers, registry, fn wrapper, reg ->
-            Registry.register(reg, wrapper)
-          end)
-
-        {:ok, updated_registry}
+        register_all(wrappers, registry)
 
       {:error, _reason} = error ->
         error
@@ -61,6 +57,18 @@ defmodule Normandy.MCP.Registry do
   def wrap_tools(adapter, client, tools, opts \\ []) when is_list(tools) do
     Enum.map(tools, fn tool ->
       ToolWrapper.new(adapter, client, tool, opts)
+    end)
+  end
+
+  # A discovered name that is already taken would otherwise raise in
+  # Registry.register/3; report it as this function's error instead.
+  defp register_all(tools, registry) do
+    Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
+      name = BaseTool.tool_name(tool)
+
+      if Registry.has_tool?(reg, name),
+        do: {:halt, {:error, {:tool_name_taken, name}}},
+        else: {:cont, {:ok, Registry.register(reg, tool)}}
     end)
   end
 end

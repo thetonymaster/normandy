@@ -38,14 +38,22 @@ defmodule NormandyTest.Tools.RegistryTest do
       assert {:ok, ^tool} = Registry.get(registry, "calculator")
     end
 
-    test "replaces existing tool with same name" do
+    test "a second tool with the same name raises" do
+      registry = Registry.new([%Calculator{operation: "add", a: 1, b: 2}])
+
+      assert_raise ArgumentError, ~r/"calculator" is already registered/, fn ->
+        Registry.register(registry, %Calculator{operation: "multiply", a: 3, b: 4})
+      end
+    end
+
+    test "replace: true replaces the tool with the same name" do
       tool1 = %Calculator{operation: "add", a: 1, b: 2}
       tool2 = %Calculator{operation: "multiply", a: 3, b: 4}
 
       registry =
         Registry.new()
         |> Registry.register(tool1)
-        |> Registry.register(tool2)
+        |> Registry.register(tool2, replace: true)
 
       assert Registry.count(registry) == 1
       assert {:ok, ^tool2} = Registry.get(registry, "calculator")
