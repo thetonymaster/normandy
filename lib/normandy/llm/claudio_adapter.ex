@@ -103,6 +103,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   use Normandy.Schema
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.SchemaBinder
@@ -132,6 +133,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     Converts Normandy requests to Claudio format and vice versa.
     """
 
+    alias Normandy.Components.ContentBlock.Describe
     alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
     alias Normandy.Components.ContentBlock.Image, as: ImageBlock
     alias Normandy.Components.ContentBlock.Text, as: TextBlock
@@ -780,7 +782,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp block_to_claudio(other) do
       raise ArgumentError,
-            "Normandy.LLM.ClaudioAdapter: unsupported content block #{inspect(other)}. " <>
+            "Normandy.LLM.ClaudioAdapter: unsupported content block, got " <>
+              "#{Describe.type_of(other)}. " <>
               "Expected a Normandy.Components.ContentBlock.* struct or a " <>
               "pre-shaped Anthropic block map."
     end
@@ -1144,7 +1147,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         raise ArgumentError,
               "ClaudioAdapter.to_claudio_client/1: expected options[:req_options] to be a " <>
                 "keyword list of Req options (for example [plug: {Req.Test, MyStub}]), " <>
-                "got: #{inspect(other)}"
+                "got: #{Describe.type_of(other)}"
     end
   end
 

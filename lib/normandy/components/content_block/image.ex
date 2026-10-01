@@ -22,6 +22,7 @@ defmodule Normandy.Components.ContentBlock.Image do
   use Normandy.Schema
 
   alias Normandy.Components.ContentBlock.CacheControl
+  alias Normandy.Components.ContentBlock.Describe
 
   @type source :: :base64 | :url
 
@@ -105,10 +106,11 @@ defmodule Normandy.Components.ContentBlock.Image do
     |> CacheControl.maybe_attach(cache_control)
   end
 
-  def to_claudio(%__MODULE__{source: :base64} = block) do
+  def to_claudio(%__MODULE__{source: :base64, data: data, media_type: media_type}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Image: invalid base64 image — " <>
-            "data and media_type must be non-empty strings. Got: #{inspect(block)}"
+            "data and media_type must be non-empty strings. Got data: #{Describe.type_of(data)}, " <>
+            "media_type: #{Describe.type_of(media_type)}"
   end
 
   def to_claudio(%__MODULE__{source: :url, url: url, cache_control: cache_control})
@@ -123,10 +125,10 @@ defmodule Normandy.Components.ContentBlock.Image do
     |> CacheControl.maybe_attach(cache_control)
   end
 
-  def to_claudio(%__MODULE__{source: :url} = block) do
+  def to_claudio(%__MODULE__{source: :url, url: url}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Image: invalid url image — " <>
-            "url must be a non-empty string. Got: #{inspect(block)}"
+            "url must be a non-empty string. Got url: #{Describe.type_of(url)}"
   end
 
   def to_claudio(%__MODULE__{source: source}) do
