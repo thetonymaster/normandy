@@ -214,7 +214,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       measurements =
         for _i <- 1..3 do
           start = System.monotonic_time(:millisecond)
-          {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+          {_agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
           duration = System.monotonic_time(:millisecond) - start
           duration
         end
@@ -230,7 +230,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       measurements =
         for _i <- 1..3 do
           start = System.monotonic_time(:millisecond)
-          {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+          {_agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
           duration = System.monotonic_time(:millisecond) - start
           duration
         end

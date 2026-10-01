@@ -3,7 +3,6 @@ defmodule Normandy.Coordination.AgentPoolTest do
 
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentPool
 
   # Helper to create agent config
@@ -568,7 +567,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, pool} = AgentPool.start_link(agent_config: agent_config, size: 3)
 
       # Checkout an agent to get its PID
-      {:ok, agent_pid} = AgentPool.checkout(pool)
+      {:ok, _agent_pid} = AgentPool.checkout(pool)
 
       # Stop pool (GenServer.stop/2 returns once it has terminated)
       AgentPool.stop(pool)

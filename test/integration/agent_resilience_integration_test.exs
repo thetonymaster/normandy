@@ -17,7 +17,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
   end
 
   describe "Retry logic with real LLM" do
-    test "agent handles transient failures with retry", %{agent: agent} do
+    test "agent handles transient failures with retry" do
       # Configure with retry options
       agent_with_retry =
         IntegrationHelper.create_real_agent(
@@ -38,7 +38,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       assert is_binary(response.chat_message)
     end
 
-    test "retry configuration affects behavior", %{agent: agent} do
+    test "retry configuration affects behavior" do
       # Test with no retries
       agent_no_retry =
         IntegrationHelper.create_real_agent(
@@ -54,7 +54,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
   end
 
   describe "Circuit breaker integration" do
-    test "circuit breaker allows normal operation when closed", %{agent: agent} do
+    test "circuit breaker allows normal operation when closed" do
       agent_with_cb =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
@@ -72,7 +72,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       assert response.chat_message != nil
     end
 
-    test "multiple successful calls keep circuit closed", %{agent: agent} do
+    test "multiple successful calls keep circuit closed" do
       agent_with_cb =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
@@ -127,7 +127,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         BaseAgent.run(agent, %{chat_message: "My name is Alice"})
 
       # Even with potential failures, memory should be intact
-      {agent2, response2} =
+      {agent2, _response2} =
         BaseAgent.run(agent, %{chat_message: "What's my name?"})
 
       # Should have conversation history
@@ -138,7 +138,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
   end
 
   describe "Timeout handling" do
-    test "agent respects timeout configuration", %{agent: agent} do
+    test "agent respects timeout configuration" do
       agent_with_timeout =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,

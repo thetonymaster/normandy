@@ -1,7 +1,6 @@
 defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
   alias NormandyTest.Support.IntegrationHelper
 

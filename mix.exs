@@ -209,7 +209,7 @@ defmodule Normandy.MixProject do
         "format",
         "credo --strict",
         "dialyzer",
-        "test"
+        "test --warnings-as-errors"
       ],
       "test.postgres": &run_postgres_tests/1,
       "test.redis": &run_redis_tests/1

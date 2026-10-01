@@ -1,14 +1,7 @@
 defmodule Normandy.Integration.MultiAgentWorkflowsTest do
   use ExUnit.Case, async: false
 
-  alias Normandy.Agents.BaseAgent
-
-  alias Normandy.Coordination.{
-    AgentProcess,
-    AgentSupervisor,
-    ParallelOrchestrator,
-    SequentialOrchestrator
-  }
+  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
 
   alias NormandyTest.Support.IntegrationHelper
 

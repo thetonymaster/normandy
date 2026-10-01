@@ -3,7 +3,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.AgentMemory
-  alias Normandy.Tools.Examples.{Calculator, StringManipulator}
+  alias Normandy.Tools.Examples.Calculator
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration

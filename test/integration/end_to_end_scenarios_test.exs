@@ -2,8 +2,6 @@ defmodule Normandy.Integration.EndToEndScenariosTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Batch.Processor
-  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration
@@ -59,7 +57,7 @@ defmodule Normandy.Integration.EndToEndScenariosTest do
 
       topic = %{chat_message: "Write about the benefits of exercise"}
 
-      {generator, draft} = BaseAgent.run(generator, topic)
+      {_generator, draft} = BaseAgent.run(generator, topic)
       assert is_binary(draft.chat_message)
 
       {_refiner, final_content} = BaseAgent.run(refiner, draft)

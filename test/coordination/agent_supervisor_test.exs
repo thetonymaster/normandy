@@ -112,7 +112,7 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       refute Process.alive?(agent_pid)
     end
 
-    test "returns error for non-existent agent", %{agent: agent} do
+    test "returns error for non-existent agent" do
       {:ok, sup} = AgentSupervisor.start_link()
       fake_pid = spawn(fn -> :ok end)
 

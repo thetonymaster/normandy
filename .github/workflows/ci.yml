@@ -67,8 +67,10 @@ jobs:
       - name: Compile project (warnings as errors)
         run: mix compile --warnings-as-errors
 
+      # Test files compile here, so their warnings (unused variables, clauses that
+      # cannot match) fail the build like lib's do.
       - name: Run unit tests
-        run: mix test
+        run: mix test --warnings-as-errors
 
       - name: Generate coverage report
         run: mix test --cover
