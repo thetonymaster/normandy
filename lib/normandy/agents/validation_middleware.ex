@@ -75,6 +75,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   defp validate_input_map(input_schema, input_map) do
     schema_module = input_schema.__struct__
+    input_map = atomize_field_keys(input_schema, input_map)
 
     # Skip validation for base schemas (backward compatibility)
     cond do
@@ -136,6 +137,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   defp validate_output_map(output_schema, output_map) do
     schema_module = output_schema.__struct__
+    output_map = atomize_field_keys(output_schema, output_map)
 
     # Skip validation for base schemas (backward compatibility)
     cond do
@@ -193,6 +195,22 @@ defmodule Normandy.Agents.ValidationMiddleware do
   @spec validation_enabled?(BaseAgentConfig.t()) :: boolean()
   def validation_enabled?(%BaseAgentConfig{input_schema: input, output_schema: output}),
     do: validating_schema?(input) or validating_schema?(output)
+
+  # JSON and form params arrive string-keyed, and struct/2 and the validator look
+  # up atom fields. A string key that names a field becomes that field's atom;
+  # other keys are left as they are (never String.to_atom/1 on caller input).
+  defp atomize_field_keys(schema, map) do
+    fields =
+      schema
+      |> Map.keys()
+      |> Map.new(&{Atom.to_string(&1), &1})
+      |> Map.drop(["__struct__", "__meta__"])
+
+    Map.new(map, fn
+      {key, value} when is_binary(key) -> {Map.get(fields, key, key), value}
+      pair -> pair
+    end)
+  end
 
   defp validating_schema?(nil), do: false
 

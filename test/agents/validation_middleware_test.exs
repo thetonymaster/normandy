@@ -35,6 +35,20 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
                ValidationMiddleware.validate_input(config(input_schema: %Query{}), %{query: "hi"})
     end
 
+    test "string keys that name a field are used (JSON or form params)" do
+      assert {:ok, %Query{query: "hi"}} =
+               ValidationMiddleware.validate_input(config(input_schema: %Query{}), %{
+                 "query" => "hi",
+                 "unknown" => 1
+               })
+
+      assert {:ok, %BaseAgentInputSchema{chat_message: "hi"}} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 %{"chat_message" => "hi"}
+               )
+    end
+
     test "a missing required field is an input validation error" do
       assert {:error, [error]} =
                ValidationMiddleware.validate_input(config(input_schema: %Query{}), %{})
