@@ -56,7 +56,16 @@ defexception [:type, :status, :retryable?, :message, :reason]
 | `reason` | `term()` | the original provider error (e.g. `%Claudio.APIError{}`, `%Req.TransportError{}`) for debugging |
 
 Types: `:rate_limit`, `:overloaded`, `:server`, `:transport`, `:authentication`,
-`:permission`, `:not_found`, `:invalid_request`, `:stream`, `:circuit_open`, `:unknown`.
+`:permission`, `:not_found`, `:invalid_request`, `:invalid_output`, `:stream`,
+`:circuit_open`, `:unknown`.
+
+Amendment (found while planning): under `on_parse_failure: :error`,
+`ClaudioAdapter.apply_parse_failure/4` already returns `{:error, reason}` from `converse/7`
+for model output that failed to parse or a structured reply that stopped early (refusal,
+max_tokens). It becomes `{:error, %LLMError{type: :invalid_output, retryable?: false,
+reason: reason}}` (the deserializer already retried; a refusal is not fixed by resending).
+Today that `{:error, _}` is nested inside the `{response, usage, meta}` triple; the adapter
+returns it at the top level instead.
 
 Rule (project-wide): neither `message` nor any log line built from an `LLMError` inspects a
 client struct, `client.options`, or `req_options` (they may hold an API key or auth header).
