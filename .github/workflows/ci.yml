@@ -223,10 +223,101 @@ jobs:
       - name: Run unit tests
         run: mix test
 
+  postgres:
+    name: Postgres session store tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Excluded from `mix test`; config/test.exs defaults (localhost, postgres/postgres) match this service.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '28'
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-postgres-1.19-28-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-postgres-1.19-28-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run postgres session store tests
+        run: mix test.postgres
+
+  redis:
+    name: Redis session store and registry tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Excluded from `mix test`; config/test.exs defaults to redis://localhost:6379, this service.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '28'
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-redis-1.19-28-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-redis-1.19-28-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run redis session store and registry tests
+        run: mix test.redis
+
   all-checks-complete:
     name: All Checks Passed
     if: always()
-    needs: [test, integration-tests, quality, unlocked-deps]
+    needs: [test, integration-tests, quality, unlocked-deps, postgres, redis]
     runs-on: ubuntu-latest
 
     steps:
@@ -234,7 +325,9 @@ jobs:
         run: |
           if [ "${{ needs.test.result }}" != "success" ] || \
              [ "${{ needs.quality.result }}" != "success" ] || \
-             [ "${{ needs.unlocked-deps.result }}" != "success" ]; then
+             [ "${{ needs.unlocked-deps.result }}" != "success" ] || \
+             [ "${{ needs.postgres.result }}" != "success" ] || \
+             [ "${{ needs.redis.result }}" != "success" ]; then
             echo "❌ Some required checks failed"
             exit 1
           fi
