@@ -6,6 +6,47 @@ defmodule Normandy.Agents.Turn.Server do
   re-encoding of the seven `Turn.State` statuses (the core stays the source of
   truth). Blocking effects (`:call_llm`, `:dispatch_tools`, `:execute_approved`)
   run in a monitored Task; non-blocking effects run synchronously in the handler.
+
+  ## Options (besides `:session_id`, `:store`, `:registry`, `:config` / `:template_provider`)
+
+    * `:handlers` — a `Turn.Driver.Handlers` set (default
+      `BaseAgent.non_streaming_handlers/0`). A `nil` `:emit` is skipped.
+    * `:subscriber` — `fn event_name, meta -> any end`, called in the server process
+      for every event. A crash in it is logged, reported as
+      `[:normandy, :turn, :subscriber, :exception]` telemetry, and ignored.
+    * `:approval_timeout_ms` — how long a parked turn waits for `approve/2`
+      (default 300_000).
+    * `:on_approval_timeout` — `:continue` (default) or `:fail`. On expiry every
+      parked call gets an `expired: true` tool result. `:continue` hands it to the
+      model; `:fail` ends the turn with `{:error, {:approval_timeout, ids}}`.
+    * `:idle_timeout_ms` — idle time before passivation (default 60_000).
+
+  ## Events (`:subscriber`)
+
+    * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
+      LLM call; `final: true` marks the forced-final call after the budget is spent.
+    * `:steering` — `%{iterations_left: m}` after a tool batch, once its state is saved.
+    * `:awaiting_approval` — `%{parked: n, resumed: boolean}` when a batch parks, and
+      again (`resumed: true`) when a restarted server resumes a parked turn.
+    * `:approval_expired` — `%{expired: n, mode: :continue | :fail}`.
+
+  ## Errors from `run/2`
+
+    * `{:rejected, exception}` — the input failed its schema
+      (`Normandy.Schema.ValidationError`) or an input guardrail
+      (`Normandy.Guardrails.ViolationError`). Nothing was persisted.
+    * `{:handler_crashed, name, exception_or_term}` — a synchronous handler
+      (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw.
+    * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
+    * `{:persist_failed, reason}` — the session store rejected a write.
+    * Core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
+
+  ## Interrupted tool calls
+
+  A turn that fails or is killed after the assistant's `tool_use` was appended leaves
+  it unanswered. The next turn appends an `interrupted: true` tool result for each
+  missing call, in memory and store, before the user message, and logs a warning.
+  If a store write fails part-way, memory keeps only the results the store accepted, so the next turn completes the repair without duplicating any result.
   """
   @behaviour :gen_statem
 

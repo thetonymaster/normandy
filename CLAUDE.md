@@ -64,6 +64,10 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Requires: `converse/7` and `completitions/6` implementations; `converse/7` may return a bare response, `{response, usage}`, `{response, usage, meta}`, or `{:error, %Normandy.LLMError{}}`
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
+- **`Normandy.Agents.Turn.Server`** - Durable `:gen_statem` turn shell
+  - `run/2` replies `{:error, {:rejected, e}}` for rejected input and `{:error, {:handler_crashed, name, e}}` for a crashing handler instead of crashing
+  - `on_approval_timeout: :continue | :fail` (default `:continue`) decides what an approval expiry does; expired calls get `expired: true` results
+
 ### Memory & Messages
 
 - **`Normandy.Components.AgentMemory`** - Conversation history management

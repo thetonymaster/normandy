@@ -152,6 +152,34 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
   fails. They used to return `{config, %{error: reason}}`. A stream that ends without
   `message_stop` is now a failure, not a complete message.
 
+## 12. `Turn.Server` failure replies and approval expiry
+
+`Turn.Server.run/2` (and `Turn.Session.run/2`, `AgentProcess.run/2` with
+`turn_engine: :server`) now replies where it used to crash the session:
+
+| Reply | Before |
+|---|---|
+| `{:error, {:rejected, exception}}` — input failed its schema or an input guardrail | the server crashed; the caller got an exit |
+| `{:error, {:handler_crashed, name, exception_or_term}}` — a handler raised, exited or threw | the server crashed |
+| `{:error, {:approval_timeout, ids}}` — only with `on_approval_timeout: :fail` | n/a |
+
+A raising `:subscriber` no longer crashes the session: it is logged and reported as
+`[:normandy, :turn, :subscriber, :exception]`, and the turn continues.
+
+Approval expiry: a parked call that nobody approved now gets
+`%{error: "approval timed out: no approver responded within <ms>ms", denied: true,
+expired: true}` instead of `"tool call rejected by approver"`, and an
+`:approval_expired` event plus `[:normandy, :turn, :approval, :expired]` telemetry
+are emitted. Pass `on_approval_timeout: :fail` to end the turn instead of continuing.
+
+Event meta additions: `:iteration` gains `final` (and the forced-final call is now
+announced), `:awaiting_approval` gains `resumed`. `:steering` is emitted after the
+turn state is persisted.
+
+A turn that failed after the assistant's `tool_use` no longer leaves the session
+unusable: the next turn appends an `interrupted: true` tool result for each
+unanswered call.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
