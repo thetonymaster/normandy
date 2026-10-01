@@ -17,7 +17,7 @@ defmodule Normandy.LLM.Json.SchemaBinder do
   # Cast a map of params against the schema and return either a populated
   # struct or a validation error in the same shape as parse_and_populate/4.
   defp cast_map(params, schema, permitted_fields, required_fields, content) do
-    normalized_params = normalize_field_names(params)
+    normalized_params = normalize_field_names(params, permitted_fields)
 
     changeset =
       schema
@@ -95,7 +95,7 @@ defmodule Normandy.LLM.Json.SchemaBinder do
     # Match against normalized keys so aliased inputs (response/message/text ->
     # chat_message) are recognized as targeting the schema — the cast in
     # cast_map/5 normalizes too, so the targeting check must agree with it.
-    inner_keys = inner_map |> normalize_field_names() |> Map.keys()
+    inner_keys = inner_map |> normalize_field_names(permitted_fields) |> Map.keys()
 
     Enum.any?(permitted_fields, fn field ->
       Enum.any?(inner_keys, fn key ->
@@ -104,18 +104,24 @@ defmodule Normandy.LLM.Json.SchemaBinder do
     end)
   end
 
-  # Normalize field names (response/message/text -> chat_message)
-  defp normalize_field_names(parsed_map) when is_map(parsed_map) do
-    Enum.reduce(parsed_map, %{}, fn {key, value}, acc ->
-      normalized_key =
-        case key do
-          "response" -> "chat_message"
-          "message" -> "chat_message"
-          "text" -> "chat_message"
-          other -> other
-        end
+  @chat_message_aliases ["response", "message", "text"]
 
-      Map.put(acc, normalized_key, value)
+  # Models often answer `{"response": ...}` (or "message"/"text") when the schema
+  # wants `chat_message`. Rename only when the schema has `chat_message` and not
+  # the alias itself, and never over a `chat_message` the payload already has.
+  defp normalize_field_names(parsed_map, permitted_fields) when is_map(parsed_map) do
+    permitted = Enum.map(permitted_fields, &to_string/1)
+
+    aliases =
+      if "chat_message" in permitted,
+        do: @chat_message_aliases -- permitted,
+        else: []
+
+    Enum.reduce(aliases, parsed_map, fn alias_key, acc ->
+      case Map.fetch(acc, alias_key) do
+        {:ok, value} -> acc |> Map.delete(alias_key) |> Map.put_new("chat_message", value)
+        :error -> acc
+      end
     end)
   end
 
