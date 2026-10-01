@@ -204,7 +204,9 @@ children =
 > Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
 
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
-Redis with AOF enabled + `config :normandy, :redis_wait, {numreplicas, timeout_ms}` to
-block boundary writes on replica acks (fail-closed). Ephemeral: `Mnesia(ram_copies)`,
+Redis with AOF enabled + a replica wait to block every write (entries, turn state,
+template) on replica acks (fail-closed): per store with the handle
+`{conn, namespace, {numreplicas, timeout_ms}}` (or `SessionStore.Redis.new(wait: ...)`),
+or for all Redis stores with `config :normandy, :redis_wait, {numreplicas, timeout_ms}`. Ephemeral: `Mnesia(ram_copies)`,
 `ETS`, `InMemory`. Redis can lose recent writes on a hard crash — durable, not bulletproof;
 do not use it for audit-grade history.

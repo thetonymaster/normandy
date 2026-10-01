@@ -9,13 +9,17 @@ if Code.ensure_loaded?(Redix) do
     (turn state, config template, resume policy) lives in a hash; eager session_ids live
     in a SET for `list_resumable/1`.
 
-    The `handle` is `{conn, namespace}` (the host owns the Redix connection, Oban-style).
+    The `handle` is `{conn, namespace}` or `{conn, namespace, wait}` (the host owns the
+    Redix connection, Oban-style).
     All of a session's keys share a `{sid}` hash-tag so multi-key reads/forks stay in one
     Redis Cluster slot. Opaque values use `term_to_binary` / `binary_to_term(_, [:safe])`.
 
     Durability is the operator's Redis config (AOF recommended). For the fail-closed
-    invariant, pass `wait: {numreplicas, timeout_ms}` so boundary writes block on
-    replica acknowledgement and fail the turn if unmet.
+    invariant, set `wait: {numreplicas, timeout_ms}` (`new/1` option, or the third
+    handle element): every write (entry appends, turn state, config template) then
+    blocks on replica acknowledgement and returns `{:error, {:wait_unmet, acked, n}}`
+    if unmet. Without it, `config :normandy, :redis_wait, {n, timeout_ms}` applies;
+    the default `{0, 0}` does not wait.
     """
     @behaviour Normandy.Behaviours.SessionStore
 
@@ -23,7 +27,8 @@ if Code.ensure_loaded?(Redix) do
     alias Normandy.Components.AgentMemory.Entry
 
     @doc "Test/default handle: a Redix conn to the configured URL + a unique namespace."
-    @spec new(keyword()) :: {pid(), binary()}
+    @spec new(keyword()) ::
+            {pid(), binary()} | {pid(), binary(), {non_neg_integer(), non_neg_integer()}}
     def new(opts \\ []) do
       url =
         Keyword.get(
@@ -34,21 +39,37 @@ if Code.ensure_loaded?(Redix) do
 
       {:ok, conn} = Redix.start_link(url)
       ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")
-      {conn, ns}
-    end
 
-    @impl true
-    def append_entry({conn, ns}, session_id, %Entry{} = entry) do
-      fields = encode_entry_fields(entry)
+      case Keyword.fetch(opts, :wait) do
+        {:ok, {n, timeout} = wait}
+        when is_integer(n) and n >= 0 and is_integer(timeout) and timeout >= 0 ->
+          {conn, ns, wait}
 
-      case Redix.command(conn, ["XADD", stream_key(ns, session_id), "*" | fields]) do
-        {:ok, id} -> {:ok, id}
-        {:error, reason} -> {:error, reason}
+        {:ok, other} ->
+          raise ArgumentError,
+                "SessionStore.Redis.new/1: :wait must be {numreplicas, timeout_ms} (non-negative " <>
+                  "integers), got: #{inspect(other)}"
+
+        :error ->
+          {conn, ns}
       end
     end
 
     @impl true
-    def history({conn, ns}, session_id) do
+    def append_entry(handle, session_id, %Entry{} = entry) do
+      {conn, ns} = conn_ns(handle)
+      fields = encode_entry_fields(entry)
+
+      with {:ok, id} <- Redix.command(conn, ["XADD", stream_key(ns, session_id), "*" | fields]),
+           :ok <- wait(handle) do
+        {:ok, id}
+      end
+    end
+
+    @impl true
+    def history(handle, session_id) do
+      {conn, ns} = conn_ns(handle)
+
       case Redix.command(conn, ["XRANGE", stream_key(ns, session_id), "-", "+"]) do
         {:ok, raw} -> {:ok, decode_stream(raw)}
         {:error, reason} -> {:error, reason}
@@ -56,7 +77,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def fork({conn, ns}, session_id, from_entry_id) do
+    def fork(handle, session_id, from_entry_id) do
+      {conn, ns} = conn_ns(handle)
+
       with {:ok, [_ | _] = raw} <-
              Redix.command(conn, ["XRANGE", stream_key(ns, session_id), "-", "+"]),
            true <- Enum.any?(raw, fn [id, _fields] -> id == from_entry_id end) do
@@ -75,7 +98,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def save_turn_state({conn, ns} = handle, session_id, term) do
+    def save_turn_state(handle, session_id, term) do
+      {conn, ns} = conn_ns(handle)
+
       with {:ok, _} <-
              Redix.command(conn, ["HSET", meta_key(ns, session_id), "turn_state", encode(term)]) do
         wait(handle)
@@ -83,7 +108,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def load_turn_state({conn, ns}, session_id) do
+    def load_turn_state(handle, session_id) do
+      {conn, ns} = conn_ns(handle)
+
       case Redix.command(conn, ["HGET", meta_key(ns, session_id), "turn_state"]) do
         {:ok, blob} when is_binary(blob) -> {:ok, decode(blob)}
         {:ok, nil} -> :error
@@ -92,7 +119,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def save_config_template({conn, ns} = handle, session_id, tmpl) do
+    def save_config_template(handle, session_id, tmpl) do
+      {conn, ns} = conn_ns(handle)
+
       rp =
         case tmpl do
           %{resume_policy: v} when is_atom(v) or is_binary(v) -> to_string(v)
@@ -114,7 +143,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def load_config_template({conn, ns}, session_id) do
+    def load_config_template(handle, session_id) do
+      {conn, ns} = conn_ns(handle)
+
       case Redix.command(conn, ["HGET", meta_key(ns, session_id), "config_template"]) do
         {:ok, blob} when is_binary(blob) -> {:ok, decode(blob)}
         {:ok, nil} -> :error
@@ -123,7 +154,9 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def list_resumable({conn, ns}) do
+    def list_resumable(handle) do
+      {conn, ns} = conn_ns(handle)
+
       case Redix.command(conn, ["SMEMBERS", resumable_key(ns)]) do
         {:ok, ids} -> {:ok, ids}
         {:error, reason} -> {:error, reason}
@@ -134,11 +167,18 @@ if Code.ensure_loaded?(Redix) do
 
     # Fail-closed: block on replica ack at boundary writes when `wait:` is configured.
     # Default {0, 0} is a no-op (single Redis); >0 fails if the ack target is unmet.
-    defp wait({conn, _ns}, num \\ nil, timeout \\ nil) do
-      {n, t} = Application.get_env(:normandy, :redis_wait, {0, 0})
-      n = num || n
-      t = timeout || t
+    defp conn_ns({conn, ns}), do: {conn, ns}
+    defp conn_ns({conn, ns, _wait}), do: {conn, ns}
 
+    # The handle's wait setting, else the :redis_wait app env, else no wait.
+    defp wait({conn, _ns, {n, t}}), do: wait(conn, n, t)
+
+    defp wait({conn, _ns}) do
+      {n, t} = Application.get_env(:normandy, :redis_wait, {0, 0})
+      wait(conn, n, t)
+    end
+
+    defp wait(conn, n, t) do
       if n > 0 do
         case Redix.command(conn, ["WAIT", Integer.to_string(n), Integer.to_string(t)]) do
           {:ok, acked} when acked >= n -> :ok
