@@ -17,6 +17,11 @@ defmodule Normandy.Agents.Turn.Session do
   persisted template in the store and reconstructs without any caller-supplied
   config.
 
+  A caller may also pass only `:template_provider` (no `:config`), for example on
+  a surviving node after the session's node died: the server starts from the
+  template already saved in the store. With no saved template, `run/2` returns
+  `{:error, {:no_config_template, session_id}}`.
+
   ## Start-time race
 
   For `:self_register` (Native) registries the race between `whereis` returning
@@ -76,43 +81,72 @@ defmodule Normandy.Agents.Turn.Session do
   # carry only the caller's config and options. A store fault in that load
   # comes back as the start's {:error, reason}.
   defp rehydrate_and_start(opts) do
-    {store_mod, store_handle} = Keyword.fetch!(opts, :store)
     sid = Keyword.fetch!(opts, :session_id)
-    config = Keyword.fetch!(opts, :config)
     supervisor = Keyword.fetch!(opts, :supervisor)
     supervisor_mod = Keyword.get(opts, :supervisor_mod, Supervisor)
-    template_provider = Keyword.get(opts, :template_provider)
-    resume_policy = Keyword.get(opts, :resume_policy, :lazy)
-
-    server_opts =
-      if template_provider do
-        tmpl =
-          config
-          |> ConfigTemplate.from_config(template_id_of(opts, config))
-          |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
-
-        :ok = store_mod.save_config_template(store_handle, sid, tmpl)
-
-        opts
-        |> Keyword.take([
-          :session_id,
-          :store,
-          :registry,
-          :subscriber,
-          :handlers,
-          :template_provider
-        ])
-        |> Keyword.merge(Keyword.take(opts, @stored_server_options))
-        |> Keyword.put(:resume_policy, resume_policy)
-      else
-        opts
-        |> Keyword.take([:session_id, :store, :registry, :subscriber, :handlers])
-        |> Keyword.merge(Keyword.take(opts, @stored_server_options))
-        |> Keyword.put(:config, config)
-      end
-
     {reg_mod, reg_handle} = Keyword.fetch!(opts, :registry)
-    start_with_retry(supervisor_mod, supervisor, server_opts, reg_mod, reg_handle, sid)
+
+    with {:ok, server_opts} <- server_opts(opts) do
+      start_with_retry(supervisor_mod, supervisor, server_opts, reg_mod, reg_handle, sid)
+    end
+  end
+
+  # Three ways to start: a :config with no template provider (Tier 0/1); a :config
+  # with a template provider, which saves the template first (Tier 2, first
+  # start); or a template provider alone, which starts from the template already
+  # in the store (Tier 2, e.g. a caller on a surviving node that has no config).
+  defp server_opts(opts) do
+    case {Keyword.fetch(opts, :config), Keyword.get(opts, :template_provider)} do
+      {{:ok, config}, nil} ->
+        {:ok,
+         opts
+         |> base_server_opts()
+         |> Keyword.put(:config, config)}
+
+      {{:ok, config}, _provider} ->
+        :ok = save_template(opts, config)
+        {:ok, thin_server_opts(opts)}
+
+      {:error, _provider} ->
+        if template_saved?(opts) do
+          {:ok, thin_server_opts(opts)}
+        else
+          {:error, {:no_config_template, Keyword.fetch!(opts, :session_id)}}
+        end
+    end
+  end
+
+  defp save_template(opts, config) do
+    {store_mod, store_handle} = Keyword.fetch!(opts, :store)
+
+    tmpl =
+      config
+      |> ConfigTemplate.from_config(template_id_of(opts, config))
+      |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
+
+    store_mod.save_config_template(store_handle, Keyword.fetch!(opts, :session_id), tmpl)
+  end
+
+  defp template_saved?(opts) do
+    {store_mod, store_handle} = Keyword.fetch!(opts, :store)
+
+    match?(
+      {:ok, _},
+      store_mod.load_config_template(store_handle, Keyword.fetch!(opts, :session_id))
+    )
+  end
+
+  defp base_server_opts(opts) do
+    opts
+    |> Keyword.take([:session_id, :store, :registry, :subscriber, :handlers])
+    |> Keyword.merge(Keyword.take(opts, @stored_server_options))
+  end
+
+  defp thin_server_opts(opts) do
+    opts
+    |> base_server_opts()
+    |> Keyword.put(:template_provider, Keyword.fetch!(opts, :template_provider))
+    |> Keyword.put(:resume_policy, Keyword.get(opts, :resume_policy, :lazy))
   end
 
   # Start the server, tolerating Horde's eventually-consistent `:via` registration.

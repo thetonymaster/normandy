@@ -2,6 +2,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -362,6 +363,56 @@ defmodule Normandy.Agents.Turn.SessionTest do
     assert "remember-me" in contents,
            "Tier-2 reconstruct loaded empty memory — history rehydration is broken. " <>
              "Got contents: #{inspect(contents)}"
+  end
+
+  describe "a template-backed session without :config" do
+    alias Normandy.Test.TurnConfig
+
+    defp template_opts(store, sid) do
+      config = TurnConfig.build()
+      {:ok, cat} = Catalog.start_link([])
+      {:ok, sup} = Turn.Supervisor.start_link([])
+
+      :ok =
+        Catalog.put(cat, "kind", %{
+          tool_registry: config.tool_registry,
+          before_hooks: [],
+          after_hooks: [],
+          client_builder: fn _token -> config.client end
+        })
+
+      [
+        session_id: sid,
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        template_provider: {Catalog, cat},
+        handlers: %{
+          BaseAgent.non_streaming_handlers()
+          | call_llm: fn _c, _s, _r -> %TurnConfig.Resp{content: "from template"} end
+        }
+      ]
+    end
+
+    test "starts from the template saved in the store" do
+      store = InMemory.new()
+      sid = "tmpl-#{System.unique_integer([:positive])}"
+      tmpl = ConfigTemplate.from_config(TurnConfig.build(), "kind")
+      :ok = InMemory.save_config_template(store, sid, tmpl)
+
+      assert {:ok, %{content: "from template"}} =
+               Turn.Session.run(template_opts(store, sid), "hello")
+
+      assert {:ok, ^tmpl} = InMemory.load_config_template(store, sid)
+    end
+
+    test "with no saved template it returns an error" do
+      store = InMemory.new()
+      sid = "no-tmpl-#{System.unique_integer([:positive])}"
+
+      assert {:error, {:no_config_template, ^sid}} =
+               Turn.Session.run(template_opts(store, sid), "hello")
+    end
   end
 
   defp children_pids(sup) do
