@@ -9,7 +9,7 @@ defmodule Normandy.MCP.ServerConfigTest do
       assert config.name == "my_server"
       assert config.url == "https://mcp.example.com/sse"
       assert config.authorization_token == nil
-      assert config.tool_configuration == nil
+      assert config.allowed_tools == nil
     end
   end
 
@@ -24,15 +24,19 @@ defmodule Normandy.MCP.ServerConfigTest do
   end
 
   describe "allow_tools/2" do
-    test "sets tool configuration with patterns" do
+    test "stores exact tool names" do
       config =
         ServerConfig.new("srv", "https://mcp.example.com")
-        |> ServerConfig.allow_tools(["search_*", "fetch_data"])
+        |> ServerConfig.allow_tools(["search_events", "fetch_data"])
 
-      assert config.tool_configuration == %{
-               "allowed_tools" => ["search_*", "fetch_data"],
-               "enabled" => true
-             }
+      assert config.allowed_tools == ["search_events", "fetch_data"]
+    end
+
+    test "raises at call time on a glob pattern (the connector matches names literally)" do
+      config = ServerConfig.new("srv", "https://mcp.example.com")
+
+      assert_raise ArgumentError, fn -> ServerConfig.allow_tools(config, ["search_*"]) end
+      assert_raise ArgumentError, fn -> ServerConfig.allow_tools(config, ["fetch_dat?"]) end
     end
   end
 
@@ -45,6 +49,8 @@ defmodule Normandy.MCP.ServerConfigTest do
       assert claudio.name == "my_server"
       assert claudio.url == "https://mcp.example.com"
       assert claudio.type == "url"
+      assert claudio.default_config == nil
+      assert claudio.configs == nil
     end
 
     test "converts config with auth token" do
@@ -56,30 +62,33 @@ defmodule Normandy.MCP.ServerConfigTest do
       assert claudio.authorization_token == "token123"
     end
 
-    test "converts config with tool configuration" do
+    test "applies the allowlist on Claudio's toolset (default off, named tools on)" do
       config =
         ServerConfig.new("srv", "https://mcp.example.com")
-        |> ServerConfig.allow_tools(["search_*"])
+        |> ServerConfig.allow_tools(["search_events", "fetch_data"])
 
       claudio = ServerConfig.to_claudio(config)
-      assert claudio.tool_configuration == %{"allowed_tools" => ["search_*"], "enabled" => true}
+      assert claudio.default_config == %{"enabled" => false}
+
+      assert claudio.configs == %{
+               "search_events" => %{"enabled" => true},
+               "fetch_data" => %{"enabled" => true}
+             }
     end
 
-    test "full pipeline preserves all fields" do
+    test "full pipeline: server entry carries no legacy tool_configuration" do
       config =
         ServerConfig.new("my_server", "https://mcp.example.com/sse")
         |> ServerConfig.set_auth_token("bearer-token")
-        |> ServerConfig.allow_tools(["search_*", "fetch_data"])
+        |> ServerConfig.allow_tools(["search_events"])
 
-      claudio = ServerConfig.to_claudio(config)
-      map = Claudio.MCP.ServerConfig.to_map(claudio)
+      map = config |> ServerConfig.to_claudio() |> Claudio.MCP.ServerConfig.to_map()
 
       assert map["name"] == "my_server"
       assert map["url"] == "https://mcp.example.com/sse"
       assert map["type"] == "url"
       assert map["authorization_token"] == "bearer-token"
-      assert map["tool_configuration"]["allowed_tools"] == ["search_*", "fetch_data"]
-      assert map["tool_configuration"]["enabled"] == true
+      refute Map.has_key?(map, "tool_configuration")
     end
   end
 
