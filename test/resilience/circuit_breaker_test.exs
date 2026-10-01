@@ -23,8 +23,11 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "can be started with a name" do
-      {:ok, cb} = CircuitBreaker.start_link(name: :test_breaker)
-      assert CircuitBreaker.state(:test_breaker) == :closed
+      # A unique name, so no other test can hold it.
+      name = :"test_breaker_#{System.unique_integer([:positive])}"
+
+      {:ok, cb} = CircuitBreaker.start_link(name: name)
+      assert CircuitBreaker.state(name) == :closed
       GenServer.stop(cb)
     end
   end

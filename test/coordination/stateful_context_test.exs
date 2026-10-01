@@ -12,8 +12,11 @@ defmodule Normandy.Coordination.StatefulContextTest do
     end
 
     test "starts a named context process" do
-      assert {:ok, _pid} = StatefulContext.start_link(name: :test_context)
-      assert Process.whereis(:test_context) != nil
+      # A unique name, so no other test can hold it.
+      name = :"test_context_#{System.unique_integer([:positive])}"
+
+      assert {:ok, _pid} = StatefulContext.start_link(name: name)
+      assert Process.whereis(name) != nil
     end
   end
 

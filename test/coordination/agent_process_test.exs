@@ -24,8 +24,11 @@ defmodule Normandy.Coordination.AgentProcessTest do
     end
 
     test "starts a named agent process", %{agent: agent} do
-      assert {:ok, _pid} = AgentProcess.start_link(agent: agent, name: :test_agent)
-      assert Process.whereis(:test_agent) != nil
+      # A unique name, so no other test can hold it.
+      name = :"test_agent_#{System.unique_integer([:positive])}"
+
+      assert {:ok, _pid} = AgentProcess.start_link(agent: agent, name: name)
+      assert Process.whereis(name) != nil
     end
 
     test "assigns agent_id", %{agent: agent} do

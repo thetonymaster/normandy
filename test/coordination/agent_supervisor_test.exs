@@ -24,8 +24,11 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     end
 
     test "starts named supervisor" do
-      assert {:ok, _pid} = AgentSupervisor.start_link(name: :test_supervisor)
-      assert Process.whereis(:test_supervisor) != nil
+      # A unique name, so no other test can hold it.
+      name = :"test_supervisor_#{System.unique_integer([:positive])}"
+
+      assert {:ok, _pid} = AgentSupervisor.start_link(name: name)
+      assert Process.whereis(name) != nil
     end
 
     test "accepts supervision options" do

@@ -9,8 +9,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
   defmodule RetryableClient do
     use Normandy.Schema
 
+    # `attempts` is an Agent counting calls (a pid, not a registered name, so
+    # tests cannot collide).
     schema do
       field(:failure_count, :integer, default: 0)
+      field(:attempts, :any)
     end
 
     defimpl Normandy.Agents.Model do
@@ -20,7 +23,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
       def converse(client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
         # Simulate failures on first attempts
-        current_count = Agent.get_and_update(:retry_agent, fn count -> {count, count + 1} end)
+        current_count = Agent.get_and_update(client.attempts, fn count -> {count, count + 1} end)
 
         if current_count < client.failure_count do
           # Simulate transient error
@@ -58,10 +61,10 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
   describe "retry integration" do
     test "automatically retries failed LLM calls" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
       # Configure agent with retry (fail first attempt only)
-      client = %RetryableClient{failure_count: 1}
+      client = %RetryableClient{failure_count: 1, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -75,13 +78,12 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
-      Agent.stop(:retry_agent)
     end
 
     test "works without retry configuration" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
-      client = %RetryableClient{failure_count: 0}
+      client = %RetryableClient{failure_count: 0, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -94,13 +96,12 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 1 attempts"
-      Agent.stop(:retry_agent)
     end
 
     test "uses custom retry options" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
-      client = %RetryableClient{failure_count: 1}
+      client = %RetryableClient{failure_count: 1, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -121,7 +122,6 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
-      Agent.stop(:retry_agent)
     end
   end
 
@@ -215,9 +215,9 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
     end
 
     test "works without circuit breaker enabled" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
-      client = %RetryableClient{failure_count: 0}
+      client = %RetryableClient{failure_count: 0, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -231,16 +231,15 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 1 attempts"
-      Agent.stop(:retry_agent)
     end
   end
 
   describe "combined retry and circuit breaker" do
     test "retries within circuit breaker" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
       # Client that fails once then succeeds (works with :quick preset's 2 max attempts)
-      client = %RetryableClient{failure_count: 1}
+      client = %RetryableClient{failure_count: 1, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -260,19 +259,16 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert response.chat_message == "Success after 2 attempts"
       assert CircuitBreaker.state(agent.circuit_breaker) == :closed
 
-      # Clean up
-      Agent.stop(:retry_agent)
-
       if agent.circuit_breaker do
         GenServer.stop(agent.circuit_breaker)
       end
     end
 
     test "circuit breaker prevents excessive retries" do
-      {:ok, _agent} = Agent.start_link(fn -> 0 end, name: :retry_agent)
+      attempts = start_supervised!({Agent, fn -> 0 end})
 
       # Client that always fails
-      client = %RetryableClient{failure_count: 1000}
+      client = %RetryableClient{failure_count: 1000, attempts: attempts}
 
       agent =
         BaseAgent.init(%{
@@ -304,7 +300,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert CircuitBreaker.state(agent.circuit_breaker) == :open
 
       # Next call should fail fast (no retries due to open circuit)
-      attempt_count_before = Agent.get(:retry_agent, & &1)
+      attempt_count_before = Agent.get(attempts, & &1)
 
       assert_raise Normandy.LLMError,
                    "LLM call failed: circuit_open: circuit breaker is open",
@@ -312,13 +308,10 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
                      BaseAgent.run(agent, %{chat_message: "test4"})
                    end
 
-      attempt_count_after = Agent.get(:retry_agent, & &1)
+      attempt_count_after = Agent.get(attempts, & &1)
 
       # Should not have retried (circuit is open)
       assert attempt_count_after == attempt_count_before
-
-      # Clean up
-      Agent.stop(:retry_agent)
 
       if agent.circuit_breaker do
         GenServer.stop(agent.circuit_breaker)

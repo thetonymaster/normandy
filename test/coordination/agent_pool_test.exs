@@ -26,14 +26,17 @@ defmodule Normandy.Coordination.AgentPoolTest do
     end
 
     test "starts a named pool" do
+      # A unique name, so no other test can hold it.
+      name = :"test_pool_#{System.unique_integer([:positive])}"
+
       agent_config = create_agent_config()
 
       assert {:ok, _pool} =
-               AgentPool.start_link(name: :test_pool, agent_config: agent_config)
+               AgentPool.start_link(name: name, agent_config: agent_config)
 
-      assert Process.whereis(:test_pool) != nil
+      assert Process.whereis(name) != nil
 
-      AgentPool.stop(:test_pool)
+      AgentPool.stop(name)
     end
 
     test "starts pool with custom size" do
