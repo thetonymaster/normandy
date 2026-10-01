@@ -61,4 +61,26 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
     err = {:json_parse_error, :invalid, "oops"}
     assert RetryFeedback.build(err, "oops", %RequiredField{}, Poison) =~ "Required Schema"
   end
+
+  test "correction instructions are plain, with no shouting and no field-name example" do
+    parse_feedback =
+      RetryFeedback.build({:json_parse_error, :invalid, "oops"}, "oops", %RequiredField{}, Poison)
+
+    {:error, {:validation_error, changeset, content}} =
+      Normandy.LLM.JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
+
+    validation_feedback =
+      RetryFeedback.build(
+        {:validation_error, changeset, content},
+        content,
+        %RequiredField{},
+        Poison
+      )
+
+    for feedback <- [parse_feedback, validation_feedback] do
+      refute feedback =~ ~r/\bMUST\b|Do NOT|CORRECT|INCORRECT/
+      refute feedback =~ "This is my response"
+      assert feedback =~ "Respond with"
+    end
+  end
 end

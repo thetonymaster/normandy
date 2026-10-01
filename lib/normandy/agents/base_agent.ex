@@ -239,8 +239,7 @@ defmodule Normandy.Agents.BaseAgent do
     history = AgentMemory.history(config.memory)
 
     # Generate system prompt and add output schema specification
-    system_prompt =
-      SystemPromptGenerator.generate_prompt(prompt_specification, config.tool_registry)
+    system_prompt = SystemPromptGenerator.generate_prompt(prompt_specification)
 
     # Add output schema if available
     system_prompt_with_schema =
@@ -250,7 +249,7 @@ defmodule Normandy.Agents.BaseAgent do
             Poison.encode!(response_model.__struct__.__specification__(), pretty: true)
 
           system_prompt <>
-            "\n\n# OUTPUT SCHEMA\nYou MUST respond with valid JSON that exactly matches this schema. Use these exact field names:\n```json\n#{schema_json}\n```\nIMPORTANT: The response must be valid JSON with the field names shown above. Do not add extra fields or change field names."
+            "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"
         rescue
           _ ->
             system_prompt
@@ -1106,11 +1105,7 @@ defmodule Normandy.Agents.BaseAgent do
     [
       %Message{
         role: "system",
-        content:
-          SystemPromptGenerator.generate_prompt(
-            config.prompt_specification,
-            config.tool_registry
-          )
+        content: SystemPromptGenerator.generate_prompt(config.prompt_specification)
       }
     ] ++ history_messages
   end

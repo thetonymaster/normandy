@@ -44,15 +44,8 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     #{schema_json}
     ```
 
-    ## Instructions for Correction
-
-    1. You MUST provide ALL required fields
-    2. Ensure field types match the schema (string, integer, etc.)
-    3. Ensure field values meet validation requirements
-    4. Do NOT wrap your JSON in markdown code blocks
-    5. Do NOT add any text before or after the JSON
-
-    Please provide a corrected JSON response addressing all validation errors above.
+    Respond with a corrected JSON object that fixes the errors above: include
+    every required field, with types and values that satisfy the schema.
     """
   end
 
@@ -82,24 +75,9 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     #{schema_json}
     ```
 
-    ## Instructions for Correction
-
-    1. You MUST respond with ONLY valid JSON
-    2. Do NOT wrap your JSON in markdown code blocks
-    3. Do NOT add any text before or after the JSON
-    4. Ensure all field names exactly match the schema
-    5. Ensure proper JSON escaping (quotes, newlines, etc.)
-    6. Do NOT nest the response in extra JSON objects
-
-    Example of CORRECT response:
-    {"chat_message": "This is my response"}
-
-    Example of INCORRECT responses:
-    - {"chat_message": "{\\"chat_message\\": \\"nested\\"}"}  ❌ Double nesting
-    - ```json\\n{"chat_message": "response"}\\n```  ❌ Code blocks
-    - Some text {"chat_message": "response"}  ❌ Extra text
-
-    Please provide a corrected JSON response now.
+    Respond with a single JSON object whose field names match the schema exactly,
+    with strings properly escaped. Put the field values at the top level of that
+    object rather than encoding another JSON document inside a string field.
     """
   end
 
