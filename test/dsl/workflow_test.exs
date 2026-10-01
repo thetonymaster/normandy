@@ -77,9 +77,6 @@ defmodule Normandy.DSL.WorkflowTest do
     end
   end
 
-  # Note: Transform workflow tests are in the execution section
-  # because transform functions can't be escaped at compile time
-
   describe "workflow definition" do
     test "steps/0 returns workflow steps" do
       steps = SequentialWorkflow.steps()
@@ -174,26 +171,6 @@ defmodule Normandy.DSL.WorkflowTest do
         )
 
       assert {:ok, _results} = result
-    end
-  end
-
-  describe "transform functionality" do
-    test "transform functions work at runtime" do
-      # While we can't define workflows with transforms at compile time in tests,
-      # we can verify the transform logic works by directly testing the private functions
-      # or by checking that workflows accept transform in their step definitions
-
-      steps = SequentialWorkflow.steps()
-      first_step = Enum.at(steps, 0)
-
-      # Verify transform field exists in step structure
-      assert Map.has_key?(first_step, :transform)
-      # No transform defined for this step
-      assert first_step.transform == nil
-
-      # The transform functionality is available in the DSL and works at runtime
-      # Users can define transforms like:
-      # transform fn result -> "processed: #{result}" end
     end
   end
 

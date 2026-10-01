@@ -1,89 +1,171 @@
 defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
   @moduledoc """
-  Integration test demonstrating that transform functionality works at runtime.
-
-  The transform macro works perfectly in real application code - the limitation
-  is only in defining workflows with transforms in test modules due to how
-  Elixir's macro system handles function escaping at compile time.
+  Workflows that use `transform` and `when_result`, compiled through the DSL and
+  run end to end with a client that reports what each agent receives.
   """
   use ExUnit.Case, async: true
 
-  test "transforms can be tested by directly calling workflow execution logic" do
-    # This test demonstrates that the transform logic in workflows works correctly
-    # by testing the underlying implementation
+  alias Normandy.Agents.BaseAgent
 
-    # Simulate a workflow step with a transform
-    step_with_transform = %{
-      name: :process,
-      type: :sequential,
-      agents: [],
-      input: [from: :previous],
-      transform: fn result -> "transformed: #{inspect(result)}" end,
-      condition: nil
+  defmodule EchoClient do
+    @moduledoc false
+    use Normandy.Schema
+
+    schema do
+      field(:test_pid, :any)
+      field(:name, :string)
+      field(:reply, :string, default: "ok")
+    end
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
+        do: response_model
+
+      def converse(client, _model, _temperature, _max_tokens, messages, response_model, _opts) do
+        send(client.test_pid, {:agent_input, client.name, List.last(messages).content})
+        %{response_model | chat_message: client.reply}
+      end
+    end
+  end
+
+  defmodule FirstAgent do
+  end
+
+  defmodule SecondAgent do
+  end
+
+  defmodule TransformWorkflow do
+    use Normandy.DSL.Workflow
+
+    workflow do
+      step :first do
+        agent(FirstAgent)
+        input("raw")
+        transform(fn text -> "first got " <> text end)
+      end
+
+      step :second do
+        agent(SecondAgent)
+        input(from: :first)
+        transform(fn %{chat_message: msg} -> "second got " <> msg end)
+      end
+    end
+  end
+
+  defmodule StopWorkflow do
+    use Normandy.DSL.Workflow
+
+    workflow do
+      step :check do
+        agent(FirstAgent)
+        input("go")
+
+        when_result do
+          {:ok, %{chat_message: "halt"}} -> :stop
+          {:ok, %{chat_message: "broken"}} -> {:error, :rejected}
+          {:ok, _} -> :continue
+        end
+      end
+
+      step :after do
+        agent(SecondAgent)
+        input(from: :check)
+      end
+    end
+  end
+
+  defp agents(first_reply \\ "ok") do
+    %{
+      FirstAgent => agent("first", first_reply),
+      SecondAgent => agent("second", "ok")
     }
-
-    # Simulate previous step result
-    state = %{
-      results: %{previous: %{data: "test"}},
-      context: %{},
-      current_input: nil
-    }
-
-    # The transform function should work when applied
-    input = Map.get(state.results, :previous)
-    transform_fn = step_with_transform.transform
-
-    assert is_function(transform_fn, 1)
-
-    transformed = transform_fn.(input)
-    assert transformed == "transformed: %{data: \"test\"}"
   end
 
-  test "transform field is properly stored in workflow steps" do
-    # When users define workflows in their actual application code (not in test files),
-    # the transform function is properly captured and stored in the step definition
-
-    # Example of how it would work in real code:
-    # defmodule MyWorkflow do
-    #   use Normandy.DSL.Workflow
-    #
-    #   workflow do
-    #     step :first do
-    #       agent MyAgent
-    #       input "data"
-    #     end
-    #
-    #     step :second do
-    #       agent ProcessAgent
-    #       input from: :first
-    #       transform fn result -> String.upcase(result) end
-    #     end
-    #   end
-    # end
-
-    # The transform is stored and executed at runtime when the workflow runs
-    # This documents the expected behavior
-    assert true
+  defp agent(name, reply) do
+    BaseAgent.init(%{
+      client: %EchoClient{test_pid: self(), name: name, reply: reply},
+      model: "test-model"
+    })
   end
 
-  test "maybe_transform helper applies transform when present" do
-    # Test the maybe_transform logic that's used internally
-    value = "hello"
-    transform = fn v -> String.upcase(v) end
+  test "a transform applies to a literal input and to a from: input" do
+    assert {:ok, _} = TransformWorkflow.execute(agents: agents(), initial_input: "x")
 
-    # Simulate the maybe_transform behavior
-    result = if is_function(transform, 1), do: transform.(value), else: value
+    assert_receive {:agent_input, "first", first}
+    assert first =~ "first got raw"
 
-    assert result == "HELLO"
+    assert_receive {:agent_input, "second", second}
+    assert second =~ "second got ok"
   end
 
-  test "maybe_transform returns value unchanged when transform is nil" do
-    value = "hello"
-    transform = nil
+  test "steps/0 reports which steps have a transform" do
+    assert [%{name: :first, transform: true}, %{name: :second, transform: true}] =
+             TransformWorkflow.steps()
+  end
 
-    # Simulate the maybe_transform behavior
-    result = if transform && is_function(transform, 1), do: transform.(value), else: value
+  test "when_result :stop ends the workflow with the results so far" do
+    assert {:ok, results} = StopWorkflow.execute(agents: agents("halt"), initial_input: "x")
 
-    assert result == "hello"
+    assert Map.keys(results) == [:check]
+    refute_received {:agent_input, "second", _}
+  end
+
+  test "when_result {:error, reason} fails the workflow at that step" do
+    assert {:error, {:check, :rejected}} =
+             StopWorkflow.execute(agents: agents("broken"), initial_input: "x")
+  end
+
+  test "any other when_result value continues" do
+    assert {:ok, results} = StopWorkflow.execute(agents: agents("fine"), initial_input: "x")
+    assert results |> Map.keys() |> Enum.sort() == [:after, :check]
+  end
+
+  describe "compile-time validation" do
+    defp compile(body) do
+      Code.compile_string("""
+      defmodule Normandy.DSL.WorkflowTransformIntegrationTest.Bad#{System.unique_integer([:positive])} do
+        use Normandy.DSL.Workflow
+        workflow do
+          #{body}
+        end
+      end
+      """)
+    end
+
+    test "from: an unknown step is rejected" do
+      assert_raise ArgumentError,
+                   ~r/step :b takes input from :nope, which is not an earlier step/,
+                   fn ->
+                     compile("""
+                     step :b do
+                       agent(Foo)
+                       input(from: :nope)
+                     end
+                     """)
+                   end
+    end
+
+    test "a step without an agent is rejected" do
+      assert_raise ArgumentError, ~r/step :a has no agent/, fn ->
+        compile("""
+        step :a do
+          input("x")
+        end
+        """)
+      end
+    end
+
+    test "a duplicate step name is rejected" do
+      assert_raise ArgumentError, ~r/step :a is defined more than once/, fn ->
+        compile("""
+        step :a do
+          agent(Foo)
+        end
+        step :a do
+          agent(Foo)
+        end
+        """)
+      end
+    end
   end
 end

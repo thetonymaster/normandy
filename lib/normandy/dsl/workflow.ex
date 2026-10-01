@@ -30,13 +30,13 @@ defmodule Normandy.DSL.Workflow do
             input from: :analyze_sources
           end
 
-          # Conditional execution
+          # Conditional execution: stop early on a good enough review
           step :final_review do
             agent ReviewAgent
             input from: :validate
             when_result do
-              {:ok, %{quality: q}} when q > 0.8 -> :approve
-              {:ok, _} -> :needs_revision
+              {:ok, %{quality: q}} when q > 0.8 -> :stop
+              {:ok, _} -> :continue
             end
           end
         end
@@ -75,13 +75,29 @@ defmodule Normandy.DSL.Workflow do
 
   ### Conditional Execution
 
+  `when_result` runs after the step with `{:ok, result}` and gates the workflow:
+  `:stop` ends it successfully with the results so far, `{:error, reason}` fails it
+  as `{:error, {step_name, reason}}`, and any other value continues.
+
       step :process do
         agent MyAgent
         input from: :previous
         when_result do
-          {:ok, value} when value > 10 -> :high
-          {:ok, _} -> :low
+          {:ok, %{chat_message: "DONE"}} -> :stop
+          {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
+          {:ok, _} -> :continue
         end
+      end
+
+  ### Transforming Input
+
+  `transform` receives the step's input (a literal, a `from:` result, or the
+  previous step's result) and returns what the agent gets.
+
+      step :summarize do
+        agent Summarizer
+        input from: :research
+        transform fn %{chat_message: text} -> "Summarize: " <> text end
       end
 
   ### Race Pattern
@@ -99,7 +115,8 @@ defmodule Normandy.DSL.Workflow do
   - Conditional execution
   - Result transformation
   - Error handling
-  - Compile-time workflow validation
+  - Compile-time workflow validation: duplicate step names, steps without an
+    agent, and `from:` references to unknown or later steps raise at compile time
   """
 
   alias Normandy.Agents.BaseAgent
@@ -129,8 +146,8 @@ defmodule Normandy.DSL.Workflow do
 
   - `agent` - Agent module or instance to use
   - `input` - Input for the agent (string, or `from: :step_name`)
-  - `transform` - Function to transform input from previous step
-  - `when_result` - Conditional execution block
+  - `transform` - Function applied to the step's input before the agent runs
+  - `when_result` - Gate on the step's result (`:stop`, `{:error, reason}`, or continue)
   """
   defmacro step(name, do: block) do
     quote do
@@ -140,6 +157,8 @@ defmodule Normandy.DSL.Workflow do
       var!(current_step_input) = nil
       var!(current_step_transform) = nil
       var!(current_step_condition) = nil
+      # The block may overwrite these before they are read.
+      _ = {var!(current_step_input), var!(current_step_transform), var!(current_step_condition)}
 
       unquote(block)
 
@@ -167,6 +186,8 @@ defmodule Normandy.DSL.Workflow do
       var!(current_step_input) = nil
       var!(current_step_transform) = nil
       var!(current_step_condition) = nil
+      # The block may overwrite these before they are read.
+      _ = {var!(current_step_input), var!(current_step_transform), var!(current_step_condition)}
 
       unquote(block)
 
@@ -194,6 +215,8 @@ defmodule Normandy.DSL.Workflow do
       var!(current_step_input) = nil
       var!(current_step_transform) = nil
       var!(current_step_condition) = nil
+      # The block may overwrite these before they are read.
+      _ = {var!(current_step_input), var!(current_step_transform), var!(current_step_condition)}
 
       unquote(block)
 
@@ -241,7 +264,8 @@ defmodule Normandy.DSL.Workflow do
   end
 
   @doc """
-  Transforms the input before passing to the agent.
+  Transforms the step's input before passing it to the agent. Applies to every
+  kind of input: a literal, a `from:` result, or the previous step's result.
 
   ## Examples
 
@@ -250,29 +274,39 @@ defmodule Normandy.DSL.Workflow do
       end
   """
   defmacro transform(fun) do
-    quote bind_quoted: [fun: fun] do
-      var!(current_step_transform) = fun
+    # Keep the function as code: a function value can't be escaped into the
+    # generated execute/1, so __before_compile__ turns this into a defp clause.
+    quote do
+      var!(current_step_transform) = unquote(Macro.escape(fun))
     end
   end
 
   @doc """
-  Conditional execution based on result.
+  Gates the workflow on the step's result, matched as `{:ok, result}`.
+
+  Return `:stop` to end the workflow successfully with the results so far,
+  `{:error, reason}` to fail it, or anything else to continue.
 
   ## Examples
 
       when_result do
-        {:ok, value} when value > 10 -> :continue
-        {:ok, _} -> :stop
-        {:error, _} -> :retry
+        {:ok, %{chat_message: "DONE"}} -> :stop
+        {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
+        {:ok, _} -> :continue
       end
   """
   defmacro when_result(do: clauses) do
-    quote do
-      var!(current_step_condition) = fn result ->
-        case result do
-          unquote(clauses)
+    fun =
+      quote do
+        fn result ->
+          case result do
+            unquote(clauses)
+          end
         end
       end
+
+    quote do
+      var!(current_step_condition) = unquote(Macro.escape(fun))
     end
   end
 
@@ -282,6 +316,51 @@ defmodule Normandy.DSL.Workflow do
     steps =
       Module.get_attribute(env.module, :workflow_steps, [])
       |> Enum.reverse()
+
+    validate_steps!(steps)
+
+    transform_clauses =
+      for %{name: name, transform: fun} <- steps, fun != nil do
+        quote do
+          defp __workflow_transform__(unquote(name), value), do: unquote(fun).(value)
+        end
+      end
+
+    condition_clauses =
+      for %{name: name, condition: fun} <- steps, fun != nil do
+        quote do
+          defp __workflow_condition__(unquote(name), result), do: unquote(fun).(result)
+        end
+      end
+
+    # when_result gates the workflow on the step's result: :stop ends it with the
+    # results so far, {:error, reason} fails it, anything else continues. Without
+    # any when_result there is nothing to gate (and the type checker would flag
+    # the :stop/:error clauses as unreachable).
+    after_step =
+      if condition_clauses == [] do
+        quote do
+          defp after_step(_step, state), do: {:cont, {:ok, state}}
+        end
+      else
+        quote do
+          defp __workflow_condition__(_step, _result), do: :continue
+
+          defp after_step(step, state) do
+            case __workflow_condition__(step.name, {:ok, Map.fetch!(state.results, step.name)}) do
+              :stop -> {:halt, {:ok, state}}
+              {:error, reason} -> {:halt, {:error, {step.name, reason}}}
+              _continue -> {:cont, {:ok, state}}
+            end
+          end
+        end
+      end
+
+    # The code lives in the defp clauses above; the step data keeps only flags.
+    steps =
+      Enum.map(steps, fn step ->
+        %{step | transform: step.transform != nil, condition: step.condition != nil}
+      end)
 
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
@@ -318,6 +397,11 @@ defmodule Normandy.DSL.Workflow do
 
       # Private functions
 
+      unquote_splicing(transform_clauses)
+      defp __workflow_transform__(_step, value), do: value
+
+      unquote_splicing(condition_clauses)
+
       defp execute_workflow(steps, agents_map, initial_input, context) do
         initial_state = %{
           results: %{},
@@ -327,11 +411,8 @@ defmodule Normandy.DSL.Workflow do
 
         Enum.reduce_while(steps, {:ok, initial_state}, fn step, {:ok, state} ->
           case execute_step(step, agents_map, state) do
-            {:ok, updated_state} ->
-              {:cont, {:ok, updated_state}}
-
-            {:error, reason} ->
-              {:halt, {:error, {step.name, reason}}}
+            {:ok, updated_state} -> after_step(step, updated_state)
+            {:error, reason} -> {:halt, {:error, {step.name, reason}}}
           end
         end)
         |> case do
@@ -375,24 +456,23 @@ defmodule Normandy.DSL.Workflow do
         end
       end
 
+      unquote(after_step)
+
       defp get_step_input(step, state) do
-        case step.input do
-          nil ->
-            {:ok, state.current_input}
-
-          binary when is_binary(binary) ->
-            {:ok, binary}
-
-          [from: step_name] ->
-            case Map.get(state.results, step_name) do
-              nil -> {:error, {:missing_step_result, step_name}}
-              result -> {:ok, maybe_transform(result, step.transform)}
-            end
-
-          value ->
-            {:ok, maybe_transform(value, step.transform)}
+        with {:ok, input} <- raw_step_input(step, state) do
+          {:ok, __workflow_transform__(step.name, input)}
         end
       end
+
+      defp raw_step_input(%{input: [from: step_name]}, state) do
+        case Map.get(state.results, step_name) do
+          nil -> {:error, {:missing_step_result, step_name}}
+          result -> {:ok, result}
+        end
+      end
+
+      # No input: the previous step's result (or the initial input).
+      defp raw_step_input(%{input: input}, state), do: {:ok, input || state.current_input}
 
       defp get_agent([%{module: module} | _], agents_map) do
         case Map.get(agents_map, module) do
@@ -415,17 +495,10 @@ defmodule Normandy.DSL.Workflow do
         end
       end
 
+      # BaseAgent.run/2 returns {config, response}; a failed LLM call raises.
       defp run_agent(agent, input) do
-        case BaseAgent.run(agent, prepare_input(input)) do
-          {_updated_agent, response} -> {:ok, response}
-          {:error, reason} -> {:error, reason}
-        end
-      end
-
-      defp maybe_transform(value, nil), do: value
-
-      defp maybe_transform(value, transform) when is_function(transform, 1) do
-        transform.(value)
+        {_updated_agent, response} = BaseAgent.run(agent, prepare_input(input))
+        {:ok, response}
       end
 
       defp name_results(results, agent_infos) do
@@ -448,4 +521,36 @@ defmodule Normandy.DSL.Workflow do
       defp prepare_input(input), do: %{chat_message: to_string(input)}
     end
   end
+
+  defp validate_steps!(steps) do
+    _earlier =
+      Enum.reduce(steps, MapSet.new(), fn step, earlier ->
+        validate_step!(step, earlier)
+        MapSet.put(earlier, step.name)
+      end)
+
+    :ok
+  end
+
+  defp validate_step!(step, earlier) do
+    if MapSet.member?(earlier, step.name) do
+      raise ArgumentError, "workflow step #{inspect(step.name)} is defined more than once"
+    end
+
+    if step.agents == [] do
+      raise ArgumentError, "workflow step #{inspect(step.name)} has no agent"
+    end
+
+    validate_source!(step, earlier)
+  end
+
+  defp validate_source!(%{name: name, input: [from: source]}, earlier) do
+    unless MapSet.member?(earlier, source) do
+      raise ArgumentError,
+            "workflow step #{inspect(name)} takes input from #{inspect(source)}, " <>
+              "which is not an earlier step"
+    end
+  end
+
+  defp validate_source!(_step, _earlier), do: :ok
 end
