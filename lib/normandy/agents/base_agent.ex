@@ -740,7 +740,8 @@ defmodule Normandy.Agents.BaseAgent do
   # mid-turn, after tools ran. Called from init/1 and ConfigTemplate.rebuild/3 so
   # the mistake surfaces where the config is made. Never inspects the client value
   # (it may hold an API key), only its struct name.
-  @spec validate_compaction_config!(BaseAgentConfig.t()) :: BaseAgentConfig.t()
+  # Takes any %BaseAgentConfig{}: init/1 validates a partial one (client + behaviours only).
+  @spec validate_compaction_config!(%BaseAgentConfig{}) :: %BaseAgentConfig{}
   def validate_compaction_config!(%BaseAgentConfig{} = config) do
     {compactor, compactor_opts} = compactor_ref(config)
     {catalog, _catalog_opts} = catalog_ref(config)

@@ -10,6 +10,6 @@ defmodule NormandyTest.Support.Tool do
       %{type: "object"}
     end
 
-    def run(_config), do: %IOTest{}
+    def run(_config), do: {:ok, %IOTest{}}
   end
 end

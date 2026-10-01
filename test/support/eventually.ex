@@ -13,9 +13,15 @@ defmodule Normandy.Test.Eventually do
   @spec wait_until((-> boolean()), non_neg_integer()) :: boolean()
   def wait_until(fun, retries \\ 200) do
     cond do
-      fun.() -> true
-      retries == 0 -> false
-      true -> Process.sleep(10) && wait_until(fun, retries - 1)
+      fun.() ->
+        true
+
+      retries == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        wait_until(fun, retries - 1)
     end
   end
 end

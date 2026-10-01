@@ -194,7 +194,9 @@ defmodule Normandy.MixProject do
 
   defp dialyzer do
     [
-      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      # Under _build (cached in CI), not priv/: package files include priv/.
+      plt_core_path: "_build/plts",
+      plt_local_path: "_build/plts",
       plt_add_apps: [:ex_unit],
       flags: [:unmatched_returns, :error_handling, :underspecs]
     ]

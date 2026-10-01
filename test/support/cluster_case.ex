@@ -106,8 +106,8 @@ defmodule Normandy.ClusterCase do
   @doc false
   def start_test_repo_unlinked(repo_opts) do
     # Ensure ecto_sql and postgrex are started on the peer.
-    Application.ensure_all_started(:ecto_sql)
-    Application.ensure_all_started(:postgrex)
+    {:ok, _} = Application.ensure_all_started(:ecto_sql)
+    {:ok, _} = Application.ensure_all_started(:postgrex)
 
     # Write the repo config into the application env on the peer node so the
     # Repo process can find its connection parameters at startup.
@@ -145,7 +145,7 @@ defmodule Normandy.ClusterCase do
 
     pid =
       spawn(fn ->
-        Normandy.Behaviours.SessionRegistry.Horde.register(reg, session_id, self())
+        :ok = Normandy.Behaviours.SessionRegistry.Horde.register(reg, session_id, self())
         send(parent, :registered)
         Process.sleep(:infinity)
       end)

@@ -19,7 +19,8 @@ defmodule Normandy.Test.TurnConfig do
     defstruct content: "", tool_calls: nil
   end
 
-  @spec build() :: Normandy.Agents.BaseAgentConfig.t()
+  # Not BaseAgentConfig.t(): the fixture uses a plain-map client and no input_schema.
+  @spec build() :: %Normandy.Agents.BaseAgentConfig{}
   def build do
     %Normandy.Agents.BaseAgentConfig{
       input_schema: nil,
