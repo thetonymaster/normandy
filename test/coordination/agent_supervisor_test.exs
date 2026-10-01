@@ -1,6 +1,8 @@
 defmodule Normandy.Coordination.AgentSupervisorTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.{AgentProcess, AgentSupervisor}
 
@@ -102,9 +104,8 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       {:ok, agent_pid} = AgentSupervisor.start_agent(sup, agent: agent)
 
       assert Process.alive?(agent_pid)
+      # terminate_child/2 returns once the child has exited.
       assert :ok = AgentSupervisor.terminate_agent(sup, agent_pid)
-
-      Process.sleep(10)
       refute Process.alive?(agent_pid)
     end
 
@@ -198,9 +199,8 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       {:ok, pid2} = AgentSupervisor.start_agent(sup, agent: agent)
       {:ok, pid3} = AgentSupervisor.start_agent(sup, agent: agent)
 
+      # Each terminate_child/2 returns once that child has exited.
       assert :ok = AgentSupervisor.terminate_all(sup)
-
-      Process.sleep(20)
 
       refute Process.alive?(pid1)
       refute Process.alive?(pid2)
@@ -226,11 +226,13 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
           restart: :transient
         )
 
-      # Kill the process abnormally
+      # Kill the process abnormally; the supervisor restarts it asynchronously.
       Process.exit(pid, :kill)
-      Process.sleep(50)
 
-      # Should have been restarted
+      assert wait_until(fn ->
+               match?({:ok, p} when p != pid, AgentSupervisor.find_agent(sup, "restartable"))
+             end)
+
       {:ok, new_pid} = AgentSupervisor.find_agent(sup, "restartable")
       assert new_pid != pid
       assert Process.alive?(new_pid)
@@ -247,11 +249,14 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
         )
 
       # Kill the process
+      ref = Process.monitor(pid)
       Process.exit(pid, :kill)
-      Process.sleep(50)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
 
-      # Should NOT have been restarted
-      assert {:error, :not_found} = AgentSupervisor.find_agent(sup, "temporary")
+      # Should NOT have been restarted (the supervisor drops it once it sees the exit)
+      assert wait_until(fn ->
+               AgentSupervisor.find_agent(sup, "temporary") == {:error, :not_found}
+             end)
     end
 
     test "restarts permanent agents even on normal exit", %{agent: agent} do
@@ -264,11 +269,13 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
           restart: :permanent
         )
 
-      # Stop normally
+      # Stop normally; the supervisor restarts it asynchronously.
       AgentProcess.stop(pid)
-      Process.sleep(50)
 
-      # Should have been restarted
+      assert wait_until(fn ->
+               match?({:ok, p} when p != pid, AgentSupervisor.find_agent(sup, "permanent"))
+             end)
+
       {:ok, new_pid} = AgentSupervisor.find_agent(sup, "permanent")
       assert new_pid != pid
       assert Process.alive?(new_pid)
@@ -331,9 +338,8 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
 
       assert AgentSupervisor.count_agents(sup) == 3
 
-      # Remove one
+      # Remove one (terminate_child/2 is synchronous)
       AgentSupervisor.terminate_agent(sup, pid2)
-      Process.sleep(10)
 
       assert AgentSupervisor.count_agents(sup) == 2
       assert {:error, :not_found} = AgentSupervisor.find_agent(sup, "agent_2")
