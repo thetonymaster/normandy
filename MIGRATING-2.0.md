@@ -131,6 +131,7 @@ usage maps in telemetry and those returned to callers change shape.
   `remaining` that subtracts the tokens compaction removed from the current turn.
 - `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
 - `served_by` appears in `[:normandy, :agent, :llm_call, :stop]` telemetry and the
-  `normandy llm call stop` log line after a server-side fallback.
+  `normandy llm call stop` log line after a server-side fallback (non-streaming calls;
+  streaming rejects `:fallbacks`, so the serving model is always the requested one).
 - Compaction keeps each message's turn id, so `AgentMemory.delete_turn/2` works after a
   compaction.

@@ -344,7 +344,7 @@ defmodule Normandy.DSL.Agent do
           # With overrides
           {:ok, agent} = MyAgent.new(
             client: my_client,
-            override: [temperature: 0.9]
+            override: [max_tokens: 2048]
           )
 
           # Top-level overrides are also supported
