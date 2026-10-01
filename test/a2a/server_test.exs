@@ -1,6 +1,8 @@
 defmodule Normandy.A2A.ServerTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.BaseAgent
+
   defmodule Verdict do
     use Normandy.Schema
 
@@ -118,7 +120,7 @@ defmodule Normandy.A2A.ServerTest do
     alias Claudio.A2A.{Message, Part}
 
     defp agent(client_fields) do
-      Normandy.Agents.BaseAgent.init(%{
+      BaseAgent.init(%{
         client: struct(Normandy.Test.TaggingClient, [name: "agent"] ++ client_fields),
         model: "test-model"
       })
@@ -136,7 +138,7 @@ defmodule Normandy.A2A.ServerTest do
 
     test "an answer without chat_message is sent as its schema's JSON, not inspect output" do
       config =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %NormandyTest.Support.ModelMockup{},
           model: "test-model",
           output_schema: %Verdict{verdict: "approve"}
