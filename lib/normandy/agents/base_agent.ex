@@ -322,27 +322,7 @@ defmodule Normandy.Agents.BaseAgent do
       |> ConverseResult.normalize()
     end
 
-    # Apply retry first if configured, then circuit breaker wraps the whole thing
-    retryable_call =
-      if config.retry_options do
-        fn ->
-          retry_opts = with_default_retry_if(config.retry_options)
-
-          Retry.with_retry(llm_call, retry_opts)
-        end
-      else
-        llm_call
-      end
-
-    # Apply circuit breaker if configured (wraps the retry logic)
-    protected_call =
-      if config.circuit_breaker do
-        fn -> CircuitBreaker.call(config.circuit_breaker, retryable_call) end
-      else
-        retryable_call
-      end
-
-    case protected_call.() do
+    case with_resilience(config, llm_call) do
       {:ok, triple} ->
         triple
 
@@ -354,6 +334,31 @@ defmodule Normandy.Agents.BaseAgent do
       {:error, reason} ->
         raise_llm_call_error(reason)
     end
+  end
+
+  # Retry (retry_options) inside the circuit breaker (circuit_breaker), each only
+  # when configured. `may_retry?` is checked before each retry on top of the
+  # retry_if policy; streaming uses it to stop once output reached the caller.
+  defp with_resilience(config, call, may_retry? \\ fn -> true end) do
+    retryable_call =
+      if config.retry_options do
+        retry_opts = retry_options(config.retry_options, may_retry?)
+        fn -> Retry.with_retry(call, retry_opts) end
+      else
+        call
+      end
+
+    if config.circuit_breaker do
+      CircuitBreaker.call(config.circuit_breaker, retryable_call)
+    else
+      retryable_call.()
+    end
+  end
+
+  defp retry_options(retry_options, may_retry?) do
+    retry_options
+    |> with_default_retry_if()
+    |> Keyword.update!(:retry_if, &fn result -> may_retry?.() and &1.(result) end)
   end
 
   defp with_default_retry_if(retry_options) do
@@ -994,7 +999,14 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Raises
     `Normandy.LLMError` when the stream fails to start, carries an `error` event
-    or `{:error, _}` item, or ends without `message_stop`. Streams are not retried.
+    or `{:error, _}` item, or ends without `message_stop`.
+
+  ## Compared with `run/2`
+    - Input goes through the same schema validation and input guardrails.
+    - `retry_options` and the circuit breaker apply, but a stream is retried only
+      until its first event reaches the callback, so no output is shown twice.
+    - The final response is the accumulated message map; it is not converted to
+      the output schema.
 
   ## Example
 
@@ -1163,9 +1175,45 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Private helper to stream from LLM
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  # Retry and the circuit breaker cover a stream like a non-streaming call, but
+  # a stream is retried only until its first event reaches the callback: after
+  # that the caller has seen output, and a retry would show it twice.
   defp stream_response_from_llm(config, messages, opts) do
+    delivered = :atomics.new(1, [])
+    opts = Keyword.update(opts, :callback, nil, &track_delivery(&1, delivered))
+
+    attempt = fn -> stream_attempt(config, messages, opts) end
+
+    case with_resilience(config, attempt, fn -> :atomics.get(delivered, 1) == 0 end) do
+      {:ok, _final} = ok ->
+        ok
+
+      {:error, %LLMError{} = error} ->
+        {:error, error}
+
+      {:error, {reason, attempts, errors}} when is_integer(attempts) and is_list(errors) ->
+        stream_error(reason)
+
+      {:error, reason} ->
+        stream_error(reason)
+    end
+  end
+
+  defp track_delivery(callback, delivered) when is_function(callback, 2) do
+    fn event, data ->
+      :atomics.put(delivered, 1, 1)
+      callback.(event, data)
+    end
+  end
+
+  defp track_delivery(callback, _delivered), do: callback
+
+  defp stream_error(%LLMError{} = error), do: {:error, error}
+  defp stream_error(reason), do: raise_llm_call_error(reason)
+
+  # One stream from the LLM.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defp stream_attempt(config, messages, opts) do
     # Check if client protocol implements stream_converse
     impl = Model.impl_for(config.client)
 
