@@ -131,20 +131,26 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
   # reject the supervised start with `{{:process_not_registered_via, _}, _child}` until
   # it converges. Production tolerates this in `Turn.Session.start_with_retry`; the
   # direct `start_server` path here bypasses that, so mirror the same containment.
+  # The race arrives bare or nested with the child spec, as Session's via_race?/1
+  # also recognizes.
   defp start_server_with_retry(sup, opts, retries \\ 50) do
     case HSup.start_server(sup, opts) do
       {:ok, pid} ->
         pid
 
-      {:error, {{:process_not_registered_via, _}, _child}} = err ->
-        if retries > 0 do
-          Process.sleep(10)
-          start_server_with_retry(sup, opts, retries - 1)
-        else
-          flunk("Horde via registration never converged: #{inspect(err)}")
-        end
+      {:error, reason} = err when retries > 0 ->
+        if via_race?(reason),
+          do: Process.sleep(10) && start_server_with_retry(sup, opts, retries - 1),
+          else: flunk("start_server failed: #{inspect(err)}")
+
+      err ->
+        flunk("Horde via registration never converged: #{inspect(err)}")
     end
   end
+
+  defp via_race?({:process_not_registered_via, _}), do: true
+  defp via_race?({{:process_not_registered_via, _}, _child}), do: true
+  defp via_race?(_), do: false
 
   defp build_test_config, do: TurnConfig.build()
 end
