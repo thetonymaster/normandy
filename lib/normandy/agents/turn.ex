@@ -240,6 +240,46 @@ defmodule Normandy.Agents.Turn do
     apply_tool_results(s, reorder(held ++ results, s.pending_calls))
   end
 
+  # The approval window closed with no decision (the shell's approval timeout).
+  # Unlike an approver's rejection, the expired results say so. `:continue` hands
+  # them to the model and steers on; `:fail` completes the batch (every tool_use
+  # answered, so the conversation stays valid) and fails the turn.
+  def step(%State{status: :awaiting_approval, parked_calls: []} = s, {:approval_expired, _}) do
+    reason = {:unexpected_event, :awaiting_approval, :approval_expired_without_parked_calls}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+  end
+
+  def step(
+        %State{status: :awaiting_approval, parked_calls: parked, held_results: held} = s,
+        {:approval_expired, %{mode: mode, timeout_ms: ms}}
+      )
+      when mode in [:continue, :fail] do
+    expired = Enum.map(parked, &expiry_result(&1, ms))
+    results = reorder(held ++ expired, s.pending_calls)
+    event = {:emit_event, :approval_expired, %{expired: length(parked), mode: mode}}
+
+    case mode do
+      :continue ->
+        {s2, effects} = apply_tool_results(s, results)
+        {s2, [event | effects]}
+
+      :fail ->
+        reason = {:approval_timeout, Enum.map(parked, & &1.id)}
+
+        s2 = %{
+          s
+          | status: :failed,
+            error: reason,
+            pending_calls: [],
+            parked_calls: [],
+            held_results: []
+        }
+
+        appends = Enum.map(results, &{:append_message, "tool", &1})
+        {s2, appends ++ [event, {:fail, reason}]}
+    end
+  end
+
   def step(%State{status: status} = s, {:llm_error, reason})
       when status not in [:stopped, :failed] do
     {%{s | status: :failed, error: reason}, [{:fail, reason}]}
@@ -343,6 +383,20 @@ defmodule Normandy.Agents.Turn do
     %ToolResult{
       tool_call_id: id,
       output: %{error: "tool call rejected by approver", denied: true, pending_approval: false},
+      is_error: true
+    }
+  end
+
+  # Result for a parked call whose approval window expired with no decision.
+  defp expiry_result(%ToolCall{id: id}, ms) do
+    %ToolResult{
+      tool_call_id: id,
+      output: %{
+        error: "approval timed out: no approver responded within #{ms}ms",
+        denied: true,
+        expired: true,
+        pending_approval: false
+      },
       is_error: true
     }
   end

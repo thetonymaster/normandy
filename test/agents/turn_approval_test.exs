@@ -278,4 +278,83 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s4.status == :assistant_streaming
     end
   end
+
+  describe "step/2 approval expiry (:awaiting_approval + :approval_expired)" do
+    setup do
+      pending = [
+        %ToolCall{id: "a1", name: "weather", input: %{}},
+        %ToolCall{id: "p1", name: "billing", input: %{}}
+      ]
+
+      s = %State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: pending,
+        held_results: [%ToolResult{tool_call_id: "a1", output: "sunny", is_error: false}],
+        parked_calls: [%ToolCall{id: "p1", name: "billing", input: %{}}]
+      }
+
+      {:ok, s: s}
+    end
+
+    test ":continue appends expired results in batch order after the event, then steers",
+         %{s: s} do
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :continue, timeout_ms: 50}})
+
+      assert s2.status == :steering
+      assert s2.iterations_left == 4
+      assert s2.parked_calls == []
+      assert s2.held_results == []
+
+      assert [
+               {:emit_event, :approval_expired, %{expired: 1, mode: :continue}},
+               {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
+               {:append_message, "tool",
+                %ToolResult{tool_call_id: "p1", is_error: true, output: output}},
+               {:persist, ^s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4}}
+             ] = effects
+
+      assert output == %{
+               error: "approval timed out: no approver responded within 50ms",
+               denied: true,
+               expired: true,
+               pending_approval: false
+             }
+    end
+
+    test ":fail completes the batch, then emits and fails with {:approval_timeout, ids}",
+         %{s: s} do
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :fail, timeout_ms: 50}})
+
+      assert s2.status == :failed
+      assert s2.error == {:approval_timeout, ["p1"]}
+      assert s2.pending_calls == []
+      assert s2.parked_calls == []
+      assert s2.held_results == []
+
+      assert [
+               {:append_message, "tool", %ToolResult{tool_call_id: "a1"}},
+               {:append_message, "tool",
+                %ToolResult{tool_call_id: "p1", is_error: true, output: %{expired: true}}},
+               {:emit_event, :approval_expired, %{expired: 1, mode: :fail}},
+               {:fail, {:approval_timeout, ["p1"]}}
+             ] = effects
+    end
+
+    test "expiry with no parked calls is an unexpected event", %{s: s} do
+      s = %{s | parked_calls: []}
+      reason = {:unexpected_event, :awaiting_approval, :approval_expired_without_parked_calls}
+
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :continue, timeout_ms: 50}})
+
+      assert s2.status == :failed
+      assert s2.error == reason
+      assert effects == [{:fail, reason}]
+    end
+  end
 end
