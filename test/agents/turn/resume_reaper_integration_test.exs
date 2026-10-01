@@ -34,11 +34,13 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
   test "on :nodedown the reaper reconstructs + resumes an eager session under Horde, from Postgres" do
     sid = "reap-#{System.unique_integer([:positive])}"
     reg = HReg.new()
-    {:ok, sup} = HSup.start_link(name: :"reapsup_#{System.unique_integer([:positive])}")
+    # Horde calls take the name; start_link's pid is Horde's outer Supervisor.
+    sup = :"reapsup_#{System.unique_integer([:positive])}"
+    {:ok, sup_pid} = HSup.start_link(name: sup)
     {:ok, cat} = Catalog.start_link([])
 
     on_exit(fn ->
-      if Process.alive?(sup), do: Process.exit(sup, :kill)
+      if Process.alive?(sup_pid), do: Process.exit(sup_pid, :kill)
       if Process.alive?(cat), do: Process.exit(cat, :kill)
     end)
 

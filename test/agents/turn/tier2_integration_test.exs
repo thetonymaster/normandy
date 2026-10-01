@@ -13,7 +13,9 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
 
   test "a turn runs through the Horde supervisor with reconstructed config" do
     reg = HReg.new()
-    {:ok, sup} = HSup.start_link(name: :"t2_#{System.unique_integer([:positive])}")
+    # Horde calls take the name; start_link's pid is Horde's outer Supervisor.
+    sup = :"t2_#{System.unique_integer([:positive])}"
+    {:ok, _} = HSup.start_link(name: sup)
     store = InMemory.new()
     {:ok, cat} = Catalog.start_link([])
     sid = "t2-#{System.unique_integer([:positive])}"
