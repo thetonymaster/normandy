@@ -503,6 +503,7 @@ defmodule Normandy.Type do
   def dump(:map, value, _dumper), do: same_map(value)
   def dump(:string, value, _dumper), do: same_binary(value)
   def dump(:binary, value, _dumper), do: same_binary(value)
+  def dump(:bitstring, value, _dumper), do: cast_bitstring(value)
   def dump(:date, value, _dumper), do: same_date(value)
   def dump(:time, value, _dumper), do: dump_time(value)
   def dump(:duration, value, _dumper), do: same_duration(value)
@@ -564,6 +565,11 @@ defmodule Normandy.Type do
   def load(:string, value, _loader), do: same_binary(value)
   def load(:date, value, _loader), do: same_date(value)
   def load(:time, value, _loader), do: load_time(value)
+  def load(:any, value, _loader), do: {:ok, value}
+  def load(:binary, value, _loader), do: same_binary(value)
+  def load(:bitstring, value, _loader), do: cast_bitstring(value)
+  def load(:duration, value, _loader), do: same_duration(value)
+  def load(:struct, value, _loader), do: cast_struct(value)
   def load(mod, value, _loader), do: mod.load(value)
 
   defp load_float(term) when is_float(term), do: {:ok, term}
