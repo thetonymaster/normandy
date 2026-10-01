@@ -143,4 +143,45 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     assert Atom.to_string(mod) == "Elixir.Normandy.Behaviours.ModelCatalog.Static"
     Code.ensure_loaded!(mod)
   end
+
+  test "rebuild rejects an unsizable compaction setup (non-Claudio client, unpinned compactor)" do
+    tmpl = %{
+      template_id: "t",
+      model: "m",
+      temperature: nil,
+      max_tokens: 100,
+      max_tool_iterations: 4,
+      max_tool_concurrency: 1,
+      name: "n",
+      prompt_specification: %Normandy.Components.PromptSpecification{},
+      input_schema: nil,
+      output_schema: nil,
+      behaviours_refs: %{
+        policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
+        budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
+        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        compactor: {Normandy.Behaviours.Compactor.WindowManager, [reserved_tokens: 16]},
+        model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
+        session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
+        session_registry: {Normandy.Behaviours.SessionRegistry.Native, []}
+      }
+    }
+
+    supp = %{
+      tool_registry: nil,
+      before_hooks: [],
+      after_hooks: [],
+      client_builder: fn token -> %{api_key: token} end
+    }
+
+    assert_raise ArgumentError, ~r/:max_tokens/, fn -> ConfigTemplate.rebuild(tmpl, supp, "T") end
+
+    pinned =
+      put_in(
+        tmpl.behaviours_refs.compactor,
+        {Normandy.Behaviours.Compactor.WindowManager, [max_tokens: 50_000]}
+      )
+
+    assert %Normandy.Agents.BaseAgentConfig{} = ConfigTemplate.rebuild(pinned, supp, "T")
+  end
 end

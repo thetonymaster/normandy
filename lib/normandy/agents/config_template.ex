@@ -46,6 +46,12 @@ defmodule Normandy.Agents.ConfigTemplate do
     from_config(c, template_id) |> Map.put(:resume_policy, resume_policy)
   end
 
+  @doc """
+  Rebuilds a `BaseAgentConfig` from a template and a supplement.
+
+  Raises `ArgumentError` for a compaction setup that can't size its window (see
+  `BaseAgent.validate_compaction_config!/1`).
+  """
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
           BaseAgentConfig.t()
   def rebuild(tmpl, supplement, token) do
@@ -78,5 +84,6 @@ defmodule Normandy.Agents.ConfigTemplate do
       behaviours: behaviours,
       memory: Normandy.Components.AgentMemory.new_memory(Map.get(tmpl, :max_messages))
     }
+    |> Normandy.Agents.BaseAgent.validate_compaction_config!()
   end
 end

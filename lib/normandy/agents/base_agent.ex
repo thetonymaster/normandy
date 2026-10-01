@@ -77,6 +77,12 @@ defmodule Normandy.Agents.BaseAgent do
             "output_guardrails_chunk_size must be a positive integer, got: #{inspect(chunk_size)}"
     end
 
+    _ =
+      validate_compaction_config!(%BaseAgentConfig{
+        client: Map.get(config, :client),
+        behaviours: Map.get(config, :behaviours, nil)
+      })
+
     # Initialize circuit breaker if enabled
     circuit_breaker =
       if Map.get(config, :enable_circuit_breaker, false) do
@@ -716,6 +722,43 @@ defmodule Normandy.Agents.BaseAgent do
        do: ref
 
   defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
+
+  @doc false
+  # A real compactor sizes against the model's context window. With no pinned
+  # :max_tokens and the default catalog (the Anthropic Models API), that lookup
+  # needs a ClaudioAdapter client; any other client makes every compaction raise
+  # mid-turn, after tools ran. Called from init/1 and ConfigTemplate.rebuild/3 so
+  # the mistake surfaces where the config is made. Never inspects the client value
+  # (it may hold an API key), only its struct name.
+  @spec validate_compaction_config!(BaseAgentConfig.t()) :: BaseAgentConfig.t()
+  def validate_compaction_config!(%BaseAgentConfig{} = config) do
+    {compactor, compactor_opts} = compactor_ref(config)
+    {catalog, _catalog_opts} = catalog_ref(config)
+
+    needs_api_lookup? =
+      compactor != Normandy.Behaviours.Compactor.NoOp and
+        not Keyword.has_key?(compactor_opts, :max_tokens) and
+        catalog in [
+          Normandy.Behaviours.ModelCatalog.ModelsAPI,
+          Normandy.Behaviours.ModelCatalog.Static
+        ]
+
+    if needs_api_lookup? and not match?(%Normandy.LLM.ClaudioAdapter{}, config.client) do
+      raise ArgumentError,
+            "Normandy.Agents.BaseAgent: compactor #{inspect(compactor)} needs the model's " <>
+              "context window, and the model catalog #{inspect(catalog)} reads it from the " <>
+              "Anthropic Models API, which needs a Normandy.LLM.ClaudioAdapter client; got " <>
+              "#{client_kind(config.client)}. Pin the window with the compactor's :max_tokens " <>
+              "option, or configure a model_catalog that works with this client."
+    end
+
+    config
+  end
+
+  defp client_kind(%{__struct__: mod}), do: "a #{inspect(mod)}"
+  defp client_kind(nil), do: "nil"
+  defp client_kind(other) when is_map(other), do: "a plain map"
+  defp client_kind(_other), do: "a non-struct value"
 
   # The window the compactor sizes against. NoOp needs none; a pinned
   # :max_tokens wins without a lookup (offline use, non-Claude clients);
