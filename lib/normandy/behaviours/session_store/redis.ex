@@ -19,6 +19,7 @@ if Code.ensure_loaded?(Redix) do
     """
     @behaviour Normandy.Behaviours.SessionStore
 
+    alias Normandy.Behaviours.SessionStore.Codec
     alias Normandy.Components.AgentMemory.Entry
 
     @doc "Test/default handle: a Redix conn to the configured URL + a unique namespace."
@@ -215,7 +216,7 @@ if Code.ensure_loaded?(Redix) do
     # transactions.
     defp resumable_key(ns), do: "#{ns}:resumable"
 
-    defp encode(term), do: :erlang.term_to_binary(term)
-    defp decode(bin) when is_binary(bin), do: :erlang.binary_to_term(bin, [:safe])
+    defp encode(term), do: Codec.encode(term)
+    defp decode(bin) when is_binary(bin), do: Codec.decode(bin)
   end
 end

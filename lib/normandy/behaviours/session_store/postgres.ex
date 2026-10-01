@@ -15,6 +15,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     import Ecto.Query
     alias Ecto.Adapters.SQL
+    alias Normandy.Behaviours.SessionStore.Codec
     alias Normandy.Behaviours.SessionStore.Postgres.Schemas.{Entry, Session}
     alias Normandy.Components.AgentMemory
 
@@ -223,7 +224,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     defp load_uuid(nil), do: nil
     defp load_uuid(bin) when is_binary(bin), do: Ecto.UUID.load!(bin)
 
-    defp encode(term), do: :erlang.term_to_binary(term)
-    defp decode(bin) when is_binary(bin), do: :erlang.binary_to_term(bin, [:safe])
+    defp encode(term), do: Codec.encode(term)
+    defp decode(bin) when is_binary(bin), do: Codec.decode(bin)
   end
 end
