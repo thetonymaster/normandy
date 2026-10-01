@@ -452,4 +452,38 @@ defmodule Normandy.TypeTest do
                "{:array, {:map, :integer}}"
     end
   end
+
+  describe "cast of :struct and plain modules" do
+    test ":struct accepts any struct and rejects anything else" do
+      assert Normandy.Type.cast(:struct, %URI{host: "x"}) == {:ok, %URI{host: "x"}}
+      assert Normandy.Type.cast(:struct, %{host: "x"}) == :error
+    end
+
+    test "a module that is neither a Normandy.Type nor a schema raises a clear error" do
+      assert_raise ArgumentError,
+                   ~r/String.*neither a Normandy.Type.*nor a Normandy schema/,
+                   fn ->
+                     Normandy.Type.cast(String, "x")
+                   end
+    end
+  end
+
+  describe "dump of nested schemas and :struct" do
+    defmodule Point do
+      use Normandy.Schema
+
+      io_schema "a point" do
+        field(:x, :integer, description: "x")
+      end
+    end
+
+    test "a nested schema dumps its own struct and rejects other values" do
+      assert Normandy.Type.dump(Point, %Point{x: 1}) == {:ok, %Point{x: 1}}
+      assert Normandy.Type.dump(Point, %{x: 1}) == :error
+    end
+
+    test ":struct dumps any struct" do
+      assert Normandy.Type.dump(:struct, %URI{}) == {:ok, %URI{}}
+    end
+  end
 end

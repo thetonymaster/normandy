@@ -506,7 +506,11 @@ defmodule Normandy.Type do
   def dump(:date, value, _dumper), do: same_date(value)
   def dump(:time, value, _dumper), do: dump_time(value)
   def dump(:duration, value, _dumper), do: same_duration(value)
-  def dump(mod, value, _dumper) when is_atom(mod), do: mod.dump(value)
+  def dump(:struct, value, _dumper), do: cast_struct(value)
+
+  def dump(mod, value, _dumper) when is_atom(mod) do
+    if schema_module?(mod), do: dump_schema(mod, value), else: mod.dump(value)
+  end
 
   defp dump_float(term) when is_float(term), do: {:ok, term}
   defp dump_float(_), do: :error
@@ -705,12 +709,54 @@ defmodule Normandy.Type do
     &map(&1, fun, true, %{})
   end
 
+  defp cast_fun(:struct), do: &cast_struct/1
+
   defp cast_fun(mod) when is_atom(mod) do
-    fn
-      nil -> {:ok, nil}
-      value -> mod.cast(value)
+    cond do
+      schema_module?(mod) ->
+        &cast_schema(mod, &1)
+
+      function_exported?(mod, :cast, 1) ->
+        fn
+          nil -> {:ok, nil}
+          value -> mod.cast(value)
+        end
+
+      true ->
+        raise ArgumentError,
+              "Normandy.Type.cast/2: #{inspect(mod)} is neither a Normandy.Type (no cast/1) " <>
+                "nor a Normandy schema, so it cannot be used as a field type"
     end
   end
+
+  defp schema_module?(mod),
+    do: Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)
+
+  defp cast_struct(value) when is_struct(value), do: {:ok, value}
+  defp cast_struct(_), do: :error
+
+  # A nested schema field: accept the struct itself, or cast a map into it with
+  # the nested schema's own field types and required fields.
+  defp cast_schema(mod, %mod{} = value), do: {:ok, value}
+
+  defp cast_schema(mod, value) when is_map(value) and not is_struct(value) do
+    data = struct(mod)
+    fields = Map.keys(mod.__specification__())
+
+    data
+    |> Normandy.Validate.cast(value, fields)
+    |> Normandy.Validate.validate_required(mod.__schema__(:required) || [])
+    |> Normandy.Validate.apply_action(:cast)
+    |> case do
+      {:ok, struct} -> {:ok, struct}
+      {:error, _changeset} -> :error
+    end
+  end
+
+  defp cast_schema(_mod, _value), do: :error
+
+  defp dump_schema(mod, %mod{} = value), do: {:ok, value}
+  defp dump_schema(_mod, _value), do: :error
 
   # We check for the byte size to avoid creating unnecessary large integers
   # which would never map to a database key (u64 is 20 digits only).
@@ -1160,7 +1206,10 @@ defmodule Normandy.Type do
     &mod.equal?(&1, &2, params)
   end
 
-  defp equal_fun(mod) when is_atom(mod), do: &mod.equal?/2
+  defp equal_fun(mod) when is_atom(mod) do
+    # A nested schema compares structurally (nil = use ==).
+    if schema_module?(mod), do: nil, else: &mod.equal?/2
+  end
 
   defp equal_time?(%Time{} = a, %Time{} = b), do: Time.compare(a, b) == :eq
   defp equal_time?(_, _), do: false
