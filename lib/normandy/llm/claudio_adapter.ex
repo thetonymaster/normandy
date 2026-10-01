@@ -36,12 +36,26 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   ## Configuration
 
-  The adapter supports all Claudio client options:
+  The adapter reads these keys from `options` (a map). Nothing below is sent unless set:
 
   - `:timeout` - Request timeout in milliseconds (default: 30_000)
   - `:enable_caching` - Enable prompt caching (default: false)
-  - `:thinking_budget` - Token budget for extended thinking mode
+  - `:thinking` - `:adaptive` (Claude 4.6 and later) or `:disabled`
+  - `:thinking_display` - `:summarized | :omitted | :updates`; requires `thinking: :adaptive`
+  - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
+    `budget_tokens` (4.6 and earlier, such as Haiku 4.5; Opus 4.7+, 5.x, Sonnet 5 and
+    Fable return 400); mutually exclusive with `:thinking`. `thinking: :disabled` also
+    returns 400 on Opus 5.5, which always thinks
+  - `:effort` - `:low | :medium | :high | :xhigh | :max`
+  - `:speed` - `:fast | :standard` (fast mode research preview)
+  - `:inference_geo` - `:global | :us`
+  - `:fallbacks` - `:default` or a list of model ids/maps (server-side refusal fallback);
+    Normandy rejects it on streaming calls (partial output would reach the callback)
+  - `:task_budget` - total tokens for the agentic turn (advisory; API minimum 20,000)
   - `:base_url` - Custom API base URL (for testing)
+
+  Which models accept which values is left to the API: an unsupported pairing
+  returns the API's 400 through the normal error path.
 
   ## Structured Outputs
 
@@ -169,7 +183,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_messages(messages, enable_caching)
         |> add_tools(tools, enable_caching)
         |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
+        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
 
       # Execute request
       case Claudio.Messages.create(claudio_client, request) do
@@ -214,7 +228,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_messages(messages, enable_caching)
         |> add_tools(tools, enable_caching)
         |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
+        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
       case Claudio.Messages.create(claudio_client, request) do
@@ -269,7 +283,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_messages(messages, enable_caching)
         |> add_tools(tools, enable_caching)
         |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
+        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
 
       Normandy.LLM.ClaudioAdapter.__raw_completion__(
         Claudio.Messages.create(claudio_client, request)
@@ -337,7 +351,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_max_tokens(max_tokens)
         |> add_messages(messages, enable_caching)
         |> add_tools(tools, enable_caching)
-        |> add_client_options(client.options)
+        |> add_client_options(
+          client.options,
+          [stream: true] ++ Keyword.take(opts, [:task_budget_remaining])
+        )
         |> Claudio.Messages.Request.enable_streaming()
 
       # Execute streaming request - Req returns Req.Response with streaming body
@@ -843,8 +860,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end)
     end
 
-    defp add_client_options(request, options),
-      do: Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, options)
+    defp add_client_options(request, options, call_opts),
+      do: Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, options, call_opts)
 
     defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
@@ -1049,22 +1066,88 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   @doc false
   # Applies `client.options` request settings, plus per-call options from the turn
-  # loop, to a Claudio request. Public so tests can assert the request shape
-  # without an HTTP call; not part of the supported surface.
+  # loop (`:task_budget_remaining`, `:stream`), to a Claudio request. Public so
+  # tests can assert the request shape without an HTTP call; not part of the
+  # supported surface. Normandy checks option *combinations* only; values reach
+  # Claudio's own ArgumentError and model support reaches the API.
   @spec __apply_client_options__(Claudio.Messages.Request.t(), map(), keyword()) ::
           Claudio.Messages.Request.t()
-  def __apply_client_options__(request, options, _call_opts \\ []) do
-    put_thinking_budget(request, Map.get(options, :thinking_budget))
+  def __apply_client_options__(request, options, call_opts \\ []) do
+    opt = fn key -> Map.get(options, key) end
+    validate_option_combinations!(opt, call_opts)
+
+    request
+    |> put_thinking(opt.(:thinking), opt.(:thinking_display), opt.(:thinking_budget))
+    |> put_if(opt.(:effort), &Claudio.Messages.Request.set_effort/2)
+    |> put_if(opt.(:speed), &Claudio.Messages.Request.set_speed/2)
+    |> put_if(opt.(:inference_geo), &Claudio.Messages.Request.set_inference_geo/2)
+    |> put_if(opt.(:fallbacks), &Claudio.Messages.Request.set_fallbacks/2)
+    |> put_task_budget(opt.(:task_budget), Keyword.get(call_opts, :task_budget_remaining))
   end
 
-  defp put_thinking_budget(request, nil), do: request
+  defp validate_option_combinations!(opt, call_opts) do
+    if opt.(:thinking) != nil and opt.(:thinking_budget) != nil do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking and :thinking_budget are " <>
+              "mutually exclusive (:thinking_budget is for models that still accept budget_tokens: " <>
+              "4.6 and earlier, such as Haiku 4.5); " <>
+              "got thinking: #{inspect(opt.(:thinking))}, thinking_budget: #{inspect(opt.(:thinking_budget))}"
+    end
 
-  defp put_thinking_budget(request, budget) when is_integer(budget) do
+    if opt.(:thinking_display) != nil and opt.(:thinking) != :adaptive do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking_display requires thinking: :adaptive; " <>
+              "got thinking: #{inspect(opt.(:thinking))}"
+    end
+
+    if opt.(:fallbacks) != nil and Keyword.get(call_opts, :stream, false) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: Normandy does not support :fallbacks on streaming calls. " <>
+              "The API retries on the same stream, but partial output from the declining model " <>
+              "would already have reached the stream callback. Remove client.options :fallbacks " <>
+              "or use a non-streaming call"
+    end
+
+    :ok
+  end
+
+  defp put_thinking(request, nil, _display, nil), do: request
+
+  defp put_thinking(request, :adaptive, display, nil),
+    do: Claudio.Messages.Request.enable_adaptive_thinking(request, display: display)
+
+  defp put_thinking(request, :disabled, _display, nil),
+    do: Claudio.Messages.Request.disable_thinking(request)
+
+  defp put_thinking(request, nil, _display, budget) when is_integer(budget) do
     Claudio.Messages.Request.enable_thinking(request, %{
       "type" => "enabled",
       "budget_tokens" => budget
     })
   end
+
+  defp put_thinking(_request, thinking, _display, nil) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client.options :thinking must be :adaptive or :disabled; " <>
+            "got #{inspect(thinking)}"
+  end
+
+  defp put_thinking(_request, nil, _display, budget) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client.options :thinking_budget must be a positive integer; " <>
+            "got #{inspect(budget)}"
+  end
+
+  defp put_if(request, nil, _setter), do: request
+  defp put_if(request, value, setter), do: setter.(request, value)
+
+  defp put_task_budget(request, nil, _remaining), do: request
+
+  defp put_task_budget(request, total, nil),
+    do: Claudio.Messages.Request.set_task_budget(request, total)
+
+  defp put_task_budget(request, total, remaining),
+    do: Claudio.Messages.Request.set_task_budget(request, total, remaining: remaining)
 
   @doc false
   # Decides what to do when the structured-outputs call errors. A request-shape
