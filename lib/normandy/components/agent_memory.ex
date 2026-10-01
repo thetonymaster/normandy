@@ -192,6 +192,15 @@ defmodule Normandy.Components.AgentMemory do
     # nothing outside known struct field names (see decode_content/1).
     loaded = adapter.decode!(dump)
 
+    case loaded["version"] do
+      1 ->
+        :ok
+
+      version ->
+        raise ArgumentError,
+              "AgentMemory.load/1: unsupported dump version #{inspect(version)} (expected 1)"
+    end
+
     entries =
       for e <- loaded["entries"], into: %{} do
         {e["id"],
@@ -366,9 +375,49 @@ defmodule Normandy.Components.AgentMemory do
   defp decode_value(value) when is_list(value), do: Enum.map(value, &decode_value/1)
   defp decode_value(value), do: value
 
+  # Only a module defined with Normandy.Schema is rebuilt: a dump is data, and
+  # must not choose arbitrary loaded structs (with fields it picks) to build.
   defp decode_struct(type, data) do
-    mod = String.to_existing_atom(type)
-    struct(mod, data |> Map.delete("__meta__") |> decode_value() |> atomize_struct_fields())
+    mod = schema_module!(type)
+
+    mod
+    |> struct(data |> Map.delete("__meta__") |> decode_value() |> atomize_struct_fields())
+    |> restore_atom_fields()
+  end
+
+  defp schema_module!(type) do
+    mod =
+      try do
+        String.to_existing_atom(type)
+      rescue
+        ArgumentError -> nil
+      end
+
+    if mod && Code.ensure_loaded?(mod) && function_exported?(mod, :__schema__, 1) do
+      mod
+    else
+      raise ArgumentError,
+            "AgentMemory.load/1: dump names a struct that is not a Normandy schema: #{inspect(type)}"
+    end
+  end
+
+  # JSON turns atom field values into strings. Content blocks keep their source
+  # as an atom, so map the known values back.
+  @atom_field_values %{
+    Normandy.Components.ContentBlock.Image => {:source, ~w(base64 url)a},
+    Normandy.Components.ContentBlock.Document => {:source, ~w(file_id)a}
+  }
+
+  defp restore_atom_fields(%mod{} = struct) do
+    case Map.fetch(@atom_field_values, mod) do
+      {:ok, {field, allowed}} ->
+        value = Map.fetch!(struct, field)
+        atom = Enum.find(allowed, &(Atom.to_string(&1) == value))
+        if atom, do: Map.put(struct, field, atom), else: struct
+
+      :error ->
+        struct
+    end
   end
 
   defp atomize_struct_fields(data) do

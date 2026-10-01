@@ -416,4 +416,67 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       assert resp.__meta__ == %ToolCallResponse{}.__meta__
     end
   end
+
+  describe "dump/load of content blocks and untrusted dumps" do
+    alias Normandy.Components.ContentBlock.{Document, Image, Text}
+
+    defp round_trip(content) do
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", content)
+      |> AgentMemory.dump()
+      |> AgentMemory.load()
+      |> AgentMemory.messages()
+      |> hd()
+      |> Map.get(:content)
+    end
+
+    test "a single base64 image comes back usable" do
+      image = %Image{source: :base64, data: "aGk=", media_type: "image/png"}
+
+      assert %Image{source: :base64} = loaded = round_trip(image)
+      assert Image.to_claudio(loaded) == Image.to_claudio(image)
+    end
+
+    test "a multimodal list comes back as the same blocks" do
+      blocks = [
+        %Text{text: "look"},
+        %Image{source: :url, url: "https://example.com/a.png"},
+        %Document{source: :file_id, file_id: "file_1"}
+      ]
+
+      assert round_trip(blocks) == blocks
+    end
+
+    defp dump_naming(type) do
+      Poison.encode!(%{
+        version: 1,
+        max_messages: nil,
+        current_turn_id: "t",
+        head: "e1",
+        entries: [
+          %{
+            id: "e1",
+            parent_id: nil,
+            turn_id: "t",
+            role: "user",
+            content: %{type: type, data: %{}}
+          }
+        ]
+      })
+    end
+
+    test "load refuses a struct that is not a Normandy schema" do
+      assert_raise ArgumentError, ~r/not a Normandy schema: "Elixir.URI"/, fn ->
+        AgentMemory.load(dump_naming("Elixir.URI"))
+      end
+    end
+
+    test "load refuses a dump version it does not know" do
+      dump = Poison.encode!(%{version: 99, entries: []})
+
+      assert_raise ArgumentError, ~r/unsupported dump version 99/, fn ->
+        AgentMemory.load(dump)
+      end
+    end
+  end
 end
