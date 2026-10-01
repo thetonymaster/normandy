@@ -259,14 +259,6 @@ defmodule Normandy.Type do
   @callback embed_as(format :: atom) :: :self | :dump
 
   @doc """
-  Generates a loaded version of the data.
-
-  This is callback is invoked when a custom type is given
-  to `field` with the `:autogenerate` flag.
-  """
-  @callback autogenerate() :: term()
-
-  @doc """
   Loads the given term into the custom type, the inverse of `c:dump/1`.
 
   This callback is called with a term coming from a serialized
@@ -275,7 +267,7 @@ defmodule Normandy.Type do
   """
   @callback load(term) :: {:ok, term} | :error
 
-  @optional_callbacks autogenerate: 0, load: 1
+  @optional_callbacks load: 1
 
   ## Functions
 
@@ -846,7 +838,6 @@ defmodule Normandy.Type do
             same_binary: 1,
             same_date: 1,
             same_duration: 1,
-            of_base_type?: 2,
             primitive?: 1,
             composite?: 1,
             base?: 1}
@@ -876,53 +867,6 @@ defmodule Normandy.Type do
   def empty_trimmed_string?(value) do
     is_binary(value) and String.trim_leading(value) == ""
   end
-
-  ## Adapter related
-
-  @doc false
-  def adapter_autogenerate(adapter, type) do
-    type
-    |> type()
-    |> adapter.autogenerate()
-  end
-
-  @doc false
-  def adapter_load(adapter, type, value) do
-    if of_base_type?(type, value) do
-      {:ok, value}
-    else
-      process_loaders(adapter.loaders(type(type), type), {:ok, value}, adapter)
-    end
-  end
-
-  defp process_loaders(_, :error, _adapter),
-    do: :error
-
-  defp process_loaders([fun | t], {:ok, value}, adapter) when is_function(fun),
-    do: process_loaders(t, fun.(value), adapter)
-
-  defp process_loaders([type | t], {:ok, value}, adapter),
-    do: process_loaders(t, load(type, value, &adapter_load(adapter, &1, &2)), adapter)
-
-  defp process_loaders([], {:ok, _} = acc, _adapter),
-    do: acc
-
-  @doc false
-  def adapter_dump(adapter, type, value) do
-    process_dumpers(adapter.dumpers(type(type), type), {:ok, value}, adapter)
-  end
-
-  defp process_dumpers(_, :error, _adapter),
-    do: :error
-
-  defp process_dumpers([fun | t], {:ok, value}, adapter) when is_function(fun),
-    do: process_dumpers(t, fun.(value), adapter)
-
-  defp process_dumpers([type | t], {:ok, value}, adapter),
-    do: process_dumpers(t, dump(type, value, &adapter_dump(adapter, &1, &2)), adapter)
-
-  defp process_dumpers([], {:ok, _} = acc, _adapter),
-    do: acc
 
   ## Date
 
@@ -1282,18 +1226,6 @@ defmodule Normandy.Type do
   def format(type), do: inspect(type)
 
   ## Helpers
-
-  # Checks if a value is of the given primitive type.
-  defp of_base_type?(:any, _), do: true
-  defp of_base_type?(:id, term), do: is_integer(term)
-  defp of_base_type?(:float, term), do: is_float(term)
-  defp of_base_type?(:integer, term), do: is_integer(term)
-  defp of_base_type?(:boolean, term), do: is_boolean(term)
-  defp of_base_type?(:binary, term), do: is_binary(term)
-  defp of_base_type?(:string, term), do: is_binary(term)
-  defp of_base_type?(:map, term), do: is_map(term) and not Map.has_key?(term, :__struct__)
-  defp of_base_type?(:date, value), do: Kernel.match?(%Date{}, value)
-  defp of_base_type?(_, _), do: false
 
   defp array_with_index([nil | t], fun, true, index, acc) do
     array_with_index(t, fun, true, index + 1, [nil | acc])

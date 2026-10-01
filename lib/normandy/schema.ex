@@ -417,24 +417,12 @@ defmodule Normandy.Schema do
   end
 
   @doc false
-  def __after_verify__(_module) do
-    # If we are compiling code, we can validate associations now,
-    # as the Elixir compiler will solve dependencies.
-
-    :ok
-  end
-
-  @doc false
   def __schema__(module, line) do
     if previous_line = Module.get_attribute(module, :schema_schema_defined) do
       raise "schema already defined for #{inspect(module)} on line #{previous_line}"
     end
 
     Module.put_attribute(module, :schema_schema_defined, line)
-
-    if Code.can_await_module_compilation?() do
-      Module.put_attribute(module, :after_verify, Normandy.Schema)
-    end
 
     Module.register_attribute(module, :schema_specification_fields, accumulate: true)
     Module.register_attribute(module, :schema_struct_fields, accumulate: true)
