@@ -32,6 +32,11 @@ defmodule Normandy.Agents.Turn.SessionTest do
     def load_config_template(_handle, _sid), do: {:error, :store_unavailable}
   end
 
+  # A store that refuses to save a config template.
+  defmodule TemplateSaveFaultStore do
+    def save_config_template(_handle, _sid, _tmpl), do: {:error, :disk_full}
+  end
+
   # A supervisor stand-in that reports the server opts Session built, then refuses.
   defmodule CapturingSupervisor do
     def start_server(test_pid, opts) do
@@ -275,6 +280,23 @@ defmodule Normandy.Agents.Turn.SessionTest do
              on_approval_timeout: :fail,
              idle_timeout_ms: 5_000
            }
+  end
+
+  test "a Tier-2 start returns the store's error when the template cannot be saved" do
+    {:ok, cat} = Catalog.start_link([])
+
+    opts = [
+      session_id: "s-save-fault",
+      config: session_config(),
+      store: {TemplateSaveFaultStore, nil},
+      registry: {Native, Native.new()},
+      supervisor: self(),
+      supervisor_mod: CapturingSupervisor,
+      template_provider: {Catalog, cat}
+    ]
+
+    assert {:error, :disk_full} = Turn.Session.run(opts, "hi")
+    refute_received {:server_opts, _}
   end
 
   describe "resume_policy: :eager" do

@@ -114,8 +114,7 @@ defmodule Normandy.Agents.Turn.Session do
          |> Keyword.put(:config, config)}
 
       {{:ok, config}, _provider} ->
-        :ok = save_template(opts, config)
-        {:ok, thin_server_opts(opts)}
+        with :ok <- save_template(opts, config), do: {:ok, thin_server_opts(opts)}
 
       {:error, _provider} ->
         case load_template(opts) do
