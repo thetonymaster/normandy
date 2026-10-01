@@ -21,7 +21,10 @@ defmodule Normandy.Context.WindowManager do
       {:ok, within_limit?} = WindowManager.within_limit?(manager, agent)
 
       # Automatically truncate if needed
-      {:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
+      case WindowManager.ensure_within_limit(agent, manager) do
+        {:ok, updated_agent} -> updated_agent
+        {:error, reason} -> handle_summary_failure(agent, reason)
+      end
 
   ## Truncation Strategies
 
@@ -239,9 +242,15 @@ defmodule Normandy.Context.WindowManager do
   @doc """
   Truncates conversation history using the configured strategy.
 
+  Returns `{:error, reason}` when the `:summarize` strategy's summarization
+  fails, leaving the agent unchanged.
+
   ## Example
 
-      {:ok, updated_agent} = WindowManager.truncate_conversation(agent, manager)
+      case WindowManager.truncate_conversation(agent, manager) do
+        {:ok, updated_agent} -> updated_agent
+        {:error, reason} -> handle_summary_failure(agent, reason)
+      end
   """
   @spec truncate_conversation(struct(), t()) :: {:ok, struct()} | {:error, term()}
   def truncate_conversation(agent, %__MODULE__{strategy: strategy} = manager) do

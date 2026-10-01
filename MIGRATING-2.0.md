@@ -140,6 +140,9 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - With a circuit breaker enabled, every returned LLM failure counts as a breaker failure,
   including non-retryable ones such as `:authentication` or `:invalid_request`, so a
   persistently bad request can open the circuit.
+- Enabling Claudio's client-level `retry:` (in `req_options` or the client config) together with
+  `retry_options` multiplies attempts, because Claudio retries HTTP failures before Normandy sees
+  them.
 - The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
   receives `{:error, %Normandy.LLMError{}}` for returned failures.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty

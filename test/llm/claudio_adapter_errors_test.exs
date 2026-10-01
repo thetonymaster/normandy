@@ -79,6 +79,50 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
 
       refute inspect(e) =~ @key
     end
+
+    test "an API error during a parse retry is returned, not applied as a parse failure" do
+      test_pid = self()
+      counter = :counters.new(1, [])
+
+      Req.Test.stub(__MODULE__.ParseRetry, fn conn ->
+        :counters.add(counter, 1, 1)
+        send(test_pid, :request)
+
+        if :counters.get(counter, 1) == 1 do
+          Req.Test.json(conn, %{
+            "id" => "msg_1",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-opus-5-5",
+            "content" => [%{"type" => "text", "text" => "this is not json"}],
+            "stop_reason" => "end_turn",
+            "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+          })
+        else
+          conn
+          |> Plug.Conn.put_status(529)
+          |> Req.Test.json(%{
+            "type" => "error",
+            "error" => %{"type" => "overloaded_error", "message" => "busy"}
+          })
+        end
+      end)
+
+      assert {:error, %LLMError{type: :overloaded, status: 529}} =
+               Model.converse(
+                 client(__MODULE__.ParseRetry, %{structured_outputs: false}),
+                 "claude-opus-5-5",
+                 nil,
+                 1024,
+                 [%Message{role: "user", content: "hi"}],
+                 %Normandy.LLM.Json.TestFixtures.MultiField{},
+                 []
+               )
+
+      assert_received :request
+      assert_received :request
+      refute_received :request
+    end
   end
 
   describe "structured path (default)" do
