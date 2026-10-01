@@ -30,13 +30,13 @@ defmodule Normandy.DSL.Workflow do
             input from: :analyze_sources
           end
 
-          # Conditional execution: stop early on a good enough review
+          # Conditional execution: the clause's value becomes the step result
           step :final_review do
             agent ReviewAgent
             input from: :validate
             when_result do
-              {:ok, %{quality: q}} when q > 0.8 -> :stop
-              {:ok, _} -> :continue
+              {:ok, %{quality: q}} when q > 0.8 -> :approve
+              {:ok, _} -> :needs_revision
             end
           end
         end
@@ -75,17 +75,19 @@ defmodule Normandy.DSL.Workflow do
 
   ### Conditional Execution
 
-  `when_result` runs after the step with `{:ok, result}` and gates the workflow:
-  `:stop` ends it successfully with the results so far, `{:error, reason}` fails it
-  as `{:error, {step_name, reason}}`, and any other value continues.
+  `when_result` works like `Normandy.Coordination.Reactive.when_result/3`: it runs
+  after the step, matches `{:ok, result}`, and the matching clause's value becomes
+  the step's result (what later steps and `from:` see). `{:ok, value}` gives
+  `value`, `{:error, reason}` fails the workflow as `{:error, {step_name, reason}}`,
+  and any other value is the result as it is. A clause can run another agent.
 
       step :process do
         agent MyAgent
         input from: :previous
         when_result do
-          {:ok, %{chat_message: "DONE"}} -> :stop
           {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
-          {:ok, _} -> :continue
+          {:ok, %{confidence: c}} when c < 0.5 -> :low_confidence
+          {:ok, result} -> {:ok, result}
         end
       end
 
@@ -147,7 +149,7 @@ defmodule Normandy.DSL.Workflow do
   - `agent` - Agent module or instance to use
   - `input` - Input for the agent (string, or `from: :step_name`)
   - `transform` - Function applied to the step's input before the agent runs
-  - `when_result` - Gate on the step's result (`:stop`, `{:error, reason}`, or continue)
+  - `when_result` - Clauses on `{:ok, result}` whose value becomes the step result
   """
   defmacro step(name, do: block) do
     quote do
@@ -282,17 +284,18 @@ defmodule Normandy.DSL.Workflow do
   end
 
   @doc """
-  Gates the workflow on the step's result, matched as `{:ok, result}`.
+  Replaces the step's result with the value of the clause matching
+  `{:ok, result}`, like `Normandy.Coordination.Reactive.when_result/3`.
 
-  Return `:stop` to end the workflow successfully with the results so far,
-  `{:error, reason}` to fail it, or anything else to continue.
+  `{:ok, value}` makes `value` the result, `{:error, reason}` fails the workflow,
+  and any other value becomes the result as it is.
 
   ## Examples
 
       when_result do
-        {:ok, %{chat_message: "DONE"}} -> :stop
         {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
-        {:ok, _} -> :continue
+        {:ok, %{confidence: c}} when c < 0.5 -> :low_confidence
+        {:ok, result} -> {:ok, result}
       end
   """
   defmacro when_result(do: clauses) do
@@ -327,16 +330,31 @@ defmodule Normandy.DSL.Workflow do
       end
 
     condition_clauses =
-      for %{name: name, condition: fun} <- steps, fun != nil do
-        quote do
-          defp __workflow_condition__(unquote(name), result), do: unquote(fun).(result)
-        end
+      case for(%{name: name, condition: fun} <- steps, fun != nil, do: {name, fun}) do
+        [] ->
+          []
+
+        conditions ->
+          clauses =
+            for {name, fun} <- conditions do
+              quote do
+                defp __workflow_condition__(unquote(name), result), do: unquote(fun).(result)
+              end
+            end
+
+          # Steps without a when_result keep their result.
+          fallback =
+            quote do
+              defp __workflow_condition__(_step, {:ok, result}), do: {:ok, result}
+            end
+
+          clauses ++ [fallback]
       end
 
-    # when_result gates the workflow on the step's result: :stop ends it with the
-    # results so far, {:error, reason} fails it, anything else continues. Without
-    # any when_result there is nothing to gate (and the type checker would flag
-    # the :stop/:error clauses as unreachable).
+    # when_result works like Reactive.when_result/3: the matching clause's value
+    # becomes the step's result. {:ok, value} gives value, {:error, reason} fails
+    # the workflow, any other value is the result as it is. Without any
+    # when_result, the step result stands.
     after_step =
       if condition_clauses == [] do
         quote do
@@ -344,14 +362,18 @@ defmodule Normandy.DSL.Workflow do
         end
       else
         quote do
-          defp __workflow_condition__(_step, _result), do: :continue
-
           defp after_step(step, state) do
-            case __workflow_condition__(step.name, {:ok, Map.fetch!(state.results, step.name)}) do
-              :stop -> {:halt, {:ok, state}}
+            result = Map.fetch!(state.results, step.name)
+
+            case __workflow_condition__(step.name, {:ok, result}) do
               {:error, reason} -> {:halt, {:error, {step.name, reason}}}
-              _continue -> {:cont, {:ok, state}}
+              {:ok, value} -> {:cont, {:ok, put_step_result(state, step.name, value)}}
+              value -> {:cont, {:ok, put_step_result(state, step.name, value)}}
             end
+          end
+
+          defp put_step_result(state, name, value) do
+            %{state | results: Map.put(state.results, name, value), current_input: value}
           end
         end
       end

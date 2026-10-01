@@ -52,7 +52,7 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
     end
   end
 
-  defmodule StopWorkflow do
+  defmodule WhenWorkflow do
     use Normandy.DSL.Workflow
 
     workflow do
@@ -61,9 +61,9 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
         input("go")
 
         when_result do
-          {:ok, %{chat_message: "halt"}} -> :stop
           {:ok, %{chat_message: "broken"}} -> {:error, :rejected}
-          {:ok, _} -> :continue
+          {:ok, %{chat_message: "good"}} -> :approve
+          {:ok, %{chat_message: msg}} -> {:ok, "rewritten " <> msg}
         end
       end
 
@@ -103,21 +103,32 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
              TransformWorkflow.steps()
   end
 
-  test "when_result :stop ends the workflow with the results so far" do
-    assert {:ok, results} = StopWorkflow.execute(agents: agents("halt"), initial_input: "x")
+  test "when_result {:ok, value} makes value the step result" do
+    assert {:ok, results} = WhenWorkflow.execute(agents: agents("fine"), initial_input: "x")
 
-    assert Map.keys(results) == [:check]
-    refute_received {:agent_input, "second", _}
+    assert results.check == "rewritten fine"
+    assert_receive {:agent_input, "second", second}
+    assert second =~ "rewritten fine"
+  end
+
+  test "any other when_result value becomes the step result as it is" do
+    assert {:ok, results} = WhenWorkflow.execute(agents: agents("good"), initial_input: "x")
+
+    assert results.check == :approve
+    assert_receive {:agent_input, "second", second}
+    assert second =~ "approve"
   end
 
   test "when_result {:error, reason} fails the workflow at that step" do
     assert {:error, {:check, :rejected}} =
-             StopWorkflow.execute(agents: agents("broken"), initial_input: "x")
+             WhenWorkflow.execute(agents: agents("broken"), initial_input: "x")
+
+    refute_received {:agent_input, "second", _}
   end
 
-  test "any other when_result value continues" do
-    assert {:ok, results} = StopWorkflow.execute(agents: agents("fine"), initial_input: "x")
-    assert results |> Map.keys() |> Enum.sort() == [:after, :check]
+  test "steps/0 reports which steps have a when_result" do
+    assert [%{name: :check, condition: true}, %{name: :after, condition: false}] =
+             WhenWorkflow.steps()
   end
 
   describe "compile-time validation" do
