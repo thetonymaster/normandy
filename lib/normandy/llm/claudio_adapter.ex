@@ -56,6 +56,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:fallbacks` - `:default` or a list of model ids/maps (server-side refusal fallback);
     Normandy rejects it on streaming calls (partial output would reach the callback)
   - `:task_budget` - total tokens for the agentic turn (advisory; API minimum 20,000)
+  - `:on_parse_failure` - `:fallback | :error`, what to do when the output still does
+    not match the schema after the JSON retries; overrides the `:normandy` app env
+    (see `Normandy.LLM.JsonDeserializer`)
   - `:base_url` - Custom API base URL (for testing)
 
   ## Errors
@@ -989,32 +992,62 @@ defmodule Normandy.LLM.ClaudioAdapter do
          )}
 
       :fallback when is_binary(content) ->
-        require Logger
-        Logger.warning("JSON parse failed; falling back to raw text. reason=#{inspect(reason)}")
-
-        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
-          reason: reason
-        })
-
+        report_parse_fallback(reason, content, "falling back to raw text")
         Map.put(schema, :chat_message, content)
 
       :fallback ->
-        require Logger
-        Logger.warning("JSON parse failed; returning schema unchanged. reason=#{inspect(reason)}")
-
-        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
-          reason: reason
-        })
-
+        report_parse_fallback(reason, content, "returning schema unchanged")
         schema
     end
   end
 
+  # The model output can hold user data and be megabytes long, so the log and
+  # telemetry carry the failure's tag and the output's size, not the output.
+  defp report_parse_fallback(reason, content, action) do
+    require Logger
+    tag = reason_tag(reason)
+    bytes = if is_binary(content), do: byte_size(content), else: 0
+
+    Logger.warning(
+      "JSON parse failed; #{action}. reason=#{inspect(tag)}, model output: #{bytes} bytes"
+    )
+
+    :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
+      reason: tag,
+      content_bytes: bytes
+    })
+  end
+
+  defp reason_tag(reason)
+       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
+       do: elem(reason, 0)
+
+  defp reason_tag(reason) when is_atom(reason), do: reason
+  defp reason_tag(_reason), do: :unknown
+
+  # A per-call override, then client.options[:on_parse_failure], then the
+  # :normandy app env, then :fallback.
   @doc false
-  def __on_parse_failure_policy__(context),
-    do:
+  def __on_parse_failure_policy__(context) do
+    client_options =
+      case Map.get(context, :client) do
+        %{options: options} when is_map(options) -> options
+        _ -> %{}
+      end
+
+    policy =
       Map.get(context, :on_parse_failure) ||
+        Map.get(client_options, :on_parse_failure) ||
         Application.get_env(:normandy, :on_parse_failure, :fallback)
+
+    if policy in [:fallback, :error] do
+      policy
+    else
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: :on_parse_failure must be :fallback or :error, " <>
+              "got: #{inspect(policy)}"
+    end
+  end
 
   @doc false
   def extract_content(%{content: content_blocks}) when is_list(content_blocks) do

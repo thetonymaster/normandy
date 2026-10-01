@@ -157,6 +157,71 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     end
   end
 
+  describe "parse failure reporting" do
+    alias Normandy.LLM.Json.TestFixtures.MultiField
+
+    @secret "user PII in the model output"
+
+    test "the log names the failure and the size, not the model output" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ClaudioAdapter.apply_parse_failure(
+            %MultiField{},
+            @secret,
+            {:structured_output_unparseable, @secret},
+            %{on_parse_failure: :fallback}
+          )
+        end)
+
+      assert log =~ "structured_output_unparseable"
+      assert log =~ "#{byte_size(@secret)} bytes"
+      refute log =~ @secret
+    end
+
+    test "telemetry carries the failure tag and size, not the model output" do
+      parent = self()
+      id = "parse-failure-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        id,
+        [:normandy, :json_deserializer, :fallback],
+        fn _, _, meta, _ ->
+          send(parent, {:fallback_meta, meta})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        ClaudioAdapter.apply_parse_failure(
+          %MultiField{},
+          @secret,
+          {:structured_output_unparseable, @secret},
+          %{
+            on_parse_failure: :fallback
+          }
+        )
+      end)
+
+      assert_received {:fallback_meta, meta}
+      assert meta == %{reason: :structured_output_unparseable, content_bytes: byte_size(@secret)}
+    end
+
+    test "client.options[:on_parse_failure] sets the policy" do
+      client = %ClaudioAdapter{api_key: "k", options: %{on_parse_failure: :error}}
+      assert :error = ClaudioAdapter.__on_parse_failure_policy__(%{client: client})
+    end
+
+    test "an invalid policy raises naming the value" do
+      assert_raise ArgumentError,
+                   ~r/:on_parse_failure must be :fallback or :error, got: :raise/,
+                   fn ->
+                     ClaudioAdapter.__on_parse_failure_policy__(%{on_parse_failure: :raise})
+                   end
+    end
+  end
+
   describe "structured-vs-legacy routing decision (__structured_schema_for__/3)" do
     alias Normandy.LLM.Json.TestFixtures.MultiField
 

@@ -82,15 +82,18 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   - `:on_parse_failure` - Controls the behaviour of `Normandy.LLM.ClaudioAdapter`
     when JSON deserialization fails after all retries are exhausted.
-    Configured under the `:normandy` application key:
+    Set per client with `options: %{on_parse_failure: ...}`, or for all clients
+    under the `:normandy` application key:
 
         config :normandy, :on_parse_failure, :fallback   # default
 
     Accepted values:
 
-    - `:fallback` (default) — Returns the raw LLM text as-is, emits a
-      `Logger.warning` describing the failure, and fires
-      `[:normandy, :json_deserializer, :fallback]` telemetry.
+    - `:fallback` (default) — Returns the response schema with `chat_message`
+      set to the raw LLM text (unchanged when the output is not text), emits a
+      `Logger.warning`, and fires `[:normandy, :json_deserializer, :fallback]`
+      telemetry with `%{reason: tag, content_bytes: n}`. Neither carries the
+      model output, which can hold user data.
     - `:error` — Returns `{:error, %Normandy.LLMError{type: :invalid_output, reason: reason}}`
       to the caller; no fallback text is produced.
 
