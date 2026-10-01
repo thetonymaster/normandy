@@ -314,10 +314,73 @@ jobs:
       - name: Run redis session store and registry tests
         run: mix test.redis
 
+  distributed:
+    name: Distributed (multi-node) tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The :distributed files spawn :peer nodes (needs epmd) and some use Postgres or
+    # Redis; all of them are excluded from `mix test`.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.19'
+          otp-version: '28'
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-distributed-1.19-28-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-distributed-1.19-28-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Start epmd
+        run: epmd -daemon
+
+      # test.postgres sets up the database; NORMANDY_REDIS enables the Redis-backed files.
+      - name: Run distributed tests
+        env:
+          NORMANDY_REDIS: 'true'
+        run: mix test.postgres --only distributed
+
   all-checks-complete:
     name: All Checks Passed
     if: always()
-    needs: [test, integration-tests, quality, unlocked-deps, postgres, redis]
+    needs: [test, integration-tests, quality, unlocked-deps, postgres, redis, distributed]
     runs-on: ubuntu-latest
 
     steps:
@@ -327,7 +390,8 @@ jobs:
              [ "${{ needs.quality.result }}" != "success" ] || \
              [ "${{ needs.unlocked-deps.result }}" != "success" ] || \
              [ "${{ needs.postgres.result }}" != "success" ] || \
-             [ "${{ needs.redis.result }}" != "success" ]; then
+             [ "${{ needs.redis.result }}" != "success" ] || \
+             [ "${{ needs.distributed.result }}" != "success" ]; then
             echo "❌ Some required checks failed"
             exit 1
           fi

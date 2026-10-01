@@ -45,7 +45,14 @@ Checks dependency health:
 - Verifies no unused dependencies
 - Lists outdated dependencies (informational)
 
-#### 5. **All Checks Complete**
+#### 5. **Postgres, Redis and Distributed**
+Run the test files that `mix test` excludes, against service containers:
+- **Postgres**: `mix test.postgres` (sets up the database, then `--include postgres`)
+- **Redis**: `mix test.redis`
+- **Distributed**: starts `epmd`, then `NORMANDY_REDIS=true mix test.postgres --only distributed`
+  with both services, for the multi-node (`:peer`) tests
+
+#### 6. **All Checks Complete**
 Final validation job that:
 - Waits for all other jobs
 - Fails if any required check failed
