@@ -195,7 +195,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
             temperature: temperature,
             max_tokens: max_tokens,
             messages: messages,
-            tools: tools
+            tools: tools,
+            task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
           }
 
           normalized_response = convert_response_to_normandy(response, response_model, context)
@@ -241,7 +242,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
             temperature: temperature,
             max_tokens: max_tokens,
             messages: messages,
-            tools: tools
+            tools: tools,
+            task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
           }
 
           {Normandy.LLM.ClaudioAdapter.__handle_structured_response__(
@@ -916,6 +918,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
       # Build opts with tools if present
       opts = if tools != [], do: [tools: tools, max_retries: 2], else: [max_retries: 2]
+
+      opts =
+        case Map.get(context, :task_budget_remaining) do
+          nil -> opts
+          remaining -> Keyword.put(opts, :task_budget_remaining, remaining)
+        end
 
       case Normandy.LLM.JsonDeserializer.deserialize_with_retry(
              content,

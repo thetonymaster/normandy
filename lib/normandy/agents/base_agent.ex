@@ -567,12 +567,29 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Effect handlers ────────────────────────────────────────────────────────────
 
+  # Task budget (client.options[:task_budget]): before any in-turn compaction the
+  # server tracks the countdown, so only `total` goes out. After compaction removed
+  # messages, the server can no longer count them: send
+  # remaining = total - this turn's tokens removed (gross), the same value on every
+  # later call in the turn (Anthropic task-budgets doc). Map.get: a Turn.State
+  # persisted by Normandy < 2.0 has no :tokens_compacted key.
+  defp task_budget_call_opts(%BaseAgentConfig{client: %{options: %{task_budget: total}}}, state)
+       when is_integer(total) do
+    case Map.get(state, :tokens_compacted, 0) do
+      0 -> []
+      compacted -> [task_budget_remaining: max(total - compacted, 0)]
+    end
+  end
+
+  defp task_budget_call_opts(_config, _state), do: []
+
   defp call_turn_llm(config, state, %{response_model: response_model}) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
     with_llm_call_span(config, llm_metadata, fn ->
-      {r, usage, response_meta} = get_response_with_usage(config, response_model)
+      {r, usage, response_meta} =
+        get_response_with_usage(config, response_model, task_budget_call_opts(config, state))
 
       # When this agent has no tools, strip any tool_calls the LLM may have
       # returned (e.g. a misbehaving or generic mock). Old run_without_tools
@@ -755,7 +772,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
 
-  defp streaming_handlers(callback) do
+  @doc false
+  def streaming_handlers(callback) do
     %Driver.Handlers{
       call_llm: fn config, state, _request -> call_stream_llm(config, state, callback) end,
       dispatch_tools: fn config, calls -> dispatch_stream_tools(config, calls, callback) end,
@@ -788,7 +806,7 @@ defmodule Normandy.Agents.BaseAgent do
           stream_response_from_llm(
             config,
             build_stream_messages(config),
-            stream_opts(config, callback)
+            stream_opts(config, callback) ++ task_budget_call_opts(config, state)
           )
 
         stop_metadata =

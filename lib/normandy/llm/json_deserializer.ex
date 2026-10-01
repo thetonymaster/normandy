@@ -316,7 +316,11 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     # Call LLM again
     tools = Keyword.get(opts, :tools, [])
-    llm_opts = [raw: true] ++ if(tools != [], do: [tools: tools], else: [])
+
+    llm_opts =
+      [raw: true] ++
+        if(tools != [], do: [tools: tools], else: []) ++
+        Keyword.take(opts, [:task_budget_remaining])
 
     {response, _usage, _meta} =
       ConverseResult.normalize(
