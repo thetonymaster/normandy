@@ -14,7 +14,7 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   This module provides robust JSON deserialization with:
   - Automatic retry on JSON parse errors
-  - Error feedback to LLM via system prompt augmentation
+  - Error feedback to the LLM in a user message after the conversation
   - Configurable retry attempts
   - Support for nested/double-encoded JSON
 
@@ -59,7 +59,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   ## How It Works
 
   1. Attempts to parse JSON response
-  2. On error, augments system prompt with error details
+  2. On error, adds a user message with the error details
   3. Retries LLM call with error feedback
   4. Repeats until success or max_retries reached
 
@@ -171,7 +171,7 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   If initial deserialization fails, this function:
   1. Extracts the error message
-  2. Augments the system prompt with error details
+  2. Adds a user message with the error details
   3. Calls the LLM again with feedback
   4. Attempts deserialization again
 
@@ -315,7 +315,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     # Build error feedback message
     error_message = RetryFeedback.build(error, failed_content, schema, adapter)
 
-    # Augment system prompt with error feedback
+    # Add the error feedback as a user message
     augmented_messages = RetryFeedback.augment_messages(messages, error_message)
 
     # Call LLM again

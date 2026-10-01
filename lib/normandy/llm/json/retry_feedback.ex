@@ -1,6 +1,6 @@
 defmodule Normandy.LLM.Json.RetryFeedback do
   @moduledoc """
-  Builds the corrective feedback appended to the system prompt on a JSON
+  Builds the corrective feedback sent as a user message on a JSON
   retry, and augments the message history with it.
   """
 
@@ -97,17 +97,18 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   end
 
   @spec augment_messages([Message.t()], String.t()) :: [Message.t()]
+  # The feedback quotes the model's own failed output, so it goes in a user
+  # message after the conversation, never into the system prompt (where a
+  # prompt-injected response could steer the retry). That also works for a
+  # block-list system prompt and for a conversation without one.
   def augment_messages(messages, feedback) do
-    # Find system message and append error feedback
-    Enum.map(messages, fn msg ->
-      case msg do
-        %Message{role: "system", content: content} = message ->
-          %Message{message | content: content <> "\n\n" <> feedback}
-
-        other ->
-          other
+    turn_id =
+      case List.last(messages) do
+        %Message{turn_id: turn_id} -> turn_id
+        _ -> nil
       end
-    end)
+
+    messages ++ [%Message{turn_id: turn_id, role: "user", content: feedback}]
   end
 
   # Format validation errors for LLM feedback

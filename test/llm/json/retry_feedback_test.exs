@@ -30,16 +30,27 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
     assert feedback =~ "Required Schema"
   end
 
-  test "augment_messages appends feedback to the system message only" do
+  test "augment_messages adds the feedback as a user message and leaves the system prompt alone" do
     messages = [
       %Message{turn_id: "t", role: "system", content: "base"},
       %Message{turn_id: "t", role: "user", content: "hi"}
     ]
 
-    [sys, user] = RetryFeedback.augment_messages(messages, "FEEDBACK")
-    assert sys.content =~ "base"
-    assert sys.content =~ "FEEDBACK"
-    assert user.content == "hi"
+    assert [^messages, [feedback]] =
+             messages
+             |> RetryFeedback.augment_messages("FEEDBACK")
+             |> Enum.split(2)
+             |> Tuple.to_list()
+
+    assert %Message{role: "user", content: "FEEDBACK"} = feedback
+  end
+
+  test "augment_messages works with a block-list system prompt" do
+    system = [%Normandy.Components.ContentBlock.Text{text: "base"}]
+    messages = [%Message{turn_id: "t", role: "system", content: system}]
+
+    assert [%Message{content: ^system}, %Message{role: "user", content: "FEEDBACK"}] =
+             RetryFeedback.augment_messages(messages, "FEEDBACK")
   end
 
   defmodule FakeAdapter do
