@@ -19,6 +19,14 @@ defmodule Normandy.Agents.Turn.SessionTest do
     def history(_handle, _sid), do: {:error, :store_unavailable}
   end
 
+  # A supervisor stand-in that reports the server opts Session built, then refuses.
+  defmodule CapturingSupervisor do
+    def start_server(test_pid, opts) do
+      send(test_pid, {:server_opts, opts})
+      {:error, :captured}
+    end
+  end
+
   defp session_config do
     %Normandy.Agents.BaseAgentConfig{
       input_schema: nil,
@@ -141,6 +149,24 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # A store fault must surface as run/2's error tuple, not a caller crash.
     assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
+  end
+
+  test "run/2 forwards :on_approval_timeout to the server" do
+    alias Normandy.Behaviours.SessionRegistry.Native
+
+    opts = [
+      session_id: "s-fwd",
+      config: session_config(),
+      store: {InMemory, InMemory.new()},
+      registry: {Native, Native.new()},
+      supervisor: self(),
+      supervisor_mod: CapturingSupervisor,
+      on_approval_timeout: :fail
+    ]
+
+    assert {:error, :captured} = Turn.Session.run(opts, "hi")
+    assert_received {:server_opts, server_opts}
+    assert Keyword.fetch!(server_opts, :on_approval_timeout) == :fail
   end
 
   test "concurrent ensure-server for one session resolves to a single pid (Horde via)" do

@@ -108,6 +108,7 @@ defmodule Normandy.Agents.Turn.Session do
               :subscriber,
               :handlers,
               :approval_timeout_ms,
+              :on_approval_timeout,
               :idle_timeout_ms,
               :template_provider
             ])
@@ -122,6 +123,7 @@ defmodule Normandy.Agents.Turn.Session do
               :subscriber,
               :handlers,
               :approval_timeout_ms,
+              :on_approval_timeout,
               :idle_timeout_ms
             ])
             |> Keyword.put(:config, config)

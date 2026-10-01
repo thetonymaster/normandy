@@ -45,7 +45,7 @@ defmodule Normandy.Coordination.AgentProcess do
   - Session infra (`:store`, `:registry`, `:supervisor`) may be supplied via
     `start_link`; if omitted, the process starts and owns in-memory defaults
     that terminate with it. `:subscriber`, `:handlers`, `:approval_timeout_ms`,
-    and `:idle_timeout_ms` are forwarded to `Turn.Session` when supplied.
+    `:on_approval_timeout`, and `:idle_timeout_ms` are forwarded to `Turn.Session` when supplied.
   """
 
   use GenServer
@@ -275,6 +275,7 @@ defmodule Normandy.Coordination.AgentProcess do
                      :subscriber,
                      :handlers,
                      :approval_timeout_ms,
+                     :on_approval_timeout,
                      :idle_timeout_ms
                    ])
              }}

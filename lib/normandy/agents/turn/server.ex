@@ -29,6 +29,7 @@ defmodule Normandy.Agents.Turn.Server do
               task_ref: nil,
               pending_reply: nil,
               approval_timeout_ms: 300_000,
+              on_approval_timeout: :continue,
               idle_timeout_ms: 60_000,
               template_provider: nil,
               resume_policy: :lazy
@@ -38,6 +39,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts) do
+    validate_on_approval_timeout!(Keyword.get(opts, :on_approval_timeout, :continue))
+
     case Keyword.get(opts, :name) do
       nil -> :gen_statem.start_link(__MODULE__, opts, [])
       name -> :gen_statem.start_link(name, __MODULE__, opts, [])
@@ -94,6 +97,7 @@ defmodule Normandy.Agents.Turn.Server do
       handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
       turn_state: turn_state,
       approval_timeout_ms: Keyword.get(opts, :approval_timeout_ms, 300_000),
+      on_approval_timeout: Keyword.get(opts, :on_approval_timeout, :continue),
       idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000)
     }
 
@@ -241,9 +245,27 @@ defmodule Normandy.Agents.Turn.Server do
     :keep_state_and_data
   end
 
-  # Approval expiry → all-reject (fail-closed): feed an empty decisions map.
+  # Approval window closed with no decision. The core answers every parked call with
+  # an expiry result and either continues or fails the turn (on_approval_timeout).
   def handle_event(:state_timeout, :approval_expiry, :awaiting_approval, data) do
-    {state, effects} = Turn.step(data.turn_state, {:approval, %{}})
+    %Turn.State{parked_calls: parked} = data.turn_state
+    mode = data.on_approval_timeout
+    ms = data.approval_timeout_ms
+
+    :telemetry.execute(
+      [:normandy, :turn, :approval, :expired],
+      %{count: length(parked)},
+      %{
+        session_id: data.session_id,
+        mode: mode,
+        timeout_ms: ms,
+        tool_names: Enum.map(parked, & &1.name)
+      }
+    )
+
+    {state, effects} =
+      Turn.step(data.turn_state, {:approval_expired, %{mode: mode, timeout_ms: ms}})
+
     interpret(effects, %{data | turn_state: state})
   end
 
@@ -260,6 +282,14 @@ defmodule Normandy.Agents.Turn.Server do
 
   # Schema and input-guardrail rejections are expected outcomes: reply them as data
   # without touching state. Anything else admit_turn_input raises is a bug and crashes.
+  defp validate_on_approval_timeout!(mode) when mode in [:continue, :fail], do: :ok
+
+  defp validate_on_approval_timeout!(other) do
+    raise ArgumentError,
+          "Turn.Server.start_link/1: invalid :on_approval_timeout, expected :continue or :fail, " <>
+            "got: #{inspect(other)}"
+  end
+
   defp admit(config, user_input) do
     {:ok, BaseAgent.admit_turn_input(config, user_input)}
   rescue

@@ -13,7 +13,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
   defmodule Resp do
@@ -29,6 +31,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     schema do
       field(:name, :string)
       field(:notify, :any, default: nil)
+      field(:sleep_ms, :integer, default: 0)
     end
   end
 
@@ -38,6 +41,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def input_schema(_), do: %{}
 
     def run(t) do
+      if t.sleep_ms > 0, do: Process.sleep(t.sleep_ms)
       if t.notify, do: send(t.notify, {:tool_ran, t.name})
       {:ok, "ran #{t.name}"}
     end
@@ -1115,6 +1119,159 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       assert log =~ "{:timeout, ...}"
       refute log =~ "SENTINEL-456"
+    end
+  end
+
+  describe "approval expiry" do
+    defp billing_approval_policy do
+      %Normandy.Behaviours.Config{
+        policy:
+          {Normandy.Behaviours.PolicyEngine.Ruleset,
+           rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+           default_action: :allow}
+      }
+    end
+
+    # 1st LLM call → weather (allowed) + billing (parked); later calls → final "done".
+    # Each call reports {:llm_call, n, messages} so tests can inspect what the model saw.
+    defp start_approval_server(sid, extra) do
+      store = InMemory.new()
+      test_pid = self()
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      call_llm = fn config, _s, _r ->
+        n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+        send(test_pid, {:llm_call, n, AgentMemory.messages(config.memory)})
+
+        if n == 0 do
+          %Resp{
+            content: "",
+            tool_calls: [
+              %ToolCall{id: "ok1", name: "weather", input: %{}},
+              %ToolCall{id: "pk1", name: "billing", input: %{}}
+            ]
+          }
+        else
+          %Resp{content: "done", tool_calls: nil}
+        end
+      end
+
+      opts = [
+        session_id: sid,
+        config: %{config_with_notify(test_pid) | behaviours: billing_approval_policy()},
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm},
+        approval_timeout_ms: 50,
+        subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+      ]
+
+      {:ok, srv} = Turn.Server.start_link(Keyword.merge(opts, extra))
+      {srv, store}
+    end
+
+    defp run_async(srv, input) do
+      parent = self()
+      spawn(fn -> send(parent, {:run_result, Turn.Server.run(srv, input)}) end)
+    end
+
+    test "default :continue tells the model the approval timed out" do
+      ref = attach_telemetry([:normandy, :turn, :approval, :expired])
+      {srv, _store} = start_approval_server("s-exp-continue", [])
+
+      run_async(srv, "go")
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+      assert_received {:event, :approval_expired, %{expired: 1, mode: :continue}}
+
+      assert_received {:telemetry, ^ref, %{count: 1},
+                       %{
+                         session_id: "s-exp-continue",
+                         mode: :continue,
+                         timeout_ms: 50,
+                         tool_names: ["billing"]
+                       }}
+
+      assert_received {:llm_call, 1, messages}
+
+      assert Enum.any?(
+               messages,
+               &match?(
+                 %Message{
+                   role: "tool",
+                   content: %ToolResult{
+                     tool_call_id: "pk1",
+                     output: %{
+                       expired: true,
+                       error: "approval timed out: no approver responded within 50ms"
+                     }
+                   }
+                 },
+                 &1
+               )
+             )
+
+      refute_received {:tool_ran, "billing"}
+    end
+
+    test ":fail ends the turn with {:approval_timeout, ids}; a late approval is dropped" do
+      {srv, store} = start_approval_server("s-exp-fail", on_approval_timeout: :fail)
+
+      run_async(srv, "go")
+
+      assert_receive {:run_result, {:error, {:approval_timeout, ["pk1"]}}}, 2_000
+      assert_received {:event, :approval_expired, %{expired: 1, mode: :fail}}
+      refute_received {:llm_call, 1, _}
+
+      {:ok, entries} = InMemory.history(store, "s-exp-fail")
+      answered = for %{role: "tool", content: %ToolResult{tool_call_id: id}} <- entries, do: id
+      assert Enum.sort(answered) == ["ok1", "pk1"]
+
+      assert {:ok, %Turn.State{status: :failed, error: {:approval_timeout, ["pk1"]}}} =
+               InMemory.load_turn_state(store, "s-exp-fail")
+
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+      assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "again")
+      refute_received {:tool_ran, "billing"}
+    end
+
+    test "an approval that arrives in time is not expired while the approved tool runs" do
+      test_pid = self()
+
+      config = %{
+        base_config()
+        | tool_registry:
+            Normandy.Tools.Registry.new([
+              %FakeTool{name: "weather", notify: test_pid},
+              %FakeTool{name: "billing", notify: test_pid, sleep_ms: 600}
+            ]),
+          behaviours: billing_approval_policy()
+      }
+
+      {srv, _store} =
+        start_approval_server("s-exp-intime", config: config, approval_timeout_ms: 200)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 3_000
+      assert_received {:tool_ran, "billing"}
+      refute_received {:event, :approval_expired, _}
+    end
+
+    test "an invalid :on_approval_timeout raises ArgumentError naming the key and value" do
+      assert_raise ArgumentError,
+                   ~r/Turn\.Server\.start_link\/1: invalid :on_approval_timeout, expected :continue or :fail, got: :sometimes/,
+                   fn ->
+                     Turn.Server.start_link(
+                       session_id: "s-bad-opt",
+                       config: base_config(),
+                       store: {InMemory, InMemory.new()},
+                       registry: {Native, Native.new()},
+                       on_approval_timeout: :sometimes
+                     )
+                   end
     end
   end
 end

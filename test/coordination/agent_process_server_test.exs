@@ -302,6 +302,26 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     end
   end
 
+  describe ":server approval expiry" do
+    test "forwards :on_approval_timeout; :fail surfaces {:approval_timeout, ids}" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: approval_config(),
+            turn_engine: :server,
+            agent_id: "approval-expiry",
+            handlers: approval_handlers(),
+            approval_timeout_ms: 50,
+            on_approval_timeout: :fail
+          ] ++ infra
+        )
+
+      assert {:error, {:approval_timeout, ["pk1"]}} = AgentProcess.run(pid, "please charge")
+    end
+  end
+
   describe ":server get_agent/1" do
     test "reconstructs config.memory from the SessionStore after a turn" do
       infra = supplied_infra()
