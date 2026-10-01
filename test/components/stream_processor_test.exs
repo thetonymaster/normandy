@@ -279,4 +279,113 @@ defmodule Normandy.Components.StreamProcessorTest do
                StreamProcessor.stream_error(Enum.drop(@complete, -1))
     end
   end
+
+  describe "content the final message keeps" do
+    test "a tool_use input is decoded once its block stops" do
+      events = [
+        %{
+          type: "content_block_start",
+          content_block: %{"type" => "tool_use", "id" => "t", "input" => %{}},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "input_json_delta", "partial_json" => "{\"a\":"},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "input_json_delta", "partial_json" => "5}"},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{content: [%{"input" => %{"a" => 5}}]} = StreamProcessor.build_final_message(events)
+    end
+
+    test "a tool_use with no input deltas has an empty object input" do
+      events = [
+        %{
+          type: "content_block_start",
+          content_block: %{"type" => "tool_use", "id" => "t", "input" => %{}},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{content: [%{"input" => %{}}]} = StreamProcessor.build_final_message(events)
+    end
+
+    test "thinking text and its signature are accumulated" do
+      events = [
+        %{
+          type: "content_block_start",
+          content_block: %{"type" => "thinking", "thinking" => ""},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "thinking_delta", "thinking" => "Let me "},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "thinking_delta", "thinking" => "think."},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "signature_delta", "signature" => "sig"},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{
+               content: [
+                 %{"type" => "thinking", "thinking" => "Let me think.", "signature" => "sig"}
+               ]
+             } =
+               StreamProcessor.build_final_message(events)
+    end
+  end
+
+  describe "process_with_callback/2 failures" do
+    @events [
+      %{type: "message_start", message: %{}},
+      %{type: "content_block_start", content_block: %{"type" => "text", "text" => ""}, index: 0},
+      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "a"}, index: 0},
+      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "b"}, index: 0},
+      %{type: "message_stop"}
+    ]
+
+    test "a callback returning {:error, reason} stops processing and returns it" do
+      parent = self()
+
+      callback = fn
+        :text_delta, text ->
+          send(parent, {:delta, text})
+          {:error, :stop_here}
+
+        _, _ ->
+          :ok
+      end
+
+      assert {:error, :stop_here} = StreamProcessor.process_with_callback(@events, callback)
+      assert_received {:delta, "a"}
+      refute_received {:delta, "b"}
+    end
+
+    test "a callback that raises is not turned into {:error, exception}" do
+      callback = fn
+        :text_delta, _ -> raise "callback bug"
+        _, _ -> :ok
+      end
+
+      assert_raise RuntimeError, "callback bug", fn ->
+        StreamProcessor.process_with_callback(@events, callback)
+      end
+    end
+  end
 end

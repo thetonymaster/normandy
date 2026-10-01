@@ -88,7 +88,9 @@ defmodule Normandy.Components.StreamProcessor do
   @doc """
   Invokes a callback for each event type.
 
-  Callbacks receive `(event_type, data)` and should return `:ok` or `{:error, reason}`.
+  Callbacks receive `(event_type, data)` and return `:ok` (any other value but
+  `{:error, reason}` is treated the same). `{:error, reason}` stops processing
+  and is returned. A callback that raises is not caught.
 
   ## Example
 
@@ -102,17 +104,18 @@ defmodule Normandy.Components.StreamProcessor do
   """
   @spec process_with_callback(Enumerable.t(), function()) :: {:ok, map()} | {:error, term()}
   def process_with_callback(event_stream, callback) when is_function(callback, 2) do
-    events =
-      event_stream
-      |> Enum.map(fn event ->
-        invoke_callback(event, callback)
-        event
+    result =
+      Enum.reduce_while(event_stream, [], fn event, events ->
+        case invoke_callback(event, callback) do
+          {:error, _reason} = error -> {:halt, error}
+          _ok -> {:cont, [event | events]}
+        end
       end)
 
-    final_message = build_final_message(events)
-    {:ok, final_message}
-  rescue
-    error -> {:error, error}
+    case result do
+      {:error, _reason} = error -> error
+      events -> {:ok, events |> Enum.reverse() |> build_final_message()}
+    end
   end
 
   # Private functions
@@ -153,6 +156,12 @@ defmodule Normandy.Components.StreamProcessor do
         %{"type" => "input_json_delta", "partial_json" => json} ->
           append_json_delta(content, index, json)
 
+        %{"type" => "thinking_delta", "thinking" => text} ->
+          update_block(content, index, "thinking", &((&1 || "") <> text))
+
+        %{"type" => "signature_delta", "signature" => signature} ->
+          update_block(content, index, "signature", fn _ -> signature end)
+
         _ ->
           content
       end
@@ -164,6 +173,21 @@ defmodule Normandy.Components.StreamProcessor do
     acc
     |> maybe_set_stop_reason(delta["stop_reason"])
     |> maybe_update_usage(usage)
+  end
+
+  # A finished tool_use block's accumulated JSON is decoded. Input that does not
+  # decode to an object stays a string; Dispatch refuses it and tells the model.
+  defp process_event(%{type: "content_block_stop", index: index}, acc) do
+    content =
+      List.update_at(acc.content || [], index, fn
+        %{"type" => "tool_use", "input" => json} = block when is_binary(json) ->
+          %{block | "input" => decode_tool_input(json)}
+
+        block ->
+          block
+      end)
+
+    %{acc | content: content}
   end
 
   defp process_event(%{type: "message_stop"}, acc), do: acc
@@ -190,6 +214,22 @@ defmodule Normandy.Components.StreamProcessor do
       block ->
         block
     end)
+  end
+
+  defp update_block(content, index, key, fun) do
+    List.update_at(content, index, fn
+      %{} = block -> Map.put(block, key, fun.(Map.get(block, key)))
+      block -> block
+    end)
+  end
+
+  defp decode_tool_input(""), do: %{}
+
+  defp decode_tool_input(json) do
+    case Poison.decode(json) do
+      {:ok, input} when is_map(input) -> input
+      _ -> json
+    end
   end
 
   defp maybe_set_stop_reason(acc, nil), do: acc
