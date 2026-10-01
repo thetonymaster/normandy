@@ -96,6 +96,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
     assert_raise LLMError, fn -> BaseAgent.run(agent, input()) end
     assert_received {:retry_if_got, {:error, ^e}}
+    assert calls() == 1
   end
 
   test "a custom retry_if that refuses an exception re-raises the original exception" do

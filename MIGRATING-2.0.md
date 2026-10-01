@@ -131,9 +131,15 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - `Model.converse/7` may now return `{:error, %Normandy.LLMError{}}`. Code that calls
   `converse/7` directly must handle it; `ConverseResult.normalize/1` now returns
   `{:ok, {response, usage, meta}}` or `{:error, %Normandy.LLMError{}}`.
-- `BaseAgent.run/2` and the DSL's `run/1-3` raise `Normandy.LLMError` when a call fails for
-  good. They used to raise `RuntimeError` for transport exceptions. Rescue
-  `Normandy.LLMError` instead.
+- `BaseAgent.run/2` and the DSL's `run/1-3` raise `Normandy.LLMError` when a returned
+  failure (`{:error, _}` from `converse/7`) is final, and when the circuit is open
+  (`type: :circuit_open`). Rescue `Normandy.LLMError` for these.
+- An exception raised by `converse/7` is re-raised with its original type. With a circuit
+  breaker enabled it used to arrive wrapped as `RuntimeError "LLM call failed: <msg>"`; that
+  wrapper is gone, so rescue the original exception type (it is not an `LLMError`).
+- With a circuit breaker enabled, every returned LLM failure counts as a breaker failure,
+  including non-retryable ones such as `:authentication` or `:invalid_request`, so a
+  persistently bad request can open the circuit.
 - The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
   receives `{:error, %Normandy.LLMError{}}` for returned failures.
 
