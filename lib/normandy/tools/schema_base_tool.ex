@@ -38,7 +38,8 @@ defmodule Normandy.Tools.SchemaBaseTool do
   - Generates JSON Schema from field definitions
   - Implements `Normandy.Tools.BaseTool` protocol
   - Provides `validate/1` function for runtime validation
-  - Handles default values and type coercion
+  - Applies field defaults; `validate/1` checks types and constraints but does
+    not coerce (a string `"5"` for a `:number` field is an error)
 
   ## Validation
 

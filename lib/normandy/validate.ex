@@ -15,7 +15,10 @@ defmodule Normandy.Validate do
 
   ## Example
 
-      changeset = Validate.validate(data, params, types, required: [:name, :email])
+      changeset =
+        %User{}
+        |> Validate.cast(params, [:name, :email, :age])
+        |> Validate.validate_required([:name, :email])
 
       if changeset.valid? do
         apply_changes(changeset)
@@ -86,7 +89,7 @@ defmodule Normandy.Validate do
   end
 
   @spec cast(
-          Normandy.Schema.t() | t | {data, types},
+          Normandy.Schema.t(),
           %{binary => term} | %{atom => term} | :invalid,
           [atom],
           Keyword.t()
@@ -441,9 +444,20 @@ defmodule Normandy.Validate do
     end
   end
 
-  def validate(data, params) do
-    cast(data, params, data.__struct__.__schema__(:fields))
-    |> validate_required(data.__struct__.__schema__(:fields))
+  @doc """
+  Casts `params` into every field of the schema struct `data` and requires the
+  fields declared `required: true`.
+
+  ## Example
+
+      changeset = Validate.validate(%Profile{}, %{"name" => "Ana"})
+      changeset.valid?
+  """
+  @spec validate(Normandy.Schema.t(), %{binary => term} | %{atom => term}) :: t
+  def validate(%schema{} = data, params) do
+    data
+    |> cast(params, schema.__schema__(:fields))
+    |> validate_required(schema.__schema__(:required))
   end
 
   @doc """

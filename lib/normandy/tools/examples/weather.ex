@@ -9,7 +9,7 @@ defmodule Normandy.Tools.Examples.Weather do
 
       iex> {:ok, weather} = Weather.validate(%{city: "San Francisco"})
       iex> Normandy.Tools.BaseTool.run(weather)
-      {:ok, "Temperature: 15.2°C, Conditions: Clear sky"}
+      {:ok, "Current weather in San Francisco: 15.2°C, Clear sky"}
 
   ## API
 

@@ -9,7 +9,7 @@ defmodule Normandy.Tools.Examples.Calculator do
 
       iex> {:ok, calculator} = Calculator.validate(%{operation: "add", a: 5, b: 3})
       iex> Normandy.Tools.BaseTool.run(calculator)
-      {:ok, 8}
+      {:ok, 8.0}
 
       iex> {:ok, calculator} = Calculator.validate(%{operation: "divide", a: 10, b: 0})
       iex> Normandy.Tools.BaseTool.run(calculator)
@@ -21,7 +21,7 @@ defmodule Normandy.Tools.Examples.Calculator do
   - Runtime validation before execution
   - Reduced code (~60% less than manual approach)
   - Better error messages with field paths
-  - Type coercion and constraint checking
+  - Constraint checking (types are checked, not coerced: `a: "5"` is rejected)
 
   """
 

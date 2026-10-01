@@ -17,7 +17,7 @@ defmodule Normandy.Tools.Examples.EnhancedCalculator do
   - Define schema once with `tool_schema`
   - Automatic JSON schema generation
   - Built-in validation with detailed errors
-  - Type coercion and default values
+  - Default values (types are checked, not coerced)
   - Format validation support
 
   ## Examples
@@ -25,7 +25,7 @@ defmodule Normandy.Tools.Examples.EnhancedCalculator do
       # Create and validate
       iex> {:ok, calc} = EnhancedCalculator.validate(%{operation: "add", a: 5, b: 3})
       iex> EnhancedCalculator.execute(calc)
-      {:ok, 8}
+      {:ok, 8.0}
 
       # Validation catches errors
       iex> EnhancedCalculator.validate(%{operation: "invalid", a: 5, b: 3})
