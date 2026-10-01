@@ -370,9 +370,12 @@ defmodule Normandy.Schema do
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
             @adapter Application.compile_env(:normandy, :adapter, Poison)
-            def __str__(str), do: @adapter.encode!(str)
-            def __rich__(str), do: @adapter.encode!(str, pretty: true)
-            def to_json(str), do: @adapter.encode!(str)
+            # __meta__ is internal bookkeeping (module name, load state): it is
+            # not part of the schema, so it never goes to the model or out.
+            # Removing the key keeps a @derive'd encoder in charge of the fields.
+            def __str__(str), do: @adapter.encode!(Map.delete(str, :__meta__))
+            def __rich__(str), do: @adapter.encode!(Map.delete(str, :__meta__), pretty: true)
+            def to_json(str), do: @adapter.encode!(Map.delete(str, :__meta__))
             def get_schema(str), do: str.__struct__.get_json_schema()
           end
 
