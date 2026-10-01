@@ -48,14 +48,24 @@ defmodule Normandy.Schema.Validator do
     - `maximum` - Maximum value (inclusive)
     - `exclusiveMinimum` - Minimum value (exclusive)
     - `exclusiveMaximum` - Maximum value (exclusive)
+    - `multipleOf` / `multiple_of` - Value must be a multiple of the number
   - **Array constraints**
     - `minItems` / `min_items` - Minimum array length
     - `maxItems` / `max_items` - Maximum array length
     - `uniqueItems` / `unique_items` - Ensures array items are unique
+  - **Object constraints**
+    - `additionalProperties` - `false` rejects keys outside `properties`; a
+      schema checks their values (a `{:map, inner}` field emits this)
+    - `patternProperties` - Checks the values of keys matching a regex
   - **Enum validation** - Ensures values are in allowed list
+  - **`const`** - Value must equal the given value
   - **Composition** - anyOf, oneOf, allOf for complex type unions and intersections
+  - **`not`** - Value must not match the schema
   - **Conditionals** - if/then/else schemas for context-dependent validation
   - **Nested schemas** - Validates nested objects and arrays recursively
+
+  Every keyword applies at every level: the root, each field, array items, and
+  each composition or conditional sub-schema.
 
   ### Format Validation
 
@@ -126,19 +136,29 @@ defmodule Normandy.Schema.Validator do
 
   # Validate data against a schema specification
   defp validate_against_spec(data, spec, path) do
-    errors =
-      []
-      |> validate_type(data, spec, path)
-      |> validate_required_fields(data, spec, path)
-      |> validate_properties(data, spec, path)
-      |> validate_composition(data, spec, path)
-      |> validate_conditionals(data, spec, path)
-
-    if errors == [] do
-      {:ok, data}
-    else
-      {:error, errors}
+    case validate_schema([], data, spec, path) do
+      [] -> {:ok, data}
+      errors -> {:error, errors}
     end
+  end
+
+  # Every keyword, at every level: the root spec, a field's spec, an array's
+  # items, and each composition or conditional sub-schema. A keyword that does
+  # not apply to the value's type is skipped.
+  defp validate_schema(errors, data, spec, path) do
+    errors
+    |> validate_type(data, spec, path)
+    |> validate_const(data, spec, path)
+    |> validate_enum(data, spec, path)
+    |> validate_string_constraints(data, spec, path)
+    |> validate_number_constraints(data, spec, path)
+    |> validate_array_constraints(data, spec, path)
+    |> validate_required_fields(data, spec, path)
+    |> validate_properties(data, spec, path)
+    |> validate_other_properties(data, spec, path)
+    |> validate_composition(data, spec, path)
+    |> validate_not(data, spec, path)
+    |> validate_conditionals(data, spec, path)
   end
 
   # Type validation
@@ -226,8 +246,7 @@ defmodule Normandy.Schema.Validator do
 
     Enum.reduce(properties, errors, fn {field, field_spec}, acc ->
       if Map.has_key?(data, field) do
-        value = Map.get(data, field)
-        validate_value(acc, value, field_spec, path ++ [field])
+        validate_schema(acc, Map.get(data, field), field_spec, path ++ [field])
       else
         acc
       end
@@ -236,15 +255,78 @@ defmodule Normandy.Schema.Validator do
 
   defp validate_properties(errors, _data, _spec, _path), do: errors
 
-  # Validate individual value against field spec
-  defp validate_value(errors, value, field_spec, path) do
-    errors
-    |> validate_type(value, field_spec, path)
-    |> validate_string_constraints(value, field_spec, path)
-    |> validate_number_constraints(value, field_spec, path)
-    |> validate_array_constraints(value, field_spec, path)
-    |> validate_enum(value, field_spec, path)
-    |> validate_nested_object(value, field_spec, path)
+  # Keys outside `properties`: a `patternProperties` entry whose regex matches
+  # the key checks the value; any other key is checked against
+  # `additionalProperties` (false rejects it, a schema checks the value).
+  defp validate_other_properties(errors, data, spec, path) when is_map(data) do
+    pattern_properties = spec[:patternProperties] || spec[:pattern_properties] || %{}
+    additional = Map.get(spec, :additionalProperties, spec[:additional_properties])
+
+    if pattern_properties == %{} and additional in [nil, true] do
+      errors
+    else
+      properties = spec[:properties] || %{}
+
+      data
+      |> Map.drop([:__struct__, :__meta__ | Map.keys(properties)])
+      |> Enum.reduce(errors, fn {key, value}, acc ->
+        validate_other_property(acc, key, value, pattern_properties, additional, path ++ [key])
+      end)
+    end
+  end
+
+  defp validate_other_properties(errors, _data, _spec, _path), do: errors
+
+  defp validate_other_property(errors, key, value, pattern_properties, additional, path) do
+    case matching_pattern_schemas(pattern_properties, key) do
+      [] -> validate_additional(errors, value, additional, path)
+      schemas -> Enum.reduce(schemas, errors, &validate_schema(&2, value, &1, path))
+    end
+  end
+
+  defp matching_pattern_schemas(pattern_properties, key) do
+    for {pattern, schema} <- pattern_properties,
+        Regex.match?(Regex.compile!(pattern), to_string(key)),
+        do: schema
+  end
+
+  defp validate_additional(errors, _value, additional, _path) when additional in [nil, true],
+    do: errors
+
+  defp validate_additional(errors, _value, false, path) do
+    [
+      %{path: path, message: "is not an allowed property", constraint: :additional_properties}
+      | errors
+    ]
+  end
+
+  defp validate_additional(errors, value, schema, path) when is_map(schema),
+    do: validate_schema(errors, value, schema, path)
+
+  defp validate_const(errors, data, spec, path) do
+    case Map.fetch(spec, :const) do
+      {:ok, ^data} ->
+        errors
+
+      {:ok, expected} ->
+        [%{path: path, message: "must be #{inspect(expected)}", constraint: :const} | errors]
+
+      :error ->
+        errors
+    end
+  end
+
+  defp validate_not(errors, data, spec, path) do
+    case spec[:not] do
+      nil ->
+        errors
+
+      schema ->
+        case validate_schema([], data, schema, path) do
+          [] -> [%{path: path, message: "must not match the schema", constraint: :not} | errors]
+          _ -> errors
+        end
+    end
   end
 
   # String constraints
@@ -466,9 +548,36 @@ defmodule Normandy.Schema.Validator do
     |> validate_maximum(value, spec, path)
     |> validate_exclusive_minimum(value, spec, path)
     |> validate_exclusive_maximum(value, spec, path)
+    |> validate_multiple_of(value, spec, path)
   end
 
   defp validate_number_constraints(errors, _value, _spec, _path), do: errors
+
+  defp validate_multiple_of(errors, value, spec, path) do
+    case spec[:multipleOf] || spec[:multiple_of] do
+      nil ->
+        errors
+
+      factor ->
+        if multiple_of?(value, factor) do
+          errors
+        else
+          [
+            %{path: path, message: "must be a multiple of #{factor}", constraint: :multiple_of}
+            | errors
+          ]
+        end
+    end
+  end
+
+  defp multiple_of?(value, factor) when is_integer(value) and is_integer(factor),
+    do: rem(value, factor) == 0
+
+  # Floats: 0.3 / 0.1 is 2.9999999999999996, so compare with a tolerance.
+  defp multiple_of?(value, factor) do
+    quotient = value / factor
+    abs(quotient - round(quotient)) < 1.0e-9
+  end
 
   defp validate_minimum(errors, value, spec, path) do
     case spec[:minimum] do
@@ -646,7 +755,7 @@ defmodule Normandy.Schema.Validator do
         value
         |> Enum.with_index()
         |> Enum.reduce(errors, fn {item, index}, acc ->
-          validate_value(acc, item, items_spec, path ++ [index])
+          validate_schema(acc, item, items_spec, path ++ [index])
         end)
     end
   end
@@ -672,21 +781,6 @@ defmodule Normandy.Schema.Validator do
         end
     end
   end
-
-  # Nested object validation
-  defp validate_nested_object(errors, value, spec, path) when is_map(value) do
-    if spec[:properties] do
-      # Recursively validate the nested object against its spec
-      case validate_against_spec(value, spec, path) do
-        {:ok, _} -> errors
-        {:error, nested_errors} -> nested_errors ++ errors
-      end
-    else
-      errors
-    end
-  end
-
-  defp validate_nested_object(errors, _value, _spec, _path), do: errors
 
   # Composition validation (anyOf, oneOf, allOf)
   defp validate_composition(errors, data, spec, path) do
