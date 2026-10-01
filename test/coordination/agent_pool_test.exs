@@ -1,6 +1,8 @@
 defmodule Normandy.Coordination.AgentPoolTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentPool
 
@@ -353,9 +355,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Now checkin overflow agent - should be terminated
       AgentPool.checkin(pool, overflow_pid)
 
-      # Give it time to process
-      Process.sleep(50)
-
+      # checkin/2 is a cast from this process, so this call runs after it.
       stats = AgentPool.stats(pool)
       assert stats.overflow == 0
       assert stats.available == 2
@@ -423,11 +423,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           AgentPool.checkout(pool, timeout: 5000)
         end)
 
-      # Give it time to start waiting
-      Process.sleep(10)
-
-      stats = AgentPool.stats(pool)
-      assert stats.waiting == 1
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       # Cleanup
       Task.shutdown(task, :brutal_kill)
@@ -442,9 +438,9 @@ defmodule Normandy.Coordination.AgentPoolTest do
 
       {:ok, agent_pid} = AgentPool.checkout(pool)
 
-      # Kill the agent
+      # Kill the agent; the pool replaces it when it handles the :DOWN.
       Process.exit(agent_pid, :kill)
-      Process.sleep(50)
+      assert wait_until(fn -> AgentPool.stats(pool).in_use == 0 end)
 
       # Pool should recover by creating a new agent
       stats = AgentPool.stats(pool)
@@ -463,9 +459,9 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, agent_pid} = AgentPool.checkout(pool)
       original_count = 2
 
-      # Kill the agent
+      # Kill the agent; the pool replaces it when it handles the :DOWN.
       Process.exit(agent_pid, :kill)
-      Process.sleep(50)
+      assert wait_until(fn -> AgentPool.stats(pool).in_use == 0 end)
 
       # Should still have capacity for 2 agents
       stats = AgentPool.stats(pool)
@@ -490,8 +486,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           AgentPool.checkout(pool, timeout: 1000)
         end)
 
-      # Give it time to start waiting
-      Process.sleep(10)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       # Return the agent - should go to waiting task
       AgentPool.checkin(pool, pid1)
@@ -521,7 +516,8 @@ defmodule Normandy.Coordination.AgentPoolTest do
           result
         end)
 
-      Process.sleep(5)
+      # task1 must be queued before task2 starts, so the order is known.
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       task2 =
         Task.async(fn ->
@@ -530,7 +526,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           result
         end)
 
-      Process.sleep(10)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 2 end)
 
       # Return agent - should go to first waiting task
       AgentPool.checkin(pool, pid)
@@ -559,9 +555,8 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, pool} = AgentPool.start_link(agent_config: agent_config)
 
       assert Process.alive?(pool)
+      # GenServer.stop/2 returns once the pool has terminated.
       assert :ok = AgentPool.stop(pool)
-
-      Process.sleep(10)
       refute Process.alive?(pool)
     end
 
@@ -572,10 +567,8 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Checkout an agent to get its PID
       {:ok, agent_pid} = AgentPool.checkout(pool)
 
-      # Stop pool
+      # Stop pool (GenServer.stop/2 returns once it has terminated)
       AgentPool.stop(pool)
-
-      Process.sleep(50)
 
       # Pool should be dead
       refute Process.alive?(pool)
