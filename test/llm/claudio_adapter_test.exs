@@ -293,6 +293,29 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     end
   end
 
+  describe "to_claudio_client/1 with invalid :req_options" do
+    test "raises ArgumentError instead of silently ignoring a non-list value" do
+      client = %Normandy.LLM.ClaudioAdapter{
+        api_key: "test-key",
+        options: %{req_options: %{plug: :oops}}
+      }
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+        end
+
+      assert error.message =~ ":req_options"
+      assert error.message =~ "to_claudio_client/1"
+      refute error.message =~ "test-key"
+    end
+
+    test "nil :req_options leaves the client unchanged" do
+      client = %Normandy.LLM.ClaudioAdapter{api_key: "test-key", options: %{req_options: nil}}
+      assert %Req.Request{} = Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+    end
+  end
+
   describe "__apply_client_options__/3" do
     test "empty options leave the request unchanged" do
       request = Claudio.Messages.Request.new("m")

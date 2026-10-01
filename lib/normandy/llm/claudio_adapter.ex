@@ -1032,9 +1032,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
         Claudio.Client.new(config)
       end
 
-    case client.options do
-      %{req_options: req_options} when is_list(req_options) -> Req.merge(req, req_options)
-      _ -> req
+    case Map.get(client.options, :req_options) do
+      nil ->
+        req
+
+      req_options when is_list(req_options) ->
+        Req.merge(req, req_options)
+
+      other ->
+        raise ArgumentError,
+              "ClaudioAdapter.to_claudio_client/1: expected options[:req_options] to be a " <>
+                "keyword list of Req options (for example [plug: {Req.Test, MyStub}]), " <>
+                "got: #{inspect(other)}"
     end
   end
 
