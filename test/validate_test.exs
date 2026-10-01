@@ -41,9 +41,10 @@ defmodule NormandyTest.ValidateTest do
     assert validations.params == %{"one" => "one"}
     assert validations.data == struct
     assert validations.changes == %{one: "one"}
-    assert validations.errors == [{:two, {"can't be blank", [validation: :required]}}]
-    assert validations.required == [:one, :two]
-    refute validations.valid?
+    # :two is not declared required: true, so leaving it out is fine.
+    assert validations.errors == []
+    assert validations.required == [:one]
+    assert validations.valid?
   end
 
   test "validate/2" do
@@ -56,7 +57,7 @@ defmodule NormandyTest.ValidateTest do
     assert validations.data == struct
     assert validations.changes == %{one: "one", two: "two"}
     assert validations.errors == []
-    assert validations.required == [:one, :two]
+    assert validations.required == [:one]
     assert validations.valid?
     assert validations(validations) == []
   end
@@ -70,12 +71,9 @@ defmodule NormandyTest.ValidateTest do
     assert validations.data == struct
     assert validations.changes == %{}
 
-    assert validations.errors == [
-             {:one, {"can't be blank", [validation: :required]}},
-             {:two, {"can't be blank", [validation: :required]}}
-           ]
+    assert validations.errors == [{:one, {"can't be blank", [validation: :required]}}]
 
-    assert validations.required == [:one, :two]
+    assert validations.required == [:one]
     refute validations.valid?
     assert validations(validations) == []
   end
@@ -90,12 +88,9 @@ defmodule NormandyTest.ValidateTest do
     assert validations.data == struct
     assert validations.changes == %{}
 
-    assert validations.errors == [
-             {:two, {"can't be blank", [validation: :required]}},
-             {:one, {"is invalid", [type: :string, validation: :cast]}}
-           ]
+    assert validations.errors == [{:one, {"is invalid", [type: :string, validation: :cast]}}]
 
-    assert validations.required == [:one, :two]
+    assert validations.required == [:one]
     refute validations.valid?
     assert validations(validations) == []
   end
