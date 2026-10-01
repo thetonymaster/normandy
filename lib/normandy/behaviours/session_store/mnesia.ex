@@ -117,7 +117,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   def load_turn_state(%{sessions: st}, session_id) do
     case txn(fn -> :mnesia.read({st, session_id}) end) do
       {:ok, [{_, ^session_id, %{turn_state: ts}}]} when not is_nil(ts) -> {:ok, ts}
-      _ -> :error
+      {:ok, _no_saved_value} -> :error
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -141,7 +142,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   def load_config_template(%{sessions: st}, session_id) do
     case txn(fn -> :mnesia.read({st, session_id}) end) do
       {:ok, [{_, ^session_id, %{config_template: t}}]} when not is_nil(t) -> {:ok, t}
-      _ -> :error
+      {:ok, _no_saved_value} -> :error
+      {:error, reason} -> {:error, reason}
     end
   end
 

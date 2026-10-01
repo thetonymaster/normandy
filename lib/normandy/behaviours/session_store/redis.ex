@@ -86,7 +86,8 @@ if Code.ensure_loaded?(Redix) do
     def load_turn_state({conn, ns}, session_id) do
       case Redix.command(conn, ["HGET", meta_key(ns, session_id), "turn_state"]) do
         {:ok, blob} when is_binary(blob) -> {:ok, decode(blob)}
-        _ -> :error
+        {:ok, nil} -> :error
+        {:error, reason} -> {:error, reason}
       end
     end
 
@@ -116,7 +117,8 @@ if Code.ensure_loaded?(Redix) do
     def load_config_template({conn, ns}, session_id) do
       case Redix.command(conn, ["HGET", meta_key(ns, session_id), "config_template"]) do
         {:ok, blob} when is_binary(blob) -> {:ok, decode(blob)}
-        _ -> :error
+        {:ok, nil} -> :error
+        {:error, reason} -> {:error, reason}
       end
     end
 

@@ -21,6 +21,17 @@ defmodule Normandy.Agents.Turn.SessionTest do
     def history(_handle, _sid), do: {:error, :store_unavailable}
   end
 
+  # A store whose turn-state load reports a backend fault.
+  defmodule TurnStateFaultStore do
+    def history(_handle, _sid), do: {:ok, []}
+    def load_turn_state(_handle, _sid), do: {:error, :store_unavailable}
+  end
+
+  # A store whose config-template load reports a backend fault.
+  defmodule TemplateFaultStore do
+    def load_config_template(_handle, _sid), do: {:error, :store_unavailable}
+  end
+
   # A supervisor stand-in that reports the server opts Session built, then refuses.
   defmodule CapturingSupervisor do
     def start_server(test_pid, opts) do
@@ -203,6 +214,21 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     # A store fault must surface as run/2's error tuple, not a caller crash.
+    assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
+  end
+
+  test "run/2 returns {:error, reason} when the turn-state load faults during rehydration" do
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    opts = [
+      session_id: "faulty-turn-state",
+      config: session_config(),
+      store: {TurnStateFaultStore, :ignored},
+      registry: {Native, Native.new()},
+      supervisor: sup
+    ]
+
+    # A fault is not "no saved turn": starting fresh would drop an in-flight turn.
     assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
   end
 
@@ -404,6 +430,13 @@ defmodule Normandy.Agents.Turn.SessionTest do
                Turn.Session.run(template_opts(store, sid), "hello")
 
       assert {:ok, ^tmpl} = InMemory.load_config_template(store, sid)
+    end
+
+    test "a template-load fault is returned, not reported as a missing template" do
+      sid = "tmpl-fault-#{System.unique_integer([:positive])}"
+      opts = Keyword.put(template_opts(InMemory.new(), sid), :store, {TemplateFaultStore, nil})
+
+      assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
     end
 
     test "with no saved template it returns an error" do

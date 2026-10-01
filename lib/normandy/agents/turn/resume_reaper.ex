@@ -109,8 +109,19 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
 
   defp non_terminal?(store_mod, store_handle, sid) do
     case store_mod.load_turn_state(store_handle, sid) do
-      {:ok, %Turn.State{status: status}} -> status not in [:stopped, :failed]
-      _ -> false
+      {:ok, %Turn.State{status: status}} ->
+        status not in [:stopped, :failed]
+
+      {:error, reason} ->
+        # A lazy caller can still rehydrate the session later; log the missed reap.
+        Logger.warning(
+          "ResumeReaper: could not load the turn state of #{inspect(sid)}: #{inspect(reason)}"
+        )
+
+        false
+
+      _ ->
+        false
     end
   end
 

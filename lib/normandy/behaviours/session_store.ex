@@ -18,6 +18,12 @@ defmodule Normandy.Behaviours.SessionStore do
   Missing-session semantics are asymmetric by intent: `history/2` is lenient and
   returns `{:ok, []}` for an unknown session, while `fork/3` is strict and returns
   `{:error, _}` — you cannot branch a conversation that does not exist.
+
+  `load_turn_state/2` and `load_config_template/2` return `:error` only when
+  nothing is saved for the session. A backend failure (a timeout, a lost
+  connection, an aborted transaction) is `{:error, reason}`: `Turn.Server` and
+  `Turn.Session` fail the start on it, because starting as if nothing were
+  saved would drop an in-flight turn and the next save would overwrite it.
   """
 
   alias Normandy.Components.AgentMemory.Entry
@@ -31,11 +37,12 @@ defmodule Normandy.Behaviours.SessionStore do
   @callback fork(handle(), session_id(), from_entry_id :: String.t()) ::
               {:ok, session_id()} | {:error, term()}
   @callback save_turn_state(handle(), session_id(), state :: term()) :: :ok | {:error, term()}
-  @callback load_turn_state(handle(), session_id()) :: {:ok, term()} | :error
+  @callback load_turn_state(handle(), session_id()) :: {:ok, term()} | :error | {:error, term()}
 
   @callback save_config_template(handle(), session_id(), template :: term()) ::
               :ok | {:error, term()}
-  @callback load_config_template(handle(), session_id()) :: {:ok, term()} | :error
+  @callback load_config_template(handle(), session_id()) ::
+              {:ok, term()} | :error | {:error, term()}
 
   @doc """
   Lists the `session_id`s whose persisted config template has `resume_policy: :eager`.

@@ -108,10 +108,10 @@ defmodule Normandy.Agents.Turn.Session do
         {:ok, thin_server_opts(opts)}
 
       {:error, _provider} ->
-        if template_saved?(opts) do
-          {:ok, thin_server_opts(opts)}
-        else
-          {:error, {:no_config_template, Keyword.fetch!(opts, :session_id)}}
+        case load_template(opts) do
+          {:ok, _tmpl} -> {:ok, thin_server_opts(opts)}
+          :error -> {:error, {:no_config_template, Keyword.fetch!(opts, :session_id)}}
+          {:error, reason} -> {:error, reason}
         end
     end
   end
@@ -127,13 +127,9 @@ defmodule Normandy.Agents.Turn.Session do
     store_mod.save_config_template(store_handle, Keyword.fetch!(opts, :session_id), tmpl)
   end
 
-  defp template_saved?(opts) do
+  defp load_template(opts) do
     {store_mod, store_handle} = Keyword.fetch!(opts, :store)
-
-    match?(
-      {:ok, _},
-      store_mod.load_config_template(store_handle, Keyword.fetch!(opts, :session_id))
-    )
+    store_mod.load_config_template(store_handle, Keyword.fetch!(opts, :session_id))
   end
 
   defp base_server_opts(opts) do

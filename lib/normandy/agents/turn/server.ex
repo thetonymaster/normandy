@@ -118,37 +118,49 @@ defmodule Normandy.Agents.Turn.Server do
   def init(opts) do
     store = Keyword.fetch!(opts, :store)
     session_id = Keyword.fetch!(opts, :session_id)
-    template_provider = Keyword.get(opts, :template_provider)
-
-    config =
-      if Keyword.has_key?(opts, :config) do
-        Keyword.fetch!(opts, :config)
-      else
-        reconstruct_config!(store, template_provider, session_id)
-      end
 
     # The store is the only source of durable state, on a first start and on a
     # supervisor restart alike: the start arguments are captured once and would
-    # bring back the memory and turn state of the first start.
-    case with_stored_memory(config, store, session_id) do
-      {:ok, config} -> init_data(opts, config, load_turn_state(store, session_id))
+    # bring back the memory and turn state of the first start. A store fault
+    # stops the start: starting without the saved turn would drop it.
+    with {:ok, config, template} <- start_config(opts, store, session_id),
+         {:ok, config} <- with_stored_memory(config, store, session_id),
+         {:ok, turn_state} <- load_turn_state(store, session_id) do
+      init_data(opts, config, template, turn_state)
+    else
       {:error, reason} -> {:stop, reason}
     end
   end
 
-  defp init_data(opts, config, turn_state) do
+  # A :config start uses it as given; a thin start rebuilds the config from the
+  # template saved in the store, and also returns that template.
+  defp start_config(opts, store, session_id) do
+    case Keyword.fetch(opts, :config) do
+      {:ok, config} ->
+        {:ok, config, nil}
+
+      :error ->
+        template_provider = Keyword.get(opts, :template_provider)
+
+        with {:ok, tmpl} <- load_config_template(store, template_provider, session_id) do
+          {:ok, reconstruct_config!(tmpl, template_provider, session_id), tmpl}
+        end
+    end
+  end
+
+  defp init_data(opts, config, template, turn_state) do
     store = Keyword.fetch!(opts, :store)
     registry = Keyword.fetch!(opts, :registry)
     session_id = Keyword.fetch!(opts, :session_id)
     template_provider = Keyword.get(opts, :template_provider)
 
     resume_policy =
-      case Keyword.get(opts, :config) do
-        nil -> template_resume_policy(store, session_id, Keyword.get(opts, :resume_policy, :lazy))
+      case template do
+        %{resume_policy: rp} -> rp
         _ -> Keyword.get(opts, :resume_policy, :lazy)
       end
 
-    timeouts = timeout_options(opts, store, session_id)
+    timeouts = timeout_options(opts, template)
 
     data = %Data{
       session_id: session_id,
@@ -175,15 +187,22 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # No :config AND no :template_provider — a Tier-2 thin start can't reconstruct.
-  defp reconstruct_config!(_store, nil, session_id) do
+  defp load_config_template(_store, nil, session_id) do
     raise ArgumentError,
           "Turn.Server: session #{inspect(session_id)} was started with neither :config " <>
             "nor :template_provider. A Tier-2 (Horde) thin start requires :template_provider " <>
             "so the server can reconstruct config from the persisted template."
   end
 
-  defp reconstruct_config!({store_mod, store_handle}, {tp_mod, tp_handle}, session_id) do
-    {:ok, tmpl} = store_mod.load_config_template(store_handle, session_id)
+  defp load_config_template({mod, handle}, _template_provider, session_id) do
+    case mod.load_config_template(handle, session_id) do
+      {:ok, tmpl} -> {:ok, tmpl}
+      :error -> {:error, {:no_config_template, session_id}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reconstruct_config!(tmpl, {tp_mod, tp_handle}, session_id) do
     {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
 
@@ -222,25 +241,20 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp load_turn_state({mod, handle}, sid) do
     case mod.load_turn_state(handle, sid) do
-      {:ok, ts} -> ts
-      _ -> nil
-    end
-  end
-
-  defp template_resume_policy({mod, handle}, sid, default) do
-    case mod.load_config_template(handle, sid) do
-      {:ok, %{resume_policy: rp}} -> rp
-      _ -> default
+      {:ok, ts} -> {:ok, ts}
+      :error -> {:ok, nil}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   # A thin start restores the server options saved with the template;
   # explicit start options still win.
-  defp timeout_options(opts, store, session_id) do
+  defp timeout_options(opts, template) do
     saved =
-      if Keyword.has_key?(opts, :config),
-        do: %{},
-        else: template_server_options(store, session_id)
+      case template do
+        %{server_options: saved} when is_map(saved) -> saved
+        _ -> %{}
+      end
 
     on_approval_timeout = server_option(opts, saved, :on_approval_timeout, :continue)
     validate_on_approval_timeout!(on_approval_timeout)
@@ -250,13 +264,6 @@ defmodule Normandy.Agents.Turn.Server do
       on_approval_timeout: on_approval_timeout,
       idle_timeout_ms: server_option(opts, saved, :idle_timeout_ms, 60_000)
     }
-  end
-
-  defp template_server_options({mod, handle}, sid) do
-    case mod.load_config_template(handle, sid) do
-      {:ok, %{server_options: saved}} when is_map(saved) -> saved
-      _ -> %{}
-    end
   end
 
   defp server_option(opts, saved, key, default) do

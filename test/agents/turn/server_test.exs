@@ -236,6 +236,23 @@ defmodule Normandy.Agents.Turn.ServerTest do
              AssistantAppendFailStore.load_turn_state(store, "s-bypass")
   end
 
+  defmodule TemplateFaultStore do
+    def load_config_template(_handle, _sid), do: {:error, :store_unavailable}
+  end
+
+  test "a thin start stops with the store's reason when the template load faults" do
+    {:ok, cat} = Catalog.start_link([])
+    Process.flag(:trap_exit, true)
+
+    assert {:error, :store_unavailable} =
+             Turn.Server.start_link(
+               session_id: "s-template-fault",
+               store: {TemplateFaultStore, nil},
+               registry: {Native, Native.new()},
+               template_provider: {Catalog, cat}
+             )
+  end
+
   test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
     store = InMemory.new()
     reg = Native.new()
@@ -494,7 +511,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       def save_turn_state(_handle, _sid, _state), do: :ok
 
       @impl true
-      def load_turn_state(_handle, _sid), do: {:error, :not_found}
+      def load_turn_state(_handle, _sid), do: :error
 
       @impl true
       def append_entry(_handle, _sid, _entry), do: {:error, :disk_full}

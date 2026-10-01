@@ -17,6 +17,13 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     end
   end
 
+  # An eager session whose turn-state load reports a backend fault.
+  defmodule TurnStateFaultStore do
+    @moduledoc false
+    def list_resumable(_handle), do: {:ok, ["s-fault"]}
+    def load_turn_state(_handle, _sid), do: {:error, :store_unavailable}
+  end
+
   defp reaper(store, reg, cat, extra \\ []) do
     {:ok, pid} =
       ResumeReaper.start_link(
@@ -129,5 +136,30 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     assert_receive {:reaper_started, "s1", opts}, 1_000
     refute Keyword.has_key?(opts, :subscriber)
     refute Keyword.has_key?(opts, :handlers)
+  end
+
+  test "a turn-state load fault skips the session and logs it" do
+    reg = Native.new()
+    {:ok, cat} = Catalog.start_link([])
+
+    {:ok, r} =
+      ResumeReaper.start_link(
+        store: {TurnStateFaultStore, nil},
+        registry: {Native, reg},
+        supervisor: self(),
+        supervisor_mod: RecordingSup,
+        template_provider: {Catalog, cat}
+      )
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(r, {:nodedown, :"gone@127.0.0.1"})
+        # A call after the send returns once the reaper has handled :nodedown.
+        :sys.get_state(r)
+      end)
+
+    refute_received {:reaper_started, "s-fault", _}
+    assert log =~ "ResumeReaper: could not load the turn state of \"s-fault\""
+    assert log =~ ":store_unavailable"
   end
 end

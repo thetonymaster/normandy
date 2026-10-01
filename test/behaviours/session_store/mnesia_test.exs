@@ -26,3 +26,37 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaTest do
 
   use Normandy.SessionStoreContract, impl: Normandy.Behaviours.SessionStore.Mnesia
 end
+
+defmodule Normandy.Behaviours.SessionStore.MnesiaBackendErrorTest do
+  # async: false — Mnesia is node-global state.
+  use ExUnit.Case, async: false
+
+  alias Normandy.Behaviours.SessionStore.Mnesia
+
+  setup do
+    :mnesia.stop()
+    :mnesia.delete_schema([node()])
+    :ok = :mnesia.start()
+    on_exit(fn -> :mnesia.stop() end)
+  end
+
+  # A handle whose table does not exist makes every transaction abort, the way
+  # a table that is not loaded yet after a restart does.
+  defp missing_table_handle, do: %{Mnesia.new() | sessions: :normandy_missing_table}
+
+  test "load_turn_state reports an aborted transaction as {:error, reason}" do
+    assert {:error, {:no_exists, :normandy_missing_table}} =
+             Mnesia.load_turn_state(missing_table_handle(), "s1")
+  end
+
+  test "load_config_template reports an aborted transaction as {:error, reason}" do
+    assert {:error, {:no_exists, :normandy_missing_table}} =
+             Mnesia.load_config_template(missing_table_handle(), "s1")
+  end
+
+  test "a session with no saved state is still :error" do
+    store = Mnesia.new()
+    assert :error = Mnesia.load_turn_state(store, "unknown")
+    assert :error = Mnesia.load_config_template(store, "unknown")
+  end
+end
