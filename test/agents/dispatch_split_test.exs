@@ -119,6 +119,19 @@ defmodule Normandy.Agents.DispatchSplitTest do
                Dispatch.classify(config, call, Dispatch.default_pipeline())
     end
 
+    test "input that is not a JSON object is refused and the model is told" do
+      config = config_with_tools([%FakeTool{}])
+
+      for input <- [~s({"city": "NY), "[1, 2]", 42] do
+        call = %ToolCall{id: "bad", name: "weather", input: input}
+
+        assert {:deny, %ToolResult{tool_call_id: "bad", is_error: true, output: output}} =
+                 Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+        assert output.error =~ "not a JSON object"
+      end
+    end
+
     test "deny → {:deny, error ToolResult}, tool not run" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c2", name: "weather", input: %{"city" => "NYC"}}

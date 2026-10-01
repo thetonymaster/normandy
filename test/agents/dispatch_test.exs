@@ -54,11 +54,11 @@ defmodule Normandy.Agents.DispatchTest do
       assert Dispatch.to_tool_call(call) == call
     end
 
-    test "normalizes a %ToolCall{} with nil or non-map input to a map" do
+    test "normalizes nil input to a map and keeps non-object input for classify/3 to refuse" do
       assert Dispatch.to_tool_call(%ToolCall{id: "c1a", name: "weather", input: nil}).input == %{}
 
       assert Dispatch.to_tool_call(%ToolCall{id: "c1b", name: "weather", input: [1, 2, 3]}).input ==
-               %{}
+               [1, 2, 3]
 
       assert Dispatch.to_tool_call(%ToolCall{
                id: "c1c",
@@ -74,12 +74,15 @@ defmodule Normandy.Agents.DispatchTest do
                %ToolCall{id: "c2", name: "weather", input: %{"city" => "LA"}}
     end
 
-    test "decodes a JSON-string input and degrades non-map input to %{}" do
+    test "decodes a JSON-string input and keeps non-object input as it came" do
       raw = %{"id" => "c3", "name" => "weather", "input" => ~s({"city":"SF"})}
       assert Dispatch.to_tool_call(raw).input == %{"city" => "SF"}
 
       bad = %{"id" => "c4", "name" => "weather", "input" => [1, 2, 3]}
-      assert Dispatch.to_tool_call(bad).input == %{}
+      assert Dispatch.to_tool_call(bad).input == [1, 2, 3]
+
+      truncated = %{"id" => "c5", "name" => "weather", "input" => ~s({"city":"S)}
+      assert Dispatch.to_tool_call(truncated).input == ~s({"city":"S)
     end
   end
 

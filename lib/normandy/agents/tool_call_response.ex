@@ -47,7 +47,9 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Agents.ToolCallResponse 
           type: "tool_use",
           id: tool_call.id,
           name: tool_call.name,
-          input: tool_call.input
+          # The API requires an object. Input that was not one was refused
+          # (Dispatch.classify/3), and the model was told in the tool result.
+          input: if(is_map(tool_call.input), do: tool_call.input, else: %{})
         }
 
         [tool_block | acc]

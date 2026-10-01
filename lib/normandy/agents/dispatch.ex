@@ -185,6 +185,9 @@ defmodule Normandy.Agents.Dispatch do
     call = %{call | input: normalize_tool_input(call.input)}
 
     case Registry.get(config.tool_registry, call.name) do
+      {:ok, _tool} when not is_map(call.input) ->
+        {:deny, invalid_input_result(call)}
+
       {:ok, tool} ->
         case run_before_hooks(config, call, pipeline.before_hooks) do
           {:halt, %ToolResult{} = result} ->
@@ -333,6 +336,17 @@ defmodule Normandy.Agents.Dispatch do
     }
   end
 
+  defp invalid_input_result(call) do
+    %ToolResult{
+      tool_call_id: call.id,
+      output: %{
+        error: "tool input is not a JSON object (it may have been cut off); the tool was not run",
+        denied: true
+      },
+      is_error: true
+    }
+  end
+
   defp not_found_result(call) do
     %ToolResult{
       tool_call_id: call.id,
@@ -341,6 +355,9 @@ defmodule Normandy.Agents.Dispatch do
     }
   end
 
+  # A JSON object string is decoded. Anything that is not an object (truncated
+  # JSON, an array, a number) is kept as it came, so classify/3 can refuse the
+  # call and tell the model, instead of running the tool with empty input.
   @doc false
   def normalize_tool_input(nil), do: %{}
   def normalize_tool_input(input) when is_map(input), do: input
@@ -348,11 +365,11 @@ defmodule Normandy.Agents.Dispatch do
   def normalize_tool_input(input) when is_binary(input) do
     case Poison.decode(input) do
       {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
+      _ -> input
     end
   end
 
-  def normalize_tool_input(_), do: %{}
+  def normalize_tool_input(input), do: input
 
   # Map an LLM-supplied input key (atom or binary) to a struct field atom on the
   # tool, returning :error for keys that don't correspond to any field. NEVER
