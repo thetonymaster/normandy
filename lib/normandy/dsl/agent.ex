@@ -56,6 +56,7 @@ defmodule Normandy.DSL.Agent do
   """
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
 
   defmacro __using__(_opts) do
@@ -317,6 +318,48 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  # The BaseAgent.init/1 options a DSL agent can override in new/1, plus
+  # :max_messages. :client is passed on its own.
+  @override_keys [
+    :model,
+    :temperature,
+    :max_tokens,
+    :name,
+    :input_schema,
+    :output_schema,
+    :memory,
+    :max_messages,
+    :prompt_specification,
+    :tool_registry,
+    :max_tool_iterations,
+    :max_tool_concurrency,
+    :retry_options,
+    :enable_circuit_breaker,
+    :circuit_breaker_options,
+    :enable_json_retry,
+    :json_retry_max_attempts,
+    :mcp_servers,
+    :behaviours,
+    :input_guardrails,
+    :output_guardrails,
+    :output_guardrails_streaming_mode,
+    :output_guardrails_chunk_size,
+    :output_guardrails_on_violation
+  ]
+
+  @doc false
+  def validate_overrides!(agent_module, overrides) do
+    case Keyword.keys(overrides) -- @override_keys do
+      [] ->
+        :ok
+
+      [key | _] ->
+        raise ArgumentError,
+              "#{inspect(agent_module)}.new/1: unknown option #{inspect(key)}; " <>
+                "allowed: :client, :override and #{Enum.map_join(@override_keys, ", ", &inspect/1)}"
+    end
+  end
+
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro __before_compile__(_env) do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
@@ -369,6 +412,10 @@ defmodule Normandy.DSL.Agent do
 
       This allows callers to pass overrides either under `:override` or directly
       at the top level. When both are present for the same key, `:override` wins.
+
+      An option that is not a `BaseAgent.init/1` option (or `:max_messages`)
+      raises `ArgumentError`, so a typo such as `temprature:` does not pass
+      silently.
 
       ## Examples
 
@@ -487,18 +534,23 @@ defmodule Normandy.DSL.Agent do
           output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
         }
 
-        # Apply max_messages if set
-        base_config =
-          if @agent_compile_config.max_messages do
-            Map.put(base_config, :max_messages, @agent_compile_config.max_messages)
-          else
-            base_config
-          end
+        Normandy.DSL.Agent.validate_overrides!(__MODULE__, overrides)
 
-        # Apply overrides
-        Enum.reduce(overrides, base_config, fn {key, value}, acc ->
-          Map.put(acc, key, value)
-        end)
+        config = Map.merge(base_config, Map.new(overrides))
+        max_messages = Map.get(config, :max_messages, @agent_compile_config.max_messages)
+
+        # BaseAgent.init/1 takes the cap through the memory, not a :max_messages key.
+        case {max_messages, Map.has_key?(config, :memory)} do
+          {nil, _} ->
+            config
+
+          {_, true} ->
+            config
+
+          {cap, false} ->
+            Map.put(config, :memory, AgentMemory.new_memory(cap))
+        end
+        |> Map.delete(:max_messages)
       end
 
       defp apply_system_prompt(agent) do

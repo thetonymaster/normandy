@@ -437,7 +437,11 @@ defmodule Normandy.Agents.BaseAgent do
         {result, metadata}
       end)
     else
-      # Fall back to regular run
+      if stream do
+        raise ArgumentError,
+              "BaseAgent.run/3: stream: true requires :on_chunk (a 1- or 2-arity callback)"
+      end
+
       run(config, user_input)
     end
   end

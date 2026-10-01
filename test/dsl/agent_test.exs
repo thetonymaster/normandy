@@ -156,6 +156,37 @@ defmodule Normandy.DSL.AgentTest do
       assert agent.name == nil
     end
 
+    test "max_messages caps the built agent's memory" do
+      {:ok, agent} = LimitedMemoryAgent.new(client: %NormandyTest.Support.ModelMockup{})
+
+      assert agent.memory.max_messages == 10
+      assert agent.initial_memory.max_messages == 10
+    end
+
+    test "a max_messages override caps the memory too" do
+      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_messages: 4)
+
+      assert agent.memory.max_messages == 4
+    end
+
+    test "an unknown option raises, naming it" do
+      assert_raise ArgumentError, ~r/unknown option :temprature/, fn ->
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, temprature: 0.2)
+      end
+
+      assert_raise ArgumentError, ~r/unknown option :maxtokens/, fn ->
+        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, override: [maxtokens: 1])
+      end
+    end
+
+    test "run/3 with stream: true and no :on_chunk raises instead of running non-streaming" do
+      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
+
+      assert_raise ArgumentError, ~r/stream: true requires :on_chunk/, fn ->
+        TestAgent.run(agent, "hi", stream: true)
+      end
+    end
+
     test "raises when client is missing" do
       assert_raise KeyError, fn ->
         TestAgent.new([])
