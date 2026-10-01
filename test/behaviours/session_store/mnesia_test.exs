@@ -54,6 +54,27 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaBackendErrorTest do
              Mnesia.load_config_template(missing_table_handle(), "s1")
   end
 
+  test "history reports a broken chain instead of returning a truncated one" do
+    store = Mnesia.new()
+
+    {:ok, first} =
+      Mnesia.append_entry(store, "s1", %Normandy.Components.AgentMemory.Entry{
+        role: "user",
+        content: "a"
+      })
+
+    {:ok, _second} =
+      Mnesia.append_entry(store, "s1", %Normandy.Components.AgentMemory.Entry{
+        role: "assistant",
+        content: "b"
+      })
+
+    # A missing parent, as a partly loaded table or an unsynced replica leaves it.
+    :ok = :mnesia.dirty_delete(store.entries, first)
+
+    assert {:error, {:broken_chain, ^first}} = Mnesia.history(store, "s1")
+  end
+
   test "a session with no saved state is still :error" do
     store = Mnesia.new()
     assert :error = Mnesia.load_turn_state(store, "unknown")

@@ -44,7 +44,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   @doc """
   Create the two Mnesia tables. Opts: `:entries`/`:sessions` (table-name atoms,
   required), `:copies` (`:disc_copies` default | `:ram_copies`), `:nodes` (default
-  `[node()]`). `disc_copies` converts this node's schema to disc first so it survives
+  `[node()]`), `:wait_timeout` (ms to wait for the tables to load, default 30_000;
+  raises on timeout). `disc_copies` converts this node's schema to disc first so it survives
   restart (requires a writable Mnesia dir; see `-mnesia dir` / `:mnesia` app env).
   """
   @spec create_tables(keyword()) :: :ok
@@ -59,7 +60,19 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
     :ok = create_table(entries, [:id, :data], copies, nodes)
     :ok = create_table(sessions, [:session_id, :data], copies, nodes)
-    :ok
+
+    # After a restart, disc_copies tables already exist but load in the
+    # background; a transaction before they finish aborts with :no_exists.
+    case :mnesia.wait_for_tables([entries, sessions], Keyword.get(opts, :wait_timeout, 30_000)) do
+      :ok ->
+        :ok
+
+      {:timeout, tables} ->
+        raise "SessionStore.Mnesia: tables not loaded within the wait timeout: #{inspect(tables)}"
+
+      {:error, reason} ->
+        raise "SessionStore.Mnesia: waiting for tables failed: #{inspect(reason)}"
+    end
   end
 
   @impl true
@@ -193,8 +206,10 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
         chain(et, d.parent_id, [entry | acc])
 
+      # A missing entry (a table still loading, an unsynced replica) would hand
+      # the model a conversation with a hole in it; fail instead.
       [] ->
-        acc
+        :mnesia.abort({:broken_chain, id})
     end
   end
 
