@@ -734,6 +734,12 @@ defmodule Normandy.Agents.BaseAgent do
     {compactor, compactor_opts} = compactor_ref(config)
     {catalog, _catalog_opts} = catalog_ref(config)
 
+    unless Keyword.keyword?(compactor_opts) do
+      raise ArgumentError,
+            "Normandy.Agents.BaseAgent.validate_compaction_config!/1: opts for compactor " <>
+              "#{inspect(compactor)} must be a keyword list, got #{inspect(compactor_opts)}"
+    end
+
     needs_api_lookup? =
       compactor != Normandy.Behaviours.Compactor.NoOp and
         not Keyword.has_key?(compactor_opts, :max_tokens) and

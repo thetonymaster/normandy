@@ -29,6 +29,16 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     refute error.message =~ "sk-secret"
   end
 
+  test "compactor opts that are not a keyword list raise a named ArgumentError" do
+    behaviours = %Config{compactor: {Compactor.WindowManager, %{}}}
+    error = assert_raise ArgumentError, fn -> init(%OtherClient{}, behaviours) end
+
+    assert error.message =~ "BaseAgent.validate_compaction_config!/1"
+    assert error.message =~ "Compactor.WindowManager"
+    assert error.message =~ "keyword list"
+    refute error.message =~ "sk-secret"
+  end
+
   test "the deprecated Static catalog is treated like the default" do
     # Built at runtime: a compiled Static literal under test/ would make the 1.x
     # [:safe] decode test in config_template_test vacuous (one shared VM).
