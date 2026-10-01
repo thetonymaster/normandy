@@ -22,6 +22,14 @@ defmodule Normandy.Agents.Turn.Session do
   template already saved in the store. With no saved template, `run/2` returns
   `{:error, {:no_config_template, session_id}}`.
 
+  ## Resume policy (`:resume_policy`, `:lazy` or `:eager`)
+
+  `:lazy` (default) restarts a session only when a caller routes to it. With
+  `:eager`, a restarted server resumes a non-terminal turn on its own, and a
+  Tier-2 start saves the policy in the template, so `ResumeReaper` restarts the
+  session when its node goes down. A session started from a saved template keeps
+  the policy it was saved with.
+
   ## Start-time race
 
   For `:self_register` (Native) registries the race between `whereis` returning
@@ -96,6 +104,8 @@ defmodule Normandy.Agents.Turn.Session do
   # start); or a template provider alone, which starts from the template already
   # in the store (Tier 2, e.g. a caller on a surviving node that has no config).
   defp server_opts(opts) do
+    validate_resume_policy!(Keyword.get(opts, :resume_policy, :lazy))
+
     case {Keyword.fetch(opts, :config), Keyword.get(opts, :template_provider)} do
       {{:ok, config}, nil} ->
         {:ok,
@@ -121,7 +131,10 @@ defmodule Normandy.Agents.Turn.Session do
 
     tmpl =
       config
-      |> ConfigTemplate.from_config(template_id_of(opts, config))
+      |> ConfigTemplate.from_config(
+        template_id_of(opts, config),
+        Keyword.get(opts, :resume_policy, :lazy)
+      )
       |> Map.put(:server_options, Map.new(Keyword.take(opts, @stored_server_options)))
 
     store_mod.save_config_template(store_handle, Keyword.fetch!(opts, :session_id), tmpl)
@@ -136,13 +149,20 @@ defmodule Normandy.Agents.Turn.Session do
     opts
     |> Keyword.take([:session_id, :store, :registry, :subscriber, :handlers])
     |> Keyword.merge(Keyword.take(opts, @stored_server_options))
+    |> Keyword.put(:resume_policy, Keyword.get(opts, :resume_policy, :lazy))
   end
 
   defp thin_server_opts(opts) do
     opts
     |> base_server_opts()
     |> Keyword.put(:template_provider, Keyword.fetch!(opts, :template_provider))
-    |> Keyword.put(:resume_policy, Keyword.get(opts, :resume_policy, :lazy))
+  end
+
+  defp validate_resume_policy!(policy) when policy in [:lazy, :eager], do: :ok
+
+  defp validate_resume_policy!(policy) do
+    raise ArgumentError,
+          "Turn.Session: :resume_policy must be :lazy or :eager, got: #{inspect(policy)}"
   end
 
   # Start the server, tolerating Horde's eventually-consistent `:via` registration.

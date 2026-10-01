@@ -277,6 +277,62 @@ defmodule Normandy.Agents.Turn.SessionTest do
            }
   end
 
+  describe "resume_policy: :eager" do
+    test "a Tier-2 start saves it in the template, so the session is listed as resumable" do
+      store = InMemory.new()
+      {:ok, cat} = Catalog.start_link([])
+
+      opts = [
+        session_id: "s-eager",
+        config: session_config(),
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        supervisor: self(),
+        supervisor_mod: CapturingSupervisor,
+        template_provider: {Catalog, cat},
+        resume_policy: :eager
+      ]
+
+      assert {:error, :captured} = Turn.Session.run(opts, "hi")
+      assert {:ok, %{resume_policy: :eager}} = InMemory.load_config_template(store, "s-eager")
+      assert {:ok, ["s-eager"]} = InMemory.list_resumable(store)
+    end
+
+    test "any other value is rejected" do
+      opts = [
+        session_id: "s-bad-policy",
+        config: session_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: self(),
+        supervisor_mod: CapturingSupervisor,
+        resume_policy: :sometimes
+      ]
+
+      assert_raise ArgumentError,
+                   ~r/:resume_policy must be :lazy or :eager, got: :sometimes/,
+                   fn ->
+                     Turn.Session.run(opts, "hi")
+                   end
+    end
+
+    test "a Tier 0/1 start passes it to the server" do
+      opts = [
+        session_id: "s-eager-local",
+        config: session_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: self(),
+        supervisor_mod: CapturingSupervisor,
+        resume_policy: :eager
+      ]
+
+      assert {:error, :captured} = Turn.Session.run(opts, "hi")
+      assert_received {:server_opts, server_opts}
+      assert server_opts[:resume_policy] == :eager
+    end
+  end
+
   test "concurrent ensure-server for one session resolves to a single pid (Horde via)" do
     alias Normandy.Behaviours.SessionRegistry.Horde
     alias Normandy.Behaviours.SessionStore.InMemory
