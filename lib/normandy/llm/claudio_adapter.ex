@@ -567,6 +567,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # grows. Together with the explicit system and last-tool breakpoints that's 3
     # of the 4 allowed. Normandy marks no message block itself.
     def add_messages(request, messages, enable_caching) do
+      ensure_single_leading_system!(messages)
+
       request =
         if enable_caching,
           do: Claudio.Messages.Request.set_cache_control(request),
@@ -677,6 +679,27 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     def add_single_message(request, _msg, _enable_caching), do: request
+
+    # Anthropic takes one top-level system prompt and `set_system/2` replaces
+    # it, so a system message anywhere but first would silently overwrite the
+    # agent's prompt (e.g. a "system"-role summary in history). Raise instead.
+    defp ensure_single_leading_system!(messages) do
+      messages
+      |> Enum.with_index()
+      |> Enum.drop(1)
+      |> Enum.find(fn {msg, _index} -> match?(%Message{role: "system"}, msg) end)
+      |> case do
+        nil ->
+          :ok
+
+        {%Message{turn_id: turn_id}, index} ->
+          raise ArgumentError,
+                "Normandy.LLM.ClaudioAdapter: system message at position #{index} " <>
+                  "(turn_id=#{inspect(turn_id)}); only the first message may be a system " <>
+                  "message, since a later one would replace the system prompt. " <>
+                  ~s(Store summaries and notes as "user" or "assistant" messages.)
+      end
+    end
 
     # Shared non-empty-list guard — called from every list branch of
     # `add_single_message/3` so no role (system/user/assistant/tool) can

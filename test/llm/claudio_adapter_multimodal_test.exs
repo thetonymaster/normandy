@@ -413,6 +413,31 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
       assert_raise ArgumentError, ~r/content list must be non-empty/, fn -> add(msg) end
     end
 
+    test "a system message after the first message raises ArgumentError" do
+      # set_system/2 replaces, so a later system message would silently
+      # overwrite the agent's system prompt.
+      messages = [
+        %Message{role: "system", content: "real prompt"},
+        %Message{role: "user", content: "hi"},
+        %Message{role: "system", content: "summary", turn_id: "t-7"}
+      ]
+
+      assert_raise ArgumentError, ~r/system message at position 2.*"t-7"/, fn ->
+        add_all(messages, false)
+      end
+    end
+
+    test "a second leading system message raises ArgumentError" do
+      messages = [
+        %Message{role: "system", content: "real prompt"},
+        %Message{role: "system", content: "another"}
+      ]
+
+      assert_raise ArgumentError, ~r/system message at position 1/, fn ->
+        add_all(messages, false)
+      end
+    end
+
     test "unrecognized role raises ArgumentError naming the role" do
       # e.g. caller typo, or OpenAI's "function" role passed in by mistake
       msg = %Message{role: "function", content: "x", turn_id: "t-42"}
