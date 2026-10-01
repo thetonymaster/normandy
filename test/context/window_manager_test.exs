@@ -333,4 +333,46 @@ defmodule Normandy.Context.WindowManagerTest do
                AgentMemory.count_messages(memory)
     end
   end
+
+  describe "compaction keeps turn ids" do
+    defp two_turn_memory do
+      old =
+        Enum.reduce(1..6, AgentMemory.initialize_turn(AgentMemory.new_memory()), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "earlier turn message #{i} with padding text")
+        end)
+
+      old_turn = AgentMemory.get_current_turn_id(old)
+
+      new =
+        old
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", "q")
+        |> AgentMemory.add_message("assistant", "a")
+
+      {new, old_turn, AgentMemory.get_current_turn_id(new)}
+    end
+
+    test "oldest_first keeps each kept message's original turn_id" do
+      {memory, old_turn, new_turn} = two_turn_memory()
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 16)
+
+      {:ok, %{memory: compacted}} = WindowManager.ensure_within_limit(%{memory: memory}, manager)
+
+      turn_ids = compacted |> AgentMemory.messages() |> Enum.map(& &1.turn_id)
+      assert length(turn_ids) < 8
+      assert List.last(turn_ids) == new_turn
+      assert old_turn in turn_ids
+      assert AgentMemory.get_current_turn_id(compacted) == new_turn
+    end
+
+    test "delete_turn/2 still removes only the old turn after a compaction" do
+      {memory, old_turn, new_turn} = two_turn_memory()
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 16)
+      {:ok, %{memory: compacted}} = WindowManager.ensure_within_limit(%{memory: memory}, manager)
+
+      remaining = compacted |> AgentMemory.delete_turn(old_turn) |> AgentMemory.messages()
+      assert remaining != []
+      assert Enum.all?(remaining, &(&1.turn_id == new_turn))
+    end
+  end
 end

@@ -268,12 +268,19 @@ defmodule Normandy.Context.WindowManager do
     if current_tokens <= target_tokens do
       {:ok, agent}
     else
-      # Remove oldest messages until under limit
+      # Remove oldest messages until under limit. history/1 and messages/1 are
+      # the same chain in the same order: take the kept suffix's turn ids from
+      # messages/1 so each kept message stays in its own turn.
       history = AgentMemory.history(agent.memory)
       {keep_messages, _removed} = split_to_fit(history, target_tokens)
 
-      # Rebuild memory with kept messages
-      new_memory = rebuild_memory(keep_messages, agent.memory)
+      kept_turn_ids =
+        agent.memory
+        |> AgentMemory.messages()
+        |> Enum.map(& &1.turn_id)
+        |> Enum.take(-length(keep_messages))
+
+      new_memory = rebuild_memory(Enum.zip(keep_messages, kept_turn_ids), agent.memory)
       {:ok, %{agent | memory: new_memory}}
     end
   end
@@ -351,7 +358,7 @@ defmodule Normandy.Context.WindowManager do
     end)
   end
 
-  defp rebuild_memory(messages, original_memory) do
+  defp rebuild_memory(kept, original_memory) do
     max_messages = Map.get(original_memory, :max_messages)
     turn_id = Map.get(original_memory, :current_turn_id)
 
@@ -359,11 +366,9 @@ defmodule Normandy.Context.WindowManager do
     # rebuilt entries stay grouped exactly as before.
     memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
-    # Add messages in chronological order
-    # (add_message appends to the active branch; iterating chronologically gives the correct chain order)
-    messages
-    |> Enum.reduce(memory, fn msg, mem ->
-      AgentMemory.add_message(mem, msg.role, msg.content)
+    # Add messages in chronological order, each under its original turn.
+    Enum.reduce(kept, memory, fn {msg, turn_id}, mem ->
+      AgentMemory.add_message(mem, msg.role, msg.content, turn_id: turn_id)
     end)
   end
 end

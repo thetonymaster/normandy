@@ -194,6 +194,38 @@ defmodule Normandy.Context.SummarizerTest do
       last_msg = List.last(history)
       assert last_msg.content == "Message 10"
     end
+
+    test "kept messages keep their turn ids; the summary takes the current turn", %{
+      client: client
+    } do
+      old =
+        Enum.reduce(1..8, AgentMemory.initialize_turn(AgentMemory.new_memory()), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "old #{i}")
+        end)
+
+      old_turn = AgentMemory.get_current_turn_id(old)
+
+      memory =
+        old
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", "new 1")
+        |> AgentMemory.add_message("assistant", "new 2")
+
+      new_turn = AgentMemory.get_current_turn_id(memory)
+
+      agent = %{
+        memory: memory,
+        model: "test-model",
+        config: %{client: client, model: "test-model"}
+      }
+
+      {:ok, %{memory: compressed}} =
+        Summarizer.compress_conversation(client, agent, keep_recent: 4)
+
+      [summary | kept] = AgentMemory.messages(compressed)
+      assert summary.turn_id == new_turn
+      assert Enum.map(kept, & &1.turn_id) == [old_turn, old_turn, new_turn, new_turn]
+    end
   end
 
   describe "estimate_savings/2" do

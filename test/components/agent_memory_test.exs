@@ -298,4 +298,25 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert AgentMemory.get_entry(result, "c").parent_id == nil
     assert result.head == "c"
   end
+
+  describe "add_message/4" do
+    test "turn_id: stores the message under the given turn, not the current one" do
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", "old", turn_id: "turn-old")
+        |> AgentMemory.add_message("user", "new")
+
+      [old, new] = AgentMemory.messages(memory)
+      assert old.turn_id == "turn-old"
+      assert new.turn_id == AgentMemory.get_current_turn_id(memory)
+      refute new.turn_id == "turn-old"
+    end
+
+    test "an unknown option raises" do
+      assert_raise ArgumentError, fn ->
+        AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", turn: "t")
+      end
+    end
+  end
 end

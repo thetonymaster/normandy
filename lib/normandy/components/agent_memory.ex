@@ -38,8 +38,15 @@ defmodule Normandy.Components.AgentMemory do
   @spec get_current_turn_id(t()) :: String.t() | nil
   def get_current_turn_id(%__MODULE__{current_turn_id: id}), do: id
 
-  @spec add_message(t(), String.t(), term()) :: t()
-  def add_message(%__MODULE__{} = memory, role, content) do
+  @doc """
+  Appends a message to the active branch.
+
+  `turn_id:` stores the message under that turn instead of `current_turn_id`;
+  compaction uses it to keep each kept message's turn.
+  """
+  @spec add_message(t(), String.t(), term(), keyword()) :: t()
+  def add_message(%__MODULE__{} = memory, role, content, opts \\ []) do
+    opts = Keyword.validate!(opts, [:turn_id])
     memory = if memory.current_turn_id == nil, do: initialize_turn(memory), else: memory
 
     id = UUID.uuid4()
@@ -47,7 +54,7 @@ defmodule Normandy.Components.AgentMemory do
     entry = %Entry{
       id: id,
       parent_id: memory.head,
-      turn_id: memory.current_turn_id,
+      turn_id: Keyword.get(opts, :turn_id, memory.current_turn_id),
       role: role,
       content: content
     }

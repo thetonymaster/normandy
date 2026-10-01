@@ -122,5 +122,76 @@ defmodule Normandy.Behaviours.CompactorTest do
       # The original acc is returned unchanged — no partially-mutated memory.
       assert AgentMemory.history(returned_acc.memory) == original_history
     end
+
+    defp two_turns(old_msgs, new_msgs) do
+      old =
+        Enum.reduce(
+          old_msgs,
+          AgentMemory.initialize_turn(AgentMemory.new_memory(nil)),
+          fn {r, c}, m -> AgentMemory.add_message(m, r, c) end
+        )
+
+      Enum.reduce(new_msgs, AgentMemory.initialize_turn(old), fn {r, c}, m ->
+        AgentMemory.add_message(m, r, c)
+      end)
+    end
+
+    defp estimate(history_msgs) do
+      Enum.sum(
+        for m <- history_msgs,
+            do: Normandy.Context.WindowManager.estimate_message_content_tokens(m.content) + 10
+      )
+    end
+
+    test "compacting only earlier turns' history reports tokens_removed: 0" do
+      old = for i <- 1..6, do: {"user", "earlier turn message #{i} with padding text"}
+      acc = %{memory: two_turns(old, [{"user", "q"}, {"assistant", "a"}])}
+
+      {_acc2, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80}, reserved_tokens: 16)
+
+      assert meta.compacted
+      assert meta.tokens_before > meta.tokens_after
+      assert meta.tokens_removed == 0
+    end
+
+    test "removing this turn's messages reports their estimate (equals the net drop without a summary)" do
+      msgs = for i <- 1..10, do: {"user", "this turn message #{i} with padding text"}
+      acc = %{memory: two_turns([], msgs)}
+
+      {acc2, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80}, reserved_tokens: 16)
+
+      kept = length(AgentMemory.history(acc2.memory))
+      removed = Enum.take(AgentMemory.history(acc.memory), 10 - kept)
+
+      assert meta.tokens_removed > 0
+      assert meta.tokens_removed == estimate(removed)
+      assert meta.tokens_removed == meta.tokens_before - meta.tokens_after
+    end
+
+    test ":summarize counts the removed messages, never the summary (gross > net)" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+
+      acc = %{
+        memory: two_turns([], msgs),
+        client: %Normandy.Test.MockSummarizerClient{summary_response: "a short summary"},
+        model: "m"
+      }
+
+      {acc2, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+          reserved_tokens: 64,
+          strategy: :summarize
+        )
+
+      # summary + kept suffix
+      kept = length(AgentMemory.history(acc2.memory)) - 1
+      removed = Enum.take(AgentMemory.history(acc.memory), 10 - kept)
+
+      assert meta.compacted
+      assert meta.tokens_removed == estimate(removed)
+      assert meta.tokens_removed > meta.tokens_before - meta.tokens_after
+    end
   end
 end

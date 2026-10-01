@@ -226,12 +226,17 @@ defmodule Normandy.Context.Summarizer do
 
     memory = AgentMemory.add_message(memory, summary_role, summary_content)
 
-    # Add recent messages in chronological order
-    # (add_message appends to the active branch; iterating chronologically gives the correct chain order)
-    recent_messages
-    |> Enum.reduce(memory, fn msg, mem ->
-      AgentMemory.add_message(mem, msg.role, msg.content)
+    # Add recent messages in chronological order, each under its original turn.
+    # The summary (added above) takes current_turn_id.
+    Enum.reduce(recent_messages, memory, fn {msg, turn_id}, mem ->
+      AgentMemory.add_message(mem, msg.role, msg.content, turn_id: turn_id)
     end)
+  end
+
+  # history/1 and messages/1 walk the same chain in the same order, so the kept
+  # suffix's turn ids are the last `count` turn ids.
+  defp recent_turn_ids(memory, count) do
+    memory |> AgentMemory.messages() |> Enum.map(& &1.turn_id) |> Enum.take(-count)
   end
 
   # Helper function that uses pattern matching instead of conditionals
@@ -271,7 +276,7 @@ defmodule Normandy.Context.Summarizer do
             agent.memory,
             summary,
             summary_role,
-            recent_messages
+            Enum.zip(recent_messages, recent_turn_ids(agent.memory, length(recent_messages)))
           )
 
         {:ok, %{agent | memory: new_memory}}

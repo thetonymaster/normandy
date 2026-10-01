@@ -15,6 +15,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   """
   @behaviour Normandy.Behaviours.Compactor
 
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.Context.WindowManager, as: WM
 
   @impl true
@@ -50,11 +52,32 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
            compacted: after_tokens < before,
            tokens_before: before,
            tokens_after: after_tokens,
+           tokens_removed: tokens_removed_this_turn(acc.memory, acc2.memory),
            strategy: manager.strategy
          }}
 
       {:error, reason} ->
         {acc, %{compacted: false, error: reason}}
     end
+  end
+
+  # Gross estimated tokens of the messages compaction removed that belong to the
+  # current turn: what the task-budget `remaining` must subtract (Anthropic
+  # task-budgets doc, "Carrying a budget across compaction"). Earlier turns were
+  # never this task's spend, and a summary is new in `after`, so it's never in the
+  # removed set. Keyed on to_json(content): kept content is stored in its JSON form.
+  defp tokens_removed_this_turn(before_memory, after_memory) do
+    turn_id = AgentMemory.get_current_turn_id(before_memory)
+    removed = message_keys(before_memory) -- message_keys(after_memory)
+
+    removed
+    |> Enum.filter(fn {id, _role, _content} -> id == turn_id end)
+    |> Enum.map(fn {_id, _role, content} -> WM.estimate_message_content_tokens(content) + 10 end)
+    |> Enum.sum()
+  end
+
+  defp message_keys(memory) do
+    for msg <- AgentMemory.messages(memory),
+        do: {msg.turn_id, msg.role, BaseIOSchema.to_json(msg.content)}
   end
 end

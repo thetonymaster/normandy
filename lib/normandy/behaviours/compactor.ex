@@ -16,7 +16,9 @@ defmodule Normandy.Behaviours.Compactor do
 
   Implementations return `{maybe_updated_acc, meta}`. `meta` always carries
   `:compacted` (a boolean); the WindowManager impl adds `:tokens_before`,
-  `:tokens_after`, and `:strategy`. The default impl `NoOp` performs no work and
+  `:tokens_after` (whole-memory estimates), `:tokens_removed` (estimated tokens
+  of this turn's messages that compaction removed; the task budget's `remaining`
+  subtracts it) and `:strategy`. The default impl `NoOp` performs no work and
   preserves current (non-compacting) behavior — the design's default-off
   principle.
   """
