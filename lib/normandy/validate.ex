@@ -749,7 +749,7 @@ defmodule Normandy.Validate do
       field, value ->
         unless is_number(value) do
           raise ArgumentError,
-                "expected field `#{field}` to be a decimal, integer, or float, got: #{inspect(value)}"
+                "expected field `#{field}` to be an integer or float, got: #{inspect(value)}"
         end
 
         opts
@@ -758,9 +758,9 @@ defmodule Normandy.Validate do
           case Map.fetch(@number_validators, spec_key) do
             {:ok, {spec_function, default_message}} ->
               # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              unless is_atom(target_value) do
+              unless is_number(target_value) do
                 raise ArgumentError,
-                      "expected option `#{spec_key}` to be a decimal, integer, or float, got: #{inspect(target_value)}"
+                      "expected option `#{spec_key}` to be an integer or float, got: #{inspect(target_value)}"
               end
 
               compare_numbers(
