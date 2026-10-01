@@ -20,15 +20,15 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   ## Usage with Agent
 
-      # Enable in agent config
+      # Retry is on by default (2 retries); each retry is a paid LLM call whose
+      # token usage is added to the reported usage.
       agent = BaseAgent.init(%{
         client: client,
         model: "claude-opus-5-5",
-        enable_json_retry: true,           # Enable automatic retry
-        json_retry_max_attempts: 3         # Optional: default is 2
+        json_retry_max_attempts: 3         # default: 2
+        # enable_json_retry: false         # no retries
       })
 
-      # The agent will automatically retry on JSON parse errors
       {agent, response} = BaseAgent.run(agent, input)
 
   ## Manual Usage
@@ -68,6 +68,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   ### Call-site options
 
   - `:max_retries` - Maximum retry attempts (default: 2)
+  - `:on_retry_usage` - `(usage -> any)`, called with each retry call's token usage
   - `:tools` - Tool schemas to include in retry
   - `:adapter` - JSON adapter module (default: from `:normandy` app config)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
@@ -299,6 +300,13 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
+  defp report_retry_usage(opts, usage) do
+    case Keyword.get(opts, :on_retry_usage) do
+      fun when is_function(fun, 1) and not is_nil(usage) -> fun.(usage)
+      _ -> :ok
+    end
+  end
+
   # Retry by calling LLM again with error feedback
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp retry_with_feedback(
@@ -344,7 +352,9 @@ defmodule Normandy.LLM.JsonDeserializer do
       {:error, %LLMError{}} = error ->
         error
 
-      {:ok, {response, _usage, _meta}} ->
+      {:ok, {response, usage, _meta}} ->
+        report_retry_usage(opts, usage)
+
         continue_after_retry(
           response,
           schema,

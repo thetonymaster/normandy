@@ -60,7 +60,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:max_tool_concurrency, :integer, default: 1)
     field(:retry_options, :map, default: nil)
     field(:circuit_breaker, :any, default: nil)
-    field(:enable_json_retry, :boolean, default: false)
+    field(:enable_json_retry, :boolean, default: true)
     field(:json_retry_max_attempts, :integer, default: 2)
     field(:mcp_servers, :any, default: nil)
     field(:input_guardrails, :any, default: [])

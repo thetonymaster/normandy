@@ -131,7 +131,7 @@ defmodule Normandy.Agents.BaseAgent do
         normalize_max_tool_concurrency(Map.get(config, :max_tool_concurrency, 1)),
       retry_options: Map.get(config, :retry_options, nil),
       circuit_breaker: circuit_breaker,
-      enable_json_retry: Map.get(config, :enable_json_retry, false),
+      enable_json_retry: Map.get(config, :enable_json_retry, true),
       json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
       mcp_servers: Map.get(config, :mcp_servers, nil),
       name: Map.get(config, :name, nil),
@@ -296,7 +296,9 @@ defmodule Normandy.Agents.BaseAgent do
         opts
       end
 
-    opts = opts ++ extra_opts
+    # How many times the adapter re-asks after a response that does not parse.
+    json_retries = if config.enable_json_retry, do: config.json_retry_max_attempts, else: 0
+    opts = [{:json_retries, json_retries} | opts] ++ extra_opts
 
     # Wrap LLM call with resilience patterns
     call_llm_with_resilience(config, messages, response_model, opts)

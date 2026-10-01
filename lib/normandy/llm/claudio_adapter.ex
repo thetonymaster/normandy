@@ -233,16 +233,24 @@ defmodule Normandy.LLM.ClaudioAdapter do
             max_tokens: max_tokens,
             messages: messages,
             tools: tools,
-            task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
+            task_budget_remaining: Keyword.get(opts, :task_budget_remaining),
+            json_retries: Keyword.get(opts, :json_retries, 2),
+            retry_usage_ref: make_ref()
           }
 
           case convert_response_to_normandy(response, response_model, context) do
             {:error, %LLMError{}} = error ->
+              _ = ClaudioAdapter.collect_retry_usage(context.retry_usage_ref, nil)
               error
 
             normalized_response ->
-              {normalized_response, ClaudioAdapter.extract_usage(response),
-               ClaudioAdapter.response_meta(response)}
+              usage =
+                ClaudioAdapter.collect_retry_usage(
+                  context.retry_usage_ref,
+                  ClaudioAdapter.extract_usage(response)
+                )
+
+              {normalized_response, usage, ClaudioAdapter.response_meta(response)}
           end
 
         {:error, error} ->
@@ -945,8 +953,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
         tools: tools
       } = context
 
-      # Build opts with tools if present
-      opts = if tools != [], do: [tools: tools, max_retries: 2], else: [max_retries: 2]
+      # Each JSON retry is a paid call; its usage is sent back to this process
+      # and added to the response's usage.
+      ref = Map.get(context, :retry_usage_ref)
+      owner = self()
+
+      opts = [
+        max_retries: Map.get(context, :json_retries, 2),
+        on_retry_usage: fn usage -> if ref, do: send(owner, {ref, :retry_usage, usage}) end
+      ]
+
+      opts = if tools != [], do: [{:tools, tools} | opts], else: opts
 
       opts =
         case Map.get(context, :task_budget_remaining) do
@@ -1137,6 +1154,30 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   def extract_tool_uses(_), do: []
+
+  # Adds the usage of the JSON retries (messages tagged with `ref` in this
+  # process's mailbox) to the first call's usage.
+  @doc false
+  def collect_retry_usage(ref, usage) do
+    receive do
+      {^ref, :retry_usage, retry_usage} -> collect_retry_usage(ref, add_usage(usage, retry_usage))
+    after
+      0 -> usage
+    end
+  end
+
+  defp add_usage(nil, usage), do: usage
+  defp add_usage(usage, nil), do: usage
+
+  defp add_usage(%{} = a, %{} = b) do
+    Map.merge(to_usage_map(a), to_usage_map(b), fn
+      _key, x, y when is_integer(x) and is_integer(y) -> x + y
+      _key, _x, y -> y
+    end)
+  end
+
+  defp to_usage_map(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__)
+  defp to_usage_map(usage), do: usage
 
   @doc false
   def extract_usage(response) when is_map(response),
