@@ -135,7 +135,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
           agent_id = Map.fetch!(spec, :id)
           agent = Map.fetch!(spec, :agent)
           input = Map.fetch!(spec, :input)
-          transform_fn = Map.get(spec, :transform, & &1)
+          transform_fn = Map.get(spec, :transform) || (& &1)
 
           # Execute agent
           result =
@@ -257,7 +257,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         agent_id = Map.fetch!(spec, :id)
         agent = Map.fetch!(spec, :agent)
         input = Map.fetch!(spec, :input)
-        transform_fn = Map.get(spec, :transform, & &1)
+        transform_fn = Map.get(spec, :transform) || (& &1)
 
         case execute_agent(agent, input) do
           {:ok, result} -> {:ok, {agent_id, transform_fn.(result)}}
