@@ -131,6 +131,121 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     assert config.behaviours.policy == {Normandy.Behaviours.PolicyEngine.AllowAll, []}
   end
 
+  describe "round trip" do
+    defp round_trip_supplement(extra \\ %{}) do
+      Map.merge(
+        %{
+          tool_registry: %Normandy.Tools.Registry{tools: %{}},
+          before_hooks: [:bh],
+          after_hooks: [:ah],
+          client_builder: fn token -> %{api_key: token} end
+        },
+        extra
+      )
+    end
+
+    # Everything a template can carry set away from its default, plus the
+    # node-local fields set to what the supplement will rebuild.
+    defp full_config(supp) do
+      %BaseAgentConfig{
+        model: "claude-x",
+        temperature: 0.3,
+        max_tokens: 100,
+        max_tool_iterations: 4,
+        max_tool_concurrency: 2,
+        name: "support",
+        prompt_specification: %Normandy.Components.PromptSpecification{background: ["bg"]},
+        input_schema: SomeInput,
+        output_schema: SomeOutput,
+        memory: AgentMemory.new_memory(7),
+        initial_memory: AgentMemory.add_message(AgentMemory.new_memory(7), "user", "seed"),
+        retry_options: [max_attempts: 4, base_delay: 10],
+        enable_json_retry: true,
+        json_retry_max_attempts: 5,
+        input_guardrails: [SomeGuard, {OtherGuard, [limit: 3]}],
+        output_guardrails: [{OutGuard, []}],
+        output_guardrails_streaming_mode: :incremental,
+        output_guardrails_chunk_size: 64,
+        client: supp.client_builder.("TOKEN"),
+        tool_registry: supp.tool_registry,
+        behaviours: %Config{before_hooks: supp.before_hooks, after_hooks: supp.after_hooks}
+      }
+    end
+
+    test "rebuild(from_config(c)) gives back c" do
+      supp = round_trip_supplement()
+      config = full_config(supp)
+
+      tmpl = ConfigTemplate.from_config(config, "support-agent")
+      assert is_binary(:erlang.term_to_binary(tmpl))
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
+    end
+
+    test "the circuit breaker and MCP servers come from the supplement, not the template" do
+      cb = spawn(fn -> :ok end)
+
+      servers = [
+        %Normandy.MCP.ServerConfig{
+          name: "docs",
+          url: "https://mcp",
+          authorization_token: "MCP-SECRET"
+        }
+      ]
+
+      supp = round_trip_supplement(%{circuit_breaker: cb, mcp_servers: servers})
+      config = %{full_config(supp) | circuit_breaker: cb, mcp_servers: servers}
+
+      tmpl = ConfigTemplate.from_config(config, "t")
+      blob = :erlang.term_to_binary(tmpl)
+      refute blob =~ "MCP-SECRET"
+      refute tmpl |> Map.values() |> Enum.any?(&is_pid/1)
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
+    end
+
+    test "rebuild raises when the template had a circuit breaker and the supplement has none" do
+      supp = round_trip_supplement()
+      tmpl = ConfigTemplate.from_config(%{full_config(supp) | circuit_breaker: self()}, "t")
+
+      assert_raise ArgumentError, ~r/:circuit_breaker/, fn ->
+        ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
+      end
+    end
+
+    test "rebuild raises when the template had MCP servers and the supplement has none" do
+      supp = round_trip_supplement()
+      servers = [%Normandy.MCP.ServerConfig{name: "docs", url: "https://mcp"}]
+      tmpl = ConfigTemplate.from_config(%{full_config(supp) | mcp_servers: servers}, "t")
+
+      assert_raise ArgumentError, ~r/:mcp_servers/, fn ->
+        ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
+      end
+    end
+
+    test "from_config refuses a function in retry_options" do
+      config = %{
+        full_config(round_trip_supplement())
+        | retry_options: [retry_if: fn _ -> true end]
+      }
+
+      assert_raise ArgumentError, ~r/from_config\/2.*:retry_options.*function/, fn ->
+        ConfigTemplate.from_config(config, "t")
+      end
+    end
+
+    test "from_config refuses a function in guardrail options" do
+      config = %{
+        full_config(round_trip_supplement())
+        | input_guardrails: [{SomeGuard, [check: fn _ -> :ok end]}]
+      }
+
+      assert_raise ArgumentError, ~r/:input_guardrails/, fn ->
+        ConfigTemplate.from_config(config, "t")
+      end
+    end
+  end
+
   test "a 1.x template naming ModelCatalog.Static still decodes with [:safe] (D18)" do
     # :erlang.term_to_binary({Normandy.Behaviours.ModelCatalog.Static, []}) as a
     # 1.x store wrote it. A binary literal, and no test module names the atom, so

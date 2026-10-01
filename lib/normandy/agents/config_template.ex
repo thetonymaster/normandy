@@ -5,14 +5,39 @@ defmodule Normandy.Agents.ConfigTemplate do
   config on any node from `template + node-local supplement + credential token`.
 
   Excluded from the template (resolved node-locally instead): `client` (built from
-  the token), `tool_registry` (from the supplement), and `before/after_hooks`
-  (from the supplement). Behaviour module refs travel in the template; their
-  `opts` must be serializable.
+  the token), `tool_registry` and `before/after_hooks` (from the supplement), and
+  `circuit_breaker` and `mcp_servers` (from the supplement; the template records
+  only that they were set, and `rebuild/3` raises if the supplement lacks one).
+  `current_user_input` and `resolved_context_window` are transient and not kept.
+
+  Everything else travels in the template: model and sampling settings, tool
+  limits, prompt, schemas, memory cap, `initial_memory`, `retry_options`, JSON
+  retry settings, guardrails, and behaviour module refs. These must be plain
+  data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
+  A template saved before these fields existed rebuilds with their defaults.
   """
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Behaviours.Config
   alias Normandy.Components.AgentMemory
+
+  # Plain-data config fields carried as-is. A template saved before 2.0 lacks
+  # them, so `rebuild/3` leaves the struct defaults in place for missing keys.
+  @data_fields [
+    :initial_memory,
+    :retry_options,
+    :enable_json_retry,
+    :json_retry_max_attempts,
+    :input_guardrails,
+    :output_guardrails,
+    :output_guardrails_streaming_mode,
+    :output_guardrails_chunk_size
+  ]
+
+  # Fields a template cannot hold (a linked pid; MCP settings that may carry an
+  # authorization token). The template records which were set, and `rebuild/3`
+  # takes them from the supplement.
+  @node_local_fields [:circuit_breaker, :mcp_servers]
 
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do
@@ -41,7 +66,37 @@ defmodule Normandy.Agents.ConfigTemplate do
         session_registry: b.session_registry
       }
     }
+    |> Map.merge(storable_fields!(c))
+    |> Map.put(:node_local_fields, Enum.reject(@node_local_fields, &(Map.fetch!(c, &1) == nil)))
   end
+
+  # A function or pid would be persisted as a term that only works on this
+  # node and this code version, so refuse it here rather than at rebuild.
+  defp storable_fields!(c) do
+    fields = Map.take(Map.from_struct(c), @data_fields)
+
+    Enum.each(fields, fn {key, value} ->
+      if unstorable?(value) do
+        raise ArgumentError,
+              "ConfigTemplate.from_config/2: #{inspect(key)} contains a function or pid, " <>
+                "which a template cannot store. Keep it to plain data (modules, atoms, " <>
+                "numbers, strings, lists, maps)."
+      end
+    end)
+
+    fields
+  end
+
+  defp unstorable?(value) when is_function(value) or is_pid(value), do: true
+  defp unstorable?(value) when is_list(value), do: Enum.any?(value, &unstorable?/1)
+  defp unstorable?(value) when is_tuple(value), do: value |> Tuple.to_list() |> unstorable?()
+
+  defp unstorable?(value) when is_struct(value), do: value |> Map.from_struct() |> unstorable?()
+
+  defp unstorable?(value) when is_map(value),
+    do: Enum.any?(value, fn {k, v} -> unstorable?(k) or unstorable?(v) end)
+
+  defp unstorable?(_value), do: false
 
   @spec from_config(BaseAgentConfig.t(), String.t(), :lazy | :eager) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id, resume_policy) do
@@ -86,8 +141,27 @@ defmodule Normandy.Agents.ConfigTemplate do
       behaviours: behaviours,
       memory: AgentMemory.new_memory(Map.get(tmpl, :max_messages))
     }
+    |> struct(Map.take(tmpl, @data_fields))
+    |> struct(node_local_fields!(tmpl, supplement))
     |> BaseAgent.validate_compaction_config!()
     |> validate_client_options!()
+  end
+
+  defp node_local_fields!(tmpl, supplement) do
+    tmpl
+    |> Map.get(:node_local_fields, [])
+    |> Map.new(fn key ->
+      case Map.fetch(supplement, key) do
+        {:ok, value} when value != nil ->
+          {key, value}
+
+        _ ->
+          raise ArgumentError,
+                "ConfigTemplate.rebuild/3: template #{inspect(tmpl.template_id)} was saved " <>
+                  "with #{inspect(key)} set, but the supplement has no #{inspect(key)}. " <>
+                  "Add it to the supplement registered for this template on every node."
+      end
+    end)
   end
 
   defp validate_client_options!(%BaseAgentConfig{client: client} = config) do
