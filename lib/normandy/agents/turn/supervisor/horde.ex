@@ -7,13 +7,28 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
     registration). `resume_policy` maps to the child `restart` value: `:lazy` →
     `:temporary` (a lost node's session is NOT redistributed; it is rebuilt on the
     next request), `:eager` → `:transient` (Phase 7d; redistributed on node-down).
+
+    `:max_restarts` / `:max_seconds` set the restart limit, with the same default
+    as `Normandy.Agents.Turn.Supervisor` (100 in 5 seconds).
+
+    Pass the supervisor's **name** to `start_server/2`, not the pid `start_link/1`
+    returns: that pid is Horde's outer `Supervisor`, which would accept the session
+    as a plain local child outside Horde's placement and supervision.
     """
     alias Normandy.Agents.Turn.Server
 
     @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
     def start_link(opts) do
       name = Keyword.get(opts, :name, __MODULE__)
-      Horde.DynamicSupervisor.start_link(name: name, strategy: :one_for_one, members: :auto)
+      limit = Normandy.Agents.Turn.Supervisor.default_restart_limit()
+
+      Horde.DynamicSupervisor.start_link(
+        name: name,
+        strategy: :one_for_one,
+        members: :auto,
+        max_restarts: Keyword.get(opts, :max_restarts, limit[:max_restarts]),
+        max_seconds: Keyword.get(opts, :max_seconds, limit[:max_seconds])
+      )
     end
 
     @spec start_server(term(), keyword()) :: {:ok, pid()} | {:error, term()}
