@@ -209,25 +209,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
            response_model,
            opts
          ) do
-      # Extract tools and MCP servers from opts if provided
       tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
-
-      # Initialize Claudio client
       claudio_client = build_claudio_client(client)
-
-      # Check if caching is enabled
-      enable_caching = Map.get(client.options, :enable_caching, false)
-
-      # Build Claudio request
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
+      request = build_request(client, model, temperature, max_tokens, messages, opts)
 
       # Execute request
       case Claudio.Messages.create(claudio_client, request) do
@@ -276,18 +260,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
            json_schema
          ) do
       claudio_client = build_claudio_client(client)
-      enable_caching = Map.get(client.options, :enable_caching, false)
       tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
 
       request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
+        client
+        |> build_request(model, temperature, max_tokens, messages, opts)
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
       case Claudio.Messages.create(claudio_client, request) do
@@ -335,18 +312,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # parsing+retry without ClaudioAdapter re-entering deserialize_with_retry.
     defp converse_raw(client, model, temperature, max_tokens, messages, opts) do
       claudio_client = build_claudio_client(client)
-      enable_caching = Map.get(client.options, :enable_caching, false)
-      tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
-
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
+      request = build_request(client, model, temperature, max_tokens, messages, opts)
 
       ClaudioAdapter.__raw_completion__(Claudio.Messages.create(claudio_client, request))
     end
@@ -395,27 +361,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
           _response_model,
           opts \\ []
         ) do
-      # Extract options
-      tools = Keyword.get(opts, :tools, [])
       callback = Keyword.get(opts, :callback)
-
-      # Initialize Claudio client
       claudio_client = build_claudio_client(client)
 
-      # Check if caching is enabled
-      enable_caching = Map.get(client.options, :enable_caching, false)
-
-      # Build streaming request
       request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_client_options(
-          client.options,
-          [stream: true] ++ Keyword.take(opts, [:task_budget_remaining])
-        )
+        client
+        |> build_request(model, temperature, max_tokens, messages, opts, stream: true)
         |> Claudio.Messages.Request.enable_streaming()
 
       # Execute streaming request - Req returns Req.Response with streaming body
@@ -698,7 +649,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
               ~s("system", "user", "assistant", "tool".)
     end
 
-    def add_single_message(request, _msg, _enable_caching), do: request
+    def add_single_message(_request, %Message{role: role}, _enable_caching) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: message role must be a string, got: " <>
+              Describe.type_of(role)
+    end
+
+    def add_single_message(_request, other, _enable_caching) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: expected a %Normandy.Components.Message{}, got " <>
+              Describe.type_of(other)
+    end
 
     # Anthropic takes one top-level system prompt and `set_system/2` replaces
     # it, so a system message anywhere but first would silently overwrite the
@@ -850,6 +811,23 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> Map.delete(:cache_control)
         |> Map.put("cache_control", %{"type" => "ephemeral"})
       end
+    end
+
+    # The one request builder for every call path (legacy, structured, raw
+    # retry, streaming), so a setting cannot reach one path and miss another.
+    defp build_request(client, model, temperature, max_tokens, messages, opts, call_opts \\ []) do
+      enable_caching = Map.get(client.options, :enable_caching, false)
+
+      Claudio.Messages.Request.new(model)
+      |> add_temperature(temperature)
+      |> add_max_tokens(max_tokens)
+      |> add_messages(messages, enable_caching)
+      |> add_tools(Keyword.get(opts, :tools, []), enable_caching)
+      |> add_mcp_servers(Keyword.get(opts, :mcp_servers))
+      |> add_client_options(
+        client.options,
+        call_opts ++ Keyword.take(opts, [:task_budget_remaining])
+      )
     end
 
     defp add_tools(request, [], _enable_caching), do: request

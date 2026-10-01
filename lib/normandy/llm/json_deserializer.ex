@@ -278,8 +278,8 @@ defmodule Normandy.LLM.JsonDeserializer do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
 
-      {:error, reason} when attempt < max_retries ->
-        # Parse failed, retry with error feedback
+      # The clause above handles attempt >= max_retries, so a retry is left.
+      {:error, reason} ->
         retry_with_feedback(
           reason,
           content,
@@ -294,9 +294,6 @@ defmodule Normandy.LLM.JsonDeserializer do
           attempt + 1,
           max_retries
         )
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
