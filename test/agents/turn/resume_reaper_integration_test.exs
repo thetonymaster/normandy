@@ -13,6 +13,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
   (re-arms the approval wait) and needs no LLM — keeping the test deterministic.
   """
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
   @moduletag :postgres
 
   alias Ecto.Adapters.SQL.Sandbox
@@ -76,19 +77,11 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
 
     # The reaper reconstructed the config from Postgres + the local supplement and
     # started the server under Horde, which registered it.
-    assert eventually(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end),
+    assert wait_until(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end),
            "reaper did not start/register the eager session after :nodedown " <>
              "(reconstruction may have failed — check the ResumeReaper logs)"
 
     {:ok, pid} = HReg.whereis(reg, sid)
     assert node(pid) == node()
-  end
-
-  defp eventually(fun, retries \\ 100) do
-    cond do
-      fun.() -> true
-      retries == 0 -> false
-      true -> Process.sleep(20) && eventually(fun, retries - 1)
-    end
   end
 end

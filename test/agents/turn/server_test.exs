@@ -1,5 +1,6 @@
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
 
   @moduletag :capture_log
 
@@ -884,14 +885,6 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # provides over the old self-register path.
     assert {:error, {:already_started, ^pid}} =
              Normandy.Agents.Turn.Server.start_link(opts)
-  end
-
-  defp wait_until(fun, retries \\ 200) do
-    cond do
-      fun.() -> true
-      retries == 0 -> false
-      true -> Process.sleep(10) && wait_until(fun, retries - 1)
-    end
   end
 
   # Direct-start analogue of Turn.Session.start_with_retry: with trap_exit on, a via

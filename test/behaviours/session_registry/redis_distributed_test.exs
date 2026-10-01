@@ -1,5 +1,6 @@
 defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
   # Needs BOTH a reachable Redis and a second node. Tagged ONLY :distributed (NOT
   # :redis): a :redis tag would make `mix test.redis` pull this in via ExUnit's
   # include-overrides-exclude rule, where the setup below starts distribution
@@ -76,12 +77,4 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
 
   defp elem_tag(:ok), do: :ok
   defp elem_tag({:error, :taken}), do: :taken
-
-  defp wait_until(fun, retries \\ 200) do
-    cond do
-      fun.() -> true
-      retries == 0 -> false
-      true -> Process.sleep(10) && wait_until(fun, retries - 1)
-    end
-  end
 end

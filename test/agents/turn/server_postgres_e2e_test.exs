@@ -1,6 +1,7 @@
 defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   @moduledoc "GAP: durable :server lifecycle (persist → passivate → rehydrate) against real Postgres."
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
   @moduletag :postgres
 
   alias Ecto.Adapters.SQL.Sandbox
@@ -66,7 +67,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     # Let the server passivate (idle timeout), then rehydrate via a second run.
     # Bounded polling, not a fixed sleep: passivation is async and a fixed delay
     # is flaky under slow CI. Assert eventual passivation within a deadline.
-    assert wait_until(fn -> Native.whereis(reg, sid) == :none end, 1_000),
+    assert wait_until(fn -> Native.whereis(reg, sid) == :none end, 100),
            "server did not passivate (registry still holds the pid) within 1s"
 
     assert {:ok, %Resp{content: "second"}} =
@@ -77,19 +78,5 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
 
     assert length(entries2) > first_count,
            "rehydrated history did not grow; passivation may have dropped persisted state"
-  end
-
-  # Poll `fun` until it returns true or the monotonic deadline passes.
-  defp wait_until(fun, timeout_ms, interval_ms \\ 10) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline, interval_ms)
-  end
-
-  defp do_wait_until(fun, deadline, interval_ms) do
-    cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) >= deadline -> false
-      true -> Process.sleep(interval_ms) && do_wait_until(fun, deadline, interval_ms)
-    end
   end
 end
