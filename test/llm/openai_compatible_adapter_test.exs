@@ -18,6 +18,18 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
              ]
     end
 
+    test "the unsupported-content error names the content's type, not the content" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Adapter.convert_messages([
+            %Message{role: "user", content: [%{"secret" => "user data"}]}
+          ])
+        end
+
+      refute error.message =~ "user data"
+      assert error.message =~ "a list"
+    end
+
     test "raises on non-string content (text-only v1)" do
       assert_raise ArgumentError, ~r/text-only v1/, fn ->
         Adapter.convert_messages([%Message{role: "user", content: [%{}]}])

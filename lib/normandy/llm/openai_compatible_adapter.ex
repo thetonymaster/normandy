@@ -42,6 +42,8 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   - `Req.TransportError`, `Mint.TransportError`, `Mint.HTTPError` → `:transport`, retryable
   - Anything else → wrapped via `LLMError.wrap/1`
   """
+
+  alias Normandy.Components.ContentBlock.Describe
   use Normandy.Schema
 
   alias Normandy.LLM.JsonDeserializer
@@ -74,7 +76,8 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
       %Normandy.Components.Message{role: role, content: content} ->
         raise ArgumentError,
               "OpenAICompatibleAdapter (text-only v1): unsupported message " <>
-                "role=#{inspect(role)} / content=#{inspect(content)}"
+                "role=#{inspect(role)} / content: " <>
+                Describe.type_of(content)
     end)
   end
 
