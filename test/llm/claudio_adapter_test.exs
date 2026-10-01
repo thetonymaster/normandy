@@ -256,4 +256,57 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                ClaudioAdapter.__structured_error_action__({:transport_error, :nxdomain})
     end
   end
+
+  describe "to_claudio_client/1" do
+    test "requests go to base_url with the adapter's api key" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "GET", "/models/claude-opus-5-5", fn conn ->
+        assert Plug.Conn.get_req_header(conn, "x-api-key") == ["test-key"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"id" => "claude-opus-5-5"}))
+      end)
+
+      client =
+        Normandy.LLM.ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
+          api_key: "test-key",
+          base_url: "http://localhost:#{bypass.port}/"
+        })
+
+      assert {:ok, %{"id" => "claude-opus-5-5"}} = Claudio.Models.get(client, "claude-opus-5-5")
+    end
+
+    test "options[:req_options] are merged into the Req request (Req.Test plug)" do
+      Req.Test.stub(__MODULE__.ModelsStub, fn conn ->
+        Req.Test.json(conn, %{"id" => "stubbed"})
+      end)
+
+      client =
+        Normandy.LLM.ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
+          api_key: "test-key",
+          options: %{req_options: [plug: {Req.Test, __MODULE__.ModelsStub}, retry: false]}
+        })
+
+      assert {:ok, %{"id" => "stubbed"}} = Claudio.Models.get(client, "any-model")
+    end
+  end
+
+  describe "__apply_client_options__/3" do
+    test "empty options leave the request unchanged" do
+      request = Claudio.Messages.Request.new("m")
+      assert Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, %{}) == request
+    end
+
+    test "thinking_budget still sets budget_tokens thinking" do
+      request =
+        Normandy.LLM.ClaudioAdapter.__apply_client_options__(
+          Claudio.Messages.Request.new("m"),
+          %{thinking_budget: 2048}
+        )
+
+      assert request.thinking == %{"type" => "enabled", "budget_tokens" => 2048}
+    end
+  end
 end

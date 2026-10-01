@@ -242,4 +242,23 @@ defmodule Normandy.Context.TokenCounterTest do
       assert estimated > 0
     end
   end
+
+  describe "client construction" do
+    test "count_message sends to the adapter's base_url (not api.anthropic.com)" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"input_tokens" => 7}))
+      end)
+
+      client = %Normandy.LLM.ClaudioAdapter{
+        api_key: "test-key",
+        base_url: "http://localhost:#{bypass.port}/"
+      }
+
+      assert {:ok, _body} = Normandy.Context.TokenCounter.count_message(client, "hi")
+    end
+  end
 end

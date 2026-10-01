@@ -154,15 +154,7 @@ defmodule Normandy.Context.TokenCounter do
   # Private helpers
 
   defp count_tokens(%ClaudioAdapter{} = client, payload) do
-    # Build Claudio client - use same format as ClaudioAdapter
-    # Claudio.Client.new expects a map with :token and :version keys
-    claudio_client =
-      Claudio.Client.new(%{
-        token: client.api_key,
-        version: "2023-06-01"
-      })
-
-    # Use Claudio's count_tokens function
+    claudio_client = ClaudioAdapter.to_claudio_client(client)
     Claudio.Messages.count_tokens(claudio_client, payload)
   end
 

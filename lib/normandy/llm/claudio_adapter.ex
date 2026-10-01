@@ -485,23 +485,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # Private functions
 
-    defp build_claudio_client(client) do
-      # Build Claudio client with token (not api_key) and version
-      # Claudio.Client.new now expects a single map parameter
-      config = %{
-        token: client.api_key,
-        version: "2023-06-01"
-      }
-
-      config = if client.finch, do: Map.put(config, :finch, client.finch), else: config
-
-      # base_url is a second parameter, not part of config
-      if client.base_url do
-        Claudio.Client.new(config, client.base_url)
-      else
-        Claudio.Client.new(config)
-      end
-    end
+    defp build_claudio_client(client), do: Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
 
     defp add_temperature(request, nil), do: request
 
@@ -859,19 +843,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end)
     end
 
-    defp add_client_options(request, options) do
-      request
-      |> maybe_set_thinking(Map.get(options, :thinking_budget))
-    end
-
-    defp maybe_set_thinking(request, nil), do: request
-
-    defp maybe_set_thinking(request, budget) when is_integer(budget) do
-      Claudio.Messages.Request.enable_thinking(request, %{
-        "type" => "enabled",
-        "budget_tokens" => budget
-      })
-    end
+    defp add_client_options(request, options),
+      do: Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, options)
 
     defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
@@ -1040,6 +1013,49 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do: Map.get(response, :usage) || Map.get(response, "usage")
 
   def extract_usage(_response), do: nil
+
+  @doc """
+  Builds the Claudio HTTP client (a `Req.Request`) for this adapter: the API key,
+  `base_url` (when set), `finch` pool and `options[:req_options]` are respected.
+  `req_options` is merged with `Req.merge/2`, as in `OpenAICompatibleAdapter`
+  (for example `[plug: {Req.Test, MyStub}]` in tests).
+  """
+  @spec to_claudio_client(t()) :: Req.Request.t()
+  def to_claudio_client(%__MODULE__{} = client) do
+    config = %{token: client.api_key, version: "2023-06-01"}
+    config = if client.finch, do: Map.put(config, :finch, client.finch), else: config
+
+    req =
+      if client.base_url do
+        Claudio.Client.new(config, client.base_url)
+      else
+        Claudio.Client.new(config)
+      end
+
+    case client.options do
+      %{req_options: req_options} when is_list(req_options) -> Req.merge(req, req_options)
+      _ -> req
+    end
+  end
+
+  @doc false
+  # Applies `client.options` request settings, plus per-call options from the turn
+  # loop, to a Claudio request. Public so tests can assert the request shape
+  # without an HTTP call; not part of the supported surface.
+  @spec __apply_client_options__(Claudio.Messages.Request.t(), map(), keyword()) ::
+          Claudio.Messages.Request.t()
+  def __apply_client_options__(request, options, _call_opts \\ []) do
+    put_thinking_budget(request, Map.get(options, :thinking_budget))
+  end
+
+  defp put_thinking_budget(request, nil), do: request
+
+  defp put_thinking_budget(request, budget) when is_integer(budget) do
+    Claudio.Messages.Request.enable_thinking(request, %{
+      "type" => "enabled",
+      "budget_tokens" => budget
+    })
+  end
 
   @doc false
   # Decides what to do when the structured-outputs call errors. A request-shape
