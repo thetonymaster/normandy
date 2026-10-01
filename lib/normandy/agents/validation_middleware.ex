@@ -82,7 +82,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
         {:ok, struct(schema_module, input_map)}
 
       # Check if schema module has validation support
-      function_exported?(schema_module, :__schema__, 1) ->
+      Code.ensure_loaded?(schema_module) and function_exported?(schema_module, :__schema__, 1) ->
         case Validator.validate(schema_module, input_map) do
           {:ok, validated_params} ->
             {:ok, struct(schema_module, validated_params)}
@@ -143,7 +143,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
         {:ok, struct(schema_module, output_map)}
 
       # Check if schema module has validation support
-      function_exported?(schema_module, :__schema__, 1) ->
+      Code.ensure_loaded?(schema_module) and function_exported?(schema_module, :__schema__, 1) ->
         case Validator.validate(schema_module, output_map) do
           {:ok, validated_params} ->
             {:ok, struct(schema_module, validated_params)}
@@ -195,7 +195,9 @@ defmodule Normandy.Agents.ValidationMiddleware do
     do: validating_schema?(input) or validating_schema?(output)
 
   defp validating_schema?(nil), do: false
-  defp validating_schema?(%mod{}), do: function_exported?(mod, :__schema__, 1)
+
+  defp validating_schema?(%mod{}),
+    do: Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)
 
   @doc """
   Validates and returns a sanitized error message for display.

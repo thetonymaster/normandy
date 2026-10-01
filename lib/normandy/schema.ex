@@ -263,6 +263,8 @@ defmodule Normandy.Schema do
   # the struct has no schema at all.
   @spec json_schema(struct()) :: map() | nil
   def json_schema(%mod{}) do
+    _ = Code.ensure_loaded(mod)
+
     cond do
       function_exported?(mod, :__schema__, 1) -> mod.__schema__(:specification)
       function_exported?(mod, :__specification__, 0) -> mod.__specification__()
@@ -277,7 +279,7 @@ defmodule Normandy.Schema do
   """
   @spec compute(struct()) :: struct()
   def compute(%mod{} = struct) do
-    if function_exported?(mod, :__schema__, 1) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1) do
       Enum.reduce(mod.__schema__(:computed_fields), struct, fn {field, fun}, acc ->
         Map.put(acc, field, fun.(acc))
       end)

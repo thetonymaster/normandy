@@ -716,7 +716,7 @@ defmodule Normandy.Type do
       schema_module?(mod) ->
         &cast_schema(mod, &1)
 
-      function_exported?(mod, :cast, 1) ->
+      Code.ensure_loaded?(mod) and function_exported?(mod, :cast, 1) ->
         fn
           nil -> {:ok, nil}
           value -> mod.cast(value)
@@ -1262,7 +1262,7 @@ defmodule Normandy.Type do
   Format type for error messaging and logs.
   """
   def format({:parameterized, {type, params}}) do
-    if function_exported?(type, :format, 1) do
+    if Code.ensure_loaded?(type) and function_exported?(type, :format, 1) do
       type.format(params)
     else
       "##{inspect(type)}<#{inspect(params)}>"

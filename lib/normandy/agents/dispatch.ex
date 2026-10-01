@@ -90,7 +90,7 @@ defmodule Normandy.Agents.Dispatch do
   """
   @spec prepare_tool(struct(), map()) :: struct()
   def prepare_tool(tool, input) when is_map(input) do
-    if function_exported?(tool.__struct__, :prepare_input, 2) do
+    if exports?(tool.__struct__, :prepare_input, 2) do
       tool.__struct__.prepare_input(tool, input)
     else
       struct(tool, atomize_known_keys(tool, input))
@@ -117,7 +117,7 @@ defmodule Normandy.Agents.Dispatch do
     mod = tool.__struct__
 
     cond do
-      function_exported?(mod, :prepare_input, 2) ->
+      exports?(mod, :prepare_input, 2) ->
         :ok
 
       # Scope: only SchemaBaseTool-shaped tools, which the macro gives BOTH
@@ -126,7 +126,7 @@ defmodule Normandy.Agents.Dispatch do
       # before apply_policy's rescue/catch, so a validator returning anything
       # outside the {:ok, _} / {:error, list} contract must fail closed here
       # rather than crash classify/3.
-      function_exported?(mod, :validate, 1) and function_exported?(mod, :validate!, 1) ->
+      exports?(mod, :validate, 1) and exports?(mod, :validate!, 1) ->
         case mod.validate(atomize_known_keys(tool, input)) do
           {:ok, _validated} ->
             :ok
@@ -371,4 +371,9 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   def normalize_tool_field_key(_tool, _key), do: :error
+
+  # function_exported?/3 is false for a module that is not loaded yet (a fresh
+  # node in interactive mode), which would skip validation or prepare_input.
+  defp exports?(mod, fun, arity),
+    do: Code.ensure_loaded?(mod) and function_exported?(mod, fun, arity)
 end

@@ -386,7 +386,7 @@ defmodule Normandy.Tools.Registry do
     tool_module = tool.__struct__
 
     # Check if this is a schema-based tool with introspection support
-    if function_exported?(tool_module, :__schema__, 1) do
+    if Code.ensure_loaded?(tool_module) and function_exported?(tool_module, :__schema__, 1) do
       alias Normandy.Schema.Introspection
 
       fields = Introspection.list_fields(tool_module)
