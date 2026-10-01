@@ -149,9 +149,14 @@ defmodule NormandyTest.BaseAgentsTest do
     test "emits telemetry events during run", %{agent: agent} do
       parent = self()
       ref = make_ref()
+      # Telemetry is global and async tests run agents at the same time: the
+      # handler keeps only this agent's events, by a name no other test uses.
+      name = "telemetry-test-#{System.unique_integer([:positive])}"
+      agent = %{agent | name: name}
+      handler_id = "base-agent-telemetry-#{inspect(ref)}"
 
       handler = fn event, measurements, metadata, _config ->
-        send(parent, {ref, event, measurements, metadata})
+        if metadata[:agent_name] == name, do: send(parent, {ref, event, measurements, metadata})
       end
 
       events = [
@@ -161,23 +166,30 @@ defmodule NormandyTest.BaseAgentsTest do
         [:normandy, :agent, :llm_call, :stop]
       ]
 
-      :telemetry.attach_many("test-handler", events, handler, nil)
+      :telemetry.attach_many(handler_id, events, handler, nil)
 
       try do
         BaseAgent.run(agent, "hello")
 
         # Check for run events
-        assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{model: _}}
-        assert_receive {^ref, [:normandy, :agent, :run, :stop], %{duration: _}, %{model: _}}
+        assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{agent_name: ^name}}
+
+        assert_receive {^ref, [:normandy, :agent, :run, :stop], %{duration: _},
+                        %{agent_name: ^name}}
 
         # Check for LLM call events
         assert_receive {^ref, [:normandy, :agent, :llm_call, :start], _ms,
-                        %{model: _, iteration: 1}}
+                        %{agent_name: ^name, iteration: 1}}
 
         assert_receive {^ref, [:normandy, :agent, :llm_call, :stop], %{duration: _},
-                        %{model: _, iteration: 1, has_tool_calls: false, tool_call_count: 0}}
+                        %{
+                          agent_name: ^name,
+                          iteration: 1,
+                          has_tool_calls: false,
+                          tool_call_count: 0
+                        }}
       after
-        :telemetry.detach("test-handler")
+        :telemetry.detach(handler_id)
       end
     end
   end
