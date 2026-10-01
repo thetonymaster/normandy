@@ -187,4 +187,35 @@ defmodule Normandy.Agents.TurnPropertyTest do
   defp next_event(%State{status: :tool_dispatch}, _tr, results), do: {:tool_results, results}
 
   defp next_event(%State{status: :steering}, _tr, _res), do: {:compaction_done, %{}}
+
+  property "tokens_compacted only grows and equals the sum of positive integer tokens_removed on compacted metas" do
+    removed_gen = one_of([integer(-1_000..100_000), constant(nil), float()])
+
+    meta_gen =
+      one_of([
+        map({boolean(), removed_gen}, fn {c, n} -> %{compacted: c, tokens_removed: n} end),
+        map(integer(0..1_000), fn n -> %{compacted: true, tokens_before: n, tokens_after: 0} end),
+        constant(%{compacted: false}),
+        constant(%{})
+      ])
+
+    check all(metas <- list_of(meta_gen)) do
+      start = %State{status: :steering, iterations_left: 10_000, max_iterations: 10_000}
+
+      final =
+        Enum.reduce(metas, start, fn meta, s ->
+          {s2, _} = Turn.step(%{s | status: :steering}, {:compaction_done, meta})
+          assert s2.tokens_compacted >= s.tokens_compacted
+          s2
+        end)
+
+      # Oracle written from the contract, not from add_compacted/2.
+      expected =
+        for %{compacted: true, tokens_removed: n} <- metas, is_integer(n), n > 0, reduce: 0 do
+          acc -> acc + n
+        end
+
+      assert final.tokens_compacted == expected
+    end
+  end
 end

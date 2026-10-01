@@ -69,19 +69,86 @@ defmodule Normandy.Agents.TurnCompactionTest do
       assert effects == [{:call_llm, %{response_model: :os, final: true}}]
     end
 
-    test "compaction_done meta is ignored by the pure core (it already mutated acc in the shell)" do
-      s = %State{
+    defp steering(left),
+      do: %State{
         status: :steering,
-        iterations_left: 3,
+        iterations_left: left,
         max_iterations: 5,
         response_model: :rm,
         output_schema: :os
       }
 
-      {s_a, eff_a} = Turn.step(s, {:compaction_done, %{compacted: true, tokens_after: 10}})
-      {s_b, eff_b} = Turn.step(s, {:compaction_done, %{compacted: false}})
-      assert s_a == s_b
-      assert eff_a == eff_b
+    test "Turn.new/1 starts tokens_compacted at 0" do
+      assert Turn.new().tokens_compacted == 0
+    end
+
+    test "a compacted boundary adds tokens_removed (not before - after)" do
+      meta = %{
+        compacted: true,
+        tokens_before: 90_000,
+        tokens_after: 30_000,
+        tokens_removed: 45_000
+      }
+
+      {s2, _} = Turn.step(steering(3), {:compaction_done, meta})
+      assert s2.tokens_compacted == 45_000
+    end
+
+    test "the forced-final (at-cap) boundary also accumulates" do
+      {s2, _} = Turn.step(steering(0), {:compaction_done, %{compacted: true, tokens_removed: 6}})
+      assert s2.tokens_compacted == 6
+    end
+
+    test "metas without a positive integer tokens_removed leave the counter unchanged" do
+      for meta <- [
+            %{compacted: false},
+            %{},
+            %{compacted: false, reason: :no_window},
+            %{compacted: true},
+            %{compacted: true, tokens_before: 100, tokens_after: 40},
+            %{compacted: true, tokens_removed: 0},
+            %{compacted: true, tokens_removed: -5},
+            %{compacted: true, tokens_removed: nil},
+            %{compacted: false, tokens_removed: 500}
+          ] do
+        {s2, _} = Turn.step(steering(3), {:compaction_done, meta})
+        assert s2.tokens_compacted == 0, "meta #{inspect(meta)} changed the counter"
+      end
+    end
+
+    test "accumulates across boundaries" do
+      {s2, _} = Turn.step(steering(3), {:compaction_done, %{compacted: true, tokens_removed: 60}})
+
+      {s3, _} =
+        Turn.step(
+          %{s2 | status: :steering},
+          {:compaction_done, %{compacted: true, tokens_removed: 30}}
+        )
+
+      assert s3.tokens_compacted == 90
+    end
+
+    test "a state persisted before 2.0 (no :tokens_compacted key) still steps" do
+      old = Map.delete(steering(3), :tokens_compacted)
+
+      {s2, effects} = Turn.step(old, {:compaction_done, %{compacted: true, tokens_removed: 30}})
+
+      assert s2.tokens_compacted == 30
+      assert {:call_llm, %{response_model: :rm, final: false}} in effects
+
+      {s3, _} =
+        Turn.step(
+          Map.delete(steering(3), :tokens_compacted),
+          {:compaction_done, %{compacted: false}}
+        )
+
+      assert s3.status == :assistant_streaming
+    end
+
+    test "tokens_compacted survives the durable stores' encoding (term_to_binary, decoded with [:safe])" do
+      state = %{steering(3) | tokens_compacted: 1_234}
+      decoded = :erlang.binary_to_term(:erlang.term_to_binary(state), [:safe])
+      assert decoded.tokens_compacted == 1_234
     end
   end
 end

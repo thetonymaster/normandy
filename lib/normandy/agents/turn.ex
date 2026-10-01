@@ -24,7 +24,7 @@ defmodule Normandy.Agents.Turn do
   alias Normandy.Components.ToolResult
 
   defmodule State do
-    @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`)."
+    @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`). `tokens_compacted` is the estimated tokens of this turn's messages removed by in-turn compaction (feeds the task budget's `remaining`)."
 
     @type status ::
             :provisioning
@@ -46,6 +46,7 @@ defmodule Normandy.Agents.Turn do
             pending_calls: [term()],
             parked_calls: [term()],
             held_results: [term()],
+            tokens_compacted: non_neg_integer(),
             last_response: term() | nil,
             final_response: term() | nil,
             stop_reason: :completed | :max_iterations | nil,
@@ -61,6 +62,7 @@ defmodule Normandy.Agents.Turn do
               pending_calls: [],
               parked_calls: [],
               held_results: [],
+              tokens_compacted: 0,
               last_response: nil,
               final_response: nil,
               stop_reason: nil,
@@ -152,17 +154,22 @@ defmodule Normandy.Agents.Turn do
     apply_tool_results(s, results)
   end
 
-  # Compaction (or its no-op) finished. Resolve the steering boundary. At/after
+  # Compaction (or its no-op) finished. Record the tokens it removed from this
+  # turn (for the task budget), then resolve the steering boundary. At/after
   # the iteration cap, issue the forced-final call (skipping convert, like the old
   # path); otherwise emit the next :iteration and continue. iterations_left was
   # already decremented in apply_tool_results.
-  def step(%State{status: :steering, iterations_left: left} = s, {:compaction_done, _meta})
+  def step(%State{status: :steering, iterations_left: left} = s, {:compaction_done, meta})
       when left <= 0 do
+    s = add_compacted(s, meta)
+
     {%{s | status: :assistant_streaming, awaiting_final: true},
      [{:call_llm, %{response_model: s.output_schema, final: true}}]}
   end
 
-  def step(%State{status: :steering} = s, {:compaction_done, _meta}) do
+  def step(%State{status: :steering} = s, {:compaction_done, meta}) do
+    s = add_compacted(s, meta)
+
     iteration =
       {:emit_event, :iteration,
        %{iteration: s.max_iterations - s.iterations_left + 1, iterations_left: s.iterations_left}}
@@ -325,6 +332,14 @@ defmodule Normandy.Agents.Turn do
       is_error: true
     }
   end
+
+  # Tokens of this turn's messages removed by an in-turn compaction (the
+  # compactor's :tokens_removed). Map.get/Map.put, not struct update syntax: a
+  # Turn.State persisted by Normandy < 2.0 decodes without the key.
+  defp add_compacted(s, %{compacted: true, tokens_removed: n}) when is_integer(n) and n > 0,
+    do: Map.put(s, :tokens_compacted, Map.get(s, :tokens_compacted, 0) + n)
+
+  defp add_compacted(s, _meta), do: s
 
   defp tool_calls(%{tool_calls: nil}), do: []
   defp tool_calls(%{tool_calls: calls}) when is_list(calls), do: calls
