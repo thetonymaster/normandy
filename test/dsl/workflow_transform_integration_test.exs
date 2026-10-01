@@ -5,6 +5,8 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
   """
   use ExUnit.Case, async: true
 
+  @moduletag :capture_log
+
   alias Normandy.Agents.BaseAgent
 
   defmodule EchoClient do
@@ -124,6 +126,20 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
              WhenWorkflow.execute(agents: agents("broken"), initial_input: "x")
 
     refute_received {:agent_input, "second", _}
+  end
+
+  test "an agent that raises fails the workflow at that step instead of crashing it" do
+    failing =
+      BaseAgent.init(%{
+        client: %Normandy.Test.TaggingClient{name: "first", fail_on: "raw"},
+        model: "test-model"
+      })
+
+    assert {:error, {:first, {:exception, %RuntimeError{message: "first failed"}, _}}} =
+             TransformWorkflow.execute(
+               agents: %{agents() | FirstAgent => failing},
+               initial_input: "x"
+             )
   end
 
   test "steps/0 reports which steps have a when_result" do

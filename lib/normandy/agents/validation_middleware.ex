@@ -10,7 +10,8 @@ defmodule Normandy.Agents.ValidationMiddleware do
   - **Input Validation**: Validates user inputs before processing
   - **Output Validation**: Validates LLM responses before returning
   - **Clear Error Messages**: Path-based validation errors
-  - **Optional Enforcement**: Can be disabled for backward compatibility
+  - **Opt-in**: Runs only for a schema that can validate (a Normandy schema);
+    any other input or output passes through unchanged
 
   ## Usage
 

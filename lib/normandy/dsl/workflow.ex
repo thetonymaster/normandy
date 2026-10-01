@@ -517,10 +517,13 @@ defmodule Normandy.DSL.Workflow do
         end
       end
 
-      # BaseAgent.run/2 returns {config, response}; a failed LLM call raises.
+      # BaseAgent.run/2 raises on failure; return it as the step's error, the
+      # same shape a parallel or race step gets from Reactive.
       defp run_agent(agent, input) do
         {_updated_agent, response} = BaseAgent.run(agent, prepare_input(input))
         {:ok, response}
+      rescue
+        e -> {:error, {:exception, e, __STACKTRACE__}}
       end
 
       defp name_results(results, agent_infos) do

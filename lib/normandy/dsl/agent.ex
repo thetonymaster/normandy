@@ -49,7 +49,7 @@ defmodule Normandy.DSL.Agent do
 
   - Clean, declarative syntax
   - Sensible defaults
-  - Compile-time validation
+  - Configuration checked when the agent is built (`new/1` raises without a model)
   - Generated helper functions
   - Tool registration support
   - Memory management helpers
