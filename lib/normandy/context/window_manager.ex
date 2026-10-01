@@ -8,14 +8,14 @@ defmodule Normandy.Context.WindowManager do
   ## Features
 
   - Token counting for messages and conversations
-  - Configurable context window limits per model
+  - Context window passed in by the caller (no built-in model table)
   - Multiple truncation strategies (oldest-first, sliding window, summarization)
   - Automatic context management with AgentMemory integration
 
   ## Example
 
-      # Create a window manager with 100k token limit
-      manager = WindowManager.new(max_tokens: 100_000)
+      # Create a window manager with the model's context window
+      manager = WindowManager.new(max_tokens: 200_000)
 
       # Check if we're within limits
       {:ok, within_limit?} = WindowManager.within_limit?(manager, agent)
@@ -36,58 +36,53 @@ defmodule Normandy.Context.WindowManager do
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
           reserved_tokens: pos_integer(),
-          strategy: strategy(),
-          model_limits: map()
+          strategy: strategy()
         }
 
-  defstruct max_tokens: 100_000,
+  defstruct max_tokens: nil,
             reserved_tokens: 4096,
-            strategy: :oldest_first,
-            model_limits: Normandy.Behaviours.ModelCatalog.Static.limits()
+            strategy: :oldest_first
 
   @doc """
-  Creates a new WindowManager with optional configuration.
+  Creates a new WindowManager.
 
   ## Options
 
-  - `:max_tokens` - Maximum tokens for context window (default: 100,000)
-  - `:reserved_tokens` - Tokens to reserve for response (default: 4096)
+  - `:max_tokens` - **Required.** The model's context window in tokens. Inside an
+    agent the compactor passes the window resolved through the configured
+    `Normandy.Behaviours.ModelCatalog`; standalone, take it from
+    `Claudio.Models.get/2` (`"max_input_tokens"`).
+  - `:reserved_tokens` - Tokens to reserve for the response (default: 4096)
   - `:strategy` - Truncation strategy (default: :oldest_first)
 
   ## Example
 
-      manager = WindowManager.new(max_tokens: 50_000, strategy: :sliding_window)
+      manager = WindowManager.new(max_tokens: 200_000, strategy: :sliding_window)
   """
   @spec new(keyword()) :: t()
-  def new(opts \\ []) do
-    max_tokens = Keyword.get(opts, :max_tokens, 100_000)
-    reserved_tokens = Keyword.get(opts, :reserved_tokens, 4096)
-    strategy = Keyword.get(opts, :strategy, :oldest_first)
+  def new(opts \\ []) when is_list(opts) do
+    max_tokens =
+      case Keyword.fetch(opts, :max_tokens) do
+        {:ok, n} when is_integer(n) and n > 0 ->
+          n
+
+        {:ok, other} ->
+          raise ArgumentError,
+                "WindowManager.new/1 :max_tokens must be a positive integer (the model's " <>
+                  "context window in tokens); got #{inspect(other)}"
+
+        :error ->
+          raise ArgumentError,
+                "WindowManager.new/1 requires :max_tokens (the model's context window in " <>
+                  "tokens); Normandy no longer ships a static model table. Use the agent's " <>
+                  "resolved window or Claudio.Models.get/2 \"max_input_tokens\"."
+      end
 
     %__MODULE__{
       max_tokens: max_tokens,
-      reserved_tokens: reserved_tokens,
-      strategy: strategy
+      reserved_tokens: Keyword.get(opts, :reserved_tokens, 4096),
+      strategy: Keyword.get(opts, :strategy, :oldest_first)
     }
-  end
-
-  @doc """
-  Creates a WindowManager configured for a specific model.
-
-  Uses the model's known context window limit.
-
-  ## Example
-
-      manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
-  """
-  @spec for_model(String.t(), keyword()) :: t()
-  def for_model(model, opts \\ []) do
-    manager = new(opts)
-
-    model_limit =
-      Normandy.Behaviours.ModelCatalog.Static.context_window(model) || manager.max_tokens
-
-    %{manager | max_tokens: model_limit}
   end
 
   @doc """

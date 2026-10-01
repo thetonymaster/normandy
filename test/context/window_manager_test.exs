@@ -5,12 +5,32 @@ defmodule Normandy.Context.WindowManagerTest do
   alias Normandy.Components.AgentMemory
 
   describe "new/1" do
-    test "creates WindowManager with default options" do
-      manager = WindowManager.new()
+    test "requires :max_tokens (no static model table)" do
+      assert_raise ArgumentError, ~r/requires :max_tokens/, fn -> WindowManager.new() end
 
+      assert_raise ArgumentError, ~r/requires :max_tokens/, fn ->
+        WindowManager.new(strategy: :oldest_first)
+      end
+    end
+
+    test "rejects a non-positive or non-integer :max_tokens" do
+      assert_raise ArgumentError, ~r/positive integer/, fn -> WindowManager.new(max_tokens: 0) end
+
+      assert_raise ArgumentError, ~r/positive integer/, fn ->
+        WindowManager.new(max_tokens: nil)
+      end
+    end
+
+    test "defaults reserved_tokens and strategy" do
+      manager = WindowManager.new(max_tokens: 100_000)
       assert manager.max_tokens == 100_000
       assert manager.reserved_tokens == 4096
       assert manager.strategy == :oldest_first
+    end
+
+    test "has no model_limits field and no for_model/2" do
+      refute Map.has_key?(WindowManager.new(max_tokens: 10), :model_limits)
+      refute function_exported?(WindowManager, :for_model, 2)
     end
 
     test "creates WindowManager with custom options" do
@@ -24,34 +44,6 @@ defmodule Normandy.Context.WindowManagerTest do
       assert manager.max_tokens == 50_000
       assert manager.reserved_tokens == 2048
       assert manager.strategy == :sliding_window
-    end
-  end
-
-  describe "for_model/2" do
-    test "sets max_tokens based on known model limits" do
-      manager = WindowManager.for_model("claude-haiku-4-5-20251001")
-      assert manager.max_tokens == 200_000
-    end
-
-    test "uses default for unknown models" do
-      manager = WindowManager.for_model("unknown-model")
-      assert manager.max_tokens == 100_000
-    end
-
-    test "allows override with options" do
-      manager =
-        WindowManager.for_model("claude-haiku-4-5-20251001",
-          reserved_tokens: 8192
-        )
-
-      assert manager.max_tokens == 200_000
-      assert manager.reserved_tokens == 8192
-    end
-
-    test "sources limits from the canonical ModelCatalog (single source of truth)" do
-      for {model, window} <- Normandy.Behaviours.ModelCatalog.Static.limits() do
-        assert WindowManager.for_model(model).max_tokens == window
-      end
     end
   end
 

@@ -35,7 +35,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   defp build_manager(window, opts) do
     cond do
       Keyword.has_key?(opts, :max_tokens) -> WM.new(opts)
-      is_integer(window) -> %{WM.new(opts) | max_tokens: window}
+      is_integer(window) -> WM.new(Keyword.put(opts, :max_tokens, window))
       true -> nil
     end
   end
