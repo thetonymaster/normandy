@@ -236,6 +236,45 @@ defmodule Normandy.Agents.Turn.ServerTest do
              AssistantAppendFailStore.load_turn_state(store, "s-bypass")
   end
 
+  test "an output guardrail block replies {:rejected, e} and keeps the answer out of memory and store" do
+    store = InMemory.new()
+    reg = Native.new()
+
+    config = %{
+      base_config()
+      | output_guardrails: [
+          {Normandy.Guardrails.Builtins.ForbiddenSubstrings, terms: ["SSN"], field: :content}
+        ]
+    }
+
+    handlers = %{
+      BaseAgent.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: "your SSN is 123", tool_calls: nil} end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-output-block",
+        config: config,
+        store: {InMemory, store},
+        registry: {Native, reg},
+        handlers: handlers
+      )
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, {:rejected, %Normandy.Guardrails.ViolationError{}}} =
+                 Turn.Server.run(srv, "what is my ssn?")
+      end)
+
+    refute log =~ "handler"
+    {:ok, entries} = InMemory.history(store, "s-output-block")
+    refute Enum.any?(entries, &(&1.role == "assistant"))
+
+    {_state, data} = :sys.get_state(srv)
+    refute Enum.any?(AgentMemory.messages(data.config.memory), &(&1.role == "assistant"))
+  end
+
   defmodule TemplateFaultStore do
     def load_config_template(_handle, _sid), do: {:error, :store_unavailable}
   end

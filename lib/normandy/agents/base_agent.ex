@@ -53,7 +53,8 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:input_guardrails) => [Normandy.Guardrails.spec()],
           optional(:output_guardrails) => [Normandy.Guardrails.spec()],
           optional(:output_guardrails_streaming_mode) => :accumulate | :incremental,
-          optional(:output_guardrails_chunk_size) => pos_integer()
+          optional(:output_guardrails_chunk_size) => pos_integer(),
+          optional(:output_guardrails_on_violation) => :block | :warn
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -85,6 +86,13 @@ defmodule Normandy.Agents.BaseAgent do
     unless is_integer(chunk_size) and chunk_size > 0 do
       raise ArgumentError,
             "output_guardrails_chunk_size must be a positive integer, got: #{inspect(chunk_size)}"
+    end
+
+    on_violation = Map.get(config, :output_guardrails_on_violation, :block)
+
+    unless on_violation in [:block, :warn] do
+      raise ArgumentError,
+            "output_guardrails_on_violation must be :block or :warn, got: #{inspect(on_violation)}"
     end
 
     _ =
@@ -131,6 +139,7 @@ defmodule Normandy.Agents.BaseAgent do
       output_guardrails: output_guardrails,
       output_guardrails_streaming_mode: streaming_mode,
       output_guardrails_chunk_size: chunk_size,
+      output_guardrails_on_violation: on_violation,
       behaviours: Map.get(config, :behaviours, nil)
     }
   end
@@ -1895,10 +1904,10 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Runs output guardrails and logs a warning on violation. Mirrors the
-  # output-side log-and-continue behaviour of ValidationMiddleware — we don't
-  # want an overzealous pattern to break end-user responses, but operators
-  # should still see the event in logs and telemetry.
+  # Runs output guardrails before the answer is appended to memory. A violation
+  # raises (output_guardrails_on_violation: :block, the default), so the answer
+  # is neither returned nor saved; with :warn it is logged and the turn goes on.
+  # Telemetry is emitted either way.
   defp run_output_guardrails(%BaseAgentConfig{output_guardrails: []}, _value), do: :ok
 
   defp run_output_guardrails(%BaseAgentConfig{output_guardrails: guards} = config, value) do
@@ -1908,14 +1917,22 @@ defmodule Normandy.Agents.BaseAgent do
 
       {:error, violations} ->
         emit_guardrail_violation(:output, config, guards, violations)
-
-        IO.warn(
-          "Agent output guardrail violation: " <>
-            ValidationMiddleware.error_message(violations)
-        )
-
-        :ok
+        output_violation(config.output_guardrails_on_violation, violations)
     end
+  end
+
+  defp output_violation(:block, violations) do
+    raise Normandy.Guardrails.ViolationError,
+      message: "Agent output guardrail violation",
+      violations: violations
+  end
+
+  defp output_violation(:warn, violations) do
+    IO.warn(
+      "Agent output guardrail violation: " <> ValidationMiddleware.error_message(violations)
+    )
+
+    :ok
   end
 
   defp emit_guardrail_violation(stage, config, guards, violations, extra_meta \\ %{}) do
@@ -1968,7 +1985,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Runs output guardrails on the accumulated text of a streaming final message.
   # Dispatches by mode: :accumulate runs guards after the stream completes
-  # (log-and-continue, mirrors non-streaming posture); :incremental is a
+  # (logged and reported, not blocked: the text already reached the caller); :incremental is a
   # no-op here because guards already ran at chunk boundaries inside
   # `consume_stream_with_incremental_guards/3`.
   #

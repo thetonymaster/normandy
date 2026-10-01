@@ -166,6 +166,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         output_guardrails: [{OutGuard, []}],
         output_guardrails_streaming_mode: :incremental,
         output_guardrails_chunk_size: 64,
+        output_guardrails_on_violation: :warn,
         client: supp.client_builder.("TOKEN"),
         tool_registry: supp.tool_registry,
         behaviours: %Config{before_hooks: supp.before_hooks, after_hooks: supp.after_hooks}

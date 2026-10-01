@@ -40,7 +40,9 @@ defmodule Normandy.Agents.Turn.Server do
 
     * `{:rejected, exception}` — the input failed its schema
       (`Normandy.Schema.ValidationError`) or an input guardrail
-      (`Normandy.Guardrails.ViolationError`). Nothing was persisted.
+      (`Normandy.Guardrails.ViolationError`), and nothing was persisted; or an
+      output guardrail blocked the answer (`Normandy.Guardrails.ViolationError`),
+      and the answer was not saved (the user message was).
     * `{:handler_crashed, name, exception_or_term}` — a synchronous handler
       (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw.
     * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
@@ -572,11 +574,15 @@ defmodule Normandy.Agents.Turn.Server do
         )
 
       {:guard_output, value} ->
+        # An output guardrail block is a rejection of the answer, not a crash.
         guarded(
           data,
           :guard,
-          fn -> data.handlers.guard.(data.config, value) end,
-          fn _ -> advance(rest, data, {:output_guarded, value}) end
+          fn -> guard_output(data, value) end,
+          fn
+            {:output_rejected, e} -> fail(data, {:rejected, e})
+            _ -> advance(rest, data, {:output_guarded, value})
+          end
         )
 
       {:call_llm, request} ->
@@ -701,6 +707,12 @@ defmodule Normandy.Agents.Turn.Server do
       )
 
       {:crashed, {:handler_crashed, name, Exception.normalize(kind, reason, stacktrace)}}
+  end
+
+  defp guard_output(data, value) do
+    data.handlers.guard.(data.config, value)
+  rescue
+    e in Normandy.Guardrails.ViolationError -> {:output_rejected, e}
   end
 
   defp guarded(data, name, fun, continue) do

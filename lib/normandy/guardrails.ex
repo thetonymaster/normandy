@@ -62,6 +62,19 @@ defmodule Normandy.Guardrails do
   `constraint: :off_topic` lets the caller render scope-specific messaging
   without parsing strings. Extra keys on the violation map are allowed.
 
+  ## Output violations (`:output_guardrails_on_violation`)
+
+  On the non-streaming path (`BaseAgent.run/2`, `Turn.Server`), output guards
+  run on the validated answer before it is saved to memory:
+
+  - `:block` (default) — `run` raises `Normandy.Guardrails.ViolationError`
+    (`Turn.Server.run/2` replies `{:error, {:rejected, exception}}`) and the
+    answer is not saved.
+  - `:warn` — the violation is logged and the answer is returned and saved.
+
+  The option does not apply to streaming, where the content has already
+  reached the caller (see below).
+
   ## Streaming
 
   Input guardrails run on streaming entry points (`BaseAgent.stream_response/3`,
@@ -72,8 +85,8 @@ defmodule Normandy.Guardrails do
 
   - `:accumulate` (default) — guards run on the **concatenated assistant text**
     (text blocks from the streamed response, joined) after the stream
-    completes. Log-and-continue on violation; content has already reached the
-    caller. This differs from the non-streaming path, which guards the
+    completes. A violation is logged and reported on the response, not
+    blocked: the content has already reached the caller. This differs from the non-streaming path, which guards the
     validated schema struct — streaming never produces one, so field-targeting
     guards (e.g. `{ForbiddenSubstrings, field: :summary}`) do not apply in
     streaming mode. Use bare string guards (no `:field`) for streaming output.

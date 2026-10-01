@@ -83,13 +83,35 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   end
 
   describe "output_guardrails" do
-    test "logs a warning and does not halt on output violation" do
+    test "an output violation raises ViolationError by default" do
+      # ModelMockup returns an empty BaseAgentOutputSchema (chat_message: nil).
+      agent =
+        BaseAgent.init(
+          base_config(%{output_guardrails: [{RequiredFields, fields: [:chat_message]}]})
+        )
+
+      error =
+        assert_raise Normandy.Guardrails.ViolationError, ~r/output guardrail violation/i, fn ->
+          BaseAgent.run(agent, "hi")
+        end
+
+      assert [%{guard: RequiredFields} | _] = error.violations
+    end
+
+    test "an invalid :output_guardrails_on_violation is rejected at init" do
+      assert_raise ArgumentError,
+                   ~r/output_guardrails_on_violation must be :block or :warn, got: :log/,
+                   fn -> BaseAgent.init(base_config(%{output_guardrails_on_violation: :log})) end
+    end
+
+    test "with on_violation :warn it logs a warning and does not halt" do
       # ModelMockup returns an empty BaseAgentOutputSchema (chat_message: nil).
       # RequiredFields([:chat_message]) will fire.
       agent =
         BaseAgent.init(
           base_config(%{
-            output_guardrails: [{RequiredFields, fields: [:chat_message]}]
+            output_guardrails: [{RequiredFields, fields: [:chat_message]}],
+            output_guardrails_on_violation: :warn
           })
         )
 
@@ -292,7 +314,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           base_config(%{
             client: %MockCapClient{},
             max_tool_iterations: 1,
-            output_guardrails: [{RequiredFields, fields: [:chat_message]}]
+            output_guardrails: [{RequiredFields, fields: [:chat_message]}],
+            output_guardrails_on_violation: :warn
           })
         )
 

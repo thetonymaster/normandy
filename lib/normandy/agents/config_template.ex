@@ -31,7 +31,8 @@ defmodule Normandy.Agents.ConfigTemplate do
     :input_guardrails,
     :output_guardrails,
     :output_guardrails_streaming_mode,
-    :output_guardrails_chunk_size
+    :output_guardrails_chunk_size,
+    :output_guardrails_on_violation
   ]
 
   # Fields a template cannot hold (a linked pid; MCP settings that may carry an

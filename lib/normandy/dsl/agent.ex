@@ -236,6 +236,13 @@ defmodule Normandy.DSL.Agent do
 
   Calling this macro twice for the same stage replaces the previous list.
 
+  An input violation always raises. An output violation blocks the answer by
+  default: `run` raises `Normandy.Guardrails.ViolationError` and the answer is
+  not saved to memory. Pass `on_violation: :warn` (output only) to log the
+  violation and return the answer instead. Telemetry is emitted either way.
+  Streaming output reports violations through `:guardrail_violations` and the
+  callback instead; see `Normandy.Guardrails`.
+
   ## Example
 
       agent do
@@ -252,15 +259,37 @@ defmodule Normandy.DSL.Agent do
         ]
       end
   """
-  defmacro guardrails(stage, specs) when stage in [:input, :output] do
+  defmacro guardrails(stage, specs, opts \\ []) when stage in [:input, :output] do
     attr =
       case stage do
         :input -> :agent_input_guardrails
         :output -> :agent_output_guardrails
       end
 
+    on_violation =
+      case {stage, Keyword.fetch(opts, :on_violation)} do
+        {_stage, :error} ->
+          nil
+
+        {:output, {:ok, value}} ->
+          value
+
+        {:input, {:ok, _value}} ->
+          raise ArgumentError,
+                "guardrails/3: on_violation applies to :output guardrails only " <>
+                  "(an input violation always raises)"
+      end
+
     quote do
       Module.put_attribute(__MODULE__, unquote(attr), unquote(specs))
+
+      if unquote(on_violation) do
+        Module.put_attribute(
+          __MODULE__,
+          :agent_output_guardrails_on_violation,
+          unquote(on_violation)
+        )
+      end
     end
   end
 
@@ -312,7 +341,9 @@ defmodule Normandy.DSL.Agent do
         output_guardrails_streaming_mode:
           Module.get_attribute(__MODULE__, :agent_output_guardrails_streaming_mode, :accumulate),
         output_guardrails_chunk_size:
-          Module.get_attribute(__MODULE__, :agent_output_guardrails_chunk_size, 200)
+          Module.get_attribute(__MODULE__, :agent_output_guardrails_chunk_size, 200),
+        output_guardrails_on_violation:
+          Module.get_attribute(__MODULE__, :agent_output_guardrails_on_violation, :block)
       }
 
       # Store additional config at compile time
@@ -429,7 +460,8 @@ defmodule Normandy.DSL.Agent do
           output_guardrails: @agent_compile_config.output_guardrails,
           output_guardrails_streaming_mode:
             @agent_compile_config.output_guardrails_streaming_mode,
-          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size
+          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size,
+          output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
         }
       end
 
@@ -451,7 +483,8 @@ defmodule Normandy.DSL.Agent do
           output_guardrails: @agent_compile_config.output_guardrails,
           output_guardrails_streaming_mode:
             @agent_compile_config.output_guardrails_streaming_mode,
-          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size
+          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size,
+          output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
         }
 
         # Apply max_messages if set

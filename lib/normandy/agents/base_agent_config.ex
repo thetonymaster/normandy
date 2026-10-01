@@ -35,6 +35,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
           output_guardrails: [Normandy.Guardrails.spec()],
           output_guardrails_streaming_mode: :accumulate | :incremental,
           output_guardrails_chunk_size: pos_integer(),
+          output_guardrails_on_violation: :block | :warn,
           behaviours: Normandy.Behaviours.Config.t() | nil,
           resolved_context_window: {String.t(), pos_integer()} | nil
         }
@@ -66,6 +67,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:output_guardrails, :any, default: [])
     field(:output_guardrails_streaming_mode, :any, default: :accumulate)
     field(:output_guardrails_chunk_size, :integer, default: 200)
+    field(:output_guardrails_on_violation, :any, default: :block)
     field(:behaviours, :any, default: nil)
     field(:resolved_context_window, :any, default: nil)
   end
