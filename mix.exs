@@ -139,7 +139,7 @@ defmodule Normandy.MixProject do
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.0"},
-      {:claudio, "~> 0.6.0"},
+      {:claudio, path: "../Claudio"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       # Tier-1/2 session infra. Optional: Tier-0 (default) users pull in none of these.
