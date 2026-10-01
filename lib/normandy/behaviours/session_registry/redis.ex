@@ -112,17 +112,9 @@ if Code.ensure_loaded?(Redix) do
             :none
 
           {:ok, blob} when is_binary(blob) ->
-            # Stored values are this registry's own routing pids (trusted, not user data),
-            # so plain binary_to_term is used. `[:safe]` blocks creating NEW atoms while
-            # decoding; a pid embeds its node atom, so `[:safe]` would raise only for a pid
-            # from a node whose atom isn't already known locally — which we must still route.
-            pid = :erlang.binary_to_term(blob)
-
-            if alive?(pid) do
-              {:ok, pid}
-            else
-              _ = del_if_owner(s.conn, reg_key(s.ns, sid), blob)
-              :none
+            case decode_pid(blob) do
+              {:ok, pid} -> {:ok, pid}
+              :stale -> stale(s, sid, blob)
             end
 
           {:error, _} ->
@@ -174,6 +166,24 @@ if Code.ensure_loaded?(Redix) do
 
     # A pid is routable iff it lives on this node (and is alive) or on a connected node.
     # A pid on a node no longer in the cluster is treated as dead → triggers rehydrate.
+    # The keyspace is shared, so another client may have written the value.
+    # `[:safe]` creates no atoms; it refuses a pid only when its node atom is
+    # unknown here, and such a node is not connected, so the pid is not live
+    # anyway (see alive?/1). A value that is not a pid is no session either.
+    defp decode_pid(blob) do
+      case :erlang.binary_to_term(blob, [:safe]) do
+        pid when is_pid(pid) -> if alive?(pid), do: {:ok, pid}, else: :stale
+        _other -> :stale
+      end
+    rescue
+      ArgumentError -> :stale
+    end
+
+    defp stale(s, sid, blob) do
+      _ = del_if_owner(s.conn, reg_key(s.ns, sid), blob)
+      :none
+    end
+
     defp alive?(pid) do
       cond do
         node(pid) == node() -> Process.alive?(pid)
