@@ -188,34 +188,6 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # Schema and input-guardrail rejections are expected outcomes: reply them as data
-  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
-  defp admit(config, user_input) do
-    {:ok, BaseAgent.admit_turn_input(config, user_input)}
-  rescue
-    e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
-      {:rejected, e}
-  end
-
-  defp start_turn(from, user_input, config, data) do
-    case persist_user_message(data, config, user_input) do
-      :ok ->
-        state =
-          Turn.new(
-            max_iterations: config.max_tool_iterations,
-            response_model: BaseAgent.turn_response_model(config),
-            output_schema: config.output_schema
-          )
-
-        data = %{data | config: config, pending_reply: from}
-        {state, effects} = Turn.step(state, :start)
-        interpret(effects, %{data | turn_state: state})
-
-      {:error, reason} ->
-        {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
-    end
-  end
-
   # Eager auto-resume: drive the persisted in-flight turn to completion. No caller
   # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
   # silently while persisting at each boundary.
@@ -284,6 +256,34 @@ defmodule Normandy.Agents.Turn.Server do
   def handle_event({:call, _from}, {:turn, _input}, state, _data)
       when state in [:running, :awaiting_approval] do
     {:keep_state_and_data, :postpone}
+  end
+
+  # Schema and input-guardrail rejections are expected outcomes: reply them as data
+  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
+  defp admit(config, user_input) do
+    {:ok, BaseAgent.admit_turn_input(config, user_input)}
+  rescue
+    e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
+      {:rejected, e}
+  end
+
+  defp start_turn(from, user_input, config, data) do
+    case persist_user_message(data, config, user_input) do
+      :ok ->
+        state =
+          Turn.new(
+            max_iterations: config.max_tool_iterations,
+            response_model: BaseAgent.turn_response_model(config),
+            output_schema: config.output_schema
+          )
+
+        data = %{data | config: config, pending_reply: from}
+        {state, effects} = Turn.step(state, :start)
+        interpret(effects, %{data | turn_state: state})
+
+      {:error, reason} ->
+        {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
+    end
   end
 
   # ---- effect interpreter ----
@@ -480,12 +480,37 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # Log text must never carry handler values. Handlers receive and return the config
+  # (client credentials, req_options), and Exception.message/1 of a MatchError,
+  # CaseClauseError, BadMapError, WithClauseError or an ErlangError embeds the offending
+  # value; so do exit terms like {:timeout, {GenServer, :call, [pid, msg, t]}}. Only
+  # RuntimeError and ArgumentError messages (author-written strings) are logged; for
+  # anything else, the kind, struct name or tag, never the payload. The reply to the
+  # caller keeps the full term.
   defp describe_crash(kind, reason, stacktrace) do
     case Exception.normalize(kind, reason, stacktrace) do
-      exception when is_exception(exception) -> Exception.format_banner(:error, exception)
-      other -> Exception.format_banner(kind, other)
+      %mod{} = e when kind == :error and mod in [RuntimeError, ArgumentError] ->
+        "error #{inspect(mod)}: " <> Exception.message(e)
+
+      %mod{} when kind == :error ->
+        "error #{inspect(mod)}"
+
+      term ->
+        "#{kind} " <> describe_term(term)
     end
   end
+
+  defp describe_term(term) when is_atom(term), do: inspect(term)
+
+  defp describe_term(term)
+       when is_tuple(term) and tuple_size(term) > 0 and is_atom(elem(term, 0)),
+       do: "{#{inspect(elem(term, 0))}, ...}"
+
+  defp describe_term(term) when is_tuple(term), do: "a tuple"
+  defp describe_term(term) when is_map(term), do: "a map"
+  defp describe_term(term) when is_list(term), do: "a list"
+  defp describe_term(term) when is_binary(term), do: "a binary"
+  defp describe_term(_term), do: "a term"
 
   # Stack frames can carry call arguments (a FunctionClauseError's top frame does),
   # and an argument may be the config, which can hold credentials. Log arities only.

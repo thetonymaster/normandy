@@ -1,6 +1,8 @@
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
 
+  @moduletag :capture_log
+
   import ExUnit.CaptureLog
 
   alias Normandy.Agents.BaseAgent
@@ -891,6 +893,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
   end
 
+  def handle_telemetry(_event, measurements, metadata, {test_pid, ref}),
+    do: send(test_pid, {:telemetry, ref, measurements, metadata})
+
   describe "failure replies and crashing callbacks (AGENTS-1)" do
     defp final_handlers(overrides \\ %{}) do
       Map.merge(
@@ -919,15 +924,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     defp attach_telemetry(event) do
       ref = make_ref()
-      test_pid = self()
 
       :telemetry.attach(
         {__MODULE__, ref},
         event,
-        fn _event, measurements, metadata, _ ->
-          send(test_pid, {:telemetry, ref, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_telemetry/4,
+        {self(), ref}
       )
 
       on_exit(fn -> :telemetry.detach({__MODULE__, ref}) end)
@@ -1061,17 +1063,58 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     test "a subscriber that exits or throws does not fail the turn" do
+      ref = attach_telemetry([:normandy, :turn, :subscriber, :exception])
+
       subscribers = [
-        {"s-sub-exit", fn _name, _meta -> exit(:gone) end},
-        {"s-sub-throw", fn _name, _meta -> throw(:nope) end}
+        {"s-sub-exit", :exit, fn _name, _meta -> exit(:gone) end},
+        {"s-sub-throw", :throw, fn _name, _meta -> throw(:nope) end}
       ]
 
-      for {sid, sub} <- subscribers do
+      for {sid, kind, sub} <- subscribers do
         capture_log(fn ->
           {srv, _store} = start_server(sid, base_config(), subscriber: sub)
           assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
         end)
+
+        assert_received {:telemetry, ^ref, %{count: 1}, %{session_id: ^sid, kind: ^kind}}
       end
+    end
+
+    test "a MatchError crash logs the exception type but never the matched value" do
+      validate = fn _config, _value ->
+        {:ok, _} = Enum.at([{:error, %{secret: "SENTINEL-123"}}], 0)
+      end
+
+      {srv, _store} =
+        start_server("s-crash-secret", base_config(),
+          handlers: final_handlers(%{validate: validate})
+        )
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:handler_crashed, :validate, %MatchError{}}} =
+                   Turn.Server.run(srv, "hi")
+        end)
+
+      assert log =~ "MatchError"
+      refute log =~ "SENTINEL-123"
+    end
+
+    test "an exit with a tuple term logs the tag but not the payload" do
+      append = fn _config, _role, _content ->
+        exit({:timeout, {GenServer, :call, [self(), "SENTINEL-456", 5000]}})
+      end
+
+      {srv, _store} =
+        start_server("s-exit-secret", base_config(), handlers: final_handlers(%{append: append}))
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:handler_crashed, :append, {:timeout, _}}} = Turn.Server.run(srv, "hi")
+        end)
+
+      assert log =~ "{:timeout, ...}"
+      refute log =~ "SENTINEL-456"
     end
   end
 end
