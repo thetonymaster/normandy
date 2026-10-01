@@ -28,6 +28,7 @@ defmodule Normandy.A2A.Server do
   alias Claudio.A2A.Part
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
@@ -47,6 +48,9 @@ defmodule Normandy.A2A.Server do
     - `:version` - Agent version
     - `:provider_url` - Provider URL
     - `:provider_org` - Provider organization name
+    - `:expose_tools` - tool names to list as skills in the public card, or `:all`.
+      Default: none, so an internal or privileged tool is not advertised unless
+      you choose to.
 
   """
   @spec build_agent_card(BaseAgentConfig.t(), keyword()) :: Claudio.A2A.AgentCard.t()
@@ -77,24 +81,38 @@ defmodule Normandy.A2A.Server do
           AgentCard.add_interface(card, url, "jsonrpc+http", "0.3")
       end
 
-    # Add skills from registered tools
-    add_tool_skills(card, config.tool_registry)
+    add_tool_skills(card, config.tool_registry, Keyword.get(opts, :expose_tools, []))
   end
 
   @doc """
   Handles an incoming A2A message by routing it through the agent.
 
-  Returns a `Claudio.A2A.Task` with the result as an artifact.
+  Returns a `Claudio.A2A.Task` with the result as an artifact, or:
+
+    - `{:error, :no_text}` - the message has no text part (file or data parts
+      alone are not run as an empty prompt)
+    - `{:error, :agent_failed}` - the agent raised or exited. The remote caller
+      gets only this; the detail is logged.
+
+  Each call runs on the given `config`: the A2A `context_id` and `task_id` do
+  not carry memory between calls.
   """
   @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t()) ::
           {:ok, Claudio.A2A.Task.t()} | {:error, term()}
   def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message) do
-    # Extract text from message parts
-    text =
-      message.parts
-      |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
-      |> String.trim()
+    case message_text(message) do
+      "" -> {:error, :no_text}
+      text -> run_agent(config, text)
+    end
+  end
 
+  defp message_text(message) do
+    message.parts
+    |> Enum.map_join("\n", fn part -> Map.get(part, :text) || "" end)
+    |> String.trim()
+  end
+
+  defp run_agent(config, text) do
     # Build user input matching the agent's input schema
     user_input =
       case config.input_schema do
@@ -127,38 +145,46 @@ defmodule Normandy.A2A.Server do
       {:ok, task}
     rescue
       error ->
-        require Logger
-
-        Logger.error(
-          "A2A Server handle_message failed: #{Exception.message(error)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
-        )
-
-        {:error, Exception.message(error)}
+        agent_failed(Exception.format(:error, error, __STACKTRACE__))
+    catch
+      :exit, reason ->
+        agent_failed(Exception.format(:exit, reason, __STACKTRACE__))
     end
   end
 
-  defp add_tool_skills(card, nil), do: card
+  # The remote caller is outside this system: it gets a generic error, and the
+  # detail (which can name internals) stays in the log.
+  defp agent_failed(detail) do
+    require Logger
+    Logger.error("A2A Server handle_message: the agent failed\n" <> detail)
+    {:error, :agent_failed}
+  end
 
-  defp add_tool_skills(card, %Registry{} = registry) do
-    Registry.list(registry)
+  defp add_tool_skills(card, nil, _expose), do: card
+
+  defp add_tool_skills(card, %Registry{} = registry, expose) do
+    registry
+    |> Registry.list()
+    |> Enum.filter(&(expose == :all or BaseTool.tool_name(&1) in expose))
     |> Enum.reduce(card, fn tool, acc ->
-      name = BaseTool.tool_name(tool)
-      description = BaseTool.tool_description(tool)
-      AgentCard.add_skill(acc, name, description)
+      AgentCard.add_skill(acc, BaseTool.tool_name(tool), BaseTool.tool_description(tool))
     end)
   end
 
   defp extract_response_text(response) when is_binary(response), do: response
 
+  # Anything else goes out as the schema's JSON (its declared fields only), never
+  # inspect/1 output, which would show the remote caller internal metadata. A
+  # value with no BaseIOSchema encoding raises, and the caller gets :agent_failed.
   defp extract_response_text(response) when is_map(response) do
     cond do
       Map.has_key?(response, :chat_message) -> to_string(response.chat_message)
       Map.has_key?(response, :content) -> to_string(response.content)
-      true -> inspect(response)
+      true -> BaseIOSchema.to_json(response)
     end
   end
 
-  defp extract_response_text(response), do: inspect(response)
+  defp extract_response_text(response), do: BaseIOSchema.to_json(response)
 
   defp generate_task_id do
     "task-" <> (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
