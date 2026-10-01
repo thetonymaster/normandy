@@ -142,6 +142,9 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
   persistently bad request can open the circuit.
 - The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
   receives `{:error, %Normandy.LLMError{}}` for returned failures.
+- API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
+  response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and raise from
+  `run/2`. `on_parse_failure: :error` returns `type: :invalid_output`.
 
 ## New, non-breaking
 

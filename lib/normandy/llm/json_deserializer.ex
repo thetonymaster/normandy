@@ -91,8 +91,8 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `:fallback` (default) — Returns the raw LLM text as-is, emits a
       `Logger.warning` describing the failure, and fires
       `[:normandy, :json_deserializer, :fallback]` telemetry.
-    - `:error` — Returns `{:error, reason}` directly to the caller; no
-      fallback text is produced.
+    - `:error` — Returns `{:error, %Normandy.LLMError{type: :invalid_output, reason: reason}}`
+      to the caller; no fallback text is produced.
 
   ## Retry raw-completion contract
 

@@ -58,6 +58,23 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:task_budget` - total tokens for the agentic turn (advisory; API minimum 20,000)
   - `:base_url` - Custom API base URL (for testing)
 
+  ## Errors
+
+  `converse/7` and `stream_converse/7` return `{:error, %Normandy.LLMError{}}` on failure,
+  classified from the Claudio error type (or the HTTP status, for Claudio's generic
+  `:api_error`, which it uses for every streaming HTTP error):
+
+  - `:rate_limit` (429), `:overloaded` (529), `:server` (5xx, 408, no status) and
+    `:transport` (connection-level failures) are retryable
+  - `:authentication` (401), `:permission` (403), `:not_found` (404) and
+    `:invalid_request` (other 4xx) are not retryable
+  - `:unknown` covers anything else and is not retryable
+  - `on_parse_failure: :error` returns `type: :invalid_output`
+
+  Claudio's client-level `retry:` (in `req_options` or the client config) retries HTTP
+  failures before Normandy sees them; enabling it together with `retry_options`
+  multiplies the attempts.
+
   `validate_options!/1` checks the option combinations and values above once, up front;
   `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` call it for you.
 
@@ -91,6 +108,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   alias Normandy.LLM.Json.SchemaBinder
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLM.StructuredOutputs
+  alias Normandy.LLMError
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -118,6 +136,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     alias Normandy.Components.ContentBlock.Image, as: ImageBlock
     alias Normandy.Components.ContentBlock.Text, as: TextBlock
     alias Normandy.Components.Message
+    alias Normandy.LLMError
 
     @doc """
     Legacy completion function (not used with Claudio).
@@ -212,13 +231,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
             task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
           }
 
-          normalized_response = convert_response_to_normandy(response, response_model, context)
+          case convert_response_to_normandy(response, response_model, context) do
+            {:error, %LLMError{}} = error ->
+              error
 
-          {normalized_response, ClaudioAdapter.extract_usage(response),
-           ClaudioAdapter.response_meta(response)}
+            normalized_response ->
+              {normalized_response, ClaudioAdapter.extract_usage(response),
+               ClaudioAdapter.response_meta(response)}
+          end
 
         {:error, error} ->
-          handle_error(error, response_model)
+          handle_error(error)
       end
     end
 
@@ -259,11 +282,14 @@ defmodule Normandy.LLM.ClaudioAdapter do
             task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
           }
 
-          {ClaudioAdapter.__handle_structured_response__(
-             response,
-             response_model,
-             context
-           ), ClaudioAdapter.extract_usage(response), ClaudioAdapter.response_meta(response)}
+          case ClaudioAdapter.__handle_structured_response__(response, response_model, context) do
+            {:error, %LLMError{}} = error ->
+              error
+
+            handled ->
+              {handled, ClaudioAdapter.extract_usage(response),
+               ClaudioAdapter.response_meta(response)}
+          end
 
         {:error, error} ->
           case ClaudioAdapter.__structured_error_action__(error) do
@@ -279,7 +305,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
               )
 
             :propagate ->
-              {handle_error(error, response_model), nil}
+              handle_error(error)
           end
       end
     end
@@ -403,7 +429,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           {:ok, final_stream}
 
         {:error, error} ->
-          {:error, error}
+          {:error, ClaudioAdapter.__to_llm_error__(error)}
       end
     end
 
@@ -912,24 +938,29 @@ defmodule Normandy.LLM.ClaudioAdapter do
         {:ok, validated_schema} ->
           validated_schema
 
+        # An LLM failure during a parse retry is not a parse failure.
+        {:error, %LLMError{}} = error ->
+          error
+
         {:error, reason} ->
           ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
       end
     end
 
-    defp handle_error(error, response_model) do
-      # Log error and return empty response_model
-      # In production, you might want more sophisticated error handling
-      IO.warn("Claudio API error: #{inspect(error)}")
-      response_model
-    end
+    defp handle_error(error), do: {:error, ClaudioAdapter.__to_llm_error__(error)}
   end
 
   @doc false
   def apply_parse_failure(schema, content, reason, context) do
     case __on_parse_failure_policy__(context) do
       :error ->
-        {:error, reason}
+        {:error,
+         LLMError.new(
+           type: :invalid_output,
+           retryable?: false,
+           detail: "model output did not match the schema",
+           reason: reason
+         )}
 
       :fallback when is_binary(content) ->
         require Logger
@@ -1210,12 +1241,56 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do: Claudio.Messages.Request.set_task_budget(request, total, remaining: remaining)
 
   @doc false
+  # Classifies a Claudio failure (spec section 2). A generic :api_error is classified by
+  # status: Claudio types every streaming HTTP error as :api_error.
+  @spec __to_llm_error__(term()) :: LLMError.t()
+  def __to_llm_error__(%LLMError{} = error), do: error
+
+  def __to_llm_error__(%Claudio.APIError{type: type, status_code: status, message: message} = e) do
+    {llm_type, retryable?} = classify_api_error(type, status)
+
+    LLMError.new(
+      type: llm_type,
+      status: status,
+      retryable?: retryable?,
+      detail: message,
+      reason: e
+    )
+  end
+
+  def __to_llm_error__(%module{} = e)
+      when module in [Req.TransportError, Mint.TransportError, Mint.HTTPError] do
+    LLMError.new(type: :transport, retryable?: true, detail: Exception.message(e), reason: e)
+  end
+
+  def __to_llm_error__(other), do: LLMError.wrap(other)
+
+  defp classify_api_error(:rate_limit_error, _status), do: {:rate_limit, true}
+  defp classify_api_error(:overloaded_error, _status), do: {:overloaded, true}
+  defp classify_api_error(:authentication_error, _status), do: {:authentication, false}
+  defp classify_api_error(:permission_error, _status), do: {:permission, false}
+  defp classify_api_error(:not_found_error, _status), do: {:not_found, false}
+  defp classify_api_error(:invalid_request_error, _status), do: {:invalid_request, false}
+  defp classify_api_error(_type, status), do: classify_status(status)
+
+  defp classify_status(nil), do: {:server, true}
+  defp classify_status(429), do: {:rate_limit, true}
+  defp classify_status(529), do: {:overloaded, true}
+  defp classify_status(408), do: {:server, true}
+  defp classify_status(status) when status >= 500, do: {:server, true}
+  defp classify_status(401), do: {:authentication, false}
+  defp classify_status(403), do: {:permission, false}
+  defp classify_status(404), do: {:not_found, false}
+  defp classify_status(status) when status >= 400, do: {:invalid_request, false}
+  defp classify_status(_status), do: {:unknown, false}
+
+  @doc false
   # Decides what to do when the structured-outputs call errors. A request-shape
   # rejection (the API not accepting the output_format/schema) is recoverable via
   # the legacy parse-retry path, which sends no output_format — so fall back.
   # Auth/permission/rate-limit/overload/transport errors are NOT recoverable that
   # way (the legacy call hits the same endpoint with the same credentials), so
-  # surface them via handle_error instead of duplicating the request.
+  # surface them as a classified error instead of duplicating the request.
   @spec __structured_error_action__(term()) :: :fallback | :propagate
   def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error}), do: :fallback
   def __structured_error_action__(_error), do: :propagate
@@ -1281,5 +1356,5 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def __raw_completion__({:ok, response}),
     do: {extract_content(response), extract_usage(response)}
 
-  def __raw_completion__({:error, error}), do: {:error, error}
+  def __raw_completion__({:error, error}), do: {:error, __to_llm_error__(error)}
 end

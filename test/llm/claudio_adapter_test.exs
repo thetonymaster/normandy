@@ -121,8 +121,9 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert {"a\nb", nil} = ClaudioAdapter.__raw_completion__({:ok, response})
     end
 
-    test "__raw_completion__ passes a Claudio API error straight through" do
-      assert {:error, :boom} = ClaudioAdapter.__raw_completion__({:error, :boom})
+    test "__raw_completion__ classifies a Claudio API error as an LLMError" do
+      assert {:error, %Normandy.LLMError{type: :unknown, reason: :boom}} =
+               ClaudioAdapter.__raw_completion__({:error, :boom})
     end
   end
 
@@ -148,7 +149,8 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     end
 
     test ":error policy returns {:error, reason}" do
-      assert {:error, :some_reason} =
+      assert {:error,
+              %Normandy.LLMError{type: :invalid_output, retryable?: false, reason: :some_reason}} =
                ClaudioAdapter.apply_parse_failure(%MultiField{}, "raw", :some_reason, %{
                  on_parse_failure: :error
                })
@@ -206,7 +208,11 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     test "non-conforming content under :error policy returns an error tuple" do
       resp = text_response(:refusal, "nope")
 
-      assert {:error, {:structured_output_incomplete, :refusal}} =
+      assert {:error,
+              %Normandy.LLMError{
+                type: :invalid_output,
+                reason: {:structured_output_incomplete, :refusal}
+              }} =
                ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
                  on_parse_failure: :error
                })
@@ -219,7 +225,11 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         "usage" => %{}
       }
 
-      assert {:error, {:structured_output_incomplete, "refusal"}} =
+      assert {:error,
+              %Normandy.LLMError{
+                type: :invalid_output,
+                reason: {:structured_output_incomplete, "refusal"}
+              }} =
                ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
                  on_parse_failure: :error
                })
