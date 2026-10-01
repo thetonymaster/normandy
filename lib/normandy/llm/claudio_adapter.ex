@@ -58,6 +58,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:task_budget` - total tokens for the agentic turn (advisory; API minimum 20,000)
   - `:base_url` - Custom API base URL (for testing)
 
+  `validate_options!/1` checks the option combinations and values above once, up front;
+  `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` call it for you.
+
   Which models accept which values is left to the API: an unsupported pairing
   returns the API's 400 through the normal error path.
 
@@ -1067,12 +1070,19 @@ defmodule Normandy.LLM.ClaudioAdapter do
         Claudio.Client.new(config)
       end
 
-    case Map.get(client.options, :req_options) do
+    case check_req_options!(client) do
+      nil -> req
+      req_options -> Req.merge(req, req_options)
+    end
+  end
+
+  defp check_req_options!(%__MODULE__{options: options}) do
+    case Map.get(options, :req_options) do
       nil ->
-        req
+        nil
 
       req_options when is_list(req_options) ->
-        Req.merge(req, req_options)
+        req_options
 
       other ->
         raise ArgumentError,
@@ -1080,6 +1090,36 @@ defmodule Normandy.LLM.ClaudioAdapter do
                 "keyword list of Req options (for example [plug: {Req.Test, MyStub}]), " <>
                 "got: #{inspect(other)}"
     end
+  end
+
+  @doc """
+  Raises `ArgumentError` when `client.options` can never produce a valid request, and
+  returns `client` unchanged otherwise.
+
+  Checks the option combinations (`:thinking` with `:thinking_budget`, `:thinking_display`
+  without `thinking: :adaptive`), the values Claudio validates in its own request setters,
+  and the shape of `options[:req_options]`. It runs the same option pass real requests
+  run, against a placeholder request, so nothing is duplicated and no network is touched.
+
+  `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` call it, so a misconfigured agent
+  fails when it is configured rather than on every call, where the retry policy would
+  wait through its backoff before surfacing the error.
+
+  The `:fallbacks` check on streaming calls is not made here: it depends on the call,
+  so it stays per call.
+  """
+  @spec validate_options!(t()) :: t()
+  def validate_options!(%__MODULE__{} = client) do
+    _ = check_req_options!(client)
+
+    _ =
+      __apply_client_options__(
+        Claudio.Messages.Request.new("validate-options-placeholder"),
+        client.options,
+        []
+      )
+
+    client
   end
 
   @doc false

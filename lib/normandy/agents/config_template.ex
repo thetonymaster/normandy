@@ -85,5 +85,11 @@ defmodule Normandy.Agents.ConfigTemplate do
       memory: Normandy.Components.AgentMemory.new_memory(Map.get(tmpl, :max_messages))
     }
     |> Normandy.Agents.BaseAgent.validate_compaction_config!()
+    |> validate_client_options!()
+  end
+
+  defp validate_client_options!(%BaseAgentConfig{client: client} = config) do
+    _ = Normandy.Agents.BaseAgent.validate_client_options!(client)
+    config
   end
 end

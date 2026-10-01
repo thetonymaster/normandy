@@ -178,4 +178,72 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
       end
     end
   end
+
+  describe "validate_options!/1" do
+    test "returns the client unchanged for valid options and for empty options" do
+      empty = %ClaudioAdapter{api_key: "k", options: %{}}
+      assert ClaudioAdapter.validate_options!(empty) == empty
+
+      valid = %ClaudioAdapter{
+        api_key: "k",
+        options: %{thinking: :adaptive, thinking_display: :summarized, effort: :high}
+      }
+
+      assert ClaudioAdapter.validate_options!(valid) == valid
+    end
+
+    test "raises for :thinking with :thinking_budget" do
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{thinking: :adaptive, thinking_budget: 1024}
+      }
+
+      assert_raise ArgumentError, ~r/mutually exclusive/, fn ->
+        ClaudioAdapter.validate_options!(client)
+      end
+    end
+
+    test "raises for :thinking_display without thinking: :adaptive" do
+      client = %ClaudioAdapter{api_key: "k", options: %{thinking_display: :summarized}}
+
+      assert_raise ArgumentError, ~r/requires thinking: :adaptive/, fn ->
+        ClaudioAdapter.validate_options!(client)
+      end
+    end
+
+    test "raises for an invalid :thinking value" do
+      client = %ClaudioAdapter{api_key: "k", options: %{thinking: :bogus}}
+      assert_raise ArgumentError, fn -> ClaudioAdapter.validate_options!(client) end
+    end
+
+    test "raises for a non-list :req_options" do
+      client = %ClaudioAdapter{api_key: "k", options: %{req_options: %{plug: :x}}}
+
+      assert_raise ArgumentError, ~r/req_options/, fn ->
+        ClaudioAdapter.validate_options!(client)
+      end
+    end
+
+    test "messages never contain the api key" do
+      for options <- [
+            %{thinking: :adaptive, thinking_budget: 1024},
+            %{thinking_display: :summarized},
+            %{thinking: :bogus},
+            %{req_options: :nope}
+          ] do
+        client = %ClaudioAdapter{api_key: "sk-secret", options: options}
+        error = assert_raise ArgumentError, fn -> ClaudioAdapter.validate_options!(client) end
+        refute error.message =~ "sk-secret"
+      end
+    end
+
+    test ":fallbacks does not raise at validate time (the streaming check is per call)" do
+      client = %ClaudioAdapter{api_key: "k", options: %{fallbacks: :default}}
+      assert ClaudioAdapter.validate_options!(client) == client
+
+      assert_raise ArgumentError, ~r/:fallbacks on streaming/, fn ->
+        apply_opts(%{fallbacks: :default}, stream: true)
+      end
+    end
+  end
 end

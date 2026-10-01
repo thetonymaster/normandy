@@ -18,6 +18,7 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     BaseAgent.init(%{client: client, model: "m", temperature: nil, behaviours: behaviours})
   end
 
+  @pinned %Config{compactor: {Compactor.WindowManager, [max_tokens: 50_000]}}
   @unpinned %Config{compactor: {Compactor.WindowManager, [reserved_tokens: 16]}}
 
   test "a non-Claudio client with an unpinned compactor and the default catalog raises at init" do
@@ -65,5 +66,25 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
   test "passes with a custom catalog (it may work with any client)" do
     behaviours = %{@unpinned | model_catalog: {CustomCatalog, []}}
     assert %Normandy.Agents.BaseAgentConfig{} = init(%OtherClient{}, behaviours)
+  end
+
+  describe "ClaudioAdapter client options" do
+    alias Normandy.LLM.ClaudioAdapter
+
+    test "init raises at configuration time for an invalid options combination" do
+      client = %ClaudioAdapter{
+        api_key: "sk-secret",
+        options: %{thinking: :adaptive, thinking_budget: 1024}
+      }
+
+      error = assert_raise ArgumentError, fn -> init(client, nil) end
+      assert error.message =~ "mutually exclusive"
+      refute error.message =~ "sk-secret"
+    end
+
+    test "init accepts valid ClaudioAdapter options and ignores non-Claudio clients" do
+      assert %{} = init(%ClaudioAdapter{api_key: "k", options: %{effort: :high}}, @pinned)
+      assert %{} = init(%OtherClient{}, nil)
+    end
   end
 end

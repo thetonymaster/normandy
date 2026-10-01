@@ -83,6 +83,8 @@ defmodule Normandy.Agents.BaseAgent do
         behaviours: Map.get(config, :behaviours, nil)
       })
 
+    _ = validate_client_options!(Map.get(config, :client))
+
     # Initialize circuit breaker if enabled
     circuit_breaker =
       if Map.get(config, :enable_circuit_breaker, false) do
@@ -721,6 +723,15 @@ defmodule Normandy.Agents.BaseAgent do
        do: ref
 
   defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
+
+  @doc false
+  # Fail at configuration time on an invalid ClaudioAdapter `client.options`, instead of
+  # on every call (where the retry policy would wait through its backoff first).
+  @spec validate_client_options!(term()) :: term()
+  def validate_client_options!(%Normandy.LLM.ClaudioAdapter{} = client),
+    do: Normandy.LLM.ClaudioAdapter.validate_options!(client)
+
+  def validate_client_options!(client), do: client
 
   @doc false
   # A real compactor sizes against the model's context window. With no pinned

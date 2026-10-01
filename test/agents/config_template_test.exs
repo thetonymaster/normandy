@@ -184,4 +184,51 @@ defmodule Normandy.Agents.ConfigTemplateTest do
 
     assert %Normandy.Agents.BaseAgentConfig{} = ConfigTemplate.rebuild(pinned, supp, "T")
   end
+
+  test "rebuild raises for a ClaudioAdapter client with invalid options" do
+    tmpl = %{
+      template_id: "T",
+      model: "claude-x",
+      temperature: 0.3,
+      max_tokens: 100,
+      max_tool_iterations: 4,
+      max_tool_concurrency: 2,
+      name: "n",
+      prompt_specification: %Normandy.Components.PromptSpecification{},
+      input_schema: nil,
+      output_schema: nil,
+      behaviours_refs: %{
+        policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
+        budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
+        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        compactor: {Normandy.Behaviours.Compactor.NoOp, []},
+        model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
+        session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
+        session_registry: {Normandy.Behaviours.SessionRegistry.Native, []}
+      }
+    }
+
+    build = fn options ->
+      %{
+        tool_registry: nil,
+        before_hooks: [],
+        after_hooks: [],
+        client_builder: fn token ->
+          %Normandy.LLM.ClaudioAdapter{api_key: token, options: options}
+        end
+      }
+    end
+
+    error =
+      assert_raise ArgumentError, fn ->
+        ConfigTemplate.rebuild(
+          tmpl,
+          build.(%{thinking: :adaptive, thinking_budget: 1}),
+          "sk-secret"
+        )
+      end
+
+    refute error.message =~ "sk-secret"
+    assert %BaseAgentConfig{} = ConfigTemplate.rebuild(tmpl, build.(%{effort: :high}), "T")
+  end
 end

@@ -127,6 +127,9 @@ usage maps in telemetry and those returned to callers change shape.
   `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.
 - `:fallbacks` is rejected on streaming calls: partial output from a declining model would
   already have reached the stream callback.
+- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` now raise on an invalid
+  `ClaudioAdapter` `client.options` combination instead of failing on the first call (after
+  any retries). `ClaudioAdapter.validate_options!/1` is the public check.
 - With `:task_budget`, Normandy sends the total and, after in-turn compaction, a fixed
   `remaining` that subtracts the tokens compaction removed from the current turn.
 - `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
