@@ -57,6 +57,38 @@ defmodule Normandy.Behaviours.ConfigTest do
     end
   end
 
+  # Reports what the pipeline hands it, including the ref's opts.
+  defmodule RecordingTracker do
+    @behaviour Normandy.Behaviours.BudgetTracker
+
+    @impl true
+    def check(scope, call, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:check, scope, call.name, opts[:limit]})
+      :ok
+    end
+
+    @impl true
+    def record(scope, call, result, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:record, scope, call.name, result, opts[:limit]})
+      :ok
+    end
+  end
+
+  describe "budget tracker opts" do
+    test "check and record receive the {module, opts} ref's opts and the call" do
+      bundle = %Config{budget: {RecordingTracker, test_pid: self(), limit: 5}}
+      p = Config.to_pipeline(bundle)
+      config = %{name: "agent", model: "m"}
+      call = %ToolCall{name: "search"}
+
+      assert :ok = p.budget_check_fn.(config, call)
+      assert :ok = p.budget_record_fn.(config, call, :result)
+
+      assert_received {:check, %{agent: "agent", model: "m"}, "search", 5}
+      assert_received {:record, %{agent: "agent", model: "m"}, "search", :result, 5}
+    end
+  end
+
   describe "to_pipeline/1 equivalence with default_pipeline/0" do
     test "default bundle reproduces the chokepoint's default behaviour" do
       p = Config.to_pipeline(%Config{})

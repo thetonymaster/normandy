@@ -63,7 +63,7 @@ defmodule Normandy.Behaviours.Config do
 
   def to_pipeline(%__MODULE__{} = bundle) do
     {policy_mod, policy_opts} = bundle.policy
-    {budget_mod, _budget_opts} = bundle.budget
+    {budget_mod, budget_opts} = bundle.budget
 
     %Pipeline{
       before_hooks: bundle.before_hooks,
@@ -72,10 +72,10 @@ defmodule Normandy.Behaviours.Config do
         policy_mod.check(call, %{config: config, tool: tool, opts: policy_opts})
       end,
       budget_check_fn: fn config, call ->
-        budget_mod.check(scope(config), call)
+        budget_mod.check(scope(config), call, budget_opts)
       end,
-      budget_record_fn: fn config, _call, result ->
-        budget_mod.record(scope(config), result)
+      budget_record_fn: fn config, call, result ->
+        budget_mod.record(scope(config), call, result, budget_opts)
       end,
       execute_fn: fn _config, tool, _name -> Executor.execute_tool(tool) end
     }

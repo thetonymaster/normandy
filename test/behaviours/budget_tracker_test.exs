@@ -4,12 +4,12 @@ defmodule Normandy.Behaviours.BudgetTrackerTest do
   alias Normandy.Behaviours.BudgetTracker
 
   describe "NoOp" do
-    test "check/2 always returns :ok" do
-      assert BudgetTracker.NoOp.check(%{agent: "a"}, %{any: :thing}) == :ok
+    test "check/3 always returns :ok" do
+      assert BudgetTracker.NoOp.check(%{agent: "a"}, %{any: :thing}, []) == :ok
     end
 
-    test "record/2 always returns :ok" do
-      assert BudgetTracker.NoOp.record(%{agent: "a"}, %{tokens: 100}) == :ok
+    test "record/4 always returns :ok" do
+      assert BudgetTracker.NoOp.record(%{agent: "a"}, %{name: "t"}, %{tokens: 100}, []) == :ok
     end
 
     test "implements the BudgetTracker behaviour" do
