@@ -18,6 +18,7 @@ defmodule Normandy.Context.TokenCounter do
   """
 
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ContentBlock.Document
   alias Normandy.Components.ContentBlock.Image
   alias Normandy.Components.ContentBlock.Text
@@ -69,8 +70,8 @@ defmodule Normandy.Context.TokenCounter do
   @spec count_conversation(ClaudioAdapter.t(), struct()) ::
           {:ok, map()} | {:error, term()}
   def count_conversation(client, agent) do
-    model = Map.get(agent, :model, "claude-haiku-4-5-20251001")
-    messages = build_messages_payload(agent.memory)
+    model = agent_model!(agent)
+    messages = build_messages_payload(agent_memory!(agent))
 
     if messages == [] do
       # No messages → no tokens; short-circuit rather than send a request the
@@ -92,8 +93,22 @@ defmodule Normandy.Context.TokenCounter do
 
       count_tokens(client, payload)
     end
-  rescue
-    e -> {:error, {:malformed_agent, e}}
+  end
+
+  # Tokenizers differ between model generations, so the count needs the agent's
+  # own model; a malformed agent is a caller bug and raises before any request.
+  defp agent_model!(%{model: model}) when is_binary(model) and model != "", do: model
+
+  defp agent_model!(_agent) do
+    raise ArgumentError,
+          "TokenCounter.count_conversation/2: agent has no :model (a non-empty string)"
+  end
+
+  defp agent_memory!(%{memory: %AgentMemory{} = memory}), do: memory
+
+  defp agent_memory!(_agent) do
+    raise ArgumentError,
+          "TokenCounter.count_conversation/2: agent has no :memory (a %Normandy.Components.AgentMemory{})"
   end
 
   @doc """
@@ -186,7 +201,11 @@ defmodule Normandy.Context.TokenCounter do
     Enum.map(content, &block_to_claudio_map/1)
   end
 
-  defp format_content(_), do: ""
+  defp format_content(other) do
+    raise ArgumentError,
+          "TokenCounter: cannot count message content of type " <>
+            Describe.type_of(other)
+  end
 
   defp block_to_claudio_map(%Normandy.Components.ContentBlock.Text{} = b),
     do: Text.to_claudio(b)

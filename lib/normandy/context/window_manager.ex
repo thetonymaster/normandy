@@ -106,7 +106,7 @@ defmodule Normandy.Context.WindowManager do
       tokens = WindowManager.estimate_tokens("Hello, world!")
       #=> ~4 tokens
   """
-  @spec estimate_tokens(String.t()) :: pos_integer()
+  @spec estimate_tokens(String.t()) :: non_neg_integer()
   def estimate_tokens(text) when is_binary(text) do
     # Rough estimate: ~4 characters per token
     # More accurate for English text
@@ -122,7 +122,7 @@ defmodule Normandy.Context.WindowManager do
 
       tokens = WindowManager.estimate_conversation_tokens(agent.memory)
   """
-  @spec estimate_conversation_tokens(map()) :: pos_integer()
+  @spec estimate_conversation_tokens(map()) :: non_neg_integer()
   def estimate_conversation_tokens(memory) do
     history = AgentMemory.history(memory)
 
@@ -141,7 +141,7 @@ defmodule Normandy.Context.WindowManager do
       tokens = WindowManager.estimate_message_content_tokens("Hello")
       #=> ~2
   """
-  @spec estimate_message_content_tokens(term()) :: pos_integer()
+  @spec estimate_message_content_tokens(term()) :: non_neg_integer()
   def estimate_message_content_tokens(content) when is_binary(content) do
     estimate_tokens(content)
   end

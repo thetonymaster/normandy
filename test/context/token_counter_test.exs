@@ -215,10 +215,19 @@ defmodule Normandy.Context.TokenCounterTest do
         memory: "not-a-valid-memory"
       }
 
-      result = TokenCounter.count_conversation(client, malformed_agent)
+      # A malformed agent is a caller bug: it raises rather than reaching the API.
+      assert_raise ArgumentError, fn ->
+        TokenCounter.count_conversation(client, malformed_agent)
+      end
+    end
+  end
 
-      # Should handle gracefully
-      assert match?({:error, _}, result) or match?({:ok, _}, result)
+  describe "count_conversation/2 input checks" do
+    test "an agent without a model raises instead of being counted against a default model",
+         %{client: client, agent: agent} do
+      assert_raise ArgumentError, ~r/agent has no :model/, fn ->
+        TokenCounter.count_conversation(client, %{agent | model: nil})
+      end
     end
   end
 

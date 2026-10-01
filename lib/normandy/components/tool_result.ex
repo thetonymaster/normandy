@@ -15,7 +15,8 @@ defmodule Normandy.Components.ToolResult do
 
   schema do
     field(:tool_call_id, :string)
-    field(:output, :map)
+    # Any term the tool returned: text, a number, a map or a list.
+    field(:output, :any)
     field(:is_error, :boolean, default: false)
   end
 end
@@ -43,7 +44,20 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
 
   defp format_tool_output(output) when is_binary(output), do: output
   defp format_tool_output(output) when is_number(output), do: to_string(output)
-  defp format_tool_output(output) when is_map(output), do: Poison.encode!(output)
+
+  # Maps and lists (a search tool's results) go to the model as JSON, through
+  # the configured adapter. A term JSON cannot express (a tuple, a pid) is
+  # shown with inspect/1, which still gives the model the whole value.
+  defp format_tool_output(output) when is_map(output) or is_list(output) do
+    adapter = Application.get_env(:normandy, :adapter, Poison)
+
+    try do
+      adapter.encode!(output)
+    rescue
+      _ -> inspect(output)
+    end
+  end
+
   defp format_tool_output(output), do: inspect(output)
 
   def get_schema(_), do: %{}
