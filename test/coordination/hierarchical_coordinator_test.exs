@@ -38,6 +38,16 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
     end
   end
 
+  defmodule AssignmentPlan do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "a manager reply that assigns tasks by worker id" do
+      field(:chat_message, :string, description: "message")
+      field(:delegation_plan, :map, description: "worker id => task", default: %{})
+    end
+  end
+
   defp agent(name, reply, output_schema \\ nil, fail \\ false) do
     config = %{
       client: %CaptureClient{test_pid: self(), name: name, reply: reply, fail: fail},
@@ -134,6 +144,77 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
           %{worker_id: "nope", task: "a"}
         ])
       end
+    end
+  end
+
+  describe "delegation strategies" do
+    defp workers do
+      [
+        %{id: "w1", agent: agent("w1", %{chat_message: "r1"})},
+        %{id: "w2", agent: agent("w2", %{chat_message: "r2"})}
+      ]
+    end
+
+    defp worker_input(name) do
+      assert_receive {:llm_call, ^name, messages}
+      List.last(messages).content
+    end
+
+    test ":broadcast sends the original input to every worker" do
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: agent("manager", %{delegation_plan: ["ignored"]}, %Plan{}),
+          workers: workers(),
+          delegation_strategy: :broadcast
+        )
+
+      assert {:ok, _} = HierarchicalCoordinator.execute(coordinator, "the original")
+
+      assert worker_input("w1") =~ "the original"
+      assert worker_input("w2") =~ "the original"
+    end
+
+    test ":conditional sends each worker the task the manager assigned to its id" do
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager:
+            agent("manager", %{delegation_plan: %{"w2" => "only for w2"}}, %AssignmentPlan{}),
+          workers: workers(),
+          delegation_strategy: :conditional
+        )
+
+      assert {:ok, _} = HierarchicalCoordinator.execute(coordinator, "x")
+
+      assert worker_input("w2") =~ "only for w2"
+      refute_received {:llm_call, "w1", _}
+    end
+  end
+
+  describe "workers and failures" do
+    test "add_worker/3 and remove_worker/2 change who gets tasks" do
+      coordinator =
+        ["a", "b"]
+        |> coordinator()
+        |> HierarchicalCoordinator.remove_worker("w1")
+        |> HierarchicalCoordinator.add_worker("w3", agent("w3", %{chat_message: "r3"}))
+
+      assert Enum.map(coordinator.workers, & &1.id) == ["w2", "w3"]
+      assert {:ok, _} = HierarchicalCoordinator.execute(coordinator, "x")
+
+      assert_receive {:llm_call, "w2", _}
+      assert_receive {:llm_call, "w3", _}
+      refute_received {:llm_call, "w1", _}
+    end
+
+    test "a failing manager returns {:error, {:manager_failed, reason}}" do
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: agent("manager", %{}, %Plan{}, true),
+          workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
+        )
+
+      assert {:error, {:manager_failed, {:exception, %RuntimeError{message: "worker down"}, _}}} =
+               HierarchicalCoordinator.execute(coordinator, "x")
     end
   end
 end
