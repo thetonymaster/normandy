@@ -63,6 +63,10 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
 
     assert body["output_config"]["task_budget"] ==
              %{"type" => "tokens", "total" => 64_000, "remaining" => 40_000}
+
+    # Only converse_structured sets output_config.format; the legacy fallback does not,
+    # so this proves the structured call site (not the legacy one) built the request.
+    assert body["output_config"]["format"]["type"] == "json_schema"
   end
 
   test "legacy path: remaining reaches the request, and the JSON retry call too" do
@@ -74,6 +78,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
 
     assert_received {:body, first}
     assert_received {:body, retry}
+    refute Map.has_key?(first["output_config"], "format")
     assert first["output_config"]["task_budget"]["remaining"] == 40_000
     assert retry["output_config"]["task_budget"]["remaining"] == 40_000
   end
