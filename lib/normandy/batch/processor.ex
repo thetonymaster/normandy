@@ -54,12 +54,14 @@ defmodule Normandy.Batch.Processor do
   @type progress_callback :: (pos_integer(), pos_integer() -> any())
   @type error_callback :: (term(), term() -> any())
 
+  @type item_result :: {:ok, term()} | {:error, term()}
+
   @type batch_result :: %{
           success: [term()],
           errors: [{term(), term()}],
-          total: pos_integer(),
-          success_count: pos_integer(),
-          error_count: pos_integer()
+          total: non_neg_integer(),
+          success_count: non_neg_integer(),
+          error_count: non_neg_integer()
         }
 
   @default_max_concurrency 10
@@ -71,20 +73,29 @@ defmodule Normandy.Batch.Processor do
   ## Options
 
   - `:max_concurrency` - Maximum concurrent tasks (default: #{@default_max_concurrency})
-  - `:ordered` - Preserve input order in results (default: true)
-  - `:timeout` - Timeout per task in milliseconds (default: #{@default_timeout}ms)
-  - `:on_progress` - Callback function called after each completion: `(completed, total -> any)`
-  - `:on_error` - Callback function called on each error: `(input, error -> any)`
+  - `:ordered` - Return one result per input, in input order (default: true).
+    With `false`, return a `batch_result` map instead.
+  - `:timeout` - Timeout per item in milliseconds (default: #{@default_timeout}ms).
+    An item that runs past it is stopped and fails with `{:exit, :timeout}`;
+    the other items carry on.
+  - `:on_progress` - Called in the caller after each item completes, with the
+    number of items completed so far: `(completed, total -> any)`
+  - `:on_error` - Called in the caller for each failed item: `(input, error -> any)`
 
   ## Returns
 
-  - `{:ok, results}` - List of results (or batch_result map if unordered)
-  - `{:error, reason}` - Fatal error during batch processing
+  - With `ordered: true`: `{:ok, [{:ok, response} | {:error, error}]}`, one per
+    input, in input order.
+  - With `ordered: false`: `{:ok, batch_result}`. `errors` pairs each error
+    with its input, `{input, error}`; both lists are in completion order.
+
+  An error is `{:exception, exception, stacktrace}`, `{:exit, reason}` or
+  `{:throw, value}`.
 
   ## Examples
 
       # Simple batch
-      {:ok, results} = Processor.process_batch(agent, inputs)
+      {:ok, [{:ok, first} | _]} = Processor.process_batch(agent, inputs)
 
       # With configuration
       {:ok, results} = Processor.process_batch(
@@ -97,7 +108,7 @@ defmodule Normandy.Batch.Processor do
       )
   """
   @spec process_batch(agent :: struct(), inputs :: [term()], batch_options()) ::
-          {:ok, [term()] | batch_result()}
+          {:ok, [item_result()] | batch_result()}
   def process_batch(agent, inputs, opts \\ []) when is_list(inputs) do
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
     ordered = Keyword.get(opts, :ordered, true)
@@ -109,39 +120,38 @@ defmodule Normandy.Batch.Processor do
 
     Logger.info("Starting batch processing: #{total} items with concurrency #{max_concurrency}")
 
-    # Process with Task.async_stream
-    results =
+    # Results arrive as items complete. Each carries its index and input (an
+    # exit carries them via zip_input_on_exit), so the callbacks run here in
+    # the caller with a true completion count, and ordered results can be
+    # put back in input order.
+    {outcomes, _completed} =
       inputs
       |> Stream.with_index()
       |> Task.async_stream(
-        fn {input, index} ->
-          # Process the input
-          result = process_single(agent, input, timeout)
-
-          # Progress callback
-          if on_progress, do: on_progress.(index + 1, total)
-
-          # Error callback
-          case result do
-            {:error, error} ->
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              if on_error, do: on_error.(input, error)
-              result
-
-            _ ->
-              result
-          end
-        end,
+        fn {input, index} -> {index, input, process_single(agent, input)} end,
         max_concurrency: max_concurrency,
         timeout: timeout,
-        ordered: ordered
+        on_timeout: :kill_task,
+        zip_input_on_exit: true,
+        ordered: false
       )
-      |> Enum.to_list()
+      |> Enum.map_reduce(0, fn result, completed ->
+        {index, input, outcome} = item_outcome(result)
+        completed = completed + 1
+
+        if on_progress, do: on_progress.(completed, total)
+        if on_error, do: report_error(on_error, input, outcome)
+
+        {{index, input, outcome}, completed}
+      end)
 
     Logger.info("Batch processing complete")
 
-    # Process results
-    process_results(results, ordered)
+    if ordered do
+      {:ok, outcomes |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 2))}
+    else
+      {:ok, results_to_stats(outcomes)}
+    end
   end
 
   @doc """
@@ -165,10 +175,7 @@ defmodule Normandy.Batch.Processor do
   def process_batch_with_stats(agent, inputs, opts \\ []) do
     opts = Keyword.put(opts, :ordered, false)
 
-    case process_batch(agent, inputs, opts) do
-      {:ok, result} when is_map(result) -> {:ok, result}
-      {:ok, results} when is_list(results) -> {:ok, results_to_stats(results)}
-    end
+    process_batch(agent, inputs, opts)
   end
 
   @doc """
@@ -182,6 +189,9 @@ defmodule Normandy.Batch.Processor do
   - `:chunk_size` - Number of items per chunk (default: 100)
   - `:chunk_delay` - Milliseconds to wait between chunks (default: 0)
 
+  Returns the same shape as `process_batch/3` for the same `:ordered` option,
+  covering all chunks.
+
   ## Example
 
       {:ok, results} = Processor.process_batch_chunked(
@@ -193,39 +203,42 @@ defmodule Normandy.Batch.Processor do
       )
   """
   @spec process_batch_chunked(agent :: struct(), inputs :: [term()], batch_options()) ::
-          {:ok, [term()]}
+          {:ok, [item_result()] | batch_result()}
   def process_batch_chunked(agent, inputs, opts \\ []) do
     chunk_size = Keyword.get(opts, :chunk_size, 100)
     chunk_delay = Keyword.get(opts, :chunk_delay, 0)
     opts = Keyword.drop(opts, [:chunk_size, :chunk_delay])
 
-    total = length(inputs)
-    Logger.info("Processing #{total} items in chunks of #{chunk_size}")
+    Logger.info("Processing #{length(inputs)} items in chunks of #{chunk_size}")
 
-    results =
-      inputs
-      |> Enum.chunk_every(chunk_size)
+    chunks = Enum.chunk_every(inputs, chunk_size)
+    last_index = length(chunks) - 1
+
+    chunk_results =
+      chunks
       |> Enum.with_index()
-      |> Enum.flat_map(fn {chunk, index} ->
+      |> Enum.map(fn {chunk, index} ->
         Logger.info("Processing chunk #{index + 1}")
 
-        {:ok, chunk_results} = process_batch(agent, chunk, opts)
+        {:ok, chunk_result} = process_batch(agent, chunk, opts)
 
-        # Wait between chunks (except after last chunk)
-        if chunk_delay > 0 and index < div(total, chunk_size) do
-          Process.sleep(chunk_delay)
-        end
+        if chunk_delay > 0 and index < last_index, do: Process.sleep(chunk_delay)
 
-        if is_list(chunk_results), do: chunk_results, else: chunk_results.success
+        chunk_result
       end)
 
-    {:ok, results}
+    if Keyword.get(opts, :ordered, true) do
+      {:ok, Enum.concat(chunk_results)}
+    else
+      {:ok, Enum.reduce(chunk_results, empty_stats(), &merge_stats(&2, &1))}
+    end
   end
 
   ## Private Functions
 
-  # Process a single input through the agent
-  defp process_single(agent, input, _timeout) do
+  # Process a single input through the agent. The per-item timeout is applied
+  # by Task.async_stream, which kills a task that runs past it.
+  defp process_single(agent, input) do
     {_updated_agent, response} = BaseAgent.run(agent, input)
     {:ok, response}
   rescue
@@ -239,43 +252,32 @@ defmodule Normandy.Batch.Processor do
       {:error, {:throw, thrown_value}}
   end
 
-  # Process async_stream results
-  defp process_results(results, ordered) do
-    if ordered do
-      # Ordered results - return list
-      processed =
-        results
-        |> Enum.map(fn
-          {:ok, {:ok, result}} -> result
-          {:ok, {:error, _error}} -> nil
-          {:exit, _reason} -> nil
-        end)
+  defp item_outcome({:ok, {index, input, outcome}}), do: {index, input, outcome}
 
-      {:ok, processed}
-    else
-      # Unordered - return stats
-      stats = results_to_stats(results)
-      {:ok, stats}
-    end
-  end
+  defp item_outcome({:exit, {{input, index}, reason}}),
+    do: {index, input, {:error, {:exit, reason}}}
 
-  # Convert results to statistics map
-  defp results_to_stats(results) do
+  defp report_error(on_error, input, {:error, error}), do: on_error.(input, error)
+  defp report_error(_on_error, _input, {:ok, _}), do: :ok
+
+  defp results_to_stats(outcomes) do
     {success, errors} =
-      results
-      |> Enum.reduce({[], []}, fn
-        {:ok, {:ok, result}}, {succ, err} ->
-          {[result | succ], err}
-
-        {:ok, {:error, error}}, {succ, err} ->
-          {succ, [error | err]}
-
-        {:exit, reason}, {succ, err} ->
-          {succ, [{:exit, reason} | err]}
+      Enum.reduce(outcomes, {[], []}, fn
+        {_index, _input, {:ok, result}}, {succ, err} -> {[result | succ], err}
+        {_index, input, {:error, error}}, {succ, err} -> {succ, [{input, error} | err]}
       end)
 
-    success = Enum.reverse(success)
-    errors = Enum.reverse(errors)
+    merge_stats(empty_stats(), %{
+      success: Enum.reverse(success),
+      errors: Enum.reverse(errors)
+    })
+  end
+
+  defp empty_stats, do: %{success: [], errors: [], total: 0, success_count: 0, error_count: 0}
+
+  defp merge_stats(acc, %{success: success, errors: errors}) do
+    success = acc.success ++ success
+    errors = acc.errors ++ errors
 
     %{
       success: success,

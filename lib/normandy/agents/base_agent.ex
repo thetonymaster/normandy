@@ -1825,10 +1825,12 @@ defmodule Normandy.Agents.BaseAgent do
   ## Options
 
   - `:max_concurrency` - Maximum concurrent tasks (default: 10)
-  - `:ordered` - Preserve input order in results (default: true)
-  - `:timeout` - Timeout per task in milliseconds (default: 300_000ms)
-  - `:on_progress` - Callback function called after each completion
-  - `:on_error` - Callback function called on each error
+  - `:ordered` - Return `[{:ok, response} | {:error, error}]` in input order
+    (default: true); with `false`, a stats map
+  - `:timeout` - Timeout per item in milliseconds (default: 300_000ms); a
+    timed-out item fails with `{:exit, :timeout}`
+  - `:on_progress` - Called after each completion with `(completed, total)`
+  - `:on_error` - Called for each failed item with `(input, error)`
 
   ## Examples
 
@@ -1837,7 +1839,7 @@ defmodule Normandy.Agents.BaseAgent do
         %{chat_message: "Hello"},
         %{chat_message: "How are you?"}
       ]
-      {:ok, results} = BaseAgent.process_batch(agent, inputs)
+      {:ok, [{:ok, first}, {:ok, second}]} = BaseAgent.process_batch(agent, inputs)
 
       # With options
       {:ok, results} = BaseAgent.process_batch(
@@ -1848,7 +1850,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec process_batch(BaseAgentConfig.t(), [term()], keyword()) ::
-          {:ok, [term()] | map()}
+          {:ok, [Processor.item_result()] | Processor.batch_result()}
   def process_batch(agent, inputs, opts \\ []) do
     Processor.process_batch(agent, inputs, opts)
   end
@@ -1871,7 +1873,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec process_batch_with_stats(BaseAgentConfig.t(), [term()], keyword()) ::
-          {:ok, map()}
+          {:ok, Processor.batch_result()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
     Processor.process_batch_with_stats(agent, inputs, opts)
   end
