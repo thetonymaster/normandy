@@ -357,6 +357,140 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:ok, _term} = InMemory.load_turn_state(store, "s-park")
   end
 
+  test "tool results keep the order of the tool calls when one is denied" do
+    store = InMemory.new()
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    call_llm = fn _c, _s, _r ->
+      if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0 do
+        %Resp{
+          content: "",
+          tool_calls: [
+            %ToolCall{id: "denied1", name: "billing", input: %{}},
+            %ToolCall{id: "ran1", name: "weather", input: %{}}
+          ]
+        }
+      else
+        %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    config = %{
+      base_config_with_tools()
+      | behaviours: %Normandy.Behaviours.Config{
+          policy:
+            {Normandy.Behaviours.PolicyEngine.Ruleset,
+             rules: [%{match: "billing", action: :deny, rule_id: "R1"}], default_action: :allow}
+        }
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-order",
+        config: config,
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "go")
+
+    {:ok, entries} = InMemory.history(store, "s-order")
+
+    ids =
+      for %{role: "tool", content: content} <- entries,
+          %ToolResult{tool_call_id: id} <- List.wrap(content),
+          do: id
+
+    assert ids == ["denied1", "ran1"]
+  end
+
+  test "stored entries carry the turn id of the turn that wrote them" do
+    store = InMemory.new()
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-turn-ids",
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        handlers: %{
+          BaseAgent.non_streaming_handlers()
+          | call_llm: fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end
+        }
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "one")
+    assert {:ok, _} = Turn.Server.run(srv, "two")
+
+    {:ok, entries} = InMemory.history(store, "s-turn-ids")
+    assert [t1, t1, t2, t2] = Enum.map(entries, & &1.turn_id)
+    assert is_binary(t1) and is_binary(t2) and t1 != t2
+    refute t1 == "live"
+  end
+
+  describe "run telemetry" do
+    setup do
+      parent = self()
+      id = "server-run-span-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        id,
+        [
+          [:normandy, :agent, :run, :start],
+          [:normandy, :agent, :run, :stop],
+          [:normandy, :agent, :run, :exception]
+        ],
+        fn event, measurements, meta, _ ->
+          if meta[:session_id], do: send(parent, {:run_event, event, measurements, meta})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    defp start_span_server(sid, call_llm) do
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: sid,
+          config: base_config(),
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        )
+
+      srv
+    end
+
+    test "a turn emits run :start and :stop with the session id" do
+      srv =
+        start_span_server("s-span", fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end)
+
+      assert {:ok, _} = Turn.Server.run(srv, "go")
+
+      assert_received {:run_event, [:normandy, :agent, :run, :start], %{system_time: _},
+                       %{session_id: "s-span", model: "test"}}
+
+      assert_received {:run_event, [:normandy, :agent, :run, :stop], %{duration: d},
+                       %{session_id: "s-span"}}
+
+      assert is_integer(d) and d >= 0
+    end
+
+    test "a failed turn emits run :exception with the reason" do
+      srv = start_span_server("s-span-fail", fn _c, _s, _r -> raise "llm down" end)
+
+      ExUnit.CaptureLog.capture_log(fn -> assert {:error, _} = Turn.Server.run(srv, "go") end)
+
+      assert_received {:run_event, [:normandy, :agent, :run, :start], _,
+                       %{session_id: "s-span-fail"}}
+
+      assert_received {:run_event, [:normandy, :agent, :run, :exception], %{duration: _},
+                       %{session_id: "s-span-fail", kind: :error, reason: {:task_down, _}}}
+    end
+  end
+
   test "approving a parked call resumes the turn and finalizes" do
     store = InMemory.new()
     reg = Native.new()

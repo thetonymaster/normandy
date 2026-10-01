@@ -36,6 +36,12 @@ defmodule Normandy.Agents.Turn.Server do
       again (`resumed: true`) when a restarted server resumes a parked turn.
     * `:approval_expired` — `%{expired: n, mode: :continue | :fail}`.
 
+  ## Telemetry
+
+  Each turn started by `run/2` emits `[:normandy, :agent, :run, :start]`, then
+  `:stop` or `:exception` (`kind: :error`, `reason`), with `model`, `agent_name`
+  and `session_id` metadata, like `BaseAgent.run/2`.
+
   ## Errors from `run/2`
 
     * `{:rejected, exception}` — the input failed its schema
@@ -83,12 +89,14 @@ defmodule Normandy.Agents.Turn.Server do
               subscriber: nil,
               handlers: nil,
               task_ref: nil,
+              task_kind: nil,
               pending_reply: nil,
               approval_timeout_ms: 300_000,
               on_approval_timeout: :continue,
               idle_timeout_ms: 60_000,
               template_provider: nil,
-              resume_policy: :lazy
+              resume_policy: :lazy,
+              run_span: nil
   end
 
   # ---- public API ----
@@ -344,8 +352,14 @@ defmodule Normandy.Agents.Turn.Server do
         :running,
         %Data{task_ref: ref} = data
       ) do
-    {state, effects} = Turn.step(data.turn_state, {:llm_error, {:task_down, reason}})
-    interpret(effects, %{data | turn_state: state, task_ref: nil})
+    event =
+      case data.task_kind do
+        :tools -> {:tool_error, {:task_down, reason}}
+        _llm_or_compact -> {:llm_error, {:task_down, reason}}
+      end
+
+    {state, effects} = Turn.step(data.turn_state, event)
+    interpret(effects, %{data | turn_state: state, task_ref: nil, task_kind: nil})
   end
 
   # :awaiting_approval — out-of-band approval decisions for a parked turn.
@@ -426,7 +440,7 @@ defmodule Normandy.Agents.Turn.Server do
           output_schema: config.output_schema
         )
 
-      data = %{data | config: config, pending_reply: from}
+      data = %{data | config: config, pending_reply: from, run_span: start_run_span(data, config)}
       {state, effects} = Turn.step(state, :start)
       interpret(effects, %{data | turn_state: state})
     else
@@ -436,6 +450,40 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   defp persist_failed(reason), do: {:error, {:persist_failed, reason}}
+
+  # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
+  # several gen_statem events, so :start and :stop/:exception are emitted by
+  # hand. A parked turn resumed by a restarted server has no :start, so no stop.
+  defp start_run_span(data, config) do
+    meta = %{
+      model: config.model,
+      agent_name: config.name,
+      session_id: data.session_id,
+      telemetry_span_context: make_ref()
+    }
+
+    start = System.monotonic_time()
+
+    :telemetry.execute(
+      [:normandy, :agent, :run, :start],
+      %{system_time: System.system_time(), monotonic_time: start},
+      meta
+    )
+
+    %{start: start, meta: meta}
+  end
+
+  defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
+
+  defp stop_run_span(%Data{run_span: %{start: start, meta: meta}}, event, extra) do
+    now = System.monotonic_time()
+
+    :telemetry.execute(
+      [:normandy, :agent, :run, event],
+      %{duration: now - start, monotonic_time: now},
+      Map.merge(meta, extra)
+    )
+  end
 
   defp last_config([], default), do: default
   defp last_config(repairs, _default), do: repairs |> List.last() |> elem(2)
@@ -496,7 +544,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp persist_interrupted(data, repairs) do
     result =
       Enum.reduce_while(repairs, {:ok, data.config}, fn {_call, result, folded}, acc ->
-        case append_to_store(data, "tool", result) do
+        case append_to_store(data, data.config, "tool", result) do
           :ok -> {:cont, {:ok, folded}}
           {:error, reason} -> {:halt, {:error, elem(acc, 1), reason}}
         end
@@ -542,7 +590,7 @@ defmodule Normandy.Agents.Turn.Server do
           fn -> data.handlers.append.(data.config, role, content) end,
           fn config ->
             # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case append_to_store(data, role, content) do
+            case append_to_store(data, config, role, content) do
               :ok -> interpret(rest, %{data | config: config})
               # Memory must match the store: do not adopt `config` when the write failed,
               # so the next turn's repair sees exactly what the store lacks.
@@ -586,18 +634,20 @@ defmodule Normandy.Agents.Turn.Server do
         )
 
       {:call_llm, request} ->
-        spawn_task(data, fn h, d ->
+        spawn_task(data, :llm, fn h, d ->
           {:llm_response, h.call_llm.(d.config, d.turn_state, request)}
         end)
 
       {:dispatch_tools, calls} ->
-        spawn_task(data, fn _h, d -> dispatch(d, calls) end)
+        spawn_task(data, :tools, fn _h, d -> dispatch(d, calls) end)
 
       {:execute_approved, calls} ->
-        spawn_task(data, fn _h, d -> {:approved_results, execute_approved(d, calls)} end)
+        spawn_task(data, :tools, fn _h, d ->
+          {:approved_results, execute_approved(d, calls)}
+        end)
 
       {:maybe_compact, info} ->
-        spawn_task(data, fn h, d ->
+        spawn_task(data, :compact, fn h, d ->
           {config2, meta} = h.compact.(d.config, d.turn_state, info)
           {:compact_result, config2, meta}
         end)
@@ -607,14 +657,16 @@ defmodule Normandy.Agents.Turn.Server do
         # completed session from a mid-turn one. Best-effort: the turn already
         # succeeded, so a failed marker-persist must not fail it.
         _ = persist_turn_state(data, data.turn_state)
+        stop_run_span(data, :stop, %{})
         reply(data, {:ok, value})
-        {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
+        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
 
       {:fail, reason} ->
         # Persist the terminal (:failed) turn state (best-effort) for the same reason.
         _ = persist_turn_state(data, data.turn_state)
+        stop_run_span(data, :exception, %{kind: :error, reason: reason, stacktrace: []})
         reply(data, {:error, reason})
-        {:next_state, :idle, %{data | pending_reply: nil}, idle_timeout(data)}
+        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
     end
   end
 
@@ -631,7 +683,7 @@ defmodule Normandy.Agents.Turn.Server do
   # by the :running :DOWN clause → fails the turn gracefully) WITHOUT taking
   # down this gen_statem. The spawned process waits for the monitor ref before
   # replying so the result is tagged with the same ref the :DOWN would carry.
-  defp spawn_task(data, fun) do
+  defp spawn_task(data, kind, fun) do
     server = self()
     handlers = data.handlers
     current = data
@@ -648,7 +700,7 @@ defmodule Normandy.Agents.Turn.Server do
 
     ref = Process.monitor(pid)
     send(pid, {:monitor_ref, ref})
-    {:next_state, :running, %{data | task_ref: ref}}
+    {:next_state, :running, %{data | task_ref: ref, task_kind: kind}}
   end
 
   # The shell-level bypass to the terminal :fail effect (used when an append/persist
@@ -786,9 +838,11 @@ defmodule Normandy.Agents.Turn.Server do
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
     do: mod.save_turn_state(handle, sid, turn_state)
 
-  defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, role, content) do
+  # The entry carries the turn id the memory gave this message, so a memory
+  # rebuilt from the store keeps the turn boundaries.
+  defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, config, role, content) do
     case mod.append_entry(handle, sid, %Normandy.Components.AgentMemory.Entry{
-           turn_id: "live",
+           turn_id: current_turn_id(config),
            role: role,
            content: content
          }) do
@@ -797,11 +851,14 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  defp current_turn_id(%{memory: %AgentMemory{current_turn_id: id}}), do: id
+  defp current_turn_id(_config), do: nil
+
   # On failure, carries the repaired config so memory keeps matching the store.
   defp persist_user_message(_data, _config, nil, _repaired), do: :ok
 
-  defp persist_user_message(data, _config, user_input, repaired) do
-    with {:error, reason} <- append_to_store(data, "user", user_input),
+  defp persist_user_message(data, config, user_input, repaired) do
+    with {:error, reason} <- append_to_store(data, config, "user", user_input),
          do: {:error, repaired, reason}
   end
 
@@ -838,7 +895,9 @@ defmodule Normandy.Agents.Turn.Server do
       )
       |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
 
-    held = executed ++ denied
+    # Back in the batch's tool_use order, as the Driver shell returns them.
+    order = classified |> Enum.with_index() |> Map.new(fn {{call, _}, i} -> {call.id, i} end)
+    held = Enum.sort_by(executed ++ denied, &Map.fetch!(order, &1.tool_call_id))
 
     if parked == [] do
       {:tool_results, held}
