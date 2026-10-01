@@ -142,11 +142,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # First two calls should fail and open circuit
-      assert_raise RuntimeError, "LLM call failed: Service unavailable", fn ->
+      assert_raise RuntimeError, "Service unavailable", fn ->
         BaseAgent.run(agent, %{chat_message: "test1"})
       end
 
-      assert_raise RuntimeError, "LLM call failed: Service unavailable", fn ->
+      assert_raise RuntimeError, "Service unavailable", fn ->
         BaseAgent.run(agent, %{chat_message: "test2"})
       end
 
@@ -154,9 +154,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert CircuitBreaker.state(agent.circuit_breaker) == :open
 
       # Third call should fail fast
-      assert_raise RuntimeError, "LLM call failed: :open", fn ->
-        BaseAgent.run(agent, %{chat_message: "test3"})
-      end
+      assert_raise Normandy.LLMError,
+                   "LLM call failed: circuit_open: circuit breaker is open",
+                   fn ->
+                     BaseAgent.run(agent, %{chat_message: "test3"})
+                   end
 
       # Clean up
       if agent.circuit_breaker do
@@ -184,7 +186,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # Open circuit
-      assert_raise RuntimeError, "LLM call failed: Service unavailable", fn ->
+      assert_raise RuntimeError, "Service unavailable", fn ->
         BaseAgent.run(agent, %{chat_message: "fail"})
       end
 
@@ -277,7 +279,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          retry_options: [max_attempts: 10, base_delay: 1],
+          retry_options: [max_attempts: 10, base_delay: 10, max_delay: 20],
           enable_circuit_breaker: true,
           circuit_breaker_options: [
             failure_threshold: 3,
@@ -304,9 +306,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       # Next call should fail fast (no retries due to open circuit)
       attempt_count_before = Agent.get(:retry_agent, & &1)
 
-      assert_raise RuntimeError, "LLM call failed: :open", fn ->
-        BaseAgent.run(agent, %{chat_message: "test4"})
-      end
+      assert_raise Normandy.LLMError,
+                   "LLM call failed: circuit_open: circuit breaker is open",
+                   fn ->
+                     BaseAgent.run(agent, %{chat_message: "test4"})
+                   end
 
       attempt_count_after = Agent.get(:retry_agent, & &1)
 

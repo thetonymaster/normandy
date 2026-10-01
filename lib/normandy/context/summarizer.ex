@@ -195,25 +195,17 @@ defmodule Normandy.Context.Summarizer do
     # Create a proper struct response model for text output
     response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
-    {response, _usage, _meta} =
-      ConverseResult.normalize(
-        Model.converse(
-          client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
-          response_model,
-          []
-        )
-      )
-
-    case response do
-      %{chat_message: summary} when is_binary(summary) ->
+    case ConverseResult.normalize(
+           Model.converse(client, model, temperature, max_tokens, messages, response_model, [])
+         ) do
+      {:ok, {%{chat_message: summary}, _usage, _meta}} when is_binary(summary) ->
         {:ok, summary}
 
-      other ->
+      {:ok, {other, _usage, _meta}} ->
         {:error, {:unexpected_response, other}}
+
+      {:error, %Normandy.LLMError{}} = error ->
+        error
     end
   end
 

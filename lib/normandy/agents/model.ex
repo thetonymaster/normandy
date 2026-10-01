@@ -36,8 +36,15 @@ defprotocol Normandy.Agents.Model do
     `meta` a map of per-call facts (e.g. `:served_by`). Normandy consumes both
     internally for observability (see `Normandy.Agents.ConverseResult`) without
     changing the external `BaseAgent.run/2` return shape.
+
+    Implementations may also return `{:error, %Normandy.LLMError{}}` when the call
+    failed. Set `retryable?` to true only when resending the same request can
+    succeed (rate limit, overload, 5xx, transport).
   """
   @spec converse(t(), String.t(), float() | nil, integer() | nil, list(), struct(), keyword()) ::
-          struct() | {struct(), map() | nil} | {struct(), map() | nil, map()}
+          struct()
+          | {struct(), map() | nil}
+          | {struct(), map() | nil, map()}
+          | {:error, Normandy.LLMError.t()}
   def converse(config, model, temperature, max_tokens, messages, response_model, opts \\ [])
 end

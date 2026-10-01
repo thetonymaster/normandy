@@ -114,6 +114,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.LLM.Json.SchemaBinder
+  alias Normandy.LLMError
 
   @default_max_retries 2
 
@@ -325,19 +326,52 @@ defmodule Normandy.LLM.JsonDeserializer do
         if(tools != [], do: [tools: tools], else: []) ++
         Keyword.take(opts, [:task_budget_remaining])
 
-    {response, _usage, _meta} =
-      ConverseResult.normalize(
-        Model.converse(
+    case ConverseResult.normalize(
+           Model.converse(
+             client,
+             model,
+             temperature,
+             max_tokens,
+             augmented_messages,
+             schema,
+             llm_opts
+           )
+         ) do
+      # An LLM failure is not a parse failure: stop and hand it back.
+      {:error, %LLMError{}} = error ->
+        error
+
+      {:ok, {response, _usage, _meta}} ->
+        continue_after_retry(
+          response,
+          schema,
           client,
           model,
           temperature,
           max_tokens,
-          augmented_messages,
-          schema,
-          llm_opts
+          messages,
+          opts,
+          adapter,
+          attempt,
+          max_retries
         )
-      )
+    end
+  end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
+  defp continue_after_retry(
+         response,
+         schema,
+         client,
+         model,
+         temperature,
+         max_tokens,
+         messages,
+         opts,
+         adapter,
+         attempt,
+         max_retries
+       ) do
     cond do
       is_binary(response) ->
         deserialize_loop(

@@ -21,6 +21,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.StreamProcessor
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
 
@@ -306,43 +307,31 @@ defmodule Normandy.Agents.BaseAgent do
     call_llm_with_resilience(config, messages, response_model, opts)
   end
 
-  # Private helper to call LLM with retry and circuit breaker protection
+  # Private helper to call LLM with retry and circuit breaker protection.
+  # The call returns {:ok, triple} | {:error, %LLMError{}} (ConverseResult.normalize/1),
+  # which is Retry's and CircuitBreaker's contract, so returned API errors are retried
+  # (when the adapter marked them retryable?) and counted, exactly like raises.
   @spec call_llm_with_resilience(BaseAgentConfig.t(), list(), struct(), keyword()) ::
           {struct(), map() | nil, map()}
   defp call_llm_with_resilience(config, messages, response_model, opts) do
     llm_call = fn ->
-      result =
-        Model.converse(
-          config.client,
-          config.model,
-          config.temperature,
-          config.max_tokens,
-          messages,
-          response_model,
-          opts
-        )
-
-      # Wrap in {:ok, result} for retry/circuit breaker compatibility
-      {:ok, result}
+      config.client
+      |> Model.converse(
+        config.model,
+        config.temperature,
+        config.max_tokens,
+        messages,
+        response_model,
+        opts
+      )
+      |> ConverseResult.normalize()
     end
 
     # Apply retry first if configured, then circuit breaker wraps the whole thing
     retryable_call =
       if config.retry_options do
         fn ->
-          # Add default retry_if for exceptions if not provided
-          retry_opts =
-            if Keyword.has_key?(config.retry_options, :retry_if) do
-              config.retry_options
-            else
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              Keyword.put(config.retry_options, :retry_if, fn
-                {:error, {:exception, _, _}} -> true
-                {:error, :open} -> false
-                {:error, error} when is_atom(error) -> true
-                _ -> false
-              end)
-            end
+          retry_opts = with_default_retry_if(config.retry_options)
 
           Retry.with_retry(llm_call, retry_opts)
         end
@@ -353,24 +342,36 @@ defmodule Normandy.Agents.BaseAgent do
     # Apply circuit breaker if configured (wraps the retry logic)
     protected_call =
       if config.circuit_breaker do
-        fn ->
-          CircuitBreaker.call(config.circuit_breaker, retryable_call)
-        end
+        fn -> CircuitBreaker.call(config.circuit_breaker, retryable_call) end
       else
         retryable_call
       end
 
-    # Execute and unwrap result
-    result =
-      case protected_call.() do
-        {:ok, {:ok, response}} -> ConverseResult.normalize(response)
-        {:ok, response} -> ConverseResult.normalize(response)
-        {:error, {reason, _attempts, _errors}} -> raise_llm_call_error(reason)
-        {:error, reason} -> raise_llm_call_error(reason)
-      end
+    case protected_call.() do
+      {:ok, triple} ->
+        triple
 
-    result
+      # Retry gave up: {last_error, attempts, errors}. The integer guard keeps
+      # {:exception, error, stacktrace} (also a 3-tuple) out of this clause.
+      {:error, {reason, attempts, errors}} when is_integer(attempts) and is_list(errors) ->
+        raise_llm_call_error(reason)
+
+      {:error, reason} ->
+        raise_llm_call_error(reason)
+    end
   end
+
+  defp with_default_retry_if(retry_options) do
+    if Keyword.has_key?(retry_options, :retry_if),
+      do: retry_options,
+      else: Keyword.put(retry_options, :retry_if, &default_retry_if/1)
+  end
+
+  defp default_retry_if({:error, %LLMError{retryable?: retryable?}}), do: retryable?
+  defp default_retry_if({:error, {:exception, _, _}}), do: true
+  defp default_retry_if({:error, :open}), do: false
+  defp default_retry_if({:error, error}) when is_atom(error), do: true
+  defp default_retry_if(_), do: false
 
   @spec run(BaseAgentConfig.t(), struct() | map() | nil) :: {BaseAgentConfig.t(), struct()}
   def run(
@@ -1534,25 +1535,32 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @spec raise_llm_call_error(term()) :: no_return()
+  defp raise_llm_call_error(%LLMError{} = error), do: raise(error)
+
+  defp raise_llm_call_error(:open),
+    do:
+      raise(
+        LLMError.new(type: :circuit_open, retryable?: false, detail: "circuit breaker is open")
+      )
+
   defp raise_llm_call_error({:exception, error, stacktrace}) do
     if Kernel.is_exception(error) do
       reraise(error, stacktrace)
     else
-      raise RuntimeError, "LLM call failed: #{inspect({:exception, error})}"
+      raise LLMError.wrap({:exception, error})
     end
   end
 
+  # CircuitBreaker's rescue carries no stacktrace; the exception keeps its type.
   defp raise_llm_call_error({:exception, error}) do
     if Kernel.is_exception(error) do
-      raise RuntimeError, "LLM call failed: #{Exception.message(error)}"
+      raise error
     else
-      raise RuntimeError, "LLM call failed: #{inspect({:exception, error})}"
+      raise LLMError.wrap({:exception, error})
     end
   end
 
-  defp raise_llm_call_error(reason) do
-    raise RuntimeError, "LLM call failed: #{inspect(reason)}"
-  end
+  defp raise_llm_call_error(reason), do: raise(LLMError.wrap(reason))
 
   defp pending_tool_call_count(%BaseAgentConfig{memory: memory}) do
     case AgentMemory.latest_message(memory) do

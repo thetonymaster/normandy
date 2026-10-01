@@ -16,6 +16,22 @@ defmodule Normandy.Test.TupleSummarizerClient do
   end
 end
 
+defmodule Normandy.Test.LLMErrorSummarizerClient do
+  @moduledoc false
+  use Normandy.Schema
+
+  schema do
+  end
+
+  defimpl Normandy.Agents.Model do
+    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
+      do: response_model
+
+    def converse(_client, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
+      do: {:error, Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)}
+  end
+end
+
 defmodule Normandy.Context.SummarizerTest do
   use ExUnit.Case, async: true
 
@@ -108,6 +124,22 @@ defmodule Normandy.Context.SummarizerTest do
       assert_raise RuntimeError, "Mock summarization failed", fn ->
         Summarizer.summarize_messages(failing_client, agent, messages)
       end
+    end
+  end
+
+  describe "LLM failures" do
+    test "summarize_messages returns the LLMError instead of an empty summary" do
+      agent =
+        BaseAgent.init(%{
+          client: %Normandy.Test.LLMErrorSummarizerClient{},
+          model: "test-model",
+          temperature: nil
+        })
+
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      assert {:error, %Normandy.LLMError{type: :rate_limit}} =
+               Summarizer.summarize_messages(agent.client, agent, messages)
     end
   end
 

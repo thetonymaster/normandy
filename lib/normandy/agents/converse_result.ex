@@ -1,19 +1,23 @@
 defmodule Normandy.Agents.ConverseResult do
   @moduledoc """
-  Flattens the `Normandy.Agents.Model.converse/7` return into a single
-  `{response, usage, meta}` triple, so callers stop assuming one shape.
+  Flattens the `Normandy.Agents.Model.converse/7` return into
+  `{:ok, {response, usage, meta}}` or `{:error, %Normandy.LLMError{}}`.
 
-  Implementations may return `struct()`, `{struct(), usage}` or
-  `{struct(), usage, meta}` (and, in raw mode, the same shapes with a binary).
-  `meta` carries per-call facts that are not token usage, such as `:served_by`
-  (the model that produced the message after a server-side fallback). Bare and
-  2-tuple returns stay accepted so third-party `Model` implementations keep working.
+  Implementations may return `struct()`, `{struct(), usage}`, `{struct(), usage, meta}`
+  (and, in raw mode, the same shapes with a binary), or `{:error, %Normandy.LLMError{}}`.
+  `meta` carries per-call facts that are not token usage, such as `:served_by`. Bare and
+  2-tuple returns stay accepted so third-party `Model` implementations keep working; an
+  `{:error, term}` that is not an `LLMError` becomes `type: :unknown`.
   """
 
-  @spec normalize(term()) :: {term(), map() | nil, map()}
+  alias Normandy.LLMError
+
+  @spec normalize(term()) :: {:ok, {term(), map() | nil, map()}} | {:error, LLMError.t()}
+  def normalize({:error, reason}), do: {:error, LLMError.wrap(reason)}
+
   def normalize({response, usage, meta})
       when (is_struct(response) or is_binary(response)) and is_map(meta),
-      do: {response, usage, meta}
+      do: {:ok, {response, usage, meta}}
 
   def normalize({response, _usage, meta}) when is_struct(response) or is_binary(response) do
     raise ArgumentError,
@@ -22,10 +26,10 @@ defmodule Normandy.Agents.ConverseResult do
   end
 
   def normalize({response, usage}) when is_struct(response) or is_binary(response),
-    do: {response, usage, %{}}
+    do: {:ok, {response, usage, %{}}}
 
   def normalize(response) when is_struct(response) or is_binary(response),
-    do: {response, nil, %{}}
+    do: {:ok, {response, nil, %{}}}
 
-  def normalize(other), do: {other, nil, %{}}
+  def normalize(other), do: {:ok, {other, nil, %{}}}
 end

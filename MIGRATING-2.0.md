@@ -126,6 +126,17 @@ If your app uses the optional Postgres session store, Normandy now requires `pos
 `>= 0.22.4` (was `~> 0.19`). Earlier releases carry EEF-CVE-2026-66838 and
 EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 
+## 11. LLM failures raise `Normandy.LLMError`
+
+- `Model.converse/7` may now return `{:error, %Normandy.LLMError{}}`. Code that calls
+  `converse/7` directly must handle it; `ConverseResult.normalize/1` now returns
+  `{:ok, {response, usage, meta}}` or `{:error, %Normandy.LLMError{}}`.
+- `BaseAgent.run/2` and the DSL's `run/1-3` raise `Normandy.LLMError` when a call fails for
+  good. They used to raise `RuntimeError` for transport exceptions. Rescue
+  `Normandy.LLMError` instead.
+- The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
+  receives `{:error, %Normandy.LLMError{}}` for returned failures.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
