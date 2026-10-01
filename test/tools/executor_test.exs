@@ -145,6 +145,56 @@ defmodule NormandyTest.Tools.ExecutorTest do
     end
   end
 
+  describe "results the model can use" do
+    defmodule ReturnTool do
+      defstruct [:value, timeout: nil]
+
+      defimpl Normandy.Tools.BaseTool do
+        def tool_name(_), do: "return_tool"
+        def tool_description(_), do: "returns or exits with the value it holds"
+        def input_schema(_), do: %{type: "object", properties: %{}}
+
+        def run(%{value: {:exit, reason}}), do: exit(reason)
+        def run(%{value: {:sleep, ms}}), do: Process.sleep(ms) && {:ok, :slept}
+        def run(%{value: value}), do: value
+      end
+    end
+
+    test "a result that is not {:ok, _} or {:error, _} becomes an error result" do
+      for bad <- [:ok, "bare string", nil] do
+        assert {:error, message} = Executor.execute_tool(%ReturnTool{value: bad})
+        assert message =~ "invalid result"
+      end
+    end
+
+    test "an exit reason is named by its tag, not copied into the result" do
+      tool = %ReturnTool{value: {:exit, {:timeout, {GenServer, :call, [:db, "SELECT secret"]}}}}
+
+      assert {:error, message} = Executor.execute_tool(tool)
+      assert message =~ ":timeout"
+      refute message =~ "SELECT secret"
+    end
+
+    test "execute/3 honours the tool's own :timeout, like execute_tool/2" do
+      registry = Registry.new([%ReturnTool{value: {:sleep, 100}, timeout: 20}])
+
+      assert {:error, message} = Executor.execute(registry, "return_tool")
+      assert message =~ "timeout after 20ms"
+    end
+
+    test "invalid options raise, naming the option and value" do
+      assert_raise ArgumentError, ~r/:timeout must be a positive integer, got: nil/, fn ->
+        Executor.execute_tool(%ReturnTool{value: {:ok, 1}}, timeout: nil)
+      end
+
+      assert_raise ArgumentError, ~r/:max_retries must be a non-negative integer, got: -1/, fn ->
+        Executor.execute(Registry.new([%ReturnTool{value: {:ok, 1}}]), "return_tool",
+          max_retries: -1
+        )
+      end
+    end
+  end
+
   describe "Executor OTel context propagation" do
     # `Task.async` spawns a fresh process, which gets an empty process
     # dictionary — and therefore an empty OpenTelemetry context. Without the

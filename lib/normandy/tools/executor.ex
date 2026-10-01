@@ -3,12 +3,22 @@ defmodule Normandy.Tools.Executor do
   Executes tools safely with timeout and error handling.
 
   The Executor provides a controlled environment for running tools with:
-  - Timeout protection
-  - Error catching and formatting
-  - Execution logging
-  - Result validation
+  - Timeout protection (`:timeout` option, else the tool struct's own `:timeout`
+    field, else 30 s)
+  - Error catching: a raise, exit, throw or timeout becomes `{:error, message}`
+  - Result checking: a tool result that is not `{:ok, value}` or
+    `{:error, reason}` becomes an error
+
+  `:max_retries` re-runs a tool after any `{:error, _}`, including one it
+  returned itself. A tool with side effects (sending mail, payments) then runs
+  again, so leave it at 0 (the default) unless the tool is idempotent.
+
+  Error messages reach the model as tool results, so an exit or throw is named
+  by its tag only (its terms can carry call arguments), and an exception
+  message is cut to 500 characters.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
@@ -42,12 +52,11 @@ defmodule Normandy.Tools.Executor do
   """
   @spec execute(Registry.t(), String.t(), execution_options()) :: execution_result()
   def execute(registry, tool_name, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
+    max_retries = max_retries!(opts)
 
     case Registry.get(registry, tool_name) do
       {:ok, tool} ->
-        execute_with_retries(tool, max_retries, timeout)
+        execute_with_retries(tool, max_retries, timeout!(opts, tool))
 
       :error ->
         {:error, "Tool '#{tool_name}' not found in registry"}
@@ -66,14 +75,7 @@ defmodule Normandy.Tools.Executor do
   """
   @spec execute_tool(struct(), execution_options()) :: execution_result()
   def execute_tool(tool, opts \\ []) do
-    # Precedence: explicit opts > per-tool struct :timeout > module default.
-    # Per-tool timeout lets slow tools (e.g. a delegation that fans out to
-    # another agent's tool loop) opt into longer-than-default budgets
-    # without changing the global default for fast tools.
-    timeout =
-      Keyword.get(opts, :timeout) || Map.get(tool, :timeout) || @default_timeout
-
-    execute_with_timeout(tool, timeout)
+    execute_with_timeout(tool, timeout!(opts, tool))
   end
 
   @doc """
@@ -102,11 +104,12 @@ defmodule Normandy.Tools.Executor do
         ]
   def execute_parallel(_registry, tool_specs, opts \\ []) do
     parent_ctx = OtelCtx.capture()
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
+    max_retries = max_retries!(opts)
 
     tool_specs
     |> Enum.map(fn {_label, tool} ->
+      timeout = timeout!(opts, tool)
+
       Task.async(fn ->
         OtelCtx.restore(parent_ctx)
         execute_with_retries(tool, max_retries, timeout)
@@ -144,6 +147,36 @@ defmodule Normandy.Tools.Executor do
 
   # Private functions
 
+  # Precedence, for every entry point: the :timeout option, then the tool
+  # struct's own :timeout field (a slow tool, such as a delegation to another
+  # agent, can opt into a longer budget), then the default.
+  defp timeout!(opts, tool) do
+    timeout =
+      case Keyword.fetch(opts, :timeout) do
+        {:ok, value} -> value
+        :error -> Map.get(tool, :timeout) || @default_timeout
+      end
+
+    unless is_integer(timeout) and timeout > 0 do
+      raise ArgumentError,
+            "Normandy.Tools.Executor: :timeout must be a positive integer, got: #{inspect(timeout)}"
+    end
+
+    timeout
+  end
+
+  defp max_retries!(opts) do
+    retries = Keyword.get(opts, :max_retries, @default_max_retries)
+
+    unless is_integer(retries) and retries >= 0 do
+      raise ArgumentError,
+            "Normandy.Tools.Executor: :max_retries must be a non-negative integer, got: " <>
+              inspect(retries)
+    end
+
+    retries
+  end
+
   defp execute_with_retries(tool, retries_left, timeout) do
     case execute_with_timeout(tool, timeout) do
       {:ok, result} ->
@@ -165,16 +198,16 @@ defmodule Normandy.Tools.Executor do
         OtelCtx.restore(parent_ctx)
 
         try do
-          BaseTool.run(tool)
+          tool |> BaseTool.run() |> check_result()
         rescue
           error ->
-            {:error, "Tool execution failed: #{Exception.message(error)}"}
+            {:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"}
         catch
           :exit, reason ->
-            {:error, "Tool execution exited: #{inspect(reason)}"}
+            {:error, "Tool execution exited: #{describe_reason(reason)}"}
 
           kind, reason ->
-            {:error, "Tool execution failed (#{kind}): #{inspect(reason)}"}
+            {:error, "Tool execution failed (#{kind}): #{describe_reason(reason)}"}
         end
       end)
 
@@ -185,5 +218,29 @@ defmodule Normandy.Tools.Executor do
       nil ->
         {:error, "Tool execution timeout after #{timeout}ms"}
     end
+  end
+
+  defp check_result({:ok, _value} = ok), do: ok
+  defp check_result({:error, _reason} = error), do: error
+
+  defp check_result(other) do
+    {:error,
+     "Tool returned an invalid result: expected {:ok, value} or {:error, reason}, got " <>
+       Describe.type_of(other)}
+  end
+
+  defp describe_reason(reason)
+       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
+       do: inspect(elem(reason, 0))
+
+  defp describe_reason(reason) when is_atom(reason), do: inspect(reason)
+  defp describe_reason(reason), do: Describe.type_of(reason)
+
+  # Characters, not bytes, so a multibyte character is never cut in half.
+  @max_message 500
+  defp truncate(message) do
+    if String.length(message) <= @max_message,
+      do: message,
+      else: String.slice(message, 0, @max_message) <> "..."
   end
 end

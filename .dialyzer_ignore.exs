@@ -17,6 +17,11 @@
   {"lib/normandy/a2a/server.ex", :guard_fail},
   {"lib/normandy/a2a/server.ex", :pattern_match_cov},
 
+  # tools/executor.ex check_result/1: BaseTool.run/1's spec allows only {:ok, _} and
+  # {:error, _}, but a third-party tool can return anything; the catch-all turns that into
+  # an error result instead of crashing the turn (audit SCHEMA-6).
+  {"lib/normandy/tools/executor.ex", :pattern_match_cov},
+
   # --- Tooling false positives ---
 
   # behaviours/session_store/postgres/migration.ex up/0 + down/0 (lines 15, 24, 36): idiomatic
