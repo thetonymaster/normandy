@@ -11,7 +11,8 @@ defmodule Normandy.Context.TokenCounterTest do
   setup do
     # Real Claudio client — these tests exercise the live count_tokens endpoint.
     client = %ClaudioAdapter{
-      api_key: IntegrationHelper.get_api_key(),
+      # A placeholder when no key is set: the tests that run without one make no API call.
+      api_key: IntegrationHelper.get_api_key() || "no-api-key-set",
       base_url: nil,
       options: %{}
     }

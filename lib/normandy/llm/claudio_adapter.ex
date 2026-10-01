@@ -37,7 +37,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   The adapter reads these keys from `options` (a map). Nothing below is sent unless set:
 
-  - `:timeout` - Request timeout in milliseconds (default: 30_000)
+  - `:timeout` - Connection timeout in milliseconds (Claudio's default: 60_000)
+  - `:recv_timeout` - How long to wait for data once connected, in milliseconds
+    (Claudio's default: 120_000); raise it for long thinking or streaming calls
   - `:enable_caching` - Prompt caching (default: false): an explicit breakpoint on the
     system prompt and the last tool, plus the API's automatic breakpoint for the
     conversation. Keep context-provider output stable across calls, or the cache
@@ -59,7 +61,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:on_parse_failure` - `:fallback | :error`, what to do when the output still does
     not match the schema after the JSON retries; overrides the `:normandy` app env
     (see `Normandy.LLM.JsonDeserializer`)
-  - `:base_url` - Custom API base URL (for testing)
+  - `:base_url` - Custom API base URL (for testing); the struct's `base_url` field wins
+  - `:req_options` - Req options merged into the HTTP client
+  - `:structured_outputs` - `false` to use the legacy parse-and-retry path
+
+  Any other key, a non-boolean `:enable_caching`/`:structured_outputs`, or a missing
+  `api_key` raises `ArgumentError` when the agent is built (`BaseAgent.init/1`).
 
   ## Errors
 
@@ -1193,14 +1200,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
   """
   @spec to_claudio_client(t()) :: Req.Request.t()
   def to_claudio_client(%__MODULE__{} = client) do
-    config = %{token: client.api_key, version: "2023-06-01"}
-    config = if client.finch, do: Map.put(config, :finch, client.finch), else: config
+    options = client.options || %{}
+
+    config =
+      %{token: client.api_key, version: "2023-06-01"}
+      |> put_present(:finch, client.finch)
+      |> put_present(:timeout, Map.get(options, :timeout))
+      |> put_present(:recv_timeout, Map.get(options, :recv_timeout))
 
     req =
-      if client.base_url do
-        Claudio.Client.new(config, client.base_url)
-      else
-        Claudio.Client.new(config)
+      case client.base_url || Map.get(options, :base_url) do
+        nil -> Claudio.Client.new(config)
+        base_url -> Claudio.Client.new(config, base_url)
       end
 
     case check_req_options!(client) do
@@ -1243,6 +1254,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
   """
   @spec validate_options!(t()) :: t()
   def validate_options!(%__MODULE__{} = client) do
+    check_api_key!(client.api_key)
+    check_option_keys!(client.options)
     _ = check_req_options!(client)
 
     _ =
@@ -1254,6 +1267,64 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     client
   end
+
+  # Every key `options` may hold; anything else is a typo or an unsupported setting.
+  @option_keys [
+    :timeout,
+    :recv_timeout,
+    :base_url,
+    :req_options,
+    :enable_caching,
+    :structured_outputs,
+    :on_parse_failure,
+    :thinking,
+    :thinking_display,
+    :thinking_budget,
+    :effort,
+    :speed,
+    :inference_geo,
+    :fallbacks,
+    :task_budget
+  ]
+
+  defp check_api_key!(key) when is_binary(key) and key != "", do: :ok
+
+  defp check_api_key!(key) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: api_key must be a non-empty string, got: " <>
+            Describe.type_of(key)
+  end
+
+  defp check_option_keys!(options) when is_map(options) do
+    case Map.keys(options) -- @option_keys do
+      [] ->
+        :ok
+
+      [key | _] ->
+        raise ArgumentError,
+              "Normandy.LLM.ClaudioAdapter: unknown client option #{inspect(key)}; " <>
+                "supported: #{Enum.map_join(@option_keys, ", ", &inspect/1)}"
+    end
+
+    for key <- [:enable_caching, :structured_outputs],
+        Map.has_key?(options, key),
+        not is_boolean(Map.fetch!(options, key)) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client option #{inspect(key)} must be a boolean, " <>
+              "got: #{inspect(Map.fetch!(options, key))}"
+    end
+
+    :ok
+  end
+
+  defp check_option_keys!(options) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client options must be a map, got " <>
+            Describe.type_of(options)
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
 
   @doc false
   # Applies `client.options` request settings, plus per-call options from the turn
