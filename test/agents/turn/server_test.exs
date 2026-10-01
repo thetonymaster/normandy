@@ -1274,4 +1274,123 @@ defmodule Normandy.Agents.Turn.ServerTest do
                    end
     end
   end
+
+  describe "dangling tool_use repair" do
+    defp dangling_memory do
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", "charge me")
+      |> AgentMemory.add_message("assistant", %Resp{
+        content: "",
+        tool_calls: [%ToolCall{id: "t1", name: "billing", input: %{}}]
+      })
+    end
+
+    # Store and memory both end in a tool_use with no result, as after a crash.
+    defp start_dangling_server(sid, config_overrides, handler_overrides \\ %{}) do
+      store = InMemory.new()
+      memory = dangling_memory()
+
+      for %Message{role: role, content: content} <- AgentMemory.messages(memory) do
+        {:ok, _} =
+          InMemory.append_entry(store, sid, %AgentMemory.Entry{
+            turn_id: "live",
+            role: role,
+            content: content
+          })
+      end
+
+      test_pid = self()
+
+      call_llm = fn config, _s, _r ->
+        send(test_pid, {:llm_messages, AgentMemory.messages(config.memory)})
+        %Resp{content: "ok", tool_calls: nil}
+      end
+
+      handlers =
+        Map.merge(%{BaseAgent.non_streaming_handlers() | call_llm: call_llm}, handler_overrides)
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: sid,
+          config: Map.merge(%{base_config() | memory: memory}, config_overrides),
+          store: {InMemory, store},
+          registry: {Native, Native.new()},
+          handlers: handlers
+        )
+
+      {srv, store}
+    end
+
+    test "the next turn closes the unanswered tool_use before the user message" do
+      {srv, store} = start_dangling_server("s-dangling", %{})
+
+      log =
+        capture_log(fn ->
+          assert {:ok, %Resp{content: "ok"}} = Turn.Server.run(srv, "next")
+        end)
+
+      assert log =~ "interrupted"
+      assert log =~ "billing"
+      assert_received {:llm_messages, messages}
+
+      assert [
+               %Message{role: "user", content: "charge me"},
+               %Message{role: "assistant"},
+               %Message{
+                 role: "tool",
+                 content: %ToolResult{
+                   tool_call_id: "t1",
+                   is_error: true,
+                   output: %{
+                     interrupted: true,
+                     error:
+                       "tool call interrupted: the previous turn ended before a result was " <>
+                         "recorded; the tool may or may not have run"
+                   }
+                 }
+               },
+               %Message{role: "user", content: "next"}
+             ] = messages
+
+      {:ok, entries} = InMemory.history(store, "s-dangling")
+      assert ["user", "assistant", "tool", "user", "assistant"] = Enum.map(entries, & &1.role)
+    end
+
+    test "a repaired batch is not repaired again on the following turn" do
+      {srv, store} = start_dangling_server("s-dangling-once", %{})
+
+      capture_log(fn ->
+        assert {:ok, _} = Turn.Server.run(srv, "next")
+        assert {:ok, _} = Turn.Server.run(srv, "again")
+      end)
+
+      {:ok, entries} = InMemory.history(store, "s-dangling-once")
+      assert Enum.count(entries, &(&1.role == "tool")) == 1
+    end
+
+    test "a rejected input in a dangling session changes nothing" do
+      {srv, store} =
+        start_dangling_server("s-dangling-reject", %{input_schema: %RequiredQueryInput{}})
+
+      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      {:ok, entries} = InMemory.history(store, "s-dangling-reject")
+      assert Enum.map(entries, & &1.role) == ["user", "assistant"]
+    end
+
+    test "an append crash during repair replies {:handler_crashed, :append, _}; nothing persisted" do
+      {srv, store} =
+        start_dangling_server("s-dangling-crash", %{}, %{
+          append: fn _config, _role, _content -> raise "append boom" end
+        })
+
+      capture_log(fn ->
+        assert {:error, {:handler_crashed, :append, %RuntimeError{message: "append boom"}}} =
+                 Turn.Server.run(srv, "next")
+      end)
+
+      assert Process.alive?(srv)
+      {:ok, entries} = InMemory.history(store, "s-dangling-crash")
+      assert Enum.map(entries, & &1.role) == ["user", "assistant"]
+    end
+  end
 end

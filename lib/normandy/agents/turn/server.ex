@@ -183,12 +183,19 @@ defmodule Normandy.Agents.Turn.Server do
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   @impl true
   def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
-    case admit(data.config, user_input) do
-      {:ok, config} ->
-        start_turn(from, user_input, config, data)
+    missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
+    interrupted = Enum.map(missing, &interrupted_result/1)
 
+    with {:ok, repaired} <- close_batch(data, interrupted),
+         {:ok, config} <- admit(repaired, user_input) do
+      log_repair(data, missing)
+      start_turn(from, user_input, config, interrupted, data)
+    else
       {:rejected, exception} ->
         {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
+
+      {:crashed, reason} ->
+        {:keep_state, data, [{:reply, from, {:error, reason}}]}
     end
   end
 
@@ -280,8 +287,6 @@ defmodule Normandy.Agents.Turn.Server do
     {:keep_state_and_data, :postpone}
   end
 
-  # Schema and input-guardrail rejections are expected outcomes: reply them as data
-  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
   defp validate_on_approval_timeout!(mode) when mode in [:continue, :fail], do: :ok
 
   defp validate_on_approval_timeout!(other) do
@@ -290,6 +295,8 @@ defmodule Normandy.Agents.Turn.Server do
             "got: #{inspect(other)}"
   end
 
+  # Schema and input-guardrail rejections are expected outcomes: reply them as data
+  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
   defp admit(config, user_input) do
     {:ok, BaseAgent.admit_turn_input(config, user_input)}
   rescue
@@ -297,23 +304,68 @@ defmodule Normandy.Agents.Turn.Server do
       {:rejected, e}
   end
 
-  defp start_turn(from, user_input, config, data) do
-    case persist_user_message(data, config, user_input) do
-      :ok ->
-        state =
-          Turn.new(
-            max_iterations: config.max_tool_iterations,
-            response_model: BaseAgent.turn_response_model(config),
-            output_schema: config.output_schema
-          )
+  # Store order mirrors memory order: interrupted results, then the user message.
+  defp start_turn(from, user_input, config, interrupted, data) do
+    with :ok <- persist_interrupted(data, interrupted),
+         :ok <- persist_user_message(data, config, user_input) do
+      state =
+        Turn.new(
+          max_iterations: config.max_tool_iterations,
+          response_model: BaseAgent.turn_response_model(config),
+          output_schema: config.output_schema
+        )
 
-        data = %{data | config: config, pending_reply: from}
-        {state, effects} = Turn.step(state, :start)
-        interpret(effects, %{data | turn_state: state})
-
+      data = %{data | config: config, pending_reply: from}
+      {state, effects} = Turn.step(state, :start)
+      interpret(effects, %{data | turn_state: state})
+    else
       {:error, reason} ->
         {:keep_state, data, [{:reply, from, {:error, {:persist_failed, reason}}}]}
     end
+  end
+
+  # A failed or killed turn can leave the last assistant tool_use without results;
+  # the Claude API rejects the next request unless every tool_use is answered. Fold
+  # an interrupted result per missing call into memory (no turn exists yet, so a
+  # crashing append replies instead of going through fail/2).
+  defp close_batch(%Data{config: config}, []), do: {:ok, config}
+
+  defp close_batch(data, interrupted) do
+    call_handler(data, :append, fn ->
+      Enum.reduce(interrupted, data.config, &data.handlers.append.(&2, "tool", &1))
+    end)
+  end
+
+  defp interrupted_result(call) do
+    %Normandy.Components.ToolResult{
+      tool_call_id: Map.get(call, :id),
+      output: %{
+        error:
+          "tool call interrupted: the previous turn ended before a result was recorded; " <>
+            "the tool may or may not have run",
+        interrupted: true
+      },
+      is_error: true
+    }
+  end
+
+  defp persist_interrupted(data, interrupted) do
+    Enum.reduce_while(interrupted, :ok, fn result, :ok ->
+      case append_to_store(data, "tool", result) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp log_repair(_data, []), do: :ok
+
+  defp log_repair(data, missing) do
+    Logger.warning(
+      "Turn.Server closed #{length(missing)} interrupted tool call(s) left by a previous " <>
+        "turn (session #{inspect(data.session_id)}): " <>
+        Enum.map_join(missing, ", ", &to_string(Map.get(&1, :name)))
+    )
   end
 
   # ---- effect interpreter ----
