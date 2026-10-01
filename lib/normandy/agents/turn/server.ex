@@ -15,6 +15,8 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Components.ToolCall
   alias Normandy.Telemetry.OtelCtx
 
+  require Logger
+
   defmodule Data do
     @moduledoc false
     defstruct turn_state: nil,
@@ -177,8 +179,25 @@ defmodule Normandy.Agents.Turn.Server do
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   @impl true
   def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
-    config = BaseAgent.admit_turn_input(data.config, user_input)
+    case admit(data.config, user_input) do
+      {:ok, config} ->
+        start_turn(from, user_input, config, data)
 
+      {:rejected, exception} ->
+        {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
+    end
+  end
+
+  # Schema and input-guardrail rejections are expected outcomes: reply them as data
+  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
+  defp admit(config, user_input) do
+    {:ok, BaseAgent.admit_turn_input(config, user_input)}
+  rescue
+    e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
+      {:rejected, e}
+  end
+
+  defp start_turn(from, user_input, config, data) do
     case persist_user_message(data, config, user_input) do
       :ok ->
         state =
@@ -284,16 +303,21 @@ defmodule Normandy.Agents.Turn.Server do
   defp interpret([effect | rest], data) do
     case effect do
       {:emit_event, name, meta} ->
-        emit(data, name, meta)
-        interpret(rest, data)
+        guarded(data, :emit, fn -> emit(data, name, meta) end, fn _ -> interpret(rest, data) end)
 
       {:append_message, role, content} ->
-        config = data.handlers.append.(data.config, role, content)
-
-        case append_to_store(data, role, content) do
-          :ok -> interpret(rest, %{data | config: config})
-          {:error, reason} -> fail(%{data | config: config}, {:persist_failed, reason})
-        end
+        guarded(
+          data,
+          :append,
+          fn -> data.handlers.append.(data.config, role, content) end,
+          fn config ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+            case append_to_store(data, role, content) do
+              :ok -> interpret(rest, %{data | config: config})
+              {:error, reason} -> fail(%{data | config: config}, {:persist_failed, reason})
+            end
+          end
+        )
 
       {:persist, turn_state} ->
         case persist_turn_state(data, turn_state) do
@@ -302,14 +326,28 @@ defmodule Normandy.Agents.Turn.Server do
         end
 
       {:convert_output, raw, schema} ->
-        advance(rest, data, {:output_converted, data.handlers.convert.(data.config, raw, schema)})
+        guarded(
+          data,
+          :convert,
+          fn -> data.handlers.convert.(data.config, raw, schema) end,
+          &advance(rest, data, {:output_converted, &1})
+        )
 
       {:validate_output, value} ->
-        advance(rest, data, {:output_validated, data.handlers.validate.(data.config, value)})
+        guarded(
+          data,
+          :validate,
+          fn -> data.handlers.validate.(data.config, value) end,
+          &advance(rest, data, {:output_validated, &1})
+        )
 
       {:guard_output, value} ->
-        data.handlers.guard.(data.config, value)
-        advance(rest, data, {:output_guarded, value})
+        guarded(
+          data,
+          :guard,
+          fn -> data.handlers.guard.(data.config, value) end,
+          fn _ -> advance(rest, data, {:output_guarded, value}) end
+        )
 
       {:call_llm, request} ->
         spawn_task(data, fn h, d ->
@@ -388,8 +426,75 @@ defmodule Normandy.Agents.Turn.Server do
 
   # ---- side-effect helpers ----
 
-  defp emit(%Data{subscriber: nil}, _name, _meta), do: :ok
-  defp emit(%Data{subscriber: sub}, name, meta) when is_function(sub, 2), do: sub.(name, meta)
+  # The agent's own emit handler first (a crash there is a handler crash), then the
+  # subscriber, whose crash is logged and reported but never fails the turn.
+  defp emit(%Data{handlers: handlers} = data, name, meta) do
+    if handlers.emit, do: handlers.emit.(data.config, name, meta)
+    notify_subscriber(data, name, meta)
+  end
+
+  defp notify_subscriber(%Data{subscriber: nil}, _name, _meta), do: :ok
+
+  defp notify_subscriber(%Data{subscriber: sub} = data, name, meta) when is_function(sub, 2) do
+    sub.(name, meta)
+    :ok
+  catch
+    kind, reason ->
+      Logger.error(
+        "Turn.Server subscriber crashed on #{inspect(name)} " <>
+          "(session #{inspect(data.session_id)}): " <>
+          describe_crash(kind, reason, __STACKTRACE__)
+      )
+
+      :telemetry.execute(
+        [:normandy, :turn, :subscriber, :exception],
+        %{count: 1},
+        %{session_id: data.session_id, event: name, kind: kind}
+      )
+
+      :ok
+  end
+
+  # Runs a synchronous handler in the server process. A raise, exit or throw becomes
+  # {:crashed, {:handler_crashed, name, exception_or_term}} instead of crashing the
+  # session (and, through restart intensity, Turn.Supervisor).
+  defp call_handler(data, name, fun) do
+    {:ok, fun.()}
+  catch
+    kind, reason ->
+      stacktrace = __STACKTRACE__
+
+      Logger.error(
+        "Turn.Server handler #{inspect(name)} crashed (session #{inspect(data.session_id)}): " <>
+          describe_crash(kind, reason, stacktrace) <>
+          "\n" <> Exception.format_stacktrace(arity_only(stacktrace))
+      )
+
+      {:crashed, {:handler_crashed, name, Exception.normalize(kind, reason, stacktrace)}}
+  end
+
+  defp guarded(data, name, fun, continue) do
+    case call_handler(data, name, fun) do
+      {:ok, value} -> continue.(value)
+      {:crashed, reason} -> fail(data, reason)
+    end
+  end
+
+  defp describe_crash(kind, reason, stacktrace) do
+    case Exception.normalize(kind, reason, stacktrace) do
+      exception when is_exception(exception) -> Exception.format_banner(:error, exception)
+      other -> Exception.format_banner(kind, other)
+    end
+  end
+
+  # Stack frames can carry call arguments (a FunctionClauseError's top frame does),
+  # and an argument may be the config, which can hold credentials. Log arities only.
+  defp arity_only(stacktrace) do
+    Enum.map(stacktrace, fn
+      {mod, fun, args, location} when is_list(args) -> {mod, fun, length(args), location}
+      frame -> frame
+    end)
+  end
 
   defp reply(%Data{pending_reply: nil}, _msg), do: :ok
   defp reply(%Data{pending_reply: from}, msg), do: :gen_statem.reply(from, msg)

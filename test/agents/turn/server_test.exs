@@ -1,6 +1,8 @@
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
@@ -36,6 +38,15 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def run(t) do
       if t.notify, do: send(t.notify, {:tool_ran, t.name})
       {:ok, "ran #{t.name}"}
+    end
+  end
+
+  # Input schema with a required field: `%{}` fails validation (ValidationError).
+  defmodule RequiredQueryInput do
+    use Normandy.Schema
+
+    io_schema "Input requiring a query" do
+      field(:query, :string, description: "query", required: true)
     end
   end
 
@@ -877,6 +888,190 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {:ok, _} = Turn.Server.run(srv, "go")
       assert_receive {:catalog_lookup, "test"}
       refute_received {:catalog_lookup, _}
+    end
+  end
+
+  describe "failure replies and crashing callbacks (AGENTS-1)" do
+    defp final_handlers(overrides \\ %{}) do
+      Map.merge(
+        %{
+          BaseAgent.non_streaming_handlers()
+          | call_llm: fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end
+        },
+        overrides
+      )
+    end
+
+    defp start_server(sid, config, opts \\ []) do
+      store = InMemory.new()
+
+      base = [
+        session_id: sid,
+        config: config,
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        handlers: final_handlers()
+      ]
+
+      {:ok, srv} = Turn.Server.start_link(Keyword.merge(base, opts))
+      {srv, store}
+    end
+
+    defp attach_telemetry(event) do
+      ref = make_ref()
+      test_pid = self()
+
+      :telemetry.attach(
+        {__MODULE__, ref},
+        event,
+        fn _event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, ref, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach({__MODULE__, ref}) end)
+      ref
+    end
+
+    test "schema-invalid input replies {:rejected, ValidationError}; nothing persisted" do
+      config = %{base_config() | input_schema: %RequiredQueryInput{}}
+      {srv, store} = start_server("s-rej-schema", config)
+
+      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
+               Turn.Server.run(srv, %{})
+
+      assert Process.alive?(srv)
+      assert {:ok, []} = InMemory.history(store, "s-rej-schema")
+      assert {:ok, %Resp{content: "ok"}} = Turn.Server.run(srv, %{query: "weather"})
+    end
+
+    test "an input guardrail block replies {:rejected, ViolationError}" do
+      config = %{
+        base_config()
+        | input_guardrails: [{Normandy.Guardrails.Builtins.MaxLength, limit: 5}]
+      }
+
+      {srv, _store} = start_server("s-rej-guard", config)
+
+      assert {:error, {:rejected, %Normandy.Guardrails.ViolationError{}}} =
+               Turn.Server.run(srv, "too long input")
+
+      assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
+    end
+
+    test "repeated rejected inputs do not take down Turn.Supervisor" do
+      {:ok, sup} = Turn.Supervisor.start_link([])
+      config = %{base_config() | input_schema: %RequiredQueryInput{}}
+
+      {:ok, srv} =
+        Turn.Supervisor.start_server(sup,
+          session_id: "s-cascade",
+          config: config,
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          handlers: final_handlers()
+        )
+
+      for _ <- 1..5, do: assert({:error, {:rejected, _}} = Turn.Server.run(srv, %{}))
+
+      assert Process.alive?(srv)
+      assert Process.alive?(sup)
+    end
+
+    test "a raising validate handler fails the turn; the session stays usable" do
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      validate = fn _config, value ->
+        if Agent.get_and_update(calls, &{&1, &1 + 1}) == 0,
+          do: raise("validate boom"),
+          else: value
+      end
+
+      {srv, store} =
+        start_server("s-crash-validate", base_config(),
+          handlers: final_handlers(%{validate: validate})
+        )
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:handler_crashed, :validate, %RuntimeError{message: "validate boom"}}} =
+                   Turn.Server.run(srv, "hi")
+        end)
+
+      assert log =~ "handler :validate crashed"
+      assert log =~ "validate boom"
+      assert Process.alive?(srv)
+
+      assert {:ok, %Turn.State{status: :failed}} =
+               InMemory.load_turn_state(store, "s-crash-validate")
+
+      assert {:ok, %Resp{}} = Turn.Server.run(srv, "again")
+    end
+
+    test "an exiting append handler fails the turn with the exit reason" do
+      append = fn _config, _role, _content -> exit(:store_timeout) end
+
+      {srv, _store} =
+        start_server("s-crash-append", base_config(), handlers: final_handlers(%{append: append}))
+
+      capture_log(fn ->
+        assert {:error, {:handler_crashed, :append, :store_timeout}} = Turn.Server.run(srv, "hi")
+      end)
+
+      assert Process.alive?(srv)
+    end
+
+    test "the Server calls handlers.emit for each event" do
+      test_pid = self()
+      emit = fn _config, name, meta -> send(test_pid, {:handler_emit, name, meta}) end
+
+      {srv, _store} =
+        start_server("s-emit", base_config(), handlers: final_handlers(%{emit: emit}))
+
+      assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
+      assert_received {:handler_emit, :iteration, %{iteration: 1, final: false}}
+    end
+
+    test "a nil handlers.emit is skipped" do
+      {srv, _store} =
+        start_server("s-emit-nil", base_config(), handlers: final_handlers(%{emit: nil}))
+
+      assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
+    end
+
+    test "a raising subscriber is logged and reported; the turn still succeeds" do
+      ref = attach_telemetry([:normandy, :turn, :subscriber, :exception])
+
+      log =
+        capture_log(fn ->
+          {srv, _store} =
+            start_server("s-sub-raise", base_config(),
+              subscriber: fn _name, _meta -> raise "subscriber boom" end
+            )
+
+          assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
+        end)
+
+      assert log =~ "subscriber crashed"
+      assert log =~ "subscriber boom"
+
+      assert_received {:telemetry, ^ref, %{count: 1},
+                       %{session_id: "s-sub-raise", event: :iteration, kind: :error}}
+    end
+
+    test "a subscriber that exits or throws does not fail the turn" do
+      subscribers = [
+        {"s-sub-exit", fn _name, _meta -> exit(:gone) end},
+        {"s-sub-throw", fn _name, _meta -> throw(:nope) end}
+      ]
+
+      for {sid, sub} <- subscribers do
+        capture_log(fn ->
+          {srv, _store} = start_server(sid, base_config(), subscriber: sub)
+          assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
+        end)
+      end
     end
   end
 end
