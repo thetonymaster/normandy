@@ -29,6 +29,8 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   """
   use Normandy.Schema
 
+  alias Normandy.LLM.JsonDeserializer
+
   @type t :: %__MODULE__{
           api_key: String.t(),
           base_url: String.t(),
@@ -131,7 +133,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
            max_tokens,
            messages
          ) do
-      case Normandy.LLM.JsonDeserializer.deserialize_with_retry(
+      case JsonDeserializer.deserialize_with_retry(
              content,
              schema,
              client,

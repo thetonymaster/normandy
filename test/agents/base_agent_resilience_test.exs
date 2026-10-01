@@ -2,6 +2,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
 
   # Mock client that fails then succeeds (for retry testing)
@@ -150,7 +151,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       end
 
       # Circuit should be open
-      assert Normandy.Resilience.CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker) == :open
 
       # Third call should fail fast
       assert_raise RuntimeError, "LLM call failed: :open", fn ->
@@ -187,7 +188,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         BaseAgent.run(agent, %{chat_message: "fail"})
       end
 
-      assert Normandy.Resilience.CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker) == :open
 
       # Wait for half-open
       Process.sleep(100)
@@ -201,7 +202,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success"
-      assert Normandy.Resilience.CircuitBreaker.state(agent.circuit_breaker) == :closed
+      assert CircuitBreaker.state(agent.circuit_breaker) == :closed
 
       # Clean up
       Agent.stop(client_ref)
@@ -255,7 +256,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
-      assert Normandy.Resilience.CircuitBreaker.state(agent.circuit_breaker) == :closed
+      assert CircuitBreaker.state(agent.circuit_breaker) == :closed
 
       # Clean up
       Agent.stop(:retry_agent)
@@ -298,7 +299,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       end
 
       # Circuit should be open now
-      assert Normandy.Resilience.CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker) == :open
 
       # Next call should fail fast (no retries due to open circuit)
       attempt_count_before = Agent.get(:retry_agent, & &1)

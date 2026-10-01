@@ -1,8 +1,8 @@
 defmodule NormandyTest.Tools.RegistryMetadataTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Tools.Registry
   alias Normandy.Tools.Examples.{Calculator, EnhancedCalculator, StringManipulator}
+  alias Normandy.Tools.Registry
 
   describe "get_metadata/2" do
     test "returns metadata for a registered tool" do
@@ -30,7 +30,7 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
       assert Map.has_key?(metadata, :fields)
       assert is_list(metadata.fields)
-      assert length(metadata.fields) > 0
+      assert metadata.fields != []
 
       # Check field structure
       operation_field = Enum.find(metadata.fields, fn f -> f.name == :operation end)
@@ -205,7 +205,7 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       {:ok, fields} = Registry.introspect_schema(registry, "calculator")
 
       assert is_list(fields)
-      assert length(fields) > 0
+      assert fields != []
 
       # Check field structure
       operation_field = Enum.find(fields, fn f -> f.name == :operation end)

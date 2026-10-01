@@ -81,6 +81,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
     case store_mod.list_resumable(store_handle) do
       {:ok, sids} ->
         Enum.each(sids, fn sid ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if reg_mod.whereis(reg_handle, sid) == :none and
                non_terminal?(store_mod, store_handle, sid) do
             start_session(state, sid)

@@ -45,6 +45,7 @@ defmodule Normandy.Agents.Turn.Driver do
 
   defp run(acc, state, [], _handlers), do: {acc, state}
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp run(acc, state, [effect | rest], handlers) do
     case effect do
       {:emit_event, name, meta} ->

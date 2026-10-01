@@ -102,6 +102,7 @@ defmodule Normandy.DSL.Workflow do
   - Compile-time workflow validation
   """
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.Reactive
 
   defmacro __using__(_opts) do
@@ -275,12 +276,14 @@ defmodule Normandy.DSL.Workflow do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro __before_compile__(env) do
     # Get the steps at compile time
     steps =
       Module.get_attribute(env.module, :workflow_steps, [])
       |> Enum.reverse()
 
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       @doc """
       Executes the workflow.
@@ -413,7 +416,7 @@ defmodule Normandy.DSL.Workflow do
       end
 
       defp run_agent(agent, input) do
-        case Normandy.Agents.BaseAgent.run(agent, prepare_input(input)) do
+        case BaseAgent.run(agent, prepare_input(input)) do
           {_updated_agent, response} -> {:ok, response}
           {:error, reason} -> {:error, reason}
         end

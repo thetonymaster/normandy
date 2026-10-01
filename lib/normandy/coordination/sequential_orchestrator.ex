@@ -140,6 +140,7 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
           {:error, reason} ->
             error_result = %{agent_id: agent_id, error: reason, input: input}
 
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case on_error_strategy do
               :stop ->
                 {:halt, {:error, error_result, ctx, results}}
@@ -225,21 +226,19 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   # Private functions
 
   defp execute_agent(agent, input) do
-    try do
-      # Convert input to agent input format if needed
-      agent_input = prepare_input(input)
+    # Convert input to agent input format if needed
+    agent_input = prepare_input(input)
 
-      # Run agent
-      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
+    # Run agent
+    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
 
-      # Extract result from response
-      result = extract_result(response)
+    # Extract result from response
+    result = extract_result(response)
 
-      {:ok, result}
-    rescue
-      e ->
-        {:error, {:exception, e, __STACKTRACE__}}
-    end
+    {:ok, result}
+  rescue
+    e ->
+      {:error, {:exception, e, __STACKTRACE__}}
   end
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do

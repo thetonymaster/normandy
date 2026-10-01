@@ -23,8 +23,12 @@ defmodule Normandy.A2A.Server do
 
   """
 
+  alias Claudio.A2A.AgentCard
+  alias Claudio.A2A.Message
+  alias Claudio.A2A.Part
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
   @doc """
@@ -50,18 +54,18 @@ defmodule Normandy.A2A.Server do
     name = Keyword.fetch!(opts, :name)
     description = Keyword.fetch!(opts, :description)
 
-    card = Claudio.A2A.AgentCard.new(name, description)
+    card = AgentCard.new(name, description)
 
     card =
       case Keyword.get(opts, :version) do
         nil -> card
-        version -> Claudio.A2A.AgentCard.set_version(card, version)
+        version -> AgentCard.set_version(card, version)
       end
 
     card =
       case {Keyword.get(opts, :provider_url), Keyword.get(opts, :provider_org)} do
         {nil, _} -> card
-        {url, org} -> Claudio.A2A.AgentCard.set_provider(card, url, org || "")
+        {url, org} -> AgentCard.set_provider(card, url, org || "")
       end
 
     card =
@@ -70,7 +74,7 @@ defmodule Normandy.A2A.Server do
           card
 
         url ->
-          Claudio.A2A.AgentCard.add_interface(card, url, "jsonrpc+http", "0.3")
+          AgentCard.add_interface(card, url, "jsonrpc+http", "0.3")
       end
 
     # Add skills from registered tools
@@ -88,8 +92,7 @@ defmodule Normandy.A2A.Server do
     # Extract text from message parts
     text =
       message.parts
-      |> Enum.map(fn part -> Map.get(part, :text, "") end)
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
       |> String.trim()
 
     # Build user input matching the agent's input schema
@@ -109,14 +112,14 @@ defmodule Normandy.A2A.Server do
         id: generate_task_id(),
         status: %{
           state: :completed,
-          message: Claudio.A2A.Message.new(:agent, [Claudio.A2A.Part.text(response_text)]),
+          message: Message.new(:agent, [Part.text(response_text)]),
           timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
         },
         artifacts: [
           %Claudio.A2A.Artifact{
             artifact_id: "result-1",
             name: "response",
-            parts: [Claudio.A2A.Part.text(response_text)]
+            parts: [Part.text(response_text)]
           }
         ]
       }
@@ -139,9 +142,9 @@ defmodule Normandy.A2A.Server do
   defp add_tool_skills(card, %Registry{} = registry) do
     Registry.list(registry)
     |> Enum.reduce(card, fn tool, acc ->
-      name = Normandy.Tools.BaseTool.tool_name(tool)
-      description = Normandy.Tools.BaseTool.tool_description(tool)
-      Claudio.A2A.AgentCard.add_skill(acc, name, description)
+      name = BaseTool.tool_name(tool)
+      description = BaseTool.tool_description(tool)
+      AgentCard.add_skill(acc, name, description)
     end)
   end
 

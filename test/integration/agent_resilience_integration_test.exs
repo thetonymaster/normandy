@@ -2,6 +2,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration
@@ -130,9 +131,9 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         BaseAgent.run(agent, %{chat_message: "What's my name?"})
 
       # Should have conversation history
-      assert Normandy.Components.AgentMemory.count_messages(agent2.memory) != 0
+      assert AgentMemory.count_messages(agent2.memory) != 0
       # user, assistant, user, assistant
-      assert Normandy.Components.AgentMemory.count_messages(agent2.memory) >= 4
+      assert AgentMemory.count_messages(agent2.memory) >= 4
     end
   end
 

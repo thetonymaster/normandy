@@ -288,7 +288,9 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro __before_compile__(_env) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       # Store configuration at compile time - MUST come first before any function uses it
       @agent_compile_config %{

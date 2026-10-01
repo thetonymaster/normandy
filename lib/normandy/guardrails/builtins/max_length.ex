@@ -32,6 +32,7 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
 
       string when is_binary(string) ->
         if String.length(string) > limit do
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           path = if field, do: [field], else: []
 
           {:error,

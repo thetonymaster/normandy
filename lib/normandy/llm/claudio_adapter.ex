@@ -86,6 +86,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   use Normandy.Schema
 
+  alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.Json.Decoder
+  alias Normandy.LLM.Json.SchemaBinder
+  alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLM.StructuredOutputs
+
   @type t :: %__MODULE__{
           api_key: String.t(),
           base_url: String.t() | nil,
@@ -108,10 +114,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
     Converts Normandy requests to Claudio format and vice versa.
     """
 
-    alias Normandy.Components.Message
     alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
     alias Normandy.Components.ContentBlock.Image, as: ImageBlock
     alias Normandy.Components.ContentBlock.Text, as: TextBlock
+    alias Normandy.Components.Message
 
     @doc """
     Legacy completion function (not used with Claudio).
@@ -137,7 +143,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
-      case Normandy.LLM.ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
+      case ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
         {:ok, json_schema} ->
           converse_structured(
             client,
@@ -208,8 +214,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
           normalized_response = convert_response_to_normandy(response, response_model, context)
 
-          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response),
-           Normandy.LLM.ClaudioAdapter.response_meta(response)}
+          {normalized_response, ClaudioAdapter.extract_usage(response),
+           ClaudioAdapter.response_meta(response)}
 
         {:error, error} ->
           handle_error(error, response_model)
@@ -253,15 +259,14 @@ defmodule Normandy.LLM.ClaudioAdapter do
             task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
           }
 
-          {Normandy.LLM.ClaudioAdapter.__handle_structured_response__(
+          {ClaudioAdapter.__handle_structured_response__(
              response,
              response_model,
              context
-           ), Normandy.LLM.ClaudioAdapter.extract_usage(response),
-           Normandy.LLM.ClaudioAdapter.response_meta(response)}
+           ), ClaudioAdapter.extract_usage(response), ClaudioAdapter.response_meta(response)}
 
         {:error, error} ->
-          case Normandy.LLM.ClaudioAdapter.__structured_error_action__(error) do
+          case ClaudioAdapter.__structured_error_action__(error) do
             :fallback ->
               do_converse_legacy(
                 client,
@@ -297,9 +302,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> add_mcp_servers(mcp_servers)
         |> add_client_options(client.options, Keyword.take(opts, [:task_budget_remaining]))
 
-      Normandy.LLM.ClaudioAdapter.__raw_completion__(
-        Claudio.Messages.create(claudio_client, request)
-      )
+      ClaudioAdapter.__raw_completion__(Claudio.Messages.create(claudio_client, request))
     end
 
     @doc """
@@ -380,6 +383,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           final_stream =
             if callback do
               Stream.map(event_stream, fn event ->
+                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
                 case event do
                   {:ok, parsed_event} ->
                     invoke_stream_callback(parsed_event, callback)
@@ -514,7 +518,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # Private functions
 
-    defp build_claudio_client(client), do: Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+    defp build_claudio_client(client), do: ClaudioAdapter.to_claudio_client(client)
 
     defp add_temperature(request, nil), do: request
 
@@ -784,7 +788,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Add tools with caching if enabled
       # Cache all tools except the last one, then cache the last one
       # This provides optimal caching for tool definitions
-      if enable_caching and length(tools) > 0 do
+      if enable_caching and tools != [] do
         # Add all tools except last without cache
         {last_tool, other_tools} = List.pop_at(tools, -1)
 
@@ -836,11 +840,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp add_client_options(request, options, call_opts),
-      do: Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, options, call_opts)
+      do: ClaudioAdapter.__apply_client_options__(request, options, call_opts)
 
     defp convert_response_to_normandy(claudio_response, response_model, context) do
       # Extract content from Claudio response
-      content = Normandy.LLM.ClaudioAdapter.extract_content(claudio_response)
+      content = ClaudioAdapter.extract_content(claudio_response)
 
       # If response_model has specific fields, populate them
       case response_model do
@@ -867,7 +871,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp populate_tool_call_response(schema, content, claudio_response) do
       # Extract tool_use blocks from Claudio response
-      tool_calls = Normandy.LLM.ClaudioAdapter.extract_tool_uses(claudio_response)
+      tool_calls = ClaudioAdapter.extract_tool_uses(claudio_response)
 
       schema
       |> Map.put(:content, content)
@@ -895,7 +899,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           remaining -> Keyword.put(opts, :task_budget_remaining, remaining)
         end
 
-      case Normandy.LLM.JsonDeserializer.deserialize_with_retry(
+      case JsonDeserializer.deserialize_with_retry(
              content,
              schema,
              client,
@@ -909,7 +913,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
           validated_schema
 
         {:error, reason} ->
-          Normandy.LLM.ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
+          ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
       end
     end
 
@@ -962,10 +966,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     |> Enum.filter(fn block ->
       Map.get(block, :type) == :text || Map.get(block, "type") == "text"
     end)
-    |> Enum.map(fn block ->
+    |> Enum.map_join("\n", fn block ->
       Map.get(block, :text) || Map.get(block, "text") || ""
     end)
-    |> Enum.join("\n")
   end
 
   def extract_content(_response), do: ""
@@ -1021,19 +1024,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
       tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
 
       name =
-        cond do
-          type in [:mcp_tool_use, "mcp_tool_use"] ->
-            server_name =
-              Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
+        if type in [:mcp_tool_use, "mcp_tool_use"] do
+          server_name =
+            Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
 
-            if server_name do
-              "#{server_name}__#{tool_name}"
-            else
-              tool_name
-            end
-
-          true ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+          if server_name do
+            "#{server_name}__#{tool_name}"
+          else
             tool_name
+          end
+        else
+          tool_name
         end
 
       %Normandy.Components.ToolCall{
@@ -1224,7 +1226,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   # mid-turn tool call the legacy path handles, not a structured-output result.
   def __structured_schema_for__(client, response_model, opts) do
     case Keyword.get(opts, :tools, []) do
-      [] -> Normandy.LLM.StructuredOutputs.schema_for(client, response_model)
+      [] -> StructuredOutputs.schema_for(client, response_model)
       _ -> :skip
     end
   end
@@ -1253,11 +1255,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
         )
 
       _ ->
-        adapter = Normandy.LLM.JsonDeserializer.get_json_adapter()
+        adapter = JsonDeserializer.get_json_adapter()
 
         with {:ok, parsed} when is_map(parsed) <-
-               Normandy.LLM.Json.Decoder.decode(content, adapter, []),
-             {:ok, bound} <- Normandy.LLM.Json.SchemaBinder.bind(parsed, response_model, content) do
+               Decoder.decode(content, adapter, []),
+             {:ok, bound} <- SchemaBinder.bind(parsed, response_model, content) do
           bound
         else
           _ ->

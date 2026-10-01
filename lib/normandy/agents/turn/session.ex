@@ -28,6 +28,7 @@ defmodule Normandy.Agents.Turn.Session do
   `{:error, {:already_started, pid}}`; `rehydrate_and_start/1` normalises this to
   `{:ok, pid}` so all callers converge on the single winner.
   """
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.{Server, Supervisor}
   alias Normandy.Components.AgentMemory
 
@@ -95,7 +96,7 @@ defmodule Normandy.Agents.Turn.Session do
         server_opts =
           if template_provider do
             tmpl =
-              Normandy.Agents.ConfigTemplate.from_config(config, template_id_of(opts, config))
+              ConfigTemplate.from_config(config, template_id_of(opts, config))
 
             :ok = store_mod.save_config_template(store_handle, sid, tmpl)
 
@@ -142,6 +143,7 @@ defmodule Normandy.Agents.Turn.Session do
   #     at start time (a concurrent winner mid-registration, OR a registry that has
   #     not converged yet). Route to the winner if one is now visible, else retry the
   #     start briefly. Genuine errors propagate unchanged.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp start_with_retry(sup_mod, sup, server_opts, reg_mod, reg_handle, sid, retries \\ 20) do
     case sup_mod.start_server(sup, server_opts) do
       {:ok, pid} ->
@@ -153,6 +155,7 @@ defmodule Normandy.Agents.Turn.Session do
             {:ok, pid}
 
           via_race?(reason) and retries > 0 ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case reg_mod.whereis(reg_handle, sid) do
               {:ok, pid} ->
                 {:ok, pid}

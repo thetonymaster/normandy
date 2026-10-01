@@ -1,8 +1,8 @@
 defmodule NormandyTest.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
   alias Normandy.Tools.{Executor, Registry}
-  alias Normandy.Tools.Examples.{Calculator, StringManipulator, ListProcessor}
 
   describe "Executor.execute/3" do
     test "executes tool successfully" do

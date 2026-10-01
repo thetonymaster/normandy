@@ -59,6 +59,8 @@ defmodule Normandy.Tools.SchemaBaseTool do
       end
   """
 
+  alias Normandy.Schema.Validator
+
   @doc false
   defmacro __using__(_opts) do
     quote do
@@ -84,6 +86,7 @@ defmodule Normandy.Tools.SchemaBaseTool do
         field(:b, :float, required: true, description: "Second operand")
       end
   """
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro tool_schema(tool_name, description, do: block) do
     quote do
       # Set module attributes first, before any code that uses them
@@ -110,7 +113,7 @@ defmodule Normandy.Tools.SchemaBaseTool do
       """
       @spec validate(map()) :: {:ok, struct()} | {:error, list()}
       def validate(params) when is_map(params) do
-        case Normandy.Schema.Validator.validate(__MODULE__, params) do
+        case Validator.validate(__MODULE__, params) do
           {:ok, validated_params} ->
             {:ok, struct(__MODULE__, validated_params)}
 

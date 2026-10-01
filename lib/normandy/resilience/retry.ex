@@ -153,7 +153,7 @@ defmodule Normandy.Resilience.Retry do
 
       {:error, error} ->
         # Check if we should retry (and haven't exceeded max attempts)
-        if attempt < config.max_attempts and is_retryable?(error, config) do
+        if attempt < config.max_attempts and retryable?(error, config) do
           delay = calculate_delay(attempt, config)
 
           Logger.warning(
@@ -165,6 +165,7 @@ defmodule Normandy.Resilience.Retry do
           do_retry(fun, config, attempt + 1, [error | errors])
         else
           # Either non-retryable or max attempts reached
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if attempt >= config.max_attempts do
             # Return the accumulated errors
             {:error, {error, config.max_attempts, Enum.reverse([error | errors])}}
@@ -186,33 +187,31 @@ defmodule Normandy.Resilience.Retry do
 
   # Execute function with safety wrapper
   defp execute_with_timeout(fun) do
-    try do
-      fun.()
-    rescue
-      error ->
-        {:error, {:exception, error, __STACKTRACE__}}
-    catch
-      :exit, reason ->
-        {:error, {:exit, reason}}
+    fun.()
+  rescue
+    error ->
+      {:error, {:exception, error, __STACKTRACE__}}
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
 
-      thrown_value ->
-        {:error, {:throw, thrown_value}}
-    end
+    thrown_value ->
+      {:error, {:throw, thrown_value}}
   end
 
   # Determine if error is retryable
-  defp is_retryable?(error, config) do
+  defp retryable?(error, config) do
     # Check custom retry condition first
     if config.retry_if do
       config.retry_if.({:error, error})
     else
       # Check if error type is in retry_on list
-      is_retryable_error?(error, config.retry_on)
+      retryable_error?(error, config.retry_on)
     end
   end
 
   # Check if error matches retryable types
-  defp is_retryable_error?(error, retry_on) do
+  defp retryable_error?(error, retry_on) do
     case error do
       # Atom error types
       error_type when is_atom(error_type) ->
@@ -227,7 +226,7 @@ defmodule Normandy.Resilience.Retry do
         error_type in retry_on
 
       %{reason: reason} ->
-        is_retryable_error?(reason, retry_on)
+        retryable_error?(reason, retry_on)
 
       # Exception struct
       %{__exception__: true, __struct__: module} ->

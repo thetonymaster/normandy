@@ -11,8 +11,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
   import ExUnit.Assertions
 
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
+  alias Normandy.LLM.ClaudioAdapter
 
   @default_model "claude-haiku-4-5-20251001"
 
@@ -148,13 +148,11 @@ defmodule NormandyTest.Support.IntegrationHelper do
   Returns {:ok, response} or {:error, reason}.
   """
   def verify_api_connection do
-    try do
-      agent = create_real_agent()
-      {_updated_agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
-      {:ok, response}
-    rescue
-      e -> {:error, e}
-    end
+    agent = create_real_agent()
+    {_updated_agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
+    {:ok, response}
+  rescue
+    e -> {:error, e}
   end
 
   @doc """

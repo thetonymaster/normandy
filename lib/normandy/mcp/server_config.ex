@@ -18,6 +18,8 @@ defmodule Normandy.MCP.ServerConfig do
 
   """
 
+  alias Claudio.MCP.ServerConfig, as: ClaudioServerConfig
+
   @type t :: %__MODULE__{
           name: String.t(),
           url: String.t(),
@@ -55,8 +57,8 @@ defmodule Normandy.MCP.ServerConfig do
   def allow_tools(%__MODULE__{} = config, names) when is_list(names) do
     # Validate now, where the mistake is, rather than when the request is built.
     _ =
-      Claudio.MCP.ServerConfig.allow_tools(
-        Claudio.MCP.ServerConfig.new(config.name, config.url),
+      ClaudioServerConfig.allow_tools(
+        ClaudioServerConfig.new(config.name, config.url),
         names
       )
 
@@ -68,17 +70,17 @@ defmodule Normandy.MCP.ServerConfig do
   """
   @spec to_claudio(t()) :: Claudio.MCP.ServerConfig.t()
   def to_claudio(%__MODULE__{} = config) do
-    claudio_config = Claudio.MCP.ServerConfig.new(config.name, config.url)
+    claudio_config = ClaudioServerConfig.new(config.name, config.url)
 
     claudio_config =
       if config.authorization_token do
-        Claudio.MCP.ServerConfig.set_auth_token(claudio_config, config.authorization_token)
+        ClaudioServerConfig.set_auth_token(claudio_config, config.authorization_token)
       else
         claudio_config
       end
 
     if config.allowed_tools do
-      Claudio.MCP.ServerConfig.allow_tools(claudio_config, config.allowed_tools)
+      ClaudioServerConfig.allow_tools(claudio_config, config.allowed_tools)
     else
       claudio_config
     end

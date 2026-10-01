@@ -27,8 +27,8 @@ defmodule Normandy.Agents.ValidationMiddleware do
       end
   """
 
-  alias Normandy.Schema.Validator
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Schema.Validator
 
   @doc """
   Validates user input against the agent's input schema.
@@ -51,21 +51,19 @@ defmodule Normandy.Agents.ValidationMiddleware do
   def validate_input(%BaseAgentConfig{}, nil), do: {:ok, nil}
 
   def validate_input(%BaseAgentConfig{input_schema: input_schema}, input) when is_map(input) do
-    cond do
-      # Check if input is a struct
-      is_map_key(input, :__struct__) ->
-        # Input is already a struct, check if it matches the schema
-        if input.__struct__ == input_schema.__struct__ do
-          {:ok, input}
-        else
-          # Convert struct to map for validation
-          input_map = Map.from_struct(input)
-          validate_input_map(input_schema, input_map)
-        end
-
+    # Check if input is a struct
+    if is_map_key(input, :__struct__) do
+      # Input is already a struct, check if it matches the schema
+      if input.__struct__ == input_schema.__struct__ do
+        {:ok, input}
+      else
+        # Convert struct to map for validation
+        input_map = Map.from_struct(input)
+        validate_input_map(input_schema, input_map)
+      end
+    else
       # Input is a plain map
-      true ->
-        validate_input_map(input_schema, input)
+      validate_input_map(input_schema, input)
     end
   end
 

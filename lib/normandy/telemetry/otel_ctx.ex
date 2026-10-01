@@ -23,6 +23,9 @@ defmodule Normandy.Telemetry.OtelCtx do
   def capture do
     if Code.ensure_loaded?(OpenTelemetry.Ctx) and
          function_exported?(OpenTelemetry.Ctx, :get_current, 0) do
+      # OpenTelemetry is a soft dependency: a direct call would emit an
+      # undefined-module compile warning when it is absent.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(OpenTelemetry.Ctx, :get_current, [])
     end
   end
@@ -32,6 +35,8 @@ defmodule Normandy.Telemetry.OtelCtx do
 
   def restore(ctx) do
     if function_exported?(OpenTelemetry.Ctx, :attach, 1) do
+      # Soft dependency, see capture/0.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(OpenTelemetry.Ctx, :attach, [ctx])
     end
 

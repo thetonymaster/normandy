@@ -19,6 +19,7 @@ defmodule Normandy.Guardrails.Builtins.RequiredFields do
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def check(value, opts) do
     fields = Keyword.fetch!(opts, :fields)
 

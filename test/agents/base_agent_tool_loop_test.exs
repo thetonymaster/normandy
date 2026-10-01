@@ -26,9 +26,11 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, ToolCallResponse}
-  alias Normandy.Components.{ToolCall, AgentMemory}
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
+  alias NormandyTest.Agents.SleepyProbe
 
   defmodule MockToolCallClient do
     @moduledoc """
@@ -396,6 +398,8 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     defmodule SleepyTool do
       use Normandy.Schema
 
+      alias NormandyTest.Agents.SleepyProbe
+
       schema do
         field(:sleep_ms, :integer, default: 200)
         field(:label, :string, default: "")
@@ -416,9 +420,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         end
 
         def run(%{sleep_ms: ms, label: label}) do
-          NormandyTest.Agents.SleepyProbe.enter()
+          SleepyProbe.enter()
           :timer.sleep(ms)
-          NormandyTest.Agents.SleepyProbe.leave()
+          SleepyProbe.leave()
           {:ok, label}
         end
       end
@@ -480,7 +484,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     defp run_with_concurrency(concurrency, n, sleep_ms) do
       # Reset again so the parallel test's two back-to-back runs each measure
       # their own peak concurrency in isolation.
-      NormandyTest.Agents.SleepyProbe.reset()
+      SleepyProbe.reset()
 
       registry = Registry.new([%SleepyTool{}])
 
@@ -498,7 +502,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       {elapsed_us, {_agent, response}} =
         :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
 
-      {elapsed_us, response, NormandyTest.Agents.SleepyProbe.max_observed()}
+      {elapsed_us, response, SleepyProbe.max_observed()}
     end
 
     test "max_tool_concurrency: 1 runs tools sequentially" do
@@ -552,7 +556,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       # AgentMemory.messages/1 returns the conversation chronological.
       tool_msgs =
-        Normandy.Components.AgentMemory.messages(agent.memory)
+        AgentMemory.messages(agent.memory)
         |> Enum.filter(&(&1.role == "tool"))
 
       assert length(tool_msgs) == 3

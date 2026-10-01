@@ -1,8 +1,8 @@
 defmodule NormandyTest.Tools.RegistryTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
   alias Normandy.Tools.Registry
-  alias Normandy.Tools.Examples.{Calculator, StringManipulator, ListProcessor}
 
   describe "Registry.new/0" do
     test "creates empty registry" do

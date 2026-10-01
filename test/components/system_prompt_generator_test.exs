@@ -2,8 +2,8 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
   use ExUnit.Case, async: true
   doctest Normandy.Components.SystemPromptGenerator
 
-  alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Components.SystemPromptGenerator
   alias NormandyTest.Support.ContextProvider
 
   test "with empty specification" do

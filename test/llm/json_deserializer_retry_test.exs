@@ -41,9 +41,9 @@ end
 defmodule Normandy.LLM.JsonDeserializerRetryTest do
   use ExUnit.Case, async: false
 
-  alias Normandy.LLM.JsonDeserializer
-  alias Normandy.LLM.Json.TestFixtures.MultiField
   alias Normandy.Components.Message
+  alias Normandy.LLM.Json.TestFixtures.MultiField
+  alias Normandy.LLM.JsonDeserializer
 
   @msgs [%Message{turn_id: "t", role: "system", content: "sys"}]
 

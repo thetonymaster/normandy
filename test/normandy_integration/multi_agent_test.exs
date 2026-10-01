@@ -2,7 +2,7 @@ defmodule Normandy.Integration.MultiAgentTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{SequentialOrchestrator, ParallelOrchestrator}
+  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
   alias NormandyTest.Support.NormandyIntegrationHelper
 
   @moduletag :normandy_integration

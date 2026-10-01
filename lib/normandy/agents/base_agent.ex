@@ -8,21 +8,29 @@ defmodule Normandy.Agents.BaseAgent do
 
   require Logger
 
-  alias Normandy.Components.SystemPromptGenerator
-  alias Normandy.Components.Message
-  alias Normandy.Components.PromptSpecification
-  alias Normandy.Components.AgentMemory
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Agents.Model
+  alias Normandy.Agents.ValidationMiddleware
+  alias Normandy.Batch.Processor
+  alias Normandy.Behaviours.Config
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.Message
+  alias Normandy.Components.PromptSpecification
+  alias Normandy.Components.StreamProcessor
+  alias Normandy.Components.SystemPromptGenerator
+  alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.Resilience.CircuitBreaker
+  alias Normandy.Resilience.Retry
 
+  alias Normandy.Agents.ConverseResult
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
-  alias Normandy.Agents.ConverseResult
 
   @type config_input :: %{
           required(:client) => struct(),
@@ -48,6 +56,7 @@ defmodule Normandy.Agents.BaseAgent do
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def init(config) do
     # Validate guardrail config BEFORE starting the circuit breaker process;
     # otherwise a bad config would leak a linked breaker before we raise.
@@ -89,7 +98,7 @@ defmodule Normandy.Agents.BaseAgent do
     circuit_breaker =
       if Map.get(config, :enable_circuit_breaker, false) do
         cb_opts = Map.get(config, :circuit_breaker_options, [])
-        {:ok, cb} = Normandy.Resilience.CircuitBreaker.start_link(cb_opts)
+        {:ok, cb} = CircuitBreaker.start_link(cb_opts)
         cb
       else
         nil
@@ -126,7 +135,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @spec reset_memory(BaseAgentConfig.t()) :: BaseAgentConfig.t()
-  def reset_memory(config = %BaseAgentConfig{initial_memory: memory}) do
+  def reset_memory(%BaseAgentConfig{initial_memory: memory} = config) do
     Map.put(config, :memory, memory)
   end
 
@@ -172,7 +181,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
-  def get_response(config = %BaseAgentConfig{}, response_model \\ nil) do
+  def get_response(%BaseAgentConfig{} = config, response_model \\ nil) do
     {response, _usage, _meta} = get_response_with_usage(config, response_model)
     response
   end
@@ -227,7 +236,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil, keyword()) ::
           {struct(), map() | nil, map()}
   defp get_response_with_usage(
-         config = %BaseAgentConfig{prompt_specification: prompt_specification},
+         %BaseAgentConfig{prompt_specification: prompt_specification} = config,
          response_model,
          extra_opts \\ []
        ) do
@@ -303,7 +312,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp call_llm_with_resilience(config, messages, response_model, opts) do
     llm_call = fn ->
       result =
-        Normandy.Agents.Model.converse(
+        Model.converse(
           config.client,
           config.model,
           config.temperature,
@@ -323,18 +332,19 @@ defmodule Normandy.Agents.BaseAgent do
         fn ->
           # Add default retry_if for exceptions if not provided
           retry_opts =
-            if !Keyword.has_key?(config.retry_options, :retry_if) do
+            if Keyword.has_key?(config.retry_options, :retry_if) do
+              config.retry_options
+            else
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               Keyword.put(config.retry_options, :retry_if, fn
                 {:error, {:exception, _, _}} -> true
                 {:error, :open} -> false
                 {:error, error} when is_atom(error) -> true
                 _ -> false
               end)
-            else
-              config.retry_options
             end
 
-          Normandy.Resilience.Retry.with_retry(llm_call, retry_opts)
+          Retry.with_retry(llm_call, retry_opts)
         end
       else
         llm_call
@@ -344,7 +354,7 @@ defmodule Normandy.Agents.BaseAgent do
     protected_call =
       if config.circuit_breaker do
         fn ->
-          Normandy.Resilience.CircuitBreaker.call(config.circuit_breaker, retryable_call)
+          CircuitBreaker.call(config.circuit_breaker, retryable_call)
         end
       else
         retryable_call
@@ -364,7 +374,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   @spec run(BaseAgentConfig.t(), struct() | map() | nil) :: {BaseAgentConfig.t(), struct()}
   def run(
-        config = %BaseAgentConfig{tool_registry: tool_registry},
+        %BaseAgentConfig{tool_registry: tool_registry} = config,
         user_input \\ nil
       ) do
     metadata = %{model: config.model, agent_name: config.name}
@@ -421,6 +431,7 @@ defmodule Normandy.Agents.BaseAgent do
         # streaming tool loop so tool_use blocks actually execute. Without
         # this, agents with tools stream back a tool_use event, the tool
         # never runs, and the user sees an empty assistant message.
+        # credo:disable-for-lines:3 Credo.Check.Refactor.Nesting
         result =
           if has_tools?(config) do
             stream_with_tools(config, user_input, callback)
@@ -729,7 +740,7 @@ defmodule Normandy.Agents.BaseAgent do
   # on every call (where the retry policy would wait through its backoff first).
   @spec validate_client_options!(term()) :: term()
   def validate_client_options!(%Normandy.LLM.ClaudioAdapter{} = client),
-    do: Normandy.LLM.ClaudioAdapter.validate_options!(client)
+    do: ClaudioAdapter.validate_options!(client)
 
   def validate_client_options!(client), do: client
 
@@ -741,7 +752,7 @@ defmodule Normandy.Agents.BaseAgent do
   # the mistake surfaces where the config is made. Never inspects the client value
   # (it may hold an API key), only its struct name.
   # Takes any %BaseAgentConfig{}: init/1 validates a partial one (client + behaviours only).
-  @spec validate_compaction_config!(%BaseAgentConfig{}) :: %BaseAgentConfig{}
+  @spec validate_compaction_config!(BaseAgentConfig.partial()) :: BaseAgentConfig.partial()
   def validate_compaction_config!(%BaseAgentConfig{} = config) do
     {compactor, compactor_opts} = compactor_ref(config)
     {catalog, _catalog_opts} = catalog_ref(config)
@@ -821,7 +832,7 @@ defmodule Normandy.Agents.BaseAgent do
        ),
        do:
          Keyword.put_new_lazy(opts, :client, fn ->
-           Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+           ClaudioAdapter.to_claudio_client(client)
          end)
 
   defp with_catalog_client(_config, opts), do: opts
@@ -918,6 +929,7 @@ defmodule Normandy.Agents.BaseAgent do
         stop_metadata =
           case r do
             {:ok, final_message} ->
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
               Map.merge(llm_metadata, %{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
 
@@ -1090,8 +1102,7 @@ defmodule Normandy.Agents.BaseAgent do
     text =
       content
       |> Enum.filter(&(&1["type"] == "text"))
-      |> Enum.map(&Map.get(&1, "text", ""))
-      |> Enum.join("")
+      |> Enum.map_join("", &Map.get(&1, "text", ""))
 
     calls =
       Enum.map(tool_calls || [], fn block ->
@@ -1148,7 +1159,7 @@ defmodule Normandy.Agents.BaseAgent do
   # Private helper to stream from LLM
   defp stream_response_from_llm(config, messages, opts) do
     # Check if client protocol implements stream_converse
-    impl = Normandy.Agents.Model.impl_for(config.client)
+    impl = Model.impl_for(config.client)
 
     # `function_exported?/3` returns false until the module is loaded. With
     # protocol consolidation (prod/dev), the impl module is not auto-loaded,
@@ -1168,6 +1179,7 @@ defmodule Normandy.Agents.BaseAgent do
              opts
            ) do
         {:ok, stream} ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case config do
             %BaseAgentConfig{
               output_guardrails: [_ | _],
@@ -1181,7 +1193,7 @@ defmodule Normandy.Agents.BaseAgent do
 
             _ ->
               events = Enum.to_list(stream)
-              final_message = Normandy.Components.StreamProcessor.build_final_message(events)
+              final_message = StreamProcessor.build_final_message(events)
               {:ok, final_message}
           end
 
@@ -1198,6 +1210,7 @@ defmodule Normandy.Agents.BaseAgent do
   # halts consumption, emits telemetry + the :guardrail_violation callback
   # event, strips any partial tool-use block from the response, and returns
   # `{:ok, final_message_with_violations}`.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp consume_stream_with_incremental_guards(stream, config, callback) do
     guards = config.output_guardrails
     chunk_size = config.output_guardrails_chunk_size
@@ -1218,6 +1231,7 @@ defmodule Normandy.Agents.BaseAgent do
         }
 
         if text_delta != "" and new_since >= chunk_size do
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case Normandy.Guardrails.run(guards, new_accumulated) do
             {:ok, _} ->
               {:cont, %{base_acc | since_last_check: 0}}
@@ -1250,7 +1264,7 @@ defmodule Normandy.Agents.BaseAgent do
       end
 
     events = Enum.reverse(final_acc.events)
-    final_message = Normandy.Components.StreamProcessor.build_final_message(events)
+    final_message = StreamProcessor.build_final_message(events)
 
     final_message =
       case final_acc.violations do
@@ -1436,7 +1450,7 @@ defmodule Normandy.Agents.BaseAgent do
   @doc false
   def base_agent_pipeline(config) do
     %{
-      Normandy.Behaviours.Config.to_pipeline(config.behaviours)
+      Config.to_pipeline(config.behaviours)
       | execute_fn: &span_execute/3
     }
   end
@@ -1609,7 +1623,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec register_context_provider(BaseAgentConfig.t(), atom(), struct()) ::
           BaseAgentConfig.t()
   def register_context_provider(
-        config = %BaseAgentConfig{prompt_specification: prompt_specification},
+        %BaseAgentConfig{prompt_specification: prompt_specification} = config,
         provider_name,
         provider
       ) do
@@ -1623,7 +1637,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   @spec delete_context_provider(BaseAgentConfig.t(), atom()) :: BaseAgentConfig.t()
   def delete_context_provider(
-        config = %BaseAgentConfig{prompt_specification: prompt_specification},
+        %BaseAgentConfig{prompt_specification: prompt_specification} = config,
         provider_name
       ) do
     context_providers =
@@ -1795,7 +1809,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec process_batch(BaseAgentConfig.t(), [term()], keyword()) ::
           {:ok, [term()] | map()}
   def process_batch(agent, inputs, opts \\ []) do
-    Normandy.Batch.Processor.process_batch(agent, inputs, opts)
+    Processor.process_batch(agent, inputs, opts)
   end
 
   @doc """
@@ -1818,7 +1832,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec process_batch_with_stats(BaseAgentConfig.t(), [term()], keyword()) ::
           {:ok, map()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
-    Normandy.Batch.Processor.process_batch_with_stats(agent, inputs, opts)
+    Processor.process_batch_with_stats(agent, inputs, opts)
   end
 
   # Runs input guardrails and raises Normandy.Guardrails.ViolationError on any
@@ -1854,7 +1868,7 @@ defmodule Normandy.Agents.BaseAgent do
 
         IO.warn(
           "Agent output guardrail violation: " <>
-            Normandy.Agents.ValidationMiddleware.error_message(violations)
+            ValidationMiddleware.error_message(violations)
         )
 
         :ok
@@ -1952,7 +1966,7 @@ defmodule Normandy.Agents.BaseAgent do
 
         IO.warn(
           "Agent streaming output guardrail violation: " <>
-            Normandy.Agents.ValidationMiddleware.error_message(violations)
+            ValidationMiddleware.error_message(violations)
         )
 
         if is_function(callback, 2) do

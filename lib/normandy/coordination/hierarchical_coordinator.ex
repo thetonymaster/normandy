@@ -21,7 +21,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   """
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{SharedContext, ParallelOrchestrator}
+  alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
 
   @type delegation_strategy :: :round_robin | :broadcast | :conditional
   @type t :: %__MODULE__{
@@ -203,16 +203,14 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   end
 
   defp execute_manager(manager, input, _context) do
-    try do
-      {_updated_manager, response} = BaseAgent.run(manager, input)
+    {_updated_manager, response} = BaseAgent.run(manager, input)
 
-      # Extract delegation plan from response
-      plan = extract_delegation_plan(response)
-      {:ok, plan}
-    rescue
-      e ->
-        {:error, {:exception, e, __STACKTRACE__}}
-    end
+    # Extract delegation plan from response
+    plan = extract_delegation_plan(response)
+    {:ok, plan}
+  rescue
+    e ->
+      {:error, {:exception, e, __STACKTRACE__}}
   end
 
   defp extract_delegation_plan(response) when is_map(response) do

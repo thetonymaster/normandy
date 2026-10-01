@@ -3,8 +3,9 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Components.PromptSpecification
+  alias Normandy.LLM.ClaudioAdapter
+  alias NormandyTest.Support.NormandyIntegrationHelper
 
   @moduletag :integration
   @moduletag :json_retry
@@ -12,7 +13,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
   # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
   # whole module at compile time: skipped when no API key is present (shown as
   # skipped, not failed), run when one is.
-  unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
+  unless NormandyIntegrationHelper.api_key_available?() do
     @moduletag skip: "API_KEY or ANTHROPIC_API_KEY not set"
   end
 

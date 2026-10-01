@@ -15,17 +15,19 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
   use ExUnit.Case, async: false
   @moduletag :postgres
 
-  alias Normandy.Agents.Turn
+  alias Ecto.Adapters.SQL.Sandbox
   alias Normandy.Agents.ConfigTemplate
+  alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.ResumeReaper
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Behaviours.SessionStore.Postgres, as: PG
+  alias Normandy.Test.TurnConfig
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, {:shared, self()})
+    :ok = Sandbox.checkout(Normandy.TestRepo)
+    Sandbox.mode(Normandy.TestRepo, {:shared, self()})
     :ok
   end
 
@@ -52,7 +54,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     # Persist the eager session in Postgres: non-secret template (credential ref =
     # node-local StubCreds, via TurnConfig.build) + a non-terminal :awaiting_approval
     # turn state.
-    tmpl = ConfigTemplate.from_config(Normandy.Test.TurnConfig.build(), "k", :eager)
+    tmpl = ConfigTemplate.from_config(TurnConfig.build(), "k", :eager)
     :ok = PG.save_config_template(Normandy.TestRepo, sid, tmpl)
     :ok = PG.save_turn_state(Normandy.TestRepo, sid, %Turn.State{status: :awaiting_approval})
 

@@ -17,6 +17,7 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def check(value, opts) do
     terms = Keyword.fetch!(opts, :terms)
     field = Keyword.get(opts, :field)
@@ -48,6 +49,7 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
           matched_terms ->
             path = if field, do: [field], else: []
 
+            # credo:disable-for-lines:3 Credo.Check.Refactor.Nesting
             violations =
               Enum.map(matched_terms, fn term ->
                 %{

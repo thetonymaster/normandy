@@ -1,8 +1,10 @@
 defmodule NormandyTest.LLM.ClaudioAdapterTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Agents.Model
+  alias Normandy.LLM.ClaudioAdapter
 
   describe "ClaudioAdapter schema" do
     test "creates adapter with required fields" do
@@ -32,7 +34,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       response_model = %BaseAgentOutputSchema{}
 
       result =
-        Normandy.Agents.Model.completitions(
+        Model.completitions(
           adapter,
           "claude-3",
           0.7,
@@ -66,7 +68,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         temperature: 0.7
       }
 
-      agent = Normandy.Agents.BaseAgent.init(config)
+      agent = BaseAgent.init(config)
 
       assert agent.client == adapter
       assert agent.model == "claude-haiku-4-5-20251001"
@@ -94,12 +96,12 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
   describe "on_parse_failure policy" do
     test "defaults to :fallback" do
-      assert :fallback = Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{})
+      assert :fallback = ClaudioAdapter.__on_parse_failure_policy__(%{})
     end
 
     test "honors a per-call override" do
       assert :error =
-               Normandy.LLM.ClaudioAdapter.__on_parse_failure_policy__(%{
+               ClaudioAdapter.__on_parse_failure_policy__(%{
                  on_parse_failure: :error
                })
     end
@@ -270,7 +272,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       end)
 
       client =
-        Normandy.LLM.ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
+        ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
           api_key: "test-key",
           base_url: "http://localhost:#{bypass.port}/"
         })
@@ -284,7 +286,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       end)
 
       client =
-        Normandy.LLM.ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
+        ClaudioAdapter.to_claudio_client(%Normandy.LLM.ClaudioAdapter{
           api_key: "test-key",
           options: %{req_options: [plug: {Req.Test, __MODULE__.ModelsStub}, retry: false]}
         })
@@ -302,7 +304,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
       error =
         assert_raise ArgumentError, fn ->
-          Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+          ClaudioAdapter.to_claudio_client(client)
         end
 
       assert error.message =~ ":req_options"
@@ -312,19 +314,19 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
     test "nil :req_options leaves the client unchanged" do
       client = %Normandy.LLM.ClaudioAdapter{api_key: "test-key", options: %{req_options: nil}}
-      assert %Req.Request{} = Normandy.LLM.ClaudioAdapter.to_claudio_client(client)
+      assert %Req.Request{} = ClaudioAdapter.to_claudio_client(client)
     end
   end
 
   describe "__apply_client_options__/3" do
     test "empty options leave the request unchanged" do
       request = Claudio.Messages.Request.new("m")
-      assert Normandy.LLM.ClaudioAdapter.__apply_client_options__(request, %{}) == request
+      assert ClaudioAdapter.__apply_client_options__(request, %{}) == request
     end
 
     test "thinking_budget still sets budget_tokens thinking" do
       request =
-        Normandy.LLM.ClaudioAdapter.__apply_client_options__(
+        ClaudioAdapter.__apply_client_options__(
           Claudio.Messages.Request.new("m"),
           %{thinking_budget: 2048}
         )
@@ -436,7 +438,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       messages = [%Normandy.Components.Message{role: "user", content: "hi"}]
 
       assert {response, _usage, %{served_by: "claude-opus-5"}} =
-               Normandy.Agents.Model.converse(
+               Model.converse(
                  client,
                  "claude-opus-5-5",
                  nil,
@@ -474,7 +476,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         options: %{req_options: [plug: {Req.Test, __MODULE__.TemperatureStub}, retry: false]}
       }
 
-      Normandy.Agents.Model.converse(
+      Model.converse(
         client,
         "claude-opus-5-5",
         nil,

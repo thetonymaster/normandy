@@ -4,10 +4,10 @@ defmodule Normandy.Integration.MultiAgentWorkflowsTest do
   alias Normandy.Agents.BaseAgent
 
   alias Normandy.Coordination.{
-    SequentialOrchestrator,
-    ParallelOrchestrator,
     AgentProcess,
-    AgentSupervisor
+    AgentSupervisor,
+    ParallelOrchestrator,
+    SequentialOrchestrator
   }
 
   alias NormandyTest.Support.IntegrationHelper

@@ -132,15 +132,13 @@ defmodule Normandy.LLM.Json.SchemaBinder do
   defp get_required_fields(schema) do
     module = schema.__struct__
 
-    cond do
-      function_exported?(module, :__schema__, 1) ->
-        case module.__schema__(:required) do
-          fields when is_list(fields) -> fields
-          _ -> required_from_specification(module)
-        end
-
-      true ->
-        required_from_specification(module)
+    if function_exported?(module, :__schema__, 1) do
+      case module.__schema__(:required) do
+        fields when is_list(fields) -> fields
+        _ -> required_from_specification(module)
+      end
+    else
+      required_from_specification(module)
     end
   end
 

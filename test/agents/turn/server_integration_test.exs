@@ -1,9 +1,11 @@
 defmodule Normandy.Agents.Turn.ServerIntegrationTest do
   use ExUnit.Case, async: false
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
 
   defmodule Resp do
@@ -35,9 +37,9 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       tool_registry: Normandy.Tools.Registry.new(tools),
       behaviours: %Normandy.Behaviours.Config{
         policy:
@@ -67,7 +69,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       end
     end
 
-    %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
   end
 
   # Poll until Native.whereis returns :none, up to ~1s in 20ms increments.

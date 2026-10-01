@@ -404,7 +404,7 @@ defmodule Normandy.Tools.Registry do
 
     case schema do
       %{required: required} when is_list(required) ->
-        length(required) > 0
+        required != []
 
       _ ->
         false

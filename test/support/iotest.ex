@@ -1,4 +1,5 @@
 defmodule NormandyTest.IOTest do
+  @moduledoc false
   use Normandy.Schema
   @derive {Poison.Encoder, only: [:test_field]}
 

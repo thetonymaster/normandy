@@ -304,7 +304,7 @@ defmodule Normandy.Coordination.Pattern do
     successes = filter_ok(results)
     errors = filter_errors(results)
 
-    if length(successes) > 0 do
+    if successes != [] do
       {:ok, successes}
     else
       {:error, errors}
@@ -334,7 +334,7 @@ defmodule Normandy.Coordination.Pattern do
   def all_ok(results) when is_list(results) do
     errors = filter_errors(results)
 
-    if length(errors) == 0 do
+    if errors == [] do
       {:ok, filter_ok(results)}
     else
       {:error, errors}

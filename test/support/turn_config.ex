@@ -11,6 +11,7 @@ defmodule Normandy.Test.TurnConfig do
   Turn.Server, Turn.Supervisor.Horde, and related tests.
   """
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
 
@@ -20,9 +21,9 @@ defmodule Normandy.Test.TurnConfig do
   end
 
   # Not BaseAgentConfig.t(): the fixture uses a plain-map client and no input_schema.
-  @spec build() :: %Normandy.Agents.BaseAgentConfig{}
+  @spec build() :: BaseAgentConfig.partial()
   def build do
-    %Normandy.Agents.BaseAgentConfig{
+    %BaseAgentConfig{
       input_schema: nil,
       output_schema: %Resp{},
       model: "test",

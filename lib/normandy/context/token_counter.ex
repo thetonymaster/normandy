@@ -17,8 +17,12 @@ defmodule Normandy.Context.TokenCounter do
       {:ok, details} = TokenCounter.count_detailed(client, agent)
   """
 
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Document
+  alias Normandy.Components.ContentBlock.Image
+  alias Normandy.Components.ContentBlock.Text
+  alias Normandy.Context.WindowManager
+  alias Normandy.LLM.ClaudioAdapter
 
   @doc """
   Counts tokens for a single text message.
@@ -65,33 +69,31 @@ defmodule Normandy.Context.TokenCounter do
   @spec count_conversation(ClaudioAdapter.t(), struct()) ::
           {:ok, map()} | {:error, term()}
   def count_conversation(client, agent) do
-    try do
-      model = Map.get(agent, :model, "claude-haiku-4-5-20251001")
-      messages = build_messages_payload(agent.memory)
+    model = Map.get(agent, :model, "claude-haiku-4-5-20251001")
+    messages = build_messages_payload(agent.memory)
 
-      if messages == [] do
-        # No messages → no tokens; short-circuit rather than send a request the
-        # count_tokens endpoint rejects ("at least one message is required").
-        {:ok, %{"input_tokens" => 0}}
-      else
-        # `max_tokens` intentionally omitted: the count_tokens endpoint rejects it.
-        payload = %{
-          "model" => model,
-          "messages" => messages
-        }
+    if messages == [] do
+      # No messages → no tokens; short-circuit rather than send a request the
+      # count_tokens endpoint rejects ("at least one message is required").
+      {:ok, %{"input_tokens" => 0}}
+    else
+      # `max_tokens` intentionally omitted: the count_tokens endpoint rejects it.
+      payload = %{
+        "model" => model,
+        "messages" => messages
+      }
 
-        # Add system prompt if present
-        payload =
-          case get_system_prompt(agent) do
-            nil -> payload
-            system -> Map.put(payload, "system", system)
-          end
+      # Add system prompt if present
+      payload =
+        case get_system_prompt(agent) do
+          nil -> payload
+          system -> Map.put(payload, "system", system)
+        end
 
-        count_tokens(client, payload)
-      end
-    rescue
-      e -> {:error, {:malformed_agent, e}}
+      count_tokens(client, payload)
     end
+  rescue
+    e -> {:error, {:malformed_agent, e}}
   end
 
   @doc """
@@ -123,7 +125,7 @@ defmodule Normandy.Context.TokenCounter do
         message_details =
           Enum.map(history, fn msg ->
             estimated =
-              Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
+              WindowManager.estimate_message_content_tokens(msg.content)
 
             %{
               role: msg.role,
@@ -135,7 +137,7 @@ defmodule Normandy.Context.TokenCounter do
         system_tokens =
           case get_system_prompt(agent) do
             nil -> 0
-            system -> Normandy.Context.WindowManager.estimate_tokens(system)
+            system -> WindowManager.estimate_tokens(system)
           end
 
         {:ok,
@@ -187,13 +189,13 @@ defmodule Normandy.Context.TokenCounter do
   defp format_content(_), do: ""
 
   defp block_to_claudio_map(%Normandy.Components.ContentBlock.Text{} = b),
-    do: Normandy.Components.ContentBlock.Text.to_claudio(b)
+    do: Text.to_claudio(b)
 
   defp block_to_claudio_map(%Normandy.Components.ContentBlock.Image{} = b),
-    do: Normandy.Components.ContentBlock.Image.to_claudio(b)
+    do: Image.to_claudio(b)
 
   defp block_to_claudio_map(%Normandy.Components.ContentBlock.Document{} = b),
-    do: Normandy.Components.ContentBlock.Document.to_claudio(b)
+    do: Document.to_claudio(b)
 
   defp block_to_claudio_map(%{} = raw), do: raw
 

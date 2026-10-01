@@ -5,6 +5,10 @@ defmodule Normandy.ClusterCase do
   """
   use ExUnit.CaseTemplate
 
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Normandy.Behaviours.SessionRegistry.Horde, as: HordeRegistry
+  alias Normandy.Behaviours.SessionRegistry.Redis
+
   using do
     quote do
       import Normandy.ClusterCase
@@ -48,7 +52,7 @@ defmodule Normandy.ClusterCase do
 
   @doc false
   def start_horde_unlinked(opts) do
-    {:ok, pid} = Normandy.Behaviours.SessionRegistry.Horde.start_link(opts)
+    {:ok, pid} = HordeRegistry.start_link(opts)
     Process.unlink(pid)
     {:ok, pid}
   end
@@ -121,7 +125,7 @@ defmodule Normandy.ClusterCase do
 
     {:ok, pid} = Normandy.TestRepo.start_link(clean_opts)
     Process.unlink(pid)
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
+    Sandbox.mode(Normandy.TestRepo, :auto)
     {:ok, pid}
   rescue
     e -> {:error, Exception.message(e)}
@@ -145,7 +149,7 @@ defmodule Normandy.ClusterCase do
 
     pid =
       spawn(fn ->
-        :ok = Normandy.Behaviours.SessionRegistry.Horde.register(reg, session_id, self())
+        :ok = HordeRegistry.register(reg, session_id, self())
         send(parent, :registered)
         Process.sleep(:infinity)
       end)
@@ -170,7 +174,7 @@ defmodule Normandy.ClusterCase do
 
   @doc false
   def start_redis_unlinked(opts) do
-    {:ok, pid} = Normandy.Behaviours.SessionRegistry.Redis.start_link(opts)
+    {:ok, pid} = Redis.start_link(opts)
     Process.unlink(pid)
     {:ok, pid}
   end
@@ -191,7 +195,7 @@ defmodule Normandy.ClusterCase do
 
     pid =
       spawn(fn ->
-        :ok = Normandy.Behaviours.SessionRegistry.Redis.register(reg_name, session_id, self())
+        :ok = Redis.register(reg_name, session_id, self())
         send(parent, :registered)
         Process.sleep(:infinity)
       end)

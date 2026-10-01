@@ -3,7 +3,7 @@ defmodule Normandy.Integration.EndToEndScenariosTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
-  alias Normandy.Coordination.{SequentialOrchestrator, ParallelOrchestrator}
+  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration

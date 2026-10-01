@@ -1,9 +1,10 @@
 defmodule Normandy.LLM.Json.RetryFeedbackTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.Components.Message
+  alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.LLM.Json.TestFixtures.RequiredField
+  alias Normandy.LLM.JsonDeserializer
 
   test "json_parse_error feedback contains the error and a correction instruction" do
     feedback =
@@ -15,7 +16,7 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
 
   test "validation_error feedback names the offending field" do
     {:error, {:validation_error, changeset, content}} =
-      Normandy.LLM.JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
+      JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
 
     feedback =
       RetryFeedback.build(
@@ -67,7 +68,7 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
       RetryFeedback.build({:json_parse_error, :invalid, "oops"}, "oops", %RequiredField{}, Poison)
 
     {:error, {:validation_error, changeset, content}} =
-      Normandy.LLM.JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
+      JsonDeserializer.parse_and_validate(~s({"count": 1}), %RequiredField{})
 
     validation_feedback =
       RetryFeedback.build(

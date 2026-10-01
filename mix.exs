@@ -150,6 +150,7 @@ defmodule Normandy.MixProject do
       {:postgrex, "~> 0.19", optional: true},
       {:horde, "~> 0.9", optional: true},
       {:redix, "~> 1.5", optional: true},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},

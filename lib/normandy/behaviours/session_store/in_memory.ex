@@ -52,6 +52,7 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
           {{:error, :no_such_session}, state}
 
         %AgentMemory{} = memory ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case AgentMemory.fork(memory, from_entry_id) do
             {:error, reason} ->
               {{:error, reason}, state}

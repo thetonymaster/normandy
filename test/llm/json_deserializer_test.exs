@@ -1,11 +1,11 @@
 defmodule Normandy.LLM.JsonDeserializerTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.LLM.JsonDeserializer
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.LLM.Json.TestFixtures.MultiField
-  alias Normandy.LLM.Json.TestFixtures.RequiredField
   alias Normandy.LLM.Json.TestFixtures.RecoveryFixture
+  alias Normandy.LLM.Json.TestFixtures.RequiredField
+  alias Normandy.LLM.JsonDeserializer
 
   describe "deserialize_with_retry/8" do
     test "parses valid JSON and populates schema" do

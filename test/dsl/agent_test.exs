@@ -1,6 +1,8 @@
 defmodule Normandy.DSL.AgentTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Components.AgentMemory
+
   # Define a test agent using the DSL
   defmodule TestAgent do
     use Normandy.DSL.Agent
@@ -195,7 +197,7 @@ defmodule Normandy.DSL.AgentTest do
       {updated_agent, _response} = TestAgent.run(agent, blocks)
 
       user_msg =
-        Enum.find(Normandy.Components.AgentMemory.messages(updated_agent.memory), fn msg ->
+        Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
           msg.role == "user"
         end)
 
@@ -209,7 +211,7 @@ defmodule Normandy.DSL.AgentTest do
       {updated_agent, _response} = TestAgent.run(agent, "plain text")
 
       user_msg =
-        Enum.find(Normandy.Components.AgentMemory.messages(updated_agent.memory), fn msg ->
+        Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
           msg.role == "user"
         end)
 
@@ -224,7 +226,7 @@ defmodule Normandy.DSL.AgentTest do
       {updated_agent, _response} = TestAgent.run(agent, %{chat_message: "test"})
 
       user_msg =
-        Enum.find(Normandy.Components.AgentMemory.messages(updated_agent.memory), fn msg ->
+        Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
           msg.role == "user"
         end)
 
@@ -239,11 +241,11 @@ defmodule Normandy.DSL.AgentTest do
 
       # Run to add to memory
       {agent, _} = TestAgent.run(agent, "first message")
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) > 0
+      assert AgentMemory.count_messages(agent.memory) > 0
 
       # Reset
       agent = TestAgent.reset_memory(agent)
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) == 0
+      assert AgentMemory.count_messages(agent.memory) == 0
     end
   end
 
@@ -258,16 +260,16 @@ defmodule Normandy.DSL.AgentTest do
       # Run once
       {agent, response1} = TestAgent.run(agent, "hello")
       assert is_map(response1)
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) > 0
+      assert AgentMemory.count_messages(agent.memory) > 0
 
       # Run again (memory should accumulate)
       {agent, response2} = TestAgent.run(agent, "goodbye")
       assert is_map(response2)
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) > 2
+      assert AgentMemory.count_messages(agent.memory) > 2
 
       # Reset and verify
       agent = TestAgent.reset_memory(agent)
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) == 0
+      assert AgentMemory.count_messages(agent.memory) == 0
     end
   end
 

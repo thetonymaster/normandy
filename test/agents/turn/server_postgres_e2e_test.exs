@@ -3,10 +3,12 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   use ExUnit.Case, async: false
   @moduletag :postgres
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.Postgres
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.Postgres
+  alias Normandy.Components.AgentMemory
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
   defmodule Resp do
@@ -14,10 +16,10 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   end
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
+    :ok = Sandbox.checkout(Normandy.TestRepo)
     # Supervised Turn.Server runs in its own process and must see the same
     # sandboxed connection — shared mode + async: false.
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, {:shared, self()})
+    Sandbox.mode(Normandy.TestRepo, {:shared, self()})
     :ok
   end
 
@@ -27,8 +29,8 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       tool_registry: nil
     }

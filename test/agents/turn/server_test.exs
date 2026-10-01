@@ -1,8 +1,14 @@
 defmodule Normandy.Agents.Turn.ServerTest do
   use ExUnit.Case, async: false
 
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.SessionRegistry.Horde
+  alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
@@ -57,9 +63,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       tool_registry: nil
     }
   end
@@ -87,11 +93,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a no-tools turn runs to :finalize and replies the final response" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     # Inject a fake LLM via the :handlers override (test seam, see Step 3).
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
     }
 
@@ -111,10 +117,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a completed turn persists a terminal :stopped turn state (for the resume reaper)" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> %Resp{content: "done", tool_calls: nil} end
     }
 
@@ -133,10 +139,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a failed turn persists a terminal :failed turn state (for the resume reaper)" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> raise "boom" end
     }
 
@@ -164,10 +170,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # turn_state (:tool_dispatch). The terminal state persisted for the reaper must
     # still be :failed (not :tool_dispatch).
     store = AssistantAppendFailStore.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           %Resp{content: "", tool_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]}
         end
@@ -190,7 +196,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     opts = [
       session_id: "s-misconfig",
@@ -208,12 +214,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a batch with a needs_approval call parks the turn (:awaiting_approval) and persists" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     test_pid = self()
 
     # First LLM response asks for two tool calls; classify parks one of them.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           %Resp{
             content: "",
@@ -255,7 +261,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "approving a parked call resumes the turn and finalizes" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     test_pid = self()
     parent = self()
 
@@ -279,7 +285,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
     end
 
-    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
 
     # Use notify-instrumented tools so we can assert billing DID execute after approval.
     config = %{
@@ -315,7 +321,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "passivates (stops :normal) after the idle timeout" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     {:ok, srv} =
       Turn.Server.start_link(
@@ -324,7 +330,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         store: {InMemory, store},
         registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
         handlers: %{
-          Normandy.Agents.BaseAgent.non_streaming_handlers()
+          BaseAgent.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %Resp{content: "x"} end
         },
         idle_timeout_ms: 50
@@ -337,13 +343,13 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "a turn request received while :running is postponed and runs after idle" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     parent = self()
 
     # Blocking call_llm that signals the test when it has started, then sleeps
     # to keep the server :running while the second turn request arrives.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           send(parent, :llm_started)
           Process.sleep(150)
@@ -373,7 +379,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "stale/late approval cast in :idle state does not crash the server" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     parent = self()
 
     # Stateful call_llm: 1st call (turn "go") → two tool calls; 2nd call → final;
@@ -383,22 +389,20 @@ defmodule Normandy.Agents.Turn.ServerTest do
     call_llm = fn _c, _s, _r ->
       n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
 
-      cond do
-        n == 0 ->
-          %Resp{
-            content: "",
-            tool_calls: [
-              %ToolCall{id: "ok1", name: "weather", input: %{}},
-              %ToolCall{id: "pk1", name: "billing", input: %{}}
-            ]
-          }
-
-        true ->
-          %Resp{content: "done", tool_calls: nil}
+      if n == 0 do
+        %Resp{
+          content: "",
+          tool_calls: [
+            %ToolCall{id: "ok1", name: "weather", input: %{}},
+            %ToolCall{id: "pk1", name: "billing", input: %{}}
+          ]
+        }
+      else
+        %Resp{content: "done", tool_calls: nil}
       end
     end
 
-    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
 
     config = %{
       base_config_with_tools()
@@ -460,10 +464,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
       def fork(_handle, _sid, _new_sid), do: {:error, :nope}
     end
 
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _c, _s, _r -> %Resp{content: "unreachable", tool_calls: nil} end
     }
 
@@ -481,7 +485,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   test "approval timeout rejects all parked calls (fail-closed) and resumes" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     test_pid = self()
     parent = self()
 
@@ -504,7 +508,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
     end
 
-    handlers = %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
 
     # Use notify-instrumented tools so we can assert billing was NOT executed on timeout.
     config = %{
@@ -539,10 +543,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
   end
 
   test "starts under a Horde :via name and is discoverable via whereis" do
-    reg = Normandy.Behaviours.SessionRegistry.Horde.new()
+    reg = Horde.new()
     sid = "via-#{System.unique_integer([:positive])}"
-    name = Normandy.Behaviours.SessionRegistry.Horde.child_name(reg, sid)
-    store = Normandy.Behaviours.SessionStore.InMemory.new()
+    name = Horde.child_name(reg, sid)
+    store = InMemory.new()
 
     opts = [
       session_id: sid,
@@ -565,7 +569,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # node), so poll `whereis` until the via registration is visible rather than racing
     # the flush.
     assert wait_until(fn ->
-             Normandy.Behaviours.SessionRegistry.Horde.whereis(reg, sid) == {:ok, pid}
+             Horde.whereis(reg, sid) == {:ok, pid}
            end)
 
     # Once the registration is visible, a second start for the same via name is
@@ -608,7 +612,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   # sentinel message — causing the final assertion to fail.
   test "compact handler's config2 is threaded into the subsequent LLM call by the Server" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     test_pid = self()
     sentinel = "__COMPACT_MARKER__"
 
@@ -636,7 +640,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     compact = fn config, _turn_state, _info ->
       config2 = %{
         config
-        | memory: Normandy.Components.AgentMemory.add_message(config.memory, "user", sentinel)
+        | memory: AgentMemory.add_message(config.memory, "user", sentinel)
       }
 
       send(test_pid, {:compact_ran, config2.memory})
@@ -644,7 +648,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: call_llm,
         compact: compact
     }
@@ -672,37 +676,37 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # would be absent and this assertion would fail.
     assert_receive {:llm_call, 1, memory_at_second_call}, 2_000
 
-    history = Normandy.Components.AgentMemory.history(memory_at_second_call)
+    history = AgentMemory.history(memory_at_second_call)
 
     assert Enum.any?(history, fn msg -> msg.content == sentinel end),
            "Second LLM call did not see the compacted config2 — Server threaded stale config"
   end
 
   test "Tier-2 server reconstructs config from a persisted template (no :config in opts)" do
-    store = Normandy.Behaviours.SessionStore.InMemory.new()
+    store = InMemory.new()
     sid = "recon-#{System.unique_integer([:positive])}"
 
     base = base_config()
 
     tmpl =
       put_in(
-        Normandy.Agents.ConfigTemplate.from_config(base, "kind-a").behaviours_refs.credential,
+        ConfigTemplate.from_config(base, "kind-a").behaviours_refs.credential,
         {Normandy.Test.StubCreds, []}
       )
 
-    :ok = Normandy.Behaviours.SessionStore.InMemory.save_config_template(store, sid, tmpl)
+    :ok = InMemory.save_config_template(store, sid, tmpl)
 
-    {:ok, cat} = Normandy.Behaviours.AgentTemplate.Catalog.start_link([])
+    {:ok, cat} = Catalog.start_link([])
 
     :ok =
-      Normandy.Behaviours.AgentTemplate.Catalog.put(cat, "kind-a", %{
+      Catalog.put(cat, "kind-a", %{
         tool_registry: base.tool_registry,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _token -> base.client end
       })
 
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
 
     opts = [
       session_id: sid,
@@ -712,12 +716,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
     ]
 
     assert {:ok, pid} = Normandy.Agents.Turn.Server.start_link(opts)
-    assert {:ok, ^pid} = Normandy.Behaviours.SessionRegistry.Native.whereis(reg, sid)
+    assert {:ok, ^pid} = Native.whereis(reg, sid)
   end
 
   test "a ModelCatalogError in the compact handler fails the turn with an error reply" do
     store = InMemory.new()
-    reg = Normandy.Behaviours.SessionRegistry.Native.new()
+    reg = Native.new()
     {:ok, counter} = Agent.start_link(fn -> 0 end)
 
     call_llm = fn _config, _state, _req ->
@@ -733,7 +737,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: call_llm,
         compact: compact
     }
@@ -787,6 +791,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {:ok, counter} = Agent.start_link(fn -> 0 end)
 
       fn _config, _state, _req ->
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if Agent.get_and_update(counter, fn n -> {n, n + 1} end) < 3 do
           %Resp{content: "", tool_calls: [%ToolCall{id: "tc", name: "weather", input: %{}}]}
         else
@@ -824,10 +829,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     test "Turn.Server: one lookup for three steering boundaries in a run" do
       store = InMemory.new()
-      reg = Normandy.Behaviours.SessionRegistry.Native.new()
+      reg = Native.new()
 
       handlers = %{
-        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        BaseAgent.non_streaming_handlers()
         | call_llm: three_tool_rounds()
       }
 

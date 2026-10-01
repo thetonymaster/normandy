@@ -435,13 +435,14 @@ defmodule Normandy.Coordination.AgentPool do
 
         new_pid ->
           # Check if there are waiting checkouts
-          if not :queue.is_empty(state.waiting) do
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+          if :queue.is_empty(state.waiting) do
+            %{state | available: [new_pid | state.available]}
+          else
             {{:value, from}, new_waiting} = :queue.out(state.waiting)
             GenServer.reply(from, {:ok, new_pid})
 
             %{state | waiting: new_waiting, in_use: MapSet.put(state.in_use, new_pid)}
-          else
-            %{state | available: [new_pid | state.available]}
           end
       end
     else

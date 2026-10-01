@@ -2,6 +2,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration
@@ -24,7 +25,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         BaseAgent.run(agent, %{chat_message: "What's my name and favorite color?"})
 
       # Should remember both pieces of information
-      history = Normandy.Components.AgentMemory.messages(agent.memory)
+      history = AgentMemory.messages(agent.memory)
       # 3 user messages + 3 assistant responses
       assert length(history) >= 6
 
@@ -47,7 +48,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         end)
 
       # Should have full history
-      assert Normandy.Components.AgentMemory.count_messages(final_agent.memory) >= 6
+      assert AgentMemory.count_messages(final_agent.memory) >= 6
     end
 
     test "system messages are preserved", %{agent: agent} do
@@ -81,7 +82,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       assert is_binary(r3.chat_message)
 
       # Memory should contain all interactions
-      assert Normandy.Components.AgentMemory.count_messages(agent.memory) >= 6
+      assert AgentMemory.count_messages(agent.memory) >= 6
     end
   end
 
@@ -108,7 +109,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
         end)
 
       # Should handle many turns
-      assert Normandy.Components.AgentMemory.count_messages(final_agent.memory) >= 20
+      assert AgentMemory.count_messages(final_agent.memory) >= 20
     end
 
     test "memory structure is maintained", %{agent: agent} do
@@ -116,9 +117,9 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       {agent, _r2} = BaseAgent.run(agent, %{chat_message: "Second message"})
 
       # Verify memory structure
-      assert is_list(Normandy.Components.AgentMemory.messages(agent.memory))
+      assert is_list(AgentMemory.messages(agent.memory))
 
-      assert Enum.all?(Normandy.Components.AgentMemory.messages(agent.memory), fn msg ->
+      assert Enum.all?(AgentMemory.messages(agent.memory), fn msg ->
                Map.has_key?(msg, :role) && Map.has_key?(msg, :content)
              end)
     end

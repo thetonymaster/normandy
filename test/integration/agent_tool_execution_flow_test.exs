@@ -2,6 +2,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias Normandy.Tools.Examples.{Calculator, StringManipulator}
   alias NormandyTest.Support.IntegrationHelper
 
@@ -31,7 +32,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
 
       # Verify tool was executed (check memory for tool_use/tool_result)
       memory = updated_agent.memory
-      history = Normandy.Components.AgentMemory.messages(memory)
+      history = AgentMemory.messages(memory)
 
       # Should have: user message, assistant tool_use, tool_result, assistant response
       assert length(history) >= 3

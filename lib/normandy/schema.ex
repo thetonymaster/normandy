@@ -304,6 +304,7 @@ defmodule Normandy.Schema do
   end
 
   @doc false
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro io_schema(source, do: block) do
     prelude =
       quote do
@@ -341,7 +342,7 @@ defmodule Normandy.Schema do
             def get_schema(str), do: str.__struct__.get_json_schema()
           end
 
-          def get_json_schema() do
+          def get_json_schema do
             __MODULE__.__schema__(:specification)
           end
         after
@@ -409,6 +410,7 @@ defmodule Normandy.Schema do
   end
 
   @doc false
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def __schema__(module) do
     fields = Module.get_attribute(module, :schema_fields) |> Enum.reverse()
     struct_fields = Module.get_attribute(module, :schema_struct_fields) |> Enum.reverse()
@@ -507,13 +509,11 @@ defmodule Normandy.Schema do
 
   # Get base JSON Schema type specification
   defp get_base_type_spec({:array, inner_type}, description) do
-    cond do
-      is_schema_module?(inner_type) ->
-        # Array of nested schemas - inline the schema
-        %{type: :array, description: description, items: inline_nested_schema(inner_type)}
-
-      true ->
-        %{type: :array, description: description, items: %{type: normalize_type(inner_type)}}
+    if schema_module?(inner_type) do
+      # Array of nested schemas - inline the schema
+      %{type: :array, description: description, items: inline_nested_schema(inner_type)}
+    else
+      %{type: :array, description: description, items: %{type: normalize_type(inner_type)}}
     end
   end
 
@@ -526,14 +526,12 @@ defmodule Normandy.Schema do
   end
 
   defp get_base_type_spec(type, description) when is_atom(type) do
-    cond do
-      is_schema_module?(type) ->
-        # Single nested schema - inline it
-        inline_nested_schema(type)
-        |> Map.put(:description, description)
-
-      true ->
-        %{type: normalize_type(type), description: description}
+    if schema_module?(type) do
+      # Single nested schema - inline it
+      inline_nested_schema(type)
+      |> Map.put(:description, description)
+    else
+      %{type: normalize_type(type), description: description}
     end
   end
 
@@ -603,8 +601,8 @@ defmodule Normandy.Schema do
         spec
 
       schemas when is_list(schemas) ->
-        anyOf = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :anyOf, anyOf)
+        any_of = Enum.map(schemas, &build_composition_schema/1)
+        Map.put(spec, :anyOf, any_of)
     end
   end
 
@@ -614,8 +612,8 @@ defmodule Normandy.Schema do
         spec
 
       schemas when is_list(schemas) ->
-        oneOf = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :oneOf, oneOf)
+        one_of = Enum.map(schemas, &build_composition_schema/1)
+        Map.put(spec, :oneOf, one_of)
     end
   end
 
@@ -625,14 +623,14 @@ defmodule Normandy.Schema do
         spec
 
       schemas when is_list(schemas) ->
-        allOf = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :allOf, allOf)
+        all_of = Enum.map(schemas, &build_composition_schema/1)
+        Map.put(spec, :allOf, all_of)
     end
   end
 
   # Build a schema for composition (handles both module references and inline specs)
   defp build_composition_schema(schema_module) when is_atom(schema_module) do
-    if is_schema_module?(schema_module) do
+    if schema_module?(schema_module) do
       inline_nested_schema(schema_module)
     else
       raise ArgumentError, "Module #{inspect(schema_module)} is not a valid schema in composition"
@@ -688,7 +686,7 @@ defmodule Normandy.Schema do
 
   # Build a schema for conditionals (similar to composition but for if/then/else)
   defp build_conditional_schema(schema_module) when is_atom(schema_module) do
-    if is_schema_module?(schema_module) do
+    if schema_module?(schema_module) do
       inline_nested_schema(schema_module)
     else
       raise ArgumentError,
@@ -737,12 +735,12 @@ defmodule Normandy.Schema do
   end
 
   # Check if a type is a schema module
-  defp is_schema_module?(type) when is_atom(type) do
+  defp schema_module?(type) when is_atom(type) do
     Code.ensure_compiled(type) == {:module, type} and
       function_exported?(type, :__schema__, 1)
   end
 
-  defp is_schema_module?(_), do: false
+  defp schema_module?(_), do: false
 
   defp check_field_type!(_mod, name, :datetime, _opts) do
     raise ArgumentError,
@@ -751,6 +749,7 @@ defmodule Normandy.Schema do
             "(no time zone information) or :utc_datetime (time zone is set to UTC)"
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp check_field_type!(mod, name, type, opts) do
     cond do
       composite?(type, name) ->

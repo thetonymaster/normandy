@@ -2,6 +2,7 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
+  alias Normandy.Agents.Model
   alias Normandy.Components.ContentBlock.Text, as: TextBlock
   alias Normandy.Components.Message
   alias Normandy.LLM.ClaudioAdapter
@@ -51,7 +52,7 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
         %{name: name, description: "d", input_schema: %{"type" => "object", "properties" => %{}}}
       end
 
-      Normandy.Agents.Model.converse(
+      Model.converse(
         client,
         "claude-opus-5-5",
         nil,

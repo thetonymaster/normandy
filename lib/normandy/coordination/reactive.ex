@@ -29,6 +29,7 @@ defmodule Normandy.Coordination.Reactive do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Coordination.Reactive
 
   @type agent_or_pid :: struct() | pid()
   @type result :: {:ok, term()} | {:error, term()}
@@ -87,6 +88,7 @@ defmodule Normandy.Coordination.Reactive do
           agent_id = "agent_#{idx}"
           result = execute_agent(agent, input)
 
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if on_complete, do: on_complete.(agent_id, result)
 
           send(parent, {ref, agent_id, result})
@@ -239,6 +241,7 @@ defmodule Normandy.Coordination.Reactive do
             agent_id = "agent_#{idx}"
             result = execute_agent(agent, input)
 
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             if on_complete, do: on_complete.(agent_id, result)
 
             send(parent, {ref, agent_id, result})
@@ -304,7 +307,7 @@ defmodule Normandy.Coordination.Reactive do
   """
   defmacro when_result(agent, input, do: clauses) do
     quote do
-      result = Normandy.Coordination.Reactive.execute_agent(unquote(agent), unquote(input))
+      result = Reactive.execute_agent(unquote(agent), unquote(input))
 
       case result do
         unquote(clauses)
@@ -322,14 +325,12 @@ defmodule Normandy.Coordination.Reactive do
 
   def execute_agent(agent, input) do
     # Agent struct
-    try do
-      agent_input = prepare_input(input)
-      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
-      {:ok, response}
-    rescue
-      e ->
-        {:error, {:exception, e, __STACKTRACE__}}
-    end
+    agent_input = prepare_input(input)
+    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
+    {:ok, response}
+  rescue
+    e ->
+      {:error, {:exception, e, __STACKTRACE__}}
   end
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do

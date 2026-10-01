@@ -1214,7 +1214,7 @@ defmodule Normandy.Type do
   """
   def format({:parameterized, {type, params}}) do
     if function_exported?(type, :format, 1) do
-      apply(type, :format, [params])
+      type.format(params)
     else
       "##{inspect(type)}<#{inspect(params)}>"
     end

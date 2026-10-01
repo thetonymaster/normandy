@@ -1,8 +1,8 @@
 defmodule Normandy.LLM.StructuredOutputsTest do
   use ExUnit.Case, async: false
 
-  alias Normandy.LLM.StructuredOutputs
   alias Normandy.LLM.Json.TestFixtures.MultiField
+  alias Normandy.LLM.StructuredOutputs
 
   defmodule OpenMapSchema do
     use Normandy.Schema

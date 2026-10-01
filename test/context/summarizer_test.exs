@@ -19,9 +19,9 @@ end
 defmodule Normandy.Context.SummarizerTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Context.Summarizer
-  alias Normandy.Components.AgentMemory
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Context.Summarizer
   alias Normandy.Test.MockSummarizerClient
 
   setup do
@@ -275,7 +275,8 @@ defmodule Normandy.Context.SummarizerTest do
 
       {:ok, savings} = Summarizer.estimate_savings(messages, summary_tokens: 200)
 
-      # Should save significant tokens (rough estimate: ~14 chars/msg * 50 msgs / 4 = ~175 tokens per msg + 10 overhead = ~9250 tokens)
+      # Should save significant tokens (rough estimate: ~14 chars/msg * 50 msgs / 4
+      # = ~175 tokens per msg + 10 overhead = ~9250 tokens)
       # Actual is lower due to shorter messages, so expect > 500 tokens savings
       assert savings.savings > 500
       assert savings.savings_percent > 70

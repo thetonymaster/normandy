@@ -2,6 +2,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Agents.Model
   alias Normandy.Components.Message
   alias Normandy.LLM.ClaudioAdapter
 
@@ -44,7 +45,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
   end
 
   defp converse(client, opts) do
-    Normandy.Agents.Model.converse(
+    Model.converse(
       client,
       "claude-opus-5-5",
       nil,
@@ -114,7 +115,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
     }
 
     # stream_converse/7 is an impl function, not a protocol callback.
-    Normandy.Agents.Model.impl_for(client).stream_converse(
+    Model.impl_for(client).stream_converse(
       client,
       "claude-opus-5-5",
       nil,

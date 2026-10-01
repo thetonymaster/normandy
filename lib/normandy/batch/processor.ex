@@ -40,6 +40,8 @@ defmodule Normandy.Batch.Processor do
 
   require Logger
 
+  alias Normandy.Agents.BaseAgent
+
   @type batch_option ::
           {:max_concurrency, pos_integer()}
           | {:ordered, boolean()}
@@ -122,6 +124,7 @@ defmodule Normandy.Batch.Processor do
           # Error callback
           case result do
             {:error, error} ->
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               if on_error, do: on_error.(input, error)
               result
 
@@ -223,19 +226,17 @@ defmodule Normandy.Batch.Processor do
 
   # Process a single input through the agent
   defp process_single(agent, input, _timeout) do
-    try do
-      {_updated_agent, response} = Normandy.Agents.BaseAgent.run(agent, input)
-      {:ok, response}
-    rescue
-      error ->
-        {:error, {:exception, error, __STACKTRACE__}}
-    catch
-      :exit, reason ->
-        {:error, {:exit, reason}}
+    {_updated_agent, response} = BaseAgent.run(agent, input)
+    {:ok, response}
+  rescue
+    error ->
+      {:error, {:exception, error, __STACKTRACE__}}
+  catch
+    :exit, reason ->
+      {:error, {:exit, reason}}
 
-      thrown_value ->
-        {:error, {:throw, thrown_value}}
-    end
+    thrown_value ->
+      {:error, {:throw, thrown_value}}
   end
 
   # Process async_stream results

@@ -316,26 +316,24 @@ defmodule Normandy.Resilience.CircuitBreaker do
   ## Private Functions
 
   defp execute_and_record(server, fun) do
-    try do
-      case fun.() do
-        {:ok, _result} = success ->
-          GenServer.call(server, {:record_success})
-          success
+    case fun.() do
+      {:ok, _result} = success ->
+        GenServer.call(server, {:record_success})
+        success
 
-        {:error, _reason} = error ->
-          GenServer.call(server, {:record_failure})
-          error
-
-        other ->
-          # Unexpected return, treat as success
-          GenServer.call(server, {:record_success})
-          {:ok, other}
-      end
-    rescue
-      error ->
+      {:error, _reason} = error ->
         GenServer.call(server, {:record_failure})
-        {:error, {:exception, error}}
+        error
+
+      other ->
+        # Unexpected return, treat as success
+        GenServer.call(server, {:record_success})
+        {:ok, other}
     end
+  rescue
+    error ->
+      GenServer.call(server, {:record_failure})
+      {:error, {:exception, error}}
   end
 
   defp handle_success(state) do

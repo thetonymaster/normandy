@@ -14,6 +14,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     @behaviour Normandy.Behaviours.SessionStore
 
     import Ecto.Query
+    alias Ecto.Adapters.SQL
     alias Normandy.Behaviours.SessionStore.Postgres.Schemas.{Entry, Session}
     alias Normandy.Components.AgentMemory
 
@@ -206,7 +207,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       SELECT id, parent_id, turn_id, role, content FROM branch ORDER BY depth DESC
       """
 
-      %{rows: rows} = Ecto.Adapters.SQL.query!(repo, sql, [Ecto.UUID.dump!(head_id)])
+      %{rows: rows} = SQL.query!(repo, sql, [Ecto.UUID.dump!(head_id)])
 
       Enum.map(rows, fn [id, parent_id, turn_id, role, content] ->
         %AgentMemory.Entry{

@@ -180,6 +180,7 @@ defmodule Normandy.Agents.Dispatch do
           | {:needs_approval, struct(), ToolCall.t(), map()}
   def classify(config, tool_call, pipeline \\ default_pipeline())
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def classify(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     call = %{call | input: normalize_tool_input(call.input)}
 
@@ -197,6 +198,7 @@ defmodule Normandy.Agents.Dispatch do
                 {:deny, validation_error_result(call, errors)}
 
               :ok ->
+                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
                 case apply_policy(pipeline, config, call, prepared) do
                   {:allow, _meta} -> {:execute, prepared, call}
                   {:deny, info} -> {:deny, denial_result(call, info, false)}

@@ -122,10 +122,9 @@ defmodule Normandy.LLM.Json.Scanner do
   # closes first.
   defp build_closers(stack) do
     stack
-    |> Enum.map(fn
+    |> Enum.map_join("", fn
       :object -> "}"
       :array -> "]"
     end)
-    |> Enum.join()
   end
 end

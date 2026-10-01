@@ -12,6 +12,7 @@ defmodule Normandy.CastError do
   end
 end
 
+# credo:disable-for-next-line Credo.Check.Consistency.ExceptionNames
 defmodule Normandy.NonExistentTurn do
   defexception [:message, :value]
 
@@ -23,6 +24,7 @@ defmodule Normandy.NonExistentTurn do
   end
 end
 
+# credo:disable-for-next-line Credo.Check.Consistency.ExceptionNames
 defmodule Normandy.NonExistentContextProvider do
   defexception [:message, :value]
 

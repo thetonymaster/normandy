@@ -1,7 +1,11 @@
 defmodule Normandy.Agents.Turn.SessionTest do
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
 
   # A local response struct for stubbing call_llm in Session tests.
   defmodule Resp do
@@ -21,9 +25,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       tool_registry: nil
     }
   end
@@ -35,12 +39,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
       Turn.Supervisor.start_server(sup,
         session_id: "x",
         config: nil,
-        store:
-          {Normandy.Behaviours.SessionStore.InMemory,
-           Normandy.Behaviours.SessionStore.InMemory.new()},
-        registry:
-          {Normandy.Behaviours.SessionRegistry.Native,
-           Normandy.Behaviours.SessionRegistry.Native.new()}
+        store: {Normandy.Behaviours.SessionStore.InMemory, InMemory.new()},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, Native.new()}
       )
 
     assert is_pid(pid)
@@ -48,8 +48,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   test "routes to a live session, else rehydrates turn state + memory from the store" do
-    alias Normandy.Behaviours.SessionStore.InMemory
     alias Normandy.Behaviours.SessionRegistry.Native
+    alias Normandy.Behaviours.SessionStore.InMemory
 
     store = InMemory.new()
     reg = Native.new()
@@ -70,7 +70,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -91,8 +91,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   test "rehydration preserves the configured memory cap (max_messages)" do
-    alias Normandy.Behaviours.SessionStore.InMemory
     alias Normandy.Behaviours.SessionRegistry.Native
+    alias Normandy.Behaviours.SessionStore.InMemory
 
     store = InMemory.new()
     reg = Native.new()
@@ -105,7 +105,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
         content: "earlier"
       })
 
-    config = %{session_config() | memory: Normandy.Components.AgentMemory.new_memory(7)}
+    config = %{session_config() | memory: AgentMemory.new_memory(7)}
 
     opts = [
       session_id: "capped",
@@ -114,7 +114,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -159,7 +159,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Horde, reg},
       supervisor: sup,
       handlers: %{
-        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -184,9 +184,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # Without Part B (the history load in reconstruct_config!/3) the captured
     # memory would have 0 messages and the assertion below would fail — that is
     # the RED justification for this test.
-    alias Normandy.Behaviours.SessionStore.InMemory
-    alias Normandy.Behaviours.SessionRegistry.Native
     alias Normandy.Behaviours.AgentTemplate.Catalog
+    alias Normandy.Behaviours.SessionRegistry.Native
+    alias Normandy.Behaviours.SessionStore.InMemory
     alias Normandy.Test.TurnConfig
 
     test_pid = self()
@@ -225,7 +225,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # Stub call_llm: capture the config memory at call time, reply via message.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn c, _s, _r ->
           send(test_pid, {:captured_memory, c.memory})
           %TurnConfig.Resp{content: "ok"}
@@ -250,7 +250,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # Assert: the LLM call saw the pre-seeded history (not empty memory).
     assert_receive {:captured_memory, memory}, 2000
 
-    messages = Normandy.Components.AgentMemory.messages(memory)
+    messages = AgentMemory.messages(memory)
     contents = Enum.map(messages, & &1.content)
 
     assert "remember-me" in contents,

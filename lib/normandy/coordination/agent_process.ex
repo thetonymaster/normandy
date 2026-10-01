@@ -53,6 +53,9 @@ defmodule Normandy.Coordination.AgentProcess do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
 
   @type agent_id :: String.t()
   @type run_opts :: [
@@ -288,7 +291,7 @@ defmodule Normandy.Coordination.AgentProcess do
     {store, owned_store} =
       case Keyword.get(opts, :store) do
         nil ->
-          store_pid = Normandy.Behaviours.SessionStore.InMemory.new()
+          store_pid = InMemory.new()
           {{Normandy.Behaviours.SessionStore.InMemory, store_pid}, [store_pid]}
 
         supplied ->
@@ -299,7 +302,7 @@ defmodule Normandy.Coordination.AgentProcess do
       case Keyword.get(opts, :registry) do
         nil ->
           name = :"agentprocess_reg_#{System.unique_integer([:positive])}"
-          {:ok, reg_pid} = Normandy.Behaviours.SessionRegistry.Native.start_link(name: name)
+          {:ok, reg_pid} = Native.start_link(name: name)
           {{Normandy.Behaviours.SessionRegistry.Native, name}, [reg_pid]}
 
         supplied ->
@@ -604,16 +607,14 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   defp handle_async_run(agent, input, agent_id) do
-    try do
-      agent_input = prepare_input(input)
-      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
-      result = extract_result(response)
-      {:ok, result}
-    rescue
-      e ->
-        Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
-        {:error, {:exception, e, __STACKTRACE__}}
-    end
+    agent_input = prepare_input(input)
+    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
+    result = extract_result(response)
+    {:ok, result}
+  rescue
+    e ->
+      Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
+      {:error, {:exception, e, __STACKTRACE__}}
   end
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers
@@ -622,7 +623,7 @@ defmodule Normandy.Coordination.AgentProcess do
     case mod.history(handle, sid) do
       {:ok, entries} ->
         rebuilt = %{
-          Normandy.Components.AgentMemory.from_entries(entries)
+          AgentMemory.from_entries(entries)
           | max_messages: agent.memory.max_messages
         }
 

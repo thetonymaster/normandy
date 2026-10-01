@@ -94,7 +94,7 @@ defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
       Agent.stop(progress_agent)
 
       # Should have received progress updates
-      assert length(progress) > 0
+      assert progress != []
     end
 
     test "tracks completion accurately", %{agent: agent} do

@@ -12,10 +12,10 @@ defmodule Normandy.Integration.AgentProcessServerLiveTest do
   @moduletag :integration
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.AgentProcess
-  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Coordination.AgentProcess
   alias NormandyTest.Support.NormandyIntegrationHelper, as: H
 
   defp supplied_infra do

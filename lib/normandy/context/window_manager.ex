@@ -31,6 +31,7 @@ defmodule Normandy.Context.WindowManager do
   """
 
   alias Normandy.Components.AgentMemory
+  alias Normandy.Context.Summarizer
 
   @type strategy :: :oldest_first | :sliding_window | :summarize
   @type t :: %__MODULE__{
@@ -302,7 +303,7 @@ defmodule Normandy.Context.WindowManager do
 
       if client do
         # Use summarizer to compress conversation
-        Normandy.Context.Summarizer.compress_conversation(
+        Summarizer.compress_conversation(
           client,
           agent,
           keep_recent: keep_messages

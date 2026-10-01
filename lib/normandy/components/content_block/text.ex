@@ -16,6 +16,8 @@ defmodule Normandy.Components.ContentBlock.Text do
 
   use Normandy.Schema
 
+  alias Normandy.Components.ContentBlock.CacheControl
+
   @type t :: %__MODULE__{
           text: String.t(),
           cache_control: map() | nil
@@ -61,6 +63,6 @@ defmodule Normandy.Components.ContentBlock.Text do
   @spec to_claudio(t()) :: %{required(String.t()) => term()}
   def to_claudio(%__MODULE__{text: text, cache_control: cache_control}) do
     base = %{"type" => "text", "text" => text}
-    Normandy.Components.ContentBlock.CacheControl.maybe_attach(base, cache_control)
+    CacheControl.maybe_attach(base, cache_control)
   end
 end

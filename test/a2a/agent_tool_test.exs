@@ -1,16 +1,18 @@
 defmodule Normandy.A2A.AgentToolTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.A2A.AgentCard
+  alias Claudio.A2A.Part
   alias Normandy.A2A.AgentTool
   alias Normandy.Tools.BaseTool
 
   setup do
-    card = Claudio.A2A.AgentCard.new("Research Agent", "Helps find information")
+    card = AgentCard.new("Research Agent", "Helps find information")
 
     card_with_skills =
       card
-      |> Claudio.A2A.AgentCard.add_skill("web_search", "Search the web", tags: ["search"])
-      |> Claudio.A2A.AgentCard.add_skill("summarize", "Summarize text", tags: ["nlp"])
+      |> AgentCard.add_skill("web_search", "Search the web", tags: ["search"])
+      |> AgentCard.add_skill("summarize", "Summarize text", tags: ["nlp"])
 
     tool = AgentTool.new("https://agent.example.com/a2a", card)
 
@@ -106,7 +108,7 @@ defmodule Normandy.A2A.AgentToolTest do
         artifacts: [
           %Claudio.A2A.Artifact{
             artifact_id: "a1",
-            parts: [Claudio.A2A.Part.text("Hello world")]
+            parts: [Part.text("Hello world")]
           }
         ]
       }
@@ -119,7 +121,7 @@ defmodule Normandy.A2A.AgentToolTest do
         id: "task-1",
         status: %{
           state: :completed,
-          message: %{parts: [Claudio.A2A.Part.text("Done!")]}
+          message: %{parts: [Part.text("Done!")]}
         },
         artifacts: []
       }
@@ -142,7 +144,7 @@ defmodule Normandy.A2A.AgentToolTest do
         id: "task-1",
         status: %{
           state: :failed,
-          message: %{parts: [Claudio.A2A.Part.text("Something broke")]}
+          message: %{parts: [Part.text("Something broke")]}
         }
       }
 
@@ -175,7 +177,7 @@ defmodule Normandy.A2A.AgentToolTest do
         artifacts: [
           %Claudio.A2A.Artifact{
             artifact_id: "a1",
-            parts: [Claudio.A2A.Part.data("binary-data")]
+            parts: [Part.data("binary-data")]
           }
         ]
       }

@@ -1,7 +1,9 @@
 defmodule Normandy.Behaviours.ModelCatalogTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.ModelCatalog.ModelsAPI
+  alias Normandy.LLM.ClaudioAdapter
 
   @opus %{
     "id" => "claude-opus-5-5",
@@ -20,7 +22,7 @@ defmodule Normandy.Behaviours.ModelCatalogTest do
   setup do
     client =
       %Normandy.LLM.ClaudioAdapter{api_key: "k"}
-      |> Normandy.LLM.ClaudioAdapter.to_claudio_client()
+      |> ClaudioAdapter.to_claudio_client()
       |> Req.merge(plug: {Req.Test, __MODULE__}, retry: false)
 
     {:ok, opts: [client: client]}
@@ -74,7 +76,7 @@ defmodule Normandy.Behaviours.ModelCatalogTest do
   test "implements the ModelCatalog behaviour, whose only callback is context_window/2" do
     behaviours = ModelsAPI.module_info(:attributes)[:behaviour] || []
     assert Normandy.Behaviours.ModelCatalog in behaviours
-    assert Normandy.Behaviours.ModelCatalog.behaviour_info(:callbacks) == [context_window: 2]
+    assert ModelCatalog.behaviour_info(:callbacks) == [context_window: 2]
   end
 
   describe "deprecated Static stub" do

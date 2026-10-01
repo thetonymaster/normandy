@@ -1,10 +1,10 @@
 defmodule NormandyTest.Components.AgentMemoryTest do
   use ExUnit.Case, async: true
 
-  alias NormandyTest.IOTest
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
+  alias NormandyTest.IOTest
   doctest Normandy.Components.AgentMemory
 
   test "new_memory builds an empty entry graph" do

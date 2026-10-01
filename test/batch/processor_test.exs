@@ -1,8 +1,8 @@
 defmodule Normandy.Batch.ProcessorTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Batch.Processor
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Batch.Processor
 
   # Mock client for testing
   defmodule MockClient do
@@ -85,7 +85,7 @@ defmodule Normandy.Batch.ProcessorTest do
       assert stats.success_count == 2
       assert stats.error_count == 0
       assert length(stats.success) == 2
-      assert length(stats.errors) == 0
+      assert stats.errors == []
     end
 
     test "handles empty input list", %{agent: agent} do
@@ -231,7 +231,7 @@ defmodule Normandy.Batch.ProcessorTest do
       assert stats.success_count == 3
       assert stats.error_count == 0
       assert length(stats.success) == 3
-      assert length(stats.errors) == 0
+      assert stats.errors == []
     end
 
     test "tracks failures in stats", %{client: client} do

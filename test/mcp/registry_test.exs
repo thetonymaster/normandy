@@ -2,6 +2,8 @@ defmodule Normandy.MCP.RegistryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.MCP.Registry, as: MCPRegistry
+  alias Normandy.MCP.ToolWrapper
+  alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
   defmodule MockAdapter do
@@ -80,7 +82,7 @@ defmodule Normandy.MCP.RegistryTest do
     test "preserves existing tools in registry" do
       tool = %Claudio.MCP.Client.Tool{name: "existing", description: "Pre", input_schema: %{}}
 
-      existing_wrapper = Normandy.MCP.ToolWrapper.new(MockAdapter, :client, tool)
+      existing_wrapper = ToolWrapper.new(MockAdapter, :client, tool)
       registry = Registry.new([existing_wrapper])
 
       assert {:ok, updated} = MCPRegistry.discover_and_register(registry, MockAdapter, :client)
@@ -121,20 +123,20 @@ defmodule Normandy.MCP.RegistryTest do
       tool_a = %Claudio.MCP.Client.Tool{name: "search", description: "A", input_schema: %{}}
       tool_b = %Claudio.MCP.Client.Tool{name: "search", description: "B", input_schema: %{}}
 
-      wrapper_a = Normandy.MCP.ToolWrapper.new(MockAdapter, :client, tool_a)
-      wrapper_b = Normandy.MCP.ToolWrapper.new(MockAdapter, :client, tool_b)
+      wrapper_a = ToolWrapper.new(MockAdapter, :client, tool_a)
+      wrapper_b = ToolWrapper.new(MockAdapter, :client, tool_b)
 
       registry = Registry.new([wrapper_a, wrapper_b])
       assert Registry.count(registry) == 1
 
       {:ok, tool} = Registry.get(registry, "search")
-      assert Normandy.Tools.BaseTool.tool_description(tool) == "B"
+      assert BaseTool.tool_description(tool) == "B"
     end
 
     test "prefix avoids name collisions" do
       tool = %Claudio.MCP.Client.Tool{name: "search", description: "Search", input_schema: %{}}
-      wrapper_a = Normandy.MCP.ToolWrapper.new(MockAdapter, :client, tool, prefix: "server1")
-      wrapper_b = Normandy.MCP.ToolWrapper.new(MockAdapter, :client, tool, prefix: "server2")
+      wrapper_a = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server1")
+      wrapper_b = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server2")
 
       registry = Registry.new([wrapper_a, wrapper_b])
       assert Registry.count(registry) == 2

@@ -1,9 +1,9 @@
 defmodule Normandy.Tools.SchemaBaseToolTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Tools.Examples.EnhancedCalculator
-  alias Normandy.Tools.BaseTool
   alias Normandy.Schema.ValidationError
+  alias Normandy.Tools.BaseTool
+  alias Normandy.Tools.Examples.EnhancedCalculator
 
   describe "tool_schema macro" do
     test "defines a struct with specified fields" do

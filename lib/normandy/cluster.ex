@@ -32,9 +32,9 @@ defmodule Normandy.Cluster do
       Supervisor.start_link(children, strategy: :one_for_one)
   """
   alias Normandy.Agents.Turn.ResumeReaper
+  alias Normandy.Agents.Turn.Supervisor, as: LocalSup
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
-  alias Normandy.Agents.Turn.Supervisor, as: LocalSup
   alias Normandy.Behaviours.SessionRegistry.Redis, as: RedisReg
   alias Normandy.Behaviours.SessionStore.Mnesia, as: MnesiaStore
   alias Normandy.Behaviours.SessionStore.Redis, as: RedisStore

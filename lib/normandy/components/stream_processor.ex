@@ -23,7 +23,7 @@ defmodule Normandy.Components.StreamProcessor do
   @spec accumulate_text(Enumerable.t()) :: Enumerable.t()
   def accumulate_text(event_stream) do
     event_stream
-    |> Stream.filter(&is_text_delta?/1)
+    |> Stream.filter(&text_delta?/1)
     |> Stream.map(&extract_text_delta/1)
     |> Stream.reject(&is_nil/1)
   end
@@ -63,28 +63,26 @@ defmodule Normandy.Components.StreamProcessor do
   """
   @spec process_with_callback(Enumerable.t(), function()) :: {:ok, map()} | {:error, term()}
   def process_with_callback(event_stream, callback) when is_function(callback, 2) do
-    try do
-      events =
-        event_stream
-        |> Enum.map(fn event ->
-          invoke_callback(event, callback)
-          event
-        end)
+    events =
+      event_stream
+      |> Enum.map(fn event ->
+        invoke_callback(event, callback)
+        event
+      end)
 
-      final_message = build_final_message(events)
-      {:ok, final_message}
-    rescue
-      error -> {:error, error}
-    end
+    final_message = build_final_message(events)
+    {:ok, final_message}
+  rescue
+    error -> {:error, error}
   end
 
   # Private functions
 
-  defp is_text_delta?(%StreamEvent{type: :content_block_delta, delta: %{"type" => "text_delta"}}),
+  defp text_delta?(%StreamEvent{type: :content_block_delta, delta: %{"type" => "text_delta"}}),
     do: true
 
-  defp is_text_delta?(%{type: "content_block_delta", delta: %{"type" => "text_delta"}}), do: true
-  defp is_text_delta?(_), do: false
+  defp text_delta?(%{type: "content_block_delta", delta: %{"type" => "text_delta"}}), do: true
+  defp text_delta?(_), do: false
 
   defp extract_text_delta(%StreamEvent{delta: %{"text" => text}}), do: text
   defp extract_text_delta(%{delta: %{"text" => text}}), do: text

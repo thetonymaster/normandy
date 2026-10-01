@@ -2,6 +2,7 @@ defmodule Normandy.A2A.ServerTest do
   use ExUnit.Case, async: true
 
   alias Normandy.A2A.Server
+  alias Normandy.MCP.ToolWrapper
 
   describe "build_agent_card/2" do
     test "creates agent card with required fields" do
@@ -68,7 +69,7 @@ defmodule Normandy.A2A.ServerTest do
         input_schema: %{}
       }
 
-      wrapper = Normandy.MCP.ToolWrapper.new(MockMCPAdapter, :client, tool)
+      wrapper = ToolWrapper.new(MockMCPAdapter, :client, tool)
       registry = Normandy.Tools.Registry.new([wrapper])
       config = %{build_minimal_config() | tool_registry: registry}
 

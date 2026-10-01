@@ -72,6 +72,7 @@ defmodule Normandy.LLM.Json.ContentCleaner do
     {:ok, binary_part(content, start, pos - start)}
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp scan_balanced(content, pos, opener, closer, depth, in_str, esc, start)
        when pos < byte_size(content) do
     byte = :binary.at(content, pos)

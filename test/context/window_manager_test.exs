@@ -1,8 +1,8 @@
 defmodule Normandy.Context.WindowManagerTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Context.WindowManager
   alias Normandy.Components.AgentMemory
+  alias Normandy.Context.WindowManager
 
   describe "new/1" do
     test "requires :max_tokens (no static model table)" do
@@ -253,7 +253,7 @@ defmodule Normandy.Context.WindowManagerTest do
 
       # Should keep most recent messages
       assert length(history) < 6
-      assert length(history) > 0
+      assert history != []
       # First message should be removed
       first = List.first(history)
       assert first.content != "First message that is quite long"
@@ -277,7 +277,7 @@ defmodule Normandy.Context.WindowManagerTest do
       history = AgentMemory.history(truncated_agent.memory)
 
       # Should keep most recent messages
-      assert length(history) > 0
+      assert history != []
       assert length(history) < 10
     end
   end
@@ -305,7 +305,7 @@ defmodule Normandy.Context.WindowManagerTest do
       # Should have fewer messages than original
       assert length(history) < 15
       # Should have at least one summary message
-      assert length(history) > 0
+      assert history != []
     end
 
     test "falls back to oldest_first when no client available" do

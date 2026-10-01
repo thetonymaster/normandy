@@ -10,7 +10,10 @@ defmodule Normandy.Agents.Turn.Server do
   @behaviour :gen_statem
 
   alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
+  alias Normandy.Agents.ConfigTemplate
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Telemetry.OtelCtx
 
   defmodule Data do
     @moduledoc false
@@ -127,7 +130,7 @@ defmodule Normandy.Agents.Turn.Server do
                   "CredentialProvider (e.g. env/vault), not CredentialProvider.FromClient."
       end
 
-    config = Normandy.Agents.ConfigTemplate.rebuild(tmpl, supplement, token)
+    config = ConfigTemplate.rebuild(tmpl, supplement, token)
 
     # The thin spec carries no memory; load the conversation graph from the store
     # so a rehydrated/redistributed Tier-2 session resumes with its history (Tier-0/1
@@ -135,7 +138,7 @@ defmodule Normandy.Agents.Turn.Server do
     case store_mod.history(store_handle, session_id) do
       {:ok, entries} ->
         memory = %{
-          Normandy.Components.AgentMemory.from_entries(entries)
+          AgentMemory.from_entries(entries)
           | max_messages: config.memory.max_messages
         }
 
@@ -277,6 +280,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp interpret([], data), do: {:keep_state, data}
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp interpret([effect | rest], data) do
     case effect do
       {:emit_event, name, meta} ->
@@ -432,7 +436,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp dispatch(%Data{config: config}, calls) do
     pipeline = BaseAgent.base_agent_pipeline(config)
     max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = Normandy.Telemetry.OtelCtx.capture()
+    parent_ctx = OtelCtx.capture()
 
     classified =
       calls
@@ -449,7 +453,7 @@ defmodule Normandy.Agents.Turn.Server do
       runnable
       |> Task.async_stream(
         fn {prepared, ncall} ->
-          Normandy.Telemetry.OtelCtx.restore(parent_ctx)
+          OtelCtx.restore(parent_ctx)
           Dispatch.execute(config, prepared, ncall, pipeline)
         end,
         ordered: true,
@@ -474,12 +478,12 @@ defmodule Normandy.Agents.Turn.Server do
   defp execute_approved(%Data{config: config}, calls) do
     pipeline = BaseAgent.base_agent_pipeline(config)
     max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = Normandy.Telemetry.OtelCtx.capture()
+    parent_ctx = OtelCtx.capture()
 
     calls
     |> Task.async_stream(
       fn %ToolCall{} = call ->
-        Normandy.Telemetry.OtelCtx.restore(parent_ctx)
+        OtelCtx.restore(parent_ctx)
         {:ok, tool} = Normandy.Tools.Registry.get(config.tool_registry, call.name)
         prepared = Dispatch.prepare_tool(tool, call.input)
         Dispatch.execute(config, prepared, call, pipeline)

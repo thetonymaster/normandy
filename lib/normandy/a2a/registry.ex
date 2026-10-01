@@ -17,6 +17,7 @@ defmodule Normandy.A2A.Registry do
 
   """
 
+  alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
   alias Normandy.Tools.Registry
 
@@ -38,7 +39,7 @@ defmodule Normandy.A2A.Registry do
   def discover_and_register(%Registry{} = registry, base_url, opts \\ []) do
     transport_opts = Keyword.get(opts, :transport_opts, [])
 
-    case Claudio.A2A.Client.discover(base_url, transport_opts) do
+    case Client.discover(base_url, transport_opts) do
       {:ok, agent_card} ->
         endpoint = derive_endpoint(base_url, agent_card)
         tools = from_agent_card(agent_card, endpoint, opts)

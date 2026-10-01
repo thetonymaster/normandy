@@ -57,6 +57,7 @@ defmodule Normandy.Agents.Turn.Inline do
 
   defp process(state, [], _deps), do: {:ok, state}
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp process(state, [effect | rest], deps) do
     case effect do
       {:emit_event, name, meta} ->

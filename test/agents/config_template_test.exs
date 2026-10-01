@@ -2,6 +2,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
   use ExUnit.Case, async: true
   alias Normandy.Agents.{BaseAgentConfig, ConfigTemplate}
   alias Normandy.Behaviours.Config
+  alias Normandy.Components.AgentMemory
 
   test "from_config produces a serializable, secret-free template" do
     config = %BaseAgentConfig{
@@ -42,7 +43,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       prompt_specification: %Normandy.Components.PromptSpecification{},
       input_schema: SomeInput,
       output_schema: SomeOutput,
-      memory: Normandy.Components.AgentMemory.new_memory(42),
+      memory: AgentMemory.new_memory(42),
       client: %{api_key: "SECRET", base_url: "https://api"},
       tool_registry: %Normandy.Tools.Registry{tools: %{"t" => %{}}},
       behaviours: %Config{}

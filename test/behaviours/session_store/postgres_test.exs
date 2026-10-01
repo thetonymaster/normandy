@@ -6,13 +6,14 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
   use ExUnit.Case, async: true
   @moduletag :postgres
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Normandy.Behaviours.SessionStore.Postgres
   alias Normandy.Components.AgentMemory.Entry
 
   defp entry(role, content), do: %Entry{turn_id: "t", role: role, content: content}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
+    :ok = Sandbox.checkout(Normandy.TestRepo)
   end
 
   test "new/0 returns the configured repo handle and the behaviour is implemented" do

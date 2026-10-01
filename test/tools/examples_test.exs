@@ -2,7 +2,7 @@ defmodule NormandyTest.Tools.ExamplesTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Tools.BaseTool
-  alias Normandy.Tools.Examples.{Calculator, StringManipulator, ListProcessor}
+  alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
 
   describe "Calculator tool" do
     test "performs addition" do

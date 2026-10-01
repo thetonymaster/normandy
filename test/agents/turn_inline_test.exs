@@ -1,10 +1,10 @@
 defmodule Normandy.Agents.Turn.InlineTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Inline
-  alias Normandy.Agents.ToolCallResponse
-  alias Normandy.Agents.Dispatch
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Tools.Registry

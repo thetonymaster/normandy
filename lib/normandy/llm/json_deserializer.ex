@@ -109,6 +109,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   """
 
   alias Normandy.Agents.ConverseResult
+  alias Normandy.Agents.Model
   alias Normandy.LLM.Json.ContentCleaner
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.RetryFeedback
@@ -229,6 +230,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   end
 
   # Main retry loop
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp deserialize_loop(
          content,
          schema,
@@ -253,6 +255,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp deserialize_loop(
          content,
          schema,
@@ -293,6 +296,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   end
 
   # Retry by calling LLM again with error feedback
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp retry_with_feedback(
          error,
          failed_content,
@@ -323,7 +327,7 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     {response, _usage, _meta} =
       ConverseResult.normalize(
-        Normandy.Agents.Model.converse(
+        Model.converse(
           client,
           model,
           temperature,
@@ -399,6 +403,7 @@ defmodule Normandy.LLM.JsonDeserializer do
       {:ok, extracted, start} ->
         case Decoder.decode(extracted, adapter, opts) do
           {:ok, parsed} when is_map(parsed) ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case SchemaBinder.bind(parsed, schema, content) do
               {:ok, _populated} = ok ->
                 ok
@@ -441,8 +446,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   defp extract_content_from_response(%{content: content}) when is_list(content) do
     content
     |> Enum.filter(&(Map.get(&1, :type) == :text || Map.get(&1, "type") == "text"))
-    |> Enum.map(&(Map.get(&1, :text) || Map.get(&1, "text") || ""))
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", &(Map.get(&1, :text) || Map.get(&1, "text") || ""))
   end
 
   defp extract_content_from_response(%{content: content}) when is_binary(content), do: content

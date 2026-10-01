@@ -113,11 +113,10 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   # Format validation errors for LLM feedback
   defp format_validation_errors(error_map) when is_map(error_map) do
     error_map
-    |> Enum.map(fn {field, errors} ->
-      formatted_errors = errors |> Enum.map(&"  - #{&1}") |> Enum.join("\n")
+    |> Enum.map_join("\n\n", fn {field, errors} ->
+      formatted_errors = errors |> Enum.map_join("\n", &"  - #{&1}")
       "• Field `#{field}`:\n#{formatted_errors}"
     end)
-    |> Enum.join("\n\n")
   end
 
   # Format JSON error for human readability

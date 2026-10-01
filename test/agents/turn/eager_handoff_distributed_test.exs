@@ -58,10 +58,14 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   use Normandy.ClusterCase
   @moduletag :distributed
 
-  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
-  alias Normandy.Behaviours.SessionStore.Postgres, as: PGStore
   alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Normandy.Behaviours.SessionStore.Postgres, as: PGStore
+  alias Normandy.Test.TurnConfig
 
   setup_all do
     unless Node.alive?(), do: {:ok, _} = :net_kernel.start([:"primary@127.0.0.1", :longnames])
@@ -77,14 +81,14 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     else
       # Non-sandboxed checkout so committed writes are visible across nodes.
       # Then set :auto mode so all spawned processes get their own connections.
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo, sandbox: false)
-      Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
+      :ok = Sandbox.checkout(Normandy.TestRepo, sandbox: false)
+      Sandbox.mode(Normandy.TestRepo, :auto)
 
       sid = "eager-handoff-#{System.unique_integer([:positive])}"
 
       on_exit(fn ->
         # Restore manual mode and clean up the test session row.
-        Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :manual)
+        Sandbox.mode(Normandy.TestRepo, :manual)
 
         try do
           import Ecto.Query
@@ -98,7 +102,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
           _ -> :ok
         end
 
-        Ecto.Adapters.SQL.Sandbox.checkin(Normandy.TestRepo)
+        Sandbox.checkin(Normandy.TestRepo)
       end)
 
       {:ok, sid: sid}
@@ -114,7 +118,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     {:ok, sup} = HSup.start_link(name: sup_name)
     {:ok, cat} = Catalog.start_link([])
 
-    base = Normandy.Test.TurnConfig.build()
+    base = TurnConfig.build()
 
     # Register the supplement (tool_registry + client_builder + hooks).
     :ok =
@@ -128,7 +132,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     # Build and persist an :eager config template in Postgres.
     tmpl =
       base
-      |> Normandy.Agents.ConfigTemplate.from_config("k", :eager)
+      |> ConfigTemplate.from_config("k", :eager)
       |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
 
     :ok = PGStore.save_config_template(repo, sid, tmpl)
@@ -190,7 +194,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
     # Stub call_llm so the resumed turn finalizes without hitting a real LLM.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      BaseAgent.non_streaming_handlers()
       | call_llm: fn _config, _state, _req ->
           %Normandy.Test.TurnConfig.Resp{content: "resumed-done", tool_calls: nil}
         end

@@ -154,6 +154,7 @@ defmodule Normandy.Validate do
       message: "expected params to be a :map, got: `#{inspect(params)}`"
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp process_param(
          key,
          params,
@@ -219,6 +220,7 @@ defmodule Normandy.Validate do
     raise ArgumentError, "cast/3 expects a list of atom keys, got key: `#{inspect(key)}`"
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp cast_field(key, param_key, type, params, current, empty_values, defaults, force?, valid?) do
     case params do
       %{^param_key => value} ->
@@ -226,6 +228,7 @@ defmodule Normandy.Validate do
 
         case Normandy.Type.cast(type, value) do
           {:ok, value} ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             if not force? and Normandy.Type.equal?(type, current, value) do
               :missing
             else
@@ -288,6 +291,7 @@ defmodule Normandy.Validate do
     case :maps.next(:maps.iterator(params)) do
       {key, _, _} when is_atom(key) ->
         for {key, value} <- params, into: %{} do
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if is_atom(key) do
             {Atom.to_string(key), value}
           else
@@ -413,7 +417,7 @@ defmodule Normandy.Validate do
     end
   end
 
-  defp ensure_field_exists!(changeset = %Validate{}, types, field) do
+  defp ensure_field_exists!(%Validate{} = changeset, types, field) do
     unless Map.has_key?(types, field) do
       raise ArgumentError, "unknown field #{inspect(field)} in #{inspect(changeset.data)}"
     end
@@ -563,6 +567,7 @@ defmodule Normandy.Validate do
             element_type
         end
 
+      # credo:disable-for-next-line Credo.Check.Refactor.Nesting
       case Enum.any?(value, fn element ->
              not Normandy.Type.include?(element_type, element, data)
            end) do
@@ -587,6 +592,7 @@ defmodule Normandy.Validate do
   end
 
   @spec validate_length(t, atom, Keyword.t()) :: t
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def validate_length(changeset, field, opts) when is_list(opts) do
     validate_change(changeset, field, {:length, opts}, fn
       _, value ->
@@ -751,6 +757,7 @@ defmodule Normandy.Validate do
         |> Enum.find_value([], fn {spec_key, target_value} ->
           case Map.fetch(@number_validators, spec_key) do
             {:ok, {spec_function, default_message}} ->
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               unless is_atom(target_value) do
                 raise ArgumentError,
                       "expected option `#{spec_key}` to be a decimal, integer, or float, got: #{inspect(target_value)}"
@@ -783,7 +790,7 @@ defmodule Normandy.Validate do
   end
 
   defp compare_numbers(field, value, default_message, spec_key, spec_function, target_value, opts) do
-    case apply(spec_function, [value, target_value]) do
+    case spec_function.(value, target_value) do
       true ->
         nil
 

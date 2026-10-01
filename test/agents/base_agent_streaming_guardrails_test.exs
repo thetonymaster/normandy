@@ -2,6 +2,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
 
   # Streaming mock that yields events lazily so Enum.reduce_while can halt
@@ -53,6 +54,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
         lazy_stream =
           Stream.map(events, fn event ->
             if callback do
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               case event do
                 %{
                   type: "content_block_delta",
@@ -138,6 +140,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
         lazy_stream =
           Stream.map(events, fn event ->
             if callback do
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               case event do
                 %{
                   type: "content_block_delta",
@@ -276,7 +279,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       # But assistant-role memory entries must not carry the violation metadata,
       # otherwise matched terms/paths feed back into the next LLM call.
       assistant_entries =
-        Normandy.Components.AgentMemory.messages(updated_agent.memory)
+        AgentMemory.messages(updated_agent.memory)
         |> Enum.filter(&(&1.role == "assistant"))
 
       assert assistant_entries != []

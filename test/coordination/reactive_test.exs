@@ -2,7 +2,7 @@ defmodule Normandy.Coordination.ReactiveTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{Reactive, AgentProcess}
+  alias Normandy.Coordination.{AgentProcess, Reactive}
 
   # Helper to create a test agent
   defp create_test_agent do

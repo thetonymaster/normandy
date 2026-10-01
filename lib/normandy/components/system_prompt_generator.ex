@@ -3,8 +3,8 @@ defmodule Normandy.Components.SystemPromptGenerator do
   Generates structured system prompts for agents from prompt specifications.
   """
 
-  alias Normandy.Components.PromptSpecification
   alias Normandy.Components.ContextProvider
+  alias Normandy.Components.PromptSpecification
 
   @background "IDENTITY and PURPOSE"
   @steps "INTERNAL ASSISTANT STEPS"

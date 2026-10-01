@@ -9,12 +9,14 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
   """
   use ExUnit.Case, async: false
 
+  alias Normandy.Components.AgentMemory
   alias Normandy.Coordination.Pattern
+  alias NormandyTest.Support.NormandyIntegrationHelper
 
   # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
   # whole module at compile time: skipped when no API key is present (shown as
   # skipped, not failed), run when one is.
-  unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
+  unless NormandyIntegrationHelper.api_key_available?() do
     @moduletag skip:
                  "API key not available. Set API_KEY or ANTHROPIC_API_KEY environment variable."
   end
@@ -200,7 +202,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
 
   setup do
     # Create real client for agents
-    client = NormandyTest.Support.NormandyIntegrationHelper.create_real_client()
+    client = NormandyIntegrationHelper.create_real_client()
 
     # Create all agent instances
     {:ok, research_agent} = ResearchAgent.new(client: client)
@@ -406,19 +408,19 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     assert is_map(response)
 
     # Verify memory was updated
-    assert Normandy.Components.AgentMemory.count_messages(updated_agent.memory) > 0
+    assert AgentMemory.count_messages(updated_agent.memory) > 0
 
     # Run again to test memory accumulation
     {updated_agent2, response2} = StructuredAgent.run(updated_agent, "And what about OTP?")
 
     assert is_map(response2)
 
-    assert Normandy.Components.AgentMemory.count_messages(updated_agent2.memory) >
-             Normandy.Components.AgentMemory.count_messages(updated_agent.memory)
+    assert AgentMemory.count_messages(updated_agent2.memory) >
+             AgentMemory.count_messages(updated_agent.memory)
 
     # Test reset_memory
     reset_agent = StructuredAgent.reset_memory(updated_agent2)
-    assert Normandy.Components.AgentMemory.count_messages(reset_agent.memory) == 0
+    assert AgentMemory.count_messages(reset_agent.memory) == 0
 
     # Use pattern matching helpers to validate results
     results = [{:ok, response}, {:ok, response2}]

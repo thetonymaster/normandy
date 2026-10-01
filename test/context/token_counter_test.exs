@@ -1,10 +1,11 @@
 defmodule Normandy.Context.TokenCounterTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Context.TokenCounter
-  alias Normandy.LLM.ClaudioAdapter
-  alias Normandy.Components.AgentMemory
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Context.TokenCounter
+  alias Normandy.Context.WindowManager
+  alias Normandy.LLM.ClaudioAdapter
   alias NormandyTest.Support.IntegrationHelper
 
   setup do
@@ -226,7 +227,7 @@ defmodule Normandy.Context.TokenCounterTest do
       # use compatible formats (even though actual counts differ)
 
       text = "Hello, this is a test message."
-      estimated = Normandy.Context.WindowManager.estimate_tokens(text)
+      estimated = WindowManager.estimate_tokens(text)
 
       # Estimate should be roughly in the right ballpark
       # ~4 chars per token = ~8 tokens for 32 chars
@@ -236,7 +237,7 @@ defmodule Normandy.Context.TokenCounterTest do
 
     test "message content estimation works with maps" do
       content = %{chat_message: "Test message with structured content"}
-      estimated = Normandy.Context.WindowManager.estimate_message_content_tokens(content)
+      estimated = WindowManager.estimate_message_content_tokens(content)
 
       # Should convert to JSON and estimate
       assert estimated > 0
@@ -258,7 +259,7 @@ defmodule Normandy.Context.TokenCounterTest do
         base_url: "http://localhost:#{bypass.port}/"
       }
 
-      assert {:ok, _body} = Normandy.Context.TokenCounter.count_message(client, "hi")
+      assert {:ok, _body} = TokenCounter.count_message(client, "hi")
     end
   end
 end

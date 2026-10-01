@@ -9,8 +9,10 @@ defmodule Normandy.Agents.ConfigTemplate do
   (from the supplement). Behaviour module refs travel in the template; their
   `opts` must be serializable.
   """
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Behaviours.Config
+  alias Normandy.Components.AgentMemory
 
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do
@@ -82,14 +84,14 @@ defmodule Normandy.Agents.ConfigTemplate do
       tool_registry: supplement.tool_registry,
       client: supplement.client_builder.(token),
       behaviours: behaviours,
-      memory: Normandy.Components.AgentMemory.new_memory(Map.get(tmpl, :max_messages))
+      memory: AgentMemory.new_memory(Map.get(tmpl, :max_messages))
     }
-    |> Normandy.Agents.BaseAgent.validate_compaction_config!()
+    |> BaseAgent.validate_compaction_config!()
     |> validate_client_options!()
   end
 
   defp validate_client_options!(%BaseAgentConfig{client: client} = config) do
-    _ = Normandy.Agents.BaseAgent.validate_client_options!(client)
+    _ = BaseAgent.validate_client_options!(client)
     config
   end
 end

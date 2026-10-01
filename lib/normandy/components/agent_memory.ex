@@ -13,8 +13,8 @@ defmodule Normandy.Components.AgentMemory do
   """
 
   alias Normandy.Components.AgentMemory.Entry
-  alias Normandy.Components.Message
   alias Normandy.Components.BaseIOSchema
+  alias Normandy.Components.Message
 
   defstruct entries: %{}, head: nil, current_turn_id: nil, max_messages: nil
 
@@ -230,6 +230,7 @@ defmodule Normandy.Components.AgentMemory do
         if MapSet.member?(visited, id) do
           nil
         else
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case Map.get(entries, id) do
             nil -> nil
             %Entry{parent_id: parent_id} = entry -> {entry, {parent_id, MapSet.put(visited, id)}}

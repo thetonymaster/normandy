@@ -3,9 +3,11 @@ defmodule Normandy.Behaviours.SessionStore.PostgresContractTest do
   use ExUnit.Case, async: false
   @moduletag :postgres
 
+  alias Ecto.Adapters.SQL.Sandbox
+
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, {:shared, self()})
+    :ok = Sandbox.checkout(Normandy.TestRepo)
+    Sandbox.mode(Normandy.TestRepo, {:shared, self()})
 
     # Start each contract test from an empty sessions table. list_resumable/1 is a
     # GLOBAL query, so rows committed by non-sandboxed suites (e.g. the distributed

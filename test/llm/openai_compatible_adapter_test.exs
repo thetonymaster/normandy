@@ -1,7 +1,9 @@
 defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
   use ExUnit.Case, async: true
-  alias Normandy.LLM.OpenAICompatibleAdapter, as: Adapter
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Model
   alias Normandy.Components.Message
+  alias Normandy.LLM.OpenAICompatibleAdapter, as: Adapter
 
   describe "convert_messages/1" do
     test "maps Normandy messages to OpenAI role/content maps" do
@@ -62,7 +64,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       msgs = [%Message{role: "user", content: "What is the answer?"}]
 
       {resp, usage} =
-        Normandy.Agents.Model.converse(client, "gpt-4o", 0.7, 1024, msgs, schema, [])
+        Model.converse(client, "gpt-4o", 0.7, 1024, msgs, schema, [])
 
       assert resp.chat_message == "The answer is 42."
       assert usage == %{"total_tokens" => 10}
@@ -107,8 +109,8 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
         options: %{req_options: [adapter: adapter_fn]}
       }
 
-      agent = Normandy.Agents.BaseAgent.init(%{client: client, model: "gpt-4o"})
-      Normandy.Agents.BaseAgent.run(agent, "hi")
+      agent = BaseAgent.init(%{client: client, model: "gpt-4o"})
+      BaseAgent.run(agent, "hi")
 
       assert_received {:openai_body, body}
       refute Map.has_key?(body, "temperature")

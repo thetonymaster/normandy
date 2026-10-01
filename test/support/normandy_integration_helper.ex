@@ -3,8 +3,8 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   Helper functions for Normandy integration tests with real Anthropic API.
   """
 
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
+  alias Normandy.LLM.ClaudioAdapter
 
   @default_model "claude-haiku-4-5-20251001"
 

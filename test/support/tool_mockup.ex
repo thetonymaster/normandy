@@ -1,4 +1,5 @@
 defmodule NormandyTest.Support.Tool do
+  @moduledoc false
   use Normandy.Schema
   alias NormandyTest.IOTest
 

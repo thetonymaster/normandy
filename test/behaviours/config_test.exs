@@ -1,10 +1,11 @@
 defmodule Normandy.Behaviours.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Behaviours.Config
-  alias Normandy.Behaviours.PolicyEngine
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Dispatch.Pipeline
+  alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Tools.Registry
@@ -51,7 +52,7 @@ defmodule Normandy.Behaviours.ConfigTest do
     end
 
     test "to_pipeline/1 ignores session_registry (not a dispatch-path concern)" do
-      pipeline = Normandy.Behaviours.Config.to_pipeline(%Normandy.Behaviours.Config{})
+      pipeline = Config.to_pipeline(%Normandy.Behaviours.Config{})
       refute Map.has_key?(Map.from_struct(pipeline), :session_registry)
     end
   end
@@ -125,7 +126,7 @@ defmodule Normandy.Behaviours.ConfigTest do
       }
 
       config =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
           model: "claude-3-5-sonnet-20241022",
           temperature: 0.0,
@@ -137,7 +138,7 @@ defmodule Normandy.Behaviours.ConfigTest do
 
     test "init/1 defaults behaviours to nil (resolved to defaults at pipeline build)" do
       config =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
           model: "claude-3-5-sonnet-20241022",
           temperature: 0.0

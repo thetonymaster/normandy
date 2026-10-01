@@ -2,9 +2,9 @@ defmodule Normandy.Agents.TurnPropertyTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.State
-  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
 

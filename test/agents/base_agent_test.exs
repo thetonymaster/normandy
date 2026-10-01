@@ -1,12 +1,13 @@
 defmodule NormandyTest.BaseAgentsTest do
-  alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
-  alias NormandyTest.Support.ContextProvider
+  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
-  alias Normandy.Components.AgentMemory
-  alias Normandy.Agents.BaseAgent
+  alias NormandyTest.Support.ContextProvider
   use ExUnit.Case, async: true
 
   setup do
@@ -117,10 +118,10 @@ defmodule NormandyTest.BaseAgentsTest do
   test "rich base agent io str and rich" do
     test_io = %Normandy.Agents.BaseAgentInputSchema{chat_message: "chat message"}
 
-    assert Normandy.Components.BaseIOSchema.__str__(test_io) ==
+    assert BaseIOSchema.__str__(test_io) ==
              "{\"chat_message\":\"chat message\"}"
 
-    assert Normandy.Components.BaseIOSchema.__rich__(test_io) != nil
+    assert BaseIOSchema.__rich__(test_io) != nil
   end
 
   describe "unwrap_llm_content/1" do
@@ -184,7 +185,7 @@ defmodule NormandyTest.BaseAgentsTest do
   describe "temperature (Opus 4.7+ reject sampling parameters)" do
     test "init/1 without :temperature leaves it nil" do
       agent =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %NormandyTest.Support.ModelMockup{},
           model: "claude-opus-5-5"
         })

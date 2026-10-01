@@ -2,6 +2,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration
@@ -160,7 +161,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
           updated
         end)
 
-      assert Normandy.Components.AgentMemory.count_messages(agent1.memory) >= 6
+      assert AgentMemory.count_messages(agent1.memory) >= 6
 
       # Second run with fresh agent but similar pattern
       _agent2 =

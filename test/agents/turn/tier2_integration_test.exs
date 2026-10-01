@@ -3,18 +3,22 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn.{Session, Supervisor}
-  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
+  alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Test.TurnConfig
 
   test "a turn runs through the Horde supervisor with reconstructed config" do
     reg = HReg.new()
     {:ok, sup} = HSup.start_link(name: :"t2_#{System.unique_integer([:positive])}")
-    store = Normandy.Behaviours.SessionStore.InMemory.new()
-    {:ok, cat} = Normandy.Behaviours.AgentTemplate.Catalog.start_link([])
+    store = InMemory.new()
+    {:ok, cat} = Catalog.start_link([])
     sid = "t2-#{System.unique_integer([:positive])}"
 
-    base = Normandy.Test.TurnConfig.build()
+    base = TurnConfig.build()
     register_supplement(cat, base)
 
     opts = [
@@ -28,7 +32,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
       template_id: "k",
       resume_policy: :lazy,
       handlers: %{
-        Normandy.Agents.BaseAgent.non_streaming_handlers()
+        BaseAgent.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Normandy.Test.TurnConfig.Resp{content: "ok"} end
       }
     ]
@@ -37,11 +41,11 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
     assert wait_until(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end)
     # The template was persisted (reconstruction would work on another node).
     assert {:ok, _tmpl} =
-             Normandy.Behaviours.SessionStore.InMemory.load_config_template(store, sid)
+             InMemory.load_config_template(store, sid)
   end
 
   defp register_supplement(cat, base) do
-    Normandy.Behaviours.AgentTemplate.Catalog.put(cat, "k", %{
+    Catalog.put(cat, "k", %{
       tool_registry: base.tool_registry,
       before_hooks: [],
       after_hooks: [],

@@ -20,6 +20,10 @@ defmodule Normandy.A2A.AgentTool do
 
   """
 
+  alias Claudio.A2A.Client
+  alias Claudio.A2A.Message
+  alias Claudio.A2A.Part
+
   @default_timeout 60_000
   @poll_interval 1_000
 
@@ -92,8 +96,9 @@ defmodule Normandy.A2A.AgentTool do
     if now >= deadline do
       {:error, "Task timed out waiting for completion"}
     else
-      case Claudio.A2A.Client.get_task(endpoint, task_id, opts) do
+      case Client.get_task(endpoint, task_id, opts) do
         {:ok, task} ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if Claudio.A2A.Task.terminal?(task) do
             extract_task_result(task)
           else
@@ -113,13 +118,13 @@ defmodule Normandy.A2A.AgentTool do
       case task.artifacts do
         [artifact | _] ->
           artifact.parts
-          |> Enum.map(fn part -> Map.get(part, :text, "") end)
-          |> Enum.join("\n")
+          |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
 
         _ ->
           case task.status do
             %{message: %{parts: parts}} when is_list(parts) ->
-              parts |> Enum.map(fn p -> Map.get(p, :text, "") end) |> Enum.join("\n")
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+              parts |> Enum.map_join("\n", fn p -> Map.get(p, :text, "") end)
 
             _ ->
               "Task completed"
@@ -135,7 +140,7 @@ defmodule Normandy.A2A.AgentTool do
     error_text =
       case message do
         %{parts: parts} when is_list(parts) ->
-          parts |> Enum.map(fn p -> Map.get(p, :text, "") end) |> Enum.join("\n")
+          parts |> Enum.map_join("\n", fn p -> Map.get(p, :text, "") end)
 
         _ ->
           "Task #{state}"
@@ -197,15 +202,15 @@ defmodule Normandy.A2A.AgentTool do
       message_text = Map.get(input, "message") || Map.get(input, :message, "")
 
       message =
-        Claudio.A2A.Message.new(:user, [
-          Claudio.A2A.Part.text(message_text)
+        Message.new(:user, [
+          Part.text(message_text)
         ])
 
       opts =
         transport_opts
         |> Keyword.merge(if(auth_token, do: [auth_token: auth_token], else: []))
 
-      case Claudio.A2A.Client.send_message(endpoint, message, opts) do
+      case Client.send_message(endpoint, message, opts) do
         {:ok, %Claudio.A2A.Task{} = task} ->
           if Claudio.A2A.Task.terminal?(task) do
             AgentTool.extract_task_result(task)
@@ -217,8 +222,7 @@ defmodule Normandy.A2A.AgentTool do
         {:ok, %Claudio.A2A.Message{} = response_msg} ->
           text =
             response_msg.parts
-            |> Enum.map(fn part -> Map.get(part, :text, "") end)
-            |> Enum.join("\n")
+            |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
 
           {:ok, text}
 

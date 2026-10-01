@@ -87,6 +87,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
         # Invoke callback if provided
         if callback do
           Enum.each(events, fn event ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case event do
               %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
                 callback.(:text_delta, text)
@@ -125,6 +126,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
         response_model
       end
 
+      # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
       def stream_converse(
             _client,
             _model,
@@ -189,6 +191,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
         # Invoke callback if provided
         if callback do
           Enum.each(events, fn event ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case event do
               %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
                 callback.(:text_delta, text)
@@ -238,7 +241,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
 
       # Verify final response
       assert response.content
-      assert length(response.content) > 0
+      assert response.content != []
     end
 
     test "adds streamed response to memory" do

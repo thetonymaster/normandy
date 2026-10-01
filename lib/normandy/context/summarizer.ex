@@ -14,8 +14,11 @@ defmodule Normandy.Context.Summarizer do
       {:ok, updated_agent} = Summarizer.compress_conversation(client, agent, keep_recent: 5)
   """
 
+  alias Normandy.Agents.ConverseResult
+  alias Normandy.Agents.Model
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
+  alias Normandy.Context.WindowManager
 
   @default_summarization_prompt """
   Please provide a concise summary of the following conversation history.
@@ -120,7 +123,7 @@ defmodule Normandy.Context.Summarizer do
     # Estimate original token count
     original_tokens =
       Enum.reduce(messages, 0, fn msg, acc ->
-        tokens = Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
+        tokens = WindowManager.estimate_message_content_tokens(msg.content)
         # Add overhead per message
         acc + tokens + 10
       end)
@@ -144,12 +147,11 @@ defmodule Normandy.Context.Summarizer do
 
   defp format_messages_for_summary(messages) do
     messages
-    |> Enum.map(fn msg ->
+    |> Enum.map_join("\n\n", fn msg ->
       role = String.capitalize(msg.role)
       content = extract_content(msg.content)
       "#{role}: #{content}"
     end)
-    |> Enum.join("\n\n")
   end
 
   defp extract_content(content) when is_binary(content), do: content
@@ -194,8 +196,8 @@ defmodule Normandy.Context.Summarizer do
     response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
     {response, _usage, _meta} =
-      Normandy.Agents.ConverseResult.normalize(
-        Normandy.Agents.Model.converse(
+      ConverseResult.normalize(
+        Model.converse(
           client,
           model,
           temperature,

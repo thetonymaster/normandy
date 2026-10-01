@@ -4,8 +4,9 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   import ExUnit.CaptureLog
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
 
@@ -37,9 +38,9 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       tool_registry: nil
     }
 
@@ -314,7 +315,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert {:ok, _} = AgentProcess.run(pid, "first message")
 
       agent = AgentProcess.get_agent(pid)
-      contents = Enum.map(Normandy.Components.AgentMemory.entry_chain(agent.memory), & &1.content)
+      contents = Enum.map(AgentMemory.entry_chain(agent.memory), & &1.content)
 
       # The user message persisted to the store is reflected back through get_agent.
       # :server mode wraps input via prepare_input/1, so the persisted content is the map form.
@@ -383,8 +384,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
         )
 
       tampered =
-        Normandy.Components.AgentMemory.add_message(
-          Normandy.Components.AgentMemory.new_memory(),
+        AgentMemory.add_message(
+          AgentMemory.new_memory(),
           "user",
           "injected"
         )
@@ -398,7 +399,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       # Non-memory change applied:
       assert agent.temperature == 0.42
       # Memory mutation discarded (still the empty template, not the injected one):
-      assert Normandy.Components.AgentMemory.entry_chain(agent.memory) == []
+      assert AgentMemory.entry_chain(agent.memory) == []
     end
   end
 end

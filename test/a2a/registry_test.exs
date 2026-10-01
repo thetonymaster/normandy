@@ -1,12 +1,13 @@
 defmodule Normandy.A2A.RegistryTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.A2A.AgentCard
   alias Normandy.A2A.Registry, as: A2ARegistry
   alias Normandy.Tools.Registry
 
   describe "from_agent_card/3" do
     test "creates single tool for agent with no skills" do
-      card = Claudio.A2A.AgentCard.new("Agent", "A simple agent")
+      card = AgentCard.new("Agent", "A simple agent")
       tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
 
       assert length(tools) == 1
@@ -17,9 +18,9 @@ defmodule Normandy.A2A.RegistryTest do
 
     test "creates one tool per skill" do
       card =
-        Claudio.A2A.AgentCard.new("Agent", "Multi-skill agent")
-        |> Claudio.A2A.AgentCard.add_skill("search", "Search the web")
-        |> Claudio.A2A.AgentCard.add_skill("summarize", "Summarize text")
+        AgentCard.new("Agent", "Multi-skill agent")
+        |> AgentCard.add_skill("search", "Search the web")
+        |> AgentCard.add_skill("summarize", "Summarize text")
 
       tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
 
@@ -30,7 +31,7 @@ defmodule Normandy.A2A.RegistryTest do
     end
 
     test "passes options through" do
-      card = Claudio.A2A.AgentCard.new("Agent", "An agent")
+      card = AgentCard.new("Agent", "An agent")
 
       tools =
         A2ARegistry.from_agent_card(card, "https://example.com/a2a",
@@ -47,8 +48,8 @@ defmodule Normandy.A2A.RegistryTest do
   describe "from_agent_card registry integration" do
     test "tools can be registered" do
       card =
-        Claudio.A2A.AgentCard.new("My Agent", "Does things")
-        |> Claudio.A2A.AgentCard.add_skill("search", "Search")
+        AgentCard.new("My Agent", "Does things")
+        |> AgentCard.add_skill("search", "Search")
 
       tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
       registry = Registry.new(tools)

@@ -39,6 +39,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
           resolved_context_window: {String.t(), pos_integer()} | nil
         }
 
+  @typedoc "Any `%BaseAgentConfig{}`, including a partially filled one (field types unchecked)."
+  @type partial() :: %__MODULE__{}
+
   schema do
     field(:name, :string, default: nil)
     field(:input_schema, :struct)

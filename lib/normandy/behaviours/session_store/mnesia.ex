@@ -91,6 +91,7 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
           :mnesia.abort(:no_such_session)
 
         [{_, ^session_id, %{head_id: head}}] ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if on_chain?(et, head, from_entry_id) do
             new_id = UUID.uuid4()
             :mnesia.write({st, new_id, %{@empty_session | head_id: from_entry_id}})

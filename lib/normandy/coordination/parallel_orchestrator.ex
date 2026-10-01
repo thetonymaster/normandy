@@ -144,6 +144,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
                 transformed = transform_fn.(agent_result)
 
                 # Call completion callback if provided
+                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
                 if on_complete do
                   on_complete.(agent_id, transformed)
                 end
@@ -272,21 +273,19 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   # Private functions
 
   defp execute_agent(agent, input) do
-    try do
-      # Convert input to agent input format if needed
-      agent_input = prepare_input(input)
+    # Convert input to agent input format if needed
+    agent_input = prepare_input(input)
 
-      # Run agent
-      {_updated_agent, response} = BaseAgent.run(agent, agent_input)
+    # Run agent
+    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
 
-      # Extract result from response
-      result = extract_result(response)
+    # Extract result from response
+    result = extract_result(response)
 
-      {:ok, result}
-    rescue
-      e ->
-        {:error, {:exception, e, __STACKTRACE__}}
-    end
+    {:ok, result}
+  rescue
+    e ->
+      {:error, {:exception, e, __STACKTRACE__}}
   end
 
   defp prepare_input(input) when is_map(input) do
