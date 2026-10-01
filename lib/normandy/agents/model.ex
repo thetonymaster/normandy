@@ -22,7 +22,7 @@ defprotocol Normandy.Agents.Model do
   ## Parameters
     - config: Model client configuration
     - model: Model identifier
-    - temperature: Sampling temperature (0.0-1.0)
+    - temperature: Sampling temperature, or nil to leave it unset (Opus 4.7+ reject sampling parameters)
     - max_tokens: Maximum tokens to generate
     - messages: List of conversation messages
     - response_model: Expected response schema
@@ -31,11 +31,13 @@ defprotocol Normandy.Agents.Model do
   ## Returns
     Structured response conforming to response_model.
 
-    Implementations may also return `{response, usage}` where `usage` is a
-    provider-specific token usage map. Normandy consumes this internally for
-    observability without changing the external `BaseAgent.run/2` return shape.
+    Implementations may also return `{response, usage}` or
+    `{response, usage, meta}`: `usage` is a provider-specific token usage map,
+    `meta` a map of per-call facts (e.g. `:served_by`). Normandy consumes both
+    internally for observability (see `Normandy.Agents.ConverseResult`) without
+    changing the external `BaseAgent.run/2` return shape.
   """
-  @spec converse(t(), String.t(), float(), integer(), list(), struct(), keyword()) ::
-          struct() | {struct(), map() | nil}
+  @spec converse(t(), String.t(), float() | nil, integer() | nil, list(), struct(), keyword()) ::
+          struct() | {struct(), map() | nil} | {struct(), map() | nil, map()}
   def converse(config, model, temperature, max_tokens, messages, response_model, opts \\ [])
 end

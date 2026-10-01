@@ -190,7 +190,7 @@ defmodule Normandy.Context.Summarizer do
     # Create a proper struct response model for text output
     response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
-    {response, _usage} =
+    {response, _usage, _meta} =
       Normandy.Agents.ConverseResult.normalize(
         Normandy.Agents.Model.converse(
           client,

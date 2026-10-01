@@ -165,7 +165,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
   def get_response(config = %BaseAgentConfig{}, response_model \\ nil) do
-    {response, _usage} = get_response_with_usage(config, response_model)
+    {response, _usage, _meta} = get_response_with_usage(config, response_model)
     response
   end
 
@@ -216,10 +216,12 @@ defmodule Normandy.Agents.BaseAgent do
 
   def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
 
-  @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil) :: {struct(), map() | nil}
+  @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil, keyword()) ::
+          {struct(), map() | nil, map()}
   defp get_response_with_usage(
          config = %BaseAgentConfig{prompt_specification: prompt_specification},
-         response_model
+         response_model,
+         extra_opts \\ []
        ) do
     response_model =
       if response_model != nil do
@@ -282,13 +284,15 @@ defmodule Normandy.Agents.BaseAgent do
         opts
       end
 
+    opts = opts ++ extra_opts
+
     # Wrap LLM call with resilience patterns
     call_llm_with_resilience(config, messages, response_model, opts)
   end
 
   # Private helper to call LLM with retry and circuit breaker protection
   @spec call_llm_with_resilience(BaseAgentConfig.t(), list(), struct(), keyword()) ::
-          {struct(), map() | nil}
+          {struct(), map() | nil, map()}
   defp call_llm_with_resilience(config, messages, response_model, opts) do
     llm_call = fn ->
       result =
@@ -568,7 +572,7 @@ defmodule Normandy.Agents.BaseAgent do
     llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
 
     with_llm_call_span(config, llm_metadata, fn ->
-      {r, usage} = get_response_with_usage(config, response_model)
+      {r, usage, _response_meta} = get_response_with_usage(config, response_model)
 
       # When this agent has no tools, strip any tool_calls the LLM may have
       # returned (e.g. a misbehaving or generic mock). Old run_without_tools
