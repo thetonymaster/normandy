@@ -288,15 +288,15 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # First few calls will retry and fail
-      assert_raise RuntimeError, fn ->
+      assert_raise RuntimeError, "Temporary network error", fn ->
         BaseAgent.run(agent, %{chat_message: "test1"})
       end
 
-      assert_raise RuntimeError, fn ->
+      assert_raise RuntimeError, "Temporary network error", fn ->
         BaseAgent.run(agent, %{chat_message: "test2"})
       end
 
-      assert_raise RuntimeError, fn ->
+      assert_raise RuntimeError, "Temporary network error", fn ->
         BaseAgent.run(agent, %{chat_message: "test3"})
       end
 

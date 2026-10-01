@@ -87,7 +87,10 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
     test "empty guard list is a no-op" do
       agent = BaseAgent.init(base_config(%{}))
-      {_updated, _response} = BaseAgent.run(agent, "anything")
+      {_updated, response} = BaseAgent.run(agent, "anything")
+
+      # ModelMockup returns the output schema unchanged.
+      assert response == %Normandy.Agents.BaseAgentOutputSchema{}
     end
   end
 
@@ -175,7 +178,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
             })
           )
 
-        assert_raise Normandy.Guardrails.ViolationError, fn ->
+        assert_raise Normandy.Guardrails.ViolationError, ~r/input guardrail violation/i, fn ->
           BaseAgent.run(agent, "xx")
         end
 

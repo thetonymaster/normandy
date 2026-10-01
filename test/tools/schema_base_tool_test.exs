@@ -122,7 +122,7 @@ defmodule Normandy.Tools.SchemaBaseToolTest do
     test "raises ValidationError on invalid input" do
       params = %{operation: "invalid", a: 5, b: 3}
 
-      assert_raise ValidationError, fn ->
+      assert_raise ValidationError, "Tool input validation failed", fn ->
         EnhancedCalculator.validate!(params)
       end
     end

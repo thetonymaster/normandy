@@ -68,7 +68,7 @@ defmodule NormandyTest.Guardrails.SemanticScopeTest do
     end
 
     test "a missing :classifier raises KeyError" do
-      assert_raise KeyError, fn ->
+      assert_raise KeyError, ~r/key :classifier not found/, fn ->
         SemanticScope.check("q", [])
       end
     end

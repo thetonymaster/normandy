@@ -19,7 +19,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
 
     test "raises on non-string content (text-only v1)" do
-      assert_raise ArgumentError, fn ->
+      assert_raise ArgumentError, ~r/text-only v1/, fn ->
         Adapter.convert_messages([%Message{role: "user", content: [%{}]}])
       end
     end

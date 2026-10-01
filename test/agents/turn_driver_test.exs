@@ -147,7 +147,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
         end
     }
 
-    assert_raise Normandy.ModelCatalogError, fn ->
+    assert_raise Normandy.ModelCatalogError, ~r/model catalog lookup failed for "m": :boom/, fn ->
       Driver.drive(Turn.new(response_model: :rm, output_schema: :rm), handlers, [])
     end
   end
