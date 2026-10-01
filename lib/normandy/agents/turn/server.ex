@@ -695,12 +695,29 @@ defmodule Normandy.Agents.Turn.Server do
             {:monitor_ref, r} -> r
           end
 
-        send(server, {ref, fun.(handlers, current)})
+        run_while_server_alive(server, ref, fn -> fun.(handlers, current) end)
       end)
 
     ref = Process.monitor(pid)
     send(pid, {:monitor_ref, ref})
     {:next_state, :running, %{data | task_ref: ref, task_kind: kind}}
+  end
+
+  # The work runs in a linked worker while this process watches the server: if
+  # the server dies, the worker is killed, so an LLM call or tool does not run
+  # on unseen (and run again by the restarted server). A worker crash exits
+  # this process with the same reason, which the server sees as {:DOWN, ...}.
+  defp run_while_server_alive(server, ref, work) do
+    server_ref = Process.monitor(server)
+    Process.flag(:trap_exit, true)
+    watcher = self()
+    worker = spawn_link(fn -> send(watcher, {:task_result, work.()}) end)
+
+    receive do
+      {:task_result, result} -> send(server, {ref, result})
+      {:EXIT, ^worker, reason} -> exit(reason)
+      {:DOWN, ^server_ref, :process, _pid, _reason} -> Process.exit(worker, :kill)
+    end
   end
 
   # The shell-level bypass to the terminal :fail effect (used when an append/persist

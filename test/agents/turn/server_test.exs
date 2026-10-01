@@ -429,6 +429,33 @@ defmodule Normandy.Agents.Turn.ServerTest do
     refute t1 == "live"
   end
 
+  test "in-flight work stops when the server dies" do
+    parent = self()
+
+    call_llm = fn _c, _s, _r ->
+      send(parent, {:llm_running, self()})
+      Process.sleep(:infinity)
+    end
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-orphan",
+        config: base_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+      )
+
+    Process.unlink(srv)
+    spawn(fn -> Turn.Server.run(srv, "go") end)
+    assert_receive {:llm_running, llm_pid}, 1_000
+
+    ref = Process.monitor(llm_pid)
+    Process.exit(srv, :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^llm_pid, _}, 1_000
+  end
+
   describe "run telemetry" do
     setup do
       parent = self()
