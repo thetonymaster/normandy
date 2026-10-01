@@ -65,6 +65,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Behaviours.SessionStore.Postgres, as: PGStore
+  alias Normandy.Test.HandoffStubs
   alias Normandy.Test.TurnConfig
 
   setup_all do
@@ -115,7 +116,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     sup_name = :"handoff_sup_#{System.unique_integer([:positive])}"
 
     {:ok, _} = HReg.start_link(name: reg_name)
-    {:ok, sup} = HSup.start_link(name: sup_name)
+    {:ok, _} = HSup.start_link(name: sup_name)
     {:ok, cat} = Catalog.start_link([])
 
     base = TurnConfig.build()
@@ -126,7 +127,8 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
         tool_registry: base.tool_registry,
         before_hooks: [],
         after_hooks: [],
-        client_builder: fn _ -> base.client end
+        # A capture of a test/support function: the peer can call it.
+        client_builder: &HandoffStubs.client/1
       })
 
     # Build and persist an :eager config template in Postgres.
@@ -195,16 +197,14 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     # Stub call_llm so the resumed turn finalizes without hitting a real LLM.
     handlers = %{
       BaseAgent.non_streaming_handlers()
-      | call_llm: fn _config, _state, _req ->
-          %Normandy.Test.TurnConfig.Resp{content: "resumed-done", tool_calls: nil}
-        end
+      | call_llm: &HandoffStubs.call_llm/3
     }
 
     session_opts = [
       session_id: sid,
       store: {PGStore, repo},
       registry: {HReg, reg_name},
-      supervisor: sup,
+      supervisor: sup_name,
       supervisor_mod: HSup,
       template_provider: {Catalog, cat},
       template_id: "k",
@@ -215,7 +215,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     # Start the Turn.Server somewhere in the cluster via HSup.start_server.
     # Horde decides which node; we don't control placement here.
     # The server reconstructs its config from Postgres (thin opts path).
-    {:ok, server_pid} = HSup.start_server(sup, session_opts)
+    {:ok, server_pid} = HSup.start_server(sup_name, session_opts)
     assert is_pid(server_pid)
 
     # Allow the eager resume to complete on wherever the server is hosted.
