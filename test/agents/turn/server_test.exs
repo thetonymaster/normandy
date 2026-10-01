@@ -542,6 +542,35 @@ defmodule Normandy.Agents.Turn.ServerTest do
     refute_receive {:tool_ran, "billing"}, 100
   end
 
+  test "an eagerly resumed parked turn re-announces :awaiting_approval with resumed: true" do
+    test_pid = self()
+    call = %ToolCall{id: "pk1", name: "billing", input: %{}}
+
+    parked = %Turn.State{
+      status: :awaiting_approval,
+      iterations_left: 5,
+      max_iterations: 5,
+      response_model: %Resp{},
+      output_schema: %Resp{},
+      pending_calls: [call],
+      parked_calls: [call],
+      held_results: []
+    }
+
+    {:ok, _srv} =
+      Turn.Server.start_link(
+        session_id: "s-resume-announce",
+        config: base_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        turn_state: parked,
+        resume_policy: :eager,
+        subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+      )
+
+    assert_receive {:event, :awaiting_approval, %{parked: 1, resumed: true}}, 1_000
+  end
+
   test "starts under a Horde :via name and is discoverable via whereis" do
     reg = Horde.new()
     sid = "via-#{System.unique_integer([:positive])}"

@@ -32,7 +32,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert effects == [
                {:persist, s2},
-               {:emit_event, :awaiting_approval, %{parked: 1}}
+               {:emit_event, :awaiting_approval, %{parked: 1, resumed: false}}
              ]
     end
   end
@@ -73,8 +73,8 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool",
                 %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
-               {:emit_event, :steering, %{iterations_left: 4}},
                {:persist, ^s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
                {:maybe_compact, %{iterations_left: 4}}
              ] = effects
 
@@ -83,7 +83,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s3.status == :assistant_streaming
 
       assert effects2 == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -168,8 +168,8 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
-               {:emit_event, :steering, %{iterations_left: 4}},
                {:persist, ^s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
                {:maybe_compact, %{iterations_left: 4}}
              ] = effects
 
@@ -178,7 +178,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s3.status == :assistant_streaming
 
       assert effects2 == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -207,8 +207,8 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
-               {:emit_event, :steering, %{iterations_left: 0}},
                {:persist, ^s2},
+               {:emit_event, :steering, %{iterations_left: 0}},
                {:maybe_compact, %{iterations_left: 0}}
              ] = effects
 
@@ -217,7 +217,10 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s3.status == :assistant_streaming
       assert s3.awaiting_final == true
 
-      assert effects2 == [{:call_llm, %{response_model: :os, final: true}}]
+      assert effects2 == [
+               {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
+               {:call_llm, %{response_model: :os, final: true}}
+             ]
     end
 
     test "mixed approve+reject across a 2-parked batch resolves in batch order" do

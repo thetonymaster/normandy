@@ -104,8 +104,7 @@ defmodule Normandy.Agents.Turn do
   def step(%State{status: :provisioning} = s, :start) do
     {%{s | status: :assistant_streaming},
      [
-       {:emit_event, :iteration,
-        %{iteration: s.max_iterations - s.iterations_left + 1, iterations_left: s.iterations_left}},
+       iteration_event(s, false),
        {:call_llm, %{response_model: s.response_model, final: false}}
      ]}
   end
@@ -164,18 +163,14 @@ defmodule Normandy.Agents.Turn do
     s = add_compacted(s, meta)
 
     {%{s | status: :assistant_streaming, awaiting_final: true},
-     [{:call_llm, %{response_model: s.output_schema, final: true}}]}
+     [iteration_event(s, true), {:call_llm, %{response_model: s.output_schema, final: true}}]}
   end
 
   def step(%State{status: :steering} = s, {:compaction_done, meta}) do
     s = add_compacted(s, meta)
 
-    iteration =
-      {:emit_event, :iteration,
-       %{iteration: s.max_iterations - s.iterations_left + 1, iterations_left: s.iterations_left}}
-
     {%{s | status: :assistant_streaming},
-     [iteration, {:call_llm, %{response_model: s.response_model, final: false}}]}
+     [iteration_event(s, false), {:call_llm, %{response_model: s.response_model, final: false}}]}
   end
 
   # Some calls in the batch need human approval. The shell has already executed the
@@ -191,7 +186,11 @@ defmodule Normandy.Agents.Turn do
     # the turn without ever signalling the park (honouring the suspend-point hard
     # gate). The Driver never reaches this branch (it never parks), so the order is
     # immaterial to the inline path.
-    {s2, [{:persist, s2}, {:emit_event, :awaiting_approval, %{parked: length(parked)}}]}
+    {s2,
+     [
+       {:persist, s2},
+       {:emit_event, :awaiting_approval, %{parked: length(parked), resumed: false}}
+     ]}
   end
 
   # Once a partial approval clears parked_calls (some approved → shell is running
@@ -276,7 +275,11 @@ defmodule Normandy.Agents.Turn do
     {s, [{:maybe_compact, %{iterations_left: left}}]}
   end
 
-  def resume(%State{status: :awaiting_approval} = s), do: {s, []}
+  # A parked turn waits for a decision again; re-announce it so an observer that
+  # attached after the restart learns approval is pending.
+  def resume(%State{status: :awaiting_approval, parked_calls: parked} = s),
+    do: {s, [{:emit_event, :awaiting_approval, %{parked: length(parked), resumed: true}}]}
+
   def resume(%State{status: status} = s) when status in [:stopped, :failed], do: {s, []}
 
   # Any other persisted status is not a durable resume point; surface as failed so
@@ -288,7 +291,7 @@ defmodule Normandy.Agents.Turn do
 
   # The batch-results transition, shared by the normal `:tool_dispatch` path and
   # the approval-resume paths. Appends each result, decrements the iteration
-  # counter exactly once per batch, emits the steering boundary event, then parks
+  # counter exactly once per batch, persists, then emits the steering boundary event, then parks
   # in `:steering` and asks the shell to (maybe) compact before the next LLM call.
   # The continue-vs-forced-final decision is deferred to the `:compaction_done`
   # clauses below. Always clears the per-batch scratch fields (`pending_calls`,
@@ -308,7 +311,7 @@ defmodule Normandy.Agents.Turn do
     }
 
     {s2,
-     append_effects ++ [steering, {:persist, s2}, {:maybe_compact, %{iterations_left: new_left}}]}
+     append_effects ++ [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left}}]}
   end
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by
@@ -322,6 +325,17 @@ defmodule Normandy.Agents.Turn do
     Enum.sort_by(results, fn %ToolResult{tool_call_id: id} ->
       Map.get(index, id, length(pending_calls))
     end)
+  end
+
+  # The :iteration event announcing the next LLM call. `final` marks the forced-final
+  # call made after the tool-iteration budget is spent.
+  defp iteration_event(%State{} = s, final?) do
+    {:emit_event, :iteration,
+     %{
+       iteration: s.max_iterations - s.iterations_left + 1,
+       iterations_left: s.iterations_left,
+       final: final?
+     }}
   end
 
   # Denial result for a parked call the approver rejected (or never decided).

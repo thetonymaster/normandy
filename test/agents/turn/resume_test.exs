@@ -8,7 +8,7 @@ defmodule Normandy.Agents.Turn.ResumeTest do
     assert {^s, [{:maybe_compact, %{iterations_left: 2}}]} = Turn.resume(s)
   end
 
-  test "resume from :awaiting_approval emits no effects (waits for approval)" do
+  test "resume from :awaiting_approval re-announces the park (resumed: true) and waits" do
     s = %State{
       status: :awaiting_approval,
       parked_calls: [:c],
@@ -16,7 +16,8 @@ defmodule Normandy.Agents.Turn.ResumeTest do
       max_iterations: 5
     }
 
-    assert {^s, []} = Turn.resume(s)
+    assert {^s, [{:emit_event, :awaiting_approval, %{parked: 1, resumed: true}}]} =
+             Turn.resume(s)
   end
 
   test "resume from a terminal state is a no-op" do

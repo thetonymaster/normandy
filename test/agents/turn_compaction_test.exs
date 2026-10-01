@@ -27,8 +27,8 @@ defmodule Normandy.Agents.TurnCompactionTest do
 
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
-               {:emit_event, :steering, %{iterations_left: 4}},
                {:persist, s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
                {:maybe_compact, %{iterations_left: 4}}
              ]
     end
@@ -48,7 +48,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
       assert s2.awaiting_final == false
 
       assert effects == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -66,7 +66,11 @@ defmodule Normandy.Agents.TurnCompactionTest do
 
       assert s2.status == :assistant_streaming
       assert s2.awaiting_final == true
-      assert effects == [{:call_llm, %{response_model: :os, final: true}}]
+
+      assert effects == [
+               {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
+               {:call_llm, %{response_model: :os, final: true}}
+             ]
     end
 
     defp steering(left),

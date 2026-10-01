@@ -58,7 +58,7 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.iterations_left == 5
 
       assert effects == [
-               {:emit_event, :iteration, %{iteration: 1, iterations_left: 5}},
+               {:emit_event, :iteration, %{iteration: 1, iterations_left: 5, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -200,8 +200,8 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
                {:append_message, "tool", Enum.at(results, 1)},
-               {:emit_event, :steering, %{iterations_left: 4}},
                {:persist, s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
                {:maybe_compact, %{iterations_left: 4}}
              ]
 
@@ -210,7 +210,7 @@ defmodule Normandy.Agents.TurnTest do
       assert s3.status == :assistant_streaming
 
       assert effects2 == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -237,8 +237,8 @@ defmodule Normandy.Agents.TurnTest do
 
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
-               {:emit_event, :steering, %{iterations_left: 0}},
                {:persist, s2},
+               {:emit_event, :steering, %{iterations_left: 0}},
                {:maybe_compact, %{iterations_left: 0}}
              ]
 
@@ -247,7 +247,10 @@ defmodule Normandy.Agents.TurnTest do
       assert s3.status == :assistant_streaming
       assert s3.awaiting_final == true
 
-      assert effects2 == [{:call_llm, %{response_model: :os, final: true}}]
+      assert effects2 == [
+               {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
+               {:call_llm, %{response_model: :os, final: true}}
+             ]
     end
 
     test "the forced final response enters :finalizing as :max_iterations, skipping convert" do
