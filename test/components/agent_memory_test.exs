@@ -4,6 +4,10 @@ defmodule NormandyTest.Components.AgentMemoryTest do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
+  alias Normandy.Agents.ToolCallResponse
+  alias Normandy.Agents.Turn
+  alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
   alias NormandyTest.IOTest
   doctest Normandy.Components.AgentMemory
 
@@ -317,6 +321,72 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       assert_raise ArgumentError, fn ->
         AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", turn: "t")
       end
+    end
+  end
+
+  describe "dump/load with nested structs" do
+    defp tool_turn(answered?) do
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "go")
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          content: "",
+          tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{"city" => "Lima"}}]
+        })
+
+      if answered?,
+        do: AgentMemory.add_message(memory, "tool", %ToolResult{tool_call_id: "t1", output: "x"}),
+        else: memory
+    end
+
+    defp contents(memory), do: memory |> AgentMemory.messages() |> Enum.map(& &1.content)
+
+    test "tool calls inside a ToolCallResponse come back as %ToolCall{} structs" do
+      memory = tool_turn(true)
+      loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+      assert contents(loaded) == contents(memory)
+    end
+
+    test "an answered batch stays answered and an open one stays open after a round trip" do
+      answered = tool_turn(true) |> AgentMemory.dump() |> AgentMemory.load()
+      open = tool_turn(false) |> AgentMemory.dump() |> AgentMemory.load()
+
+      assert Turn.unanswered_tool_calls(AgentMemory.messages(answered)) == []
+
+      assert [%ToolCall{id: "t1", name: "weather"}] =
+               Turn.unanswered_tool_calls(AgentMemory.messages(open))
+    end
+
+    test "a dump written before nested structs were tagged still loads" do
+      legacy =
+        Poison.encode!(%{
+          version: 1,
+          max_messages: nil,
+          current_turn_id: "turn",
+          head: "e1",
+          entries: [
+            %{
+              id: "e1",
+              parent_id: nil,
+              turn_id: "turn",
+              role: "assistant",
+              content: %{
+                type: "Elixir.Normandy.Agents.ToolCallResponse",
+                data: %{
+                  "__meta__" => %{"state" => "built"},
+                  "content" => "",
+                  "tool_calls" => [%{"id" => "t1", "name" => "weather", "input" => %{}}]
+                }
+              }
+            }
+          ]
+        })
+
+      assert [%ToolCallResponse{tool_calls: [%{"id" => "t1"}]} = resp] =
+               legacy |> AgentMemory.load() |> contents()
+
+      assert resp.__meta__ == %ToolCallResponse{}.__meta__
     end
   end
 end

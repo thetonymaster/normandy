@@ -292,22 +292,57 @@ defmodule Normandy.Components.AgentMemory do
     end
   end
 
+  # Nested Normandy schema structs (e.g. the %ToolCall{}s inside a ToolCallResponse)
+  # are tagged with their module so load/1 can rebuild them; JSON alone would bring
+  # them back as string-keyed maps. `__meta__` is dropped: the struct default
+  # restores it on load.
+  @struct_tag "$normandy_struct"
+
   defp encode_content(content) when is_struct(content) do
-    %{type: to_string(content.__struct__), data: content}
+    data = if schema_struct?(content), do: encode_fields(content), else: content
+    %{type: to_string(content.__struct__), data: data}
   end
 
-  defp encode_content(content), do: %{type: "raw", data: content}
+  defp encode_content(content), do: %{type: "raw", data: encode_value(content)}
+
+  defp encode_value(value) when is_struct(value) do
+    if schema_struct?(value),
+      do: %{@struct_tag => to_string(value.__struct__), "data" => encode_fields(value)},
+      else: value
+  end
+
+  defp encode_value(value) when is_map(value),
+    do: Map.new(value, fn {k, v} -> {k, encode_value(v)} end)
+
+  defp encode_value(value) when is_list(value), do: Enum.map(value, &encode_value/1)
+  defp encode_value(value), do: value
+
+  defp encode_fields(struct) do
+    struct |> Map.from_struct() |> Map.delete(:__meta__) |> encode_value()
+  end
+
+  defp schema_struct?(%mod{}), do: function_exported?(mod, :__schema__, 1)
 
   # Raw (non-struct) content round-trips verbatim — its keys stay strings, so an
   # untrusted dump cannot grow the atom table.
-  defp decode_content(%{"type" => "raw", "data" => data}), do: data
+  defp decode_content(%{"type" => "raw", "data" => data}), do: decode_value(data)
 
   # Struct content rebuilds onto the named module. Only the struct's own field
   # names are atomized, via `to_existing_atom` (which never mints a new atom), so a
   # hostile dump still cannot exhaust the atom table.
-  defp decode_content(%{"type" => type, "data" => data}) do
+  defp decode_content(%{"type" => type, "data" => data}), do: decode_struct(type, data)
+
+  defp decode_value(%{@struct_tag => type, "data" => data}), do: decode_struct(type, data)
+
+  defp decode_value(value) when is_map(value),
+    do: Map.new(value, fn {k, v} -> {k, decode_value(v)} end)
+
+  defp decode_value(value) when is_list(value), do: Enum.map(value, &decode_value/1)
+  defp decode_value(value), do: value
+
+  defp decode_struct(type, data) do
     mod = String.to_existing_atom(type)
-    struct(mod, atomize_struct_fields(data))
+    struct(mod, data |> Map.delete("__meta__") |> decode_value() |> atomize_struct_fields())
   end
 
   defp atomize_struct_fields(data) do
