@@ -1,8 +1,4 @@
 [
-  # Weather tool uses Erlang :inets and :httpc modules
-  ~r"lib/normandy/tools/examples/weather\.ex.*unknown_function.*Function :inets\.start",
-  ~r"lib/normandy/tools/examples/weather\.ex.*unknown_function.*Function :httpc\.request",
-
   # Dialyzer false positive - compress_conversation can return early or continue
   {"lib/normandy/context/summarizer.ex", :pattern_match},
 

@@ -59,47 +59,27 @@ defmodule Normandy.Tools.Examples.Weather do
     url =
       "https://api.open-meteo.com/v1/forecast?latitude=#{lat}&longitude=#{lon}&current=temperature_2m,weather_code&temperature_unit=celsius"
 
-    case http_get(url) do
-      {:ok, body} ->
+    # Req verifies TLS certificates by default and decodes the JSON body.
+    case Req.get(url, receive_timeout: 10_000, retry: false) do
+      {:ok, %Req.Response{status: 200, body: body}} ->
         parse_weather_response(body, city)
 
-      {:error, reason} ->
-        {:error, "Failed to fetch weather: #{inspect(reason)}"}
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "Failed to fetch weather: HTTP #{status}"}
+
+      {:error, exception} ->
+        {:error, "Failed to fetch weather: #{Exception.message(exception)}"}
     end
   end
 
-  defp http_get(url) do
-    url_charlist = String.to_charlist(url)
+  defp parse_weather_response(%{"current" => current}, city) do
+    temp = Map.get(current, "temperature_2m")
+    conditions = current |> Map.get("weather_code") |> weather_code_to_description()
 
-    # Start required applications if not already started
-    _ = :inets.start()
-    _ = :ssl.start()
-
-    case :httpc.request(:get, {url_charlist, []}, [{:timeout, 10_000}], body_format: :binary) do
-      {:ok, {{_, 200, _}, _headers, body}} ->
-        {:ok, body}
-
-      {:ok, {{_, status_code, _}, _headers, _body}} ->
-        {:error, "HTTP #{status_code}"}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    {:ok, "Current weather in #{city}: #{temp}°C, #{conditions}"}
   end
 
-  defp parse_weather_response(body, city) do
-    case Poison.decode(body) do
-      {:ok, %{"current" => current}} ->
-        temp = Map.get(current, "temperature_2m")
-        weather_code = Map.get(current, "weather_code")
-        conditions = weather_code_to_description(weather_code)
-
-        {:ok, "Current weather in #{city}: #{temp}°C, #{conditions}"}
-
-      {:error, _} ->
-        {:error, "Failed to parse weather data"}
-    end
-  end
+  defp parse_weather_response(_body, _city), do: {:error, "Failed to parse weather data"}
 
   # WMO Weather interpretation codes
   # https://open-meteo.com/en/docs

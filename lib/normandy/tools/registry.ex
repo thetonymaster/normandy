@@ -427,7 +427,8 @@ defmodule Normandy.Tools.Registry do
       %{properties: properties} when is_map(properties) ->
         properties
         |> Map.values()
-        |> Enum.any?(fn prop -> prop[:type] == param_type end)
+        # Schema-based tools use atom types (:number), hand-written ones strings.
+        |> Enum.any?(fn prop -> to_string(prop[:type]) == to_string(param_type) end)
 
       _ ->
         false

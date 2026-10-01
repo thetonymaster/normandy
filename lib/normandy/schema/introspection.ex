@@ -174,14 +174,9 @@ defmodule Normandy.Schema.Introspection do
   @spec virtual_field?(module(), atom()) :: boolean()
   def virtual_field?(schema_module, field_name)
       when is_atom(schema_module) and is_atom(field_name) do
-    spec = schema_module.__schema__(:specification)
-    properties = spec[:properties] || %{}
-
-    # A field is considered virtual if it exists in the schema but not in properties
-    field_exists? = field_name in schema_module.__schema__(:fields)
-    in_properties? = Map.has_key?(properties, field_name)
-
-    field_exists? and not in_properties?
+    # A virtual field may still be listed in the JSON schema
+    # (include_in_json_schema: true), so ask the schema, not its JSON.
+    field_name in schema_module.__schema__(:virtual_fields)
   end
 
   @doc """

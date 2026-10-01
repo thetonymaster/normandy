@@ -131,6 +131,7 @@ defmodule Normandy.Schema.IntrospectionTest do
         field(:name, :string)
         field(:computed, :string, virtual: true)
         field(:hidden, :string, virtual: true, include_in_json_schema: false)
+        field(:listed, :string, virtual: true, include_in_json_schema: true)
       end
     end
 
@@ -140,6 +141,10 @@ defmodule Normandy.Schema.IntrospectionTest do
 
     test "returns false for non-virtual fields" do
       assert Introspection.virtual_field?(VirtualSchema, :name) == false
+    end
+
+    test "returns true for a virtual field that is still in the JSON schema" do
+      assert Introspection.virtual_field?(VirtualSchema, :listed) == true
     end
   end
 

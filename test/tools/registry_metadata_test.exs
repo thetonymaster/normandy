@@ -138,8 +138,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       # But we need to check the JSON Schema type which may differ
       filtered = Registry.filter_by_param_type(registry, "number")
 
-      # Only calculator should match as it has number fields in its JSON schema
-      assert Registry.count(filtered) >= 0
+      # Calculator's schema types are atoms (:number); the filter takes a string.
+      assert Registry.list_names(filtered) == ["calculator"]
     end
 
     test "filters tools with string parameters" do
@@ -150,7 +150,7 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       filtered = Registry.filter_by_param_type(registry, "string")
 
       # Both have string params (operation field)
-      assert Registry.count(filtered) >= 1
+      assert Registry.count(filtered) == 2
     end
 
     test "returns empty registry when no tools have the parameter type" do
