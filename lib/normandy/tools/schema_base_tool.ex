@@ -39,7 +39,7 @@ defmodule Normandy.Tools.SchemaBaseTool do
   - Implements `Normandy.Tools.BaseTool` protocol
   - Provides `validate/1` function for runtime validation
   - Applies field defaults; `validate/1` checks types and constraints but does
-    not coerce (a string `"5"` for a `:number` field is an error)
+    not coerce (a string `"5"` for a `:float` field is an error)
 
   ## Validation
 

@@ -12,7 +12,7 @@ defmodule Normandy.Schema.Validator do
         use Normandy.Schema
 
         schema do
-          field :name, :string, required: true, minLength: 1
+          field :name, :string, required: true, min_length: 1
           field :age, :integer, minimum: 0, maximum: 150
           field :email, :string, format: "email"
         end

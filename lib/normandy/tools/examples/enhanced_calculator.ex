@@ -34,7 +34,7 @@ defmodule Normandy.Tools.Examples.EnhancedCalculator do
       # Automatic through BaseTool protocol
       iex> tool = %EnhancedCalculator{operation: "multiply", a: 4, b: 7}
       iex> Normandy.Tools.BaseTool.run(tool)
-      {:ok, 28}
+      {:ok, 28.0}
   """
 
   use Normandy.Tools.SchemaBaseTool
