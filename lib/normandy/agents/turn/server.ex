@@ -213,8 +213,9 @@ defmodule Normandy.Agents.Turn.Server do
       :error ->
         template_provider = Keyword.get(opts, :template_provider)
 
-        with {:ok, tmpl} <- load_config_template(store, template_provider, session_id) do
-          {:ok, reconstruct_config!(tmpl, template_provider, session_id), tmpl}
+        with {:ok, tmpl} <- load_config_template(store, template_provider, session_id),
+             {:ok, config} <- reconstruct_config(tmpl, template_provider) do
+          {:ok, config, tmpl}
         end
     end
   end
@@ -271,24 +272,21 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  defp reconstruct_config!(tmpl, {tp_mod, tp_handle}, session_id) do
-    {:ok, supplement} = tp_mod.fetch(tp_handle, session_id_template_id(tmpl))
+  # A missing supplement or a failed credential lookup is reported like a store
+  # fault, so the server waits :unavailable and retries instead of crashing into a
+  # supervisor restart loop. Tier-2 reconstruction needs a node-local credential
+  # provider (env/vault); CredentialProvider.FromClient has no client here.
+  defp reconstruct_config(tmpl, {tp_mod, tp_handle}) do
+    template_id = session_id_template_id(tmpl)
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
 
-    token =
-      case cred_mod.get_token(token_provider(tmpl), cred_opts) do
-        {:ok, token} ->
-          token
-
-        {:error, reason} ->
-          # Tier-2 reconstruction needs a node-local provider (env/vault). The default
-          # CredentialProvider.FromClient cannot work here — there is no in-memory client.
-          raise "Turn.Server reconstruct: credential resolution failed for #{inspect(session_id)} " <>
-                  "via #{inspect(cred_mod)}: #{inspect(reason)}. Tier-2 sessions need a node-local " <>
-                  "CredentialProvider (e.g. env/vault), not CredentialProvider.FromClient."
-      end
-
-    ConfigTemplate.rebuild(tmpl, supplement, token)
+    with {:supplement, {:ok, supplement}} <- {:supplement, tp_mod.fetch(tp_handle, template_id)},
+         {:token, {:ok, token}} <- {:token, cred_mod.get_token(token_provider(tmpl), cred_opts)} do
+      {:ok, ConfigTemplate.rebuild(tmpl, supplement, token)}
+    else
+      {:supplement, :error} -> {:error, {:no_template_supplement, template_id}}
+      {:token, {:error, reason}} -> {:error, {:credential_unavailable, cred_mod, reason}}
+    end
   end
 
   # Rebuild the conversation from the store's history, keeping the configured

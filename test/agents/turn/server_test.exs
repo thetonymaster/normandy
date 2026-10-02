@@ -1001,6 +1001,53 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:ok, ^pid} = Native.whereis(reg, sid)
   end
 
+  describe "a thin start that cannot rebuild its config" do
+    defmodule FailingCreds do
+      def get_token(_provider, _opts), do: {:error, :vault_sealed}
+    end
+
+    defp thin_start(creds, supplement?) do
+      store = InMemory.new()
+      sid = "thin-fail-#{System.unique_integer([:positive])}"
+      base = base_config()
+
+      tmpl =
+        put_in(ConfigTemplate.from_config(base, "kind-a").behaviours_refs.credential, {creds, []})
+
+      :ok = InMemory.save_config_template(store, sid, tmpl)
+      {:ok, cat} = Catalog.start_link([])
+
+      if supplement? do
+        :ok =
+          Catalog.put(cat, "kind-a", %{
+            tool_registry: base.tool_registry,
+            before_hooks: [],
+            after_hooks: [],
+            client_builder: fn _token -> base.client end
+          })
+      end
+
+      Turn.Server.start_link(
+        session_id: sid,
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        template_provider: {Catalog, cat}
+      )
+    end
+
+    test "a template this node has no supplement for is run/2's error, not a crash" do
+      assert {:ok, srv} = thin_start(Normandy.Test.StubCreds, false)
+      assert {:error, {:no_template_supplement, "kind-a"}} = Turn.Server.run(srv, "hello")
+    end
+
+    test "a credential provider that fails is run/2's error, not a crash" do
+      assert {:ok, srv} = thin_start(FailingCreds, true)
+
+      assert {:error, {:credential_unavailable, FailingCreds, :vault_sealed}} =
+               Turn.Server.run(srv, "hello")
+    end
+  end
+
   describe "server options saved with the template" do
     defp thin_start_with_saved_options(start_opts) do
       store = InMemory.new()
