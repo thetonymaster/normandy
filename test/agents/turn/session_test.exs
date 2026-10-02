@@ -391,9 +391,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   test "Tier-2 thin path rehydrates conversation history into reconstructed server memory" do
-    # Part C: proves that reconstruct_config!/3 loads session history so a
+    # Part C: proves that a thin start loads session history so a
     # rehydrated/redistributed Tier-2 server does NOT start with empty memory.
-    # Without Part B (the history load in reconstruct_config!/3) the captured
+    # Without Part B (the history load in Turn.Server.with_stored_memory/3) the captured
     # memory would have 0 messages and the assertion below would fail — that is
     # the RED justification for this test.
     alias Normandy.Behaviours.SessionRegistry.Native
