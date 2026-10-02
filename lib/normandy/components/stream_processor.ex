@@ -231,7 +231,7 @@ defmodule Normandy.Components.StreamProcessor do
   defp decode_tool_input(""), do: %{}
 
   defp decode_tool_input(json) do
-    case Poison.decode(json) do
+    case Application.get_env(:normandy, :adapter, Poison).decode(json) do
       {:ok, input} when is_map(input) -> input
       _ -> json
     end

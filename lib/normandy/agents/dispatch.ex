@@ -374,7 +374,7 @@ defmodule Normandy.Agents.Dispatch do
   def normalize_tool_input(input) when is_map(input), do: input
 
   def normalize_tool_input(input) when is_binary(input) do
-    case Poison.decode(input) do
+    case Application.get_env(:normandy, :adapter, Poison).decode(input) do
       {:ok, parsed} when is_map(parsed) -> parsed
       _ -> input
     end

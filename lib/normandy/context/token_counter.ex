@@ -196,7 +196,8 @@ defmodule Normandy.Context.TokenCounter do
   defp format_content(content) when is_binary(content), do: content
 
   defp format_content(content) when is_map(content) do
-    # For structured content, convert to JSON
+    # For structured content, convert to JSON (a text rendering; Poison, not the
+    # configured adapter, because it encodes any struct)
     Poison.encode!(content)
   end
 

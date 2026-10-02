@@ -514,7 +514,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   @doc false
   def unwrap_llm_content(content) when is_binary(content) do
-    case Poison.decode(content) do
+    case Application.get_env(:normandy, :adapter, Poison).decode(content) do
       {:ok, %{"chat_message" => text}} when is_binary(text) -> text
       _ -> content
     end
@@ -1192,7 +1192,8 @@ defmodule Normandy.Agents.BaseAgent do
         system_prompt
 
       schema ->
-        schema_json = Poison.encode!(schema, pretty: true)
+        schema_json =
+          Application.get_env(:normandy, :adapter, Poison).encode!(schema, pretty: true)
 
         system_prompt <>
           "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"
