@@ -898,7 +898,7 @@ defmodule Normandy.Agents.BaseAgent do
       {config, final_state} = Driver.drive(state, streaming_handlers(callback), config)
       {config, Map.delete(final_state.final_response, :tool_calls)}
     catch
-      {:stream_turn_error, error, _config_at_failure} ->
+      {:stream_turn_error, error} ->
         raise LLMError.wrap(error)
     end
   end
@@ -968,7 +968,9 @@ defmodule Normandy.Agents.BaseAgent do
          |> Map.merge(stream_meta(final_message))}
 
       {:error, error} ->
-        throw({:stream_turn_error, error, config})
+        # Only the error: the span's exception log and telemetry inspect the thrown
+        # term, and the config holds the client.
+        throw({:stream_turn_error, error})
     end
   end
 

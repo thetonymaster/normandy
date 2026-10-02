@@ -9,7 +9,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
   # stream_converse/7 returns {:ok, events} (a list is Enumerable) or {:error, reason}.
   defmodule EventsClient do
-    defstruct events: [], connect_error: nil
+    defstruct events: [], connect_error: nil, api_key: nil
   end
 
   defimpl Normandy.Agents.Model, for: Normandy.Agents.BaseAgentStreamErrorsTest.EventsClient do
@@ -82,6 +82,42 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
     assert_received {:llm_call_event, [:normandy, :agent, :llm_call, :exception]}
     refute_received {:llm_call_event, [:normandy, :agent, :llm_call, :stop]}
+  end
+
+  test "a failed stream's exception telemetry and log line do not carry the config" do
+    id = {__MODULE__, self(), make_ref()}
+    test_pid = self()
+
+    :telemetry.attach(
+      id,
+      [:normandy, :agent, :llm_call, :exception],
+      fn _event, _measurements, metadata, _config ->
+        if self() == test_pid, do: send(test_pid, {:exception_metadata, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    agent =
+      BaseAgent.init(%{
+        client: %EventsClient{
+          events: [start(), block(), delta("Hel"), error_event()],
+          api_key: "sk-fv1-secret"
+        },
+        model: "claude-opus-5-5",
+        temperature: nil
+      })
+
+    log =
+      ExUnit.CaptureLog.capture_log([metadata: [:reason]], fn ->
+        assert_raise LLMError, fn -> stream(agent) end
+      end)
+
+    assert_received {:exception_metadata, metadata}
+    refute inspect(metadata, limit: :infinity, printable_limit: :infinity) =~ "sk-fv1-secret"
+    assert log =~ "normandy llm call exception"
+    refute log =~ "sk-fv1-secret"
   end
 
   test "an {:error, _} item in the stream raises" do
