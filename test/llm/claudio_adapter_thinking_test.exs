@@ -325,6 +325,25 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
       assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
     end
 
+    test "the stream callback gets :thinking_delta events" do
+      stream_script(__MODULE__.StreamThinkingDelta)
+      test_pid = self()
+
+      agent =
+        BaseAgent.init(%{
+          client: client(__MODULE__.StreamThinkingDelta),
+          model: "claude-opus-5-5",
+          tool_registry: Registry.new([%FakeTool{}])
+        })
+
+      BaseAgent.stream_with_tools(agent, "weather?", fn event, data ->
+        send(test_pid, {:event, event, data})
+        :ok
+      end)
+
+      assert_received {:event, :thinking_delta, "check the weather"}
+    end
+
     test "the tool results go back after the streamed thinking blocks" do
       stream_script(__MODULE__.Stream)
 

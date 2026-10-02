@@ -428,6 +428,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp invoke_stream_callback(
            %{
+             event: "content_block_delta",
+             data: %{"delta" => %{"type" => "thinking_delta", "thinking" => text}}
+           },
+           callback
+         ) do
+      callback.(:thinking_delta, text)
+    end
+
+    defp invoke_stream_callback(
+           %{
              event: "content_block_start",
              data: %{"content_block" => %{"type" => "tool_use"} = tool}
            },
