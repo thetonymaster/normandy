@@ -281,6 +281,42 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
       end
     end
 
+    test "raises for an invalid :on_parse_failure before any request" do
+      client = %ClaudioAdapter{api_key: "k", options: %{on_parse_failure: :raise}}
+
+      assert_raise ArgumentError,
+                   ~r/:on_parse_failure must be :fallback or :error; got :raise/,
+                   fn ->
+                     ClaudioAdapter.validate_options!(client)
+                   end
+    end
+
+    test "raises for an invalid :timeout or :recv_timeout before any request" do
+      for key <- [:timeout, :recv_timeout] do
+        client = %ClaudioAdapter{api_key: "k", options: %{key => "soon"}}
+
+        assert_raise ArgumentError, ~r/#{key}/, fn -> ClaudioAdapter.validate_options!(client) end
+      end
+    end
+
+    test "messages describe a bad option value without printing it" do
+      secret = "sk-option-secret"
+
+      for options <- [
+            %{enable_caching: secret},
+            %{on_parse_failure: secret},
+            %{thinking: secret},
+            %{thinking_budget: secret},
+            %{thinking: secret, thinking_budget: 1024},
+            %{thinking_display: :summarized, thinking: secret},
+            %{thinking_block_binding: :drop_block, thinking: secret}
+          ] do
+        client = %ClaudioAdapter{api_key: "k", options: options}
+        error = assert_raise ArgumentError, fn -> ClaudioAdapter.validate_options!(client) end
+        refute error.message =~ secret, "#{inspect(Map.keys(options))}: #{error.message}"
+      end
+    end
+
     test ":fallbacks does not raise at validate time (the streaming check is per call)" do
       client = %ClaudioAdapter{api_key: "k", options: %{fallbacks: :default}}
       assert ClaudioAdapter.validate_options!(client) == client

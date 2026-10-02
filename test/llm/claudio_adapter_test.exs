@@ -215,7 +215,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
     test "an invalid policy raises naming the value" do
       assert_raise ArgumentError,
-                   ~r/:on_parse_failure must be :fallback or :error, got: :raise/,
+                   ~r/:on_parse_failure must be :fallback or :error; got :raise/,
                    fn ->
                      ClaudioAdapter.__on_parse_failure_policy__(%{on_parse_failure: :raise})
                    end

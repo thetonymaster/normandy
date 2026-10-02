@@ -1058,9 +1058,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
       policy
     else
       raise ArgumentError,
-            "Normandy.LLM.ClaudioAdapter: :on_parse_failure must be :fallback or :error, " <>
-              "got: #{inspect(policy)}"
+            "Normandy.LLM.ClaudioAdapter: :on_parse_failure must be :fallback or :error; " <>
+              "got #{Describe.type_of(policy)}"
     end
+  end
+
+  defp check_on_parse_failure!(nil), do: :ok
+  defp check_on_parse_failure!(policy) when policy in [:fallback, :error], do: :ok
+
+  defp check_on_parse_failure!(policy) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client option :on_parse_failure must be :fallback " <>
+            "or :error; got #{Describe.type_of(policy)}"
   end
 
   @doc false
@@ -1272,7 +1281,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def validate_options!(%__MODULE__{} = client) do
     check_api_key!(client.api_key)
     check_option_keys!(client.options)
-    _ = check_req_options!(client)
+    check_on_parse_failure!(Map.get(client.options, :on_parse_failure))
+    # Builds the Claudio client locally (no request): checks :req_options, and
+    # Claudio checks :timeout and :recv_timeout.
+    _ = to_claudio_client(client)
 
     _ =
       __apply_client_options__(
@@ -1328,7 +1340,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         not is_boolean(Map.fetch!(options, key)) do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: client option #{inspect(key)} must be a boolean, " <>
-              "got: #{inspect(Map.fetch!(options, key))}"
+              "got: #{Describe.type_of(Map.fetch!(options, key))}"
     end
 
     :ok
@@ -1376,20 +1388,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
             "Normandy.LLM.ClaudioAdapter: client.options :thinking and :thinking_budget are " <>
               "mutually exclusive (:thinking_budget is for models that still accept budget_tokens: " <>
               "4.6 and earlier, such as Haiku 4.5); " <>
-              "got thinking: #{inspect(opt.(:thinking))}, thinking_budget: #{inspect(opt.(:thinking_budget))}"
+              "got thinking: #{Describe.type_of(opt.(:thinking))}, " <>
+              "thinking_budget: #{Describe.type_of(opt.(:thinking_budget))}"
     end
 
     if opt.(:thinking_display) != nil and opt.(:thinking) != :adaptive do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: client.options :thinking_display requires thinking: :adaptive; " <>
-              "got thinking: #{inspect(opt.(:thinking))}"
+              "got thinking: #{Describe.type_of(opt.(:thinking))}"
     end
 
     if opt.(:thinking_block_binding) != nil and opt.(:thinking) != :adaptive and
          opt.(:thinking_budget) == nil do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: client.options :thinking_block_binding requires " <>
-              "thinking: :adaptive or :thinking_budget; got thinking: #{inspect(opt.(:thinking))}"
+              "thinking: :adaptive or :thinking_budget; got thinking: " <>
+              Describe.type_of(opt.(:thinking))
     end
 
     if opt.(:fallbacks) != nil and Keyword.get(call_opts, :stream, false) do
@@ -1421,13 +1435,13 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp put_thinking(_request, thinking, _display, nil) do
     raise ArgumentError,
           "Normandy.LLM.ClaudioAdapter: client.options :thinking must be :adaptive or :disabled; " <>
-            "got #{inspect(thinking)}"
+            "got #{Describe.type_of(thinking)}"
   end
 
   defp put_thinking(_request, nil, _display, budget) do
     raise ArgumentError,
           "Normandy.LLM.ClaudioAdapter: client.options :thinking_budget must be a positive integer; " <>
-            "got #{inspect(budget)}"
+            "got #{Describe.type_of(budget)}"
   end
 
   defp put_if(request, nil, _setter), do: request

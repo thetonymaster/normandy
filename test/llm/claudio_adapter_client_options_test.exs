@@ -34,7 +34,7 @@ defmodule Normandy.LLM.ClaudioAdapterClientOptionsTest do
     end
 
     test ":enable_caching and :structured_outputs must be booleans" do
-      assert_raise ArgumentError, ~r/:enable_caching must be a boolean, got: "yes"/, fn ->
+      assert_raise ArgumentError, ~r/:enable_caching must be a boolean, got: a string/, fn ->
         ClaudioAdapter.validate_options!(client(%{enable_caching: "yes"}))
       end
 
