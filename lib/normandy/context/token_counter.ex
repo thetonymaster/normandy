@@ -17,11 +17,14 @@ defmodule Normandy.Context.TokenCounter do
       {:ok, details} = TokenCounter.count_detailed(client, agent)
   """
 
+  alias Claudio.Messages.Request
+  alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ContentBlock.Document
   alias Normandy.Components.ContentBlock.Image
   alias Normandy.Components.ContentBlock.Text
+  alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
   alias Normandy.LLM.ClaudioAdapter
 
@@ -175,16 +178,19 @@ defmodule Normandy.Context.TokenCounter do
     Claudio.Messages.count_tokens(claudio_client, payload)
   end
 
+  # The messages as a request would send them, built by the adapter's own
+  # conversion: tool results become user tool_result blocks and tool calls
+  # assistant tool_use blocks (count_tokens accepts only user and assistant).
   defp build_messages_payload(memory) do
-    history = AgentMemory.history(memory)
+    messages =
+      memory
+      |> AgentMemory.history()
+      |> Enum.reject(&(&1.role == "system"))
+      |> Enum.map(&%Message{role: &1.role, content: &1.content})
 
-    Enum.map(history, fn msg ->
-      %{
-        "role" => msg.role,
-        "content" => format_content(msg.content)
-      }
-    end)
-    |> Enum.reject(&(&1["role"] == "system"))
+    Request.new("token-count")
+    |> ClaudioModel.add_messages(messages, false)
+    |> Map.fetch!(:messages)
   end
 
   defp format_content(content) when is_binary(content), do: content

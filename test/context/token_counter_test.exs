@@ -222,6 +222,45 @@ defmodule Normandy.Context.TokenCounterTest do
     end
   end
 
+  describe "count_conversation/2 payload" do
+    test "a tool round is sent as the API expects: no \"tool\" role" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.ToolRound, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 42})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.ToolRound}, retry: false]}
+      }
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "weather?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "weather", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "sunny"
+        })
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 42}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      assert Enum.map(payload["messages"], & &1["role"]) == ["user", "assistant", "user"]
+      assert [%{"type" => "tool_use", "id" => "t1"}] = Enum.at(payload["messages"], 1)["content"]
+
+      assert [%{"type" => "tool_result", "tool_use_id" => "t1"}] =
+               Enum.at(payload["messages"], 2)["content"]
+    end
+  end
+
   describe "count_conversation/2 input checks" do
     test "an agent without a model raises instead of being counted against a default model",
          %{client: client, agent: agent} do
