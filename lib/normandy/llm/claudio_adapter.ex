@@ -52,6 +52,13 @@ defmodule Normandy.LLM.ClaudioAdapter do
     `budget_tokens` (4.6 and earlier, such as Haiku 4.5; Opus 4.7+, 5.x, Sonnet 5 and
     Fable return 400); mutually exclusive with `:thinking`. `thinking: :disabled` also
     returns 400 on Opus 5.5, which always thinks
+  - `:thinking_block_binding` - `:error | :drop_block`: what the API does with a replayed
+    thinking block whose history changed since it was produced (sends the
+    `thinking-binding-controls-2026-08-01` beta). `:drop_block` drops that block and every
+    later one instead of rejecting the request. Normandy's own history edits already drop
+    the thinking they invalidate (see `Normandy.Components.AgentMemory.drop_thinking/1`);
+    this covers edits it can't see, such as a context provider whose output changes the
+    system prompt. Requires `thinking: :adaptive` or `:thinking_budget`
   - `:effort` - `:low | :medium | :high | :xhigh | :max`
   - `:speed` - `:fast | :standard` (fast mode research preview)
   - `:inference_geo` - `:global | :us`
@@ -1271,6 +1278,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     :thinking,
     :thinking_display,
     :thinking_budget,
+    :thinking_block_binding,
     :effort,
     :speed,
     :inference_geo,
@@ -1331,6 +1339,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     request
     |> put_thinking(opt.(:thinking), opt.(:thinking_display), opt.(:thinking_budget))
+    |> put_if(
+      opt.(:thinking_block_binding),
+      &Claudio.Messages.Request.set_thinking_block_binding/2
+    )
     |> put_if(opt.(:effort), &Claudio.Messages.Request.set_effort/2)
     |> put_if(opt.(:speed), &Claudio.Messages.Request.set_speed/2)
     |> put_if(opt.(:inference_geo), &Claudio.Messages.Request.set_inference_geo/2)
@@ -1338,6 +1350,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
     |> put_task_budget(opt.(:task_budget), Keyword.get(call_opts, :task_budget_remaining))
   end
 
+  # A flat list of independent checks, one per rule.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp validate_option_combinations!(opt, call_opts) do
     if opt.(:thinking) != nil and opt.(:thinking_budget) != nil do
       raise ArgumentError,
@@ -1351,6 +1365,13 @@ defmodule Normandy.LLM.ClaudioAdapter do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: client.options :thinking_display requires thinking: :adaptive; " <>
               "got thinking: #{inspect(opt.(:thinking))}"
+    end
+
+    if opt.(:thinking_block_binding) != nil and opt.(:thinking) != :adaptive and
+         opt.(:thinking_budget) == nil do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking_block_binding requires " <>
+              "thinking: :adaptive or :thinking_budget; got thinking: #{inspect(opt.(:thinking))}"
     end
 
     if opt.(:fallbacks) != nil and Keyword.get(call_opts, :stream, false) do

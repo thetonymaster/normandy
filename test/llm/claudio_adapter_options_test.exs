@@ -60,6 +60,45 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
     end
   end
 
+  describe "thinking_block_binding" do
+    test "sets the prefix mismatch behaviour and declares its beta" do
+      r = apply_opts(%{thinking: :adaptive, thinking_block_binding: :drop_block})
+
+      assert r.thinking == %{
+               "type" => "adaptive",
+               "block_binding" => %{"prefix_mismatch_behavior" => "drop_block"}
+             }
+
+      assert "thinking-binding-controls-2026-08-01" in r.betas
+    end
+
+    test "works with a thinking budget too" do
+      r = apply_opts(%{thinking_budget: 2048, thinking_block_binding: :error})
+      assert r.thinking["block_binding"] == %{"prefix_mismatch_behavior" => "error"}
+    end
+
+    test "needs thinking: :adaptive or :thinking_budget" do
+      for options <- [
+            %{thinking_block_binding: :drop_block},
+            %{thinking: :disabled, thinking_block_binding: :drop_block}
+          ] do
+        assert_raise ArgumentError,
+                     ~r/:thinking_block_binding requires thinking: :adaptive or :thinking_budget/,
+                     fn ->
+                       apply_opts(options)
+                     end
+      end
+    end
+
+    test "rejects other values" do
+      assert_raise ArgumentError,
+                   ~r/must be :error or :drop_block; got :maybe/,
+                   fn ->
+                     apply_opts(%{thinking: :adaptive, thinking_block_binding: :maybe})
+                   end
+    end
+  end
+
   describe "effort, speed, inference_geo" do
     test "effort writes output_config.effort" do
       assert apply_opts(%{effort: :high}).output_config == %{"effort" => "high"}
@@ -186,7 +225,12 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
 
       valid = %ClaudioAdapter{
         api_key: "k",
-        options: %{thinking: :adaptive, thinking_display: :summarized, effort: :high}
+        options: %{
+          thinking: :adaptive,
+          thinking_display: :summarized,
+          thinking_block_binding: :drop_block,
+          effort: :high
+        }
       }
 
       assert ClaudioAdapter.validate_options!(valid) == valid
