@@ -3,7 +3,9 @@ defmodule Normandy.Agents.LazyModuleTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.{BaseAgentConfig, Dispatch, ValidationMiddleware}
-  alias Normandy.Test.{LazyInput, LazyTool}
+  alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Test.{LazyInput, LazyTool, LazyViaRegistry}
 
   # A struct can reach a node before its module is loaded there (e.g. a schema
   # struct in a Tier-2 template). Unload the module and build the struct as a
@@ -20,6 +22,26 @@ defmodule Normandy.Agents.LazyModuleTest do
     tool = unloaded_struct(LazyTool, %{operation: nil})
 
     assert {:error, [_ | _]} = Dispatch.validate_input(tool, %{"operation" => "bogus"})
+  end
+
+  test "Turn.Supervisor and Turn.Server load a registry module before checking child_name/2" do
+    registry = :"lazy_via_#{System.unique_integer([:positive])}"
+    start_supervised!({Registry, keys: :unique, name: registry})
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    _ = unloaded_struct(LazyViaRegistry, %{})
+
+    # Unloaded, child_name/2 looked missing: the server started without its :via
+    # name and registered itself, which this registry refuses.
+    assert {:ok, pid} =
+             Turn.Supervisor.start_server(sup,
+               session_id: "lazy",
+               config: nil,
+               store: {InMemory, InMemory.new()},
+               registry: {LazyViaRegistry, registry}
+             )
+
+    assert {:ok, ^pid} = LazyViaRegistry.whereis(registry, "lazy")
   end
 
   test "ValidationMiddleware validates against an input schema whose module is not loaded yet" do

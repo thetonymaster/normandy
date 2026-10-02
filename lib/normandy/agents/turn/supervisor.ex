@@ -58,7 +58,7 @@ defmodule Normandy.Agents.Turn.Supervisor do
     sid = Keyword.fetch!(opts, :session_id)
 
     name =
-      if function_exported?(mod, :child_name, 2),
+      if Code.ensure_loaded?(mod) and function_exported?(mod, :child_name, 2),
         do: mod.child_name(handle, sid),
         else: :self_register
 
