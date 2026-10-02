@@ -5,6 +5,22 @@ defmodule Normandy.A2A.RegistryTest do
   alias Normandy.A2A.Registry, as: A2ARegistry
   alias Normandy.Tools.Registry
 
+  defmodule LongNameTransport do
+    def discover(_url, _opts),
+      do: {:ok, AgentCard.new(String.duplicate("very long agent name ", 4), "An agent")}
+  end
+
+  describe "discover_and_register/3" do
+    test "an agent whose tool name the API would refuse is an error, not a raise" do
+      assert {:error, {:invalid_tool_name, name}} =
+               A2ARegistry.discover_and_register(Registry.new(), "http://agent.test",
+                 transport_opts: [transport: LongNameTransport]
+               )
+
+      assert String.length(name) > 64
+    end
+  end
+
   describe "from_agent_card/3" do
     test "creates single tool for agent with no skills" do
       card = AgentCard.new("Agent", "A simple agent")

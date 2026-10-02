@@ -137,6 +137,16 @@ defmodule Normandy.MCP.RegistryTest do
                MCPRegistry.discover_and_register(registry, MockAdapter, :client)
     end
 
+    test "a tool name the API would refuse is an error, not a raise" do
+      defmodule DottedAdapter do
+        def list_tools(_client, _opts),
+          do: {:ok, [%Claudio.MCP.Client.Tool{name: "files.read", input_schema: %{}}]}
+      end
+
+      assert {:error, {:invalid_tool_name, "files.read"}} =
+               MCPRegistry.discover_and_register(Registry.new(), DottedAdapter, :client)
+    end
+
     test "prefix avoids name collisions" do
       tool = %Claudio.MCP.Client.Tool{name: "search", description: "Search", input_schema: %{}}
       wrapper_a = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server1")

@@ -457,6 +457,11 @@ defmodule Normandy.Tools.Registry do
     end
   end
 
-  # The names the Messages API accepts for a tool.
-  defp valid_name?(name), do: name =~ ~r/\A[a-zA-Z0-9_-]{1,64}\z/
+  @doc """
+  Whether `name` is a tool name the API accepts: 1 to 64 letters, digits,
+  underscores and dashes. `register/3` raises on any other name.
+  """
+  @spec valid_name?(term()) :: boolean()
+  def valid_name?(name) when is_binary(name), do: name =~ ~r/\A[a-zA-Z0-9_-]{1,64}\z/
+  def valid_name?(_name), do: false
 end

@@ -60,15 +60,17 @@ defmodule Normandy.MCP.Registry do
     end)
   end
 
-  # A discovered name that is already taken would otherwise raise in
-  # Registry.register/3; report it as this function's error instead.
+  # A discovered name that is taken, or that the API would refuse, would otherwise
+  # raise in Registry.register/3; report it as this function's error instead.
   defp register_all(tools, registry) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
       name = BaseTool.tool_name(tool)
 
-      if Registry.has_tool?(reg, name),
-        do: {:halt, {:error, {:tool_name_taken, name}}},
-        else: {:cont, {:ok, Registry.register(reg, tool)}}
+      cond do
+        not Registry.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
+        Registry.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
+        true -> {:cont, {:ok, Registry.register(reg, tool)}}
+      end
     end)
   end
 end
