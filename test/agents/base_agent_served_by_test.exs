@@ -67,4 +67,26 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
     assert log =~ "normandy llm call stop"
     assert log =~ "served_by=claude-opus-5"
   end
+
+  describe "thinking blocks the API dropped" do
+    @dropped %{
+      "type" => "thinking_dropped",
+      "path" => "messages.1.content.0",
+      "reason" => "prefix_binding_mismatch"
+    }
+
+    test "llm_call stop metadata carries the API's input_transformations" do
+      {metadata, _log} = run_and_capture_stop(meta_client(%{input_transformations: [@dropped]}))
+      assert metadata.input_transformations == [@dropped]
+    end
+
+    test "a dropped thinking block is logged as a warning with its path and reason" do
+      {_metadata, log} = run_and_capture_stop(meta_client(%{input_transformations: [@dropped]}))
+
+      assert log =~ "[warning]"
+      assert log =~ "thinking block dropped by the API"
+      assert log =~ "messages.1.content.0"
+      assert log =~ "prefix_binding_mismatch"
+    end
+  end
 end

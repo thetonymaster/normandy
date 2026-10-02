@@ -640,7 +640,7 @@ defmodule Normandy.Agents.BaseAgent do
           tool_call_count: length(tool_calls),
           usage: usage
         })
-        |> Map.merge(Map.take(response_meta, [:served_by]))
+        |> Map.merge(Map.take(response_meta, [:served_by, :input_transformations]))
 
       {r, meta}
     end)
@@ -1489,6 +1489,7 @@ defmodule Normandy.Agents.BaseAgent do
           end
 
         log_lifecycle(:info, "normandy llm call stop", log_metadata)
+        log_dropped_thinking(Map.get(stop_metadata, :input_transformations, []), log_metadata)
 
         {result, stop_metadata}
       rescue
@@ -1594,6 +1595,22 @@ defmodule Normandy.Agents.BaseAgent do
     else
       inspect(reason)
     end
+  end
+
+  # The API dropped a replayed thinking block because its history changed since it
+  # was produced (client.options :thinking_block_binding is :drop_block). The turn
+  # goes on without that reasoning; a steady stream of these means something
+  # rewrites the conversation (often a context provider changing the system prompt).
+  defp log_dropped_thinking(transformations, log_metadata) do
+    for %{"type" => "thinking_dropped"} = t <- transformations do
+      log_lifecycle(
+        :warning,
+        "normandy thinking block dropped by the API at #{t["path"]} (#{t["reason"]})",
+        Keyword.take(log_metadata, [:agent, :model])
+      )
+    end
+
+    :ok
   end
 
   defp log_lifecycle(level, message, metadata) do

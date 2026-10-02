@@ -481,6 +481,22 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert ClaudioAdapter.response_meta(no_model) == %{}
     end
 
+    test "response_meta/1 passes on the thinking blocks the API dropped or let through" do
+      dropped = %{
+        "type" => "thinking_dropped",
+        "path" => "messages.1.content.0",
+        "reason" => "prefix_binding_mismatch"
+      }
+
+      response = %Claudio.Messages.Response{content: [], input_transformations: [dropped]}
+      assert ClaudioAdapter.response_meta(response) == %{input_transformations: [dropped]}
+
+      for none <- [[], nil] do
+        response = %Claudio.Messages.Response{content: [], input_transformations: none}
+        assert ClaudioAdapter.response_meta(response) == %{}
+      end
+    end
+
     test "converse returns served_by from a fallback reply on the wire" do
       Req.Test.stub(__MODULE__.FallbackStub, fn conn ->
         Req.Test.json(conn, %{

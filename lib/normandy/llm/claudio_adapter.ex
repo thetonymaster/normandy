@@ -1103,9 +1103,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
   # `converse/7` (see `Normandy.Agents.ConverseResult`).
   @spec response_meta(term()) :: map()
   def response_meta(%Claudio.Messages.Response{} = response) do
-    case Claudio.Messages.Response.served_by(response) do
-      model when is_binary(model) -> %{served_by: model}
-      _ -> %{}
+    served_by =
+      case Claudio.Messages.Response.served_by(response) do
+        model when is_binary(model) -> %{served_by: model}
+        _ -> %{}
+      end
+
+    # Thinking blocks the API dropped or let through after their history changed
+    # (sent only with :thinking_block_binding's beta).
+    case response.input_transformations do
+      [_ | _] = transformations -> Map.put(served_by, :input_transformations, transformations)
+      _ -> served_by
     end
   end
 
