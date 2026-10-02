@@ -135,6 +135,34 @@ defmodule Normandy.Context.SummarizerTest do
       refute Enum.any?(blocks, &(&1["type"] == "thinking"))
     end
 
+    test "the kept messages start at a user message, never an orphan tool result",
+         %{client: client} do
+      memory =
+        Enum.reduce(1..6, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i}")
+        end)
+        |> AgentMemory.add_message("user", "weather?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "weather", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "sunny"
+        })
+        |> AgentMemory.add_message("assistant", "It is sunny.")
+        |> AgentMemory.add_message("user", "thanks")
+        |> AgentMemory.add_message("assistant", "You're welcome.")
+
+      agent = %{memory: memory, model: "test-model", config: %{}}
+
+      # A fixed count of 4 would keep [tool result, assistant, user, assistant].
+      {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 4)
+
+      [summary | kept] = AgentMemory.history(compressed.memory)
+      assert summary.content =~ "Previous conversation summary"
+      assert [%{role: "user", content: "thanks"}, %{role: "assistant"}] = kept
+    end
+
     test "compresses conversation by summarizing old messages", %{client: client} do
       # Create agent with many messages
       memory =

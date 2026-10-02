@@ -76,7 +76,9 @@ defmodule Normandy.Context.Summarizer do
 
   ## Options
 
-  - `:keep_recent` - Number of recent messages to keep (default: 10)
+  - `:keep_recent` - Number of recent messages to keep (default: 10). The kept
+    messages start at a user message: the oldest one among the last `:keep_recent`,
+    or the newest one when none is
   - `:summary_role` - Role for summary message (default: "user"). Keep it out of
     "system": the adapter sends the agent's own system prompt and refuses a second one
   - `:max_summary_tokens` - Max tokens for summary (default: 500)
@@ -98,12 +100,20 @@ defmodule Normandy.Context.Summarizer do
     history = AgentMemory.history(agent.memory)
     total_messages = length(history)
 
+    # The kept messages start at a user message, as trimming's do: starting at a
+    # tool result whose tool_use was summarized away gets every later call a 400.
+    keep =
+      history
+      |> Enum.reverse()
+      |> Enum.map(& &1.role)
+      |> AgentMemory.keep_count(keep_recent)
+
     do_compress_conversation(
       client,
       agent,
       history,
       total_messages,
-      keep_recent,
+      keep,
       summary_role,
       opts
     )
