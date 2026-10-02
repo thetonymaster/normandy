@@ -411,6 +411,8 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
+  # A flat table, one clause per format.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp validate_format(errors, value, spec, path) do
     case spec[:format] do
       nil -> errors
@@ -418,6 +420,10 @@ defmodule Normandy.Schema.Validator do
       "uri" -> validate_uri_format(errors, value, path)
       "uuid" -> validate_uuid_format(errors, value, path)
       "date-time" -> validate_datetime_format(errors, value, path)
+      "date" -> check_format(errors, path, "date", match?({:ok, _}, Date.from_iso8601(value)))
+      "time" -> check_format(errors, path, "time", match?({:ok, _}, Time.from_iso8601(value)))
+      "duration" -> check_format(errors, path, "duration", Regex.match?(duration_regex(), value))
+      "hostname" -> check_format(errors, path, "hostname", Regex.match?(hostname_regex(), value))
       "ipv4" -> validate_ipv4_format(errors, value, path)
       "ipv6" -> validate_ipv6_format(errors, value, path)
       _ -> errors
@@ -483,6 +489,23 @@ defmodule Normandy.Schema.Validator do
   end
 
   # ISO 8601 date-time format validation (simplified)
+  # ISO 8601 durations (P1Y2M3W4DT5H6M7.5S; at least one part) and RFC 1123 hostnames.
+  defp duration_regex,
+    do: ~r/^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/
+
+  defp hostname_regex,
+    do:
+      ~r/^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+
+  defp check_format(errors, _path, _format, true), do: errors
+
+  defp check_format(errors, path, format, false) do
+    [
+      %{path: path, message: "must be a valid #{format}", constraint: :format, format: format}
+      | errors
+    ]
+  end
+
   defp validate_datetime_format(errors, value, path) do
     datetime_regex = ~r/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/
 

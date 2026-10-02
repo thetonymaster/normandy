@@ -54,6 +54,7 @@ defmodule Normandy.LLM.Json.SchemaTranslator do
     %{"type" => scalar_type}
     |> with_description(spec)
     |> with_enum(spec)
+    |> with_format(spec)
   end
 
   defp node(%{type: other}, _depth),
@@ -66,6 +67,20 @@ defmodule Normandy.LLM.Json.SchemaTranslator do
       desc when is_binary(desc) and desc != "" -> Map.put(map, "description", desc)
       _ -> map
     end
+  end
+
+  # The string formats constrained decoding supports; any other format is left out
+  # (the schema validator still checks the ones it knows).
+  @formats ~w(date-time time date duration email hostname uri ipv4 ipv6 uuid)
+
+  defp with_format(map, spec) do
+    format =
+      case Map.get(spec, :format) do
+        atom when is_atom(atom) and not is_nil(atom) -> Atom.to_string(atom)
+        other -> other
+      end
+
+    if format in @formats, do: Map.put(map, "format", format), else: map
   end
 
   defp with_enum(map, spec) do

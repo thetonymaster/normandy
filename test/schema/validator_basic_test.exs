@@ -176,6 +176,42 @@ defmodule Normandy.Schema.ValidatorBasicTest do
     end
   end
 
+  describe "date, time, duration and hostname formats" do
+    defmodule DateFormats do
+      use Normandy.Schema
+
+      schema do
+        field(:on, :date)
+        field(:at, :time)
+        field(:lasts, :duration)
+        field(:host, :string, format: "hostname")
+      end
+    end
+
+    test "valid ISO 8601 values and hostnames pass" do
+      assert {:ok, _} =
+               Validator.validate(DateFormats, %{
+                 on: "2026-10-02",
+                 at: "13:45:00",
+                 lasts: "P1DT2H30M",
+                 host: "api.example.com"
+               })
+    end
+
+    test "each invalid value is a :format error naming its format" do
+      for {field, value, format} <- [
+            {:on, "banana", "date"},
+            {:at, "noon", "time"},
+            {:lasts, "two days", "duration"},
+            {:host, "not a host!", "hostname"}
+          ] do
+        assert {:error, [error]} = Validator.validate(DateFormats, %{field => value})
+        assert error.constraint == :format
+        assert error.format == format
+      end
+    end
+  end
+
   describe "string format validation" do
     defmodule FormatSchema do
       use Normandy.Schema

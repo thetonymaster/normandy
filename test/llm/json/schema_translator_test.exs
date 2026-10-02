@@ -3,6 +3,26 @@ defmodule Normandy.LLM.Json.SchemaTranslatorTest do
 
   alias Normandy.LLM.Json.SchemaTranslator
 
+  test "keeps the string formats structured outputs support, drops the others" do
+    spec = %{
+      type: :object,
+      properties: %{
+        on: %{type: :string, format: "date"},
+        at: %{type: :string, format: "time"},
+        lasts: %{type: :string, format: "duration"},
+        mail: %{type: :string, format: "email"},
+        blob: %{type: :string, format: "binary"}
+      }
+    }
+
+    assert {:ok, %{"properties" => props}} = SchemaTranslator.translate(spec)
+    assert props["on"] == %{"type" => "string", "format" => "date"}
+    assert props["at"]["format"] == "time"
+    assert props["lasts"]["format"] == "duration"
+    assert props["mail"]["format"] == "email"
+    assert props["blob"] == %{"type" => "string"}
+  end
+
   test "translates a flat object: string keys, additionalProperties:false, required" do
     spec = %{
       type: :object,
