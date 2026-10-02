@@ -271,6 +271,28 @@ defmodule Normandy.Schema do
     end
   end
 
+  @doc false
+  # What an io_schema's to_json encodes: __meta__ (internal bookkeeping) and every
+  # redact: true field removed, at every depth, so a nested schema hides its
+  # secrets too. Schema structs stay structs (missing those keys), so a @derive'd
+  # encoder still handles the remaining fields; other structs are left alone.
+  @spec __serializable__(term()) :: term()
+  def __serializable__(%mod{} = struct) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1) do
+      kept = Map.drop(struct, [:__meta__ | mod.__schema__(:redact_fields)])
+      :maps.map(fn _key, value -> __serializable__(value) end, kept)
+    else
+      struct
+    end
+  end
+
+  def __serializable__(list) when is_list(list), do: Enum.map(list, &__serializable__/1)
+
+  def __serializable__(map) when is_map(map),
+    do: :maps.map(fn _key, value -> __serializable__(value) end, map)
+
+  def __serializable__(other), do: other
+
   @doc """
   Fills every `compute:` field of a schema struct, in declaration order. Each
   compute function receives the struct, including fields computed before it.
@@ -377,12 +399,9 @@ defmodule Normandy.Schema do
             # would refuse to boot when the two differ.
             defp adapter, do: Application.get_env(:normandy, :adapter, Poison)
 
-            # __meta__ is internal bookkeeping (module name, load state) and a
-            # redact: true field is hidden everywhere, so neither goes to the
-            # model or out. Removing the keys keeps a @derive'd encoder in
-            # charge of the remaining fields.
-            defp serializable(str),
-              do: Map.drop(str, [:__meta__ | str.__struct__.__schema__(:redact_fields)])
+            # Neither __meta__ nor a redact: true field goes to the model or out,
+            # in this struct or any schema nested in it.
+            defp serializable(str), do: Normandy.Schema.__serializable__(str)
 
             def get_schema(str), do: str.__struct__.get_json_schema()
           end
