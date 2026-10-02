@@ -190,11 +190,15 @@ defmodule Normandy.Agents.Dispatch do
         {:deny, invalid_input_result(call)}
 
       {:ok, tool} ->
+        # A hook may change a call's input, not which call it is: the result must
+        # answer the model's tool_use id, and both shells order results by it.
         case run_before_hooks(config, call, pipeline.before_hooks) do
           {:halt, %ToolResult{} = result} ->
-            {:deny, result}
+            {:deny, %{result | tool_call_id: call.id}}
 
-          {:cont, call} ->
+          {:cont, hooked} ->
+            call = %{hooked | id: call.id}
+
             prepared = prepare_tool(tool, call.input)
 
             case validate_input(tool, call.input) do
@@ -232,7 +236,7 @@ defmodule Normandy.Agents.Dispatch do
       :ok ->
         result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
-        run_after_hooks(config, call, result, pipeline.after_hooks)
+        %{run_after_hooks(config, call, result, pipeline.after_hooks) | tool_call_id: call.id}
 
       {:error, reason} ->
         budget_denial_result(call, reason)

@@ -238,6 +238,30 @@ defmodule Normandy.Agents.DispatchTest do
       assert result.output == "weather in Boston"
     end
 
+    test "a hook cannot change which call a result answers" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c12", name: "weather", input: %{"city" => "NYC"}}
+
+      for pipeline <- [
+            %{
+              Dispatch.default_pipeline()
+              | before_hooks: [fn _c, c -> {:cont, %{c | id: "rewritten"}} end]
+            },
+            %{
+              Dispatch.default_pipeline()
+              | before_hooks: [
+                  fn _c, _call -> {:halt, %ToolResult{tool_call_id: "other", output: "no"}} end
+                ]
+            },
+            %{
+              Dispatch.default_pipeline()
+              | after_hooks: [fn _c, _call, r -> %{r | tool_call_id: "other"} end]
+            }
+          ] do
+        assert %ToolResult{tool_call_id: "c12"} = Dispatch.dispatch_one(config, call, pipeline)
+      end
+    end
+
     test "after-hook transforms the result" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c11", name: "weather", input: %{"city" => "NYC"}}
