@@ -170,6 +170,23 @@ defmodule Normandy.A2A.ServerTest do
 
       assert log =~ "agent failed"
     end
+
+    test "an agent that throws gets the same generic error, not a crash" do
+      message = Message.new(:user, [Part.text("hello")])
+
+      thrower =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{reply: fn _ -> throw(:no_answer) end},
+          model: "test-model"
+        })
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :agent_failed} = Server.handle_message(thrower, message)
+        end)
+
+      assert log =~ "agent failed"
+    end
   end
 
   defp two_tool_registry do

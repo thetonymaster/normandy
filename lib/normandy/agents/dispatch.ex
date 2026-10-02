@@ -16,6 +16,7 @@ defmodule Normandy.Agents.Dispatch do
   `classify/3` to park a `:needs_approval` call before any side effect runs.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Tools.Executor
@@ -288,13 +289,23 @@ defmodule Normandy.Agents.Dispatch do
   # {:deny, …}, honoring the spec's "a policy timeout/unreachable surfaces as
   # {:deny, …}". `catch` covers exits/throws (e.g. a GenServer.call timeout);
   # `rescue` covers raised exceptions.
+  #
+  # The rationale goes to the model, and a policy engine's exception or exit can
+  # carry its ctx (config and client), so it names the failure's shape only.
   defp apply_policy(pipeline, config, call, prepared) do
     pipeline.policy_fn.(config, call, prepared)
   rescue
-    e -> {:deny, %{reason: "policy check raised", rationale: Exception.message(e)}}
+    e -> {:deny, %{reason: "policy check raised", rationale: inspect(e.__struct__)}}
   catch
-    kind, value -> {:deny, %{reason: "policy check failed (#{kind})", rationale: inspect(value)}}
+    kind, value ->
+      {:deny, %{reason: "policy check failed (#{kind})", rationale: describe_failure(value)}}
   end
+
+  defp describe_failure(tuple)
+       when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+       do: "{#{inspect(elem(tuple, 0))}, ...}"
+
+  defp describe_failure(value), do: Describe.type_of(value)
 
   defp run_after_hooks(_config, _call, result, []), do: result
 

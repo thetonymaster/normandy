@@ -163,6 +163,26 @@ defmodule Normandy.Agents.DispatchTest do
              } = result
     end
 
+    test "a policy that raises, exits or throws is a denial that does not show the term" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c8", name: "weather", input: %{"city" => "NYC"}}
+      secret = %{api_key: "sk-policy-secret"}
+
+      for {policy, rationale} <- [
+            {fn _, _, _ -> Map.fetch!(secret, :missing) end, "KeyError"},
+            {fn _, _, _ -> exit({:timeout, secret}) end, "{:timeout, ...}"},
+            {fn _, _, _ -> throw(secret) end, "a map"}
+          ] do
+        pipeline = %{Dispatch.default_pipeline() | policy_fn: policy}
+
+        assert %ToolResult{is_error: true, output: %{denied: true} = output} =
+                 Dispatch.dispatch_one(config, call, pipeline)
+
+        refute inspect(output) =~ "sk-policy-secret"
+        assert output.rationale =~ rationale
+      end
+    end
+
     test "needs_approval → tagged denial result with pending_approval: true" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c7", name: "weather", input: %{"city" => "NYC"}}

@@ -147,8 +147,8 @@ defmodule Normandy.A2A.Server do
       error ->
         agent_failed(Exception.format(:error, error, __STACKTRACE__))
     catch
-      :exit, reason ->
-        agent_failed(Exception.format(:exit, reason, __STACKTRACE__))
+      kind, reason when kind in [:exit, :throw] ->
+        agent_failed(Exception.format(kind, reason, __STACKTRACE__))
     end
   end
 
