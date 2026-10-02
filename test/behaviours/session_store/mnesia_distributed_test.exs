@@ -1,4 +1,5 @@
 defmodule Normandy.Behaviours.SessionStore.MnesiaDistributedTest do
+  # async: false — Mnesia is node-global state, and the test starts peer nodes.
   use ExUnit.Case, async: false
   @moduletag :distributed
 

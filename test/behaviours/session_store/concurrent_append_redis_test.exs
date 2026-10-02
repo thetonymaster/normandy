@@ -1,6 +1,6 @@
 defmodule Normandy.Behaviours.SessionStore.ConcurrentAppendRedisTest do
   @moduledoc "GAP: concurrent single-session appends must not lose writes (Redis Streams, XADD)."
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   @moduletag :redis
 
   alias Normandy.Behaviours.SessionStore.Redis

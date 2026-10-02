@@ -7,7 +7,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
   - Agent DSL (Normandy.DSL.Agent)
   - Workflow DSL (Normandy.DSL.Workflow)
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Coordination.Pattern

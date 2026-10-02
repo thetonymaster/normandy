@@ -7,6 +7,7 @@ defmodule Normandy.Integration.AgentProcessServerLiveTest do
   it runs only with a real key (`API_KEY` / `ANTHROPIC_API_KEY`) and is excluded
   from the default `mix test` run.
   """
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   @moduletag :integration

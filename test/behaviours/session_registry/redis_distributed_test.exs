@@ -1,4 +1,5 @@
 defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
+  # async: false — starts peer nodes.
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
   # Needs BOTH a reachable Redis and a second node. Tagged ONLY :distributed (NOT

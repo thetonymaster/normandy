@@ -1,4 +1,5 @@
 defmodule NormandyTest.Agents.BaseAgentLoggingTest do
+  # async: false — adds :logger handlers, which see every process's log events.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, ToolCallResponse}

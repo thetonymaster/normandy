@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.Turn.ServerIntegrationTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn

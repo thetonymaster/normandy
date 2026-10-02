@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.Turn.SessionTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   import Normandy.Test.Eventually
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.ConfigTemplate

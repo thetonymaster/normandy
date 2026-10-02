@@ -3,6 +3,7 @@ defmodule Normandy.Behaviours.SessionStore.CodecDistributedTest do
   A fresh node in interactive mode loads modules lazily, so `[:safe]` decoding of
   a term naming a module it hasn't loaded yet must still work there.
   """
+  # async: false — starts peer nodes.
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed

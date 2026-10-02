@@ -12,6 +12,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
   `:awaiting_approval` turn state is used so the resume is a no-op effect-wise
   (re-arms the approval wait) and needs no LLM — keeping the test deterministic.
   """
+  # async: false — the Postgres sandbox runs in shared mode (one connection for every process).
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
   @moduletag :postgres

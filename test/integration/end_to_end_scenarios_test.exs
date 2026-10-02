@@ -1,4 +1,5 @@
 defmodule Normandy.Integration.EndToEndScenariosTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent

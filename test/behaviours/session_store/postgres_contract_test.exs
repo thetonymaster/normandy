@@ -1,5 +1,6 @@
 defmodule Normandy.Behaviours.SessionStore.PostgresContractTest do
   @moduledoc "Run with `mix test --include postgres`. Requires Postgres."
+  # async: false — the Postgres sandbox runs in shared mode (one connection for every process).
   use ExUnit.Case, async: false
   @moduletag :postgres
 

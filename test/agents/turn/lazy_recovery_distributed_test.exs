@@ -1,4 +1,5 @@
 defmodule Normandy.Agents.Turn.LazyRecoveryDistributedTest do
+  # async: false — starts peer nodes.
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed

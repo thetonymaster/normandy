@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.Turn.ServerTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   import Normandy.Test.Eventually
 
   @moduletag :capture_log

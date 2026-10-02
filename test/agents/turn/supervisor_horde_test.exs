@@ -1,4 +1,5 @@
 defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
+  # async: false — the restart-limit tests switch off Logger's global translator filter.
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
 

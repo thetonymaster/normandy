@@ -18,6 +18,7 @@ defmodule Normandy.Agents.Turn.HordeRedistributionTest do
   `Horde.DynamicSupervisor` with `:auto` membership. Two separate supervisors are
   required (or manual membership management with explicit `:dead` marking).
   """
+  # async: false — starts peer nodes.
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed

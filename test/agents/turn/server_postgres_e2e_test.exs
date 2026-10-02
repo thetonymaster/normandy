@@ -1,5 +1,6 @@
 defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   @moduledoc "GAP: durable :server lifecycle (persist → passivate → rehydrate) against real Postgres."
+  # async: false — the Postgres sandbox runs in shared mode (one connection for every process).
   use ExUnit.Case, async: false
   import Normandy.Test.Eventually
   @moduletag :postgres

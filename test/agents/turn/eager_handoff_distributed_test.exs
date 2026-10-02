@@ -54,6 +54,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   actionable message if the Repo isn't running (ExUnit setup cannot skip at runtime —
   returning `{:skip, _}` raises).
   """
+  # async: false — starts peer nodes and switches the Postgres sandbox to :auto.
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed

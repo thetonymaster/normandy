@@ -1,6 +1,6 @@
 defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
   @moduledoc "Tier-2 (Horde reg+sup, lazy) as a cluster-of-one, end to end."
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.BaseAgent

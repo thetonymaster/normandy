@@ -1,4 +1,5 @@
 defmodule Normandy.Integration.MultiAgentTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
