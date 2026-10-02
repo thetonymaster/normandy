@@ -133,22 +133,34 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
                converse(client(__MODULE__.Structured))
     end
 
-    test "an invalid_request_error falls back to legacy once, then returns the error" do
+    defp stub_invalid_request(name, message) do
       test_pid = self()
 
-      Req.Test.stub(__MODULE__.Fallback, fn conn ->
+      Req.Test.stub(name, fn conn ->
         send(test_pid, :request)
 
         conn
         |> Plug.Conn.put_status(400)
         |> Req.Test.json(%{
           "type" => "error",
-          "error" => %{"type" => "invalid_request_error", "message" => "bad"}
+          "error" => %{"type" => "invalid_request_error", "message" => message}
         })
       end)
+    end
+
+    test "a schema rejection falls back to legacy once, then returns the error" do
+      stub_invalid_request(__MODULE__.Fallback, "output_config.format.schema: unsupported")
 
       assert {:error, %LLMError{type: :invalid_request}} = converse(client(__MODULE__.Fallback))
       assert_received :request
+      assert_received :request
+      refute_received :request
+    end
+
+    test "any other invalid_request_error is returned without a second request" do
+      stub_invalid_request(__MODULE__.TooLong, "prompt is too long: 250000 tokens > 200000")
+
+      assert {:error, %LLMError{type: :invalid_request}} = converse(client(__MODULE__.TooLong))
       assert_received :request
       refute_received :request
     end

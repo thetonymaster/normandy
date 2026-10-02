@@ -112,9 +112,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
     guard.
   - The call carries tools — a `stop_reason: :tool_use` response requires the legacy tool-handling
     loop.
-  - The model returns `refusal`, `max_tokens`, or context-exceeded, or the API rejects the
-    structured-output request — these route through the existing `:on_parse_failure` policy and
-    legacy fallback.
+  - The model returns `refusal`, `max_tokens`, or context-exceeded — these route through the
+    existing `:on_parse_failure` policy and legacy fallback.
+  - The API answers 400 with a message naming the output format or schema. Any other 400 (such
+    as "prompt is too long") is returned as the error, without a second request.
 
   """
 
@@ -1485,15 +1486,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp classify_status(_status), do: {:unknown, false}
 
   @doc false
-  # Decides what to do when the structured-outputs call errors. A request-shape
-  # rejection (the API not accepting the output_format/schema) is recoverable via
-  # the legacy parse-retry path, which sends no output_format — so fall back.
-  # Auth/permission/rate-limit/overload/transport errors are NOT recoverable that
-  # way (the legacy call hits the same endpoint with the same credentials), so
-  # surface them as a classified error instead of duplicating the request.
+  # Decides what to do when the structured-outputs call errors. The API refusing the
+  # output format or its schema is recoverable via the legacy parse-retry path, which
+  # sends no output format, so fall back. Any other error, including other 400s such
+  # as "prompt is too long", would fail the legacy call the same way: surface it
+  # instead of paying for a second request.
   @spec __structured_error_action__(term()) :: :fallback | :propagate
-  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error}), do: :fallback
+  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error} = error) do
+    if schema_rejection?(error.message), do: :fallback, else: :propagate
+  end
+
   def __structured_error_action__(_error), do: :propagate
+
+  defp schema_rejection?(message) when is_binary(message),
+    do: message =~ ~r/output_format|output_config|schema/i
+
+  defp schema_rejection?(_message), do: false
 
   @doc false
   # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use

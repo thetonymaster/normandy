@@ -312,6 +312,28 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert :fallback = ClaudioAdapter.__structured_error_action__(err)
     end
 
+    test "an invalid_request_error about something other than the schema propagates" do
+      for message <- [
+            "prompt is too long: 250000 tokens > 200000 maximum",
+            "messages.1: tool_use ids must be unique",
+            "max_tokens: must be greater than 0"
+          ] do
+        err = %Claudio.APIError{type: :invalid_request_error, message: message, status_code: 400}
+        assert :propagate = ClaudioAdapter.__structured_error_action__(err)
+      end
+    end
+
+    test "an invalid_request_error naming the output format or schema falls back" do
+      for message <- [
+            "output_config.format.schema: unsupported keyword 'patternProperties'",
+            "output_format is not supported for this model",
+            "Invalid JSON Schema: too many properties"
+          ] do
+        err = %Claudio.APIError{type: :invalid_request_error, message: message, status_code: 400}
+        assert :fallback = ClaudioAdapter.__structured_error_action__(err)
+      end
+    end
+
     test "auth/permission/rate-limit/overload/api errors propagate (no duplicate call)" do
       for type <- [
             :authentication_error,

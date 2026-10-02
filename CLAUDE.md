@@ -169,7 +169,7 @@ end
 - `config/config.exs` - Imports environment-specific config
 - `config/dev.exs` and `config/test.exs` - Environment configs
 - Application config requires `:adapter` (JSON encoder/decoder, e.g., Poison)
-- `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, and refusal/max_tokens/API-rejection
+- `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, refusal/max_tokens, and a 400 that names the output format or schema (other 400s are returned without a second request)
 - `client.options` request settings (`:thinking`, `:effort`, `:speed`, `:inference_geo`, `:fallbacks`, `:task_budget`, `:thinking_budget`, `:thinking_block_binding`, `:enable_caching`, `:req_options`) are documented on `Normandy.LLM.ClaudioAdapter`; nothing is sent unless set
 - `consolidate_protocols: false` in test environment for faster compilation
 
