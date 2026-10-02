@@ -215,3 +215,56 @@ tool cannot be counted.
 
 Each area reviewer named one per fixed finding. The exceptions are OTP-9 and SCHEMA-14
 (a deletion), which have none, and TESTS-1 and TESTS-12, which are covered by CI only.
+
+## Outcomes (2026-10-02)
+
+Every item was fixed test-first unless noted. Each fix commit cites its FV id.
+
+| Item | Outcome | Commit(s) |
+|---|---|---|
+| FV-1 | Fixed: the stream error is thrown without the config | d896114 |
+| FV-2 | Fixed: an `:infinity` waiter has no timer; a bad `:timeout` raises in the caller | 967c55b, 6538b40 |
+| FV-3 | Fixed (Q chose a degraded start): a store fault starts the server `:unavailable`; it retries on calls and on a backoff timer | ee5fb4c |
+| FV-4 | Fixed: the agent id is read from the process dictionary, without a call | 2c23c1b |
+| FV-5 | Fixed: `__meta__` and redacted fields are removed at every depth | 43e50e6 |
+| FV-6 | Fixed: the summarizer's kept part starts at a user message | d185bf8 |
+| FV-7 | **Premise false; open for Q.** Regular thinking blocks replay across models: the API drops a block the target cannot read and the request succeeds, and the guidance is to keep sending blocks when switching models. 404f24b strips them on a model change and should be reverted. | 404f24b |
+| FV-8 | Fixed: RegexGuard compiles each pattern from its source and options | ce67fcc |
+| FV-9 | Fixed (Q chose holder only): checkin is honored only from the holder | 963ce6e |
+| FV-10 | Fixed: discovery returns `{:error, {:invalid_tool_name, name}}` | 393e477 |
+| FV-11 | Fixed: every Postgres callback returns `{:error, reason}` | 7b72fcc |
+| FV-12 | Fixed: an unknown `converse/7` shape raises, naming its type | 81282d0 |
+| FV-13 | Fixed (Q chose schema errors only): the fallback runs only on 400s that name the output format or schema | 5e7bbe3 |
+| FV-14, FV-21, FV-22 | Fixed: checked at agent init; option values are described, not printed | 3d48bf4 |
+| FV-15, FV-23 | Fixed: shared `Normandy.LLM.ParseFailure`; no fake success | 9e74f3b |
+| FV-16 | Fixed: a raising compute is a changeset error | d9526fc |
+| FV-17 | Fixed: the count payload is built by the adapter's own message conversion | f8aa27f |
+| FV-18 | Fixed: supported formats are kept; the validator checks date, time, duration and hostname | fd9217f |
+| FV-19 | Fixed | 316ed5b |
+| FV-20 | Fixed | 3af260b |
+| FV-24 | **Not changed; open for Q.** Preserving each block's original position needs a stored block order (and server-tool blocks, which are not kept today). The docs do not settle whether order within one message is bound. | — |
+| FV-25 | Fixed | 77fd837 |
+| FV-26 | Documented: name the agents whose budgets are tracked | bf8cfa3 |
+| FV-27 | Fixed | 8ceab61 |
+| FV-28 | Fixed | b6e9254 |
+| FV-29 | Fixed | 963ce6e |
+| FV-30 | Fixed | c2a0909, ce44ce1 |
+| FV-31 | Fixed (A2A also catches throws now) | a79b0a8 |
+| FV-32 | Fixed | 2981593 |
+| FV-33 | Fixed: `whereis` may return `{:error, reason}` | 6c012ba |
+| FV-34 | All three confirmed and fixed: A2A throw, Redis `{n, 0}` wait, numbered id collision | a79b0a8, 448419f, b09db89 |
+| FV-35 | Fixed; the examples were run | f2ef16e |
+| FV-36 | Fixed: a built-in guard's config errors raise under any `:on_error`. A `:field` on a plain map is documented as uncheckable | 9ee9a10 |
+| FV-37 | Fixed: rejected when the field is declared | 62e6185 |
+| FV-38 | Fixed for wire-facing JSON. Size estimates keep Poison on purpose: Jason raises on content blocks | 07fd02a |
+| FV-39 | Fixed | 4009026 |
+| FV-40 | Fixed | 92c0683 |
+| FV-41 | Fixed: rebuild failures are load errors (the server starts `:unavailable`) | 656e22e |
+| FV-42 | Fixed | c117ed3 |
+| FV-43 | Fixed: Dispatch keeps the original call id through every hook | c62031d |
+| FV-44 | Fixed: sleeps, the filter restore, handler filters and the helper; eight serial files now run async, and every serial file says why | 15441e7, ea86d18 |
+
+Found while fixing:
+
+- **Flake root cause.** The eager-handoff test's cleanup was swallowed by a bare `rescue`, so 68 committed rows had built up. ResumeReaperIntegrationTest reaps every eager row, and timed out now and then. Fixed in 3213bf5; the leftover rows were deleted from the test database.
+- **Flake.** The execute_stream timeout test gave the fast agent too little margin (2b1df90).
