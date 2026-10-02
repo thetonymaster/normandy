@@ -96,6 +96,22 @@ defmodule Normandy.Coordination.SequentialOrchestratorTest do
       assert c.chat_message =~ ~r/^c\(.*a\(/
       refute c.chat_message =~ "error"
     end
+
+    test "a failure makes success false and is listed in errors" do
+      specs = [
+        %{id: "a", agent: agent("a")},
+        %{id: "b", agent: agent("b", fail_on: "a(")},
+        %{id: "c", agent: agent("c")}
+      ]
+
+      assert {:ok, %{success: false, errors: [%{agent_id: "b", error: {:exception, _, _}}]}} =
+               SequentialOrchestrator.execute(specs, "x", on_error: :continue)
+
+      assert {:ok, %{success: true, errors: []}} =
+               SequentialOrchestrator.execute([%{id: "a", agent: agent("a")}], "x",
+                 on_error: :continue
+               )
+    end
   end
 
   describe "execute/2 with plain agents" do

@@ -52,8 +52,9 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   - `:shared_context` - SharedContext to use (default: new context)
   - `:on_agent_complete` - Callback after each agent: `(agent_id, result, context -> any)`
   - `:on_error` - Error handling: `:stop` (default) or `:continue`. With
-    `:continue`, a failed agent's entry in `results` is `{:error, reason}` and
-    the next agent receives the last successful output.
+    `:continue`, a failed agent's entry in `results` is `{:error, reason}`, the
+    next agent receives the last successful output, and the `{:ok, result}` has
+    `success: false` with each failure in `errors`.
   - `:store_intermediate` - Store each result in shared context (default: true)
 
   ## Example
@@ -112,9 +113,9 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
 
     # Execute pipeline
     result =
-      Enum.reduce_while(agent_specs, {:ok, initial_input, context, []}, fn spec,
-                                                                           {:ok, input, ctx,
-                                                                            results} ->
+      Enum.reduce_while(agent_specs, {:ok, initial_input, context, [], []}, fn spec,
+                                                                               {:ok, input, ctx,
+                                                                                results, errors} ->
         agent_id = Map.fetch!(spec, :id)
         agent = Map.fetch!(spec, :agent)
         transform_fn = Map.get(spec, :transform, & &1)
@@ -139,7 +140,8 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
             end
 
             # Continue to next agent with transformed result
-            {:cont, {:ok, transformed_result, updated_ctx, results ++ [transformed_result]}}
+            {:cont,
+             {:ok, transformed_result, updated_ctx, results ++ [transformed_result], errors}}
 
           {:error, reason} ->
             error_result = %{agent_id: agent_id, error: reason, input: input}
@@ -152,18 +154,21 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
               :continue ->
                 # The failure stays in results; the next agent gets the last
                 # successful output (or the initial input), not the error.
-                {:cont, {:ok, input, ctx, results ++ [{:error, reason}]}}
+                {:cont,
+                 {:ok, input, ctx, results ++ [{:error, reason}], errors ++ [error_result]}}
             end
         end
       end)
 
     case result do
-      {:ok, _final_input, context, results} ->
+      # With on_error: :continue the pipeline ran to the end; success says whether
+      # every agent did.
+      {:ok, _final_input, context, results, errors} ->
         {:ok,
          %{
-           success: true,
+           success: errors == [],
            results: results,
-           errors: [],
+           errors: errors,
            context: context
          }}
 
