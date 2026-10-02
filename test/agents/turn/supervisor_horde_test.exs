@@ -51,8 +51,70 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
     assert wait_until(fn -> HReg.whereis(reg, sid) == {:ok, pid} end)
   end
 
+  # Forwards supervisor reports (child terminated, start error, restart intensity
+  # reached) to the test process, so a failing restart-limit test can show what
+  # the supervisors saw. Horde's ProcessesSupervisor, which restarts sessions,
+  # reports through :error_logger; Horde's outer supervisor through OTP's
+  # {:supervisor, context} label. Logger drops both by default (SASL).
+  defmodule SupervisorReports do
+    @moduledoc false
+    def log(%{msg: {:report, %{label: label, report: report}}}, %{config: %{to: to}})
+        when is_list(report) do
+      case {label, report[:errorContext]} do
+        {{:supervisor, :progress}, _} -> :ok
+        {{:supervisor, context}, _} -> forward(to, context, report)
+        {{:error_logger, _}, context} when context != nil -> forward(to, context, report)
+        _ -> :ok
+      end
+    end
+
+    def log(_event, _config), do: :ok
+
+    defp forward(to, context, report) do
+      send(to, {:supervisor_report, report[:supervisor], context, report[:reason]})
+      :ok
+    end
+  end
+
   describe "restart limit" do
     @describetag :capture_log
+
+    setup do
+      # Logger's translator drops SASL reports and rewrites the others into text,
+      # so it is off while these (sync) tests run and the handler sees raw reports.
+      %{filters: filters} = :logger.get_primary_config()
+      {_, translator} = List.keyfind(filters, :logger_translator, 0)
+      :ok = :logger.remove_primary_filter(:logger_translator)
+
+      handler = :"horde_reports_#{System.unique_integer([:positive])}"
+
+      :ok =
+        :logger.add_handler(handler, SupervisorReports, %{
+          config: %{to: self()},
+          level: :all,
+          filter_default: :log
+        })
+
+      on_exit(fn ->
+        :logger.remove_handler(handler)
+        :logger.remove_primary_filter(:logger_translator)
+        :logger.add_primary_filter(:logger_translator, translator)
+      end)
+
+      :ok
+    end
+
+    # The supervisor reports received so far, for a failure message. Reads the
+    # mailbox without consuming it, so a passing assertion can't hide them.
+    defp supervisor_reports do
+      {:messages, messages} = Process.info(self(), :messages)
+
+      reports =
+        for {:supervisor_report, supervisor, context, reason} <- messages,
+            do: {supervisor, context, inspect(reason, limit: 8)}
+
+      "supervisor reports: " <> inspect(reports, pretty: true)
+    end
 
     # An :eager session runs under restart :transient, so a kill counts as a restart.
     defp eager_sessions(sup, count) do
@@ -97,11 +159,22 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
       Enum.each(sessions, fn {sid, reg, pid} ->
         ref = Process.monitor(pid)
         Process.exit(pid, :kill)
-        assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
 
-        wait_until(fn ->
-          not Process.alive?(sup) or match?({:ok, new} when new != pid, HReg.whereis(reg, sid))
-        end)
+        receive do
+          {:DOWN, ^ref, :process, ^pid, :killed} ->
+            :ok
+
+          {:DOWN, ^ref, :process, ^pid, other} ->
+            flunk("session ended with #{inspect(other)} before the kill; #{supervisor_reports()}")
+        after
+          1_000 -> flunk("no :DOWN after the kill; #{supervisor_reports()}")
+        end
+
+        assert wait_until(fn ->
+                 not Process.alive?(sup) or
+                   match?({:ok, new} when new != pid, HReg.whereis(reg, sid))
+               end),
+               "the killed session was not restarted; #{supervisor_reports()}"
       end)
     end
 
@@ -111,7 +184,7 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
 
       crash_each(outer, eager_sessions(sup, 6))
 
-      assert Process.alive?(outer)
+      assert Process.alive?(outer), supervisor_reports()
     end
 
     test ":max_restarts and :max_seconds set the limit" do
@@ -122,7 +195,7 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
 
       crash_each(outer, eager_sessions(sup, 2))
 
-      assert_receive {:EXIT, ^outer, _reason}, 2_000
+      assert_receive {:EXIT, ^outer, _reason}, 2_000, supervisor_reports()
     end
   end
 
