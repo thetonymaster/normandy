@@ -24,7 +24,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))
 
     @impl true
-    def append_entry(repo, session_id, %{__struct__: _} = entry) do
+    def append_entry(repo, session_id, %{__struct__: _} = entry),
+      do: backend(fn -> do_append_entry(repo, session_id, entry) end)
+
+    defp do_append_entry(repo, session_id, entry) do
       repo.transaction(fn ->
         # Ensure the session row exists so the FOR UPDATE below always locks a real
         # row. This serializes concurrent first-appends to a new session: two callers
@@ -68,7 +71,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def history(repo, session_id) do
+    def history(repo, session_id),
+      do: backend(fn -> do_history(repo, session_id) end)
+
+    defp do_history(repo, session_id) do
       case repo.get(Session, session_id) do
         nil ->
           {:ok, []}
@@ -82,7 +88,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def fork(repo, session_id, from_entry_id) do
+    def fork(repo, session_id, from_entry_id),
+      do: backend(fn -> do_fork(repo, session_id, from_entry_id) end)
+
+    defp do_fork(repo, session_id, from_entry_id) do
       repo.transaction(fn ->
         cond do
           repo.get(Session, session_id) == nil ->
@@ -106,7 +115,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def save_turn_state(repo, session_id, term) do
+    def save_turn_state(repo, session_id, term),
+      do: backend(fn -> do_save_turn_state(repo, session_id, term) end)
+
+    defp do_save_turn_state(repo, session_id, term) do
       blob = encode(term)
 
       %Session{session_id: session_id}
@@ -122,7 +134,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def load_turn_state(repo, session_id) do
+    def load_turn_state(repo, session_id),
+      do: backend(fn -> do_load_turn_state(repo, session_id) end)
+
+    defp do_load_turn_state(repo, session_id) do
       case repo.get(Session, session_id) do
         %Session{turn_state: blob} when is_binary(blob) -> {:ok, decode(blob)}
         _ -> :error
@@ -130,7 +145,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def save_config_template(repo, session_id, tmpl) do
+    def save_config_template(repo, session_id, tmpl),
+      do: backend(fn -> do_save_config_template(repo, session_id, tmpl) end)
+
+    defp do_save_config_template(repo, session_id, tmpl) do
       blob = encode(tmpl)
       # Mirror resume_policy into a queryable column so list_resumable/1 can filter
       # without decoding every opaque template blob. The template is an opaque term
@@ -157,7 +175,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def list_resumable(repo) do
+    def list_resumable(repo),
+      do: backend(fn -> do_list_resumable(repo) end)
+
+    defp do_list_resumable(repo) do
       ids =
         Session
         |> where([s], s.resume_policy == "eager")
@@ -168,7 +189,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def load_config_template(repo, session_id) do
+    def load_config_template(repo, session_id),
+      do: backend(fn -> do_load_config_template(repo, session_id) end)
+
+    defp do_load_config_template(repo, session_id) do
       case repo.get(Session, session_id) do
         %Session{config_template: blob} when is_binary(blob) -> {:ok, decode(blob)}
         _ -> :error
@@ -176,6 +200,14 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     # --- Private helpers ---
+
+    # An unreachable or failing database raises out of Ecto; the store contract
+    # reports a backend failure as {:error, reason}.
+    defp backend(fun) do
+      fun.()
+    rescue
+      e in [DBConnection.ConnectionError, Postgrex.Error] -> {:error, e}
+    end
 
     defp ancestor_of_head?(repo, session_id, entry_id) do
       case repo.get(Session, session_id) do
