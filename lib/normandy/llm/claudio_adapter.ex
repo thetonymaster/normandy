@@ -113,6 +113,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   use Normandy.Schema
 
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLM.Json.Decoder
@@ -924,6 +925,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
       schema
       |> Map.put(:content, content)
       |> Map.put(:tool_calls, tool_calls)
+      |> Map.put(:thinking, ClaudioAdapter.extract_thinking(claudio_response))
     end
 
     defp populate_standard_schema(schema, content, context) do
@@ -1101,6 +1103,17 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   def response_meta(_response), do: %{}
+
+  @doc false
+  # The served model's thinking and redacted_thinking blocks, in order and in
+  # wire shape (string keys), so they can be sent back exactly as received.
+  def extract_thinking(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> content_after_last_fallback()
+    |> ToolCallResponse.thinking_blocks()
+  end
+
+  def extract_thinking(_response), do: []
 
   @doc false
   def extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do

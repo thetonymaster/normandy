@@ -1134,7 +1134,8 @@ defmodule Normandy.Agents.BaseAgent do
 
     %ToolCallResponse{
       content: if(text == "", do: nil, else: text),
-      tool_calls: calls
+      tool_calls: calls,
+      thinking: ToolCallResponse.thinking_blocks(content)
     }
   end
 

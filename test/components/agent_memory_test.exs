@@ -375,6 +375,43 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       assert contents(loaded) == contents(memory)
     end
 
+    test "thinking blocks inside a ToolCallResponse come back unchanged" do
+      thinking = [
+        %{"type" => "thinking", "thinking" => "plan", "signature" => "sig1"},
+        %{"type" => "redacted_thinking", "data" => "opaque"}
+      ]
+
+      memory =
+        AgentMemory.add_message(AgentMemory.new_memory(), "assistant", %ToolCallResponse{
+          thinking: thinking,
+          tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{}}]
+        })
+
+      assert [%ToolCallResponse{thinking: ^thinking}] =
+               memory |> AgentMemory.dump() |> AgentMemory.load() |> contents()
+    end
+
+    test "a ToolCallResponse dumped before :thinking existed loads with no thinking" do
+      old_dump =
+        tool_turn(false)
+        |> AgentMemory.dump()
+        |> Poison.decode!()
+        |> Map.update!("entries", fn entries ->
+          Enum.map(entries, fn entry ->
+            update_in(entry, ["content", "data"], fn
+              data when is_map(data) -> Map.delete(data, "thinking")
+              data -> data
+            end)
+          end)
+        end)
+        |> Poison.encode!()
+
+      refute old_dump =~ "thinking"
+
+      assert ["go", %ToolCallResponse{thinking: []}] =
+               old_dump |> AgentMemory.load() |> contents()
+    end
+
     test "an answered batch stays answered and an open one stays open after a round trip" do
       answered = tool_turn(true) |> AgentMemory.dump() |> AgentMemory.load()
       open = tool_turn(false) |> AgentMemory.dump() |> AgentMemory.load()
