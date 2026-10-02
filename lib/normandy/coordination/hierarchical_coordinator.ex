@@ -300,22 +300,28 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   end
 
   # ParallelOrchestrator keys results by spec id, so a worker with several tasks
-  # would keep only its last result. Number them ("w1#1", "w1#2"); a worker
-  # with one task keeps its plain id.
+  # would keep only its last result. Number them ("w1#1", "w1#2"), skipping any
+  # number that is another worker's id; a worker with one task keeps its plain id.
   defp unique_ids(specs) do
     counts = Enum.frequencies_by(specs, & &1.id)
+    taken = MapSet.new(specs, & &1.id)
 
-    {specs, _seen} =
-      Enum.map_reduce(specs, %{}, fn spec, seen ->
+    {specs, _state} =
+      Enum.map_reduce(specs, {%{}, taken}, fn spec, {seen, taken} ->
         if counts[spec.id] > 1 do
-          n = Map.get(seen, spec.id, 0) + 1
-          {%{spec | id: "#{spec.id}##{n}"}, Map.put(seen, spec.id, n)}
+          {id, n} = next_free_id(spec.id, Map.get(seen, spec.id, 0) + 1, taken)
+          {%{spec | id: id}, {Map.put(seen, spec.id, n), MapSet.put(taken, id)}}
         else
-          {spec, seen}
+          {spec, {seen, taken}}
         end
       end)
 
     specs
+  end
+
+  defp next_free_id(base, n, taken) do
+    id = "#{base}##{n}"
+    if MapSet.member?(taken, id), do: next_free_id(base, n + 1, taken), else: {id, n}
   end
 
   defp fetch_worker!(workers, worker_id) do

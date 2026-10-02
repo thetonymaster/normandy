@@ -138,6 +138,33 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       assert results =~ "w1#2"
     end
 
+    test "a numbered id never takes another worker's id" do
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: agent("manager", %{delegation_plan: []}, %Plan{}),
+          workers: [
+            %{id: "w1", agent: agent("w1", %{chat_message: "r1"})},
+            %{id: "w1#1", agent: agent("w1#1", %{chat_message: "other"})}
+          ]
+        )
+
+      tasks = [
+        %{worker_id: "w1", task: "a"},
+        %{worker_id: "w1", task: "b"},
+        %{worker_id: "w1#1", task: "c"}
+      ]
+
+      assert {:ok, _} = HierarchicalCoordinator.execute_with_tasks(coordinator, tasks)
+      assert_receive {:llm_call, "manager", messages}
+      results = List.last(messages).content
+
+      # The content is JSON-encoded: each section starts "## <id>" and ends in "\\n".
+      ids = Regex.scan(~r/## ([^\s\\]+)/, results, capture: :all_but_first) |> List.flatten()
+      assert length(ids) == 3
+      assert ids == Enum.uniq(ids)
+      assert results =~ "other"
+    end
+
     test "an unknown worker id raises a clear error" do
       assert_raise ArgumentError, ~r/no worker "nope"/, fn ->
         HierarchicalCoordinator.execute_with_tasks(coordinator([]), [
