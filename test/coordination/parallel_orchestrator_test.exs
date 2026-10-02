@@ -157,10 +157,11 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
     test "an agent past :timeout is reported by id; the stream goes on" do
       specs = [
         %{id: "fast", agent: tagging("fast"), input: "x"},
-        %{id: "slow", agent: tagging("slow", sleep_ms: 500), input: "x"}
+        # Killed at the timeout; the margin keeps "fast" in time on a loaded machine.
+        %{id: "slow", agent: tagging("slow", sleep_ms: 10_000), input: "x"}
       ]
 
-      outcomes = specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
+      outcomes = specs |> ParallelOrchestrator.execute_stream(timeout: 1_000) |> Enum.to_list()
 
       assert {:exit, {"slow", :timeout}} in outcomes
       assert Enum.any?(outcomes, &match?({:ok, {:ok, {"fast", _}}}, &1))
