@@ -27,8 +27,16 @@ if Code.ensure_loaded?(Redix) do
 
     def whereis_name({owner, sid}) do
       case Reg.whereis(owner, sid) do
-        {:ok, pid} -> pid
-        :none -> :undefined
+        {:ok, pid} ->
+          pid
+
+        :none ->
+          :undefined
+
+        # As in register_name/2: an outage is not "no process"; crash loud.
+        {:error, reason} ->
+          raise "SessionRegistry.Redis.Via: whereis failed for " <>
+                  "#{inspect({owner, sid})}: #{inspect(reason)}"
       end
     end
 

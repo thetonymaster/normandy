@@ -117,8 +117,9 @@ if Code.ensure_loaded?(Redix) do
               :stale -> stale(s, sid, blob)
             end
 
-          {:error, _} ->
-            :none
+          # An outage is not "no session": that would start a duplicate server.
+          {:error, reason} ->
+            {:error, reason}
         end
 
       {:reply, reply, s}

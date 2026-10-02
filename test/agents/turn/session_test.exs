@@ -222,6 +222,28 @@ defmodule Normandy.Agents.Turn.SessionTest do
     assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
   end
 
+  defmodule DownRegistry do
+    def whereis(_handle, _sid), do: {:error, :registry_down}
+  end
+
+  defmodule NoStartSupervisor do
+    def start_server(_sup, _opts), do: raise("no server should be started")
+  end
+
+  test "a registry lookup that fails is run/2's and approve/2's error; no server starts" do
+    opts = [
+      session_id: "registry-down",
+      config: session_config(),
+      store: {Normandy.Behaviours.SessionStore.InMemory, :unused},
+      registry: {DownRegistry, nil},
+      supervisor: :unused,
+      supervisor_mod: NoStartSupervisor
+    ]
+
+    assert {:error, :registry_down} = Turn.Session.run(opts, "hello")
+    assert {:error, :registry_down} = Turn.Session.approve(opts, %{})
+  end
+
   test "run/2 returns {:error, reason} when the turn-state load faults during rehydration" do
     {:ok, sup} = Turn.Supervisor.start_link([])
 

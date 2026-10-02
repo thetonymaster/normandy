@@ -93,7 +93,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       {:ok, sids} ->
         Enum.each(sids, fn sid ->
           # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if reg_mod.whereis(reg_handle, sid) == :none and
+          if not_running?(reg_mod, reg_handle, sid) and
                non_terminal?(store_mod, store_handle, sid) do
             start_session(state, sid)
           end
@@ -104,6 +104,25 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
         # surface it so operators can detect and triage missed reaps.
         Logger.warning("ResumeReaper: list_resumable failed: #{inspect(reason)}")
         :ok
+    end
+  end
+
+  # Only a registry that answers "no process" counts; a failed lookup skips the
+  # session (starting it could make a second server) and logs the missed reap.
+  defp not_running?(reg_mod, reg_handle, sid) do
+    case reg_mod.whereis(reg_handle, sid) do
+      :none ->
+        true
+
+      {:ok, _pid} ->
+        false
+
+      {:error, reason} ->
+        Logger.warning(
+          "ResumeReaper: could not look up #{inspect(sid)} in the registry: #{inspect(reason)}"
+        )
+
+        false
     end
   end
 

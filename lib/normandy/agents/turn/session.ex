@@ -56,7 +56,7 @@ defmodule Normandy.Agents.Turn.Session do
     with {:ok, pid} <- ensure_server(opts), do: Server.run(pid, user_input)
   end
 
-  @spec approve(keyword(), map()) :: :ok | {:error, :no_session}
+  @spec approve(keyword(), map()) :: :ok | {:error, :no_session} | {:error, term()}
   def approve(opts, decisions) do
     {reg_mod, reg_handle} = Keyword.fetch!(opts, :registry)
     sid = Keyword.fetch!(opts, :session_id)
@@ -71,6 +71,9 @@ defmodule Normandy.Agents.Turn.Session do
       # instead of booting a fresh server and silently dropping the approval.
       :none ->
         {:error, :no_session}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -81,6 +84,8 @@ defmodule Normandy.Agents.Turn.Session do
     case reg_mod.whereis(reg_handle, sid) do
       {:ok, pid} -> {:ok, pid}
       :none -> rehydrate_and_start(opts)
+      # The registry could not answer: starting would risk a second server.
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -191,6 +196,9 @@ defmodule Normandy.Agents.Turn.Session do
               :none ->
                 Process.sleep(10)
                 start_with_retry(sup_mod, sup, server_opts, reg_mod, reg_handle, sid, retries - 1)
+
+              {:error, lookup_error} ->
+                {:error, lookup_error}
             end
 
           true ->

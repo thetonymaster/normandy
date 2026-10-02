@@ -162,4 +162,36 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     assert log =~ "ResumeReaper: could not load the turn state of \"s-fault\""
     assert log =~ ":store_unavailable"
   end
+
+  defmodule DownRegistry do
+    def whereis(_handle, _sid), do: {:error, :registry_down}
+  end
+
+  test "a registry lookup that fails skips the session (no duplicate start) and logs it" do
+    store = InMemory.new()
+    {:ok, cat} = Catalog.start_link([])
+
+    :ok =
+      InMemory.save_config_template(store, "s-eager", %{template_id: "k", resume_policy: :eager})
+
+    :ok = InMemory.save_turn_state(store, "s-eager", %Turn.State{status: :steering})
+
+    {:ok, r} =
+      ResumeReaper.start_link(
+        store: {InMemory, store},
+        registry: {DownRegistry, nil},
+        supervisor: self(),
+        supervisor_mod: RecordingSup,
+        template_provider: {Catalog, cat}
+      )
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(r, {:nodedown, :"gone@127.0.0.1"})
+        :sys.get_state(r)
+      end)
+
+    refute_received {:reaper_started, "s-eager", _}
+    assert log =~ "could not look up \"s-eager\" in the registry"
+  end
 end
