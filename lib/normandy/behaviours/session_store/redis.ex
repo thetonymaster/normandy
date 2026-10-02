@@ -19,7 +19,8 @@ if Code.ensure_loaded?(Redix) do
     handle element): every write (entry appends, turn state, config template) then
     blocks on replica acknowledgement and returns `{:error, {:wait_unmet, acked, n}}`
     if unmet. Without it, `config :normandy, :redis_wait, {n, timeout_ms}` applies;
-    the default `{0, 0}` does not wait.
+    the default `{0, 0}` does not wait. With replicas, `timeout_ms` must be positive:
+    Redis treats 0 as wait forever, which would stall the shared connection.
     """
     @behaviour Normandy.Behaviours.SessionStore
 
@@ -37,31 +38,28 @@ if Code.ensure_loaded?(Redix) do
           Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
         )
 
+      # Checked before connecting, so a bad setting starts nothing.
+      _ =
+        with {:ok, wait} <- Keyword.fetch(opts, :wait),
+             do: check_wait!(wait, "SessionStore.Redis.new/1: :wait")
+
       {:ok, conn} = Redix.start_link(url)
       ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")
 
       case Keyword.fetch(opts, :wait) do
-        {:ok, {n, timeout} = wait}
-        when is_integer(n) and n >= 0 and is_integer(timeout) and timeout >= 0 ->
-          {conn, ns, wait}
-
-        {:ok, other} ->
-          raise ArgumentError,
-                "SessionStore.Redis.new/1: :wait must be {numreplicas, timeout_ms} (non-negative " <>
-                  "integers), got: #{inspect(other)}"
-
-        :error ->
-          {conn, ns}
+        {:ok, wait} -> {conn, ns, check_wait!(wait, "SessionStore.Redis.new/1: :wait")}
+        :error -> {conn, ns}
       end
     end
 
     @impl true
     def append_entry(handle, session_id, %Entry{} = entry) do
       {conn, ns} = conn_ns(handle)
+      wait = wait_setting!(handle)
       fields = encode_entry_fields(entry)
 
       with {:ok, id} <- Redix.command(conn, ["XADD", stream_key(ns, session_id), "*" | fields]),
-           :ok <- wait(handle) do
+           :ok <- wait(conn, wait) do
         {:ok, id}
       end
     end
@@ -100,10 +98,11 @@ if Code.ensure_loaded?(Redix) do
     @impl true
     def save_turn_state(handle, session_id, term) do
       {conn, ns} = conn_ns(handle)
+      wait = wait_setting!(handle)
 
       with {:ok, _} <-
              Redix.command(conn, ["HSET", meta_key(ns, session_id), "turn_state", encode(term)]) do
-        wait(handle)
+        wait(conn, wait)
       end
     end
 
@@ -121,6 +120,7 @@ if Code.ensure_loaded?(Redix) do
     @impl true
     def save_config_template(handle, session_id, tmpl) do
       {conn, ns} = conn_ns(handle)
+      wait = wait_setting!(handle)
 
       rp =
         case tmpl do
@@ -137,7 +137,7 @@ if Code.ensure_loaded?(Redix) do
       ]
 
       case Redix.pipeline(conn, cmds) do
-        {:ok, _} -> wait(handle)
+        {:ok, _} -> wait(conn, wait)
         {:error, reason} -> {:error, reason}
       end
     end
@@ -170,23 +170,39 @@ if Code.ensure_loaded?(Redix) do
     defp conn_ns({conn, ns}), do: {conn, ns}
     defp conn_ns({conn, ns, _wait}), do: {conn, ns}
 
-    # The handle's wait setting, else the :redis_wait app env, else no wait.
-    defp wait({conn, _ns, {n, t}}), do: wait(conn, n, t)
+    # The handle's wait setting, else the :redis_wait app env, else no wait. Read
+    # before a write, so a bad setting fails the write instead of following it.
+    defp wait_setting!({_conn, _ns, wait}), do: wait
 
-    defp wait({conn, _ns}) do
-      {n, t} = Application.get_env(:normandy, :redis_wait, {0, 0})
-      wait(conn, n, t)
+    defp wait_setting!({_conn, _ns}),
+      do:
+        check_wait!(
+          Application.get_env(:normandy, :redis_wait, {0, 0}),
+          "SessionStore.Redis: the :redis_wait app env"
+        )
+
+    # WAIT with a 0 timeout blocks until the replicas answer, possibly forever, and
+    # the connection is shared, so every later command would queue behind it.
+    defp check_wait!({0, timeout} = wait, _what) when is_integer(timeout) and timeout >= 0,
+      do: wait
+
+    defp check_wait!({n, timeout} = wait, _what)
+         when is_integer(n) and n > 0 and is_integer(timeout) and timeout > 0,
+         do: wait
+
+    defp check_wait!(other, what) do
+      raise ArgumentError,
+            "#{what} must be {numreplicas, timeout_ms} (non-negative " <>
+              "integers; with replicas, timeout_ms must be positive), got: #{inspect(other)}"
     end
 
-    defp wait(conn, n, t) do
-      if n > 0 do
-        case Redix.command(conn, ["WAIT", Integer.to_string(n), Integer.to_string(t)]) do
-          {:ok, acked} when acked >= n -> :ok
-          {:ok, acked} -> {:error, {:wait_unmet, acked, n}}
-          {:error, reason} -> {:error, reason}
-        end
-      else
-        :ok
+    defp wait(_conn, {0, _t}), do: :ok
+
+    defp wait(conn, {n, t}) do
+      case Redix.command(conn, ["WAIT", Integer.to_string(n), Integer.to_string(t)]) do
+        {:ok, acked} when acked >= n -> :ok
+        {:ok, acked} -> {:error, {:wait_unmet, acked, n}}
+        {:error, reason} -> {:error, reason}
       end
     end
 
