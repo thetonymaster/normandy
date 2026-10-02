@@ -532,7 +532,11 @@ defmodule Normandy.Coordination.AgentPool do
     do: Process.send_after(self(), {:checkout_timeout, from}, timeout)
 
   defp cancel_checkout_timer(nil), do: :ok
-  defp cancel_checkout_timer(timer), do: _ = Process.cancel_timer(timer)
+
+  defp cancel_checkout_timer(timer) do
+    _ = Process.cancel_timer(timer)
+    :ok
+  end
 
   defp hand_to_waiter(agent_pid, state) do
     {{:value, {{client, _tag} = from, timer, mref}}, waiting} = :queue.out(state.waiting)
