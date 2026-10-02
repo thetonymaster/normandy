@@ -293,6 +293,22 @@ defmodule Normandy.Batch.ProcessorTest do
       assert length(results) == 100
     end
 
+    test "on_progress counts across chunks against the whole batch", %{agent: agent} do
+      inputs = Enum.map(1..5, fn i -> %{chat_message: "Message #{i}"} end)
+      test_pid = self()
+
+      Processor.process_batch_chunked(agent, inputs,
+        chunk_size: 2,
+        on_progress: fn completed, total -> send(test_pid, {:progress, completed, total}) end
+      )
+
+      progress =
+        for _ <- 1..5, do: assert_receive({:progress, completed, total}) && {completed, total}
+
+      assert progress == [{1, 5}, {2, 5}, {3, 5}, {4, 5}, {5, 5}]
+      refute_received {:progress, _, _}
+    end
+
     test "applies delay between chunks", %{agent: agent} do
       inputs = Enum.map(1..10, fn i -> %{chat_message: "Message #{i}"} end)
 

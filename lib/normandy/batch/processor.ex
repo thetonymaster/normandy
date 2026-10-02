@@ -213,6 +213,7 @@ defmodule Normandy.Batch.Processor do
 
     chunks = Enum.chunk_every(inputs, chunk_size)
     last_index = length(chunks) - 1
+    total = length(inputs)
 
     chunk_results =
       chunks
@@ -220,7 +221,8 @@ defmodule Normandy.Batch.Processor do
       |> Enum.map(fn {chunk, index} ->
         Logger.info("Processing chunk #{index + 1}")
 
-        {:ok, chunk_result} = process_batch(agent, chunk, opts)
+        chunk_opts = chunk_progress(opts, index * chunk_size, total)
+        {:ok, chunk_result} = process_batch(agent, chunk, chunk_opts)
 
         if chunk_delay > 0 and index < last_index, do: Process.sleep(chunk_delay)
 
@@ -235,6 +237,19 @@ defmodule Normandy.Batch.Processor do
   end
 
   ## Private Functions
+
+  # on_progress counts against the whole batch, not the chunk.
+  defp chunk_progress(opts, done_before, total) do
+    case Keyword.get(opts, :on_progress) do
+      nil ->
+        opts
+
+      on_progress ->
+        Keyword.put(opts, :on_progress, fn completed, _chunk_total ->
+          on_progress.(done_before + completed, total)
+        end)
+    end
+  end
 
   # Process a single input through the agent. The per-item timeout is applied
   # by Task.async_stream, which kills a task that runs past it.
