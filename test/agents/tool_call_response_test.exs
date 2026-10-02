@@ -32,4 +32,20 @@ defmodule Normandy.Agents.ToolCallResponseTest do
 
     assert [%{input: %{"a" => 1}}] = BaseIOSchema.to_json(response)
   end
+
+  test "prefix_key/2 changes with the system prompt or the tools, not with tool order" do
+    a = %{name: "a", input_schema: %{}}
+    b = %{name: "b", input_schema: %{}}
+
+    assert ToolCallResponse.prefix_key("sys", [a, b]) ==
+             ToolCallResponse.prefix_key("sys", [b, a])
+
+    refute ToolCallResponse.prefix_key("sys", [a]) == ToolCallResponse.prefix_key("sys2", [a])
+    refute ToolCallResponse.prefix_key("sys", [a]) == ToolCallResponse.prefix_key("sys", [a, b])
+  end
+
+  test "to_json does not send prefix_key" do
+    response = %ToolCallResponse{prefix_key: 123, content: "hi"}
+    assert [%{type: "text", text: "hi"}] = BaseIOSchema.to_json(response)
+  end
 end

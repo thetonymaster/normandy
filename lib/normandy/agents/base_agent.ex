@@ -12,6 +12,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.Model
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.ValidationMiddleware
   alias Normandy.Batch.Processor
   alias Normandy.Behaviours.Config
@@ -263,13 +264,24 @@ defmodule Normandy.Agents.BaseAgent do
         Map.get(config, :output_schema)
       end
 
-    history = AgentMemory.history(config.memory)
-
     # Generate system prompt and add output schema specification
     system_prompt = SystemPromptGenerator.generate_prompt(prompt_specification)
 
     # Add output schema if available
     system_prompt_with_schema = with_output_schema(system_prompt, response_model)
+
+    tool_schemas =
+      if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
+
+    # Thinking is valid only under the system prompt and tools that produced it (a
+    # context provider, a tool change or the forced final call's schema can change
+    # them), so stale thinking is left out and this call's response is stamped.
+    prefix_key = ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas)
+
+    history =
+      config.memory
+      |> AgentMemory.drop_stale_thinking(prefix_key)
+      |> AgentMemory.history()
 
     # Convert history plain maps to Message structs
     history_messages =
@@ -286,13 +298,7 @@ defmodule Normandy.Agents.BaseAgent do
       ] ++ history_messages
 
     # Prepare tool schemas if tools are available
-    opts =
-      if has_tools?(config) do
-        tool_schemas = Registry.to_tool_schemas(config.tool_registry)
-        [tools: tool_schemas]
-      else
-        []
-      end
+    opts = if has_tools?(config), do: [tools: tool_schemas], else: []
 
     # Pass MCP server configs through to the LLM adapter
     opts =
@@ -307,8 +313,14 @@ defmodule Normandy.Agents.BaseAgent do
     opts = [{:json_retries, json_retries} | opts] ++ extra_opts
 
     # Wrap LLM call with resilience patterns
-    call_llm_with_resilience(config, messages, response_model, opts)
+    {response, usage, meta} = call_llm_with_resilience(config, messages, response_model, opts)
+    {stamp_prefix(response, prefix_key), usage, meta}
   end
+
+  defp stamp_prefix(%ToolCallResponse{} = response, prefix_key),
+    do: %{response | prefix_key: prefix_key}
+
+  defp stamp_prefix(response, _prefix_key), do: response
 
   # Private helper to call LLM with retry and circuit breaker protection.
   # The call returns {:ok, triple} | {:error, %LLMError{}} (ConverseResult.normalize/1),
@@ -938,12 +950,16 @@ defmodule Normandy.Agents.BaseAgent do
   # Runs inside the llm_call span: a failed stream throws here so the span emits
   # :exception rather than :stop.
   defp stream_llm_attempt(config, state, callback, llm_metadata) do
+    {messages, prefix_key} = build_stream_messages(config)
+
     case stream_response_from_llm(
            config,
-           build_stream_messages(config),
+           messages,
            stream_opts(config, callback) ++ task_budget_call_opts(config, state)
          ) do
       {:ok, final_message} ->
+        # The prefix this response was produced under, stamped when it is appended.
+        final_message = Map.put(final_message, :prefix_key, prefix_key)
         tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
 
         {final_message,
@@ -1113,9 +1129,8 @@ defmodule Normandy.Agents.BaseAgent do
   # turn survives AgentMemory.history/1 re-serialization. Without this, the
   # generic Map BaseIOSchema impl stringifies the whole response map and the
   # next LLM call loses its tool_use content blocks.
-  defp build_streaming_assistant_response(%{content: content}, tool_calls)
+  defp build_streaming_assistant_response(%{content: content} = response, tool_calls)
        when is_list(content) do
-    alias Normandy.Agents.ToolCallResponse
     alias Normandy.Components.ToolCall
 
     text =
@@ -1135,7 +1150,8 @@ defmodule Normandy.Agents.BaseAgent do
     %ToolCallResponse{
       content: if(text == "", do: nil, else: text),
       tool_calls: calls,
-      thinking: ToolCallResponse.thinking_blocks(content)
+      thinking: ToolCallResponse.thinking_blocks(content),
+      prefix_key: Map.get(response, :prefix_key)
     }
   end
 
@@ -1162,19 +1178,26 @@ defmodule Normandy.Agents.BaseAgent do
   # Build the [system | history] message list for a streaming LLM call.
   # History plain maps are converted to %Message{} structs so the adapter's
   # add_single_message picks them up (otherwise the catch-all drops them).
+  # The request messages, with thinking left out where the system prompt or tools
+  # changed since it was produced (see get_response_with_usage/3), and the prefix
+  # key this request runs under.
   defp build_stream_messages(config) do
+    system_prompt = SystemPromptGenerator.generate_prompt(config.prompt_specification)
+
+    tool_schemas =
+      if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
+
+    prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas)
+
     history_messages =
-      AgentMemory.history(config.memory)
+      config.memory
+      |> AgentMemory.drop_stale_thinking(prefix_key)
+      |> AgentMemory.history()
       |> Enum.map(fn %{role: role, content: content} ->
         %Message{role: role, content: content}
       end)
 
-    [
-      %Message{
-        role: "system",
-        content: SystemPromptGenerator.generate_prompt(config.prompt_specification)
-      }
-    ] ++ history_messages
+    {[%Message{role: "system", content: system_prompt}] ++ history_messages, prefix_key}
   end
 
   defp stream_opts(config, callback) do

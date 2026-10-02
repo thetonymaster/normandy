@@ -9,6 +9,11 @@ defmodule Normandy.Agents.ToolCallResponse do
   in their wire shape (string keys, with `signature` or `data`). They are sent
   back unchanged, first, when the turn is replayed: a thinking model needs
   them on the assistant message that carries the tool calls.
+
+  `:prefix_key` (see `prefix_key/2`) records the system prompt and tools the
+  response was produced under. The API accepts a thinking block only under that
+  same prefix, so `Normandy.Components.AgentMemory.drop_stale_thinking/2` drops
+  thinking whose key no longer matches. It is never sent to the API.
   """
 
   use Normandy.Schema
@@ -18,14 +23,28 @@ defmodule Normandy.Agents.ToolCallResponse do
   @type t :: %__MODULE__{
           content: String.t() | nil,
           tool_calls: [ToolCall.t()],
-          thinking: [map()]
+          thinking: [map()],
+          prefix_key: integer() | nil
         }
 
   schema do
     field(:content, :string, default: nil)
     field(:tool_calls, {:array, :struct}, default: [])
     field(:thinking, {:array, :map}, default: [])
+    field(:prefix_key, :integer, default: nil)
   end
+
+  @doc """
+  A key for the part of a request a thinking block is bound to besides the
+  messages: the system prompt and the tool set. The API binds tools as a set
+  sorted by name, so their order doesn't change the key.
+  """
+  @spec prefix_key(term(), [map()]) :: non_neg_integer()
+  def prefix_key(system_prompt, tools) do
+    :erlang.phash2({system_prompt, Enum.sort_by(tools, &tool_name/1)})
+  end
+
+  defp tool_name(tool), do: Map.get(tool, :name) || Map.get(tool, "name")
 
   @doc """
   The `thinking` and `redacted_thinking` blocks among response content blocks

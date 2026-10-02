@@ -155,6 +155,55 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   @doc """
+  Drops thinking that no longer applies under the current system prompt and tools,
+  given as `prefix_key` (see `Normandy.Agents.ToolCallResponse.prefix_key/2`).
+
+  Walking the active chain oldest first, a `ToolCallResponse` whose `:prefix_key`
+  differs loses its thinking. Earlier thinking is not part of a block's prefix, so
+  dropping a leading run leaves later blocks valid; once a block has been kept, a
+  dropped one breaks the chain and every later message loses its thinking too.
+  Responses without a key (stored before it existed) are left as they are.
+  """
+  @spec drop_stale_thinking(t(), integer()) :: t()
+  def drop_stale_thinking(%__MODULE__{} = memory, prefix_key) do
+    {entries, _state} =
+      memory
+      |> chain_newest_first()
+      |> Enum.reverse()
+      |> Enum.reduce({memory.entries, :leading}, fn %Entry{id: id} = entry, {entries, state} ->
+        case thinking_verdict(entry.content, prefix_key, state) do
+          {:keep, state} ->
+            {entries, state}
+
+          {:drop, state} ->
+            {Map.put(entries, id, %{entry | content: drop_thinking(entry.content)}), state}
+        end
+      end)
+
+    %{memory | entries: entries}
+  end
+
+  # state: :leading (no thinking kept yet), :kept (some kept), :broken (a block
+  # after a kept one was dropped).
+  defp thinking_verdict(content, prefix_key, state) do
+    cond do
+      not has_thinking?(content) -> {:keep, state}
+      state == :broken -> {:drop, :broken}
+      stale?(content, prefix_key) -> {:drop, if(state == :kept, do: :broken, else: :leading)}
+      true -> {:keep, :kept}
+    end
+  end
+
+  defp has_thinking?(%Normandy.Agents.ToolCallResponse{thinking: thinking}), do: thinking != []
+  defp has_thinking?(blocks) when is_list(blocks), do: Enum.any?(blocks, &thinking_block?/1)
+  defp has_thinking?(_content), do: false
+
+  defp stale?(%Normandy.Agents.ToolCallResponse{prefix_key: key}, current),
+    do: key != nil and key != current
+
+  defp stale?(_content, _current), do: false
+
+  @doc """
   Removes `thinking` and `redacted_thinking` blocks from a message's content:
   a `ToolCallResponse`'s `:thinking`, or the blocks of a content list. Other
   content is returned unchanged.

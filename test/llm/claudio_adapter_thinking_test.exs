@@ -14,6 +14,21 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
   alias Normandy.Test.FakeTool
   alias Normandy.Tools.Registry
 
+  # A context provider whose text changes on every call, so each request's
+  # system prompt differs from the last.
+  defmodule CountingProvider do
+    defstruct [:counter]
+
+    defimpl Normandy.Components.ContextProvider do
+      def title(_), do: "Call"
+
+      def get_info(%{counter: counter}) do
+        :counters.add(counter, 1, 1)
+        "call #{:counters.get(counter, 1)}"
+      end
+    end
+  end
+
   @thinking %{"type" => "thinking", "thinking" => "check the weather", "signature" => "sig1"}
   @redacted %{"type" => "redacted_thinking", "data" => "opaque"}
   @tool_use %{"type" => "tool_use", "id" => "t1", "name" => "weather", "input" => %{}}
@@ -120,6 +135,31 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
     end
   end
 
+  describe "a changed system prompt" do
+    test "the forced final call at max_tool_iterations does not replay the loop's thinking" do
+      script(__MODULE__.Forced)
+
+      agent =
+        BaseAgent.init(%{
+          client: client(__MODULE__.Forced),
+          model: "claude-opus-5-5",
+          tool_registry: Registry.new([%FakeTool{}]),
+          max_tool_iterations: 1
+        })
+
+      BaseAgent.run_with_tools(agent, "weather?")
+
+      assert_received {:body, first}
+      assert_received {:body, forced}
+
+      # The forced call asks for the output schema, so its system prompt differs and
+      # the loop's thinking no longer applies; the tool call itself still goes back.
+      refute first["system"] == forced["system"]
+      assistant = Enum.find(forced["messages"], &(&1["role"] == "assistant"))
+      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
+    end
+  end
+
   describe "streaming" do
     defp sse(events) do
       Enum.map_join(events, fn data ->
@@ -194,6 +234,30 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         |> Plug.Conn.put_resp_content_type("text/event-stream")
         |> Plug.Conn.send_resp(200, sse(if n == 0, do: first, else: second))
       end)
+    end
+
+    test "thinking from a different system prompt is not replayed" do
+      stream_script(__MODULE__.StreamChanged)
+
+      agent =
+        %{
+          client: client(__MODULE__.StreamChanged),
+          model: "claude-opus-5-5",
+          tool_registry: Registry.new([%FakeTool{}])
+        }
+        |> BaseAgent.init()
+        |> BaseAgent.register_context_provider("call", %CountingProvider{
+          counter: :counters.new(1, [])
+        })
+
+      BaseAgent.stream_with_tools(agent, "weather?", fn _, _ -> :ok end)
+
+      assert_received {:body, first}
+      assert_received {:body, second}
+      refute first["system"] == second["system"]
+
+      assistant = Enum.find(second["messages"], &(&1["role"] == "assistant"))
+      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
     end
 
     test "the tool results go back after the streamed thinking blocks" do

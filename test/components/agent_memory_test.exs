@@ -391,6 +391,50 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     end
   end
 
+  describe "drop_stale_thinking/2" do
+    # A thinking block is valid only under the system prompt and tools it was
+    # produced with (prefix_key). Earlier thinking blocks are not part of a block's
+    # prefix, so a leading run can go; removing one after a kept block breaks the
+    # chain for every later block.
+    @t [%{"type" => "thinking", "thinking" => "p", "signature" => "s"}]
+
+    defp stamped(keys) do
+      Enum.reduce(Enum.with_index(keys), AgentMemory.new_memory(), fn {key, i}, mem ->
+        mem
+        |> AgentMemory.add_message("user", "go #{i}")
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @t,
+          prefix_key: key,
+          tool_calls: [%ToolCall{id: "c#{i}", name: "w", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %ToolResult{tool_call_id: "c#{i}", output: "x"})
+      end)
+    end
+
+    defp kept(memory) do
+      for %Message{content: %ToolCallResponse{thinking: t}} <- AgentMemory.messages(memory),
+          do: t != []
+    end
+
+    test "blocks produced under the current prefix are kept" do
+      assert stamped([1, 1]) |> AgentMemory.drop_stale_thinking(1) |> kept() == [true, true]
+    end
+
+    test "a leading run under an old prefix is dropped and later blocks stay" do
+      assert stamped([1, 1, 2]) |> AgentMemory.drop_stale_thinking(2) |> kept() ==
+               [false, false, true]
+    end
+
+    test "a stale block after a kept one drops every later block" do
+      assert stamped([2, 1, 2]) |> AgentMemory.drop_stale_thinking(2) |> kept() ==
+               [true, false, false]
+    end
+
+    test "unstamped blocks (from before prefix_key existed) are left as they are" do
+      assert stamped([nil, nil]) |> AgentMemory.drop_stale_thinking(2) |> kept() == [true, true]
+    end
+  end
+
   describe "add_message/4" do
     test "turn_id: stores the message under the given turn, not the current one" do
       memory =
