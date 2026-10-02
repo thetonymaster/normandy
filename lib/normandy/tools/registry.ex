@@ -47,7 +47,9 @@ defmodule Normandy.Tools.Registry do
   @doc """
   Registers a tool in the registry.
 
-  The tool is indexed by its `tool_name`. Registering a second tool with the same
+  The tool is indexed by its `tool_name`, which must be 1 to 64 letters, digits,
+  underscores or dashes (what the API accepts); anything else raises `ArgumentError`
+  here rather than as a 400 on the first request. Registering a second tool with the same
   name raises `ArgumentError` (the model could only ever reach one of them); pass
   `replace: true` to replace the existing one.
 
@@ -62,6 +64,12 @@ defmodule Normandy.Tools.Registry do
   @spec register(t(), struct(), keyword()) :: t()
   def register(%__MODULE__{tools: tools} = registry, tool, opts \\ []) do
     tool_name = BaseTool.tool_name(tool)
+
+    unless valid_name?(tool_name) do
+      raise ArgumentError,
+            "Normandy.Tools.Registry.register/3: #{inspect(tool_name)} is not a valid tool name; " <>
+              "the API accepts 1 to 64 letters, digits, underscores and dashes"
+    end
 
     if Map.has_key?(tools, tool_name) and not Keyword.get(opts, :replace, false) do
       raise ArgumentError,
@@ -448,4 +456,7 @@ defmodule Normandy.Tools.Registry do
         false
     end
   end
+
+  # The names the Messages API accepts for a tool.
+  defp valid_name?(name), do: name =~ ~r/\A[a-zA-Z0-9_-]{1,64}\z/
 end

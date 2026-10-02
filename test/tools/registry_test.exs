@@ -58,6 +58,27 @@ defmodule NormandyTest.Tools.RegistryTest do
       assert Registry.count(registry) == 1
       assert {:ok, ^tool2} = Registry.get(registry, "calculator")
     end
+
+    test "a name the API would reject raises at registration" do
+      dotted = %Normandy.MCP.ToolWrapper{tool: %{name: "web.search"}}
+
+      assert_raise ArgumentError, ~r/"web.search" is not a valid tool name/, fn ->
+        Registry.register(Registry.new(), dotted)
+      end
+
+      too_long = %Normandy.MCP.ToolWrapper{tool: %{name: String.duplicate("a", 65)}}
+
+      assert_raise ArgumentError, ~r/is not a valid tool name/, fn ->
+        Registry.register(Registry.new(), too_long)
+      end
+    end
+
+    test "a 64-character name with dashes and underscores is accepted" do
+      name = "a-b_" <> String.duplicate("c", 60)
+      tool = %Normandy.MCP.ToolWrapper{tool: %{name: name}}
+
+      assert Registry.has_tool?(Registry.register(Registry.new(), tool), name)
+    end
   end
 
   describe "Registry.get/2" do
