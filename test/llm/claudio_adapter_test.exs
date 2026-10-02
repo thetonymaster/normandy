@@ -148,6 +148,21 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       assert %MultiField{chat_message: nil} = result
     end
 
+    defmodule NoChatMessage do
+      use Normandy.Schema
+
+      io_schema "no chat_message" do
+        field(:answer, :string, description: "the answer", required: true)
+      end
+    end
+
+    test ":fallback policy with a schema that has no :chat_message returns :invalid_output" do
+      assert {:error, %Normandy.LLMError{type: :invalid_output, reason: :some_reason}} =
+               ClaudioAdapter.apply_parse_failure(%NoChatMessage{}, "raw", :some_reason, %{
+                 on_parse_failure: :fallback
+               })
+    end
+
     test ":error policy returns {:error, reason}" do
       assert {:error,
               %Normandy.LLMError{type: :invalid_output, retryable?: false, reason: :some_reason}} =

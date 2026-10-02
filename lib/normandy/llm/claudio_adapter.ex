@@ -86,7 +86,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:authentication` (401), `:permission` (403), `:not_found` (404) and
     `:invalid_request` (other 4xx) are not retryable
   - `:unknown` covers anything else and is not retryable
-  - `on_parse_failure: :error` returns `type: :invalid_output`
+  - `on_parse_failure: :error` returns `type: :invalid_output`, and so does `:fallback`
+    when the schema has no `:chat_message` field to put the raw text in
 
   Claudio's client-level `retry:` (in `req_options` or the client config) retries HTTP
   failures before Normandy sees them; enabling it together with `retry_options`
@@ -994,83 +995,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   @doc false
-  def apply_parse_failure(schema, content, reason, context) do
-    case __on_parse_failure_policy__(context) do
-      :error ->
-        {:error,
-         LLMError.new(
-           type: :invalid_output,
-           retryable?: false,
-           detail: "model output did not match the schema",
-           reason: reason
-         )}
+  defdelegate apply_parse_failure(schema, content, reason, context),
+    to: Normandy.LLM.ParseFailure,
+    as: :apply
 
-      :fallback when is_binary(content) ->
-        report_parse_fallback(reason, content, "falling back to raw text")
-        Map.put(schema, :chat_message, content)
-
-      :fallback ->
-        report_parse_fallback(reason, content, "returning schema unchanged")
-        schema
-    end
-  end
-
-  # The model output can hold user data and be megabytes long, so the log and
-  # telemetry carry the failure's tag and the output's size, not the output.
-  defp report_parse_fallback(reason, content, action) do
-    require Logger
-    tag = reason_tag(reason)
-    bytes = if is_binary(content), do: byte_size(content), else: 0
-
-    Logger.warning(
-      "JSON parse failed; #{action}. reason=#{inspect(tag)}, model output: #{bytes} bytes"
-    )
-
-    :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
-      reason: tag,
-      content_bytes: bytes
-    })
-  end
-
-  defp reason_tag(reason)
-       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
-       do: elem(reason, 0)
-
-  defp reason_tag(reason) when is_atom(reason), do: reason
-  defp reason_tag(_reason), do: :unknown
-
-  # A per-call override, then client.options[:on_parse_failure], then the
-  # :normandy app env, then :fallback.
   @doc false
-  def __on_parse_failure_policy__(context) do
-    client_options =
-      case Map.get(context, :client) do
-        %{options: options} when is_map(options) -> options
-        _ -> %{}
-      end
-
-    policy =
-      Map.get(context, :on_parse_failure) ||
-        Map.get(client_options, :on_parse_failure) ||
-        Application.get_env(:normandy, :on_parse_failure, :fallback)
-
-    if policy in [:fallback, :error] do
-      policy
-    else
-      raise ArgumentError,
-            "Normandy.LLM.ClaudioAdapter: :on_parse_failure must be :fallback or :error; " <>
-              "got #{Describe.type_of(policy)}"
-    end
-  end
-
-  defp check_on_parse_failure!(nil), do: :ok
-  defp check_on_parse_failure!(policy) when policy in [:fallback, :error], do: :ok
-
-  defp check_on_parse_failure!(policy) do
-    raise ArgumentError,
-          "Normandy.LLM.ClaudioAdapter: client option :on_parse_failure must be :fallback " <>
-            "or :error; got #{Describe.type_of(policy)}"
-  end
+  defdelegate __on_parse_failure_policy__(context), to: Normandy.LLM.ParseFailure, as: :policy
 
   @doc false
   def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
@@ -1315,6 +1245,15 @@ defmodule Normandy.LLM.ClaudioAdapter do
     :fallbacks,
     :task_budget
   ]
+
+  defp check_on_parse_failure!(nil), do: :ok
+  defp check_on_parse_failure!(policy) when policy in [:fallback, :error], do: :ok
+
+  defp check_on_parse_failure!(policy) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client option :on_parse_failure must be :fallback " <>
+            "or :error; got #{Describe.type_of(policy)}"
+  end
 
   defp check_api_key!(key) when is_binary(key) and key != "", do: :ok
 

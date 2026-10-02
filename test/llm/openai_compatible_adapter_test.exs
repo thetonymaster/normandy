@@ -87,6 +87,45 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
   end
 
+  describe "converse/7 when the output does not parse" do
+    defmodule Answer do
+      use Normandy.Schema
+
+      io_schema "an answer" do
+        field(:answer, :string, description: "the answer", required: true)
+      end
+    end
+
+    defp prose_client(options) do
+      req_options =
+        stub(fn conn ->
+          Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "just prose"}}]})
+        end)
+
+      %Adapter{
+        api_key: "test-key",
+        base_url: "https://example.test/v1",
+        options: Map.put(options, :req_options, req_options)
+      }
+    end
+
+    defp converse_prose(options, schema) do
+      Model.converse(prose_client(options), "gpt-4o", nil, 1024, [], schema, [])
+    end
+
+    test "on_parse_failure: :error returns an :invalid_output error" do
+      assert {:error, %Normandy.LLMError{type: :invalid_output}} =
+               converse_prose(
+                 %{on_parse_failure: :error},
+                 %Normandy.Agents.BaseAgentOutputSchema{}
+               )
+    end
+
+    test "a schema without :chat_message has nothing to fall back to: :invalid_output" do
+      assert {:error, %Normandy.LLMError{type: :invalid_output}} = converse_prose(%{}, %Answer{})
+    end
+  end
+
   describe "build_body/4 with unset sampling parameters" do
     alias Normandy.LLM.OpenAICompatibleAdapter, as: A
 

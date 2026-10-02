@@ -47,6 +47,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLM.ParseFailure
   alias Normandy.LLMError
 
   @type t :: %__MODULE__{
@@ -162,10 +163,10 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
         {:ok, %Req.Response{status: status, body: resp_body}} when status in 200..299 ->
           content = A.extract_text(resp_body)
 
-          populated =
-            populate(content, response_model, client, model, temperature, max_tokens, messages)
-
-          {populated, Map.get(resp_body, "usage")}
+          case populate(content, response_model, client, model, temperature, max_tokens, messages) do
+            {:error, %Normandy.LLMError{}} = error -> error
+            populated -> {populated, Map.get(resp_body, "usage")}
+          end
 
         {:ok, %Req.Response{status: status, body: resp_body}} ->
           {:error, A.__to_llm_error__(status, resp_body)}
@@ -177,7 +178,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
     # Mirror ClaudioAdapter.convert_response_to_normandy/populate_standard_schema.
     # max_retries: 0 → one-shot parse: if content is valid JSON it populates
-    # the schema; if not, the prose fallback sets :chat_message directly.
+    # the schema; if not, :on_parse_failure decides (Normandy.LLM.ParseFailure).
     # No extra LLM round-trips are wasted for prose responses.
     defp populate(
            content,
@@ -199,8 +200,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
              max_retries: 0
            ) do
         {:ok, validated} -> validated
-        {:error, _} when is_binary(content) -> Map.put(schema, :chat_message, content)
-        {:error, _} -> schema
+        {:error, reason} -> ParseFailure.apply(schema, content, reason, %{client: client})
       end
     end
 
