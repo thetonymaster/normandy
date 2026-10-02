@@ -7,7 +7,9 @@ defmodule Normandy.AppEnvConfigTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Behaviours.SessionStore.Redis
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.LLM.{ClaudioAdapter, StructuredOutputs}
+  alias Normandy.LLM.Json.TestFixtures.MultiField
 
   defp put_env(key, value) do
     previous = Application.fetch_env(:normandy, key)
@@ -42,6 +44,23 @@ defmodule Normandy.AppEnvConfigTest do
                ClaudioAdapter.__on_parse_failure_policy__(%{
                  client: client(%{on_parse_failure: :fallback})
                })
+    end
+  end
+
+  describe ":adapter" do
+    defmodule TaggingJson do
+      @moduledoc false
+      def encode!(_value), do: "tagged"
+      def encode!(_value, _opts), do: "tagged-pretty"
+    end
+
+    test "is read when an io_schema struct is encoded, not when it was compiled" do
+      put_env(:adapter, TaggingJson)
+      value = %MultiField{}
+
+      assert BaseIOSchema.to_json(value) == "tagged"
+      assert BaseIOSchema.__str__(value) == "tagged"
+      assert BaseIOSchema.__rich__(value) == "tagged-pretty"
     end
   end
 

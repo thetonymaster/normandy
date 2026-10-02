@@ -368,10 +368,14 @@ defmodule Normandy.Schema do
 
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
-            @adapter Application.compile_env(:normandy, :adapter, Poison)
-            def __str__(str), do: @adapter.encode!(serializable(str))
-            def __rich__(str), do: @adapter.encode!(serializable(str), pretty: true)
-            def to_json(str), do: @adapter.encode!(serializable(str))
+            def __str__(str), do: adapter().encode!(serializable(str))
+            def __rich__(str), do: adapter().encode!(serializable(str), pretty: true)
+            def to_json(str), do: adapter().encode!(serializable(str))
+
+            # Read when encoding, like every other JSON call in Normandy: a value
+            # captured at compile time would ignore runtime config, and a release
+            # would refuse to boot when the two differ.
+            defp adapter, do: Application.get_env(:normandy, :adapter, Poison)
 
             # __meta__ is internal bookkeeping (module name, load state) and a
             # redact: true field is hidden everywhere, so neither goes to the
