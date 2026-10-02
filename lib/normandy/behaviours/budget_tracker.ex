@@ -5,7 +5,8 @@ defmodule Normandy.Behaviours.BudgetTracker do
   `check/3` is a pre-spend gate (returns `:ok` to proceed or `{:error, reason}`
   to deny before executing the tool call); `record/4` accounts for the call's
   result afterwards. `scope` identifies the budget owner
-  (`%{agent: name, model: model}`); `opts` is the `opts` half of the
+  (`%{agent: name, model: model}`). Agents without a `:name` share one scope per
+  model, so give each agent whose spend you track its own name. `opts` is the `opts` half of the
   `{module, opts}` ref in `Normandy.Behaviours.Config` (limits, a store
   handle, a name). The default impl `NoOp` preserves current (untracked)
   behavior.
