@@ -5,6 +5,33 @@ defmodule Normandy.Guardrails.Builtins.RegexGuardTest do
 
   @ssn_pattern ~r/\b\d{3}-\d{2}-\d{4}\b/
 
+  # A regex decoded after the process that compiled it is gone: its compiled form
+  # refers to a freed resource, as a regex stored by another VM does (a Tier-2
+  # config template carries its guardrails through the session store).
+  defp stored_regex(source, opts) do
+    parent = self()
+    spawn(fn -> send(parent, {:bin, :erlang.term_to_binary(Regex.compile!(source, opts))}) end)
+    bin = receive do: ({:bin, bin} -> bin)
+    Process.sleep(20)
+    :erlang.garbage_collect()
+    :erlang.binary_to_term(bin)
+  end
+
+  describe "a regex restored from storage" do
+    test "still matches, in both modes" do
+      ssn = stored_regex("\\b\\d{3}-\\d{2}-\\d{4}\\b", [])
+
+      assert {:error, [_]} = RegexGuard.check("SSN 123-45-6789", patterns: [ssn])
+      assert :ok = RegexGuard.check("no digits", patterns: [ssn])
+      assert :ok = RegexGuard.check("SSN 123-45-6789", patterns: [ssn], mode: :require)
+    end
+
+    test "keeps its options" do
+      word = stored_regex("secret", [:caseless])
+      assert {:error, [_]} = RegexGuard.check("SECRET", patterns: [word])
+    end
+  end
+
   describe "deny mode (default)" do
     test "passes when no pattern matches" do
       assert RegexGuard.check("no digits here", patterns: [@ssn_pattern]) == :ok

@@ -8,8 +8,9 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
 
   ## Options
 
-  - `:patterns` (required) — list of compiled `Regex.t()` values. Must be
-    non-empty.
+  - `:patterns` (required) — list of `Regex.t()` values. Must be non-empty. Each is
+    compiled again from its source and options when checked, so a pattern restored
+    from storage written by another node still works.
   - `:mode` (optional, default `:deny`) — `:deny` rejects when any pattern
     matches; `:require` rejects when no pattern matches.
   - `:field` (optional) — atom naming a field to extract from a struct or map
@@ -40,8 +41,18 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
             "#{inspect(__MODULE__)} :mode must be :deny or :require, got: #{inspect(mode)}"
     end
 
-    check_value(Field.extract!(__MODULE__, value, field), patterns, mode, field)
+    check_value(
+      Field.extract!(__MODULE__, value, field),
+      Enum.map(patterns, &usable/1),
+      mode,
+      field
+    )
   end
+
+  # A compiled regex is only valid in the VM that compiled it, and a guard spec can
+  # come from storage (a Tier-2 config template), so match with one compiled here
+  # from the pattern's source and options.
+  defp usable(regex), do: Regex.compile!(Regex.source(regex), Regex.opts(regex))
 
   defp check_value(nil, patterns, :require, field) do
     path = if field, do: [field], else: []
