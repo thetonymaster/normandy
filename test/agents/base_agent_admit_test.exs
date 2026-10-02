@@ -3,6 +3,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Guardrails.Builtins.MaxLength
+  alias Normandy.Test.StubClient
 
   defp base_config(extra) do
     Map.merge(
@@ -40,24 +41,6 @@ defmodule NormandyTest.BaseAgentAdmitTest do
     def check(_value, _opts), do: raise("boom")
   end
 
-  # Records any LLM invocation against the test pid carried in the struct, so
-  # the assertion is independent of which process runs a turn (gen_statem FSM).
-  defmodule SpyClient do
-    defstruct [:test_pid]
-
-    defimpl Normandy.Agents.Model do
-      def converse(config, _model, _temp, _max, _messages, response_model, _opts \\ []) do
-        send(config.test_pid, :llm_called)
-        response_model
-      end
-
-      def completitions(config, _model, _temp, _max, _messages, response_model) do
-        send(config.test_pid, :llm_called)
-        response_model
-      end
-    end
-  end
-
   describe "admit/2" do
     test "returns :ok when no input guardrails are configured" do
       agent = BaseAgent.init(base_config(%{}))
@@ -80,7 +63,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            client: %SpyClient{test_pid: self()},
+            client: %StubClient{notify: self()},
             input_guardrails: [{MaxLength, limit: 5}]
           })
         )
@@ -88,7 +71,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
       assert {:block, _} = BaseAgent.admit(agent, "too long input")
       assert BaseAgent.admit(agent, "ok") == :ok
 
-      refute_received :llm_called
+      refute_received {:converse, _, _}
     end
   end
 

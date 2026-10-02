@@ -7,25 +7,10 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Test.FakeTool
 
   defmodule Resp do
     defstruct content: "", tool_calls: nil
-  end
-
-  # Parameterized fake tool: name is configurable; run/1 returns {:ok, "charged"}.
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:name, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.Turn.ServerIntegrationTest.FakeTool do
-    def tool_name(t), do: t.name
-    def tool_description(_), do: "fake billing tool"
-    def input_schema(_), do: %{}
-    def run(_t), do: {:ok, "charged"}
   end
 
   # Builds a BaseAgentConfig with billing tool + Ruleset policy requiring approval for "billing".

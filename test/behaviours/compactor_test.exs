@@ -1,58 +1,8 @@
-defmodule Normandy.Test.BadResponseClient do
-  @moduledoc """
-  Stub LLM client that returns a response with no :chat_message key, triggering
-  {:error, {:unexpected_response, _}} in Summarizer.call_llm_for_summary/5.
-  """
-  use Normandy.Schema
-
-  schema do
-  end
-
-  defimpl Normandy.Agents.Model do
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(_client, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
-      do: %{}
-  end
-end
-
-defmodule Normandy.Test.EmptySummaryClient do
-  @moduledoc "Stub LLM client whose summary comes back empty."
-  use Normandy.Schema
-
-  schema do
-  end
-
-  defimpl Normandy.Agents.Model do
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts),
-      do: %{response_model | chat_message: ""}
-  end
-end
-
-defmodule Normandy.Test.LLMErrorCompactionClient do
-  @moduledoc "Stub LLM client whose summarization call fails."
-  use Normandy.Schema
-
-  schema do
-  end
-
-  defimpl Normandy.Agents.Model do
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(_client, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
-      do: {:error, Normandy.LLMError.new(type: :overloaded, status: 529, retryable?: true)}
-  end
-end
-
 defmodule Normandy.Behaviours.CompactorTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.Compactor
+  alias Normandy.Test.StubClient
 
   describe "NoOp default" do
     test "returns the acc unchanged and reports compacted: false" do
@@ -119,13 +69,13 @@ defmodule Normandy.Behaviours.CompactorTest do
     end
 
     test ":summarize strategy returns error meta when client returns unexpected response shape" do
-      # Normandy.Test.BadResponseClient.converse/7 returns %{} (no :chat_message key).
+      # The client returns %{} (no :chat_message key).
       # Summarizer.call_llm_for_summary/5 pattern-matches only %{chat_message: binary};
       # anything else falls to the `other ->` clause → {:error, {:unexpected_response, _}}.
       # That propagates through compress_conversation → ensure_within_limit as {:error, _},
       # hitting the error branch in Compactor.WindowManager.run/2:
       #   {:error, reason} -> {acc, %{compacted: false, error: reason}}
-      client = %Normandy.Test.BadResponseClient{}
+      client = %StubClient{reply: fn _ -> %{} end}
 
       # 10 messages with enough content so estimate_conversation_tokens exceeds the
       # tiny window (window: 80, reserved_tokens: 64 → target = 16 tokens), forcing
@@ -160,7 +110,11 @@ defmodule Normandy.Behaviours.CompactorTest do
 
       acc = %{
         memory: mem_with(msgs),
-        client: %Normandy.Test.LLMErrorCompactionClient{},
+        client: %StubClient{
+          reply: fn _ ->
+            {:error, Normandy.LLMError.new(type: :overloaded, status: 529, retryable?: true)}
+          end
+        },
         model: "m"
       }
 
@@ -179,7 +133,13 @@ defmodule Normandy.Behaviours.CompactorTest do
 
     test ":summarize keeps history when the summary comes back empty" do
       msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
-      acc = %{memory: mem_with(msgs), client: %Normandy.Test.EmptySummaryClient{}, model: "m"}
+
+      acc = %{
+        memory: mem_with(msgs),
+        client: %StubClient{reply: &%{&1 | chat_message: ""}},
+        model: "m"
+      }
+
       original_history = AgentMemory.history(acc.memory)
 
       {returned_acc, meta} =

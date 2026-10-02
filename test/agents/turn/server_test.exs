@@ -17,6 +17,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Test.FakeTool
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
   defmodule Resp do
@@ -28,31 +29,6 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def __rich__(resp), do: resp.content
     def to_json(resp), do: resp.content
     def get_schema(_resp), do: %{}
-  end
-
-  # Parameterized fake tool for testing tool dispatch/classification.
-  # `notify` is a pid that receives `{:tool_ran, name}` when the tool runs,
-  # letting tests assert whether a tool was executed or silently rejected.
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:name, :string)
-      field(:notify, :any, default: nil)
-      field(:sleep_ms, :integer, default: 0)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.Turn.ServerTest.FakeTool do
-    def tool_name(t), do: t.name
-    def tool_description(_), do: "fake"
-    def input_schema(_), do: %{}
-
-    def run(t) do
-      if t.sleep_ms > 0, do: Process.sleep(t.sleep_ms)
-      if t.notify, do: send(t.notify, {:tool_ran, t.name})
-      {:ok, "ran #{t.name}"}
-    end
   end
 
   # Input schema with a required field: `%{}` fails validation (ValidationError).

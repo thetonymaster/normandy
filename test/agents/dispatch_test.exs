@@ -19,22 +19,8 @@ defmodule Normandy.Agents.DispatchTest do
 
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Test.FakeTool
   alias Normandy.Tools.Registry
-
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchTest.FakeTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
-  end
 
   defmodule FakeToolWithPrepare do
     use Normandy.Schema

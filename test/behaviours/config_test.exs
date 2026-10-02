@@ -8,22 +8,8 @@ defmodule Normandy.Behaviours.ConfigTest do
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Test.FakeTool
   alias Normandy.Tools.Registry
-
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Behaviours.ConfigTest.FakeTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
-  end
 
   defp config_with_tools(tools) do
     %{name: "test-agent", model: "claude-3-5-sonnet-20241022", tool_registry: Registry.new(tools)}

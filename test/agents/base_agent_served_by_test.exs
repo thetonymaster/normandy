@@ -3,19 +3,18 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Test.StubClient
 
-  defmodule MetaClient do
-    defstruct meta: nil
-  end
+  # Answers "hi" with usage, plus `meta` as the third element when it is set.
+  defp meta_client(meta) do
+    usage = %{input_tokens: 1, output_tokens: 1}
 
-  defimpl Normandy.Agents.Model, for: Normandy.Agents.BaseAgentServedByTest.MetaClient do
-    def completitions(_c, _m, _t, _mt, _msgs, response_model), do: response_model
-
-    def converse(client, _m, _t, _mt, _msgs, response_model, _opts) do
-      response = Map.put(response_model, :chat_message, "hi")
-      usage = %{input_tokens: 1, output_tokens: 1}
-      if client.meta, do: {response, usage, client.meta}, else: {response, usage}
-    end
+    %StubClient{
+      reply: fn response_model ->
+        response = Map.put(response_model, :chat_message, "hi")
+        if meta, do: {response, usage, meta}, else: {response, usage}
+      end
+    }
   end
 
   def forward_stop(_event, _measurements, metadata, test_pid),
@@ -49,12 +48,12 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
   end
 
   test "llm_call stop metadata carries served_by when the model reports it" do
-    {metadata, _log} = run_and_capture_stop(%MetaClient{meta: %{served_by: "claude-opus-5"}})
+    {metadata, _log} = run_and_capture_stop(meta_client(%{served_by: "claude-opus-5"}))
     assert metadata.served_by == "claude-opus-5"
   end
 
   test "llm_call stop metadata has no served_by when the model reports none" do
-    {metadata, _log} = run_and_capture_stop(%MetaClient{meta: nil})
+    {metadata, _log} = run_and_capture_stop(meta_client(nil))
     refute Map.has_key?(metadata, :served_by)
   end
 
@@ -63,7 +62,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
     Logger.configure(level: :info)
     on_exit(fn -> Logger.configure(level: previous) end)
 
-    {_metadata, log} = run_and_capture_stop(%MetaClient{meta: %{served_by: "claude-opus-5"}})
+    {_metadata, log} = run_and_capture_stop(meta_client(%{served_by: "claude-opus-5"}))
 
     assert log =~ "normandy llm call stop"
     assert log =~ "served_by=claude-opus-5"

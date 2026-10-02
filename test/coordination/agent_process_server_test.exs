@@ -10,26 +10,11 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Test.FakeTool
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
   defmodule Resp do
     defstruct content: "", tool_calls: nil
-  end
-
-  # A configurable fake billing tool used by the approval test (Task 4).
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:name, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Coordination.AgentProcessServerTest.FakeTool do
-    def tool_name(t), do: t.name
-    def tool_description(_), do: "fake billing tool"
-    def input_schema(_), do: %{}
-    def run(_t), do: {:ok, "charged"}
   end
 
   # A plain BaseAgentConfig template (client is nil; the fake LLM is injected via handlers).

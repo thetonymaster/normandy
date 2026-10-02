@@ -1,37 +1,3 @@
-defmodule Normandy.Test.TupleSummarizerClient do
-  @moduledoc false
-  use Normandy.Schema
-
-  schema do
-  end
-
-  defimpl Normandy.Agents.Model do
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-      # Mirrors ClaudioAdapter: returns {struct, usage} tuple on success.
-      {%{response_model | chat_message: "tuple-summary"}, %{tokens: 1}}
-    end
-  end
-end
-
-defmodule Normandy.Test.LLMErrorSummarizerClient do
-  @moduledoc false
-  use Normandy.Schema
-
-  schema do
-  end
-
-  defimpl Normandy.Agents.Model do
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(_client, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
-      do: {:error, Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)}
-  end
-end
-
 defmodule Normandy.Context.SummarizerTest do
   use ExUnit.Case, async: true
 
@@ -42,6 +8,7 @@ defmodule Normandy.Context.SummarizerTest do
   alias Normandy.Components.Message
   alias Normandy.Context.Summarizer
   alias Normandy.Test.MockSummarizerClient
+  alias Normandy.Test.StubClient
 
   setup do
     # Create a mock client for summarization
@@ -101,7 +68,13 @@ defmodule Normandy.Context.SummarizerTest do
     end
 
     test "succeeds when the client returns a {struct, usage} tuple (ClaudioAdapter shape)" do
-      client = %Normandy.Test.TupleSummarizerClient{}
+      # Mirrors ClaudioAdapter: returns a {struct, usage} tuple on success.
+      client = %StubClient{
+        reply: fn response_model ->
+          {%{response_model | chat_message: "tuple-summary"}, %{tokens: 1}}
+        end
+      }
+
       agent = BaseAgent.init(%{client: client, model: "test-model", temperature: 0.7})
 
       messages = [
@@ -134,7 +107,11 @@ defmodule Normandy.Context.SummarizerTest do
     test "summarize_messages returns the LLMError instead of an empty summary" do
       agent =
         BaseAgent.init(%{
-          client: %Normandy.Test.LLMErrorSummarizerClient{},
+          client: %StubClient{
+            reply: fn _ ->
+              {:error, Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)}
+            end
+          },
           model: "test-model",
           temperature: nil
         })
