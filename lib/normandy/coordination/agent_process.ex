@@ -54,6 +54,8 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
+
+  @agent_id_key :"$normandy_agent_id"
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
 
@@ -180,6 +182,23 @@ defmodule Normandy.Coordination.AgentProcess do
     GenServer.call(server, :get_id)
   end
 
+  @doc false
+  # The agent id of a local agent process, read from its process dictionary
+  # without a call: `{:ok, id}`, or `:error` if the process is gone.
+  @spec agent_id_of(pid()) :: {:ok, agent_id()} | :error
+  def agent_id_of(pid) when is_pid(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dictionary} ->
+        case List.keyfind(dictionary, @agent_id_key, 0) do
+          {_key, id} -> {:ok, id}
+          nil -> :error
+        end
+
+      nil ->
+        :error
+    end
+  end
+
   @doc """
   Returns agent statistics and metadata.
 
@@ -232,6 +251,8 @@ defmodule Normandy.Coordination.AgentProcess do
   def init(opts) do
     agent = Keyword.fetch!(opts, :agent)
     agent_id = Keyword.get(opts, :agent_id, UUID.uuid4())
+    # Readable without a call (see agent_id_of/1), so a busy agent can be listed.
+    Process.put(@agent_id_key, agent_id)
     context_pid = Keyword.get(opts, :context_pid)
     turn_engine = Keyword.get(opts, :turn_engine, :inline)
 

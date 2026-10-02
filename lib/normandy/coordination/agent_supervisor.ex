@@ -138,12 +138,11 @@ defmodule Normandy.Coordination.AgentSupervisor do
     |> DynamicSupervisor.which_children()
     |> Enum.filter(fn {_id, pid, _type, _modules} -> is_pid(pid) end)
     |> Enum.flat_map(fn {_id, pid, _type, _modules} ->
-      # A child can exit between which_children/1 and this call (before the
-      # supervisor has processed the exit); it is no longer an agent to list.
-      try do
-        [{pid, AgentProcess.get_id(pid)}]
-      catch
-        :exit, _reason -> []
+      # Read without calling the agent, so one busy in a long call is still listed.
+      # A child that exited after which_children/1 is no longer an agent to list.
+      case AgentProcess.agent_id_of(pid) do
+        {:ok, id} -> [{pid, id}]
+        :error -> []
       end
     end)
   end

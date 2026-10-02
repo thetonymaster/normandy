@@ -183,6 +183,21 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       assert {:error, :not_found} = AgentSupervisor.find_agent(sup, "nonexistent")
     end
 
+    test "finds an agent that is busy handling a call", %{agent: agent} do
+      {:ok, sup} = AgentSupervisor.start_link()
+      {:ok, pid} = AgentSupervisor.start_agent(sup, agent: agent, agent_id: "busy")
+
+      # A suspended agent answers no calls, like one running a long LLM call.
+      :sys.suspend(pid)
+      {elapsed_us, result} = :timer.tc(fn -> AgentSupervisor.find_agent(sup, "busy") end)
+      listed = AgentSupervisor.list_agents(sup)
+      :sys.resume(pid)
+
+      assert result == {:ok, pid}
+      assert elapsed_us < 1_000_000
+      assert [{^pid, "busy"}] = listed
+    end
+
     test "finds correct agent among multiple", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
 
