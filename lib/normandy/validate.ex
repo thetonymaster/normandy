@@ -382,8 +382,9 @@ defmodule Normandy.Validate do
 
   defp missing?(changeset, field) when is_atom(field) do
     case get_field(changeset, field) do
+      # Whitespace-only is blank too, as cast/4 already treats it.
       value when is_binary(value) ->
-        value == ""
+        String.trim(value) == ""
 
       nil ->
         true

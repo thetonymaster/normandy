@@ -21,4 +21,13 @@ defmodule Normandy.ValidateValidateTest do
     assert %Validate{valid?: false, errors: [name: {"can't be blank", _}]} =
              Validate.validate(%Profile{}, %{"nickname" => "a"})
   end
+
+  test "a required field holding only whitespace counts as blank" do
+    assert %Validate{valid?: false, errors: [name: {"can't be blank", _}]} =
+             Validate.validate(%Profile{name: "  \n"}, %{})
+  end
+
+  test "a required field with text around whitespace is present" do
+    assert %Validate{valid?: true} = Validate.validate(%Profile{name: " Ana "}, %{})
+  end
 end
