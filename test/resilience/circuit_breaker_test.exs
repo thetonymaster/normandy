@@ -59,6 +59,17 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       GenServer.stop(cb)
     end
 
+    test "an exit or a throw is a recorded failure, returned as an error" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2)
+
+      assert {:error, {:exit, :boom}} = CircuitBreaker.call(cb, fn -> exit(:boom) end)
+      assert CircuitBreaker.metrics(cb).failure_count == 1
+
+      assert {:error, {:throw, :nope}} = CircuitBreaker.call(cb, fn -> throw(:nope) end)
+      assert CircuitBreaker.state(cb) == :open
+      GenServer.stop(cb)
+    end
+
     test "increments failure count on errors" do
       {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 3)
 

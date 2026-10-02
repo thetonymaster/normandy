@@ -128,7 +128,9 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   - `{:ok, result}` - Function executed successfully
   - `{:error, :open}` - Circuit is open, request blocked
-  - `{:error, reason}` - Function failed with reason
+  - `{:error, reason}` - Function failed with reason; a raise is
+    `{:error, {:exception, e}}`, an exit `{:error, {:exit, reason}}` and a throw
+    `{:error, {:throw, value}}`, each recorded as a failure
 
   ## Examples
 
@@ -335,6 +337,16 @@ defmodule Normandy.Resilience.CircuitBreaker do
     error ->
       GenServer.call(server, {:record_failure})
       {:error, {:exception, error}}
+  catch
+    # An exit or throw is a failure too (as Retry treats it); otherwise a call
+    # that exits in half-open would leave its slot taken and the breaker stuck.
+    :exit, reason ->
+      GenServer.call(server, {:record_failure})
+      {:error, {:exit, reason}}
+
+    thrown ->
+      GenServer.call(server, {:record_failure})
+      {:error, {:throw, thrown}}
   end
 
   defp handle_success(state) do
