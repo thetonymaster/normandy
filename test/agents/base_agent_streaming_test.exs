@@ -217,6 +217,16 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
   end
 
   describe "stream_response/3" do
+    test "the returned response carries no internal bookkeeping keys" do
+      config = BaseAgent.init(%{client: %MockStreamingClient{}, model: "claude-3"})
+
+      {_config, response} =
+        BaseAgent.stream_response(config, %{chat_message: "Hi"}, fn _, _ -> :ok end)
+
+      refute Map.has_key?(response, :tool_calls)
+      refute Map.has_key?(response, :prefix_key)
+    end
+
     test "streams text response with callback" do
       client = %MockStreamingClient{}
 

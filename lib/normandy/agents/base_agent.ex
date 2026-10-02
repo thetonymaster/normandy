@@ -886,8 +886,9 @@ defmodule Normandy.Agents.BaseAgent do
   # Streaming analog of run_turn/2. Admission (input guardrails + memory init,
   # NO schema validation — streaming parity) before Turn.step(:start), then drive
   # the FSM with the streaming handler set. Returns {config, final_response}; the
-  # synthetic :tool_calls key (added so the FSM could branch) is stripped from the
-  # returned response. A thrown stream error is raised as a Normandy.LLMError.
+  # synthetic :tool_calls key (added so the FSM could branch) and the :prefix_key
+  # stamp are stripped from the returned response. A thrown stream error is raised
+  # as a Normandy.LLMError.
   defp run_stream_turn(config, user_input, callback) when is_function(callback, 2) do
     config = admit_stream_turn_input(config, user_input)
 
@@ -900,7 +901,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     try do
       {config, final_state} = Driver.drive(state, streaming_handlers(callback), config)
-      {config, Map.delete(final_state.final_response, :tool_calls)}
+      {config, Map.drop(final_state.final_response, [:tool_calls, :prefix_key])}
     catch
       {:stream_turn_error, error} ->
         raise LLMError.wrap(error)
