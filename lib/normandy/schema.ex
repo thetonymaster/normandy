@@ -987,6 +987,12 @@ defmodule Normandy.Schema do
               "Virtual fields are computed and not part of the input data."
     end
 
+    if compute_fn && not is_virtual do
+      raise ArgumentError,
+            "field `#{name}` has compute: but is not virtual; computed fields need " <>
+              "virtual: true (a compute: on a stored field is never applied)"
+    end
+
     if Keyword.get(opts, :required, false) do
       Module.put_attribute(mod, :schema_required_fields, name)
     end

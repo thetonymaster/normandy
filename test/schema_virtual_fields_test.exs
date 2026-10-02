@@ -170,6 +170,21 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
         end
       end
     end
+
+    test "compute: needs virtual: true (it is never applied otherwise)" do
+      assert_raise ArgumentError, ~r/field `total` has compute: but is not virtual/, fn ->
+        defmodule InvalidComputeNotVirtual do
+          use Normandy.Schema
+
+          schema do
+            field(:price, :float)
+            field(:total, :float, compute: &__MODULE__.total/1)
+          end
+
+          def total(s), do: s.price
+        end
+      end
+    end
   end
 
   describe "io_schema with virtual fields" do
