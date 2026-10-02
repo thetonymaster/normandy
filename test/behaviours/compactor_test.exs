@@ -69,13 +69,13 @@ defmodule Normandy.Behaviours.CompactorTest do
     end
 
     test ":summarize strategy returns error meta when client returns unexpected response shape" do
-      # The client returns %{} (no :chat_message key).
+      # The client returns a struct with no :chat_message key.
       # Summarizer.call_llm_for_summary/5 pattern-matches only %{chat_message: binary};
       # anything else falls to the `other ->` clause → {:error, {:unexpected_response, _}}.
       # That propagates through compress_conversation → ensure_within_limit as {:error, _},
       # hitting the error branch in Compactor.WindowManager.run/2:
       #   {:error, reason} -> {acc, %{compacted: false, error: reason}}
-      client = %StubClient{reply: fn _ -> %{} end}
+      client = %StubClient{reply: fn _ -> %Normandy.Agents.ToolCallResponse{} end}
 
       # 10 messages with enough content so estimate_conversation_tokens exceeds the
       # tiny window (window: 80, reserved_tokens: 64 → target = 16 tokens), forcing

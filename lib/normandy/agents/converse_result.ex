@@ -7,9 +7,11 @@ defmodule Normandy.Agents.ConverseResult do
   (and, in raw mode, the same shapes with a binary), or `{:error, %Normandy.LLMError{}}`.
   `meta` carries per-call facts that are not token usage, such as `:served_by`. Bare and
   2-tuple returns stay accepted so third-party `Model` implementations keep working; an
-  `{:error, term}` that is not an `LLMError` becomes `type: :unknown`.
+  `{:error, term}` that is not an `LLMError` becomes `type: :unknown`. Any other return
+  raises `ArgumentError`.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLMError
 
   @spec normalize(term()) :: {:ok, {term(), map() | nil, map()}} | {:error, LLMError.t()}
@@ -31,5 +33,17 @@ defmodule Normandy.Agents.ConverseResult do
   def normalize(response) when is_struct(response) or is_binary(response),
     do: {:ok, {response, nil, %{}}}
 
-  def normalize(other), do: {:ok, {other, nil, %{}}}
+  # Anything else is a Model implementation bug (nil, a plain map, {:ok, struct}).
+  # Passing it on as the response failed later, far from the cause.
+  def normalize(other) do
+    raise ArgumentError,
+          "Normandy.Agents.ConverseResult.normalize/1: converse/7 must return a struct or " <>
+            "binary response, {response, usage}, {response, usage, meta} or " <>
+            "{:error, reason}; got #{describe(other)}"
+  end
+
+  defp describe(tuple) when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+    do: "a {#{inspect(elem(tuple, 0))}, ...} tuple"
+
+  defp describe(other), do: Describe.type_of(other)
 end

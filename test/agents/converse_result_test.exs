@@ -38,8 +38,16 @@ defmodule Normandy.Agents.ConverseResultTest do
              ConverseResult.normalize({:error, :boom})
   end
 
-  test "any other term is passed through as the response" do
-    assert {:ok, {nil, nil, %{}}} = ConverseResult.normalize(nil)
+  test "any other shape raises, naming the function and what came back" do
+    for {other, described} <- [
+          {nil, "nil"},
+          {%{content: "hi"}, "a map"},
+          {{:ok, %R{}}, "a {:ok, ...} tuple"}
+        ] do
+      error = assert_raise ArgumentError, fn -> ConverseResult.normalize(other) end
+      assert error.message =~ "ConverseResult.normalize/1"
+      assert error.message =~ "got #{described}"
+    end
   end
 
   test "a non-map meta raises, naming the function" do
