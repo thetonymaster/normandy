@@ -37,7 +37,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
      and visible to the peer via its own Repo instance.
   2. Sets pool mode to :auto so all spawned processes (Turn.Server, Tasks) can
      check out their own connections without explicit allow-listing.
-  3. Cleans up the session row in on_exit.
+  3. Cleans up the session row in on_exit (before restoring :manual mode).
 
   ## Tag behaviour note
 
@@ -88,21 +88,18 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
       sid = "eager-handoff-#{System.unique_integer([:positive])}"
 
       on_exit(fn ->
-        # Restore manual mode and clean up the test session row.
-        Sandbox.mode(Normandy.TestRepo, :manual)
+        # Delete the committed session row while the repo is still in :auto mode:
+        # in :manual this process has no connection, and the row would outlive the
+        # test (ResumeReaperIntegrationTest reaps every eager row it finds).
+        import Ecto.Query
 
-        try do
-          import Ecto.Query
-
-          Normandy.TestRepo.delete_all(
-            from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
-              where: s.session_id == ^sid
-            )
+        Normandy.TestRepo.delete_all(
+          from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
+            where: s.session_id == ^sid
           )
-        rescue
-          _ -> :ok
-        end
+        )
 
+        Sandbox.mode(Normandy.TestRepo, :manual)
         Sandbox.checkin(Normandy.TestRepo)
       end)
 
