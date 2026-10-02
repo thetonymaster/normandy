@@ -483,7 +483,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
       %{
         type: "message_delta",
         delta: data_get(data, :delta) |> stringify_keys(),
-        usage: data_get(data, :usage) |> stringify_keys()
+        usage: data_get(data, :usage) |> stringify_keys(),
+        # Top level, beside delta and usage (after a mid-stream fallback).
+        input_transformations: data_get(data, :input_transformations) |> stringify_keys()
       }
     end
 

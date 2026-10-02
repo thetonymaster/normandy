@@ -963,10 +963,27 @@ defmodule Normandy.Agents.BaseAgent do
         tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
 
         {final_message,
-         Map.merge(llm_metadata, %{has_tool_calls: tcs != [], tool_call_count: length(tcs)})}
+         llm_metadata
+         |> Map.merge(%{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
+         |> Map.merge(stream_meta(final_message))}
 
       {:error, error} ->
         throw({:stream_turn_error, error, config})
+    end
+  end
+
+  # The streamed counterpart of the adapter's response_meta/1. Streaming calls
+  # cannot use :fallbacks, so message_start's model is the one that served.
+  defp stream_meta(final_message) do
+    served_by =
+      case Map.get(final_message, :model) do
+        model when is_binary(model) -> %{served_by: model}
+        _ -> %{}
+      end
+
+    case Map.get(final_message, :input_transformations) do
+      [_ | _] = transformations -> Map.put(served_by, :input_transformations, transformations)
+      _ -> served_by
     end
   end
 

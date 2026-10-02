@@ -35,6 +35,41 @@ defmodule Normandy.Components.StreamProcessorTest do
     end
   end
 
+  describe "build_final_message/1 input_transformations" do
+    @dropped %{"type" => "thinking_dropped", "path" => "messages.1.content.0"}
+
+    test "keeps the input_transformations reported in message_start" do
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [@dropped]
+    end
+
+    test "a message_delta's input_transformations replace the message_start ones" do
+      later = %{@dropped | "path" => "messages.3.content.0"}
+
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_delta", delta: %{}, usage: nil, input_transformations: [later]},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [later]
+    end
+
+    test "a message_delta without them keeps the message_start ones" do
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_delta", delta: %{"stop_reason" => "end_turn"}, usage: nil},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [@dropped]
+    end
+  end
+
   describe "build_final_message/1" do
     test "builds complete message from text events" do
       events = [

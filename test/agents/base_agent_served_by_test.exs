@@ -21,7 +21,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
     do: send(test_pid, {:stop, metadata})
 
   # Returns {stop_metadata, captured_log}. Logs are captured so the run stays quiet.
-  defp run_and_capture_stop(client) do
+  defp run_and_capture_stop(client, run \\ &BaseAgent.run(&1, "hello")) do
     test_pid = self()
     id = "served-by-#{System.unique_integer([:positive])}"
 
@@ -37,7 +37,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
 
       log =
         ExUnit.CaptureLog.capture_log([metadata: [:served_by]], fn ->
-          BaseAgent.run(agent, "hello")
+          run.(agent)
         end)
 
       assert_receive {:stop, metadata}
@@ -66,6 +66,111 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
 
     assert log =~ "normandy llm call stop"
     assert log =~ "served_by=claude-opus-5"
+  end
+
+  describe "streaming" do
+    alias Normandy.LLM.ClaudioAdapter
+
+    @streamed_drop %{
+      "type" => "thinking_dropped",
+      "path" => "messages.1.content.0",
+      "reason" => "prefix_binding_mismatch"
+    }
+
+    defp sse(events) do
+      Enum.map_join(events, fn data ->
+        "event: #{data["type"]}\ndata: #{Jason.encode!(data)}\n\n"
+      end)
+    end
+
+    # A one-text-block streamed reply. `start` is merged into message_start's
+    # message, `delta` into the message_delta event.
+    defp stream_client(name, start, delta) do
+      events = [
+        %{
+          "type" => "message_start",
+          "message" =>
+            Map.merge(
+              %{
+                "id" => "msg_1",
+                "type" => "message",
+                "role" => "assistant",
+                "model" => "claude-opus-5-5",
+                "content" => [],
+                "usage" => %{"input_tokens" => 1, "output_tokens" => 0}
+              },
+              start
+            )
+        },
+        %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{"type" => "text", "text" => ""}
+        },
+        %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "text_delta", "text" => "hi"}
+        },
+        %{"type" => "content_block_stop", "index" => 0},
+        Map.merge(
+          %{
+            "type" => "message_delta",
+            "delta" => %{"stop_reason" => "end_turn"},
+            "usage" => %{"output_tokens" => 1}
+          },
+          delta
+        ),
+        %{"type" => "message_stop"}
+      ]
+
+      Req.Test.stub(name, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, sse(events))
+      end)
+
+      %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, name}, retry: false]}
+      }
+    end
+
+    defp stream_and_capture_stop(client) do
+      run_and_capture_stop(client, fn agent ->
+        BaseAgent.stream_response(agent, "hello", fn _, _ -> :ok end)
+      end)
+    end
+
+    test "llm_call stop metadata carries served_by" do
+      {metadata, _log} = stream_and_capture_stop(stream_client(__MODULE__.Served, %{}, %{}))
+      assert metadata.served_by == "claude-opus-5-5"
+    end
+
+    test "llm_call stop metadata carries message_start's input_transformations, logged" do
+      client =
+        stream_client(__MODULE__.Start, %{"input_transformations" => [@streamed_drop]}, %{})
+
+      {metadata, log} = stream_and_capture_stop(client)
+
+      assert metadata.input_transformations == [@streamed_drop]
+      assert log =~ "thinking block dropped by the API"
+      assert log =~ "messages.1.content.0"
+    end
+
+    test "message_delta's input_transformations replace message_start's" do
+      later = %{@streamed_drop | "path" => "messages.3.content.0"}
+
+      client =
+        stream_client(
+          __MODULE__.Delta,
+          %{"input_transformations" => [@streamed_drop]},
+          %{"input_transformations" => [later]}
+        )
+
+      {metadata, _log} = stream_and_capture_stop(client)
+      assert metadata.input_transformations == [later]
+    end
   end
 
   describe "thinking blocks the API dropped" do

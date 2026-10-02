@@ -131,11 +131,13 @@ defmodule Normandy.Components.StreamProcessor do
   defp extract_text_delta(_), do: nil
 
   defp process_event(%{type: "message_start", message: message}, acc) do
-    Map.merge(acc, %{
+    acc
+    |> Map.merge(%{
       id: message["id"],
       model: message["model"],
       role: message["role"]
     })
+    |> maybe_set_input_transformations(message["input_transformations"])
   end
 
   defp process_event(%{type: "content_block_start", content_block: block, index: index}, acc) do
@@ -169,10 +171,13 @@ defmodule Normandy.Components.StreamProcessor do
     %{acc | content: updated_content}
   end
 
-  defp process_event(%{type: "message_delta", delta: delta, usage: usage}, acc) do
+  # After a mid-stream fallback, message_delta repeats input_transformations with the
+  # serving model's entries, replacing the message_start ones.
+  defp process_event(%{type: "message_delta", delta: delta, usage: usage} = event, acc) do
     acc
     |> maybe_set_stop_reason(delta["stop_reason"])
     |> maybe_update_usage(usage)
+    |> maybe_set_input_transformations(Map.get(event, :input_transformations))
   end
 
   # A finished tool_use block's accumulated JSON is decoded. Input that does not
@@ -234,6 +239,11 @@ defmodule Normandy.Components.StreamProcessor do
 
   defp maybe_set_stop_reason(acc, nil), do: acc
   defp maybe_set_stop_reason(acc, reason), do: Map.put(acc, :stop_reason, reason)
+
+  defp maybe_set_input_transformations(acc, nil), do: acc
+
+  defp maybe_set_input_transformations(acc, transformations),
+    do: Map.put(acc, :input_transformations, transformations)
 
   defp maybe_update_usage(acc, nil), do: acc
 
