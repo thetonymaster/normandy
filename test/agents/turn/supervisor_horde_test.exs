@@ -83,8 +83,20 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
       # Logger's translator drops SASL reports and rewrites the others into text,
       # so it is off while these (sync) tests run and the handler sees raw reports.
       %{filters: filters} = :logger.get_primary_config()
-      {_, translator} = List.keyfind(filters, :logger_translator, 0)
+
+      translator =
+        case List.keyfind(filters, :logger_translator, 0) do
+          {_, translator} -> translator
+          nil -> flunk("Logger has no :logger_translator primary filter to switch off")
+        end
+
       :ok = :logger.remove_primary_filter(:logger_translator)
+
+      # Registered before anything else can fail, so the filter always comes back.
+      on_exit(fn ->
+        :logger.remove_primary_filter(:logger_translator)
+        :logger.add_primary_filter(:logger_translator, translator)
+      end)
 
       handler = :"horde_reports_#{System.unique_integer([:positive])}"
 
@@ -95,11 +107,7 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
           filter_default: :log
         })
 
-      on_exit(fn ->
-        :logger.remove_handler(handler)
-        :logger.remove_primary_filter(:logger_translator)
-        :logger.add_primary_filter(:logger_translator, translator)
-      end)
+      on_exit(fn -> :logger.remove_handler(handler) end)
 
       :ok
     end

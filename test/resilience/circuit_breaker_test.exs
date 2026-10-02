@@ -1,6 +1,8 @@
 defmodule Normandy.Resilience.CircuitBreakerTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Resilience.CircuitBreaker
 
   describe "start_link/1" do
@@ -216,21 +218,20 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       # Open the circuit
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
 
-      # Wait for half-open
-      Process.sleep(100)
-      assert CircuitBreaker.state(cb) == :half_open
+      assert wait_until(fn -> CircuitBreaker.state(cb) == :half_open end)
 
-      # First call should be allowed
+      # First call is allowed, and holds the only half-open slot until released
+      test_pid = self()
+
       task1 =
         Task.async(fn ->
           CircuitBreaker.call(cb, fn ->
-            Process.sleep(50)
-            {:ok, "first"}
+            send(test_pid, {:first_running, self()})
+            receive do: (:release -> {:ok, "first"})
           end)
         end)
 
-      # Give first task time to start
-      Process.sleep(10)
+      assert_receive {:first_running, first}
 
       # Second call should be rejected (circuit is half-open with max 1 call)
       result2 =
@@ -240,7 +241,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
 
       assert result2 == {:error, :open}
 
-      # Wait for first task
+      send(first, :release)
       assert Task.await(task1) == {:ok, "first"}
 
       GenServer.stop(cb)

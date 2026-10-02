@@ -508,7 +508,8 @@ defmodule Normandy.LLM.JsonDeserializerTest do
         handler_id,
         [:normandy, :json_deserializer, :recovery],
         fn name, measurements, metadata, %{test_pid: pid} ->
-          send(pid, {:telemetry, name, measurements, metadata})
+          # Handlers are global and the module is async: only this test's process.
+          if self() == pid, do: send(pid, {:telemetry, name, measurements, metadata})
         end,
         %{test_pid: test_pid}
       )

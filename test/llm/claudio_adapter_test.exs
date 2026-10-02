@@ -201,7 +201,8 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         id,
         [:normandy, :json_deserializer, :fallback],
         fn _, _, meta, _ ->
-          send(parent, {:fallback_meta, meta})
+          # Handlers are global and the module is async: only this test's process.
+          if self() == parent, do: send(parent, {:fallback_meta, meta})
         end,
         nil
       )

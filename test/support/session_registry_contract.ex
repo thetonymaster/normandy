@@ -1,6 +1,8 @@
 defmodule Normandy.SessionRegistryContract do
   @moduledoc "Shared contract tests; `use` with `impl:` a SessionRegistry module."
 
+  alias Normandy.Test.Eventually
+
   defmacro __using__(opts) do
     impl = Keyword.fetch!(opts, :impl)
 
@@ -58,19 +60,8 @@ defmodule Normandy.SessionRegistryContract do
         assert wait_until(fn -> @reg.whereis(h, "s1") == :none end)
       end
 
-      defp wait_until(fun, retries \\ 300) do
-        cond do
-          fun.() ->
-            true
-
-          retries == 0 ->
-            false
-
-          true ->
-            Process.sleep(10)
-            wait_until(fun, retries - 1)
-        end
-      end
+      # The shared helper, with a larger budget for Horde's CRDT cleanup.
+      defp wait_until(fun), do: Eventually.wait_until(fun, 300)
     end
   end
 end
