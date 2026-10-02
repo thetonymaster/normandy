@@ -390,9 +390,12 @@ defmodule Normandy.Context.WindowManager do
     # rebuilt entries stay grouped exactly as before.
     memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
-    # Add messages in chronological order, each under its original turn.
+    # Add messages in chronological order, each under its original turn. Their
+    # thinking was produced after the removed messages, so it no longer applies.
     Enum.reduce(kept, memory, fn {msg, turn_id}, mem ->
-      AgentMemory.add_message(mem, msg.role, msg.content, turn_id: turn_id)
+      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(msg.content),
+        turn_id: turn_id
+      )
     end)
   end
 end

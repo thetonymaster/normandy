@@ -124,6 +124,17 @@ defmodule Normandy.Context.SummarizerTest do
   end
 
   describe "compress_conversation/3" do
+    test "kept messages lose their thinking: it was produced before the summary existed",
+         %{client: client} do
+      agent = %{memory: memory_ending_in_thinking_round(), model: "test-model", config: %{}}
+
+      {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 3)
+
+      blocks = kept_assistant_blocks(compressed.memory)
+      assert Enum.any?(blocks, &(&1[:type] == "tool_use"))
+      refute Enum.any?(blocks, &(&1["type"] == "thinking"))
+    end
+
     test "compresses conversation by summarizing old messages", %{client: client} do
       # Create agent with many messages
       memory =
@@ -339,5 +350,32 @@ defmodule Normandy.Context.SummarizerTest do
 
       assert is_binary(summary)
     end
+  end
+
+  # 20 filler user messages, then a tool round whose assistant turn carries thinking.
+  defp memory_ending_in_thinking_round do
+    filler =
+      Enum.reduce(1..20, AgentMemory.new_memory(), fn i, mem ->
+        AgentMemory.add_message(mem, "user", "Message #{i} with some padding content")
+      end)
+
+    filler
+    |> AgentMemory.add_message("user", "weather?")
+    |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+      thinking: [%{"type" => "thinking", "thinking" => "plan", "signature" => "s"}],
+      tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "weather", input: %{}}]
+    })
+    |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+      tool_call_id: "t1",
+      output: "x"
+    })
+  end
+
+  # The kept tool round, as the next request will send it.
+  defp kept_assistant_blocks(memory) do
+    memory
+    |> AgentMemory.history()
+    |> Enum.find(&(&1.role == "assistant" and is_list(&1.content)))
+    |> Map.fetch!(:content)
   end
 end

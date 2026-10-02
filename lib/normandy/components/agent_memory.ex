@@ -137,8 +137,50 @@ defmodule Normandy.Components.AgentMemory do
 
     head = surviving_ancestor(memory.head, memory.entries, deleted)
 
+    # Messages after the deleted turn were produced with it in their history.
+    entries =
+      Map.new(entries, fn {id, entry} ->
+        if after_deleted?(entry.parent_id, memory.entries, deleted),
+          do: {id, %{entry | content: drop_thinking(entry.content)}},
+          else: {id, entry}
+      end)
+
     %{memory | entries: entries, head: head}
   end
+
+  defp after_deleted?(nil, _entries, _deleted), do: false
+
+  defp after_deleted?(id, entries, deleted) do
+    MapSet.member?(deleted, id) or after_deleted?(entries[id].parent_id, entries, deleted)
+  end
+
+  @doc """
+  Removes `thinking` and `redacted_thinking` blocks from a message's content:
+  a `ToolCallResponse`'s `:thinking`, or the blocks of a content list. Other
+  content is returned unchanged.
+
+  A thinking block is valid only after the exact history that produced it, so
+  memory edits that remove or replace earlier messages (a `max_messages` trim,
+  `delete_turn/2`, summarizing or truncating with `Normandy.Context`) drop the
+  thinking of the messages they kept. Text and tool calls stay.
+  """
+  @spec drop_thinking(term()) :: term()
+  def drop_thinking(%Normandy.Agents.ToolCallResponse{} = response),
+    do: %{response | thinking: []}
+
+  def drop_thinking(blocks) when is_list(blocks), do: Enum.reject(blocks, &thinking_block?/1)
+  def drop_thinking(content), do: content
+
+  defp thinking_block?(block) when is_map(block) and not is_struct(block),
+    do:
+      (Map.get(block, :type) || Map.get(block, "type")) in [
+        :thinking,
+        :redacted_thinking,
+        "thinking",
+        "redacted_thinking"
+      ]
+
+  defp thinking_block?(_block), do: false
 
   @doc """
   Rebuild a memory from a chronological list of `Entry.t()` (e.g. the output of
@@ -266,10 +308,12 @@ defmodule Normandy.Components.AgentMemory do
       dropped = Enum.drop(chain, keep)
       oldest_kept = List.last(kept)
 
+      # Every kept message was produced after the dropped ones.
       entries =
         dropped
         |> Enum.reduce(memory.entries, fn %Entry{id: id}, acc -> Map.delete(acc, id) end)
         |> Map.update!(oldest_kept.id, fn entry -> %{entry | parent_id: nil} end)
+        |> Map.new(fn {id, entry} -> {id, %{entry | content: drop_thinking(entry.content)}} end)
 
       %{memory | entries: entries}
     end

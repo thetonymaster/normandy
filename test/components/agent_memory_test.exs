@@ -330,6 +330,67 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert result.head == "c"
   end
 
+  describe "history edits drop the thinking they invalidate" do
+    # A thinking block is valid only after the exact history that produced it, so
+    # an edit that removes earlier messages must drop the thinking it invalidated.
+    @thinking [%{"type" => "thinking", "thinking" => "plan", "signature" => "s"}]
+
+    defp tool_round(memory, id) do
+      memory
+      |> AgentMemory.add_message("user", "go #{id}")
+      |> AgentMemory.add_message("assistant", %ToolCallResponse{
+        thinking: @thinking,
+        tool_calls: [%ToolCall{id: id, name: "weather", input: %{}}]
+      })
+      |> AgentMemory.add_message("tool", %ToolResult{tool_call_id: id, output: "x"})
+    end
+
+    defp thinking_by_call(memory) do
+      for %Message{content: %ToolCallResponse{tool_calls: [call], thinking: t}} <-
+            AgentMemory.messages(memory),
+          do: {call.id, t}
+    end
+
+    test "without an edit, every round keeps its thinking" do
+      memory = AgentMemory.new_memory(10) |> tool_round("a") |> tool_round("b")
+      assert thinking_by_call(memory) == [{"a", @thinking}, {"b", @thinking}]
+    end
+
+    test "a max_messages trim drops the thinking of every kept message" do
+      memory = AgentMemory.new_memory(4) |> tool_round("a") |> tool_round("b")
+      assert thinking_by_call(memory) == [{"b", []}]
+    end
+
+    test "delete_turn drops thinking after the deleted turn and keeps it before" do
+      memory = AgentMemory.new_memory()
+      memory = tool_round(memory, "a")
+      memory = AgentMemory.initialize_turn(memory)
+      memory = tool_round(memory, "b")
+      second_turn = memory.current_turn_id
+      memory = AgentMemory.initialize_turn(memory)
+      memory = tool_round(memory, "c")
+
+      memory = AgentMemory.delete_turn(memory, second_turn)
+
+      assert thinking_by_call(memory) == [{"a", @thinking}, {"c", []}]
+    end
+
+    test "drop_thinking/1 removes thinking blocks from a block list and a ToolCallResponse" do
+      blocks = [
+        %{"type" => "thinking", "thinking" => "p", "signature" => "s"},
+        %{type: "redacted_thinking", data: "d"},
+        %{type: "tool_use", id: "t1", name: "w", input: %{}}
+      ]
+
+      assert [%{type: "tool_use"}] = AgentMemory.drop_thinking(blocks)
+
+      assert %ToolCallResponse{thinking: []} =
+               AgentMemory.drop_thinking(%ToolCallResponse{thinking: @thinking})
+
+      assert AgentMemory.drop_thinking("text") == "text"
+    end
+  end
+
   describe "add_message/4" do
     test "turn_id: stores the message under the given turn, not the current one" do
       memory =
