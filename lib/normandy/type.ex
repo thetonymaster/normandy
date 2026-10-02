@@ -562,7 +562,10 @@ defmodule Normandy.Type do
   def load(:bitstring, value, _loader), do: cast_bitstring(value)
   def load(:duration, value, _loader), do: same_duration(value)
   def load(:struct, value, _loader), do: cast_struct(value)
-  def load(mod, value, _loader), do: mod.load(value)
+  # A nested schema loads as it casts: its own struct, or a map of its fields.
+  def load(mod, value, _loader) do
+    if schema_module?(mod), do: cast_schema(mod, value), else: mod.load(value)
+  end
 
   defp load_float(term) when is_float(term), do: {:ok, term}
   defp load_float(term) when is_integer(term), do: {:ok, :erlang.float(term)}

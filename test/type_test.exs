@@ -482,6 +482,12 @@ defmodule Normandy.TypeTest do
       assert Normandy.Type.dump(Point, %{x: 1}) == :error
     end
 
+    test "a nested schema loads its own struct or a map of its fields" do
+      assert Normandy.Type.load(Point, %Point{x: 1}) == {:ok, %Point{x: 1}}
+      assert {:ok, %Point{x: 2}} = Normandy.Type.load(Point, %{"x" => 2})
+      assert Normandy.Type.load(Point, "not a point") == :error
+    end
+
     test ":struct dumps any struct" do
       assert Normandy.Type.dump(:struct, %URI{}) == {:ok, %URI{}}
     end
