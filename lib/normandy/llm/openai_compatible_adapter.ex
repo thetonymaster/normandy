@@ -14,17 +14,17 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   ## Transport injection (testing)
 
-  Pass a custom Req `:adapter` function via `options[:req_options]` to stub the
-  HTTP layer in tests without network access:
+  `options[:req_options]` is merged into the Req request, so tests can route
+  the HTTP layer to a `Req.Test` stub without network access (this needs
+  `:plug` in your test dependencies):
 
-      adapter_fn = fn request ->
-        response = Req.Response.json(%{"choices" => [%{"message" => %{"content" => "hi"}}]})
-        {request, response}
-      end
+      Req.Test.stub(MyStub, fn conn ->
+        Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "hi"}}]})
+      end)
 
       client = %Normandy.LLM.OpenAICompatibleAdapter{
         api_key: "test",
-        options: %{req_options: [adapter: adapter_fn]}
+        options: %{req_options: [plug: {Req.Test, MyStub}]}
       }
 
   ## Errors

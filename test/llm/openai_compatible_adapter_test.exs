@@ -5,6 +5,14 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
   alias Normandy.Components.Message
   alias Normandy.LLM.OpenAICompatibleAdapter, as: Adapter
 
+  # Routes the client's HTTP calls to `plug` through Req.Test, under a name only
+  # this test uses.
+  defp stub(plug) do
+    name = {__MODULE__, make_ref()}
+    Req.Test.stub(name, plug)
+    [plug: {Req.Test, name}]
+  end
+
   describe "convert_messages/1" do
     test "maps Normandy messages to OpenAI role/content maps" do
       msgs = [
@@ -53,22 +61,18 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
 
   describe "converse/7 (stubbed transport)" do
     test "returns response_model with prose in :chat_message" do
-      # Stub Req via the adapter option carried in options[:req_options].
-      # Using :adapter (not :plug) because plug dep is not installed.
-      adapter_fn = fn request ->
-        response =
-          Req.Response.json(%{
+      req_options =
+        stub(fn conn ->
+          Req.Test.json(conn, %{
             "choices" => [%{"message" => %{"content" => "The answer is 42."}}],
             "usage" => %{"total_tokens" => 10}
           })
-
-        {request, response}
-      end
+        end)
 
       client = %Adapter{
         api_key: "test-key",
         base_url: "https://example.test/v1",
-        options: %{req_options: [adapter: adapter_fn]}
+        options: %{req_options: req_options}
       }
 
       # Default agent output schema — confirmed: Normandy.Agents.BaseAgentOutputSchema
@@ -105,20 +109,21 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     test "an agent built without temperature sends none on the wire (BaseAgent.run → converse)" do
       test_pid = self()
 
-      adapter_fn = fn request ->
-        send(test_pid, {:openai_body, request.body |> IO.iodata_to_binary() |> Jason.decode!()})
+      req_options =
+        stub(fn conn ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:openai_body, Jason.decode!(body)})
 
-        {request,
-         Req.Response.json(%{
-           "choices" => [%{"message" => %{"content" => "ok"}}],
-           "usage" => %{"total_tokens" => 1}
-         })}
-      end
+          Req.Test.json(conn, %{
+            "choices" => [%{"message" => %{"content" => "ok"}}],
+            "usage" => %{"total_tokens" => 1}
+          })
+        end)
 
       client = %A{
         api_key: "k",
         base_url: "https://example.test/v1",
-        options: %{req_options: [adapter: adapter_fn]}
+        options: %{req_options: req_options}
       }
 
       agent = BaseAgent.init(%{client: client, model: "gpt-4o"})
@@ -132,11 +137,11 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
   describe "converse/7 failures" do
     @key "sk-openai-test-canary"
 
-    defp failing_client(adapter_fn) do
+    defp failing_client(plug) do
       %Adapter{
         api_key: @key,
         base_url: "https://example.test/v1",
-        options: %{req_options: [adapter: adapter_fn, retry: false]}
+        options: %{req_options: [retry: false] ++ stub(plug)}
       }
     end
 
@@ -163,15 +168,13 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
           {503, :server, true}
         ] do
       test "HTTP #{status} -> #{type}, retryable?: #{retryable?}" do
-        adapter_fn = fn request ->
-          {request,
-           Req.Response.new(
-             status: unquote(status),
-             body: %{"error" => %{"message" => "provider says no"}}
-           )}
+        plug = fn conn ->
+          conn
+          |> Plug.Conn.put_status(unquote(status))
+          |> Req.Test.json(%{"error" => %{"message" => "provider says no"}})
         end
 
-        assert {:error, %Normandy.LLMError{} = e} = call(failing_client(adapter_fn))
+        assert {:error, %Normandy.LLMError{} = e} = call(failing_client(plug))
         assert e.type == unquote(type)
         assert e.status == unquote(status)
         assert e.retryable? == unquote(retryable?)
@@ -181,17 +184,17 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
 
     test "a body without an error message falls back to HTTP <status>" do
-      adapter_fn = fn request -> {request, Req.Response.new(status: 502, body: "")} end
+      plug = fn conn -> Plug.Conn.send_resp(conn, 502, "") end
 
       assert {:error, %Normandy.LLMError{message: "LLM call failed: server (502): HTTP 502"}} =
-               call(failing_client(adapter_fn))
+               call(failing_client(plug))
     end
 
     test "a transport error -> :transport, retryable" do
-      adapter_fn = fn request -> {request, %Req.TransportError{reason: :timeout}} end
+      plug = fn conn -> Req.Test.transport_error(conn, :timeout) end
 
       assert {:error, %Normandy.LLMError{type: :transport, retryable?: true, status: nil}} =
-               call(failing_client(adapter_fn))
+               call(failing_client(plug))
     end
   end
 end
