@@ -55,6 +55,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   - `:max_concurrency` - Maximum concurrent agents (default: 10)
   - `:timeout` - Timeout per agent in ms (default: 300_000). An agent that runs
     past it is stopped and reported in `errors` as `{:exit, :timeout}`.
+    An agent that raises is reported as `{:exception, e, stacktrace}`, and
+    one that exits as `{:exit, reason}`; neither stops the others or the caller.
   - `:aggregate` - Function to aggregate results: `([{id, result}] -> term())`
   - `:on_agent_complete` - Callback: `(agent_id, result -> any)`
   - `:ordered` - Return results in spec order (default: false)
@@ -239,15 +241,21 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   @doc """
   Executes agents and collects results as they complete.
 
-  Returns a stream of results as agents finish.
+  Returns a stream of results as agents finish. Each element is one of:
+
+  - `{:ok, {:ok, {agent_id, result}}}` - the agent finished
+  - `{:ok, {:error, {agent_id, reason}}}` - the agent raised or exited (see `execute/2`)
+  - `{:exit, {agent_id, :timeout}}` - the agent ran past `:timeout` and was stopped
 
   ## Example
 
-      stream = ParallelOrchestrator.execute_stream(agents)
+      stream = ParallelOrchestrator.execute_stream(agents, timeout: 60_000)
 
       stream
-      |> Stream.each(fn {:ok, {agent_id, result}} ->
-        IO.puts("Agent \#{agent_id}: \#{inspect(result)}")
+      |> Stream.each(fn
+        {:ok, {:ok, {agent_id, result}}} -> IO.puts("Agent \#{agent_id}: \#{inspect(result)}")
+        {:ok, {:error, {agent_id, reason}}} -> IO.puts("Agent \#{agent_id} failed: \#{inspect(reason)}")
+        {:exit, {agent_id, :timeout}} -> IO.puts("Agent \#{agent_id} timed out")
       end)
       |> Stream.run()
   """
@@ -271,8 +279,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       end,
       max_concurrency: max_concurrency,
       timeout: timeout,
+      # A slow agent fails on its own instead of exiting the caller.
+      on_timeout: :kill_task,
+      zip_input_on_exit: true,
       ordered: false
     )
+    |> Stream.map(fn
+      {:exit, {%{id: agent_id}, reason}} -> {:exit, {agent_id, reason}}
+      other -> other
+    end)
   end
 
   # Private functions
@@ -291,6 +306,11 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   rescue
     e ->
       {:error, {:exception, e, __STACKTRACE__}}
+  catch
+    # An exit (a timed-out GenServer.call, say) would otherwise end the task and,
+    # through its link, the caller.
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   defp prepare_input(input) when is_map(input) do

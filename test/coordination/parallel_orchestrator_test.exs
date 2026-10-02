@@ -3,6 +3,7 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
+  alias Normandy.Test.StubClient
   alias Normandy.Test.TaggingClient
 
   @moduletag :capture_log
@@ -128,7 +129,43 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
     end
   end
 
+  # An agent whose model call exits (as a timed-out GenServer.call does) instead of raising.
+  defp exiting_agent,
+    do:
+      BaseAgent.init(%{client: %StubClient{reply: fn _ -> exit(:boom) end}, model: "test-model"})
+
+  describe "agents that exit" do
+    test "execute/2 reports the exit under the agent's id instead of exiting the caller" do
+      specs = [
+        %{id: "ok", agent: tagging("ok"), input: "x"},
+        %{id: "exits", agent: exiting_agent(), input: "x"}
+      ]
+
+      assert {:ok, %{results: %{"ok" => _}, errors: %{"exits" => {:exit, :boom}}}} =
+               ParallelOrchestrator.execute(specs)
+    end
+
+    test "execute_stream/2 yields the exit as the agent's error" do
+      specs = [%{id: "exits", agent: exiting_agent(), input: "x"}]
+
+      assert [{:ok, {:error, {"exits", {:exit, :boom}}}}] =
+               specs |> ParallelOrchestrator.execute_stream() |> Enum.to_list()
+    end
+  end
+
   describe "execute_stream/2" do
+    test "an agent past :timeout is reported by id; the stream goes on" do
+      specs = [
+        %{id: "fast", agent: tagging("fast"), input: "x"},
+        %{id: "slow", agent: tagging("slow", sleep_ms: 500), input: "x"}
+      ]
+
+      outcomes = specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
+
+      assert {:exit, {"slow", :timeout}} in outcomes
+      assert Enum.any?(outcomes, &match?({:ok, {:ok, {"fast", _}}}, &1))
+    end
+
     test "yields each agent's result or error tagged with its id" do
       specs = [
         %{id: "a", agent: tagging("a"), input: "x"},
