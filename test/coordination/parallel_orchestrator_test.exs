@@ -134,6 +134,37 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
     do:
       BaseAgent.init(%{client: %StubClient{reply: fn _ -> exit(:boom) end}, model: "test-model"})
 
+  describe "callbacks that raise" do
+    test "a raising :transform is the agent's error, not a crash of the caller" do
+      specs = [
+        %{id: "ok", agent: tagging("ok"), input: "x"},
+        %{
+          id: "t",
+          agent: tagging("t"),
+          input: "x",
+          transform: fn _ -> raise "transform failed" end
+        }
+      ]
+
+      assert {:ok, %{results: %{"ok" => _}, errors: %{"t" => {:exception, %RuntimeError{}, _}}}} =
+               ParallelOrchestrator.execute(specs)
+    end
+
+    test "a raising :on_agent_complete is the agent's error, not a crash of the caller" do
+      specs = [%{id: "a", agent: tagging("a"), input: "x"}]
+
+      assert {:ok, %{errors: %{"a" => {:exception, %RuntimeError{}, _}}}} =
+               ParallelOrchestrator.execute(specs, on_agent_complete: fn _, _ -> raise "boom" end)
+    end
+
+    test "execute_stream/2: a raising :transform is the agent's error" do
+      specs = [%{id: "t", agent: tagging("t"), input: "x", transform: fn _ -> raise "no" end}]
+
+      assert [{:ok, {:error, {"t", {:exception, %RuntimeError{}, _}}}}] =
+               specs |> ParallelOrchestrator.execute_stream() |> Enum.to_list()
+    end
+  end
+
   describe "agents that exit" do
     test "execute/2 reports the exit under the agent's id instead of exiting the caller" do
       specs = [

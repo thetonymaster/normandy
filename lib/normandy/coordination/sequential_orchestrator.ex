@@ -249,6 +249,10 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   rescue
     e ->
       {:error, {:exception, e, __STACKTRACE__}}
+  catch
+    # An exit (a timed-out GenServer.call, say) is the step's error, as a raise is.
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do

@@ -141,19 +141,16 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
           input = Map.fetch!(spec, :input)
           transform_fn = Map.get(spec, :transform) || (& &1)
 
-          # Execute agent
+          # Execute agent, then its callbacks (guarded: they run in this task, and
+          # a crash here would take the caller down through the link)
           result =
             case execute_agent(agent, input) do
               {:ok, agent_result} ->
-                transformed = transform_fn.(agent_result)
-
-                # Call completion callback if provided
-                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-                if on_complete do
-                  on_complete.(agent_id, transformed)
-                end
-
-                {:ok, transformed}
+                guarded(fn ->
+                  transformed = transform_fn.(agent_result)
+                  if on_complete, do: on_complete.(agent_id, transformed)
+                  transformed
+                end)
 
               {:error, reason} ->
                 {:error, reason}
@@ -272,8 +269,10 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         input = Map.fetch!(spec, :input)
         transform_fn = Map.get(spec, :transform) || (& &1)
 
-        case execute_agent(agent, input) do
-          {:ok, result} -> {:ok, {agent_id, transform_fn.(result)}}
+        with {:ok, result} <- execute_agent(agent, input),
+             {:ok, transformed} <- guarded(fn -> transform_fn.(result) end) do
+          {:ok, {agent_id, transformed}}
+        else
           {:error, reason} -> {:error, {agent_id, reason}}
         end
       end,
@@ -311,6 +310,16 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     # through its link, the caller.
     :exit, reason ->
       {:error, {:exit, reason}}
+  end
+
+  # A spec's :transform or :on_agent_complete runs in the agent's task; report a
+  # crash in it as that agent's error, in execute_agent/2's shapes.
+  defp guarded(fun) do
+    {:ok, fun.()}
+  rescue
+    e -> {:error, {:exception, e, __STACKTRACE__}}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
   defp prepare_input(input) when is_map(input) do

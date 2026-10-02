@@ -210,6 +210,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   rescue
     e ->
       {:error, {:exception, e, __STACKTRACE__}}
+  catch
+    # An exit (a timed-out GenServer.call, say) is the manager's failure too.
+    :exit, reason ->
+      {:error, {:exit, reason}}
   end
 
   defp extract_delegation_plan(response) when is_map(response) do
@@ -337,6 +341,9 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     rescue
       e ->
         {:error, {:aggregation_failed, e, __STACKTRACE__}}
+    catch
+      :exit, reason ->
+        {:error, {:aggregation_failed, {:exit, reason}}}
     end
   end
 

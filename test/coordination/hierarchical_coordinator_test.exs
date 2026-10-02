@@ -206,6 +206,52 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       refute_received {:llm_call, "w1", _}
     end
 
+    test "a manager whose model call exits returns {:error, {:manager_failed, {:exit, _}}}" do
+      exiting =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{reply: fn _ -> exit(:boom) end},
+          model: "test-model"
+        })
+
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: exiting,
+          workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
+        )
+
+      assert {:error, {:manager_failed, {:exit, :boom}}} =
+               HierarchicalCoordinator.execute(coordinator, "x")
+    end
+
+    test "a manager whose aggregation call exits returns {:error, {:aggregation_failed, _}}" do
+      calls = :counters.new(1, [])
+
+      # Plans on the first call, exits on the second (the aggregation).
+      reply = fn response_model ->
+        :counters.add(calls, 1, 1)
+
+        if :counters.get(calls, 1) == 1,
+          do: %{response_model | delegation_plan: ["t1"]},
+          else: exit(:boom)
+      end
+
+      manager =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{reply: reply},
+          model: "test-model",
+          output_schema: %Plan{}
+        })
+
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: manager,
+          workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
+        )
+
+      assert {:error, {:aggregation_failed, {:exit, :boom}}} =
+               HierarchicalCoordinator.execute(coordinator, "x")
+    end
+
     test "a failing manager returns {:error, {:manager_failed, reason}}" do
       coordinator =
         HierarchicalCoordinator.new(

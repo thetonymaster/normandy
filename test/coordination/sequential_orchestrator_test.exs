@@ -81,6 +81,19 @@ defmodule Normandy.Coordination.SequentialOrchestratorTest do
     end
   end
 
+  describe "an agent that exits" do
+    test "is the step's error, not an exit of the caller" do
+      exiting =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{reply: fn _ -> exit(:boom) end},
+          model: "test-model"
+        })
+
+      assert {:error, %{errors: [%{agent_id: "e", error: {:exit, :boom}}]}} =
+               SequentialOrchestrator.execute([%{id: "e", agent: exiting}], "x")
+    end
+  end
+
   describe "on_error: :continue" do
     test "the agent after a failure gets the last successful output; the failure stays in results" do
       specs = [
