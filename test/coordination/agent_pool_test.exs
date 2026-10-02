@@ -472,6 +472,88 @@ defmodule Normandy.Coordination.AgentPoolTest do
 
       AgentPool.stop(pool)
     end
+
+    test "a crashed agent leaves one replacement, not an extra untracked one" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 2)
+      sup = :sys.get_state(pool).supervisor
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      Process.exit(agent_pid, :kill)
+      assert wait_until(fn -> AgentPool.stats(pool).available == 2 end)
+
+      # Only the pool replaces agents; the supervisor must not restart one too.
+      assert DynamicSupervisor.count_children(sup).active == 2
+
+      AgentPool.stop(pool)
+    end
+
+    test "an idle agent that crashes is replaced" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 2)
+      [idle | _] = :sys.get_state(pool).available
+
+      Process.exit(idle, :kill)
+
+      assert wait_until(fn ->
+               available = :sys.get_state(pool).available
+               length(available) == 2 and idle not in available
+             end)
+
+      AgentPool.stop(pool)
+    end
+
+    test "a client that dies holding an agent gives it back" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      test_pid = self()
+
+      holder =
+        spawn(fn ->
+          {:ok, _} = AgentPool.checkout(pool)
+          send(test_pid, :checked_out)
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive :checked_out
+      Process.exit(holder, :kill)
+
+      assert wait_until(fn -> AgentPool.stats(pool).available == 1 end)
+
+      AgentPool.stop(pool)
+    end
+
+    test "a waiter that dies before it is served does not take the next agent" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      waiter = spawn(fn -> AgentPool.checkout(pool, timeout: 60_000) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      Process.exit(waiter, :kill)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 0 end)
+
+      AgentPool.checkin(pool, agent_pid)
+      assert AgentPool.stats(pool).available == 1
+
+      AgentPool.stop(pool)
+    end
+
+    test "checking in the same agent twice does not list it twice" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      AgentPool.checkin(pool, agent_pid)
+      AgentPool.checkin(pool, agent_pid)
+
+      assert %{available: 1, in_use: 0} = AgentPool.stats(pool)
+      # The second checkin used to terminate the listed agent as if it were overflow.
+      assert :sys.get_state(pool).available == [agent_pid]
+      assert Process.alive?(agent_pid)
+
+      AgentPool.stop(pool)
+    end
   end
 
   describe "waiting queue" do

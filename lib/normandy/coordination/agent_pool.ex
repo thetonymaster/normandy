@@ -67,7 +67,10 @@ defmodule Normandy.Coordination.AgentPool do
       in_use: MapSet.new(),
       overflow_count: 0,
       waiting: :queue.new(),
-      monitors: %{}
+      # agent pid => monitor ref, for every agent the pool started
+      agents: %{},
+      # client monitor ref => the agent that client holds
+      clients: %{}
     ]
   end
 
@@ -273,18 +276,16 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   @impl true
-  def handle_call({:checkout, block, timeout}, from, state) do
+  def handle_call({:checkout, block, timeout}, {client, _tag} = from, state) do
     case do_checkout(state) do
       {:ok, agent_pid, new_state} ->
-        # Monitor the checking out process
-        ref = Process.monitor(agent_pid)
-        new_state = put_in(new_state.monitors[ref], agent_pid)
-
-        {:reply, {:ok, agent_pid}, new_state}
+        {:reply, {:ok, agent_pid}, lend(agent_pid, client, new_state)}
 
       {:error, :no_agents} when block ->
+        # Watch the waiter, so one that dies is dropped instead of being handed an agent.
+        mref = Process.monitor(client)
         timer = Process.send_after(self(), {:checkout_timeout, from}, timeout)
-        {:noreply, %{state | waiting: :queue.in({from, timer}, state.waiting)}}
+        {:noreply, %{state | waiting: :queue.in({from, timer, mref}, state.waiting)}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -307,39 +308,37 @@ defmodule Normandy.Coordination.AgentPool do
 
   @impl true
   def handle_cast({:checkin, agent_pid}, state) do
-    # Check if agent is still alive
-    if Process.alive?(agent_pid) do
-      new_state = do_checkin(agent_pid, state)
-      {:noreply, new_state}
-    else
-      # Agent died, remove from in_use and potentially create new one
-      new_state = handle_agent_death(agent_pid, state)
-      {:noreply, new_state}
+    case release(agent_pid, state) do
+      # Not checked out (a second checkin, or a pid the pool never lent): ignore it.
+      :not_lent ->
+        {:noreply, state}
+
+      # A dead agent is left in use; its :DOWN removes and replaces it.
+      {:ok, state} ->
+        {:noreply, if(Process.alive?(agent_pid), do: do_checkin(agent_pid, state), else: state)}
     end
   end
 
   @impl true
   def handle_info({:checkout_timeout, from}, state) do
     # A waiter served just before its timer fired is no longer in the queue.
-    waiting = :queue.filter(fn {waiter, _timer} -> waiter != from end, state.waiting)
+    {gone, waiting} =
+      split_waiters(state.waiting, fn {waiter, _timer, _mref} -> waiter == from end)
 
-    if :queue.len(waiting) < :queue.len(state.waiting),
-      do: GenServer.reply(from, {:error, :timeout})
+    Enum.each(gone, fn {_from, _timer, mref} ->
+      Process.demonitor(mref, [:flush])
+      GenServer.reply(from, {:error, :timeout})
+    end)
 
     {:noreply, %{state | waiting: waiting}}
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Agent process died
-    case Map.pop(state.monitors, ref) do
-      {nil, _monitors} ->
-        {:noreply, state}
-
-      {agent_pid, monitors} ->
-        new_state = %{state | monitors: monitors}
-        new_state = handle_agent_death(agent_pid, new_state)
-        {:noreply, new_state}
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    cond do
+      Map.get(state.agents, pid) == ref -> {:noreply, agent_down(pid, state)}
+      Map.has_key?(state.clients, ref) -> {:noreply, client_down(ref, state)}
+      true -> {:noreply, waiter_down(ref, state)}
     end
   end
 
@@ -353,37 +352,88 @@ defmodule Normandy.Coordination.AgentPool do
   # Private Functions
 
   defp start_agents(state, count) do
-    pids =
-      1..count
-      |> Enum.map(fn _ ->
-        start_agent(state)
-      end)
-      |> Enum.filter(&(&1 != nil))
-
-    %{state | available: pids}
+    Enum.reduce(1..count, state, fn _, state ->
+      case start_agent(state) do
+        {:ok, pid, state} -> %{state | available: state.available ++ [pid]}
+        :error -> state
+      end
+    end)
   end
 
+  # The pool owns replacement, so agents are :temporary: a supervisor restart
+  # would add an agent the pool doesn't know about.
   defp start_agent(state) do
     agent = BaseAgent.init(state.agent_config)
 
-    case AgentSupervisor.start_agent(state.supervisor, agent: agent) do
+    case AgentSupervisor.start_agent(state.supervisor, agent: agent, restart: :temporary) do
       {:ok, pid} ->
-        pid
+        {:ok, pid, put_in(state.agents[pid], Process.monitor(pid))}
 
       {:error, reason} ->
         Logger.error("Failed to start agent in pool: #{inspect(reason)}")
-        nil
+        :error
     end
+  end
+
+  defp stop_agent(agent_pid, state) do
+    {ref, agents} = Map.pop(state.agents, agent_pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    _ = AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
+    %{state | agents: agents}
+  end
+
+  # Record that `client` holds `agent_pid`, so the agent comes back if the client dies.
+  defp lend(agent_pid, client, state) do
+    put_in(state.clients[Process.monitor(client)], agent_pid)
+  end
+
+  defp release(agent_pid, state) do
+    case Enum.find(state.clients, fn {_ref, pid} -> pid == agent_pid end) do
+      nil ->
+        :not_lent
+
+      {ref, _} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, %{state | clients: Map.delete(state.clients, ref)}}
+    end
+  end
+
+  defp agent_down(agent_pid, state) do
+    state = %{state | agents: Map.delete(state.agents, agent_pid)}
+
+    state =
+      case release(agent_pid, state) do
+        {:ok, state} -> state
+        :not_lent -> state
+      end
+
+    handle_agent_death(agent_pid, state)
+  end
+
+  defp client_down(ref, state) do
+    {agent_pid, clients} = Map.pop(state.clients, ref)
+    do_checkin(agent_pid, %{state | clients: clients})
+  end
+
+  defp waiter_down(ref, state) do
+    {gone, waiting} = split_waiters(state.waiting, fn {_from, _timer, mref} -> mref == ref end)
+    Enum.each(gone, fn {_from, timer, _mref} -> Process.cancel_timer(timer) end)
+    %{state | waiting: waiting}
+  end
+
+  defp split_waiters(queue, fun) do
+    {gone, kept} = Enum.split_with(:queue.to_list(queue), fun)
+    {gone, :queue.from_list(kept)}
   end
 
   defp do_checkout(%State{available: []} = state) do
     # No available agents, check if we can create overflow
     if state.overflow_count < state.max_overflow do
       case start_agent(state) do
-        nil ->
+        :error ->
           {:error, :failed_to_start_agent}
 
-        agent_pid ->
+        {:ok, agent_pid, state} ->
           new_state = %{
             state
             | in_use: MapSet.put(state.in_use, agent_pid),
@@ -431,7 +481,7 @@ defmodule Normandy.Coordination.AgentPool do
 
       # Overflow agent, terminate it
       true ->
-        _ = AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
+        new_state = stop_agent(agent_pid, new_state)
         %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
     end
   end
@@ -450,11 +500,11 @@ defmodule Normandy.Coordination.AgentPool do
     if total_agents < state.size do
       # Start replacement agent
       case start_agent(state) do
-        nil ->
+        :error ->
           Logger.warning("Failed to start replacement agent")
           state
 
-        new_pid ->
+        {:ok, new_pid, state} ->
           # Check if there are waiting checkouts
           # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if :queue.is_empty(state.waiting) do
@@ -470,10 +520,12 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   defp hand_to_waiter(agent_pid, state) do
-    {{:value, {from, timer}}, waiting} = :queue.out(state.waiting)
+    {{:value, {{client, _tag} = from, timer, mref}}, waiting} = :queue.out(state.waiting)
     _ = Process.cancel_timer(timer)
+    Process.demonitor(mref, [:flush])
     GenServer.reply(from, {:ok, agent_pid})
 
-    %{state | waiting: waiting, in_use: MapSet.put(state.in_use, agent_pid)}
+    state = %{state | waiting: waiting, in_use: MapSet.put(state.in_use, agent_pid)}
+    lend(agent_pid, client, state)
   end
 end
