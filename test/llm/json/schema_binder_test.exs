@@ -14,6 +14,38 @@ defmodule Normandy.LLM.Json.SchemaBinderTest do
     end
   end
 
+  defmodule Doubled do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "an optional quantity and its double" do
+      field(:qty, :integer, description: "quantity")
+
+      field(:double, :integer,
+        description: "twice qty",
+        virtual: true,
+        compute: &__MODULE__.double/1
+      )
+    end
+
+    def double(%{qty: qty}), do: qty * 2
+  end
+
+  describe "a compute function that raises" do
+    test "is a validation error on the computed field, not a raise" do
+      assert {:error, {:validation_error, changeset, "{}"}} =
+               SchemaBinder.bind(%{}, %Doubled{}, "{}")
+
+      assert {:double, {message, _}} = List.keyfind(changeset.errors, :double, 0)
+      assert message =~ "could not be computed"
+    end
+
+    test "does not stop a valid arguments envelope from binding" do
+      assert {:ok, %Doubled{qty: 2, double: 4}} =
+               SchemaBinder.bind(%{"arguments" => %{"qty" => 2}}, %Doubled{}, "{}")
+    end
+  end
+
   defmodule Address do
     @moduledoc false
     use Normandy.Schema

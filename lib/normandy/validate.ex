@@ -318,13 +318,12 @@ defmodule Normandy.Validate do
   end
 
   @spec apply_changes(t) :: Normandy.Schema.t() | data
-  def apply_changes(%Validate{changes: changes, data: data}) when changes == %{} do
-    maybe_compute(data)
-  end
+  def apply_changes(%Validate{} = changeset), do: changeset |> merge_changes() |> maybe_compute()
 
-  def apply_changes(%Validate{changes: changes, data: data, types: types}) do
-    changes
-    |> Enum.reduce(data, fn {key, value}, acc ->
+  defp merge_changes(%Validate{changes: changes, data: data}) when changes == %{}, do: data
+
+  defp merge_changes(%Validate{changes: changes, data: data, types: types}) do
+    Enum.reduce(changes, data, fn {key, value}, acc ->
       case Map.fetch(types, key) do
         {:ok, _} ->
           Map.put(acc, key, value)
@@ -333,7 +332,6 @@ defmodule Normandy.Validate do
           acc
       end
     end)
-    |> maybe_compute()
   end
 
   # Schema structs get their compute: fields filled; schemaless {data, types} maps don't.
@@ -873,7 +871,7 @@ defmodule Normandy.Validate do
   @spec apply_action(t, action) :: {:ok, Normandy.Schema.t() | data} | {:error, t}
   def apply_action(%Validate{} = changeset, action) when is_atom(action) do
     if changeset.valid? do
-      {:ok, apply_changes(changeset)}
+      compute_or_error(merge_changes(changeset), changeset, action)
     else
       {:error, %Validate{changeset | action: action}}
     end
@@ -882,6 +880,26 @@ defmodule Normandy.Validate do
   def apply_action(%Validate{}, action) do
     raise ArgumentError, "expected action to be an atom, got: #{inspect(action)}"
   end
+
+  # A compute function that raises (say, on a nil optional field) makes the
+  # changeset invalid instead of raising out of the caller, which may be parsing
+  # model output. The error names the exception, not its message: that can carry
+  # field values.
+  defp compute_or_error(data, changeset, action) when is_struct(data) do
+    case Normandy.Schema.__compute__(data) do
+      {:ok, computed} ->
+        {:ok, computed}
+
+      {:error, field, exception, _stacktrace} ->
+        error =
+          {field,
+           {"could not be computed (#{inspect(exception.__struct__)})", [validation: :compute]}}
+
+        {:error, %{changeset | errors: [error | changeset.errors], valid?: false, action: action}}
+    end
+  end
+
+  defp compute_or_error(data, _changeset, _action), do: {:ok, data}
 
   @spec apply_action!(t, action) :: Normandy.Schema.t() | data
   def apply_action!(%Validate{} = changeset, action) do

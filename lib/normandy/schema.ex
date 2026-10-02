@@ -299,13 +299,30 @@ defmodule Normandy.Schema do
   `Normandy.Validate.apply_changes/1` calls this, so cast results are computed.
   """
   @spec compute(struct()) :: struct()
-  def compute(%mod{} = struct) do
+  def compute(struct) do
+    case __compute__(struct) do
+      {:ok, computed} -> computed
+      {:error, _field, exception, stacktrace} -> reraise exception, stacktrace
+    end
+  end
+
+  @doc false
+  # compute/1 that reports which field's compute function raised, so a changeset
+  # can turn it into an error on that field.
+  @spec __compute__(struct()) ::
+          {:ok, struct()} | {:error, atom(), Exception.t(), Exception.stacktrace()}
+  def __compute__(%mod{} = struct) do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1) do
-      Enum.reduce(mod.__schema__(:computed_fields), struct, fn {field, fun}, acc ->
-        Map.put(acc, field, fun.(acc))
+      Enum.reduce_while(mod.__schema__(:computed_fields), {:ok, struct}, fn {field, fun},
+                                                                            {:ok, acc} ->
+        try do
+          {:cont, {:ok, Map.put(acc, field, fun.(acc))}}
+        rescue
+          exception -> {:halt, {:error, field, exception, __STACKTRACE__}}
+        end
       end)
     else
-      struct
+      {:ok, struct}
     end
   end
 
