@@ -69,7 +69,7 @@ defmodule Normandy.Coordination.AgentPool do
       waiting: :queue.new(),
       # agent pid => monitor ref, for every agent the pool started
       agents: %{},
-      # client monitor ref => the agent that client holds
+      # client monitor ref => {the agent that client holds, the client pid}
       clients: %{}
     ]
   end
@@ -209,6 +209,10 @@ defmodule Normandy.Coordination.AgentPool do
   @doc """
   Returns an agent to the pool.
 
+  Only the process that checked the agent out can return it. A checkin from any
+  other process, such as a late second checkin after the agent was lent again, is
+  ignored with a warning; an agent whose holder exits comes back on its own.
+
   ## Examples
 
       {:ok, agent_pid} = AgentPool.checkout(pool)
@@ -217,7 +221,7 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec checkin(GenServer.server(), pid()) :: :ok
   def checkin(pool, agent_pid) do
-    GenServer.cast(pool, {:checkin, agent_pid})
+    GenServer.cast(pool, {:checkin, agent_pid, self()})
   end
 
   @doc """
@@ -313,10 +317,19 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   @impl true
-  def handle_cast({:checkin, agent_pid}, state) do
-    case release(agent_pid, state) do
+  def handle_cast({:checkin, agent_pid, caller}, state) do
+    case release(agent_pid, caller, state) do
       # Not checked out (a second checkin, or a pid the pool never lent): ignore it.
       :not_lent ->
+        {:noreply, state}
+
+      # Lent to someone else: a stale checkin must not release their loan.
+      :not_holder ->
+        Logger.warning(
+          "AgentPool ignored a checkin of #{inspect(agent_pid)}: not held by the caller " <>
+            "#{inspect(caller)}"
+        )
+
         {:noreply, state}
 
       # A dead agent is left in use; its :DOWN removes and replaces it.
@@ -390,13 +403,17 @@ defmodule Normandy.Coordination.AgentPool do
 
   # Record that `client` holds `agent_pid`, so the agent comes back if the client dies.
   defp lend(agent_pid, client, state) do
-    put_in(state.clients[Process.monitor(client)], agent_pid)
+    put_in(state.clients[Process.monitor(client)], {agent_pid, client})
   end
 
-  defp release(agent_pid, state) do
-    case Enum.find(state.clients, fn {_ref, pid} -> pid == agent_pid end) do
+  # Ends the loan of `agent_pid`. With a `caller`, only the holder may end it.
+  defp release(agent_pid, caller \\ :any, state) do
+    case Enum.find(state.clients, fn {_ref, {pid, _client}} -> pid == agent_pid end) do
       nil ->
         :not_lent
+
+      {_ref, {_pid, client}} when caller != :any and client != caller ->
+        :not_holder
 
       {ref, _} ->
         Process.demonitor(ref, [:flush])
@@ -417,7 +434,7 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   defp client_down(ref, state) do
-    {agent_pid, clients} = Map.pop(state.clients, ref)
+    {{agent_pid, _client}, clients} = Map.pop(state.clients, ref)
     do_checkin(agent_pid, %{state | clients: clients})
   end
 
@@ -520,8 +537,18 @@ defmodule Normandy.Coordination.AgentPool do
           end
       end
     else
-      # It was an overflow agent
-      %{state | overflow_count: max(0, state.overflow_count - 1)}
+      # It was an overflow agent; its slot can serve a waiting checkout.
+      serve_waiter(%{state | overflow_count: max(0, state.overflow_count - 1)})
+    end
+  end
+
+  # Hands the first waiter an agent if one can be had (a new overflow agent).
+  defp serve_waiter(state) do
+    with false <- :queue.is_empty(state.waiting),
+         {:ok, agent_pid, state} <- do_checkout(state) do
+      hand_to_waiter(agent_pid, state)
+    else
+      _ -> state
     end
   end
 

@@ -406,6 +406,24 @@ defmodule Normandy.Coordination.AgentPoolTest do
     end
   end
 
+  describe "overflow agent death" do
+    test "the freed overflow slot goes to a waiting checkout" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 1)
+
+      {:ok, _pooled} = AgentPool.checkout(pool)
+      {:ok, overflow} = AgentPool.checkout(pool)
+      waiter = Task.async(fn -> AgentPool.checkout(pool, timeout: 2_000) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      Process.exit(overflow, :kill)
+
+      assert {:ok, pid} = Task.await(waiter)
+      assert pid != overflow
+      AgentPool.stop(pool)
+    end
+  end
+
   describe "stats/1" do
     test "returns initial pool statistics" do
       agent_config = create_agent_config()
@@ -577,6 +595,36 @@ defmodule Normandy.Coordination.AgentPoolTest do
       assert :sys.get_state(pool).available == [agent_pid]
       assert Process.alive?(agent_pid)
 
+      AgentPool.stop(pool)
+    end
+
+    test "a stale checkin after the agent was lent again does not release the new loan" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      AgentPool.checkin(pool, agent_pid)
+
+      test_pid = self()
+
+      holder =
+        spawn(fn ->
+          send(test_pid, {:held, AgentPool.checkout(pool)})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:held, {:ok, ^agent_pid}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          AgentPool.checkin(pool, agent_pid)
+          assert %{in_use: 1, available: 0} = AgentPool.stats(pool)
+        end)
+
+      assert log =~ "not held by the caller"
+      assert {:error, :no_agents} = AgentPool.checkout(pool, block: false)
+
+      Process.exit(holder, :kill)
       AgentPool.stop(pool)
     end
   end
