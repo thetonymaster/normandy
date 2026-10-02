@@ -279,6 +279,31 @@ defmodule Normandy.Coordination.AgentPoolTest do
       AgentPool.stop(pool)
     end
 
+    test "timeout: :infinity waits until an agent is checked in" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      waiter = Task.async(fn -> AgentPool.checkout(pool, timeout: :infinity) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      :ok = AgentPool.checkin(pool, agent_pid)
+
+      assert {:ok, ^agent_pid} = Task.await(waiter)
+      AgentPool.stop(pool)
+    end
+
+    test "an invalid :timeout raises in the caller, naming the value" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 1)
+
+      assert_raise ArgumentError, ~r/AgentPool.checkout\/2: invalid :timeout.*-1/, fn ->
+        AgentPool.checkout(pool, timeout: -1)
+      end
+
+      assert Process.alive?(pool)
+      AgentPool.stop(pool)
+    end
+
     test "a timed-out checkout does not take the next checked-in agent" do
       agent_config = create_agent_config()
 

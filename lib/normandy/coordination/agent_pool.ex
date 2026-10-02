@@ -119,7 +119,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Options
 
-  - `:timeout` - Checkout timeout in ms (default: 5000)
+  - `:timeout` - Checkout timeout in ms, or `:infinity` (default: 5000)
 
   ## Examples
 
@@ -167,7 +167,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Options
 
-  - `:timeout` - Maximum time to wait in ms (default: 5000)
+  - `:timeout` - Maximum time to wait in ms, or `:infinity` (default: 5000)
   - `:block` - Whether to block if no agents available (default: true)
 
   ## Returns
@@ -194,6 +194,12 @@ defmodule Normandy.Coordination.AgentPool do
   def checkout(pool, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5000)
     block = Keyword.get(opts, :block, true)
+
+    unless timeout == :infinity or (is_integer(timeout) and timeout >= 0) do
+      raise ArgumentError,
+            "AgentPool.checkout/2: invalid :timeout, expected a non-negative integer " <>
+              "or :infinity, got #{inspect(timeout)}"
+    end
 
     # The pool enforces the timeout and always replies, so a caller never exits
     # on a busy pool and an agent is never handed to a caller that gave up.
@@ -284,7 +290,7 @@ defmodule Normandy.Coordination.AgentPool do
       {:error, :no_agents} when block ->
         # Watch the waiter, so one that dies is dropped instead of being handed an agent.
         mref = Process.monitor(client)
-        timer = Process.send_after(self(), {:checkout_timeout, from}, timeout)
+        timer = start_checkout_timer(from, timeout)
         {:noreply, %{state | waiting: :queue.in({from, timer, mref}, state.waiting)}}
 
       {:error, reason} ->
@@ -417,7 +423,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   defp waiter_down(ref, state) do
     {gone, waiting} = split_waiters(state.waiting, fn {_from, _timer, mref} -> mref == ref end)
-    Enum.each(gone, fn {_from, timer, _mref} -> Process.cancel_timer(timer) end)
+    Enum.each(gone, fn {_from, timer, _mref} -> cancel_checkout_timer(timer) end)
     %{state | waiting: waiting}
   end
 
@@ -519,9 +525,18 @@ defmodule Normandy.Coordination.AgentPool do
     end
   end
 
+  # A waiter with timeout: :infinity has no timer.
+  defp start_checkout_timer(_from, :infinity), do: nil
+
+  defp start_checkout_timer(from, timeout),
+    do: Process.send_after(self(), {:checkout_timeout, from}, timeout)
+
+  defp cancel_checkout_timer(nil), do: :ok
+  defp cancel_checkout_timer(timer), do: _ = Process.cancel_timer(timer)
+
   defp hand_to_waiter(agent_pid, state) do
     {{:value, {{client, _tag} = from, timer, mref}}, waiting} = :queue.out(state.waiting)
-    _ = Process.cancel_timer(timer)
+    cancel_checkout_timer(timer)
     Process.demonitor(mref, [:flush])
     GenServer.reply(from, {:ok, agent_pid})
 
