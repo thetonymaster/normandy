@@ -470,7 +470,8 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
     test "response_meta/1 names the model that served the message" do
       response = %Claudio.Messages.Response{model: "claude-opus-5-5", content: [@fallback]}
-      assert ClaudioAdapter.response_meta(response) == %{served_by: "b"}
+      # The thinking kept after a fallback is bound to the fallback model.
+      assert ClaudioAdapter.response_meta(response) == %{served_by: "b", fallback_model: "b"}
 
       no_fallback = %Claudio.Messages.Response{model: "claude-opus-5-5", content: []}
       assert ClaudioAdapter.response_meta(no_fallback) == %{served_by: "claude-opus-5-5"}

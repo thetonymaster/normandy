@@ -156,7 +156,7 @@ defmodule Normandy.Components.AgentMemory do
 
   @doc """
   Drops thinking that no longer applies under the current system prompt and tools,
-  given as `prefix_key` (see `Normandy.Agents.ToolCallResponse.prefix_key/2`).
+  given as `prefix_key` (see `Normandy.Agents.ToolCallResponse.prefix_key/3`).
 
   Walking the active chain oldest first, a `ToolCallResponse` whose `:prefix_key`
   differs loses its thinking. Earlier thinking is not part of a block's prefix, so

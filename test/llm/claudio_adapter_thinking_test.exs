@@ -160,6 +160,71 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
     end
   end
 
+  describe "a changed model" do
+    test "thinking produced by another model is not replayed" do
+      script(__MODULE__.ModelChange)
+
+      agent =
+        BaseAgent.init(%{
+          client: client(__MODULE__.ModelChange),
+          model: "claude-opus-5-5",
+          tool_registry: Registry.new([%FakeTool{}])
+        })
+
+      {agent, _} = BaseAgent.run_with_tools(agent, "weather?")
+      BaseAgent.run_with_tools(%{agent | model: "claude-sonnet-5-5"}, "and tomorrow?")
+
+      assert_received {:body, _first}
+      assert_received {:body, _second}
+      assert_received {:body, third}
+
+      assistant = Enum.find(third["messages"], &(&1["role"] == "assistant"))
+      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
+    end
+
+    test "thinking from a fallback model is not replayed to the requested model" do
+      test_pid = self()
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+      fallback = %{"type" => "fallback", "to" => %{"model" => "claude-sonnet-5-5"}}
+      served = %{@thinking | "signature" => "sig-b"}
+
+      Req.Test.stub(__MODULE__.FallbackModel, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:body, Jason.decode!(body)})
+        n = Agent.get_and_update(calls, &{&1, &1 + 1})
+
+        {content, stop} =
+          if n == 0,
+            do: {[@thinking, fallback, served, @tool_use], "tool_use"},
+            else: {[%{"type" => "text", "text" => "Sunny."}], "end_turn"}
+
+        Req.Test.json(conn, %{
+          "id" => "msg_#{n}",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-opus-5-5",
+          "content" => content,
+          "stop_reason" => stop,
+          "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+        })
+      end)
+
+      agent =
+        BaseAgent.init(%{
+          client: client(__MODULE__.FallbackModel),
+          model: "claude-opus-5-5",
+          tool_registry: Registry.new([%FakeTool{}])
+        })
+
+      BaseAgent.run_with_tools(agent, "weather?")
+
+      assert_received {:body, _first}
+      assert_received {:body, second}
+      assistant = Enum.find(second["messages"], &(&1["role"] == "assistant"))
+      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
+    end
+  end
+
   describe "streaming" do
     defp sse(events) do
       Enum.map_join(events, fn data ->

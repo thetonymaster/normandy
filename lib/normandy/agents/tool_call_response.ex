@@ -10,9 +10,9 @@ defmodule Normandy.Agents.ToolCallResponse do
   back unchanged, first, when the turn is replayed: a thinking model needs
   them on the assistant message that carries the tool calls.
 
-  `:prefix_key` (see `prefix_key/2`) records the system prompt and tools the
+  `:prefix_key` (see `prefix_key/3`) records the system prompt, tools and model the
   response was produced under. The API accepts a thinking block only under that
-  same prefix, so `Normandy.Components.AgentMemory.drop_stale_thinking/2` drops
+  same prefix and model, so `Normandy.Components.AgentMemory.drop_stale_thinking/2` drops
   thinking whose key no longer matches. It is never sent to the API.
   """
 
@@ -36,12 +36,12 @@ defmodule Normandy.Agents.ToolCallResponse do
 
   @doc """
   A key for the part of a request a thinking block is bound to besides the
-  messages: the system prompt and the tool set. The API binds tools as a set
-  sorted by name, so their order doesn't change the key.
+  messages: the system prompt, the tool set and the model. The API binds tools as
+  a set sorted by name, so their order doesn't change the key.
   """
-  @spec prefix_key(term(), [map()]) :: non_neg_integer()
-  def prefix_key(system_prompt, tools) do
-    :erlang.phash2({system_prompt, Enum.sort_by(tools, &tool_name/1)})
+  @spec prefix_key(term(), [map()], String.t() | nil) :: non_neg_integer()
+  def prefix_key(system_prompt, tools, model) do
+    :erlang.phash2({system_prompt, Enum.sort_by(tools, &tool_name/1), model})
   end
 
   defp tool_name(tool), do: Map.get(tool, :name) || Map.get(tool, "name")

@@ -273,14 +273,15 @@ defmodule Normandy.Agents.BaseAgent do
     tool_schemas =
       if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
 
-    # Thinking is valid only under the system prompt and tools that produced it (a
-    # context provider, a tool change or the forced final call's schema can change
-    # them), so stale thinking is left out and this call's response is stamped.
-    prefix_key = ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas)
+    # Thinking is valid only under the system prompt, tools and model that produced
+    # it (a context provider, a tool change, the forced final call's schema or a
+    # model change can change them), so stale thinking is left out and this call's
+    # response is stamped.
+    prefix_key = &ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas, &1)
 
     history =
       config.memory
-      |> AgentMemory.drop_stale_thinking(prefix_key)
+      |> AgentMemory.drop_stale_thinking(prefix_key.(config.model))
       |> AgentMemory.history()
 
     # Convert history plain maps to Message structs
@@ -314,7 +315,10 @@ defmodule Normandy.Agents.BaseAgent do
 
     # Wrap LLM call with resilience patterns
     {response, usage, meta} = call_llm_with_resilience(config, messages, response_model, opts)
-    {stamp_prefix(response, prefix_key), usage, meta}
+
+    # After a server-side fallback the thinking kept is the fallback model's.
+    produced_by = Map.get(meta, :fallback_model) || config.model
+    {stamp_prefix(response, prefix_key.(produced_by)), usage, meta}
   end
 
   defp stamp_prefix(%ToolCallResponse{} = response, prefix_key),
@@ -1206,7 +1210,8 @@ defmodule Normandy.Agents.BaseAgent do
     tool_schemas =
       if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
 
-    prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas)
+    # Streaming calls cannot use :fallbacks, so the requested model produces it.
+    prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas, config.model)
 
     history_messages =
       config.memory

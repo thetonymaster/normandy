@@ -1111,11 +1111,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
         _ -> %{}
       end
 
+    # After a server-side fallback the kept thinking belongs to the fallback model.
+    meta =
+      case {Claudio.Messages.Response.fallbacks(response), served_by} do
+        {[_ | _], %{served_by: model}} -> Map.put(served_by, :fallback_model, model)
+        _ -> served_by
+      end
+
     # Thinking blocks the API dropped or let through after their history changed
     # (sent only with :thinking_block_binding's beta).
     case response.input_transformations do
-      [_ | _] = transformations -> Map.put(served_by, :input_transformations, transformations)
-      _ -> served_by
+      [_ | _] = transformations -> Map.put(meta, :input_transformations, transformations)
+      _ -> meta
     end
   end
 
