@@ -147,8 +147,6 @@ defmodule Normandy.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      # No :mnesia: OTP starts every listed application (optional ones too, when
-      # available), and only SessionStore.Mnesia needs it; that store starts it.
       # Not :mnesia for consumers (a dependency builds in :prod): OTP starts every
       # listed application, optional ones too when available, and only
       # SessionStore.Mnesia needs it. Apps that use that store add :mnesia
