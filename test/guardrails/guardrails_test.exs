@@ -139,6 +139,23 @@ defmodule Normandy.GuardrailsTest do
       assert Guardrails.run([{RaisesError, on_error: :open}], "x") == {:ok, "x"}
     end
 
+    test "a built-in guard's config error raises whatever :on_error says" do
+      value = %Normandy.Agents.BaseAgentOutputSchema{chat_message: "hello"}
+
+      for policy <- [:open, :closed] do
+        field_typo =
+          {Normandy.Guardrails.Builtins.MaxLength, limit: 3, field: :typo, on_error: policy}
+
+        assert_raise ArgumentError, ~r/:field :typo is not a field/, fn ->
+          Guardrails.run([field_typo], value)
+        end
+
+        # :max instead of the required :limit
+        option_typo = {Normandy.Guardrails.Builtins.MaxLength, max: 3, on_error: policy}
+        assert_raise KeyError, fn -> Guardrails.run([option_typo], "hello") end
+      end
+    end
+
     test ":closed converts a crashing guard into a :guard_error violation" do
       assert {:error, [violation]} =
                Guardrails.run([{RaisesError, on_error: :closed}], "x")

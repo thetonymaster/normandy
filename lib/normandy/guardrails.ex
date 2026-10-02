@@ -53,7 +53,10 @@ defmodule Normandy.Guardrails do
   - `:closed` — the crash is rescued and turned into a `:guard_error` violation.
 
   Only the guard's `check` call is rescued; a malformed return value is a
-  contract violation and always raises regardless of `:on_error`.
+  contract violation and always raises regardless of `:on_error`. So does a
+  built-in guard's configuration error (an `ArgumentError` or `KeyError`, such
+  as a `:field` the struct does not have or a missing option). A `:field` on a plain map cannot be checked: a map
+  has no fixed keys, so a missing key reads as `nil`.
 
   ## Structured reason
 
@@ -180,7 +183,16 @@ defmodule Normandy.Guardrails do
         try do
           do_check(mod, value, opts, context)
         rescue
-          exception -> on_error_result(policy, mod, exception)
+          # A built-in guard raises ArgumentError or KeyError only for its own
+          # configuration (a :field typo, a bad or missing option): a bug to fix,
+          # never a pass or a violation.
+          exception in [ArgumentError, KeyError] ->
+            if builtin?(mod),
+              do: reraise(exception, __STACKTRACE__),
+              else: on_error_result(policy, mod, exception)
+
+          exception ->
+            on_error_result(policy, mod, exception)
         end
 
       other ->
@@ -200,6 +212,8 @@ defmodule Normandy.Guardrails do
       mod.check(value, opts)
     end
   end
+
+  defp builtin?(mod), do: String.starts_with?(inspect(mod), "Normandy.Guardrails.Builtins.")
 
   defp on_error_result(:open, _mod, _exception), do: :ok
 
