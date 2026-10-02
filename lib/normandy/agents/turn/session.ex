@@ -87,7 +87,7 @@ defmodule Normandy.Agents.Turn.Session do
   # Turn.Server.init/1 loads the turn state and rebuilds memory from the store
   # itself (on every start, including supervisor restarts), so the server opts
   # carry only the caller's config and options. A store fault in that load
-  # comes back as the start's {:error, reason}.
+  # comes back as run/2's {:error, reason} (the server starts :unavailable).
   defp rehydrate_and_start(opts) do
     sid = Keyword.fetch!(opts, :session_id)
     supervisor = Keyword.fetch!(opts, :supervisor)

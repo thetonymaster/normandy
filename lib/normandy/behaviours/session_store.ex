@@ -21,9 +21,10 @@ defmodule Normandy.Behaviours.SessionStore do
 
   `load_turn_state/2` and `load_config_template/2` return `:error` only when
   nothing is saved for the session. A backend failure (a timeout, a lost
-  connection, an aborted transaction) is `{:error, reason}`: `Turn.Server` and
-  `Turn.Session` fail the start on it, because starting as if nothing were
-  saved would drop an in-flight turn and the next save would overwrite it.
+  connection, an aborted transaction) is `{:error, reason}`: `Turn.Server` waits
+  `:unavailable` and retries, replying the reason to `run/2`, because starting as
+  if nothing were saved would drop an in-flight turn and the next save would
+  overwrite it.
   """
 
   alias Normandy.Components.AgentMemory.Entry

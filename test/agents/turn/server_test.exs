@@ -263,17 +263,18 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def load_config_template(_handle, _sid), do: {:error, :store_unavailable}
   end
 
-  test "a thin start stops with the store's reason when the template load faults" do
+  test "a thin start whose template load faults replies the store's reason to run/2" do
     {:ok, cat} = Catalog.start_link([])
-    Process.flag(:trap_exit, true)
 
-    assert {:error, :store_unavailable} =
+    assert {:ok, srv} =
              Turn.Server.start_link(
                session_id: "s-template-fault",
                store: {TemplateFaultStore, nil},
                registry: {Native, Native.new()},
                template_provider: {Catalog, cat}
              )
+
+    assert {:error, :store_unavailable} = Turn.Server.run(srv, "hello")
   end
 
   test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
@@ -1867,6 +1868,97 @@ defmodule Normandy.Agents.Turn.ServerTest do
       :sys.get_state(srv)
       assert {:awaiting_approval, _} = :sys.get_state(srv)
       assert tool_ids(store, sid) == []
+    end
+  end
+
+  describe "store unavailable at start" do
+    alias Normandy.Test.FlakyStore
+
+    defp flaky_server(store, sid, extra \\ []) do
+      handlers = %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
+      }
+
+      Turn.Server.start_link(
+        [
+          session_id: sid,
+          config: base_config(),
+          store: {FlakyStore, store},
+          registry: {Native, Native.new()},
+          handlers: handlers
+        ] ++ extra
+      )
+    end
+
+    test "the start succeeds and run/2 replies the store's reason" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+
+      assert {:ok, srv} = flaky_server(store, "s-unavail")
+      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
+      assert Process.alive?(srv)
+    end
+
+    test "a call after the store recovers loads the session and runs the turn" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+      {:ok, srv} = flaky_server(store, "s-recover-call")
+      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
+
+      FlakyStore.up(store)
+
+      assert {:ok, %Resp{content: "hi"}} = Turn.Server.run(srv, "hello")
+    end
+
+    test "the server retries the load on its own once the store is back" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+      {:ok, srv} = flaky_server(store, "s-recover-timer")
+      assert {:unavailable, _} = :sys.get_state(srv)
+
+      FlakyStore.up(store)
+
+      assert wait_until(fn -> match?({:idle, _}, :sys.get_state(srv)) end)
+    end
+
+    test "with no call for idle_timeout_ms, it stops normally" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+      Process.flag(:trap_exit, true)
+      {:ok, srv} = flaky_server(store, "s-unavail-idle", idle_timeout_ms: 50)
+
+      assert_receive {:EXIT, ^srv, :normal}, 1_000
+    end
+
+    test "a crash while the store is down does not take the supervisor or other sessions down" do
+      store = FlakyStore.new()
+      {:ok, sup} = Turn.Supervisor.start_link(max_restarts: 3, max_seconds: 5)
+      reg = Native.new()
+
+      start = fn sid ->
+        Turn.Supervisor.start_server(sup,
+          session_id: sid,
+          config: base_config(),
+          store: {FlakyStore, store},
+          registry: {Native, reg}
+        )
+      end
+
+      {:ok, a} = start.("s-storm-a")
+      {:ok, b} = start.("s-storm-b")
+      sup_ref = Process.monitor(sup)
+
+      FlakyStore.down(store)
+      Process.exit(a, :kill)
+
+      assert wait_until(fn ->
+               match?({:ok, pid} when pid != a, Native.whereis(reg, "s-storm-a"))
+             end)
+
+      refute_received {:DOWN, ^sup_ref, _, _, _}
+      assert Process.alive?(sup)
+      assert Process.alive?(b)
     end
   end
 end

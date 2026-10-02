@@ -27,6 +27,16 @@ defmodule Normandy.Agents.Turn.Server do
   functions and are never saved, so whoever restarts the server passes them (see
   `ResumeReaper`).
 
+  ## Store unavailable
+
+  Every start, supervisor restarts included, loads the session from the store. If
+  the store fails that load, the start still succeeds: the server waits in
+  `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s) and
+  on every `run/2`, and replies `{:error, reason}` with the store's reason until a
+  load succeeds. It then carries on as a normal start would, eager resume included.
+  An approval that arrives while the load fails is dropped with a warning. With no
+  call for `:idle_timeout_ms`, the server stops normally.
+
   ## Events (`:subscriber`)
 
     * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
@@ -96,8 +106,14 @@ defmodule Normandy.Agents.Turn.Server do
               idle_timeout_ms: 60_000,
               template_provider: nil,
               resume_policy: :lazy,
-              run_span: nil
+              run_span: nil,
+              start_opts: nil,
+              retry_ms: nil
   end
+
+  # Backoff between load retries while the store is unavailable.
+  @retry_initial_ms 200
+  @retry_max_ms 30_000
 
   # ---- public API ----
 
@@ -129,16 +145,61 @@ defmodule Normandy.Agents.Turn.Server do
     store = Keyword.fetch!(opts, :store)
     session_id = Keyword.fetch!(opts, :session_id)
 
+    register_self(%Data{registry: Keyword.fetch!(opts, :registry), session_id: session_id})
+
     # The store is the only source of durable state, on a first start and on a
     # supervisor restart alike: the start arguments are captured once and would
-    # bring back the memory and turn state of the first start. A store fault
-    # stops the start: starting without the saved turn would drop it.
+    # bring back the memory and turn state of the first start. Starting without
+    # the saved turn would drop it, and failing the start would make the
+    # supervisor retry at once, spending the restart limit every session shares.
+    # So a store fault starts the server :unavailable, retrying the load.
+    case load_session(opts, store, session_id) do
+      {:ok, config, template, turn_state} ->
+        init_data(opts, config, template, turn_state)
+
+      {:error, reason} ->
+        unavailable(opts, reason)
+    end
+  end
+
+  defp load_session(opts, store, session_id) do
     with {:ok, config, template} <- start_config(opts, store, session_id),
          {:ok, config} <- with_stored_memory(config, store, session_id),
          {:ok, turn_state} <- load_turn_state(store, session_id) do
-      init_data(opts, config, template, turn_state)
-    else
-      {:error, reason} -> {:stop, reason}
+      {:ok, config, template, turn_state}
+    end
+  end
+
+  defp unavailable(opts, reason) do
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    Logger.warning(
+      "Turn.Server could not load session #{inspect(session_id)} from the store " <>
+        "(#{inspect(reason)}); retrying"
+    )
+
+    data = %Data{
+      session_id: session_id,
+      store: Keyword.fetch!(opts, :store),
+      registry: Keyword.fetch!(opts, :registry),
+      idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000),
+      start_opts: opts,
+      retry_ms: @retry_initial_ms
+    }
+
+    {:ok, :unavailable, data,
+     [{{:timeout, :retry}, @retry_initial_ms, :retry}, idle_timeout(data)]}
+  end
+
+  # Loads the session again. On success the transition is the one init/1 would
+  # have made; the retry timer is cancelled.
+  defp retry_load(%Data{start_opts: opts}) do
+    store = Keyword.fetch!(opts, :store)
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    with {:ok, config, template, turn_state} <- load_session(opts, store, session_id) do
+      {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state)
+      {:ok, {:next_state, :idle, data, [{{:timeout, :retry}, :cancel} | List.wrap(actions)]}}
     end
   end
 
@@ -186,8 +247,6 @@ defmodule Normandy.Agents.Turn.Server do
       on_approval_timeout: timeouts.on_approval_timeout,
       idle_timeout_ms: timeouts.idle_timeout_ms
     }
-
-    register_self(data)
 
     if data.resume_policy == :eager and resumable?(data.turn_state) do
       {:ok, :idle, data, [{:next_event, :internal, :resume}]}
@@ -293,8 +352,48 @@ defmodule Normandy.Agents.Turn.Server do
   # so we pass a minimal provider map derived from the template's model.
   defp token_provider(%{model: model}), do: %{model: model}
 
-  # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
+  # :unavailable — the store failed the load at start. A turn request retries it:
+  # on success the request is replayed in :idle, otherwise it gets the reason.
   @impl true
+  def handle_event({:call, from}, {:turn, _input}, :unavailable, data) do
+    case retry_load(data) do
+      {:ok, {:next_state, state, new_data, actions}} ->
+        {:next_state, state, new_data, actions ++ [:postpone]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}, idle_timeout(data)]}
+    end
+  end
+
+  # An approval for a session whose turn could not be loaded: load it now, or drop
+  # the decision (there is no parked turn to give it to).
+  def handle_event(:cast, {:approval, _decisions}, :unavailable, data) do
+    case retry_load(data) do
+      {:ok, {:next_state, state, new_data, actions}} ->
+        {:next_state, state, new_data, actions ++ [:postpone]}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Turn.Server dropped an approval for session #{inspect(data.session_id)}: " <>
+            "the store is unavailable (#{inspect(reason)})"
+        )
+
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event({:timeout, :retry}, :retry, :unavailable, data) do
+    case retry_load(data) do
+      {:ok, transition} ->
+        transition
+
+      {:error, _reason} ->
+        retry_ms = min(data.retry_ms * 2, @retry_max_ms)
+        {:keep_state, %{data | retry_ms: retry_ms}, [{{:timeout, :retry}, retry_ms, :retry}]}
+    end
+  end
+
+  # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
 
@@ -400,7 +499,9 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Idle long enough → passivate. Final turn state is already persisted; just stop.
-  def handle_event(:state_timeout, :passivate, :idle, data) do
+  # An :unavailable server nobody calls stops too; the next caller starts it again.
+  def handle_event(:state_timeout, :passivate, state, data)
+      when state in [:idle, :unavailable] do
     {:stop, :normal, data}
   end
 
