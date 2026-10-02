@@ -815,6 +815,14 @@ defmodule Normandy.Schema do
             "(no time zone information) or :utc_datetime (time zone is set to UTC)"
   end
 
+  # Internal composites of Normandy.Type (cast helpers), with no JSON Schema form.
+  defp check_field_type!(_mod, name, {internal, _inner} = type, _opts)
+       when internal in [:try, :in] do
+    raise ArgumentError,
+          "invalid type #{Normandy.Type.format(type)} for field #{inspect(name)}: " <>
+            "#{inspect(internal)} is internal to Normandy.Type and is not a field type"
+  end
+
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp check_field_type!(mod, name, type, opts) do
     cond do

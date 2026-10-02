@@ -456,6 +456,24 @@ defmodule Normandy.SchemaNestedTest do
       end
     end
 
+    test "{:try, _} and {:in, _} are not field types" do
+      for type <- [{:try, :string}, {:in, :integer}] do
+        assert_raise ArgumentError, ~r/is not a field type/, fn ->
+          Code.eval_quoted(
+            quote do
+              defmodule unquote(Module.concat(__MODULE__, "Internal#{elem(type, 0)}")) do
+                use Normandy.Schema
+
+                schema do
+                  field(:x, unquote(type))
+                end
+              end
+            end
+          )
+        end
+      end
+    end
+
     test "nested schema without io_schema works" do
       defmodule SimpleNested do
         use Normandy.Schema
