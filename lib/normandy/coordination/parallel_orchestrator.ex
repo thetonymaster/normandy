@@ -135,29 +135,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     results =
       Task.async_stream(
         agent_specs,
-        fn spec ->
-          agent_id = Map.fetch!(spec, :id)
-          agent = Map.fetch!(spec, :agent)
-          input = Map.fetch!(spec, :input)
-          transform_fn = Map.get(spec, :transform) || (& &1)
-
-          # Execute agent, then its callbacks (guarded: they run in this task, and
-          # a crash here would take the caller down through the link)
-          result =
-            case execute_agent(agent, input) do
-              {:ok, agent_result} ->
-                guarded(fn ->
-                  transformed = transform_fn.(agent_result)
-                  if on_complete, do: on_complete.(agent_id, transformed)
-                  transformed
-                end)
-
-              {:error, reason} ->
-                {:error, reason}
-            end
-
-          {agent_id, result}
-        end,
+        &{Map.fetch!(&1, :id), run_spec(&1, on_complete)},
         max_concurrency: max_concurrency,
         timeout: timeout,
         # A slow agent fails on its own instead of exiting the caller.
@@ -265,14 +243,9 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       agent_specs,
       fn spec ->
         agent_id = Map.fetch!(spec, :id)
-        agent = Map.fetch!(spec, :agent)
-        input = Map.fetch!(spec, :input)
-        transform_fn = Map.get(spec, :transform) || (& &1)
 
-        with {:ok, result} <- execute_agent(agent, input),
-             {:ok, transformed} <- guarded(fn -> transform_fn.(result) end) do
-          {:ok, {agent_id, transformed}}
-        else
+        case run_spec(spec, nil) do
+          {:ok, transformed} -> {:ok, {agent_id, transformed}}
           {:error, reason} -> {:error, {agent_id, reason}}
         end
       end,
@@ -312,8 +285,22 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       {:error, {:exit, reason}}
   end
 
-  # A spec's :transform or :on_agent_complete runs in the agent's task; report a
-  # crash in it as that agent's error, in execute_agent/2's shapes.
+  # Runs one spec's agent, then its :transform and the :on_agent_complete callback.
+  # The callbacks run in the agent's task, so they are guarded: a crash would take
+  # the caller down through the task's link.
+  defp run_spec(spec, on_complete) do
+    with {:ok, result} <- execute_agent(Map.fetch!(spec, :agent), Map.fetch!(spec, :input)) do
+      guarded(fn -> run_callbacks(spec, result, on_complete) end)
+    end
+  end
+
+  defp run_callbacks(spec, result, on_complete) do
+    transformed = (Map.get(spec, :transform) || (& &1)).(result)
+    if on_complete, do: on_complete.(Map.fetch!(spec, :id), transformed)
+    transformed
+  end
+
+  # A crash in a spec's callbacks is that agent's error, in execute_agent/2's shapes.
   defp guarded(fun) do
     {:ok, fun.()}
   rescue
