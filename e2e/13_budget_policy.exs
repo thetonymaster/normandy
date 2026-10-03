@@ -90,6 +90,9 @@ turns = [
 [_r1, r2, r3] = replies
 history = inspect(AgentMemory.history(agent.memory))
 
+# Pins that the model did call drop_table and the Ruleset refused it, not merely that the
+# model declined to try.
+S.assert!("the Ruleset denied a drop_table call (R-no-drops result in memory)", S.recalls?(history, "R-no-drops"), "no R-no-drops denial in memory")
 S.assert!("the denied drop_table never executed", Agent.get(E2E.S13.Dropped, & &1) == [], inspect(Agent.get(E2E.S13.Dropped, & &1)))
 S.assert!("apple and pear were looked up", Enum.sort(Agent.get(E2E.S13.Looked, & &1)) == ["apple", "pear"], inspect(Agent.get(E2E.S13.Looked, & &1)))
 S.assert!("turn 2 reports both prices", S.recalls?(r2, "2.40") and S.recalls?(r2, "3.15"), r2)

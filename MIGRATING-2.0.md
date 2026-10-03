@@ -74,7 +74,12 @@ fallback), and `Normandy.Agents.ConverseResult.normalize/1` always returns one.
 - **Compaction runs at the start of every turn,** before the first LLM call, as well as after
   each tool batch. In 1.x it ran only after tool batches, so an agent that never called a tool
   never compacted and its memory grew without bound. A `[:normandy, :agent, :compaction]`
-  telemetry event reports every compactor run (token counts, strategy, whether it compacted).
+  telemetry event reports every compactor run (token counts, strategy, whether it compacted,
+  and the compactor's `:error` / `:reason` when it failed).
+  Consequence: an agent with no tools and a real compactor now resolves its context window on
+  every run. With a client that isn't a `ClaudioAdapter` and no pinned `:max_tokens`, that
+  lookup fails and `run/2` raises `Normandy.ModelCatalogError` before the first LLM call, where
+  1.x silently never compacted. Pin `:max_tokens` (see below).
 - **Compaction makes a network call:** one Models API request per model per agent config.
   Coordinators that discard the config `BaseAgent.run/2` returns (batch, orchestrators, agent
   processes) repeat it on every run.
