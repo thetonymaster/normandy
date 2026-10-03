@@ -48,18 +48,35 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       client: client,
       model: "m",
       temperature: nil,
-      name: "compacting-agent",
+      name: Process.get(:agent_name),
       behaviours: %Config{compactor: {StubCompactor, [max_tokens: 1_000, meta: meta]}}
     })
   end
 
+  # Every agent turn emits this event, and telemetry handlers are global, so concurrent
+  # async tests' events would reach this test too. Forward only this test's agent's.
   setup do
-    ref = :telemetry_test.attach_event_handlers(self(), [[:normandy, :agent, :compaction]])
-    on_exit(fn -> :telemetry.detach(ref) end)
-    %{ref: ref}
+    name = "compacting-agent-#{System.unique_integer([:positive])}"
+    Process.put(:agent_name, name)
+    test_pid = self()
+    handler_id = {__MODULE__, name}
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:normandy, :agent, :compaction],
+        fn _event, measurements, metadata, _ ->
+          if metadata.agent_name == name,
+            do: send(test_pid, {:compaction, measurements, metadata})
+        end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+    %{name: name}
   end
 
-  test "a compaction that fired reports token counts and strategy", %{ref: ref} do
+  test "a compaction that fired reports token counts and strategy", %{name: name} do
     meta = %{
       compacted: true,
       tokens_before: 900,
@@ -72,11 +89,11 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       iterations_left: 3
     })
 
-    assert_receive {[:normandy, :agent, :compaction], ^ref, measurements, metadata}
+    assert_receive {:compaction, measurements, metadata}
     assert measurements == %{tokens_before: 900, tokens_after: 300, tokens_removed: 600}
 
     assert metadata == %{
-             agent_name: "compacting-agent",
+             agent_name: name,
              model: "m",
              strategy: :summarize,
              compacted: true,
@@ -85,15 +102,14 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
            }
   end
 
-  test "a compactor that failed or had no window says why in the event", %{ref: ref} do
+  test "a compactor that failed or had no window says why in the event" do
     BaseAgent.compact_turn_memory(
       agent(%{compacted: false, error: {:summarize_failed, :timeout}}),
       %Normandy.Agents.Turn.State{},
       %{iterations_left: 3}
     )
 
-    assert_receive {[:normandy, :agent, :compaction], ^ref, _,
-                    %{error: {:summarize_failed, :timeout}}}
+    assert_receive {:compaction, _, %{error: {:summarize_failed, :timeout}}}
 
     BaseAgent.compact_turn_memory(
       agent(%{compacted: false, reason: :no_window}),
@@ -101,31 +117,31 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       %{iterations_left: 3}
     )
 
-    assert_receive {[:normandy, :agent, :compaction], ^ref, _, %{reason: :no_window}}
+    assert_receive {:compaction, _, %{reason: :no_window}}
   end
 
-  test "a chat turn with no tool calls runs the compactor before calling the model", %{ref: ref} do
+  test "a chat turn with no tool calls runs the compactor before calling the model" do
     {_agent, _response} = BaseAgent.run(agent(%{compacted: false}), "hello")
 
-    assert_receive {[:normandy, :agent, :compaction], ^ref, _measurements, %{compacted: false}}
+    assert_receive {:compaction, _measurements, %{compacted: false}}
   end
 
-  test "a streamed turn runs the compactor before its first stream call", %{ref: ref} do
+  test "a streamed turn runs the compactor before its first stream call" do
     config = agent(%{compacted: false}, %NotifyingStreamClient{notify: self()})
 
     {_config, _response} = BaseAgent.stream_response(config, "hello", fn _, _ -> :ok end)
 
     assert {:messages, [first | _]} = Process.info(self(), :messages)
-    assert {[:normandy, :agent, :compaction], ^ref, _, _} = first
+    assert {:compaction, _, _} = first
     assert_received :llm_called
   end
 
-  test "a compactor run that did not compact is still observable", %{ref: ref} do
+  test "a compactor run that did not compact is still observable" do
     BaseAgent.compact_turn_memory(agent(%{compacted: false}), %Normandy.Agents.Turn.State{}, %{
       iterations_left: 3
     })
 
-    assert_receive {[:normandy, :agent, :compaction], ^ref, measurements, metadata}
+    assert_receive {:compaction, measurements, metadata}
     assert measurements == %{}
     assert metadata.compacted == false
     assert metadata.strategy == nil
