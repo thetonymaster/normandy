@@ -107,6 +107,6 @@ defmodule E2E.Support do
     %{id: id, calls: n, t0: t0} = Agent.get(__MODULE__, & &1)
     ms = System.monotonic_time(:millisecond) - t0
     IO.puts("\nLIVE CALLS USED: #{n}")
-    IO.puts("E2E_RESULT " <> IO.iodata_to_binary(:json.encode(%{scenario: id, calls: n, ms: ms})))
+    IO.puts("E2E_RESULT " <> Jason.encode!(%{scenario: id, calls: n, ms: ms}))
   end
 end

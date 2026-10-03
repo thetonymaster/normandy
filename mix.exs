@@ -165,8 +165,6 @@ defmodule Normandy.MixProject do
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:bypass, "~> 2.1", only: :test},
-      # Live e2e scenario 12 talks to a real stdio MCP server through Claudio's ExMCP adapter.
-      {:ex_mcp, "~> 1.5", only: :test},
       # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
       # fails to compile on OTP 26, which CI still tests. Lift these pins when OTP 26 leaves
       # the matrix.
@@ -187,7 +185,16 @@ defmodule Normandy.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:opentelemetry, "~> 1.5", only: :test},
       {:opentelemetry_api, "~> 1.4", only: :test}
-    ]
+    ] ++ e2e_deps()
+  end
+
+  # Live e2e scenario 12 talks to a real stdio MCP server through Claudio's ExMCP adapter.
+  # ex_mcp requires Elixir ~> 1.17; on older toolchains (CI's 1.15/1.16 legs) it is left
+  # out and only that scenario is unavailable.
+  defp e2e_deps do
+    if Version.match?(System.version(), "~> 1.17"),
+      do: [{:ex_mcp, "~> 1.5", only: :test}],
+      else: []
   end
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).

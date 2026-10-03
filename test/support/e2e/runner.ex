@@ -47,7 +47,7 @@ defmodule NormandyTest.E2E.Runner do
     |> Enum.reverse()
     |> Enum.find_value(:missing, fn
       "E2E_RESULT " <> json ->
-        %{"calls" => calls, "ms" => ms} = :json.decode(json)
+        %{"calls" => calls, "ms" => ms} = Jason.decode!(json)
         {:ok, %{calls: calls, ms: ms}}
 
       _ ->

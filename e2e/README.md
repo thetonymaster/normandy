@@ -9,6 +9,8 @@ roughly $0.15–0.45. Each scenario has its own cap and halts if it exceeds it.
 ## Prerequisites
 
 - `export ANTHROPIC_API_KEY=...` (or `API_KEY`)
+- Scenario 12 only: Elixir ≥ 1.17 (the `ex_mcp` test dependency is skipped on older
+  versions) and OTP ≥ 27 (the stdio MCP server uses the built-in `:json` module)
 - Scenario 11 only: `docker compose -f docker-compose.verify.yml up -d` and
   `MIX_ENV=test mix ecto.setup`
 
