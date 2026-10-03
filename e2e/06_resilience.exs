@@ -49,7 +49,8 @@ S.assert!("run 3 never reached the client", E2E.FaultClient.converse_calls(clien
 S.assert!("no live request so far", S.calls() == 0, "#{S.calls()}")
 
 S.narrate("Waiting out the 3 s breaker timeout (the documented open → half-open contract).")
-Process.sleep(3_200)
+S.wait_for(fn -> CircuitBreaker.state(breaker) == :half_open end, 6_000, "the breaker turns half-open after its timeout")
+IO.puts("  ok: the breaker is half-open")
 
 {:ok, {_agent, r}} = attempt.()
 S.turn(4, input.chat_message, r.chat_message)

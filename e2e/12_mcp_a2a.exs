@@ -14,7 +14,7 @@ defmodule E2E.S12.Router do
   get "/.well-known/agent-card.json" do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(200, Jason.encode!(Claudio.A2A.AgentCard.to_map(conn.assigns.b.card)))
+    |> send_resp(200, Jason.encode!(Claudio.A2A.AgentCard.to_map(Agent.get(E2E.S12.Card, & &1))))
   end
 
   post "/a2a" do
@@ -30,6 +30,8 @@ end
 
 S.start("12_mcp_a2a", cap: 10)
 {:ok, _} = Agent.start_link(fn -> 0 end, name: E2E.S12.Hits)
+# The card names the server's URL, which exists only once the OS picks the port.
+{:ok, _} = Agent.start_link(fn -> nil end, name: E2E.S12.Card)
 
 S.narrate("Agent B (Harbour Office) behind A2A on a random local port.")
 b_config =
@@ -43,12 +45,11 @@ b_config =
     }
   })
 
-{:ok, _} = Plug.Cowboy.http(E2E.S12.Router, %{config: b_config, card: nil}, port: 0)
+{:ok, _} = Plug.Cowboy.http(E2E.S12.Router, %{config: b_config}, port: 0)
 port = :ranch.get_port(E2E.S12.Router.HTTP)
 base = "http://127.0.0.1:#{port}"
 card = Normandy.A2A.Server.build_agent_card(b_config, name: "Harbour Office", description: "Answers questions about the harbour", url: base <> "/a2a")
-:ok = Plug.Cowboy.shutdown(E2E.S12.Router.HTTP)
-{:ok, _} = Plug.Cowboy.http(E2E.S12.Router, %{config: b_config, card: card}, port: port)
+:ok = Agent.update(E2E.S12.Card, fn nil -> card end)
 
 card_resp = Req.get!(base <> "/.well-known/agent-card.json")
 S.assert!("the agent card is served over HTTP", card_resp.status == 200 and card_resp.body["name"] == "Harbour Office", inspect(card_resp.body))
