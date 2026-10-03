@@ -29,6 +29,7 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.BaseIOSchema
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
@@ -96,15 +97,72 @@ defmodule Normandy.A2A.Server do
 
   Each call runs on the given `config`: the A2A `context_id` and `task_id` do
   not carry memory between calls.
+
+  Same as `handle_message/3` with no carrier: the request span nests under
+  whatever OpenTelemetry context is current in the calling process.
   """
   @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t()) ::
           {:ok, Claudio.A2A.Task.t()} | {:error, term()}
   def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message) do
-    case message_text(message) do
-      "" -> {:error, :no_text}
-      text -> run_agent(config, text)
+    handle_message(config, message, [])
+  end
+
+  @doc """
+  Like `handle_message/2`, joining the caller's trace from `carrier`.
+
+  `carrier` is the incoming request's headers as `[{name, value}]` (a Plug
+  `conn.req_headers` works as is). When it has a W3C `traceparent` and
+  OpenTelemetry is loaded, the extracted context is attached for the duration
+  of the call (and the previous one put back after), so the agent's spans join
+  the remote caller's trace. Without a `traceparent` the current context is
+  left alone. If your HTTP instrumentation already extracted the trace into a
+  server span, call `handle_message/2` instead so the agent nests under that
+  span.
+
+  Emits a `[:normandy, :a2a, :request]` `:telemetry.span/3`. Start metadata:
+  `:task_id` (the id of the returned task) and `:agent_name` (`config.name`).
+  Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error`
+  (`:no_text` or `:agent_failed`). No message content is included.
+  """
+  @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t(), [{String.t(), String.t()}]) ::
+          {:ok, Claudio.A2A.Task.t()} | {:error, term()}
+  def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message, carrier)
+      when is_list(carrier) do
+    token = carrier |> trace_ctx() |> OtelCtx.attach()
+
+    try do
+      request_span(config, message)
+    after
+      OtelCtx.detach(token)
     end
   end
+
+  # Only a carrier that names a parent replaces the current context: extracting
+  # from headers without one would detach the request from any span the caller
+  # (e.g. HTTP instrumentation) already made current.
+  defp trace_ctx(carrier) do
+    if Enum.any?(carrier, fn {name, _} -> String.downcase(name) == "traceparent" end) do
+      OtelCtx.extract(carrier)
+    end
+  end
+
+  defp request_span(config, message) do
+    task_id = generate_task_id()
+    metadata = %{task_id: task_id, agent_name: config.name}
+
+    :telemetry.span([:normandy, :a2a, :request], metadata, fn ->
+      result =
+        case message_text(message) do
+          "" -> {:error, :no_text}
+          text -> run_agent(config, text, task_id)
+        end
+
+      {result, Map.merge(metadata, stop_status(result))}
+    end)
+  end
+
+  defp stop_status({:ok, _task}), do: %{status: :ok}
+  defp stop_status({:error, reason}), do: %{status: :error, error: reason}
 
   defp message_text(message) do
     message.parts
@@ -112,7 +170,7 @@ defmodule Normandy.A2A.Server do
     |> String.trim()
   end
 
-  defp run_agent(config, text) do
+  defp run_agent(config, text, task_id) do
     # Build user input matching the agent's input schema
     user_input =
       case config.input_schema do
@@ -127,7 +185,7 @@ defmodule Normandy.A2A.Server do
       response_text = extract_response_text(response)
 
       task = %Claudio.A2A.Task{
-        id: generate_task_id(),
+        id: task_id,
         status: %{
           state: :completed,
           message: Message.new(:agent, [Part.text(response_text)]),

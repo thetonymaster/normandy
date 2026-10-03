@@ -27,6 +27,16 @@ defmodule Normandy.MCP.ToolWrapper do
       # Register in agent
       agent = BaseAgent.register_tool(agent, wrapper)
 
+  ## Trace context
+
+  Unlike `Normandy.A2A.AgentTool`, an MCP call does not carry the W3C trace
+  context to the server. `Claudio.MCP.Client.call_tool/4` takes the tool name,
+  its arguments and transport options (a timeout), with no request metadata
+  (MCP `_meta`) or header field, and the adapters build the request inside the
+  MCP client library. Putting `traceparent` into the arguments would hand the
+  tool an input it did not declare. The MCP server's spans therefore start a
+  trace of their own.
+
   """
 
   @type t :: %__MODULE__{

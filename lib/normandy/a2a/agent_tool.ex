@@ -23,6 +23,7 @@ defmodule Normandy.A2A.AgentTool do
   alias Claudio.A2A.Client
   alias Claudio.A2A.Message
   alias Claudio.A2A.Part
+  alias Normandy.Telemetry.OtelCtx
 
   @default_timeout 60_000
   @poll_interval 1_000
@@ -55,7 +56,10 @@ defmodule Normandy.A2A.AgentTool do
 
     - `:skill_id` - Specific skill to expose (nil for general agent access)
     - `:auth_token` - Bearer token for authentication
-    - `:transport_opts` - Options passed to the A2A transport
+    - `:transport_opts` - Options passed to the A2A transport. Its `:headers`
+      (`[{name, value}]`) are sent on every request; when OpenTelemetry is
+      loaded and a span is active, W3C `traceparent`/`tracestate` headers are
+      added beside them (a same-named header you set is kept)
     - `:timeout` - Maximum time to wait for task completion (default: 60s)
 
   """
@@ -77,6 +81,25 @@ defmodule Normandy.A2A.AgentTool do
   @spec prepare_input(t(), map()) :: t()
   def prepare_input(%__MODULE__{} = tool, input) when is_map(input) do
     %{tool | input: input}
+  end
+
+  @doc false
+  # Adds the current OpenTelemetry context as W3C `traceparent`/`tracestate`
+  # request headers, so the remote agent's spans join this trace (see
+  # `Normandy.A2A.Server.handle_message/3`). A header the caller already set in
+  # `transport_opts[:headers]` is kept. No-op without OTel or an active span.
+  @spec put_trace_headers(keyword()) :: keyword()
+  def put_trace_headers(opts) do
+    case OtelCtx.inject(OtelCtx.capture()) do
+      [] ->
+        opts
+
+      carrier ->
+        headers = Keyword.get(opts, :headers, [])
+        taken = MapSet.new(headers, fn {name, _} -> String.downcase(to_string(name)) end)
+        trace = Enum.reject(carrier, fn {name, _} -> String.downcase(name) in taken end)
+        Keyword.put(opts, :headers, headers ++ trace)
+    end
   end
 
   @doc false
@@ -209,6 +232,7 @@ defmodule Normandy.A2A.AgentTool do
       opts =
         transport_opts
         |> Keyword.merge(if(auth_token, do: [auth_token: auth_token], else: []))
+        |> AgentTool.put_trace_headers()
 
       case Client.send_message(endpoint, message, opts) do
         {:ok, %Claudio.A2A.Task{} = task} ->
