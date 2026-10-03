@@ -169,6 +169,31 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:messages, [:compacted, :llm_called]} = Process.info(self(), :messages)
   end
 
+  test "the store holds the admitted user input, the same value memory holds" do
+    store = InMemory.new()
+
+    handlers = %{
+      BaseAgent.non_streaming_handlers()
+      | call_llm: fn _config, _state, _req -> %Resp{content: "noted", tool_calls: nil} end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-admitted",
+        config: %{base_config() | input_schema: %Normandy.Agents.BaseAgentInputSchema{}},
+        store: {InMemory, store},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, Native.new()},
+        handlers: handlers
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "My locker number is 4417."})
+
+    {:ok, [user | _]} = InMemory.history(store, "s-admitted")
+
+    assert %Normandy.Agents.BaseAgentInputSchema{chat_message: "My locker number is 4417."} =
+             user.content
+  end
+
   test "a completed turn persists a terminal :stopped turn state (for the resume reaper)" do
     store = InMemory.new()
     reg = Native.new()

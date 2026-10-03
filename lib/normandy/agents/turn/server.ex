@@ -971,10 +971,12 @@ defmodule Normandy.Agents.Turn.Server do
   defp current_turn_id(_config), do: nil
 
   # On failure, carries the repaired config so memory keeps matching the store.
+  # Stores the admitted input (e.g. a map cast to the input schema), the value
+  # admission put in memory, not the raw argument.
   defp persist_user_message(_data, _config, nil, _repaired), do: :ok
 
-  defp persist_user_message(data, config, user_input, repaired) do
-    with {:error, reason} <- append_to_store(data, config, "user", user_input),
+  defp persist_user_message(data, config, _user_input, repaired) do
+    with {:error, reason} <- append_to_store(data, config, "user", config.current_user_input),
          do: {:error, repaired, reason}
   end
 
