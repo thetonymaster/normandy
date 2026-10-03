@@ -34,6 +34,9 @@ SystemPromptGenerator.generate_prompt(spec)
   `# OUTPUT INSTRUCTIONS` heading is no longer emitted, the context section adds "Use this
   information where it is relevant to the request.", and the output-schema and
   retry-feedback wording changed. Update prompt snapshot tests.
+- Agents with tools no longer get an `# OUTPUT SCHEMA` block on tool-loop calls. 1.x showed
+  the model the internal tool-call field map there. Their system prompt changes, so the first
+  request after upgrading misses the prompt cache.
 
 ## 3. MCP tool allowlists take exact names
 
