@@ -357,4 +357,17 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert effects == [{:fail, reason}]
     end
   end
+
+  describe "rejected_calls/2" do
+    test "every parked call not explicitly :approve is rejected, in parked order" do
+      parked =
+        for id <- ["a", "r", "m", "x"], do: %ToolCall{id: id, name: "billing", input: %{}}
+
+      decisions = %{"a" => :approve, "r" => :reject, "x" => :maybe}
+
+      assert Enum.map(Turn.rejected_calls(parked, decisions), & &1.id) == ["r", "m", "x"]
+      assert Turn.rejected_calls(parked, Map.new(parked, &{&1.id, :approve})) == []
+      assert Turn.rejected_calls([], %{}) == []
+    end
+  end
 end

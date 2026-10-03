@@ -213,8 +213,8 @@ defmodule Normandy.Agents.Turn do
         %State{status: :awaiting_approval, parked_calls: parked, held_results: held} = s,
         {:approval, decisions}
       ) do
-    {approved, rejected} =
-      Enum.split_with(parked, fn %ToolCall{id: id} -> Map.get(decisions, id) == :approve end)
+    rejected = rejected_calls(parked, decisions)
+    approved = parked -- rejected
 
     rejected_results = Enum.map(rejected, &rejection_result/1)
 
@@ -396,6 +396,16 @@ defmodule Normandy.Agents.Turn do
     Enum.sort_by(results, fn %ToolResult{tool_call_id: id} ->
       Map.get(index, id, length(pending_calls))
     end)
+  end
+
+  @doc """
+  The parked calls `decisions` reject, in parked order. Anything not explicitly
+  `:approve` (a `:reject`, an unknown value, or no decision) is rejected:
+  approval fails closed.
+  """
+  @spec rejected_calls([ToolCall.t()], %{optional(String.t()) => term()}) :: [ToolCall.t()]
+  def rejected_calls(parked, decisions) do
+    Enum.reject(parked, fn %ToolCall{id: id} -> Map.get(decisions, id) == :approve end)
   end
 
   # The :iteration event announcing the next LLM call. `final` marks the forced-final

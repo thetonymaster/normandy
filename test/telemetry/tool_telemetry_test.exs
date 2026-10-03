@@ -8,6 +8,17 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
 
+  defmodule RaisingDescriptionTool do
+    defstruct []
+
+    defimpl Normandy.Tools.BaseTool do
+      def tool_name(_), do: "raising_description"
+      def tool_description(_), do: raise("no description")
+      def input_schema(_), do: %{}
+      def run(_), do: {:ok, "ran"}
+    end
+  end
+
   defmodule MockMCPAdapter do
     def call_tool(_client, "search", _args, _opts), do: {:ok, "found"}
   end
@@ -92,6 +103,22 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
 
       assert_received {:event, [:normandy, :tool, :execute, :stop], _,
                        %{status: :error, error_type: :tool_error, tool_call_id: "c2"}}
+    end
+
+    test "a tool whose tool_description/1 raises still runs; the span omits the description" do
+      config = config([%RaisingDescriptionTool{}])
+      attach(@span, config.name)
+      call = %ToolCall{id: "c6", name: "raising_description", input: %{}}
+
+      assert %ToolResult{tool_call_id: "c6", output: "ran", is_error: false} =
+               Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
+
+      for phase <- [:start, :stop] do
+        assert_received {:event, [:normandy, :tool, :execute, ^phase], _,
+                         %{tool_call_id: "c6", tool_type: :function} = meta}
+
+        refute Map.has_key?(meta, :tool_description)
+      end
     end
 
     test "an MCP-wrapped tool reports :extension" do

@@ -490,12 +490,12 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # :awaiting_approval — out-of-band approval decisions for a parked turn.
-  # Every parked call not explicitly approved is rejected (the core's fail-closed
-  # rule), so each gets a [:normandy, :tool, :denied] event here.
+  # Each call the core will reject (Turn.rejected_calls/2, its own split) gets a
+  # [:normandy, :tool, :denied] event here.
   def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
     %Turn.State{parked_calls: parked} = data.turn_state
 
-    for %ToolCall{id: id} = call <- parked, Map.get(decisions, id) != :approve do
+    for call <- Turn.rejected_calls(parked, decisions) do
       Dispatch.emit_denied(data.config, call, :approval_rejected)
     end
 

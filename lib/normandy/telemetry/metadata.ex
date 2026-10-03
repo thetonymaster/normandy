@@ -88,16 +88,19 @@ defmodule Normandy.Telemetry.Metadata do
   defp tool_type(%ToolWrapper{}), do: :extension
   defp tool_type(_tool), do: :function
 
+  # Runs before the tool, outside the Executor's protection, so it must never
+  # fail the call: a missing or raising tool_description/1 just leaves the key out.
   defp tool_description(tool) do
-    case BaseTool.impl_for(tool) do
-      nil ->
-        nil
-
-      impl ->
-        if function_exported?(impl, :tool_description, 1),
-          do: BaseTool.tool_description(tool),
-          else: nil
+    with impl when impl != nil <- BaseTool.impl_for(tool),
+         true <- function_exported?(impl, :tool_description, 1) do
+      BaseTool.tool_description(tool)
+    else
+      _ -> nil
     end
+  rescue
+    _ -> nil
+  catch
+    _kind, _value -> nil
   end
 
   @doc "The memory's current turn id, or `nil`."
