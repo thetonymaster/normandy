@@ -190,7 +190,7 @@ defmodule Normandy.MixProject do
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).
   def cli do
-    [preferred_envs: [precommit: :test, "test.postgres": :test, "test.redis": :test]]
+    [preferred_envs: [precommit: :test, "test.postgres": :test, "test.redis": :test, e2e: :test]]
   end
 
   defp aliases do
@@ -210,7 +210,8 @@ defmodule Normandy.MixProject do
         "test --warnings-as-errors"
       ],
       "test.postgres": &run_postgres_tests/1,
-      "test.redis": &run_redis_tests/1
+      "test.redis": &run_redis_tests/1,
+      e2e: ["run e2e/run.exs"]
     ]
   end
 

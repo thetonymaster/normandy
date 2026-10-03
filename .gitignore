@@ -29,3 +29,4 @@ normandy-*.tar
 /priv/plts/
 
 .envrc
+/e2e/reports/
