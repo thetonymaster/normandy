@@ -169,7 +169,8 @@ defmodule Normandy.Agents.DispatchTest do
       secret = %{api_key: "sk-policy-secret"}
 
       for {policy, rationale} <- [
-            {fn _, _, _ -> Map.fetch!(secret, :missing) end, "KeyError"},
+            # The KeyError carries the secret map as its term, as Map.fetch!/2 would.
+            {fn _, _, _ -> raise KeyError, key: :missing, term: secret end, "KeyError"},
             {fn _, _, _ -> exit({:timeout, secret}) end, "{:timeout, ...}"},
             {fn _, _, _ -> throw(secret) end, "a map"}
           ] do
