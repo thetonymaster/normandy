@@ -22,8 +22,16 @@ defmodule NormandyTest.E2E.Runner do
     |> Enum.map(fn path ->
       id = Path.basename(path, ".exs")
       [_num, name] = String.split(id, "_", parts: 2)
-      %{id: id, name: name, path: path}
+      %{id: id, name: name, path: path, cap: declared_cap(path)}
     end)
+  end
+
+  # The cap the scenario passes to E2E.Support.start/2; each scenario halts past it.
+  defp declared_cap(path) do
+    case Regex.run(~r/S\.start\("[^"]+", cap: (\d+)\)/, File.read!(path)) do
+      [_, cap] -> String.to_integer(cap)
+      nil -> nil
+    end
   end
 
   def select(all, []), do: {:ok, all}
@@ -47,8 +55,13 @@ defmodule NormandyTest.E2E.Runner do
     |> Enum.reverse()
     |> Enum.find_value(:missing, fn
       "E2E_RESULT " <> json ->
-        %{"calls" => calls, "ms" => ms} = Jason.decode!(json)
-        {:ok, %{calls: calls, ms: ms}}
+        case Jason.decode(json) do
+          {:ok, %{"calls" => calls, "ms" => ms}} when is_integer(calls) and is_integer(ms) ->
+            {:ok, %{calls: calls, ms: ms}}
+
+          _ ->
+            {:error, "malformed E2E_RESULT line: #{String.slice(json, 0, 200)}"}
+        end
 
       _ ->
         nil
@@ -61,18 +74,45 @@ defmodule NormandyTest.E2E.Runner do
   end
 
   def preflight(_key, scenarios, postgres_check) do
-    needs_pg = Enum.filter(scenarios, &(&1.id in @needs_postgres))
+    with :ok <- check_caps(scenarios) do
+      needs_pg = Enum.filter(scenarios, &(&1.id in @needs_postgres))
 
-    blocked =
-      case needs_pg != [] and postgres_check.() do
-        {:error, reason} -> Map.new(needs_pg, &{&1.id, reason})
-        _ -> %{}
-      end
+      blocked =
+        case needs_pg != [] and postgres_check.() do
+          {:error, reason} -> Map.new(needs_pg, &{&1.id, reason})
+          _ -> %{}
+        end
 
-    {:ok, %{blocked: blocked}}
+      {:ok, %{blocked: blocked}}
+    end
   end
 
-  def postgres_check(host \\ "localhost", port \\ 5432) do
+  # Each scenario halts past its own cap, so the caps' sum bounds a run's spend
+  # before any request is made.
+  defp check_caps(scenarios) do
+    case Enum.filter(scenarios, &is_nil(&1.cap)) do
+      [] ->
+        total = scenarios |> Enum.map(& &1.cap) |> Enum.sum()
+
+        if total <= @suite_cap,
+          do: :ok,
+          else:
+            {:error,
+             "the selected scenarios' live-call caps sum to #{total}, over the suite cap #{@suite_cap}"}
+
+      uncapped ->
+        {:error,
+         "no live-call cap declared (S.start(id, cap: n)) in: #{Enum.map_join(uncapped, ", ", & &1.id)}"}
+    end
+  end
+
+  # Reachability of the Postgres the test config points at (POSTGRES_HOST, default localhost).
+  def postgres_check do
+    repo = Application.get_env(:normandy, Normandy.TestRepo, [])
+    postgres_check(Keyword.get(repo, :hostname, "localhost"), Keyword.get(repo, :port, 5432))
+  end
+
+  def postgres_check(host, port) do
     case :gen_tcp.connect(String.to_charlist(host), port, [], 1_000) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
@@ -114,17 +154,18 @@ defmodule NormandyTest.E2E.Runner do
     ms = System.monotonic_time(:millisecond) - started
     File.write!(log, output)
 
-    base = %{id: scenario.id, ms: ms, log: log, reason: nil}
+    base = %{id: scenario.id, ms: ms, log: log, reason: nil, os_pid: os_pid}
 
     case outcome do
       :timeout ->
         _ = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+        await_exit(port, os_pid)
 
         Map.merge(base, %{
-          status: :timeout,
+          status: :fail,
           exit: nil,
           calls: nil,
-          reason: "killed after #{timeout_ms} ms"
+          reason: "timeout: killed after #{timeout_ms} ms"
         })
 
       {:exit, status} ->
@@ -137,7 +178,19 @@ defmodule NormandyTest.E2E.Runner do
 
           :missing ->
             Map.merge(base, %{status: :fail, exit: status, calls: nil})
+
+          {:error, reason} ->
+            Map.merge(base, %{status: :fail, exit: status, calls: nil, reason: reason})
         end
+    end
+  end
+
+  # The port reports the exit once the OS has reaped the killed process.
+  defp await_exit(port, os_pid) do
+    receive do
+      {^port, {:exit_status, _}} -> :ok
+    after
+      10_000 -> raise "scenario os pid #{os_pid} survived kill -9 for 10 s"
     end
   end
 
@@ -199,37 +252,14 @@ defmodule NormandyTest.E2E.Runner do
   end
 
   defp run_all(selected, blocked, dir) do
-    {results, _total} =
-      Enum.map_reduce(selected, 0, fn s, total ->
-        cond do
-          Map.has_key?(blocked, s.id) ->
-            {%{
-               id: s.id,
-               status: :blocked,
-               exit: nil,
-               calls: 0,
-               ms: 0,
-               log: nil,
-               reason: blocked[s.id]
-             }, total}
+    Enum.map(selected, fn s ->
+      case Map.fetch(blocked, s.id) do
+        {:ok, reason} ->
+          %{id: s.id, status: :blocked, exit: nil, calls: 0, ms: 0, log: nil, reason: reason}
 
-          total >= @suite_cap ->
-            {%{
-               id: s.id,
-               status: :not_run,
-               exit: nil,
-               calls: 0,
-               ms: 0,
-               log: nil,
-               reason: "suite cap #{@suite_cap} reached"
-             }, total}
-
-          true ->
-            r = run_one(s, report_dir: dir)
-            {r, total + (r.calls || 0)}
-        end
-      end)
-
-    results
+        :error ->
+          run_one(s, report_dir: dir)
+      end
+    end)
   end
 end

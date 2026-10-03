@@ -1,10 +1,12 @@
 # Live e2e scenarios
 
 Thirteen multi-turn scenarios, one per major Normandy 2.0 feature. Each is a narrated demo
-and a gate: it prints what it does, checks hard invariants, and exits 2 on the first break.
+and a gate: it prints what it does, checks hard invariants, and exits 2 on the first broken
+invariant (1 if it crashes outright).
 
-**Every run calls the live Anthropic API** (Haiku 4.5). A full run is ≤ 120 requests,
-roughly $0.15–0.45. Each scenario has its own cap and halts if it exceeds it.
+**Every run calls the live Anthropic API** (Haiku 4.5). Each scenario declares a live-call cap
+(`S.start(id, cap: n)`) and halts if it exceeds it; the runner refuses a selection whose caps
+sum past 120. A full run is roughly $0.15–0.45.
 
 ## Prerequisites
 
@@ -20,7 +22,12 @@ roughly $0.15–0.45. Each scenario has its own cap and halts if it exceeds it.
 mix e2e                        # all, in order; summary table at the end
 mix e2e compaction tool_loop   # a subset, by name or id
 MIX_ENV=test mix run e2e/02_compaction.exs   # one scenario, output straight to the terminal
+MIX_ENV=test elixir --hidden --name e2e_primary@127.0.0.1 -S mix run e2e/11_distributed.exs
+                               # scenario 11 alone: it needs a distributed (hidden) primary
 ```
+
+A scenario that outruns its timeout (5 min; 10 for scenario 11) is killed and reported as
+`FAIL` with a `timeout:` note.
 
 Logs and `summary.md` land in `e2e/reports/<UTC timestamp>/` (gitignored).
 

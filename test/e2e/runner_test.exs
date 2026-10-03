@@ -6,23 +6,30 @@ defmodule NormandyTest.E2E.RunnerTest do
   @moduletag :tmp_dir
 
   test "discover lists numbered scenarios in order and splits id from name", %{tmp_dir: dir} do
-    for f <- ["02_tool_loop.exs", "01_long_conversation.exs", "support.exs", "README.md"],
-        do: File.write!(Path.join(dir, f), "")
+    File.write!(Path.join(dir, "02_tool_loop.exs"), ~s|S.start("02_tool_loop", cap: 12)|)
+    File.write!(Path.join(dir, "01_long_conversation.exs"), ~s|S.start("01_x", cap: 3)|)
+    for f <- ["support.exs", "README.md"], do: File.write!(Path.join(dir, f), "")
 
     assert [
-             %{id: "01_long_conversation", name: "long_conversation"},
-             %{id: "02_tool_loop", name: "tool_loop"}
+             %{id: "01_long_conversation", name: "long_conversation", cap: 3},
+             %{id: "02_tool_loop", name: "tool_loop", cap: 12}
            ] =
              Runner.discover(dir)
+  end
+
+  test "discover leaves cap nil when a scenario declares none", %{tmp_dir: dir} do
+    File.write!(Path.join(dir, "01_bare.exs"), "IO.puts(:hi)")
+    assert [%{id: "01_bare", cap: nil}] = Runner.discover(dir)
   end
 
   @all [
     %{
       id: "01_long_conversation",
       name: "long_conversation",
-      path: "e2e/01_long_conversation.exs"
+      path: "e2e/01_long_conversation.exs",
+      cap: 12
     },
-    %{id: "02_compaction", name: "compaction", path: "e2e/02_compaction.exs"}
+    %{id: "02_compaction", name: "compaction", path: "e2e/02_compaction.exs", cap: 18}
   ]
 
   test "select with no names runs everything" do
@@ -52,6 +59,12 @@ defmodule NormandyTest.E2E.RunnerTest do
     assert :missing = Runner.parse_result("** (RuntimeError) boom\n")
   end
 
+  test "parse_result names a malformed E2E_RESULT line instead of raising" do
+    assert {:error, msg} = Runner.parse_result("E2E_RESULT {not json\n")
+    assert msg =~ "malformed E2E_RESULT"
+    assert {:error, _} = Runner.parse_result(~s|E2E_RESULT {"calls":1}\n|)
+  end
+
   test "preflight refuses to start without an API key" do
     assert {:error, msg} = Runner.preflight(nil, @all, fn -> :ok end)
     assert msg =~ "ANTHROPIC_API_KEY"
@@ -60,12 +73,29 @@ defmodule NormandyTest.E2E.RunnerTest do
 
   test "preflight blocks only the scenarios that need Postgres when it is down" do
     scenarios =
-      @all ++ [%{id: "11_distributed", name: "distributed", path: "e2e/11_distributed.exs"}]
+      @all ++
+        [%{id: "11_distributed", name: "distributed", path: "e2e/11_distributed.exs", cap: 6}]
 
     down = fn -> {:error, "Postgres unreachable at localhost:5432"} end
 
     assert {:ok, %{blocked: blocked}} = Runner.preflight("sk-x", scenarios, down)
     assert blocked == %{"11_distributed" => "Postgres unreachable at localhost:5432"}
+  end
+
+  test "preflight refuses a selection whose live-call caps exceed the suite cap" do
+    big = Enum.map(1..7, &%{id: "0#{&1}_s", name: "s", path: "p", cap: 18})
+
+    assert {:error, msg} = Runner.preflight("sk-x", big, fn -> :ok end)
+    assert msg =~ "126"
+    assert msg =~ "120"
+  end
+
+  test "preflight refuses a scenario that declares no live-call cap" do
+    bare = [%{id: "01_bare", name: "bare", path: "e2e/01_bare.exs", cap: nil}]
+
+    assert {:error, msg} = Runner.preflight("sk-x", bare, fn -> :ok end)
+    assert msg =~ "01_bare"
+    assert msg =~ "cap"
   end
 
   @tag :tmp_dir
@@ -107,7 +137,26 @@ defmodule NormandyTest.E2E.RunnerTest do
         echo: false
       )
 
-    assert %{status: :timeout, calls: nil} = result
+    assert %{status: :fail, calls: nil, reason: "timeout: killed after 1500 ms"} = result
+
+    assert {_, status} =
+             System.cmd("kill", ["-0", Integer.to_string(result.os_pid)], stderr_to_stdout: true)
+
+    assert status != 0, "os pid #{result.os_pid} is still alive"
+  end
+
+  @tag :tmp_dir
+  test "run_one fails a scenario whose E2E_RESULT line is malformed", %{tmp_dir: dir} do
+    result =
+      Runner.run_one(%{id: "x", name: "x", path: "x"},
+        report_dir: dir,
+        timeout_ms: 30_000,
+        command: {"elixir", ["-e", ~S|IO.puts("E2E_RESULT {oops")|]},
+        echo: false
+      )
+
+    assert %{status: :fail, exit: 0, calls: nil} = result
+    assert result.reason =~ "malformed E2E_RESULT"
   end
 
   test "summary shows unknown call counts as ? and totals the known ones" do
