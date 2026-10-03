@@ -52,6 +52,34 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
     assert calls() == 3
   end
 
+  test "llm_call :exception reason carries the usage paid before the failure" do
+    test_pid = self()
+    id = "llm-error-usage-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      id,
+      [:normandy, :agent, :llm_call, :exception],
+      fn _event, _measurements, metadata, _ ->
+        send(test_pid, {:llm_call_exception, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    e =
+      LLMError.with_usage(
+        LLMError.new(type: :invalid_output, retryable?: false),
+        %{input_tokens: 30, output_tokens: 6}
+      )
+
+    assert_raise LLMError, fn -> BaseAgent.run(agent(error_client(e)), input()) end
+
+    assert_received {:llm_call_exception, %{reason: %LLMError{} = reason}}
+    assert reason.usage == %{input_tokens: 30, output_tokens: 6}
+    assert reason.usage_counts == %{input_tokens: 30, output_tokens: 6}
+  end
+
   test "a non-retryable error is attempted once, then raised" do
     e = LLMError.new(type: :authentication, status: 401, retryable?: false)
     agent = agent(error_client(e), %{retry_options: @retry})

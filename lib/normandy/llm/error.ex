@@ -10,9 +10,20 @@ defmodule Normandy.LLMError do
   - `:retryable?` — whether a retry can help; set by the adapter that classified the failure
   - `:message` — `"LLM call failed: <type> (<status>): <detail>"`
   - `:reason` — the provider's original error, for debugging
+  - `:usage` — raw token usage already paid for before the call failed (for example the
+    first response plus JSON-parse retries that ended in `:invalid_output`), `nil` when
+    no call was billed
+  - `:usage_counts` — the same usage normalized by `Normandy.Telemetry.Usage.normalize/1`
+    (`:input_tokens`, `:output_tokens`, ...), `nil` when `:usage` is
+
+  The llm_call span's `[:normandy, :agent, :llm_call, :exception]` metadata cannot carry
+  extra keys, so this usage is read from its `reason`: `metadata.reason.usage` and
+  `metadata.reason.usage_counts`.
 
   The message never includes the client, its options or `req_options`.
   """
+
+  alias Normandy.Telemetry.Usage
 
   @types [
     :rate_limit,
@@ -29,7 +40,7 @@ defmodule Normandy.LLMError do
     :unknown
   ]
 
-  defexception [:type, :status, :retryable?, :message, :reason]
+  defexception [:type, :status, :retryable?, :message, :reason, :usage, :usage_counts]
 
   @type error_type ::
           :rate_limit
@@ -50,7 +61,9 @@ defmodule Normandy.LLMError do
           status: non_neg_integer() | nil,
           retryable?: boolean(),
           message: String.t(),
-          reason: term()
+          reason: term(),
+          usage: map() | struct() | nil,
+          usage_counts: Usage.normalized() | nil
         }
 
   @doc """
@@ -82,6 +95,17 @@ defmodule Normandy.LLMError do
       message: build_message(type, status, Keyword.get(fields, :detail))
     }
   end
+
+  @doc """
+  Attaches the raw usage already billed before the failure (and its normalized counts).
+  A `nil` usage, or an error that already carries usage, is returned unchanged.
+  """
+  @spec with_usage(t(), map() | struct() | nil) :: t()
+  def with_usage(%__MODULE__{usage: nil} = error, usage) when not is_nil(usage) do
+    %{error | usage: usage, usage_counts: Usage.normalize(usage)}
+  end
+
+  def with_usage(%__MODULE__{} = error, _usage), do: error
 
   @doc """
   Returns an `LLMError` unchanged; wraps any other term as `type: :unknown`,

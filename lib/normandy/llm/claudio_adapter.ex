@@ -240,9 +240,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
           }
 
           case convert_response_to_normandy(response, response_model, context) do
-            {:error, %LLMError{}} = error ->
-              _ = ClaudioAdapter.collect_retry_usage(context.retry_usage_ref, nil)
-              error
+            {:error, %LLMError{} = error} ->
+              # The first response and any JSON retries were billed even though
+              # the call failed; the usage rides on the error.
+              usage =
+                ClaudioAdapter.collect_retry_usage(
+                  context.retry_usage_ref,
+                  ClaudioAdapter.extract_usage(response)
+                )
+
+              {:error, LLMError.with_usage(error, usage)}
 
             normalized_response ->
               usage =
@@ -290,8 +297,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
           }
 
           case ClaudioAdapter.__handle_structured_response__(response, response_model, context) do
-            {:error, %LLMError{}} = error ->
-              error
+            {:error, %LLMError{} = error} ->
+              {:error, LLMError.with_usage(error, ClaudioAdapter.extract_usage(response))}
 
             handled ->
               {handled, ClaudioAdapter.extract_usage(response),
@@ -1171,14 +1178,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
   end
 
-  @iteration_count_keys ~w(input_tokens output_tokens cache_read_input_tokens cache_creation_input_tokens)
+  # Literal atoms: a lazily loaded release has not necessarily interned these
+  # yet, so `String.to_existing_atom/1` on the names could raise.
+  @iteration_count_keys [
+    {:input_tokens, "input_tokens"},
+    {:output_tokens, "output_tokens"},
+    {:cache_read_input_tokens, "cache_read_input_tokens"},
+    {:cache_creation_input_tokens, "cache_creation_input_tokens"}
+  ]
 
   defp side_iterations(usage) do
     case iterations_of(usage) do
       [] ->
         counts =
-          for key <- @iteration_count_keys,
-              n = Map.get(usage, String.to_existing_atom(key)) || Map.get(usage, key),
+          for {atom_key, key} <- @iteration_count_keys,
+              n = Map.get(usage, atom_key) || Map.get(usage, key),
               is_integer(n),
               into: %{},
               do: {key, n}
