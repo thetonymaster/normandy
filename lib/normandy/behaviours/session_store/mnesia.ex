@@ -21,6 +21,7 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   # :mnesia is not a declared application dependency (see the moduledoc).
   @compile {:no_warn_undefined, :mnesia}
 
+  alias Normandy.Behaviours.MnesiaSetup
   alias Normandy.Components.AgentMemory.Entry
 
   @empty_session %{
@@ -55,24 +56,17 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     copies = Keyword.get(opts, :copies, :disc_copies)
     nodes = Keyword.get(opts, :nodes, [node()])
 
-    :ok = ensure_started!()
-    if copies == :disc_copies, do: ensure_disc_schema!(nodes)
+    :ok = MnesiaSetup.ensure_started!()
+    if copies == :disc_copies, do: MnesiaSetup.ensure_disc_schema!(nodes)
 
-    :ok = create_table(entries, [:id, :data], copies, nodes)
-    :ok = create_table(sessions, [:session_id, :data], copies, nodes)
+    :ok = MnesiaSetup.create_table!(entries, [:id, :data], copies, nodes)
+    :ok = MnesiaSetup.create_table!(sessions, [:session_id, :data], copies, nodes)
 
-    # After a restart, disc_copies tables already exist but load in the
-    # background; a transaction before they finish aborts with :no_exists.
-    case :mnesia.wait_for_tables([entries, sessions], Keyword.get(opts, :wait_timeout, 30_000)) do
-      :ok ->
-        :ok
-
-      {:timeout, tables} ->
-        raise "SessionStore.Mnesia: tables not loaded within the wait timeout: #{inspect(tables)}"
-
-      {:error, reason} ->
-        raise "SessionStore.Mnesia: waiting for tables failed: #{inspect(reason)}"
-    end
+    MnesiaSetup.wait_for_tables!(
+      [entries, sessions],
+      Keyword.get(opts, :wait_timeout, 30_000),
+      "SessionStore.Mnesia"
+    )
   end
 
   @impl true
@@ -233,39 +227,4 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   # save_* want :ok (not {:ok, :ok}) since :mnesia.write returns :ok.
   defp to_ok({:ok, :ok}), do: :ok
   defp to_ok({:error, _} = e), do: e
-
-  defp ensure_started! do
-    case :mnesia.system_info(:is_running) do
-      :yes -> :ok
-      _ -> :mnesia.start()
-    end
-  end
-
-  defp ensure_disc_schema!(nodes) do
-    Enum.each(nodes, fn n ->
-      case :mnesia.change_table_copy_type(:schema, n, :disc_copies) do
-        {:atomic, :ok} ->
-          :ok
-
-        {:aborted, {:already_exists, :schema, _, :disc_copies}} ->
-          :ok
-
-        {:aborted, reason} ->
-          raise "Mnesia disc schema setup failed on #{inspect(n)}: #{inspect(reason)}"
-      end
-    end)
-  end
-
-  defp create_table(name, attrs, copies, nodes) do
-    case :mnesia.create_table(name, [{:attributes, attrs}, {:type, :set}, {copies, nodes}]) do
-      {:atomic, :ok} ->
-        :ok
-
-      {:aborted, {:already_exists, ^name}} ->
-        :ok
-
-      {:aborted, reason} ->
-        raise "Mnesia create_table #{inspect(name)} failed: #{inspect(reason)}"
-    end
-  end
 end
