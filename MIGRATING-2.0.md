@@ -249,6 +249,21 @@ if you attach handlers: `[:normandy, :agent, :run, :exception]` can be synthetic
 event named in old changelog entries never existed (the LLM call span is
 `[:normandy, :agent, :llm_call, *]`; `[:normandy, :llm, :request, *]` is new).
 
+## 15. Agent memory and tool context
+
+- `BaseAgentConfig` gains `tool_context` (default `%{}`), plain per-session data handed to
+  tools that implement `Normandy.Tools.ContextualTool`. It is stored in the config
+  template: templates saved before 2.0 rebuild with `%{}`, and `from_config/2` raises on a
+  function or pid inside it. Never put secrets in it.
+- `Dispatch.default_pipeline/0` and `Behaviours.Config.to_pipeline/1` now build a 4-arity
+  `execute_fn` that passes the call's context. A custom 3-arity `execute_fn` still works
+  for ordinary tools; a contextual tool run through it returns
+  "<name> requires tool context".
+- To use `Normandy.Tools.Memory` with Postgres, add a host migration calling
+  `Normandy.Behaviours.MemoryStore.Postgres.Migration.up/0`; with Mnesia, call
+  `Normandy.Behaviours.MemoryStore.Mnesia.create_tables/1`. See
+  `docs/guides/agent-memory.md`.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

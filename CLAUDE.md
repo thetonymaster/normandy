@@ -80,6 +80,18 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.Components.Message`** - Message struct with `:turn_id`, `:role`, `:content`
 
+### Long-term Memory & Tool Context
+
+- **`Normandy.Behaviours.MemoryStore`** - Namespaced, path-addressed document store with
+  compare-and-set versions; backends InMemory, ETS, Mnesia, Postgres, Redis; shared contract
+  in `test/support/memory_store_contract.ex`
+- **`Normandy.Tools.Memory`** - The `memory` tool (Anthropic memory-tool commands); namespace
+  from `tool_context[:memory_namespace]`, never from the struct; `Commands`/`Paths`/`Render`
+  hold command logic, path rules and model-facing text
+- **`Normandy.Tools.Context`** / **`Normandy.Tools.ContextualTool`** - Per-call context built
+  from `BaseAgentConfig.tool_context` (plain data, persisted in the config template) and
+  passed by every built-in pipeline's `execute_fn`
+
 ### Prompt System
 
 - **`Normandy.Components.SystemPromptGenerator`** - Generates system prompts
