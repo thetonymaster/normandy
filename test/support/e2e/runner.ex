@@ -10,7 +10,8 @@ defmodule NormandyTest.E2E.Runner do
   @default_timeout_ms 300_000
   @timeouts %{"11_distributed" => 600_000}
   @needs_postgres ["11_distributed"]
-  # :peer needs a distributed origin node.
+  # :peer needs a distributed origin node; hidden, so Horde's members: :auto on the
+  # peers doesn't count the observing primary as a cluster member.
   @distributed ["11_distributed"]
 
   def discover(dir) do
@@ -84,7 +85,7 @@ defmodule NormandyTest.E2E.Runner do
   end
 
   def command(%{id: id, path: path}) when id in @distributed,
-    do: {"elixir", ["--name", "e2e_primary@127.0.0.1", "-S", "mix", "run", path]}
+    do: {"elixir", ["--hidden", "--name", "e2e_primary@127.0.0.1", "-S", "mix", "run", path]}
 
   def command(%{path: path}), do: {"mix", ["run", path]}
 
