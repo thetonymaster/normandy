@@ -91,9 +91,18 @@ defmodule Normandy.Components.AgentMemory do
     memory
     |> messages()
     |> Enum.map(fn %Message{role: role, content: content} ->
-      %{role: role, content: BaseIOSchema.to_json(content)}
+      %{role: role, content: model_content(content)}
     end)
   end
+
+  # The default chat input goes to the model as the user's own words. Sent as
+  # {"chat_message": ...} JSON, Haiku 4.5 read earlier turns as data rather than
+  # conversation and denied remembering them.
+  defp model_content(%Normandy.Agents.BaseAgentInputSchema{chat_message: text})
+       when is_binary(text),
+       do: text
+
+  defp model_content(content), do: BaseIOSchema.to_json(content)
 
   @doc """
   Total number of stored entries across all branches (`map_size(entries)`).

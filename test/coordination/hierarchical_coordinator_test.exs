@@ -96,7 +96,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
     assert {:ok, _} = HierarchicalCoordinator.execute(coordinator(["t1", "t2"]), "go")
 
     results = aggregated_results()
-    assert results =~ "## w1\\n"
+    assert results =~ "## w1\n"
     refute results =~ "w1#"
   end
 
