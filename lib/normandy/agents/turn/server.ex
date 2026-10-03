@@ -52,6 +52,12 @@ defmodule Normandy.Agents.Turn.Server do
   `:stop` or `:exception` (`kind: :error`, `reason`), with `model`, `agent_name`
   and `session_id` metadata, like `BaseAgent.run/2`.
 
+  A server that stops with a turn in flight, through a callback-initiated stop or
+  `:gen_statem.stop/3`, emits `:exception` with `kind: :exit` and the stop reason in
+  `terminate/3`. The server does not trap exits, so an exit signal that kills it
+  (`:kill`, a supervisor's `Process.exit/2`, a linked process dying) runs no callback
+  and emits no `:exception`. Stray messages are logged at debug and dropped.
+
   ## Errors from `run/2`
 
     * `{:rejected, exception}` — the input failed its schema
@@ -507,6 +513,38 @@ defmodule Normandy.Agents.Turn.Server do
   def handle_event({:call, _from}, {:turn, _input}, state, _data)
       when state in [:running, :awaiting_approval] do
     {:keep_state_and_data, :postpone}
+  end
+
+  # Anything else that lands in the mailbox: a late result from a task whose ref was
+  # already cleared, an unrelated :DOWN or :EXIT, a stray send/2. Drop it with a log
+  # line instead of raising FunctionClauseError (which would crash the server). A
+  # late `{ref, _}` result also drops the monitor it was never matched against.
+  def handle_event(:info, msg, state, data) do
+    case msg do
+      {ref, _result} when is_reference(ref) and ref != data.task_ref ->
+        Process.demonitor(ref, [:flush])
+
+      _ ->
+        :ok
+    end
+
+    Logger.debug(
+      "Turn.Server #{inspect(data.session_id)} ignored a stray message in #{inspect(state)}: " <>
+        inspect(msg, limit: 5, printable_limit: 100)
+    )
+
+    :keep_state_and_data
+  end
+
+  # The server ends a run span left in flight (between the hand-emitted run :start and
+  # its :stop/:exception) with a run :exception of kind :exit. The server does not trap
+  # exits, so this runs on callback-initiated stops ({:stop, ...}, passivation),
+  # :gen_statem.stop/3 and supervisor-initiated stops that arrive as system messages;
+  # an untrappable exit signal (:kill, or a linked process dying) ends the process with
+  # no callback.
+  @impl true
+  def terminate(reason, _state, data) do
+    stop_run_span(data, :exception, %{kind: :exit, reason: reason, stacktrace: []})
   end
 
   defp validate_on_approval_timeout!(mode) when mode in [:continue, :fail], do: :ok

@@ -556,6 +556,138 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
   end
 
+  describe "stray messages and termination" do
+    @describetag :capture_log
+
+    setup do
+      parent = self()
+      id = "server-stray-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        id,
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+        fn event, measurements, meta, _ ->
+          if meta[:session_id], do: send(parent, {:run_event, event, measurements, meta})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    defp stray_messages do
+      [
+        :stray,
+        {make_ref(), :late_result},
+        {:DOWN, make_ref(), :process, self(), :boom},
+        {:EXIT, spawn(fn -> :ok end), :boom}
+      ]
+    end
+
+    defp flood_with_strays(srv) do
+      Enum.each(stray_messages(), &send(srv, &1))
+      # A synchronous call after the sends proves the server processed them and lives.
+      :sys.get_state(srv)
+      assert Process.alive?(srv)
+    end
+
+    defp final_llm, do: fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end
+
+    defp blocking_llm(test_pid) do
+      fn _c, _s, _r ->
+        send(test_pid, {:llm_started, self()})
+
+        receive do
+          :release -> %Resp{content: "ok", tool_calls: nil}
+        end
+      end
+    end
+
+    test "stray messages in :idle do not crash the server" do
+      {srv, _store} =
+        start_server("s-stray-idle", base_config(),
+          handlers: final_handlers(%{call_llm: final_llm()})
+        )
+
+      flood_with_strays(srv)
+      assert {:ok, %Resp{content: "ok"}} = Turn.Server.run(srv, "go")
+    end
+
+    test "stray messages in :running do not crash the server or the turn" do
+      {srv, _store} =
+        start_server("s-stray-running", base_config(),
+          handlers: final_handlers(%{call_llm: blocking_llm(self())})
+        )
+
+      caller = run_async(srv, "go")
+      assert_receive {:llm_started, worker}, 1_000
+      assert {:running, _} = {elem(:sys.get_state(srv), 0), caller}
+
+      flood_with_strays(srv)
+      send(worker, :release)
+
+      assert_receive {:run_result, {:ok, %Resp{content: "ok"}}}, 2_000
+
+      run_async(srv, "again")
+      assert_receive {:llm_started, worker2}, 1_000
+      send(worker2, :release)
+      assert_receive {:run_result, {:ok, %Resp{content: "ok"}}}, 2_000
+    end
+
+    test "stray messages in :awaiting_approval do not crash the server" do
+      {srv, _store} = start_approval_server("s-stray-approval", approval_timeout_ms: 60_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      assert {:awaiting_approval, _} = {elem(:sys.get_state(srv), 0), :ok}
+
+      flood_with_strays(srv)
+      Turn.Server.approve(srv, %{"pk1" => :approve})
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+    end
+
+    test "stopping a server mid-turn emits run :exception with kind :exit" do
+      Process.flag(:trap_exit, true)
+
+      {srv, _store} =
+        start_server("s-stop-mid", base_config(),
+          handlers: final_handlers(%{call_llm: blocking_llm(self())})
+        )
+
+      run_async(srv, "go")
+      assert_receive {:llm_started, _worker}, 1_000
+
+      assert_receive {:run_event, [:normandy, :agent, :run, :start], _,
+                      %{session_id: "s-stop-mid"}}
+
+      :ok = :gen_statem.stop(srv, :shutdown, 5_000)
+
+      assert_receive {:run_event, [:normandy, :agent, :run, :exception], %{duration: d},
+                      %{
+                        session_id: "s-stop-mid",
+                        kind: :exit,
+                        reason: :shutdown,
+                        stacktrace: [],
+                        model: "test"
+                      }},
+                     1_000
+
+      assert is_integer(d) and d >= 0
+    end
+
+    test "stopping an idle server emits no run :exception" do
+      Process.flag(:trap_exit, true)
+      {srv, _store} = start_server("s-stop-idle", base_config())
+      assert {:ok, _} = Turn.Server.run(srv, "go")
+      :ok = :gen_statem.stop(srv, :shutdown, 5_000)
+
+      refute_receive {:run_event, [:normandy, :agent, :run, :exception], _,
+                      %{session_id: "s-stop-idle"}},
+                     100
+    end
+  end
+
   test "approving a parked call resumes the turn and finalizes" do
     store = InMemory.new()
     reg = Native.new()
@@ -1989,6 +2121,20 @@ defmodule Normandy.Agents.Turn.ServerTest do
           handlers: handlers
         ] ++ extra
       )
+    end
+
+    test "stray messages in :unavailable do not crash the server" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+      {:ok, srv} = flaky_server(store, "s-stray-unavail")
+      assert {:unavailable, _} = :sys.get_state(srv)
+
+      Enum.each([:stray, {make_ref(), :late}, {:DOWN, make_ref(), :process, self(), :x}], fn m ->
+        send(srv, m)
+      end)
+
+      assert {:unavailable, _} = :sys.get_state(srv)
+      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
     end
 
     test "the start succeeds and run/2 replies the store's reason" do
