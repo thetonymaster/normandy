@@ -231,7 +231,9 @@ defmodule Normandy.DSL.WorkflowTest do
         handler_id,
         [[:normandy, :workflow, :run, :start], [:normandy, :workflow, :run, :stop]],
         fn event, _m, metadata, _ ->
-          if metadata.workflow_name == SequentialWorkflow, do: send(parent, {event, metadata})
+          # Orchestrator spans from concurrent async tests carry no :workflow_name.
+          if Map.get(metadata, :workflow_name) == SequentialWorkflow,
+            do: send(parent, {event, metadata})
         end,
         nil
       )
