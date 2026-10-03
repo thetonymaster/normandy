@@ -163,7 +163,7 @@ defmodule E2E.OtelCheck do
         []
 
       is_nil(parent) and MapSet.member?(resumed_turns, span.attrs["normandy.turn_id"]) ->
-        attr_rules(span)
+        attr_rules(span) ++ finish_rule(span, children)
 
       is_nil(parent) ->
         [v(span, "parent #{span.parent} is not in the trace")]
@@ -172,6 +172,7 @@ defmodule E2E.OtelCheck do
         parent_rule(span, parent) ++
           timing_rule(span, parent) ++
           attr_rules(span) ++
+          finish_rule(span, children) ++
           consistency_rules(span, children)
     end
   end
@@ -221,7 +222,7 @@ defmodule E2E.OtelCheck do
         do:
           require_attrs(
             s,
-            ~w(gen_ai.usage.input_tokens gen_ai.usage.output_tokens gen_ai.response.id gen_ai.response.finish_reasons)
+            ~w(gen_ai.usage.input_tokens gen_ai.usage.output_tokens gen_ai.response.id)
           ),
         else: []
 
@@ -232,6 +233,20 @@ defmodule E2E.OtelCheck do
 
     base ++ done ++ ttfc
   end
+
+  # A finished llm_call reports the provider's finish reason, unless an incremental
+  # guardrail halted its stream first (the violation event lands on the request span that
+  # was current): the provider never sent one, and Normandy does not invent it.
+  defp finish_rule(%{type: :llm_call} = s, children) do
+    halted? =
+      Enum.any?([s | children], &("normandy.agent.guardrail.violation" in &1.events))
+
+    if ok?(s) and not halted?,
+      do: require_attrs(s, ~w(gen_ai.response.finish_reasons)),
+      else: []
+  end
+
+  defp finish_rule(_s, _children), do: []
 
   defp attr_rules(%{type: :request} = s) do
     base =

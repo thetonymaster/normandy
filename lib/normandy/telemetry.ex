@@ -66,7 +66,8 @@ defmodule Normandy.Telemetry do
       reads and writes; for OpenAI-shaped usage it equals `prompt_tokens`),
       `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens`, each
       only when the provider reported it (see `Normandy.Telemetry.Usage`);
-      `response_id`; `finish_reason` (always a string, e.g. `"end_turn"`, `"stop"`);
+      `response_id`; `finish_reason` (a string, e.g. `"end_turn"`, `"stop"`; absent when
+      the provider sent none, as when an incremental guardrail halts the stream first);
       `served_by` (the model that answered, after a server-side fallback);
       `input_transformations`; `attempts` (provider requests made), `json_retries`,
       `structured_fallback` (boolean);

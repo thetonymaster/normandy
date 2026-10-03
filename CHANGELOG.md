@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[:normandy, :llm, :request, :start | :stop | :exception]`: one span per provider request inside an
   llm_call (`attempt`, `request_kind`, `status`, `response_id`, `finish_reason`, token counts).
 - `[:normandy, :agent, :llm_call, :stop]` adds `provider`, `stream`, `structured_output`, `max_tokens`,
-  `temperature`, `effort`, `server_address` (start), `response_id`, `finish_reason` (always a string),
+  `temperature`, `effort`, `server_address` (start), `response_id`, `finish_reason` (a string, when the provider sent one),
   `served_by`, `attempts`, `json_retries`, `structured_fallback`, and for streaming
   `time_to_first_chunk` (metadata, native units). Normalized `input_tokens` (Anthropic: includes cache
   reads and writes), `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens` sit beside the
