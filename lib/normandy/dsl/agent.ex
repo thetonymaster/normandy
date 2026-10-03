@@ -58,6 +58,7 @@ defmodule Normandy.DSL.Agent do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Tools.Memory
 
   defmacro __using__(_opts) do
     quote do
@@ -220,6 +221,18 @@ defmodule Normandy.DSL.Agent do
   end
 
   @doc """
+  Declares persistent memory (`Normandy.Tools.Memory`). Takes `Memory.new/1`'s options
+  except `:store`, which a handle such as a Redis connection cannot supply at compile
+  time: pass `memory_store: {module, handle}` to `new/1`. The namespace comes from
+  `tool_context` (`new/1`'s `:tool_context`).
+  """
+  defmacro memory(opts \\ []) do
+    quote do
+      Module.put_attribute(__MODULE__, :agent_memory, unquote(opts))
+    end
+  end
+
+  @doc """
   Sets the maximum number of messages in memory.
   """
   defmacro max_messages(value) do
@@ -328,6 +341,7 @@ defmodule Normandy.DSL.Agent do
     :input_schema,
     :output_schema,
     :memory,
+    :tool_context,
     :max_messages,
     :prompt_specification,
     :tool_registry,
@@ -360,6 +374,27 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @doc false
+  # Builds the memory tool from the agent's declared options and the runtime store.
+  # Returns nil when the agent neither declares memory nor was given a store.
+  def memory_tool!(agent_module, declared, store) do
+    case {declared, store} do
+      {nil, nil} ->
+        nil
+
+      {nil, _store} ->
+        raise ArgumentError,
+              "#{inspect(agent_module)}.new/1: :memory_store was given, but the agent does not declare memory"
+
+      {_opts, nil} ->
+        raise ArgumentError,
+              "#{inspect(agent_module)} declares memory; pass memory_store: {module, handle} to new/1"
+
+      {opts, store} ->
+        Memory.new([{:store, store} | opts])
+    end
+  end
+
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro __before_compile__(_env) do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
@@ -379,6 +414,7 @@ defmodule Normandy.DSL.Agent do
         steps: Module.get_attribute(__MODULE__, :agent_steps),
         output_instructions: Module.get_attribute(__MODULE__, :agent_output_instructions),
         tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse(),
+        memory: Module.get_attribute(__MODULE__, :agent_memory),
         input_guardrails: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
         output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, []),
         output_guardrails_streaming_mode:
@@ -413,6 +449,10 @@ defmodule Normandy.DSL.Agent do
       This allows callers to pass overrides either under `:override` or directly
       at the top level. When both are present for the same key, `:override` wins.
 
+      `:memory_store` (`{module, handle}`) supplies the store for a declared
+      `memory`; it is required when the agent declares memory and rejected when
+      it does not. `:tool_context` (a map) is passed to `BaseAgent.init/1`.
+
       An option that is not a `BaseAgent.init/1` option (or `:max_messages`)
       raises `ArgumentError`, so a typo such as `temprature:` does not pass
       silently.
@@ -432,6 +472,11 @@ defmodule Normandy.DSL.Agent do
       """
       def new(opts) do
         client = Keyword.fetch!(opts, :client)
+        {memory_store, opts} = Keyword.pop(opts, :memory_store)
+        # Built before init/1 so a missing store raises before any process starts.
+        memory_tool =
+          Normandy.DSL.Agent.memory_tool!(__MODULE__, @agent_compile_config.memory, memory_store)
+
         explicit = Keyword.get(opts, :override, [])
         implicit = Keyword.drop(opts, [:client, :override])
         overrides = Keyword.merge(implicit, explicit)
@@ -444,6 +489,8 @@ defmodule Normandy.DSL.Agent do
 
         # Register tools if any
         agent = register_tools(agent)
+
+        agent = if memory_tool, do: BaseAgent.register_tool(agent, memory_tool), else: agent
 
         {:ok, agent}
       end
