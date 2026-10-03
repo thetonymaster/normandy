@@ -15,7 +15,8 @@ defmodule Normandy.Test.LazyViaRegistry do
   end
 
   # A server started under a :via name is registered by the name; it must never
-  # register itself as well.
+  # register itself as well. Raising is the point, so dialyzer's no_return is expected.
+  @dialyzer {:nowarn_function, register: 3}
   def register(_registry, _sid, _pid), do: raise("a :via-named server registered itself")
   def unregister(_registry, _sid), do: :ok
 end
