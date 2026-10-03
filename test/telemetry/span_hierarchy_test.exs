@@ -241,6 +241,26 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
     end
 
+    # Documents a limitation: the coordinator's synthetic killed exception fires
+    # outside the killed process, so a process-keyed bridge can't end its span.
+    test "Reactive.race: a killed loser's run span is never exported" do
+      stuck =
+        BaseAgent.init(%{
+          client: %StubClient{reply: fn _ -> receive do: (:never -> :ok) end},
+          model: "test-model"
+        })
+
+      caller = start_caller_span()
+
+      assert {:ok, _} = Reactive.race([final_agent(), stuck], %{chat_message: "hi"})
+
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.agent.run"])
+
+      assert [_winner] = Enum.filter(spans, &(&1.name == "normandy.agent.run"))
+      refute_receive {:span, _}, 50
+    end
+
     test "Reactive.some nests the agent runs under the caller" do
       caller = start_caller_span()
 

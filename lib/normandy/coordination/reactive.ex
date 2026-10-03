@@ -25,11 +25,23 @@ defmodule Normandy.Coordination.Reactive do
   - **Race**: Get fastest response for latency-sensitive operations
   - **All**: Ensemble methods, need all perspectives
   - **Some**: Quorum-based decisions, need majority agreement
+
+  ## Telemetry
+
+  `race/3` and `some/3` kill the agents still running once they have their
+  answer, and `all/3` kills an agent that runs past `:timeout`. A killed
+  agent's `[:normandy, :agent, :run]` span never closes on its own, so these
+  functions emit a synthetic `[:normandy, :agent, :run, :exception]` with
+  `reason: :killed` for each agent struct they kill, possibly without a
+  matching `:start`; the `llm_call`/`tool` spans open inside it stay open.
+  Agent processes (pids) are not killed, only the task waiting on them, so
+  their runs end normally. See `Normandy.Telemetry.KilledRun`.
   """
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Coordination.Reactive
+  alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
 
   @type agent_or_pid :: struct() | pid()
@@ -39,7 +51,7 @@ defmodule Normandy.Coordination.Reactive do
   Races multiple agents and returns the first successful result.
 
   Starts all agents concurrently and returns as soon as any agent succeeds.
-  Other agents continue running in the background but their results are ignored.
+  The agents still running are then killed (see "Telemetry" in the moduledoc).
 
   ## Options
 
@@ -82,29 +94,33 @@ defmodule Normandy.Coordination.Reactive do
 
     # Start all agent tasks
     parent_otel_ctx = OtelCtx.capture()
+    started_at = System.monotonic_time()
 
     tasks =
       agents
       |> Enum.with_index()
       |> Enum.map(fn {agent, idx} ->
-        Task.async(fn ->
-          OtelCtx.restore(parent_otel_ctx)
-          agent_id = "agent_#{idx}"
-          result = execute_agent(agent, input)
+        task =
+          Task.async(fn ->
+            OtelCtx.restore(parent_otel_ctx)
+            agent_id = "agent_#{idx}"
+            result = execute_agent(agent, input)
 
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if on_complete, do: on_complete.(agent_id, result)
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+            if on_complete, do: on_complete.(agent_id, result)
 
-          send(parent, {ref, agent_id, result})
-          result
-        end)
+            send(parent, {ref, agent_id, result})
+            result
+          end)
+
+        {task, agent}
       end)
 
     # Wait for first success or all failures
     result = await_first_success(ref, length(agents), timeout)
 
     # Cleanup: shutdown remaining tasks
-    Enum.each(tasks, fn task -> Task.shutdown(task, :brutal_kill) end)
+    shutdown_tasks(tasks, started_at, parent_otel_ctx)
 
     result
   end
@@ -170,8 +186,10 @@ defmodule Normandy.Coordination.Reactive do
         end,
         max_concurrency: max_concurrency,
         timeout: timeout,
-        on_timeout: :kill_task
+        on_timeout: :kill_task,
+        zip_input_on_exit: true
       )
+      |> Stream.map(&report_kill(&1, timeout, parent_otel_ctx))
       |> Enum.reduce_while({:ok, %{}}, fn
         {:ok, {agent_id, result}}, {:ok, acc} ->
           # Check if we should fail fast
@@ -241,29 +259,33 @@ defmodule Normandy.Coordination.Reactive do
 
       # Start all agent tasks
       parent_otel_ctx = OtelCtx.capture()
+      started_at = System.monotonic_time()
 
       tasks =
         agents
         |> Enum.with_index()
         |> Enum.map(fn {agent, idx} ->
-          Task.async(fn ->
-            OtelCtx.restore(parent_otel_ctx)
-            agent_id = "agent_#{idx}"
-            result = execute_agent(agent, input)
+          task =
+            Task.async(fn ->
+              OtelCtx.restore(parent_otel_ctx)
+              agent_id = "agent_#{idx}"
+              result = execute_agent(agent, input)
 
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            if on_complete, do: on_complete.(agent_id, result)
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+              if on_complete, do: on_complete.(agent_id, result)
 
-            send(parent, {ref, agent_id, result})
-            result
-          end)
+              send(parent, {ref, agent_id, result})
+              result
+            end)
+
+          {task, agent}
         end)
 
       # Wait for N successes
       result = await_n_successes(ref, count, length(agents), timeout)
 
       # Cleanup
-      Enum.each(tasks, fn task -> Task.shutdown(task, :brutal_kill) end)
+      shutdown_tasks(tasks, started_at, parent_otel_ctx)
 
       result
     end
@@ -326,6 +348,26 @@ defmodule Normandy.Coordination.Reactive do
   end
 
   # Private Functions
+
+  # Kills the tasks still running. A task with no reply was killed mid-run, so
+  # its agent's run span never closed: report it.
+  defp shutdown_tasks(tasks, started_at, otel_ctx) do
+    Enum.each(tasks, fn {task, agent} ->
+      if Task.shutdown(task, :brutal_kill) == nil do
+        KilledRun.emit(agent, System.monotonic_time() - started_at, otel_ctx)
+      end
+    end)
+  end
+
+  # A task past the timeout was killed mid-run, so its agent's run span never
+  # closed: report it. Strips the input zip_input_on_exit added, keeping the
+  # `{:exit, reason}` shape callers see.
+  defp report_kill({:exit, {{agent, _agent_id}, reason}}, timeout, otel_ctx) do
+    if reason == :timeout, do: KilledRun.emit_timeout(agent, timeout, otel_ctx)
+    {:exit, reason}
+  end
+
+  defp report_kill(result, _timeout, _otel_ctx), do: result
 
   @doc false
   def execute_agent(agent, input) when is_pid(agent) do

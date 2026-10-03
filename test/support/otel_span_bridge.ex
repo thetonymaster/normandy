@@ -41,6 +41,15 @@ defmodule Normandy.Test.OtelSpanBridge do
   Spans ended in other processes may finish after the test body does; use
   `await_spans/2` rather than `finished_spans/0` for those.
 
+  ## Killed runs
+
+  A coordinator that kills a task mid-run emits a synthetic run `:exception`
+  with `reason: :killed` from its own process (see
+  `Normandy.Telemetry.KilledRun`). That process has no open span for it, and
+  the killed process's span can't be reached, so the bridge drops the event
+  like a real process-keyed bridge would, instead of reporting it. The killed
+  run's span is never exported.
+
   ## Bridge errors
 
   A stop/exception event with no open span, or whose name differs from the span
@@ -158,15 +167,23 @@ defmodule Normandy.Test.OtelSpanBridge do
   end
 
   @doc false
-  def handle_event(event, _measurements, _metadata, owner) do
+  def handle_event(event, _measurements, metadata, owner) do
     {prefix, [kind]} = Enum.split(event, -1)
     name = Enum.map_join(prefix, ".", &Atom.to_string/1)
 
-    case kind do
-      :start -> open_span(name)
-      _stop_or_exception -> close_span(name, kind, owner)
+    cond do
+      kind == :start -> open_span(name)
+      killed_elsewhere?(kind, metadata) -> :ok
+      true -> close_span(name, kind, owner)
     end
   end
+
+  # A coordinator's synthetic exception for a run it killed fires in the
+  # coordinator, which has no open span for it (see "Killed runs").
+  defp killed_elsewhere?(:exception, %{reason: :killed}),
+    do: Process.get(@stack_key, []) == []
+
+  defp killed_elsewhere?(_kind, _metadata), do: false
 
   defp open_span(name) do
     tracer = :opentelemetry.get_application_tracer(__MODULE__)

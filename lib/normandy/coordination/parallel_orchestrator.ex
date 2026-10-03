@@ -21,10 +21,20 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         max_concurrency: 3,
         aggregate: &combine_research_results/1
       )
+
+  ## Telemetry
+
+  An agent that runs past `:timeout` is killed mid-run, so its
+  `[:normandy, :agent, :run]` span never closes on its own. `execute/2` and
+  `execute_stream/2` emit a synthetic `[:normandy, :agent, :run, :exception]`
+  with `reason: :killed` for it (`execute_stream/2` when the timed-out element
+  is consumed), possibly without a matching `:start`; the `llm_call`/`tool`
+  spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
   """
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.SharedContext
+  alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
 
   @type agent_spec :: %{
@@ -151,6 +161,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       )
       |> Enum.to_list()
 
+    Enum.each(results, &report_kill(&1, timeout, parent_otel_ctx))
+
     # Separate successes and errors
     {successes, errors} =
       Enum.reduce(results, {%{}, %{}}, fn
@@ -266,12 +278,22 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       ordered: false
     )
     |> Stream.map(fn
-      {:exit, {%{id: agent_id}, reason}} -> {:exit, {agent_id, reason}}
-      other -> other
+      {:exit, {%{id: agent_id}, reason}} = exit ->
+        :ok = report_kill(exit, timeout, parent_otel_ctx)
+        {:exit, {agent_id, reason}}
+
+      other ->
+        other
     end)
   end
 
   # Private functions
+
+  # An agent past the timeout was killed mid-run, so its run span never closed.
+  defp report_kill({:exit, {%{agent: agent}, :timeout}}, timeout, otel_ctx),
+    do: KilledRun.emit_timeout(agent, timeout, otel_ctx)
+
+  defp report_kill(_result, _timeout, _otel_ctx), do: :ok
 
   defp execute_agent(agent, input) do
     # Convert input to agent input format if needed

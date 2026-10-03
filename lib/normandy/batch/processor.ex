@@ -36,11 +36,21 @@ defmodule Normandy.Batch.Processor do
           IO.puts("Progress: \#{completed}/\#{total}")
         end
       )
+
+  ## Telemetry
+
+  An item that runs past `:timeout` is killed mid-run, so its
+  `[:normandy, :agent, :run]` span never closes on its own. The processor
+  emits a synthetic `[:normandy, :agent, :run, :exception]` with
+  `reason: :killed` for it, possibly without a matching `:start`; the
+  `llm_call`/`tool` spans open inside it stay open. See
+  `Normandy.Telemetry.KilledRun`.
   """
 
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
 
   @type batch_option ::
@@ -143,6 +153,7 @@ defmodule Normandy.Batch.Processor do
       )
       |> Enum.map_reduce(0, fn result, completed ->
         {index, input, outcome} = item_outcome(result)
+        :ok = report_kill(result, agent, timeout, parent_otel_ctx)
         completed = completed + 1
 
         if on_progress, do: on_progress.(completed, total)
@@ -277,6 +288,12 @@ defmodule Normandy.Batch.Processor do
 
   defp item_outcome({:exit, {{input, index}, reason}}),
     do: {index, input, {:error, {:exit, reason}}}
+
+  # A task past the timeout was killed mid-run, so its run span never closed.
+  defp report_kill({:exit, {_input_and_index, :timeout}}, agent, timeout, otel_ctx),
+    do: KilledRun.emit_timeout(agent, timeout, otel_ctx)
+
+  defp report_kill(_result, _agent, _timeout, _otel_ctx), do: :ok
 
   defp report_error(on_error, input, {:error, error}), do: on_error.(input, error)
   defp report_error(_on_error, _input, {:ok, _}), do: :ok
