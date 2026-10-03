@@ -734,7 +734,10 @@ defmodule Normandy.Agents.BaseAgent do
   # Compaction at the :steering boundary. Resolves the configured Compactor and
   # the model's context window (pinned `:max_tokens`, else the configured
   # ModelCatalog, memoised on the config), compacts the running config.memory,
-  # and logs when it actually shrinks the conversation.
+  # and logs when it actually shrinks the conversation. Every run emits
+  # [:normandy, :agent, :compaction] (measurements: whichever of :tokens_before,
+  # :tokens_after, :tokens_removed the compactor reported; metadata: :agent_name,
+  # :model, :strategy, :compacted), so a compactor that never fires is observable.
   # The default config selects Compactor.NoOp, so this is observably a no-op
   # unless an agent opts into a real compactor.
   @doc false
@@ -743,6 +746,17 @@ defmodule Normandy.Agents.BaseAgent do
     {config, window} = resolve_context_window(config, mod, opts)
     ctx = %{model: config.model, window: window}
     {config2, meta} = mod.maybe_compact(config, ctx, opts)
+
+    :telemetry.execute(
+      [:normandy, :agent, :compaction],
+      Map.take(meta, [:tokens_before, :tokens_after, :tokens_removed]),
+      %{
+        agent_name: config.name,
+        model: config.model,
+        strategy: Map.get(meta, :strategy),
+        compacted: Map.get(meta, :compacted) == true
+      }
+    )
 
     if Map.get(meta, :compacted) do
       log_lifecycle(:debug, "normandy agent compaction",
