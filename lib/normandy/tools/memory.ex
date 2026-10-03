@@ -205,7 +205,8 @@ defmodule Normandy.Tools.Memory do
   end
 
   defp telemetry_metadata(%__MODULE__{store: {mod, _}, command: cmd} = tool, namespace) do
-    base = %{command: cmd && cmd.command, store: mod}
+    # only a known name reaches telemetry: the model's raw value would be unbounded
+    base = %{command: if(cmd && cmd.command in @commands, do: cmd.command), store: mod}
 
     if tool.telemetry_include_paths,
       do: Map.merge(base, %{namespace: namespace, path: cmd && (cmd.path || cmd.old_path)}),

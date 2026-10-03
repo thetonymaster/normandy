@@ -96,4 +96,43 @@ defmodule Normandy.Tools.MemoryTest do
       Memory.run(t, %Context{tool_call_id: "c", values: %{tenant: "acme"}})
     end
   end
+
+  describe "telemetry command metadata" do
+    setup do
+      test_pid = self()
+      id = "memory-shell-tel-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach_many(
+          id,
+          [[:normandy, :memory, :command, :start], [:normandy, :memory, :command, :stop]],
+          fn event, _m, meta, _ ->
+            # handlers run in the emitting process; ignore events from other async tests
+            if self() == test_pid, do: send(test_pid, {:tel, event, meta})
+          end,
+          nil
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    defp run_with(input) do
+      t = Memory.prepare_input(tool(), input)
+      Memory.run(t, %Context{tool_call_id: "c", values: %{memory_namespace: "acme/u"}})
+    end
+
+    test "a command outside the six names is reported as nil, never the model's value" do
+      for bad <- ["rm -rf", String.duplicate("x", 500), %{"a" => 1}, 42] do
+        run_with(%{"command" => bad, "path" => "/memories"})
+        assert_receive {:tel, [:normandy, :memory, :command, :start], %{command: nil}}
+        assert_receive {:tel, [:normandy, :memory, :command, :stop], %{command: nil}}
+      end
+    end
+
+    test "a valid command name passes through" do
+      run_with(%{"command" => "view", "path" => "/memories"})
+      assert_receive {:tel, [:normandy, :memory, :command, :start], %{command: "view"}}
+      assert_receive {:tel, [:normandy, :memory, :command, :stop], %{command: "view"}}
+    end
+  end
 end
