@@ -12,8 +12,10 @@ defmodule Normandy.Telemetry do
 
     * Durations and `monotonic_time` are in native time units; convert with
       `System.convert_time_unit/3`. Fields named `*_ms` say so.
-    * Metadata never carries message, prompt or output content. Keys with no value
-      are left out of the map, except where a key is described as "always present".
+    * The keys Normandy adds never carry message, prompt or output content. The
+      `:exception` `reason` is the raw error term and may embed provider or parse
+      details. Keys with no value are left out of the map, except where a key is described
+      as "always present".
     * Metadata keys are snake_case atoms, not dotted semconv names. The mapping to
       OpenTelemetry GenAI attributes is in "OpenTelemetry GenAI mapping" below.
     * Spans follow `:telemetry.span/3`: `:start` has `system_time` and `monotonic_time`
@@ -130,7 +132,7 @@ defmodule Normandy.Telemetry do
   `A2A.Server.handle_message/3` handling one agent-to-agent message.
 
     * Start metadata: `task_id`, `agent_name`.
-    * Stop metadata adds `status` (`:ok | :error`) and, on error, `error` (`:no_text` or
+    * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type` (`:no_text` or
       `:agent_failed`).
     * Parenting: when the carrier passed to `handle_message/3` has a valid W3C
       `traceparent`, the request span (and the agent run inside it) joins that trace.
@@ -140,7 +142,8 @@ defmodule Normandy.Telemetry do
   One park of a durable turn awaiting a tool-approval decision (`Turn.Server` only,
   hand-emitted; both events share `telemetry_span_context`).
 
-    * Start metadata: `session_id`, `tool_names`, `count`.
+    * Start metadata: `session_id`, `tool_names`, `count`, plus the run's ids (`turn_id`,
+      `conversation_id`).
     * Stop metadata adds `outcome`: `:approved | :rejected | :mixed | :expired |
       :terminated` (`:terminated` when the server stops while parked). `duration` is the
       wait.
@@ -160,7 +163,7 @@ defmodule Normandy.Telemetry do
 
   A parked batch whose approval window closed with no decision. Measurement
   `count` (parked calls). Metadata: `session_id`, `mode` (`:continue | :fail`),
-  `timeout_ms`, `tool_names`. Each call also gets a `[:normandy, :tool, :denied]`, and the
+  `timeout_ms`, `tool_names`, plus the run's ids (`turn_id`, `conversation_id`). Each call also gets a `[:normandy, :tool, :denied]`, and the
   approval span stops with `outcome: :expired`.
 
   ### `[:normandy, :turn, :subscriber, :exception]`
@@ -230,8 +233,9 @@ defmodule Normandy.Telemetry do
   `ParallelOrchestrator.execute/execute_stream`, `Batch.Processor.process_batch`)
   emit a synthetic `[:normandy, :agent, :run, :exception]` for it, in the coordinator
   process, with the caller's OTel context attached. It has `reason: :killed`,
-  `kind: :exit`, `stacktrace: []`, no `telemetry_span_context`, and `model` and
-  `agent_name`. Consequences:
+  `kind: :exit`, `stacktrace: []`, no `telemetry_span_context`, and the same run
+  metadata as a live run's `:start` (`model`, `agent_name`, `provider`, and the session
+  ids when set), minus `turn_id`. Consequences:
 
     * A handler can see this `:exception` with no matching `:start` (the start fired in
       the killed process).
@@ -246,7 +250,7 @@ defmodule Normandy.Telemetry do
       nothing emits their `:stop` or `:exception`.
     * Not emitted for agent pids, for tasks that finished their run before the kill, or
       for tasks `Task.async_stream` shuts down when the consumer halts early
-      (`Reactive.all` with `fail_fast`). A window of a few instructions between a run's
+      (`Reactive.all` with `fail_fast`). A short window between a run's
       `:stop` and its completion mark can still produce a late synthetic `:exception`.
 
   See `Normandy.Telemetry.KilledRun` for the details.

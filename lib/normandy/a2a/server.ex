@@ -121,7 +121,7 @@ defmodule Normandy.A2A.Server do
 
   Emits a `[:normandy, :a2a, :request]` `:telemetry.span/3`. Start metadata:
   `:task_id` (the id of the returned task) and `:agent_name` (`config.name`).
-  Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error`
+  Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error_type`
   (`:no_text` or `:agent_failed`). No message content is included.
   """
   @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t(), [{String.t(), String.t()}]) ::
@@ -167,7 +167,7 @@ defmodule Normandy.A2A.Server do
   end
 
   defp stop_status({:ok, _task}), do: %{status: :ok}
-  defp stop_status({:error, reason}), do: %{status: :error, error: reason}
+  defp stop_status({:error, reason}), do: %{status: :error, error_type: reason}
 
   defp message_text(message) do
     message.parts

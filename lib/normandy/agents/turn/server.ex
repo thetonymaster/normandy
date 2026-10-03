@@ -26,7 +26,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   Each park is wrapped in a `[:normandy, :turn, :approval, :start | :stop]` span
   (hand-emitted; both events carry the same `:telemetry_span_context`). `:start`
-  metadata: `session_id`, `tool_names`, `count`. `:stop` adds `outcome` (`:approved`,
+  metadata: `session_id`, `tool_names`, `count` and the run's ids (`turn_id`,
+  `conversation_id`). `:stop` adds `outcome` (`:approved`,
   `:rejected`, `:mixed`, `:expired`, or `:terminated` when the server stops while
   parked) and measures `duration`. The run span stays one span across parks; its
   `:stop`/`:exception` measurements add `approval_wait` (native units, the sum of all
@@ -568,12 +569,12 @@ defmodule Normandy.Agents.Turn.Server do
     :telemetry.execute(
       [:normandy, :turn, :approval, :expired],
       %{count: length(parked)},
-      %{
+      Map.merge(Metadata.ids(data.config), %{
         session_id: data.session_id,
         mode: mode,
         timeout_ms: ms,
         tool_names: Enum.map(parked, & &1.name)
-      }
+      })
     )
 
     Enum.each(parked, &Dispatch.emit_denied(data.config, &1, :approval_expired))
@@ -622,10 +623,9 @@ defmodule Normandy.Agents.Turn.Server do
 
   # The server ends a run span left in flight (between the hand-emitted run :start and
   # its :stop/:exception) with a run :exception of kind :exit. The server does not trap
-  # exits, so this runs on callback-initiated stops ({:stop, ...}, passivation),
-  # :gen_statem.stop/3 and supervisor-initiated stops that arrive as system messages;
-  # an untrappable exit signal (:kill, or a linked process dying) ends the process with
-  # no callback.
+  # exits, so this runs on callback-initiated stops ({:stop, ...}, passivation) and
+  # :gen_statem.stop/3. A supervisor's shutdown is an exit signal, which without
+  # trap_exit ends the process with no callback, as do :kill and a linked process dying.
   @impl true
   def terminate(reason, _state, data) do
     data = stop_approval_span(data, :terminated)
@@ -764,12 +764,13 @@ defmodule Normandy.Agents.Turn.Server do
     outer_ctx = OtelCtx.capture()
     start = System.monotonic_time()
 
-    meta = %{
-      session_id: data.session_id,
-      tool_names: Enum.map(parked, & &1.name),
-      count: length(parked),
-      telemetry_span_context: make_ref()
-    }
+    meta =
+      Map.merge(Metadata.ids(data.config), %{
+        session_id: data.session_id,
+        tool_names: Enum.map(parked, & &1.name),
+        count: length(parked),
+        telemetry_span_context: make_ref()
+      })
 
     :telemetry.execute(
       [:normandy, :turn, :approval, :start],

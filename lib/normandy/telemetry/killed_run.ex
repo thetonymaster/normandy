@@ -32,10 +32,8 @@ defmodule Normandy.Telemetry.KilledRun do
       returns, and the coordinator checks the mark (`run_done?/2`) before
       emitting. The mark is written after the run's `:stop`/`:exception` has
       fired, so a kill landing between the two still gets a synthetic
-      `:exception` after the real one; that window is a few instructions
-      wide. `Batch.Processor` runs no callbacks in the task and doesn't mark:
-      its window, from the run's `:stop` to the task's reply, is the same few
-      instructions.
+      `:exception` after the real one; that window is short. `Batch.Processor` runs no callbacks in the task and doesn't mark:
+      its window, from the run's `:stop` to the task's reply, is the same short window.
     * Not emitted for agent processes (a pid in `Reactive.race/3`): killing
       the task that waits on `AgentProcess.run/3` does not kill the run, which
       ends normally in the agent process.
@@ -65,6 +63,7 @@ defmodule Normandy.Telemetry.KilledRun do
   """
 
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
 
   @doc """
@@ -77,13 +76,8 @@ defmodule Normandy.Telemetry.KilledRun do
   def emit(%BaseAgentConfig{} = agent, duration, otel_ctx) do
     measurements = %{duration: duration, monotonic_time: System.monotonic_time()}
 
-    metadata = %{
-      model: agent.model,
-      agent_name: agent.name,
-      kind: :exit,
-      reason: :killed,
-      stacktrace: []
-    }
+    metadata =
+      Map.merge(Metadata.run(agent), %{kind: :exit, reason: :killed, stacktrace: []})
 
     token = OtelCtx.attach(otel_ctx)
 

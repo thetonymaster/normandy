@@ -1913,16 +1913,21 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert_received {:telemetry, ^start_ref, %{system_time: st, monotonic_time: _},
                        %{
                          session_id: "s-aspan",
+                         conversation_id: "s-aspan",
+                         turn_id: turn_id,
                          tool_names: ["billing"],
                          count: 1,
                          telemetry_span_context: ctx
                        }}
+
+      assert is_binary(turn_id)
 
       assert is_integer(st)
 
       assert_received {:telemetry, ^stop_ref, %{duration: d, monotonic_time: _},
                        %{
                          session_id: "s-aspan",
+                         turn_id: ^turn_id,
                          outcome: :approved,
                          tool_names: ["billing"],
                          count: 1,

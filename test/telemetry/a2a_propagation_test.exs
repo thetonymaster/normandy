@@ -237,7 +237,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       assert {:error, :no_text} = Server.handle_message(remote_agent(), message)
 
       assert_received {[:normandy, :a2a, :request, :stop], stop}
-      assert %{status: :error, error: :no_text} = stop
+      assert %{status: :error, error_type: :no_text} = stop
     end
   end
 end

@@ -260,4 +260,25 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
       assert_one_killed(name, "stuck-model")
     end
   end
+
+  describe "KilledRun.emit/3 metadata" do
+    test "carries the same run metadata as a live run, plus kind, reason and stacktrace", %{
+      name: name
+    } do
+      agent = %{stuck_agent(name) | session_id: "killed-sess"}
+
+      :ok = Normandy.Telemetry.KilledRun.emit(agent, 5, nil)
+
+      assert_receive {:run_exception, %{duration: 5},
+                      %{
+                        model: "stuck-model",
+                        agent_name: ^name,
+                        session_id: "killed-sess",
+                        conversation_id: "killed-sess",
+                        kind: :exit,
+                        reason: :killed,
+                        stacktrace: []
+                      }, _ctx}
+    end
+  end
 end
