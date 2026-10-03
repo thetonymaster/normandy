@@ -19,6 +19,8 @@ defmodule E2E.Support do
         name: __MODULE__
       )
 
+    # Lifecycle [info] logs would bury the narrated transcript; warnings and errors stay.
+    Logger.configure(level: :warning)
     :ok = :telemetry.attach("e2e-claudio-calls", [:claudio, :messages, :create, :stop], &__MODULE__.on_call/4, nil)
     :ok = :telemetry.attach_many("e2e-probes", @probe_events, &__MODULE__.on_event/4, nil)
     IO.puts("\n=== #{id} (live-call cap #{cap}) ===")
