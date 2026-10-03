@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Telemetry catalogue.** `Normandy.Telemetry` documents every event with its measurements, metadata,
+  the OpenTelemetry GenAI attribute mapping and the known limits. `test/telemetry/catalogue_test.exs`
+  fails when an event is emitted but not listed there, or the reverse.
+- `[:normandy, :llm, :request, :start | :stop | :exception]`: one span per provider request inside an
+  llm_call (`attempt`, `request_kind`, `status`, `response_id`, `finish_reason`, token counts).
+- `[:normandy, :agent, :llm_call, :stop]` adds `provider`, `stream`, `structured_output`, `max_tokens`,
+  `temperature`, `effort`, `server_address` (start), `response_id`, `finish_reason` (always a string),
+  `served_by`, `attempts`, `json_retries`, `structured_fallback`, and for streaming
+  `time_to_first_chunk` (metadata, native units). Normalized `input_tokens` (Anthropic: includes cache
+  reads and writes), `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens` sit beside the
+  unchanged raw `usage`; streaming calls carry usage too, and OpenAI-shaped usage is normalized.
+  Failed calls carry the billed usage on the error: `reason.usage` and `reason.usage_counts`.
+- Run, llm_call and tool events carry `provider`, `turn_id`, `session_id` and `conversation_id` when
+  known; tool spans add `tool_call_id`, `tool_description`, `tool_type` and, on failure, `error_type`.
+- `[:normandy, :tool, :denied]` for every call answered without running its tool.
+- `[:normandy, :turn, :approval, :start | :stop]` per approval park (`outcome`), and an `approval_wait`
+  measurement on `Turn.Server`'s run `:stop`/`:exception`. The run stays one span.
+- `[:normandy, :workflow, :run]` around `Workflow.execute/1` and the orchestrators' entry points.
+- `[:normandy, :a2a, :request]` around `A2A.Server.handle_message/3`.
+- Trace context: `Turn.Server`, `AgentProcess` and the coordinators carry the caller's OpenTelemetry
+  context into the runs they start. `A2A.AgentTool` injects a W3C `traceparent` and
+  `A2A.Server.handle_message/3` extracts it; this needs Claudio's A2A transport `:headers` option
+  (Claudio 0.7.0). MCP calls carry no trace context (`call_tool/4` has no field for it).
+- Resumed durable turns emit a run `:start` with `resumed: true`, parented under the persisted caller
+  context.
+
+### Changed
+
+- `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `approve/2` casts `{:approval, decisions, ctx}`.
+  `AgentProcess.run/3` sends `{:run, input, ctx}` and `AgentProcess.cast/3` sends
+  `{:run_async, input, reply_to, ctx}`. New servers still accept the old shapes, but an old-version
+  server that receives a new shape crashes. **Rolling deploy: upgrade the nodes that host servers
+  (`Turn.Server`, `AgentProcess`) before the nodes that call or approve them.**
+
+### Fixed
+
+- Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
+  `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
+  can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
+- `Reactive.all/3` keeps the results it collected when an agent exits or times out.
+- `Turn.Server` closes the run span on `terminate/3` and ignores stray messages.
+
 - - -
 ## [v1.3.0](https://github.com/thetonymaster/normandy/compare/6416cea35d8b120370c644dcd9a297dec67df829..v1.3.0) - 2026-06-23
 #### Features
@@ -623,7 +669,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Logger` calls for agent, LLM, and tool lifecycle events
   - Telemetry events for:
     - `[:normandy, :agent, :run, :start | :stop | :exception]`
-    - `[:normandy, :llm, :call, :start | :stop | :exception]`
+    - `[:normandy, :agent, :llm_call, :start | :stop | :exception]` (the LLM call span; an `[:normandy, :llm, :call, *]` event never existed. `[:normandy, :llm, :request, *]`, added in the Unreleased section, is a different event)
     - `[:normandy, :tool, :execute, :start | :stop | :exception]`
   - Automatic duration tracking for all operations
   - Metadata enrichment with agent names, models, and tool names

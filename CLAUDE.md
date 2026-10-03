@@ -128,6 +128,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Events: `[:normandy, :agent, :run, :start | :stop | :exception]`, etc.
   - Automatic duration tracking and metadata enrichment (agent name, model, tools)
   - OpenTelemetry-compatible span context correlation
+- **`Normandy.Telemetry`** - The catalogue of every emitted event (measurements, metadata, OTel GenAI mapping, known limits). `test/telemetry/catalogue_test.exs` fails when an emitted event is missing from its moduledoc, so document any new event there
 
 ### Protocol Support
 

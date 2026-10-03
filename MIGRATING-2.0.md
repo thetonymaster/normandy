@@ -204,6 +204,25 @@ A turn that failed after the assistant's `tool_use` no longer leaves the session
 unusable: the next turn appends an `interrupted: true` tool result for each
 unanswered call.
 
+## 13. Rolling deploys: upgrade server nodes first
+
+`Turn.Server.run/2` now sends `{:turn, input, ctx}` and `Turn.Server.approve/2` casts
+`{:approval, decisions, ctx}`; `AgentProcess.run/3` sends `{:run, input, ctx}` and
+`AgentProcess.cast/3` sends `{:run_async, input, reply_to, ctx}`. `ctx` is the caller's
+OpenTelemetry context, so the run nests under the caller's span. New servers still accept the
+old shapes. An old-version server that receives a new shape has no matching clause and
+crashes. When callers and servers run on different nodes, upgrade the nodes that host
+`Turn.Server` and `AgentProcess` before the nodes that call or approve them.
+
+## 14. Telemetry additions
+
+The telemetry events are catalogued in `Normandy.Telemetry`. Existing events, measurements and
+metadata keys keep their names and meanings; keys and events were added. Two things to know
+if you attach handlers: `[:normandy, :agent, :run, :exception]` can be synthetic
+(`reason: :killed`) and arrive without a matching `:start`, and the `[:normandy, :llm, :call, *]`
+event named in old changelog entries never existed (the LLM call span is
+`[:normandy, :agent, :llm_call, *]`; `[:normandy, :llm, :request, *]` is new).
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

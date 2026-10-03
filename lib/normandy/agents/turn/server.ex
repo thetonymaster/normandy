@@ -22,6 +22,7 @@ defmodule Normandy.Agents.Turn.Server do
       Expiry emits `[:normandy, :turn, :approval, :expired]` for the batch and a
       `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a
       rejected call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
+    * `:idle_timeout_ms` — idle time before passivation (default 60_000).
 
   Each park is wrapped in a `[:normandy, :turn, :approval, :start | :stop]` span
   (hand-emitted; both events carry the same `:telemetry_span_context`). `:start`
@@ -32,8 +33,7 @@ defmodule Normandy.Agents.Turn.Server do
   parks in the turn, 0 if never parked). `BaseAgent.run/2` never parks, so its run
   events carry no `approval_wait`. A turn resumed after a restart that lands in
   `:awaiting_approval` opens a fresh approval span (the old one died with the old
-  process) inside the resumed run's span.
-    * `:idle_timeout_ms` — idle time before passivation (default 60_000).
+  process) inside the resumed run's span. `Normandy.Telemetry` catalogues every event.
 
   A Tier-2 `Turn.Session` saves `:approval_timeout_ms`, `:on_approval_timeout` and
   `:idle_timeout_ms` with the config template. A thin start (no `:config`) restores
