@@ -10,6 +10,20 @@ defmodule Normandy.Context.SummarizerTest do
   alias Normandy.Test.MockSummarizerClient
   alias Normandy.Test.StubClient
 
+  # Sends each request's messages to `notify`, then returns a fixed summary.
+  defmodule RecordingClient do
+    defstruct [:notify]
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
+
+      def converse(client, _model, _temperature, _max_tokens, messages, rm, _opts) do
+        send(client.notify, {:summarize_request, messages})
+        %{rm | chat_message: "summary"}
+      end
+    end
+  end
+
   setup do
     # Create a mock client for summarization
     client = %MockSummarizerClient{
@@ -28,6 +42,22 @@ defmodule Normandy.Context.SummarizerTest do
   end
 
   describe "summarize_messages/4" do
+    test "the default prompt keeps stated facts word for word, across summaries", %{agent: agent} do
+      messages = [
+        %{role: "user", content: "Previous conversation summary: The vault code is TANGERINE-7."},
+        %{role: "user", content: "Describe glaciers."},
+        %{role: "assistant", content: "Glaciers are slow rivers of ice."}
+      ]
+
+      {:ok, "summary"} =
+        Summarizer.summarize_messages(%RecordingClient{notify: self()}, agent, messages)
+
+      assert_received {:summarize_request, [%Message{role: "user", content: prompt}]}
+      assert prompt =~ "word for word"
+      assert prompt =~ "earlier summary"
+      assert prompt =~ "TANGERINE-7"
+    end
+
     test "summarizes a list of messages", %{client: client, agent: agent} do
       messages = [
         %{role: "user", content: "Hello"},

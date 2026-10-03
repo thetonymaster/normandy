@@ -20,10 +20,17 @@ defmodule Normandy.Context.Summarizer do
   alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
 
+  # Compaction summarizes its own earlier summaries, so a fact the conversation has moved
+  # past must be carried forward explicitly or a later round drops it.
   @default_summarization_prompt """
-  Please provide a concise summary of the following conversation history.
-  Focus on key points, decisions made, and important context that should be preserved.
-  Keep the summary brief but informative.
+  Summarize the conversation below. Your summary replaces it in the assistant's memory, so
+  anything you leave out is forgotten.
+
+  - Keep every fact the user stated or asked to be remembered (names, numbers, codes, dates,
+    preferences) word for word, even when the conversation moved on to other topics.
+  - If the conversation begins with an earlier summary, carry all of its facts forward.
+  - Then note briefly the topics covered, decisions made and any open requests.
+  - Leave out the assistant's remarks about its own abilities or memory.
 
   Conversation to summarize:
   """
