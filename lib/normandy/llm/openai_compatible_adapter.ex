@@ -49,6 +49,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLM.ParseFailure
   alias Normandy.LLMError
+  alias Normandy.Telemetry.Request
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -141,6 +142,27 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   def __to_llm_error__(other), do: LLMError.wrap(other)
 
+  @doc false
+  # The [:normandy, :llm, :request] span's outcome for a `Req.post/2` result.
+  @spec __request_outcome__(term()) :: {:ok, map()} | {:error, LLMError.t()}
+  def __request_outcome__({:ok, %Req.Response{status: status, body: body}})
+      when status in 200..299 do
+    meta = response_meta(body)
+    usage = if is_map(body), do: Map.get(body, "usage")
+
+    {:ok,
+     Request.stop_metadata(
+       Map.get(meta, :response_id),
+       Map.get(meta, :finish_reason),
+       usage
+     )}
+  end
+
+  def __request_outcome__({:ok, %Req.Response{status: status, body: body}}),
+    do: {:error, __to_llm_error__(status, body)}
+
+  def __request_outcome__({:error, error}), do: {:error, __to_llm_error__(error)}
+
   defp classify_status(429), do: {:rate_limit, true}
   defp classify_status(408), do: {:server, true}
   defp classify_status(status) when status in 500..599, do: {:server, true}
@@ -177,7 +199,16 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
           receive_timeout: Map.get(client.options, :timeout, 120_000)
         ] ++ Map.get(client.options, :req_options, [])
 
-      case Req.post(url, req_options) do
+      result =
+        Request.span(
+          Keyword.get(opts, :request_tracker),
+          Keyword.get(opts, :request_kind),
+          %{model: model, provider: :openai_compatible, stream: false},
+          fn -> Req.post(url, req_options) end,
+          &A.__request_outcome__/1
+        )
+
+      case result do
         {:ok, %Req.Response{status: status, body: resp_body}} when status in 200..299 ->
           content = A.extract_text(resp_body)
 

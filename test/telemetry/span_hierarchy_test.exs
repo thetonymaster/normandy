@@ -80,6 +80,68 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
     end
   end
 
+  describe "LLM requests" do
+    test "a retried llm_call nests one request span per provider request" do
+      OtelSpanBridge.attach(
+        prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :llm, :request]]
+      )
+
+      counter = :counters.new(1, [])
+
+      Req.Test.stub(__MODULE__.RetriedRequest, fn conn ->
+        n = :counters.get(counter, 1)
+        :counters.add(counter, 1, 1)
+
+        if n == 0 do
+          conn
+          |> Plug.Conn.put_status(429)
+          |> Req.Test.json(%{
+            "type" => "error",
+            "error" => %{"type" => "rate_limit_error", "message" => "slow down"}
+          })
+        else
+          Req.Test.json(conn, %{
+            "id" => "msg_1",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-opus-5-5",
+            "content" => [%{"type" => "text", "text" => ~s({"chat_message":"hi"})}],
+            "stop_reason" => "end_turn",
+            "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+          })
+        end
+      end)
+
+      agent =
+        BaseAgent.init(%{
+          client: %Normandy.LLM.ClaudioAdapter{
+            api_key: "k",
+            options: %{req_options: [plug: {Req.Test, __MODULE__.RetriedRequest}, retry: false]}
+          },
+          model: "claude-opus-5-5",
+          temperature: nil,
+          retry_options: [max_attempts: 2, base_delay: 1, jitter: false]
+        })
+
+      BaseAgent.run(agent, "hello")
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "normandy.agent.run",
+          "normandy.agent.llm_call",
+          "normandy.llm.request",
+          "normandy.llm.request"
+        ])
+
+      llm_call = OtelSpanBridge.fetch_span!(spans, "normandy.agent.llm_call")
+      requests = Enum.filter(spans, &(&1.name == "normandy.llm.request"))
+
+      assert [_, _] = requests
+      assert Enum.all?(requests, &(&1.parent_span_id == llm_call.span_id))
+      assert Enum.all?(requests, &(&1.trace_id == llm_call.trace_id))
+    end
+  end
+
   # Turn.Server runs each LLM call in its own worker process, so the reply switches
   # on a shared counter rather than the process dictionary.
   defp counted_client(tool_first?) do

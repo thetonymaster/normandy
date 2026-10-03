@@ -26,7 +26,10 @@ defprotocol Normandy.Agents.Model do
     - max_tokens: Maximum tokens to generate
     - messages: List of conversation messages
     - response_model: Expected response schema
-    - opts: Optional keyword list with :tools key for tool schemas
+    - opts: Optional keyword list with :tools key for tool schemas. BaseAgent also
+      passes `:request_tracker` (a `Normandy.Telemetry.Request`); an implementation
+      may wrap each provider request in `Normandy.Telemetry.Request.span/5` with it
+      to emit `[:normandy, :llm, :request]` spans, and may ignore it otherwise
 
   ## Returns
     Structured response conforming to response_model.

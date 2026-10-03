@@ -130,6 +130,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLM.StructuredOutputs
   alias Normandy.LLMError
+  alias Normandy.Telemetry.Request
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -205,7 +206,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
             max_tokens,
             messages,
             response_model,
-            opts
+            opts,
+            nil
           )
       end
     end
@@ -217,14 +219,15 @@ defmodule Normandy.LLM.ClaudioAdapter do
            max_tokens,
            messages,
            response_model,
-           opts
+           opts,
+           request_kind
          ) do
       tools = Keyword.get(opts, :tools, [])
       claudio_client = build_claudio_client(client)
       request = build_request(client, model, temperature, max_tokens, messages, opts)
 
       # Execute request
-      case Claudio.Messages.create(claudio_client, request) do
+      case create(claudio_client, request, model, opts, request_kind) do
         {:ok, response} ->
           # Pass context for JSON retry
           context = %{
@@ -236,7 +239,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
             tools: tools,
             task_budget_remaining: Keyword.get(opts, :task_budget_remaining),
             json_retries: Keyword.get(opts, :json_retries, 2),
-            retry_usage_ref: make_ref()
+            retry_usage_ref: make_ref(),
+            request_tracker: Keyword.get(opts, :request_tracker)
           }
 
           case convert_response_to_normandy(response, response_model, context) do
@@ -284,7 +288,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> build_request(model, temperature, max_tokens, messages, opts)
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
-      case Claudio.Messages.create(claudio_client, request) do
+      case create(claudio_client, request, model, opts, nil) do
         {:ok, response} ->
           context = %{
             client: client,
@@ -315,7 +319,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
                 max_tokens,
                 messages,
                 response_model,
-                opts
+                opts,
+                :structured_fallback
               )
 
             :propagate ->
@@ -331,7 +336,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
       claudio_client = build_claudio_client(client)
       request = build_request(client, model, temperature, max_tokens, messages, opts)
 
-      ClaudioAdapter.__raw_completion__(Claudio.Messages.create(claudio_client, request))
+      claudio_client
+      |> create(request, model, opts, Keyword.get(opts, :request_kind))
+      |> ClaudioAdapter.__raw_completion__()
+    end
+
+    # One non-streaming Messages API request, in a [:normandy, :llm, :request] span
+    # (Normandy.Telemetry.Request). `kind` is nil for the call's first request.
+    defp create(claudio_client, request, model, opts, kind) do
+      Request.span(
+        Keyword.get(opts, :request_tracker),
+        kind,
+        %{model: model, provider: :anthropic, stream: false},
+        fn -> Claudio.Messages.create(claudio_client, request) end,
+        &ClaudioAdapter.__request_outcome__/1
+      )
     end
 
     @doc """
@@ -975,7 +994,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
       opts = [
         max_retries: Map.get(context, :json_retries, 2),
-        on_retry_usage: fn usage -> if ref, do: send(owner, {ref, :retry_usage, usage}) end
+        on_retry_usage: fn usage -> if ref, do: send(owner, {ref, :retry_usage, usage}) end,
+        request_tracker: Map.get(context, :request_tracker)
       ]
 
       opts = if tools != [], do: [{:tools, tools} | opts], else: opts
@@ -1598,4 +1618,20 @@ defmodule Normandy.LLM.ClaudioAdapter do
     do: {extract_content(response), extract_usage(response)}
 
   def __raw_completion__({:error, error}), do: {:error, __to_llm_error__(error)}
+
+  @doc false
+  # The request span's outcome for a `Claudio.Messages.create/2` result.
+  @spec __request_outcome__(term()) :: {:ok, map()} | {:error, LLMError.t()}
+  def __request_outcome__({:ok, response}) do
+    meta = response_meta(response)
+
+    {:ok,
+     Request.stop_metadata(
+       Map.get(meta, :response_id),
+       Map.get(meta, :finish_reason),
+       extract_usage(response)
+     )}
+  end
+
+  def __request_outcome__({:error, error}), do: {:error, __to_llm_error__(error)}
 end

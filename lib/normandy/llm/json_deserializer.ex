@@ -70,6 +70,9 @@ defmodule Normandy.LLM.JsonDeserializer do
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:on_retry_usage` - `(usage -> any)`, called with each retry call's token usage
   - `:tools` - Tool schemas to include in retry
+  - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed to each
+    retry's `converse/7` (with `request_kind: :json_retry`) so the retry's request
+    span is numbered within the enclosing llm_call
   - `:adapter` - JSON adapter module (default: from `:normandy` app config)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
     string truncation (default: `false`). See `parse_and_validate/3`.
@@ -330,9 +333,9 @@ defmodule Normandy.LLM.JsonDeserializer do
     tools = Keyword.get(opts, :tools, [])
 
     llm_opts =
-      [raw: true] ++
+      [raw: true, request_kind: :json_retry] ++
         if(tools != [], do: [tools: tools], else: []) ++
-        Keyword.take(opts, [:task_budget_remaining])
+        Keyword.take(opts, [:task_budget_remaining, :request_tracker])
 
     case ConverseResult.normalize(
            Model.converse(

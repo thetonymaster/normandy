@@ -34,6 +34,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
+  alias Normandy.Telemetry.Request
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -319,6 +320,12 @@ defmodule Normandy.Agents.BaseAgent do
 
     # How many times the adapter re-asks after a response that does not parse.
     json_retries = if config.enable_json_retry, do: config.json_retry_max_attempts, else: 0
+
+    # Numbers the provider requests of this call (get_response/2 has no llm_call
+    # span to create one).
+    extra_opts =
+      Keyword.put_new_lazy(extra_opts, :request_tracker, fn -> request_tracker(config) end)
+
     opts = [{:json_retries, json_retries} | opts] ++ extra_opts
 
     # Wrap LLM call with resilience patterns
@@ -341,7 +348,11 @@ defmodule Normandy.Agents.BaseAgent do
   @spec call_llm_with_resilience(BaseAgentConfig.t(), list(), struct(), keyword()) ::
           {struct(), map() | nil, map()}
   defp call_llm_with_resilience(config, messages, response_model, opts) do
+    tracker = Keyword.get(opts, :request_tracker)
+
     llm_call = fn ->
+      Request.note_call(tracker)
+
       config.client
       |> Model.converse(
         config.model,
@@ -652,8 +663,14 @@ defmodule Normandy.Agents.BaseAgent do
       )
 
     with_llm_call_span(config, llm_metadata, fn ->
+      tracker = request_tracker(config)
+
       {r, usage, response_meta} =
-        get_response_with_usage(config, response_model, task_budget_call_opts(config, state))
+        get_response_with_usage(
+          config,
+          response_model,
+          [request_tracker: tracker] ++ task_budget_call_opts(config, state)
+        )
 
       # When this agent has no tools, strip any tool_calls the LLM may have
       # returned (e.g. a misbehaving or generic mock). Old run_without_tools
@@ -683,9 +700,19 @@ defmodule Normandy.Agents.BaseAgent do
           ])
           |> normalize_finish_reason()
         )
+        |> Map.merge(Request.summary(tracker))
 
       {r, meta}
     end)
+  end
+
+  # The [:normandy, :llm, :request] counter for one llm_call; its request spans
+  # carry the call's ids.
+  defp request_tracker(config) do
+    config
+    |> Metadata.ids()
+    |> Map.put(:agent_name, config.name)
+    |> Request.new()
   end
 
   defp dispatch_turn_tools(config, calls) do
@@ -1010,12 +1037,13 @@ defmodule Normandy.Agents.BaseAgent do
   defp stream_llm_attempt(config, state, callback, llm_metadata) do
     {messages, prefix_key} = build_stream_messages(config)
     {callback, first_chunk} = track_first_chunk(callback)
+    tracker = request_tracker(config)
 
     case stream_response_from_llm(
            config,
            messages,
            stream_opts(config, callback) ++ task_budget_call_opts(config, state),
-           first_chunk
+           {first_chunk, tracker}
          ) do
       {:ok, final_message} ->
         # The prefix this response was produced under, stamped when it is appended.
@@ -1027,6 +1055,7 @@ defmodule Normandy.Agents.BaseAgent do
          |> Map.merge(%{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
          |> Map.merge(stream_meta(final_message))
          |> Map.merge(first_chunk_meta(first_chunk))
+         |> Map.merge(Request.summary(tracker))
          |> put_usage(Map.get(final_message, :usage))}
 
       {:error, error} ->
@@ -1359,13 +1388,29 @@ defmodule Normandy.Agents.BaseAgent do
   # Retry and the circuit breaker cover a stream like a non-streaming call, but
   # a stream is retried only until its first event reaches the callback: after
   # that the caller has seen output, and a retry would show it twice.
-  defp stream_response_from_llm(config, messages, opts, first_chunk) do
+  # Each attempt is one [:normandy, :llm, :request] span, emitted here because the
+  # stream is consumed here (adapters emit none for stream_converse/7).
+  defp stream_response_from_llm(config, messages, opts, {first_chunk, tracker}) do
     delivered = :atomics.new(1, [])
     opts = Keyword.update(opts, :callback, nil, &track_delivery(&1, delivered))
 
+    request_metadata = %{
+      model: config.model,
+      provider: Provider.provider(config.client),
+      stream: true
+    }
+
     attempt = fn ->
       mark_attempt_start(first_chunk)
-      stream_attempt(config, messages, opts)
+      Request.note_call(tracker)
+
+      Request.span(
+        tracker,
+        nil,
+        request_metadata,
+        fn -> stream_attempt(config, messages, opts) end,
+        &stream_request_outcome/1
+      )
     end
 
     case with_resilience(config, attempt, fn -> :atomics.get(delivered, 1) == 0 end) do
@@ -1382,6 +1427,17 @@ defmodule Normandy.Agents.BaseAgent do
         stream_error(reason)
     end
   end
+
+  defp stream_request_outcome({:ok, final_message}) do
+    {:ok,
+     Request.stop_metadata(
+       Map.get(final_message, :id),
+       Map.get(final_message, :stop_reason),
+       Map.get(final_message, :usage)
+     )}
+  end
+
+  defp stream_request_outcome({:error, %LLMError{} = error}), do: {:error, error}
 
   defp track_delivery(callback, delivered) when is_function(callback, 2) do
     fn event, data ->
