@@ -141,6 +141,34 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert %Resp{content: "hi"} = final
   end
 
+  test "a turn compacts memory before its first LLM call" do
+    test_pid = self()
+
+    handlers = %{
+      BaseAgent.non_streaming_handlers()
+      | compact: fn config, _state, _info ->
+          send(test_pid, :compacted)
+          {config, %{compacted: false}}
+        end,
+        call_llm: fn _config, _state, _req ->
+          send(test_pid, :llm_called)
+          %Resp{content: "hi", tool_calls: nil}
+        end
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-compact-first",
+        config: base_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Normandy.Behaviours.SessionRegistry.Native, Native.new()},
+        handlers: handlers
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "hello")
+    assert {:messages, [:compacted, :llm_called]} = Process.info(self(), :messages)
+  end
+
   test "a completed turn persists a terminal :stopped turn state (for the resume reaper)" do
     store = InMemory.new()
     reg = Native.new()

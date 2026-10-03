@@ -10,9 +10,42 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     def maybe_compact(acc, _ctx, opts), do: {acc, Keyword.fetch!(opts, :meta)}
   end
 
-  defp agent(meta) do
+  # Reports each stream call to `notify`, then streams a one-word reply.
+  defmodule NotifyingStreamClient do
+    defstruct [:notify]
+
+    defimpl Normandy.Agents.Model do
+      def completitions(_client, _model, _temperature, _max_tokens, _messages, rm), do: rm
+
+      def converse(_client, _model, _temperature, _max_tokens, _messages, rm, _opts \\ []),
+        do: rm
+
+      def stream_converse(client, _model, _temperature, _max_tokens, _messages, _rm, _opts) do
+        send(client.notify, :llm_called)
+
+        {:ok,
+         [
+           %{type: "message_start", message: %{"id" => "m1", "role" => "assistant"}},
+           %{
+             type: "content_block_start",
+             content_block: %{"type" => "text", "text" => ""},
+             index: 0
+           },
+           %{
+             type: "content_block_delta",
+             delta: %{"type" => "text_delta", "text" => "hi"},
+             index: 0
+           },
+           %{type: "message_delta", delta: %{"stop_reason" => "end_turn"}, usage: %{}},
+           %{type: "message_stop"}
+         ]}
+      end
+    end
+  end
+
+  defp agent(meta, client \\ %NormandyTest.Support.ModelMockup{}) do
     BaseAgent.init(%{
-      client: %NormandyTest.Support.ModelMockup{},
+      client: client,
       model: "m",
       temperature: nil,
       name: "compacting-agent",
@@ -75,6 +108,16 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     {_agent, _response} = BaseAgent.run(agent(%{compacted: false}), "hello")
 
     assert_receive {[:normandy, :agent, :compaction], ^ref, _measurements, %{compacted: false}}
+  end
+
+  test "a streamed turn runs the compactor before its first stream call", %{ref: ref} do
+    config = agent(%{compacted: false}, %NotifyingStreamClient{notify: self()})
+
+    {_config, _response} = BaseAgent.stream_response(config, "hello", fn _, _ -> :ok end)
+
+    assert {:messages, [first | _]} = Process.info(self(), :messages)
+    assert {[:normandy, :agent, :compaction], ^ref, _, _} = first
+    assert_received :llm_called
   end
 
   test "a compactor run that did not compact is still observable", %{ref: ref} do
