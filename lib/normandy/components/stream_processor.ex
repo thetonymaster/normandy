@@ -138,6 +138,7 @@ defmodule Normandy.Components.StreamProcessor do
       role: message["role"]
     })
     |> maybe_set_input_transformations(message["input_transformations"])
+    |> maybe_update_usage(message["usage"])
   end
 
   defp process_event(%{type: "content_block_start", content_block: block, index: index}, acc) do
@@ -247,11 +248,16 @@ defmodule Normandy.Components.StreamProcessor do
 
   defp maybe_update_usage(acc, nil), do: acc
 
-  defp maybe_update_usage(acc, usage) do
+  # message_start carries the input and cache counts, message_delta the running
+  # output count (and possibly more); the later one wins, but a nil never
+  # erases a count the earlier event reported.
+  defp maybe_update_usage(acc, usage) when is_map(usage) do
     existing_usage = acc.usage || %{}
-    updated_usage = Map.merge(existing_usage, usage)
+    updated_usage = Map.merge(existing_usage, Map.reject(usage, fn {_k, v} -> is_nil(v) end))
     Map.put(acc, :usage, updated_usage)
   end
+
+  defp maybe_update_usage(acc, _usage), do: acc
 
   defp invoke_callback(
          %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}},

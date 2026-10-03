@@ -38,6 +38,33 @@ defmodule Normandy.Components.StreamProcessorTest do
   describe "build_final_message/1 input_transformations" do
     @dropped %{"type" => "thinking_dropped", "path" => "messages.1.content.0"}
 
+    test "usage merges message_start's counts with message_delta's, a nil never erasing one" do
+      events = [
+        %{
+          type: "message_start",
+          message: %{
+            "id" => "m",
+            "usage" => %{
+              "input_tokens" => 10,
+              "output_tokens" => 1,
+              "cache_read_input_tokens" => 100
+            }
+          }
+        },
+        %{
+          type: "message_delta",
+          delta: %{"stop_reason" => "end_turn"},
+          usage: %{"output_tokens" => 7, "cache_read_input_tokens" => nil}
+        }
+      ]
+
+      assert StreamProcessor.build_final_message(events).usage == %{
+               "input_tokens" => 10,
+               "output_tokens" => 7,
+               "cache_read_input_tokens" => 100
+             }
+    end
+
     test "keeps the input_transformations reported in message_start" do
       events = [
         %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},

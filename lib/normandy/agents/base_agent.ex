@@ -31,6 +31,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
@@ -990,7 +991,8 @@ defmodule Normandy.Agents.BaseAgent do
         {final_message,
          llm_metadata
          |> Map.merge(%{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
-         |> Map.merge(stream_meta(final_message))}
+         |> Map.merge(stream_meta(final_message))
+         |> put_usage(Map.get(final_message, :usage))}
 
       {:error, error} ->
         # Only the error: the span's exception log and telemetry inspect the thrown
@@ -1544,7 +1546,9 @@ defmodule Normandy.Agents.BaseAgent do
       try do
         {result, stop_metadata} = fun.()
         duration_ms = elapsed_ms(started_at)
-        {input_tokens, output_tokens} = token_counts(Map.get(stop_metadata, :usage) || result)
+        stop_metadata = merge_normalized_usage(stop_metadata, result)
+        input_tokens = Map.get(stop_metadata, :input_tokens)
+        output_tokens = Map.get(stop_metadata, :output_tokens)
 
         log_metadata = [
           agent: log_agent_name(config),
@@ -1696,33 +1700,30 @@ defmodule Normandy.Agents.BaseAgent do
     |> System.convert_time_unit(:native, :millisecond)
   end
 
-  defp token_counts(response) do
+  # Adds the raw usage (only when the provider reported some) to llm_call stop
+  # metadata; normalized counts are added later by merge_normalized_usage/2.
+  defp put_usage(metadata, usage) when is_map(usage) and map_size(usage) > 0,
+    do: Map.put(metadata, :usage, usage)
+
+  defp put_usage(metadata, _usage), do: metadata
+
+  # Normalized token counts (Normandy.Telemetry.Usage) beside the raw `usage`,
+  # from the stop metadata's usage or, failing that, the result itself (a usage
+  # map or a response carrying one). Absent counts stay absent.
+  defp merge_normalized_usage(stop_metadata, result) do
     usage =
-      cond do
-        is_map(response) and usage_map?(response) -> response
-        is_map(response) -> Map.get(response, :usage) || Map.get(response, "usage")
-        true -> nil
+      case Map.get(stop_metadata, :usage) do
+        nil -> usage_of(result)
+        usage -> usage
       end
 
-    {usage_value(usage, :input_tokens), usage_value(usage, :output_tokens)}
+    Map.merge(stop_metadata, Usage.normalize(usage))
   end
 
-  defp usage_map?(usage) when is_map(usage) do
-    Map.has_key?(usage, :input_tokens) ||
-      Map.has_key?(usage, "input_tokens") ||
-      Map.has_key?(usage, :output_tokens) ||
-      Map.has_key?(usage, "output_tokens")
-  end
-
-  defp usage_map?(_usage), do: false
-
-  defp usage_value(nil, _key), do: nil
-
-  defp usage_value(usage, key) do
-    case Map.fetch(usage, key) do
-      {:ok, value} -> value
-      :error -> Map.get(usage, Atom.to_string(key))
-    end
+  defp usage_of(%{} = result) do
+    if Usage.normalize(result) == %{},
+      do: Map.get(result, :usage) || Map.get(result, "usage"),
+      else: result
   end
 
   @spec raise_llm_call_error(term()) :: no_return()
