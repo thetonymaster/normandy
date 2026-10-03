@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{:run_async, input, reply_to, ctx}`. New servers still accept the old shapes, but an old-version
   server that receives a new shape crashes. **Rolling deploy: upgrade the nodes that host servers
   (`Turn.Server`, `AgentProcess`) before the nodes that call or approve them.**
+- `Turn.State` gains `tokens_compacted` and `trace_carrier`. **On the Postgres and Redis stores a
+  pre-2.0 node cannot load a session a 2.0 node has served** (its `[:safe]` decode raises on the
+  new field names), finished turns included, and rolling back hits the same failure. Move every
+  session-hosting node to 2.0 together; see MIGRATING-2.0.md §13.
 - The `normandy llm call stop` log line's `input_tokens` is now the normalized count (Anthropic:
   input plus cache read and write), matching the span's normalized `input_tokens`. Log parsers that
   summed the old value on Anthropic will see larger numbers when prompt caching is on.

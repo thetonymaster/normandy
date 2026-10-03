@@ -204,7 +204,7 @@ A turn that failed after the assistant's `tool_use` no longer leaves the session
 unusable: the next turn appends an `interrupted: true` tool result for each
 unanswered call.
 
-## 13. Rolling deploys: upgrade server nodes first
+## 13. Rolling deploys
 
 `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `Turn.Server.approve/2` casts
 `{:approval, decisions, ctx}`; `AgentProcess.run/3` sends `{:run, input, ctx}` and
@@ -214,14 +214,31 @@ old shapes. An old-version server that receives a new shape has no matching clau
 crashes. When callers and servers run on different nodes, upgrade the nodes that host
 `Turn.Server` and `AgentProcess` before the nodes that call or approve them.
 
-The persisted `Turn.State` also gains a `trace_carrier` field. A state saved before 2.0 loads
-without it (`Turn.Server` reads it with `Map.get/3`). The reverse direction does not hold on
-every store: the Postgres and Redis stores decode with `binary_to_term(bin, [:safe])`
-(`SessionStore.Codec`), which raises `ArgumentError` for an atom the node does not know, and a
-pre-2.0 node has no `trace_carrier` atom. ETS, Mnesia and InMemory keep the term as is, so an old
-node loads it and ignores the extra key. Found by reading the codecs, not by running a mixed
-cluster: on Postgres or Redis, do not let a pre-2.0 node resume a session that a 2.0 node last
-saved mid-turn. The server-nodes-first order above avoids that.
+On the Postgres and Redis session stores there is a second constraint, which that order does not
+cover: a pre-2.0 node cannot load a session that a 2.0 node has run a turn for.
+
+- The persisted `Turn.State` gains two fields, `tokens_compacted` and `trace_carrier`.
+- `Turn.Server` persists the state at every suspend point and at the end of every turn
+  (`:stopped` or `:failed`), and never deletes it. So every session a 2.0 node has served holds a
+  2.0 state, whether its last turn finished or not.
+- The pre-2.0 Postgres and Redis stores decode with `binary_to_term(bin, [:safe])`, which raises
+  `ArgumentError` for an atom the node does not know. A pre-2.0 node knows neither field name.
+- A pre-2.0 `Turn.Server` loads the turn state in `init/1`, so starting such a session on a
+  pre-2.0 node crashes, lazy or eager.
+
+So, on Postgres or Redis:
+
+- Do not let pre-2.0 and 2.0 nodes host sessions from the same store at the same time. Move
+  every session-hosting node to 2.0 together (stop the old ones before the new ones take
+  sessions), rather than one node at a time.
+- Rolling back to a pre-2.0 release after 2.0 has served sessions fails the same way for those
+  sessions.
+
+Other terms 2.0 writes (memory entries, config templates) may name atoms a pre-2.0 node lacks
+too; only `Turn.State` was checked. ETS, Mnesia and InMemory keep terms as they are, so an old node
+loads a 2.0 state and ignores the extra keys. In the other direction, a 2.0 node loads a pre-2.0
+state: `Turn.Server` reads both new fields with `Map.get/3`. This section comes from reading the
+1.3.0 and 2.0 code, not from running a mixed cluster.
 
 ## 14. Telemetry additions
 
