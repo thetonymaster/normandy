@@ -13,10 +13,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
   setup do
     OtelSpanBridge.attach()
 
-    on_exit(fn ->
-      OtelSpanBridge.detach()
-      OpenTelemetry.Ctx.clear()
-    end)
+    on_exit(&OtelSpanBridge.detach/0)
   end
 
   defp tool_then_final_client do
@@ -54,7 +51,15 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       {_agent, _response} = BaseAgent.run(agent, %{chat_message: "hi"})
 
       :otel_span.end_span(caller)
-      spans = OtelSpanBridge.finished_spans()
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "caller",
+          "normandy.agent.run",
+          "normandy.tool.execute",
+          "normandy.agent.llm_call",
+          "normandy.agent.llm_call"
+        ])
 
       caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
       run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
