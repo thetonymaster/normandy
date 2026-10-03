@@ -37,4 +37,23 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
     assert prompt =~ ~s("verdict")
     assert prompt =~ ~s("number")
   end
+
+  test "a tool-using agent is not told to answer in the internal ToolCallResponse shape" do
+    agent =
+      BaseAgent.init(%{
+        client: %StubClient{
+          notify: self(),
+          reply: fn rm -> %{rm | content: "plain answer", tool_calls: []} end
+        },
+        model: "test-model"
+      })
+      |> BaseAgent.register_tool(%Normandy.Tools.Examples.Calculator{})
+
+    {_agent, response} = BaseAgent.run(agent, "hi")
+
+    assert_receive {:converse, [%{content: prompt} | _], _}
+    refute prompt =~ "tool_calls"
+    refute prompt =~ "prefix_key"
+    assert response.chat_message == "plain answer"
+  end
 end

@@ -1200,6 +1200,11 @@ defmodule Normandy.Agents.BaseAgent do
   # sending the prompt without its schema.
   defp with_output_schema(system_prompt, nil), do: system_prompt
 
+  # ToolCallResponse is the adapter's internal shape for a tool-loop reply; tool calls
+  # travel through the API's `tools` parameter. Showing its schema made models write
+  # that shape as their text answer, which then landed verbatim in chat_message.
+  defp with_output_schema(system_prompt, %Normandy.Agents.ToolCallResponse{}), do: system_prompt
+
   defp with_output_schema(system_prompt, response_model) do
     case Normandy.Schema.json_schema(response_model) do
       nil ->
