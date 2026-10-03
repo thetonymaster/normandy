@@ -45,6 +45,8 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
       tag = "#{prefix}:mem:{#{Base.url_encode64(ns, padding: false)}}"
       {:ok, indexed} = Redix.command(conn, ["ZCARD", tag <> ":idx"])
       hashes = scan(conn, tag <> ":doc:*", "0", [])
+      # a stale key layout would find nothing and pass vacuously
+      assert indexed >= 1
       assert length(hashes) == indexed, "round #{round}: #{inspect(hashes)} vs #{indexed} indexed"
     end
   end
