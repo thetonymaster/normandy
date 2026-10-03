@@ -255,14 +255,18 @@ defmodule Normandy.Telemetry do
 
   Normandy depends on no OTel library (the packages are test-only). A bridge in your
   application turns these events into spans. The table says which Normandy key feeds
-  which GenAI semantic-convention attribute. The conventions have **Development**
-  stability, so attribute names and the allowed values can still change; this table was
-  written from the specification as remembered, not checked against a pinned version.
+  which GenAI semantic-convention attribute. Checked against semantic-conventions-genai
+  `main` on 2026-10-03. All GenAI attributes are **Development** stability, so names and
+  allowed values can still change.
 
   | Semconv attribute | Source |
   |---|---|
-  | `gen_ai.operation.name` | derived from the event: `invoke_agent` for run, `chat` for llm_call and request, `execute_tool` for tool execute |
-  | `gen_ai.provider.name` | `provider`, mapped by the bridge (`:anthropic` is `"anthropic"`; `:openai_compatible` has no single semconv value) |
+  | `gen_ai.operation.name` | derived from the event: `invoke_agent` for run, `chat` for llm_call and request, `execute_tool` for tool execute, `invoke_workflow` for workflow run |
+  | `gen_ai.provider.name` | `provider`, mapped by the bridge: `:anthropic` is `"anthropic"`; `:openai_compatible` is `"openai"` only for OpenAI itself, otherwise a custom value (the spec allows one when no well-known value applies) |
+  | `gen_ai.workflow.name` | workflow run `workflow_name` (the module, as a string) |
+  | `gen_ai.request.stream` | llm_call start `stream` |
+  | `gen_ai.request.reasoning.level` | llm_call start `effort` (the exact string sent to the provider) |
+  | `gen_ai.output.type` | `"json"` when llm_call start `structured_output` is `true` |
   | `gen_ai.request.model` | `model` |
   | `gen_ai.request.max_tokens` | llm_call start `max_tokens` |
   | `gen_ai.request.temperature` | llm_call start `temperature` |
@@ -272,7 +276,7 @@ defmodule Normandy.Telemetry do
   | `gen_ai.usage.input_tokens` | stop `input_tokens` |
   | `gen_ai.usage.output_tokens` | stop `output_tokens` |
   | `gen_ai.usage.cache_read.input_tokens` | stop `cache_read_input_tokens` |
-  | `gen_ai.usage.cache_creation.input_tokens` | stop `cache_write_input_tokens` |
+  | `gen_ai.usage.cache_write.input_tokens` | stop `cache_write_input_tokens` |
   | `gen_ai.tool.name` | tool `tool_name` |
   | `gen_ai.tool.call.id` | tool `tool_call_id` |
   | `gen_ai.tool.description` | tool `tool_description` |
@@ -280,17 +284,18 @@ defmodule Normandy.Telemetry do
   | `gen_ai.agent.name` | `agent_name` |
   | `gen_ai.conversation.id` | `conversation_id` |
   | `error.type` | `:exception` `reason`: an `LLMError`'s `type`, else the exception module or the term's tag; tool `error_type` |
+  | `gen_ai.response.time_to_first_chunk` | llm_call stop `time_to_first_chunk`; the attribute is a double in **seconds**, so the bridge converts from native units with `System.convert_time_unit/3` (or `/ System.convert_time_unit(1, :second, :native)`) |
   | `server.address` | llm_call start `server_address` |
 
   Gaps: Normandy has no `gen_ai.agent.id`, no `gen_ai.request.top_p` and the like, and
   never records message content (the opt-in content attributes are not supported).
-  `time_to_first_chunk` and `approval_wait` have no standard attribute; export them as
-  custom attributes.
+  `approval_wait` has no standard attribute; export it as a custom attribute.
 
   ## Example bridge
 
-  A sketch using `opentelemetry_telemetry`, not compiled or run here. It opens a span on
-  `:start` and ends it on `:stop` or `:exception`:
+  An illustrative sketch using `opentelemetry_telemetry`. It is not a dependency here, so
+  this code is not compiled or run. It opens a span on `:start` and ends it on `:stop` or
+  `:exception`:
 
       defmodule MyApp.NormandyOtel do
         require OpenTelemetry.Tracer, as: Tracer
@@ -306,19 +311,21 @@ defmodule Normandy.Telemetry do
           :telemetry.attach_many("my-app-normandy-otel", events, &__MODULE__.handle/4, nil)
         end
 
-        def handle(event, _measurements, meta, _config) do
-          case List.last(event) do
+        def handle([:normandy | rest] = event, _measurements, meta, _config) do
+          {span, [phase]} = Enum.split(rest, -1)
+
+          case phase do
             :start ->
               OpentelemetryTelemetry.start_telemetry_span(
                 :my_app,
-                span_name(event, meta),
+                span_name(span, meta),
                 meta,
-                %{attributes: %{"gen_ai.request.model" => meta[:model]}}
+                %{kind: kind(span), attributes: attributes(span, meta)}
               )
 
             :stop ->
               OpentelemetryTelemetry.set_current_telemetry_span(:my_app, meta)
-              Tracer.set_attributes(%{"gen_ai.usage.input_tokens" => meta[:input_tokens]})
+              Tracer.set_attributes(stop_attributes(meta))
               OpentelemetryTelemetry.end_telemetry_span(:my_app, meta)
 
             :exception ->
@@ -326,11 +333,49 @@ defmodule Normandy.Telemetry do
               Tracer.set_status(:error, inspect(meta[:reason]))
               OpentelemetryTelemetry.end_telemetry_span(:my_app, meta)
           end
+
+          event
         end
 
-        defp span_name([:normandy, :agent, :run | _], meta), do: "invoke_agent #{meta[:agent_name]}"
-        defp span_name([:normandy, :agent, :llm_call | _], meta), do: "chat #{meta[:model]}"
-        defp span_name([:normandy, :tool, :execute | _], meta), do: "execute_tool #{meta[:tool_name]}"
+        defp kind([:agent, :llm_call]), do: :client
+        defp kind(_span), do: :internal
+
+        defp span_name([:agent, :run], %{agent_name: name}) when is_binary(name),
+          do: "invoke_agent " <> name
+
+        defp span_name([:agent, :run], _meta), do: "invoke_agent"
+        defp span_name([:agent, :llm_call], meta), do: "chat " <> to_string(meta[:model])
+        defp span_name([:tool, :execute], meta), do: "execute_tool " <> to_string(meta[:tool_name])
+
+        # gen_ai.operation.name and gen_ai.provider.name are required by the conventions.
+        defp attributes(span, meta) do
+          %{
+            "gen_ai.operation.name" => operation(span),
+            "gen_ai.provider.name" => provider(meta[:provider]),
+            "gen_ai.request.model" => meta[:model],
+            "gen_ai.agent.name" => meta[:agent_name],
+            "gen_ai.conversation.id" => meta[:conversation_id]
+          }
+          |> reject_nil()
+        end
+
+        defp stop_attributes(meta) do
+          %{
+            "gen_ai.usage.input_tokens" => meta[:input_tokens],
+            "gen_ai.usage.output_tokens" => meta[:output_tokens]
+          }
+          |> reject_nil()
+        end
+
+        defp operation([:agent, :run]), do: "invoke_agent"
+        defp operation([:agent, :llm_call]), do: "chat"
+        defp operation([:tool, :execute]), do: "execute_tool"
+
+        defp provider(:anthropic), do: "anthropic"
+        defp provider(nil), do: nil
+        defp provider(other), do: to_string(other)
+
+        defp reject_nil(map), do: map |> Enum.reject(fn {_k, v} -> is_nil(v) end) |> Map.new()
       end
 
   A real bridge must also handle a run `:exception` that has no matching `:start` (see
