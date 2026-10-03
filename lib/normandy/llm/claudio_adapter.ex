@@ -1083,13 +1083,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
         _ -> meta
       end
 
-    # The provider's message id and stop_reason (an atom here, e.g. :end_turn).
+    # The provider's message id and stop_reason, as a string (e.g. "end_turn").
     meta
     |> put_unless_nil(:response_id, response.id)
-    |> put_unless_nil(:finish_reason, response.stop_reason)
+    |> put_unless_nil(:finish_reason, stop_reason_string(response.stop_reason))
   end
 
   def response_meta(_response), do: %{}
+
+  defp stop_reason_string(reason) when is_atom(reason) and reason != nil,
+    do: Atom.to_string(reason)
+
+  defp stop_reason_string(reason), do: reason
 
   defp put_unless_nil(map, _key, nil), do: map
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)

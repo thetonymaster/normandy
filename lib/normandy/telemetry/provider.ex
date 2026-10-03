@@ -18,14 +18,14 @@ defmodule Normandy.Telemetry.Provider do
   ## llm_call stop metadata (set by the adapters and BaseAgent)
 
     * `:response_id` - the provider's message/completion id
-    * `:finish_reason` - the provider's stop reason as provided: an atom from
-      the Claudio non-streaming adapter (`:end_turn`), a string from streaming
-      (`"end_turn"`) and from the OpenAI-compatible adapter (`"stop"`)
+    * `:finish_reason` - the provider's stop reason, always a string
+      (`"end_turn"`, `"stop"`); an atom reported by a client is converted
     * `:time_to_first_chunk` - streaming only; native time units (convert with
-      `System.convert_time_unit/3`) from the start of the stream attempt to the
-      first text or thinking delta. Absent when the stream had no such delta.
-      It is metadata, not a measurement, because `:telemetry.span/3` fixes the
-      stop measurements.
+      `System.convert_time_unit/3`) from the start of the stream attempt that
+      delivered it (retry backoff is not counted) to the first content chunk: a
+      text delta, a thinking delta or a tool-use start (not message start/stop).
+      Absent when the stream had none. It is metadata, not a measurement,
+      because `:telemetry.span/3` fixes the stop measurements.
   """
 
   alias Normandy.LLM.{ClaudioAdapter, OpenAICompatibleAdapter}

@@ -121,7 +121,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
     test "carries response_id and finish_reason from the adapter meta" do
       {_start, stop} = capture(stub_client(), &run_it/1)
       assert stop.response_id == "msg_stub"
-      assert stop.finish_reason == :end_turn
+      assert stop.finish_reason == "end_turn"
     end
 
     test "has neither when the adapter reports none" do
@@ -161,7 +161,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
       assert start.provider == :anthropic
       assert start.structured_output == true
       assert stop.response_id == "msg_abc"
-      assert stop.finish_reason == :end_turn
+      assert stop.finish_reason == "end_turn"
     end
 
     test "structured_output is false when the kill-switch is off" do
@@ -209,7 +209,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
       end)
     end
 
-    defp stream_client(name, options \\ %{}, deltas? \\ true) do
+    defp stream_client(name, options \\ %{}, mode \\ :text) do
       events = [
         %{
           "type" => "message_start",
@@ -241,10 +241,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
         %{"type" => "message_stop"}
       ]
 
-      events =
-        if deltas?,
-          do: events,
-          else: Enum.reject(events, &(&1["type"] in ["content_block_delta"]))
+      events = stream_events(events, mode)
 
       Req.Test.stub(name, fn conn ->
         conn
@@ -256,6 +253,32 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
         api_key: "k",
         options: Map.merge(%{req_options: [plug: {Req.Test, name}, retry: false]}, options)
       }
+    end
+
+    defp stream_events(events, :text), do: events
+
+    defp stream_events(events, :empty),
+      do: Enum.reject(events, &(&1["type"] in ["content_block_delta"]))
+
+    defp stream_events(events, :tool_use) do
+      Enum.map(events, fn
+        %{"type" => "content_block_start"} = e ->
+          %{
+            e
+            | "content_block" => %{
+                "type" => "tool_use",
+                "id" => "toolu_1",
+                "name" => "lookup",
+                "input" => %{}
+              }
+          }
+
+        %{"type" => "content_block_delta"} = e ->
+          %{e | "delta" => %{"type" => "input_json_delta", "partial_json" => "{}"}}
+
+        e ->
+          e
+      end)
     end
 
     defp stream_it(agent), do: BaseAgent.stream_response(agent, "hello", fn _, _ -> :ok end)
@@ -282,11 +305,76 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
       assert stop.time_to_first_chunk >= 0
     end
 
-    test "time_to_first_chunk is absent when the stream has no content delta" do
-      client = stream_client(__MODULE__.S3, %{}, false)
+    test "time_to_first_chunk is set for a tool-use-only stream" do
+      client = stream_client(__MODULE__.S4, %{}, :tool_use)
+      {_start, stop} = capture(client, &stream_it/1)
+
+      assert is_integer(stop.time_to_first_chunk)
+      assert stop.time_to_first_chunk >= 0
+    end
+
+    test "time_to_first_chunk is absent when the stream has no content events" do
+      client = stream_client(__MODULE__.S3, %{}, :empty)
       {_start, stop} = capture(client, &stream_it/1)
       refute Map.has_key?(stop, :time_to_first_chunk)
       assert stop.response_id == "msg_s1"
+    end
+
+    test "time_to_first_chunk is measured from the attempt that delivered it" do
+      client = struct!(__MODULE__.RetryClient)
+
+      {_start, stop} =
+        capture(client, &stream_it/1, %{
+          retry_options: [max_attempts: 2, base_delay: 300, jitter: false]
+        })
+
+      ms = System.convert_time_unit(stop.time_to_first_chunk, :native, :millisecond)
+      assert ms < 150
+    end
+  end
+
+  # First stream_converse call fails retryably; the retry streams one text delta.
+  defmodule RetryClient do
+    defstruct counter: nil, options: %{}
+  end
+
+  defimpl Normandy.Agents.Model, for: Normandy.Telemetry.LlmCallRequestMetadataTest.RetryClient do
+    def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
+    def converse(_c, _m, _t, _mt, _msgs, rm, _opts), do: rm
+
+    def stream_converse(_client, _m, _t, _mt, _msgs, _rm, opts) do
+      key = {__MODULE__, self()}
+      n = Process.get(key, 0)
+      Process.put(key, n + 1)
+
+      if n == 0 do
+        {:error, Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)}
+      else
+        callback = Keyword.fetch!(opts, :callback)
+
+        events = [
+          %{type: "message_start", message: %{"id" => "m", "role" => "assistant"}},
+          %{
+            type: "content_block_start",
+            content_block: %{"type" => "text", "text" => ""},
+            index: 0
+          },
+          %{
+            type: "content_block_delta",
+            delta: %{"type" => "text_delta", "text" => "hi"},
+            index: 0
+          },
+          %{type: "content_block_stop", index: 0},
+          %{type: "message_delta", delta: %{"stop_reason" => "end_turn"}, usage: %{}},
+          %{type: "message_stop"}
+        ]
+
+        {:ok,
+         Stream.map(events, fn event ->
+           if event.type == "content_block_delta", do: callback.(:text_delta, "hi")
+           event
+         end)}
+      end
     end
   end
 end

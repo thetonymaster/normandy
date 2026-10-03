@@ -677,6 +677,7 @@ defmodule Normandy.Agents.BaseAgent do
             :response_id,
             :finish_reason
           ])
+          |> normalize_finish_reason()
         )
 
       {r, meta}
@@ -1008,7 +1009,8 @@ defmodule Normandy.Agents.BaseAgent do
     case stream_response_from_llm(
            config,
            messages,
-           stream_opts(config, callback) ++ task_budget_call_opts(config, state)
+           stream_opts(config, callback) ++ task_budget_call_opts(config, state),
+           first_chunk
          ) do
       {:ok, final_message} ->
         # The prefix this response was produced under, stamped when it is appended.
@@ -1041,7 +1043,7 @@ defmodule Normandy.Agents.BaseAgent do
     served_by =
       served_by
       |> put_present(:response_id, Map.get(final_message, :id))
-      |> put_present(:finish_reason, Map.get(final_message, :stop_reason))
+      |> put_present(:finish_reason, finish_reason(Map.get(final_message, :stop_reason)))
 
     case Map.get(final_message, :input_transformations) do
       [_ | _] = transformations -> Map.put(served_by, :input_transformations, transformations)
@@ -1049,33 +1051,49 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  # One type for consumers: the provider's stop reason as a string.
+  defp finish_reason(nil), do: nil
+  defp finish_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp finish_reason(reason), do: reason
+
+  defp normalize_finish_reason(%{finish_reason: reason} = meta),
+    do: Map.put(meta, :finish_reason, finish_reason(reason))
+
+  defp normalize_finish_reason(meta), do: meta
+
   defp put_present(map, _key, nil), do: map
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
-  # Wraps the stream callback to note when the first content delta (text or
-  # thinking) arrives. Returns the wrapped callback and a tracker holding the
-  # start time and the elapsed native time (+1, so 0 means "not seen").
+  # Wraps the stream callback to note when the first content chunk (a text delta,
+  # a thinking delta or a tool-use start; not message_start/stop) arrives.
+  # Returns the wrapped callback and a tracker: an atomics array whose slot 1 holds
+  # the elapsed native time + 1 (0 = not seen) and slot 2 the start of the current
+  # attempt, which mark_attempt_start/1 resets so retry backoff is not counted.
   defp track_first_chunk(callback) when is_function(callback, 2) do
-    started_at = System.monotonic_time()
-    seen = :atomics.new(1, [])
+    tracker = :atomics.new(2, [])
+    mark_attempt_start(tracker)
 
     wrapped = fn event, data ->
-      if event in [:text_delta, :thinking_delta] and :atomics.get(seen, 1) == 0 do
-        :atomics.put(seen, 1, System.monotonic_time() - started_at + 1)
+      if event in [:text_delta, :thinking_delta, :tool_use_start] and
+           :atomics.get(tracker, 1) == 0 do
+        :atomics.put(tracker, 1, System.monotonic_time() - :atomics.get(tracker, 2) + 1)
       end
 
       callback.(event, data)
     end
 
-    {wrapped, seen}
+    {wrapped, tracker}
   end
 
   defp track_first_chunk(callback), do: {callback, nil}
 
+  defp mark_attempt_start(nil), do: :ok
+  defp mark_attempt_start(tracker), do: :atomics.put(tracker, 2, System.monotonic_time())
+
   defp first_chunk_meta(nil), do: %{}
 
-  defp first_chunk_meta(seen) do
-    case :atomics.get(seen, 1) do
+  defp first_chunk_meta(tracker) do
+    case :atomics.get(tracker, 1) do
       0 -> %{}
       elapsed -> %{time_to_first_chunk: elapsed - 1}
     end
@@ -1338,11 +1356,14 @@ defmodule Normandy.Agents.BaseAgent do
   # Retry and the circuit breaker cover a stream like a non-streaming call, but
   # a stream is retried only until its first event reaches the callback: after
   # that the caller has seen output, and a retry would show it twice.
-  defp stream_response_from_llm(config, messages, opts) do
+  defp stream_response_from_llm(config, messages, opts, first_chunk) do
     delivered = :atomics.new(1, [])
     opts = Keyword.update(opts, :callback, nil, &track_delivery(&1, delivered))
 
-    attempt = fn -> stream_attempt(config, messages, opts) end
+    attempt = fn ->
+      mark_attempt_start(first_chunk)
+      stream_attempt(config, messages, opts)
+    end
 
     case with_resilience(config, attempt, fn -> :atomics.get(delivered, 1) == 0 end) do
       {:ok, _final} = ok ->
