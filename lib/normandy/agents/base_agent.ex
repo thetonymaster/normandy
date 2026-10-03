@@ -21,6 +21,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.StreamProcessor
   alias Normandy.Components.SystemPromptGenerator
+  alias Normandy.Components.ToolCall
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
@@ -1264,8 +1265,6 @@ defmodule Normandy.Agents.BaseAgent do
   # next LLM call loses its tool_use content blocks.
   defp build_streaming_assistant_response(%{content: content} = response, tool_calls)
        when is_list(content) do
-    alias Normandy.Components.ToolCall
-
     text =
       content
       |> Enum.filter(&(&1["type"] == "text"))
@@ -1745,16 +1744,25 @@ defmodule Normandy.Agents.BaseAgent do
   def base_agent_pipeline(config) do
     %{
       Config.to_pipeline(config.behaviours)
-      | execute_fn: &span_execute/3
+      | execute_fn: &span_execute/4
     }
   end
 
-  defp span_execute(config, prepared_tool, tool_name) do
-    tool_meta = Map.merge(%{tool_name: tool_name, agent_name: config.name}, Metadata.ids(config))
+  # The stop metadata adds :status and, for a failed execution, :error_type (why
+  # it failed, see Executor.error_type/0). The model sees the same {:error, msg}.
+  defp span_execute(config, prepared_tool, tool_name, %ToolCall{} = call) do
+    tool_meta = Metadata.tool(config, call, prepared_tool)
 
     with_tool_execute_span(config, tool_name, tool_meta, fn ->
-      r = Executor.execute_tool(prepared_tool)
-      {r, Map.put(tool_meta, :status, elem(r, 0))}
+      {r, error_type} = Executor.execute_tool_classified(prepared_tool)
+
+      stop_meta =
+        case error_type do
+          nil -> Map.put(tool_meta, :status, elem(r, 0))
+          type -> Map.merge(tool_meta, %{status: elem(r, 0), error_type: type})
+        end
+
+      {r, stop_meta}
     end)
   end
 

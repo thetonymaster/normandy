@@ -24,6 +24,12 @@ defmodule Normandy.Tools.Executor do
   alias Normandy.Tools.Registry
 
   @type execution_result :: {:ok, term()} | {:error, String.t()}
+  @typedoc """
+  What made a tool execution fail: the tool raised (or threw) (`:exception`),
+  exited (`:exit`), ran past its timeout (`:timeout`), returned `{:error, _}`
+  itself (`:tool_error`), or returned something else (`:invalid_result`).
+  """
+  @type error_type :: :exception | :exit | :timeout | :tool_error | :invalid_result
   @type execution_options :: [
           timeout: pos_integer(),
           max_retries: non_neg_integer()
@@ -75,6 +81,18 @@ defmodule Normandy.Tools.Executor do
   """
   @spec execute_tool(struct(), execution_options()) :: execution_result()
   def execute_tool(tool, opts \\ []) do
+    {result, _error_type} = execute_tool_classified(tool, opts)
+    result
+  end
+
+  @doc """
+  Like `execute_tool/2`, but also says why a failed execution failed (see
+  `t:error_type/0`); the error type is `nil` on success. The `{:error, message}`
+  result is exactly the one `execute_tool/2` returns.
+  """
+  @spec execute_tool_classified(struct(), execution_options()) ::
+          {{:ok, term()}, nil} | {{:error, String.t()}, error_type()}
+  def execute_tool_classified(tool, opts \\ []) do
     execute_with_timeout(tool, timeout!(opts, tool))
   end
 
@@ -178,7 +196,9 @@ defmodule Normandy.Tools.Executor do
   end
 
   defp execute_with_retries(tool, retries_left, timeout) do
-    case execute_with_timeout(tool, timeout) do
+    {result, _error_type} = execute_with_timeout(tool, timeout)
+
+    case result do
       {:ok, result} ->
         {:ok, result}
 
@@ -201,32 +221,33 @@ defmodule Normandy.Tools.Executor do
           tool |> BaseTool.run() |> check_result()
         rescue
           error ->
-            {:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"}
+            {{:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"},
+             :exception}
         catch
           :exit, reason ->
-            {:error, "Tool execution exited: #{describe_reason(reason)}"}
+            {{:error, "Tool execution exited: #{describe_reason(reason)}"}, :exit}
 
           kind, reason ->
-            {:error, "Tool execution failed (#{kind}): #{describe_reason(reason)}"}
+            {{:error, "Tool execution failed (#{kind}): #{describe_reason(reason)}"}, :exception}
         end
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, result} ->
-        result
+      {:ok, classified} ->
+        classified
 
       nil ->
-        {:error, "Tool execution timeout after #{timeout}ms"}
+        {{:error, "Tool execution timeout after #{timeout}ms"}, :timeout}
     end
   end
 
-  defp check_result({:ok, _value} = ok), do: ok
-  defp check_result({:error, _reason} = error), do: error
+  defp check_result({:ok, _value} = ok), do: {ok, nil}
+  defp check_result({:error, _reason} = error), do: {error, :tool_error}
 
   defp check_result(other) do
-    {:error,
-     "Tool returned an invalid result: expected {:ok, value} or {:error, reason}, got " <>
-       Describe.type_of(other)}
+    {{:error,
+      "Tool returned an invalid result: expected {:ok, value} or {:error, reason}, got " <>
+        Describe.type_of(other)}, :invalid_result}
   end
 
   defp describe_reason(reason)

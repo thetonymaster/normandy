@@ -14,11 +14,28 @@ defmodule Normandy.Agents.Dispatch do
   (budget → execute → record → after, running an already-classified call).
   `dispatch_one/3` is exactly `classify ➞ execute`; a durable shell consults
   `classify/3` to park a `:needs_approval` call before any side effect runs.
+
+  ## Telemetry
+
+  A call answered without running its tool emits `[:normandy, :tool, :denied]`
+  (`%{count: 1}`, metadata from `Normandy.Telemetry.Metadata.tool_denied/4`) with
+  `reason` `:policy` (a policy deny, or a `:needs_approval` verdict collapsed by
+  `dispatch_one/3`), `:hook_halt` (a before-hook halted it) or `:budget` (the
+  budget pre-check refused it). Approval outcomes (`:approval_rejected`,
+  `:approval_expired`) are emitted by `Turn.Server`, the only shell that parks.
+  Registry misses and invalid or schema-failing input are errors, not denials,
+  and emit nothing.
+
+  ## `execute_fn`
+
+  `execute_fn` is called as `(config, prepared, tool_name)` when it has arity 3,
+  or `(config, prepared, tool_name, tool_call)` when it has arity 4.
   """
 
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Telemetry.Metadata
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
@@ -45,7 +62,9 @@ defmodule Normandy.Agents.Dispatch do
             policy_fn: function(),
             budget_check_fn: function(),
             budget_record_fn: function(),
-            execute_fn: function(),
+            execute_fn:
+              (map(), struct(), String.t() -> Executor.execution_result())
+              | (map(), struct(), String.t(), ToolCall.t() -> Executor.execution_result()),
             after_hooks: [function()]
           }
     defstruct before_hooks: [],
@@ -167,7 +186,8 @@ defmodule Normandy.Agents.Dispatch do
   @doc """
   Classifies one tool call: registry resolution → before-hooks → policy. Returns
   the routing decision WITHOUT executing the tool, so a durable shell can act on a
-  `:needs_approval` verdict (park) before any side effect runs.
+  `:needs_approval` verdict (park) before any side effect runs. Its only side
+  effect is the `[:normandy, :tool, :denied]` event for a policy deny or hook halt.
 
     * `{:execute, prepared, call}` — allowed; `prepared` is the built tool struct,
       `call` the post-before-hook `%ToolCall{}` (hooks may have rewritten it).
@@ -194,6 +214,7 @@ defmodule Normandy.Agents.Dispatch do
         # answer the model's tool_use id, and both shells order results by it.
         case run_before_hooks(config, call, pipeline.before_hooks) do
           {:halt, %ToolResult{} = result} ->
+            emit_denied(config, call, :hook_halt)
             {:deny, %{result | tool_call_id: call.id}}
 
           {:cont, hooked} ->
@@ -209,7 +230,7 @@ defmodule Normandy.Agents.Dispatch do
                 # credo:disable-for-next-line Credo.Check.Refactor.Nesting
                 case apply_policy(pipeline, config, call, prepared) do
                   {:allow, _meta} -> {:execute, prepared, call}
-                  {:deny, info} -> {:deny, denial_result(call, info, false)}
+                  {:deny, info} -> {:deny, policy_denial(config, call, info, false)}
                   {:needs_approval, info} -> {:needs_approval, prepared, call, info}
                 end
             end
@@ -239,8 +260,23 @@ defmodule Normandy.Agents.Dispatch do
         %{run_after_hooks(config, call, result, pipeline.after_hooks) | tool_call_id: call.id}
 
       {:error, reason} ->
+        emit_denied(config, call, :budget)
         budget_denial_result(call, reason)
     end
+  end
+
+  @doc """
+  Emits `[:normandy, :tool, :denied]` for `call`, answered without running its
+  tool. Shells that answer a call outside the pipeline (`Turn.Server` approval
+  rejection or expiry) call this too, so every denial has one shape.
+  """
+  @spec emit_denied(map(), ToolCall.t(), atom(), String.t() | nil) :: :ok
+  def emit_denied(config, %ToolCall{} = call, reason, rule_id \\ nil) do
+    :telemetry.execute(
+      [:normandy, :tool, :denied],
+      %{count: 1},
+      Metadata.tool_denied(config, call, reason, rule_id)
+    )
   end
 
   @doc """
@@ -259,7 +295,7 @@ defmodule Normandy.Agents.Dispatch do
     case classify(config, call, pipeline) do
       {:execute, prepared, call} -> execute(config, prepared, call, pipeline)
       {:deny, %ToolResult{} = result} -> result
-      {:needs_approval, _prepared, call, info} -> denial_result(call, info, true)
+      {:needs_approval, _prepared, call, info} -> policy_denial(config, call, info, true)
     end
   end
 
@@ -268,13 +304,24 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   defp execute_and_wrap(config, call, prepared, execute_fn) do
-    case execute_fn.(config, prepared, call.name) do
+    case call_execute_fn(execute_fn, config, prepared, call) do
       {:ok, result} ->
         %ToolResult{tool_call_id: call.id, output: result, is_error: false}
 
       {:error, error} ->
         %ToolResult{tool_call_id: call.id, output: %{error: error}, is_error: true}
     end
+  end
+
+  defp call_execute_fn(execute_fn, config, prepared, call) when is_function(execute_fn, 4),
+    do: execute_fn.(config, prepared, call.name, call)
+
+  defp call_execute_fn(execute_fn, config, prepared, call),
+    do: execute_fn.(config, prepared, call.name)
+
+  defp policy_denial(config, call, info, pending?) do
+    emit_denied(config, call, :policy, Map.get(info, :rule_id))
+    denial_result(call, info, pending?)
   end
 
   defp run_before_hooks(_config, call, []), do: {:cont, call}

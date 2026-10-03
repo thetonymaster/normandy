@@ -19,6 +19,9 @@ defmodule Normandy.Agents.Turn.Server do
     * `:on_approval_timeout` — `:continue` (default) or `:fail`. On expiry every
       parked call gets an `expired: true` tool result. `:continue` hands it to the
       model; `:fail` ends the turn with `{:error, {:approval_timeout, ids}}`.
+      Expiry emits `[:normandy, :turn, :approval, :expired]` for the batch and a
+      `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a
+      rejected call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
     * `:idle_timeout_ms` — idle time before passivation (default 60_000).
 
   A Tier-2 `Turn.Session` saves `:approval_timeout_ms`, `:on_approval_timeout` and
@@ -487,7 +490,15 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # :awaiting_approval — out-of-band approval decisions for a parked turn.
+  # Every parked call not explicitly approved is rejected (the core's fail-closed
+  # rule), so each gets a [:normandy, :tool, :denied] event here.
   def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
+    %Turn.State{parked_calls: parked} = data.turn_state
+
+    for %ToolCall{id: id} = call <- parked, Map.get(decisions, id) != :approve do
+      Dispatch.emit_denied(data.config, call, :approval_rejected)
+    end
+
     {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
     interpret(effects, %{data | turn_state: state})
   end
@@ -516,6 +527,8 @@ defmodule Normandy.Agents.Turn.Server do
         tool_names: Enum.map(parked, & &1.name)
       }
     )
+
+    Enum.each(parked, &Dispatch.emit_denied(data.config, &1, :approval_expired))
 
     {state, effects} =
       Turn.step(data.turn_state, {:approval_expired, %{mode: mode, timeout_ms: ms}})

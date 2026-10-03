@@ -1787,6 +1787,48 @@ defmodule Normandy.Agents.Turn.ServerTest do
       refute_received {:event, :approval_expired, _}
     end
 
+    test "each expired call emits [:normandy, :tool, :denied] with reason :approval_expired" do
+      ref = attach_telemetry([:normandy, :tool, :denied])
+      {srv, _store} = start_approval_server("s-denied-expired", [])
+
+      run_async(srv, "go")
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+
+      assert_received {:telemetry, ^ref, %{count: 1},
+                       %{
+                         session_id: "s-denied-expired",
+                         tool_name: "billing",
+                         tool_call_id: "pk1",
+                         reason: :approval_expired
+                       }}
+
+      refute_received {:telemetry, ^ref, _, %{session_id: "s-denied-expired"}}
+    end
+
+    test "each rejected call emits [:normandy, :tool, :denied] with reason :approval_rejected" do
+      ref = attach_telemetry([:normandy, :tool, :denied])
+
+      {srv, _store} =
+        start_approval_server("s-denied-rejected", approval_timeout_ms: 5_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :reject})
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+
+      assert_received {:telemetry, ^ref, %{count: 1},
+                       %{
+                         session_id: "s-denied-rejected",
+                         tool_name: "billing",
+                         tool_call_id: "pk1",
+                         reason: :approval_rejected
+                       }}
+
+      refute_received {:telemetry, ^ref, _, %{session_id: "s-denied-rejected"}}
+    end
+
     test "an invalid :on_approval_timeout raises ArgumentError naming the key and value" do
       assert_raise ArgumentError,
                    ~r/Turn\.Server\.start_link\/1: invalid :on_approval_timeout, expected :continue or :fail, got: :sometimes/,

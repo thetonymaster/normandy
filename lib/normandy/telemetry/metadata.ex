@@ -13,10 +13,17 @@ defmodule Normandy.Telemetry.Metadata do
     * `:turn_id` - the memory turn id: `ids/1` reads it from the config's memory
       (the llm_call and tool spans run inside an admitted turn); `run/2` takes it
       from `:turn_id` because the run span starts before `BaseAgent` admits input
+
+  Tool spans (`tool/3`) and `[:normandy, :tool, :denied]` (`tool_denied/4`) add the
+  call's `:tool_name` and `:tool_call_id`; spans also add `:tool_description` and
+  `:tool_type` (`:extension` for an MCP-wrapped tool, `:function` otherwise).
   """
 
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ToolCall
+  alias Normandy.MCP.ToolWrapper
   alias Normandy.Telemetry.Provider
+  alias Normandy.Tools.BaseTool
 
   @doc """
   Run span metadata. Options: `:turn_id` - the turn id, when already known.
@@ -40,6 +47,57 @@ defmodule Normandy.Telemetry.Metadata do
     %{turn_id: turn_id(config)}
     |> Map.merge(session_ids(config))
     |> reject_nil()
+  end
+
+  @doc """
+  `[:normandy, :tool, :execute]` span metadata for `call`, run as the built tool
+  `prepared`. `:tool_name` and `:agent_name` are always present (as before);
+  `:tool_call_id` and `:tool_description` only when known.
+  """
+  @spec tool(map(), ToolCall.t(), struct()) :: map()
+  def tool(config, %ToolCall{} = call, prepared) do
+    optional =
+      %{tool_call_id: call.id, tool_description: tool_description(prepared)}
+      |> Map.merge(ids(config))
+      |> reject_nil()
+
+    Map.merge(
+      %{tool_name: call.name, agent_name: Map.get(config, :name), tool_type: tool_type(prepared)},
+      optional
+    )
+  end
+
+  @doc """
+  `[:normandy, :tool, :denied]` metadata: a call answered without running its
+  tool. `reason` is one of `:policy | :budget | :hook_halt | :approval_expired |
+  :approval_rejected`; `rule_id` is the policy rule, when one is known.
+  """
+  @spec tool_denied(map(), ToolCall.t(), atom(), String.t() | nil) :: map()
+  def tool_denied(config, %ToolCall{} = call, reason, rule_id) do
+    optional =
+      %{tool_call_id: call.id, rule_id: rule_id}
+      |> Map.merge(ids(config))
+      |> reject_nil()
+
+    Map.merge(
+      %{tool_name: call.name, reason: reason, agent_name: Map.get(config, :name)},
+      optional
+    )
+  end
+
+  defp tool_type(%ToolWrapper{}), do: :extension
+  defp tool_type(_tool), do: :function
+
+  defp tool_description(tool) do
+    case BaseTool.impl_for(tool) do
+      nil ->
+        nil
+
+      impl ->
+        if function_exported?(impl, :tool_description, 1),
+          do: BaseTool.tool_description(tool),
+          else: nil
+    end
   end
 
   @doc "The memory's current turn id, or `nil`."

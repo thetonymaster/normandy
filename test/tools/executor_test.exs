@@ -195,6 +195,29 @@ defmodule NormandyTest.Tools.ExecutorTest do
     end
   end
 
+  describe "Executor.execute_tool_classified/2" do
+    alias NormandyTest.Tools.ExecutorTest.ReturnTool
+
+    test "success carries no error type" do
+      assert {{:ok, 1}, nil} = Executor.execute_tool_classified(%ReturnTool{value: {:ok, 1}})
+    end
+
+    test "each failure kind is named, with the same {:error, msg} execute_tool/2 returns" do
+      cases = [
+        {%ReturnTool{value: {:error, "nope"}}, :tool_error},
+        {%ReturnTool{value: :bare}, :invalid_result},
+        {%ReturnTool{value: {:exit, :boom}}, :exit},
+        {%ReturnTool{value: {:sleep, 100}, timeout: 10}, :timeout},
+        {%NormandyTest.Tools.ExecutorTest.CrashingTool{}, :exception}
+      ]
+
+      for {tool, kind} <- cases do
+        assert {{:error, message}, ^kind} = Executor.execute_tool_classified(tool)
+        assert {:error, ^message} = Executor.execute_tool(tool)
+      end
+    end
+  end
+
   describe "Executor OTel context propagation" do
     # `Task.async` spawns a fresh process, which gets an empty process
     # dictionary — and therefore an empty OpenTelemetry context. Without the
