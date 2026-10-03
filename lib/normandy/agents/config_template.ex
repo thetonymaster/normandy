@@ -12,8 +12,9 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   Everything else travels in the template: model and sampling settings, tool
   limits, prompt, schemas, memory cap, `initial_memory`, `retry_options`, JSON
-  retry settings, guardrails, and behaviour module refs. These must be plain
+  retry settings, guardrails, `tool_context`, and behaviour module refs. These must be plain
   data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
+  `tool_context` must hold no secrets: the template is stored in plaintext.
   A template saved before these fields existed rebuilds with their defaults.
   """
   alias Normandy.Agents.BaseAgent
@@ -32,7 +33,8 @@ defmodule Normandy.Agents.ConfigTemplate do
     :output_guardrails,
     :output_guardrails_streaming_mode,
     :output_guardrails_chunk_size,
-    :output_guardrails_on_violation
+    :output_guardrails_on_violation,
+    :tool_context
   ]
 
   # Fields a template cannot hold (a linked pid; MCP settings that may carry an

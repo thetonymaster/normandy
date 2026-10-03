@@ -36,6 +36,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
   alias Normandy.Telemetry.Usage
+  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
@@ -63,7 +64,8 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:output_guardrails_on_violation) => :block | :warn,
           optional(:name) => String.t() | nil,
           optional(:behaviours) => Normandy.Behaviours.Config.t() | nil,
-          optional(:mcp_servers) => [struct() | map()] | nil
+          optional(:mcp_servers) => [struct() | map()] | nil,
+          optional(:tool_context) => map()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
@@ -102,6 +104,13 @@ defmodule Normandy.Agents.BaseAgent do
     unless on_violation in [:block, :warn] do
       raise ArgumentError,
             "output_guardrails_on_violation must be :block or :warn, got: #{inspect(on_violation)}"
+    end
+
+    tool_context = Map.get(config, :tool_context, %{})
+
+    unless is_map(tool_context) do
+      raise ArgumentError,
+            "tool_context must be a map of plain data, got: #{inspect(tool_context)}"
     end
 
     _ =
@@ -151,6 +160,7 @@ defmodule Normandy.Agents.BaseAgent do
       mcp_servers: Map.get(config, :mcp_servers, nil),
       name: Map.get(config, :name, nil),
       session_id: Map.get(config, :session_id, nil),
+      tool_context: tool_context,
       input_guardrails: input_guardrails,
       output_guardrails: output_guardrails,
       output_guardrails_streaming_mode: streaming_mode,
@@ -1811,7 +1821,8 @@ defmodule Normandy.Agents.BaseAgent do
     tool_meta = Metadata.tool(config, call, prepared_tool)
 
     with_tool_execute_span(config, tool_name, tool_meta, fn ->
-      {r, error_type} = Executor.execute_tool_classified(prepared_tool)
+      {r, error_type} =
+        Executor.execute_tool_classified(prepared_tool, context: Context.build(config, call))
 
       stop_meta =
         case error_type do

@@ -167,10 +167,36 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         output_guardrails_streaming_mode: :incremental,
         output_guardrails_chunk_size: 64,
         output_guardrails_on_violation: :warn,
+        tool_context: %{memory_namespace: "acme/u-1"},
         client: supp.client_builder.("TOKEN"),
         tool_registry: supp.tool_registry,
         behaviours: %Config{before_hooks: supp.before_hooks, after_hooks: supp.after_hooks}
       }
+    end
+
+    test "tool_context travels in the template" do
+      supp = round_trip_supplement()
+      config = %{full_config(supp) | tool_context: %{memory_namespace: "acme/u-7"}}
+
+      tmpl = ConfigTemplate.from_config(config, "t")
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").tool_context ==
+               %{memory_namespace: "acme/u-7"}
+    end
+
+    test "a template saved before tool_context existed rebuilds with %{}" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t") |> Map.delete(:tool_context)
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").tool_context == %{}
+    end
+
+    test "from_config refuses a pid in tool_context" do
+      config = %{full_config(round_trip_supplement()) | tool_context: %{owner: self()}}
+
+      assert_raise ArgumentError, ~r/:tool_context/, fn ->
+        ConfigTemplate.from_config(config, "t")
+      end
     end
 
     test "rebuild(from_config(c)) gives back c" do

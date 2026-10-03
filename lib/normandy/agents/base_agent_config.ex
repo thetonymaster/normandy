@@ -38,7 +38,8 @@ defmodule Normandy.Agents.BaseAgentConfig do
           output_guardrails_on_violation: :block | :warn,
           behaviours: Normandy.Behaviours.Config.t() | nil,
           resolved_context_window: {String.t(), pos_integer()} | nil,
-          session_id: String.t() | nil
+          session_id: String.t() | nil,
+          tool_context: map()
         }
 
   @typedoc "Any `%BaseAgentConfig{}`, including a partially filled one (field types unchecked)."
@@ -72,5 +73,6 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:behaviours, :any, default: nil)
     field(:resolved_context_window, :any, default: nil)
     field(:session_id, :string, default: nil)
+    field(:tool_context, :map, default: %{})
   end
 end

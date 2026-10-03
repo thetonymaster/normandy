@@ -36,6 +36,7 @@ defmodule Normandy.Agents.Dispatch do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Telemetry.Metadata
+  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
 
@@ -76,7 +77,7 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
-  The default pipeline: allow-all policy, no-op budget, no hooks, bare executor.
+  The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing the call's `%Normandy.Tools.Context{}`.
   Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
   to add telemetry, and later phases override the behaviour functions.
   """
@@ -87,7 +88,9 @@ defmodule Normandy.Agents.Dispatch do
       policy_fn: fn _config, _call, _tool -> {:allow, %{}} end,
       budget_check_fn: fn _config, _call -> :ok end,
       budget_record_fn: fn _config, _call, _result -> :ok end,
-      execute_fn: fn _config, tool, _name -> Executor.execute_tool(tool) end,
+      execute_fn: fn config, tool, _name, call ->
+        Executor.execute_tool(tool, context: Context.build(config, call))
+      end,
       after_hooks: []
     }
   end

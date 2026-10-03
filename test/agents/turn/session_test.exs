@@ -548,6 +548,100 @@ defmodule Normandy.Agents.Turn.SessionTest do
     end
   end
 
+  describe "tool context after rehydration" do
+    alias Normandy.Components.ToolCall
+    alias Normandy.Test.{ContextProbe, TurnConfig}
+    alias Normandy.Tools.Context
+
+    # First LLM call of a turn asks for the probe; once a tool result is the last
+    # message, it answers.
+    defp probe_handlers do
+      %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn c, _s, _r ->
+            case c.memory |> AgentMemory.messages() |> List.last() do
+              %{role: "tool"} ->
+                %TurnConfig.Resp{content: "done"}
+
+              _ ->
+                id = "call-#{System.unique_integer([:positive])}"
+
+                %TurnConfig.Resp{
+                  content: "",
+                  tool_calls: [%ToolCall{id: id, name: "probe", input: %{}}]
+                }
+            end
+          end
+      }
+    end
+
+    defp fresh_node_opts(base) do
+      {:ok, sup} = Turn.Supervisor.start_link([])
+
+      base
+      |> Keyword.delete(:config)
+      |> Keyword.put(:supervisor, sup)
+      |> Keyword.put(:registry, {Native, Native.new()})
+    end
+
+    test "two sessions of one template keep their own tool_context on a fresh node" do
+      store = InMemory.new()
+      {:ok, cat} = Catalog.start_link([])
+      {:ok, sup} = Turn.Supervisor.start_link([])
+      reg = Native.new()
+
+      :ok =
+        Catalog.put(cat, "mem-kind", %{
+          tool_registry: Normandy.Tools.Registry.new([%ContextProbe{notify: self()}]),
+          before_hooks: [],
+          after_hooks: [],
+          client_builder: fn _token -> %{api_key: "k"} end
+        })
+
+      base = fn sid, ns ->
+        [
+          session_id: sid,
+          config: %{TurnConfig.build() | tool_context: %{memory_namespace: ns}},
+          store: {InMemory, store},
+          registry: {Native, reg},
+          supervisor: sup,
+          template_provider: {Catalog, cat},
+          template_id: "mem-kind",
+          handlers: probe_handlers()
+        ]
+      end
+
+      sid_a = "ctx-a-#{System.unique_integer([:positive])}"
+      sid_b = "ctx-b-#{System.unique_integer([:positive])}"
+
+      assert {:ok, _} = Turn.Session.run(base.(sid_a, "acme/a"), "hi")
+
+      assert_receive {:probe_ctx,
+                      %Context{session_id: ^sid_a, values: %{memory_namespace: "acme/a"}}},
+                     2000
+
+      assert {:ok, _} = Turn.Session.run(base.(sid_b, "acme/b"), "hi")
+
+      assert_receive {:probe_ctx,
+                      %Context{session_id: ^sid_b, values: %{memory_namespace: "acme/b"}}},
+                     2000
+
+      # A fresh supervisor and registry: no live server, so each session is rebuilt from
+      # its stored template + the shared supplement, as on another node.
+      assert {:ok, _} = Turn.Session.run(fresh_node_opts(base.(sid_a, "ignored")), "again")
+
+      assert_receive {:probe_ctx,
+                      %Context{session_id: ^sid_a, values: %{memory_namespace: "acme/a"}}},
+                     2000
+
+      assert {:ok, _} = Turn.Session.run(fresh_node_opts(base.(sid_b, "ignored")), "again")
+
+      assert_receive {:probe_ctx,
+                      %Context{session_id: ^sid_b, values: %{memory_namespace: "acme/b"}}},
+                     2000
+    end
+  end
+
   defp children_pids(sup) do
     DynamicSupervisor.which_children(sup) |> Enum.map(fn {_, p, _, _} -> p end)
   end

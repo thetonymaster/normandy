@@ -25,6 +25,7 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Behaviours.SessionRegistry
   alias Normandy.Behaviours.SessionStore
+  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
 
   @type ref :: {module(), keyword()}
@@ -77,7 +78,9 @@ defmodule Normandy.Behaviours.Config do
       budget_record_fn: fn config, call, result ->
         budget_mod.record(scope(config), call, result, budget_opts)
       end,
-      execute_fn: fn _config, tool, _name -> Executor.execute_tool(tool) end
+      execute_fn: fn config, tool, _name, call ->
+        Executor.execute_tool(tool, context: Context.build(config, call))
+      end
     }
   end
 
