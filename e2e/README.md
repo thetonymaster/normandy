@@ -1,12 +1,12 @@
 # Live e2e scenarios
 
-Thirteen multi-turn scenarios, one per major Normandy 2.0 feature. Each is a narrated demo
+Fourteen multi-turn scenarios, one per major Normandy 2.0 feature. Each is a narrated demo
 and a gate: it prints what it does, checks hard invariants, and exits 2 on the first broken
 invariant (1 if it crashes outright).
 
 **Every run calls the live Anthropic API** (Haiku 4.5). Each scenario declares a live-call cap
 (`S.start(id, cap: n)`) and halts if it exceeds it; the runner refuses a selection whose caps
-sum past 120. A full run is roughly $0.15–0.45.
+sum past 140. A full run is roughly $0.15–0.50.
 
 ## Prerequisites
 
@@ -51,3 +51,4 @@ is a finding to triage (model wording vs. lost memory), not something to retry.
 | 11 | distributed | Postgres store, Horde, eager resume on node loss |
 | 12 | mcp_a2a | stdio MCP server tools, A2A over HTTP |
 | 13 | budget_policy | BudgetTracker denial, Ruleset deny |
+| 14 | memory | `Tools.Memory` across sessions, namespace isolation (InMemory store) |

@@ -9,7 +9,8 @@ defmodule E2E.Support do
     [:normandy, :agent, :compaction],
     [:normandy, :agent, :guardrail, :violation],
     [:normandy, :agent, :llm_call, :stop],
-    [:normandy, :turn, :approval, :expired]
+    [:normandy, :turn, :approval, :expired],
+    [:normandy, :memory, :command, :stop]
   ]
 
   def model, do: @model

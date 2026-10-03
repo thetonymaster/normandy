@@ -83,11 +83,11 @@ defmodule NormandyTest.E2E.RunnerTest do
   end
 
   test "preflight refuses a selection whose live-call caps exceed the suite cap" do
-    big = Enum.map(1..7, &%{id: "0#{&1}_s", name: "s", path: "p", cap: 18})
+    big = Enum.map(1..8, &%{id: "0#{&1}_s", name: "s", path: "p", cap: 18})
 
     assert {:error, msg} = Runner.preflight("sk-x", big, fn -> :ok end)
-    assert msg =~ "126"
-    assert msg =~ "120"
+    assert msg =~ "144"
+    assert msg =~ "140"
   end
 
   test "preflight refuses a scenario that declares no live-call cap" do

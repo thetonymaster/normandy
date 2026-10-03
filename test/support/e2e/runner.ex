@@ -6,7 +6,7 @@ defmodule NormandyTest.E2E.Runner do
   `mix run e2e/run.exs` under MIX_ENV=test.
   """
 
-  @suite_cap 120
+  @suite_cap 140
   @default_timeout_ms 300_000
   @timeouts %{"11_distributed" => 600_000}
   @needs_postgres ["11_distributed"]
