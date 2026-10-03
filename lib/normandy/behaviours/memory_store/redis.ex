@@ -205,8 +205,12 @@ if Code.ensure_loaded?(Redix) do
     defp expected_arg(:any), do: "any"
     defp expected_arg(v) when is_integer(v), do: Integer.to_string(v)
 
-    defp idx({_, prefix}, ns), do: "#{prefix}:mem:{#{ns}}:idx"
-    defp doc_prefix({_, prefix}, ns), do: "#{prefix}:mem:{#{ns}}:doc:"
+    defp idx({_, prefix}, ns), do: "#{prefix}:mem:{#{enc(ns)}}:idx"
+    defp doc_prefix({_, prefix}, ns), do: "#{prefix}:mem:{#{enc(ns)}}:doc:"
+
+    # URL-safe base64 has no `}` or `:`, so a namespace can never alter the key structure
+    # or produce an empty hash tag.
+    defp enc(ns), do: Base.url_encode64(ns, padding: false)
     defp doc(h, ns, path), do: doc_prefix(h, ns) <> path
 
     defp from_micros(at), do: at |> String.to_integer() |> DateTime.from_unix!(:microsecond)
