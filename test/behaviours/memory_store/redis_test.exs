@@ -29,4 +29,28 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
     assert {:ok, %{content: "v"}} = Redis.get(h, "}x", "/memories/a")
     assert {:ok, [%{path: "/memories/a"}]} = Redis.list(h, "}x", "/memories")
   end
+
+  test "a rename racing a write leaves no orphaned document hash", %{handle: {conn, prefix} = h} do
+    for round <- 1..20 do
+      ns = "race-#{round}-#{System.unique_integer([:positive])}"
+      {:ok, _} = Redis.put(h, ns, "/memories/a/doc", "x", :new)
+
+      [
+        Task.async(fn -> Redis.rename(h, ns, "/memories/a", "/memories/b") end),
+        Task.async(fn -> Redis.put(h, ns, "/memories/a/doc", "y", :any) end)
+      ]
+      |> Enum.each(&Task.await(&1, 5_000))
+
+      # the key layout of Redis.idx/2 and Redis.doc_prefix/2
+      tag = "#{prefix}:mem:{#{Base.url_encode64(ns, padding: false)}}"
+      {:ok, indexed} = Redix.command(conn, ["ZCARD", tag <> ":idx"])
+      hashes = scan(conn, tag <> ":doc:*", "0", [])
+      assert length(hashes) == indexed, "round #{round}: #{inspect(hashes)} vs #{indexed} indexed"
+    end
+  end
+
+  defp scan(conn, pattern, cursor, acc) do
+    {:ok, [next, keys]} = Redix.command(conn, ["SCAN", cursor, "MATCH", pattern, "COUNT", "1000"])
+    if next == "0", do: Enum.uniq(acc ++ keys), else: scan(conn, pattern, next, acc ++ keys)
+  end
 end

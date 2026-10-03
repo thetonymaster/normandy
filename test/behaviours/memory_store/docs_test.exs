@@ -22,8 +22,9 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
       {{:ok, 2}, d} = Docs.put(d, "/memories/a", "y", 1)
       assert {:ok, %{content: "y", version: 2}} = Docs.get(d, "/memories/a")
       assert {{:error, :conflict}, ^d} = Docs.delete(d, "/memories/a", 1)
-      assert {:ok, %{}} = Docs.delete(d, "/memories/a", 2)
-      assert {:not_found, %{}} = Docs.delete(%{}, "/memories/a", :any)
+      # compare whole values: a `%{}` pattern would match any map
+      assert Docs.delete(d, "/memories/a", 2) == {:ok, %{}}
+      assert Docs.delete(%{}, "/memories/a", :any) == {:not_found, %{}}
     end
 
     test "list is prefix-bounded, sorted and sized" do

@@ -14,6 +14,7 @@ defmodule Normandy.MemoryStoreContract do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote bind_quoted: [impl: impl] do
       alias Normandy.Behaviours.MemoryStore
+      alias Normandy.Tools.{Context, Memory}
 
       @store impl
 
@@ -80,6 +81,17 @@ defmodule Normandy.MemoryStoreContract do
                  ["/memories/a.md", "/memories/b/1.md", "/memories/b/2.md", "/memories/bb.md"]
       end
 
+      test "list sorts in byte order, not by a locale collation", %{handle: h, ns: ns} do
+        for p <- ["/memories/a/b", "/memories/a.md", "/memories/a-b", "/memories/B.md"] do
+          {:ok, _} = @store.put(h, ns, p, "x", :new)
+        end
+
+        assert {:ok, all} = @store.list(h, ns, "/memories")
+
+        assert Enum.map(all, & &1.path) ==
+                 ["/memories/B.md", "/memories/a-b", "/memories/a.md", "/memories/a/b"]
+      end
+
       test "list includes the prefix itself when it is a document", %{handle: h, ns: ns} do
         {:ok, _} = @store.put(h, ns, "/memories/a", "file", :new)
         assert {:ok, [%{path: "/memories/a"}]} = @store.list(h, ns, "/memories/a")
@@ -104,6 +116,9 @@ defmodule Normandy.MemoryStoreContract do
 
         assert {:ok, entries} = @store.list(h, ns, "/memories")
         assert length(entries) == limit
+        # the limit applies after sorting: the first list_limit/0 paths in byte order
+        assert hd(entries).path == "/memories/f00001"
+        assert List.last(entries).path == "/memories/f01000"
       end
 
       test "namespaces are isolated", %{handle: h, ns: ns} do
@@ -123,6 +138,10 @@ defmodule Normandy.MemoryStoreContract do
         {:ok, 2} = @store.put(h, ns, "/memories/a.md", "y", 1)
         assert {:error, :conflict} = @store.delete(h, ns, "/memories/a.md", 1)
         assert :ok = @store.delete(h, ns, "/memories/a.md", 2)
+      end
+
+      test "delete with a version on a missing document is :not_found", %{handle: h, ns: ns} do
+        assert :not_found = @store.delete(h, ns, "/memories/a.md", 1)
       end
 
       test "delete_tree removes the prefix and everything under it", %{handle: h, ns: ns} do
@@ -153,6 +172,17 @@ defmodule Normandy.MemoryStoreContract do
         assert Enum.map(all, & &1.path) == ["/memories/dd", "/memories/z/1", "/memories/z/e/2"]
       end
 
+      test "rename of a document that also has documents under it moves the document alone",
+           %{handle: h, ns: ns} do
+        {:ok, _} = @store.put(h, ns, "/memories/d", "doc", :new)
+        {:ok, _} = @store.put(h, ns, "/memories/d/child", "kid", :new)
+
+        assert {:ok, 1} = @store.rename(h, ns, "/memories/d", "/memories/e")
+        assert {:ok, all} = @store.list(h, ns, "/memories")
+        assert Enum.map(all, & &1.path) == ["/memories/d/child", "/memories/e"]
+        assert {:ok, %{content: "doc"}} = @store.get(h, ns, "/memories/e")
+      end
+
       test "rename onto an existing document or non-empty directory is {:error, :exists}", %{
         handle: h,
         ns: ns
@@ -179,8 +209,59 @@ defmodule Normandy.MemoryStoreContract do
         assert :ok = @store.delete_namespace(h, "never-used")
       end
 
-      # Review Focus #3: the concurrency tests run through the memory tool, which
-      # does not exist yet; Task 10, Step 5 replaces this comment with them.
+      # Review Focus #3: concurrent edits through the memory tool keep every edit.
+      test "concurrent inserts through the memory tool lose no edit", %{handle: h, ns: ns} do
+        tool = Memory.new(store: {@store, h}, max_cas_retries: 100)
+        {:ok, _} = @store.put(h, ns, "/memories/log.md", "start", :new)
+        ctx = %Context{tool_call_id: "c", values: %{memory_namespace: ns}}
+
+        1..20
+        |> Enum.map(fn i ->
+          Task.async(fn ->
+            input = %{
+              "command" => "insert",
+              "path" => "/memories/log.md",
+              "insert_line" => 0,
+              "insert_text" => "line-#{i}"
+            }
+
+            Memory.run(Memory.prepare_input(tool, input), ctx)
+          end)
+        end)
+        |> Enum.map(&Task.await(&1, 15_000))
+        |> Enum.each(&assert({:ok, _} = &1))
+
+        {:ok, %{content: content}} = @store.get(h, ns, "/memories/log.md")
+        for i <- 1..20, do: assert(content =~ "line-#{i}\n", "lost line-#{i}")
+        assert content |> String.split("\n") |> length() == 21
+      end
+
+      test "concurrent renames and writes leave no orphaned or duplicated document", %{
+        handle: h,
+        ns: ns
+      } do
+        {:ok, _} = @store.put(h, ns, "/memories/a/doc", "x", :new)
+
+        tasks = [
+          Task.async(fn -> @store.rename(h, ns, "/memories/a", "/memories/b") end),
+          Task.async(fn -> @store.put(h, ns, "/memories/a/doc", "y", :any) end)
+        ]
+
+        Enum.each(tasks, &Task.await(&1, 5_000))
+        {:ok, entries} = @store.list(h, ns, "/memories")
+
+        outcome =
+          Enum.map(entries, fn %{path: p} ->
+            {:ok, %{content: c}} = @store.get(h, ns, p)
+            {p, c}
+          end)
+
+        # put first then rename: one document, moved; rename first then put: both
+        assert outcome in [
+                 [{"/memories/a/doc", "y"}, {"/memories/b/doc", "x"}],
+                 [{"/memories/b/doc", "y"}]
+               ]
+      end
     end
   end
 end
