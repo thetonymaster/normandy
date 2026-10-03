@@ -110,6 +110,14 @@ defmodule Normandy.DSL.Workflow do
         input "Who can answer fastest?"
       end
 
+  ## Telemetry
+
+  `execute/1` runs under a `[:normandy, :workflow, :run]` span (`:start`, `:stop`,
+  `:exception`) with metadata `:workflow_name` (the module), `:orchestrator`
+  (`:workflow`) and `:step_count`. Agent runs started by the workflow's steps
+  nest under it, so a trace shows workflow -> run -> llm_call/tool. The
+  coordinators in `Normandy.Coordination` are not wrapped by this span.
+
   ## Features
 
   - Sequential, parallel, and race execution
@@ -407,7 +415,18 @@ defmodule Normandy.DSL.Workflow do
         initial_input = Keyword.fetch!(opts, :initial_input)
         context = Keyword.get(opts, :context, %{})
 
-        execute_workflow(unquote(Macro.escape(steps)), agents_map, initial_input, context)
+        steps = unquote(Macro.escape(steps))
+
+        # No content in the metadata: only the workflow's identity and size.
+        metadata = %{
+          workflow_name: __MODULE__,
+          orchestrator: :workflow,
+          step_count: length(steps)
+        }
+
+        :telemetry.span([:normandy, :workflow, :run], metadata, fn ->
+          {execute_workflow(steps, agents_map, initial_input, context), metadata}
+        end)
       end
 
       @doc """

@@ -470,6 +470,59 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
     assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
   end
 
+  defmodule WfAgent do
+    use Normandy.DSL.Agent
+
+    agent do
+      model("test-model")
+      system_prompt("wf")
+    end
+  end
+
+  describe "workflow" do
+    defmodule OneStepWorkflow do
+      use Normandy.DSL.Workflow
+
+      workflow do
+        step :only do
+          agent(NormandyTest.Telemetry.SpanHierarchyTest.WfAgent)
+          input("hi")
+        end
+      end
+    end
+
+    test "workflow.run nests the step's agent run under it, under the caller" do
+      OtelSpanBridge.attach(
+        prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :workflow, :run]]
+      )
+
+      caller = start_caller_span()
+
+      assert {:ok, _} =
+               OneStepWorkflow.execute(
+                 agents: %{__MODULE__.WfAgent => final_agent()},
+                 initial_input: "hi"
+               )
+
+      :otel_span.end_span(caller)
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "caller",
+          "normandy.workflow.run",
+          "normandy.agent.run"
+        ])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      workflow = OtelSpanBridge.fetch_span!(spans, "normandy.workflow.run")
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+
+      assert workflow.parent_span_id == caller_span.span_id
+      assert run.parent_span_id == workflow.span_id
+      assert run.trace_id == caller_span.trace_id
+    end
+  end
+
   describe "coordination fan-out" do
     test "Reactive.all nests each agent run under the caller" do
       caller = start_caller_span()

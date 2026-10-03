@@ -217,4 +217,42 @@ defmodule Normandy.DSL.WorkflowTest do
       assert length(race_step.agents) == 2
     end
   end
+
+  describe "telemetry" do
+    test "execute/1 emits one [:normandy, :workflow, :run] span with identity and size only" do
+      client = %NormandyTest.Support.ModelMockup{}
+      {:ok, simple_agent} = SimpleAgent.new(client: client)
+      {:ok, process_agent} = ProcessAgent.new(client: client)
+
+      handler_id = "workflow-span-#{System.unique_integer([:positive])}"
+      parent = self()
+
+      :telemetry.attach_many(
+        handler_id,
+        [[:normandy, :workflow, :run, :start], [:normandy, :workflow, :run, :stop]],
+        fn event, _m, metadata, _ ->
+          if metadata.workflow_name == SequentialWorkflow, do: send(parent, {event, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert {:ok, _} =
+               SequentialWorkflow.execute(
+                 agents: %{SimpleAgent => simple_agent, ProcessAgent => process_agent},
+                 initial_input: "secret prompt"
+               )
+
+      assert_receive {[:normandy, :workflow, :run, :start], start_meta}
+      assert_receive {[:normandy, :workflow, :run, :stop], _}
+      refute_receive {[:normandy, :workflow, :run, :start], _}
+
+      assert Map.delete(start_meta, :telemetry_span_context) == %{
+               workflow_name: SequentialWorkflow,
+               orchestrator: :workflow,
+               step_count: 2
+             }
+    end
+  end
 end

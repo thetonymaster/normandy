@@ -28,6 +28,14 @@ defmodule Normandy.Agents.Turn.Inline do
                     `:steering` boundary; the inline shell does not thread memory, so
                     a real impl must compact external state by side effect.
 
+  ## Telemetry
+
+  This shell emits no telemetry of its own: spans and events come from the
+  `deps` it is given (`:emit` is a no-op by default). `BaseAgent` does not use
+  this interpreter (it drives the turn through `Turn.Driver`, whose handlers
+  open the run, llm_call and tool spans), so a caller of `Inline.run/2` that
+  wants spans wraps them inside its own `:call_llm`, `:dispatch` and `:emit`.
+
   By design, `step/2` always places the single blocking/terminal effect
   (`:call_llm`, `:dispatch_tools`, `:finalize`, `:fail`) last in its effect list,
   so the interpreter performs the leading `:append_message` / `:emit_event`

@@ -97,7 +97,10 @@ defmodule Normandy.LLM.JsonDeserializer do
       set to the raw LLM text (unchanged when the output is not text), emits a
       `Logger.warning`, and fires `[:normandy, :json_deserializer, :fallback]`
       telemetry with `%{reason: tag, content_bytes: n}`. Neither carries the
-      model output, which can hold user data.
+      model output, which can hold user data. The event has no `:model` or
+      `:agent_name`: the parser is not given them, and Normandy keeps no
+      process-global state to look them up. Correlate through the enclosing
+      `[:normandy, :agent, :llm_call]` span, which runs in the same process.
     - `:error` — Returns `{:error, %Normandy.LLMError{type: :invalid_output, reason: reason}}`
       to the caller; no fallback text is produced.
 
@@ -146,7 +149,9 @@ defmodule Normandy.LLM.JsonDeserializer do
         truncates at the last non-`\\n`-escape position (or the byte after
         the opening quote if none), appends `"` and the balancing object or
         array closers, re-decodes, and emits
-        `[:normandy, :json_deserializer, :recovery]` telemetry on success.
+        `[:normandy, :json_deserializer, :recovery]` telemetry on success
+        (no `:model`/`:agent_name`; correlate via the enclosing llm_call span,
+        same process).
         Truncations inside nested objects or arrays are not recovered. On
         recovery failure the original adapter error is returned unchanged.
         Default: `false`.

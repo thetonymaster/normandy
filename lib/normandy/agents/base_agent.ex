@@ -461,6 +461,7 @@ defmodule Normandy.Agents.BaseAgent do
       # Convert arity-1 callback to arity-2 if needed
       callback =
         if is_function(on_chunk, 1) do
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           fn
             :text_delta, text -> on_chunk.(text)
             _, _ -> :ok
@@ -469,20 +470,11 @@ defmodule Normandy.Agents.BaseAgent do
           on_chunk
         end
 
+      # stream_with_tools/3 and stream_response/3 are both run_stream_turn/3 (the
+      # tool loop is the FSM's), and each opens its own run span, so call the
+      # private turn here to keep a single span.
       with_agent_run_span(config, metadata, fn ->
-        # Mirror run/2's dispatch: if the agent has tools, drive the
-        # streaming tool loop so tool_use blocks actually execute. Without
-        # this, agents with tools stream back a tool_use event, the tool
-        # never runs, and the user sees an empty assistant message.
-        # credo:disable-for-lines:3 Credo.Check.Refactor.Nesting
-        result =
-          if has_tools?(config) do
-            stream_with_tools(config, user_input, callback)
-          else
-            stream_response(config, user_input, callback)
-          end
-
-        {result, metadata}
+        {run_stream_turn(config, user_input, callback), metadata}
       end)
     else
       if stream do
@@ -1219,7 +1211,11 @@ defmodule Normandy.Agents.BaseAgent do
   @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
           {BaseAgentConfig.t(), map()}
   def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
-    run_stream_turn(config, user_input, callback)
+    metadata = Metadata.run(config)
+
+    with_agent_run_span(config, metadata, fn ->
+      {run_stream_turn(config, user_input, callback), metadata}
+    end)
   end
 
   @doc """
@@ -1274,7 +1270,11 @@ defmodule Normandy.Agents.BaseAgent do
           {BaseAgentConfig.t(), struct()}
   def stream_with_tools(config = %BaseAgentConfig{}, user_input \\ nil, callback)
       when is_function(callback, 2) do
-    run_stream_turn(config, user_input, callback)
+    metadata = Metadata.run(config)
+
+    with_agent_run_span(config, metadata, fn ->
+      {run_stream_turn(config, user_input, callback), metadata}
+    end)
   end
 
   # Extract tool calls from streaming response

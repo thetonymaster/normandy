@@ -188,4 +188,20 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
       BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: callback)
     end)
   end
+
+  for {fun, name} <- [
+        {:stream_response, "stream_response/3"},
+        {:stream_with_tools, "stream_with_tools/3"}
+      ] do
+    test "#{name} called directly emits exactly one agent.run span" do
+      agent =
+        BaseAgent.init(%{client: %StreamingClient{}, model: "claude-3", temperature: 0.7})
+
+      callback = fn _type, _payload -> :ok end
+
+      assert_exactly_one_run_span(agent, fn agent ->
+        apply(BaseAgent, unquote(fun), [agent, %{chat_message: "Hello"}, callback])
+      end)
+    end
+  end
 end
