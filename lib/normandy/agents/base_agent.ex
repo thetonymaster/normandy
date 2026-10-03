@@ -30,6 +30,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
+  alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Usage
@@ -147,6 +148,7 @@ defmodule Normandy.Agents.BaseAgent do
       json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
       mcp_servers: Map.get(config, :mcp_servers, nil),
       name: Map.get(config, :name, nil),
+      session_id: Map.get(config, :session_id, nil),
       input_guardrails: input_guardrails,
       output_guardrails: output_guardrails,
       output_guardrails_streaming_mode: streaming_mode,
@@ -406,7 +408,7 @@ defmodule Normandy.Agents.BaseAgent do
         %BaseAgentConfig{tool_registry: tool_registry} = config,
         user_input \\ nil
       ) do
-    metadata = %{model: config.model, agent_name: config.name}
+    metadata = Metadata.run(config)
 
     with_agent_run_span(config, metadata, fn ->
       result =
@@ -442,7 +444,7 @@ defmodule Normandy.Agents.BaseAgent do
     on_chunk = Keyword.get(opts, :on_chunk)
 
     if stream and on_chunk do
-      metadata = %{model: config.model, agent_name: config.name}
+      metadata = Metadata.run(config)
 
       # Convert arity-1 callback to arity-2 if needed
       callback =
@@ -510,7 +512,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
           {BaseAgentConfig.t(), struct()}
   def run_with_tools(config, user_input \\ nil) do
-    metadata = %{model: config.model, agent_name: config.name}
+    metadata = Metadata.run(config)
 
     with_agent_run_span(config, metadata, fn ->
       {run_turn(config, user_input), metadata}
@@ -639,6 +641,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     llm_metadata =
       %{model: config.model, iteration: iteration, agent_name: config.name}
+      |> Map.merge(Metadata.ids(config))
       |> Map.merge(
         Provider.request_metadata(config,
           stream: false,
@@ -983,6 +986,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     llm_metadata =
       %{model: config.model, iteration: iteration, agent_name: config.name}
+      |> Map.merge(Metadata.ids(config))
       |> Map.merge(
         Provider.request_metadata(config,
           stream: true,
@@ -1597,6 +1601,17 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp strip_partial_tool_use(message), do: message
 
+  # Admission initialises the turn inside the run span, so the id is only known at
+  # stop; the run result carries the config whose memory holds it.
+  defp put_turn_id(stop_metadata, {%BaseAgentConfig{} = config, _response}) do
+    case Metadata.turn_id(config) do
+      nil -> stop_metadata
+      turn_id -> Map.put_new(stop_metadata, :turn_id, turn_id)
+    end
+  end
+
+  defp put_turn_id(stop_metadata, _result), do: stop_metadata
+
   defp with_agent_run_span(config, telemetry_metadata, fun) do
     :telemetry.span([:normandy, :agent, :run], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy agent run start",
@@ -1609,6 +1624,7 @@ defmodule Normandy.Agents.BaseAgent do
 
       try do
         {result, stop_metadata} = fun.()
+        stop_metadata = put_turn_id(stop_metadata, result)
         duration_ms = Map.get(stop_metadata, :duration_ms, elapsed_ms(started_at))
 
         log_lifecycle(:info, "normandy agent run stop",
@@ -1734,7 +1750,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp span_execute(config, prepared_tool, tool_name) do
-    tool_meta = %{tool_name: tool_name, agent_name: config.name}
+    tool_meta = Map.merge(%{tool_name: tool_name, agent_name: config.name}, Metadata.ids(config))
 
     with_tool_execute_span(config, tool_name, tool_meta, fn ->
       r = Executor.execute_tool(prepared_tool)

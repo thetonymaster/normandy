@@ -91,6 +91,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
 
   require Logger
@@ -238,6 +239,10 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # llm_call and tool spans read the session id from the config they run with.
+  defp with_session_id(nil, _session_id), do: nil
+  defp with_session_id(config, session_id), do: %{config | session_id: session_id}
+
   defp init_data(opts, config, template, turn_state) do
     store = Keyword.fetch!(opts, :store)
     registry = Keyword.fetch!(opts, :registry)
@@ -254,7 +259,7 @@ defmodule Normandy.Agents.Turn.Server do
 
     data = %Data{
       session_id: session_id,
-      config: config,
+      config: with_session_id(config, session_id),
       store: store,
       registry: registry,
       template_provider: template_provider,
@@ -421,6 +426,7 @@ defmodule Normandy.Agents.Turn.Server do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->
+        emit_rejected_run(data, caller_ctx, exception)
         {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
 
       {:crashed, reason} ->
@@ -592,7 +598,7 @@ defmodule Normandy.Agents.Turn.Server do
           output_schema: config.output_schema
         )
 
-      run_span = start_run_span(data, config, caller_ctx)
+      run_span = start_run_span(data, config, caller_ctx, Metadata.turn_id(config))
       data = %{data | config: config, pending_reply: from, run_span: run_span}
       {state, effects} = Turn.step(state, :start)
       interpret(effects, %{data | turn_state: state})
@@ -611,15 +617,13 @@ defmodule Normandy.Agents.Turn.Server do
   # The caller's OTel context is attached in this (long-lived) process before
   # :start, so a bridged run span nests under the caller's span; stop_run_span/3
   # detaches it again so it does not leak into the next turn.
-  defp start_run_span(data, config, caller_ctx) do
+  defp start_run_span(data, config, caller_ctx, turn_id) do
     caller_ctx_token = OtelCtx.attach(caller_ctx)
 
-    meta = %{
-      model: config.model,
-      agent_name: config.name,
-      session_id: data.session_id,
-      telemetry_span_context: make_ref()
-    }
+    meta =
+      %{session_id: data.session_id}
+      |> Map.merge(Metadata.run(config, turn_id: turn_id))
+      |> Map.put(:telemetry_span_context, make_ref())
 
     start = System.monotonic_time()
 
@@ -630,6 +634,19 @@ defmodule Normandy.Agents.Turn.Server do
     )
 
     %{start: start, meta: meta, caller_ctx_token: caller_ctx_token}
+  end
+
+  # Rejected input never starts a turn, but BaseAgent.run/2 reports it as a run span
+  # that ends in :exception; do the same here (the reply is unchanged). The turn id
+  # is left out: admission raised before a turn was initialised.
+  defp emit_rejected_run(data, caller_ctx, exception) do
+    span = start_run_span(data, data.config, caller_ctx, nil)
+
+    stop_run_span(%{data | run_span: span}, :exception, %{
+      kind: :error,
+      reason: {:rejected, exception},
+      stacktrace: []
+    })
   end
 
   defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
