@@ -47,8 +47,10 @@ defmodule Normandy.Test.OtelSpanBridge do
   with `reason: :killed` from its own process (see
   `Normandy.Telemetry.KilledRun`). That process has no open span for it, and
   the killed process's span can't be reached, so the bridge drops the event
-  like a real process-keyed bridge would, instead of reporting it. The killed
-  run's span is never exported.
+  (a `normandy.agent.run` exception with `reason: :killed` and no
+  `telemetry_span_context`) like a real process-keyed bridge would, instead
+  of reporting it or ending a span the coordinator has open. The killed run's
+  span is never exported.
 
   ## Bridge errors
 
@@ -173,17 +175,18 @@ defmodule Normandy.Test.OtelSpanBridge do
 
     cond do
       kind == :start -> open_span(name)
-      killed_elsewhere?(kind, metadata) -> :ok
+      killed_elsewhere?(name, kind, metadata) -> :ok
       true -> close_span(name, kind, owner)
     end
   end
 
   # A coordinator's synthetic exception for a run it killed fires in the
-  # coordinator, which has no open span for it (see "Killed runs").
-  defp killed_elsewhere?(:exception, %{reason: :killed}),
-    do: Process.get(@stack_key, []) == []
+  # coordinator, which has no open span for it (see "Killed runs"). Unlike a
+  # real span event it carries no `telemetry_span_context`.
+  defp killed_elsewhere?("normandy.agent.run", :exception, %{reason: :killed} = metadata),
+    do: not Map.has_key?(metadata, :telemetry_span_context)
 
-  defp killed_elsewhere?(_kind, _metadata), do: false
+  defp killed_elsewhere?(_name, _kind, _metadata), do: false
 
   defp open_span(name) do
     tracer = :opentelemetry.get_application_tracer(__MODULE__)

@@ -54,6 +54,15 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     end
   end
 
+  defp wait_until(fun) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(1)
+      wait_until(fun)
+    end
+  end
+
   defp fast_agent(name) do
     agent = BaseAgent.init(%{client: %StubClient{}, model: "fast-model"})
     %{agent | name: name}
@@ -120,6 +129,102 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
 
       {measurements, _} = assert_one_killed(name, "stuck-model")
       assert measurements.duration >= System.convert_time_unit(100, :millisecond, :native)
+    end
+  end
+
+  # A run that already stopped must not also get a killed exception when the
+  # task is killed later, in a callback that runs after the run.
+  describe "a task killed after its run finished" do
+    test "race: a loser killed in on_complete emits nothing", %{name: name} do
+      gate = :atomics.new(1, [])
+
+      on_complete = fn
+        # The winner reports only once the loser's run is over.
+        "agent_0", _ ->
+          wait_until(fn -> :atomics.get(gate, 1) == 1 end)
+
+        "agent_1", _ ->
+          :atomics.put(gate, 1, 1)
+          block(nil)
+      end
+
+      assert {:ok, _} =
+               Reactive.race([fast_agent("#{name}-winner"), fast_agent(name)], "hi",
+                 on_complete: on_complete
+               )
+
+      refute_receive {:run_exception, _, _, _}, 50
+    end
+
+    test "some: an agent killed in on_complete emits nothing", %{name: name} do
+      gate = :atomics.new(1, [])
+
+      on_complete = fn
+        "agent_0", _ ->
+          wait_until(fn -> :atomics.get(gate, 1) == 1 end)
+
+        "agent_1", _ ->
+          :atomics.put(gate, 1, 1)
+          block(nil)
+      end
+
+      assert {:ok, _} =
+               Reactive.some([fast_agent("#{name}-winner"), fast_agent(name)], "hi",
+                 count: 1,
+                 on_complete: on_complete
+               )
+
+      refute_receive {:run_exception, _, _, _}, 50
+    end
+
+    test "all: a task timed out in on_complete emits nothing", %{name: name} do
+      assert {:ok, _} =
+               Reactive.all([fast_agent(name)], "hi",
+                 timeout: 100,
+                 on_complete: fn _, _ -> block(nil) end
+               )
+
+      refute_receive {:run_exception, _, _, _}, 50
+    end
+
+    test "ParallelOrchestrator.execute: timed out in on_agent_complete emits nothing", %{
+      name: name
+    } do
+      specs = [%{id: "done", agent: fast_agent(name), input: "hi"}]
+
+      assert {:ok, %{errors: %{"done" => {:exit, :timeout}}}} =
+               ParallelOrchestrator.execute(specs,
+                 timeout: 100,
+                 on_agent_complete: fn _, _ -> block(nil) end
+               )
+
+      refute_receive {:run_exception, _, _, _}, 50
+    end
+
+    test "ParallelOrchestrator.execute_stream: timed out in transform emits nothing", %{
+      name: name
+    } do
+      specs = [%{id: "done", agent: fast_agent(name), input: "hi", transform: &block/1}]
+
+      assert [{:exit, {"done", :timeout}}] =
+               specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
+
+      refute_receive {:run_exception, _, _, _}, 50
+    end
+
+    test "ParallelOrchestrator.execute_stream reports a kill on every enumeration", %{
+      name: name
+    } do
+      stream =
+        ParallelOrchestrator.execute_stream(
+          [%{id: "stuck", agent: stuck_agent(name), input: "hi"}],
+          timeout: 50
+        )
+
+      assert [{:exit, {"stuck", :timeout}}] = Enum.to_list(stream)
+      assert [{:exit, {"stuck", :timeout}}] = Enum.to_list(stream)
+      assert_receive {:run_exception, _, _, _}
+      assert_receive {:run_exception, _, _, _}
     end
   end
 

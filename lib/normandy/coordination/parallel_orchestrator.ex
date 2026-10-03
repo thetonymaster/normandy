@@ -28,7 +28,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   `[:normandy, :agent, :run]` span never closes on its own. `execute/2` and
   `execute_stream/2` emit a synthetic `[:normandy, :agent, :run, :exception]`
   with `reason: :killed` for it (`execute_stream/2` when the timed-out element
-  is consumed), possibly without a matching `:start`; the `llm_call`/`tool`
+  is consumed) unless its run had already returned and the timeout hit its
+  `:transform` or `:on_agent_complete` callback, possibly without a matching `:start`; the `llm_call`/`tool`
   spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
   """
 
@@ -144,13 +145,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
     # Execute agents in parallel using Task.async_stream
     parent_otel_ctx = OtelCtx.capture()
+    run_marks = KilledRun.new_run_marks(length(agent_specs))
 
     results =
       Task.async_stream(
-        agent_specs,
-        fn spec ->
+        Enum.with_index(agent_specs),
+        fn {spec, idx} ->
           OtelCtx.restore(parent_otel_ctx)
-          {Map.fetch!(spec, :id), run_spec(spec, on_complete)}
+          on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
+          {Map.fetch!(spec, :id), run_spec(spec, on_complete, on_run_done)}
         end,
         max_concurrency: max_concurrency,
         timeout: timeout,
@@ -161,7 +164,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       )
       |> Enum.to_list()
 
-    Enum.each(results, &report_kill(&1, timeout, parent_otel_ctx))
+    Enum.each(results, &report_kill(&1, run_marks, timeout, parent_otel_ctx))
 
     # Separate successes and errors
     {successes, errors} =
@@ -172,7 +175,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         {:ok, {agent_id, {:error, reason}}}, {succ, err} ->
           {succ, Map.put(err, agent_id, reason)}
 
-        {:exit, {%{id: agent_id}, reason}}, {succ, err} ->
+        {:exit, {{%{id: agent_id}, _idx}, reason}}, {succ, err} ->
           {succ, Map.put(err, agent_id, {:exit, reason})}
       end)
 
@@ -259,13 +262,23 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
     parent_otel_ctx = OtelCtx.capture()
 
+    # Run marks are per enumeration, so they're made when the stream runs.
+    Stream.flat_map([agent_specs], fn agent_specs ->
+      stream_specs(agent_specs, max_concurrency, timeout, parent_otel_ctx)
+    end)
+  end
+
+  defp stream_specs(agent_specs, max_concurrency, timeout, parent_otel_ctx) do
+    run_marks = KilledRun.new_run_marks(length(agent_specs))
+
     Task.async_stream(
-      agent_specs,
-      fn spec ->
+      Enum.with_index(agent_specs),
+      fn {spec, idx} ->
         OtelCtx.restore(parent_otel_ctx)
         agent_id = Map.fetch!(spec, :id)
+        on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
 
-        case run_spec(spec, nil) do
+        case run_spec(spec, nil, on_run_done) do
           {:ok, transformed} -> {:ok, {agent_id, transformed}}
           {:error, reason} -> {:error, {agent_id, reason}}
         end
@@ -278,8 +291,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       ordered: false
     )
     |> Stream.map(fn
-      {:exit, {%{id: agent_id}, reason}} = exit ->
-        :ok = report_kill(exit, timeout, parent_otel_ctx)
+      {:exit, {{%{id: agent_id}, _idx}, reason}} = exit ->
+        :ok = report_kill(exit, run_marks, timeout, parent_otel_ctx)
         {:exit, {agent_id, reason}}
 
       other ->
@@ -289,11 +302,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   # Private functions
 
-  # An agent past the timeout was killed mid-run, so its run span never closed.
-  defp report_kill({:exit, {%{agent: agent}, :timeout}}, timeout, otel_ctx),
-    do: KilledRun.emit_timeout(agent, timeout, otel_ctx)
+  # An agent killed past the timeout before its run returned left its run span
+  # open: report it.
+  defp report_kill({:exit, {{%{agent: agent}, idx}, :timeout}}, run_marks, timeout, otel_ctx) do
+    if KilledRun.run_done?(run_marks, idx),
+      do: :ok,
+      else: KilledRun.emit_timeout(agent, timeout, otel_ctx)
+  end
 
-  defp report_kill(_result, _timeout, _otel_ctx), do: :ok
+  defp report_kill(_result, _run_marks, _timeout, _otel_ctx), do: :ok
 
   defp execute_agent(agent, input) do
     # Convert input to agent input format if needed
@@ -319,8 +336,12 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   # Runs one spec's agent, then its :transform and the :on_agent_complete callback.
   # The callbacks run in the agent's task, so they are guarded: a crash would take
   # the caller down through the task's link.
-  defp run_spec(spec, on_complete) do
-    with {:ok, result} <- execute_agent(Map.fetch!(spec, :agent), Map.fetch!(spec, :input)) do
+  # `on_run_done` runs as soon as the agent's run returns, before the callbacks.
+  defp run_spec(spec, on_complete, on_run_done) do
+    outcome = execute_agent(Map.fetch!(spec, :agent), Map.fetch!(spec, :input))
+    :ok = on_run_done.()
+
+    with {:ok, result} <- outcome do
       guarded(fn -> run_callbacks(spec, result, on_complete) end)
     end
   end
