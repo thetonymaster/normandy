@@ -14,6 +14,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
   alias Normandy.Coordination.{AgentProcess, ParallelOrchestrator, Reactive}
+  alias Normandy.Telemetry.KilledRun
   alias Normandy.Test.StubClient
 
   @exception [:normandy, :agent, :run, :exception]
@@ -267,7 +268,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     } do
       agent = %{stuck_agent(name) | session_id: "killed-sess"}
 
-      :ok = Normandy.Telemetry.KilledRun.emit(agent, 5, nil)
+      :ok = KilledRun.emit(agent, 5, nil)
 
       assert_receive {:run_exception, %{duration: 5},
                       %{
