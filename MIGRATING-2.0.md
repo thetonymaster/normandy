@@ -37,6 +37,14 @@ SystemPromptGenerator.generate_prompt(spec)
 - Agents with tools no longer get an `# OUTPUT SCHEMA` block on tool-loop calls. 1.x showed
   the model the internal tool-call field map there. Their system prompt changes, so the first
   request after upgrading misses the prompt cache.
+- User turns given as the default chat input (`%{chat_message: ...}` or a
+  `BaseAgentInputSchema`) reach the model as their plain text, not `{"chat_message": ...}`
+  JSON. As JSON, Haiku 4.5 often denied remembering earlier turns. Custom input schemas are
+  still sent as JSON.
+- A `:summarize` compaction stores its summary as a plain string
+  (`"Previous conversation summary: ..."`), not a `BaseAgentOutputSchema`.
+- `Turn.Server` stores the admitted user input (a map cast to the input schema), the value
+  memory holds, instead of the raw argument to `run/2`.
 
 ## 3. MCP tool allowlists take exact names
 
