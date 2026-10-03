@@ -43,9 +43,14 @@ pool_config =
 
 rounds =
   for round <- 1..3 do
+    # Task.async does not carry the OTel context; pass it so pool runs join the scenario trace.
+    ctx = Normandy.Telemetry.OtelCtx.capture()
+
     tasks =
       for _worker <- 1..2 do
         Task.async(fn ->
+          Normandy.Telemetry.OtelCtx.restore(ctx)
+
           AgentPool.transaction(pool, fn pid ->
             text =
               "Round #{round}: remember the number #{round * 11}. Then list every number I have asked you to remember so far, comma separated."

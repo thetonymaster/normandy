@@ -54,7 +54,11 @@ session = fn sid, mode ->
   ]
 end
 
-run_async = fn opts, text -> spawn(fn -> send(parent, {:result, opts[:session_id], Turn.Session.run(opts, %{chat_message: text})}) end) end
+# A raw spawn does not carry the caller's OTel context; pass it like an instrumented app would.
+run_async = fn opts, text ->
+  ctx = Normandy.Telemetry.OtelCtx.capture()
+  spawn(fn -> Normandy.Telemetry.OtelCtx.restore(ctx); send(parent, {:result, opts[:session_id], Turn.Session.run(opts, %{chat_message: text})}) end)
+end
 
 await_park = fn sid ->
   receive do

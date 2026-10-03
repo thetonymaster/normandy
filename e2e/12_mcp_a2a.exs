@@ -20,7 +20,7 @@ defmodule E2E.S12.Router do
   post "/a2a" do
     %{"id" => id, "method" => "message/send", "params" => %{"message" => m}} = conn.body_params
     Agent.update(E2E.S12.Hits, &(&1 + 1))
-    {:ok, task} = Normandy.A2A.Server.handle_message(conn.assigns.b.config, Claudio.A2A.Message.from_map(m))
+    {:ok, task} = Normandy.A2A.Server.handle_message(conn.assigns.b.config, Claudio.A2A.Message.from_map(m), conn.req_headers)
 
     conn
     |> put_resp_content_type("application/json")
