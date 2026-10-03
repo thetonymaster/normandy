@@ -117,6 +117,12 @@ defmodule Normandy.Agents.Turn.Server do
               retry_ms: nil
   end
 
+  # A turn request: {:turn, input, caller_otel_ctx}. The two-element {:turn, input}
+  # sent by a caller running an older Normandy (another node during a rolling
+  # deploy) is still accepted, with no caller context.
+  defguardp is_turn_request(msg)
+            when is_tuple(msg) and tuple_size(msg) in [2, 3] and elem(msg, 0) == :turn
+
   # Backoff between load retries while the store is unavailable.
   @retry_initial_ms 200
   @retry_max_ms 30_000
@@ -133,9 +139,15 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  @doc "Run a turn synchronously; replies once the turn finalizes or fails."
+  @doc """
+  Run a turn synchronously; replies once the turn finalizes or fails.
+
+  The caller's OpenTelemetry context travels with the request, so the turn's run
+  span nests under the caller's active span (a no-op without OTel).
+  """
   @spec run(:gen_statem.server_ref(), term()) :: {:ok, term()} | {:error, term()}
-  def run(server, user_input), do: :gen_statem.call(server, {:turn, user_input}, :infinity)
+  def run(server, user_input),
+    do: :gen_statem.call(server, {:turn, user_input, OtelCtx.capture()}, :infinity)
 
   @doc "Deliver approval decisions to a parked server (Task 6)."
   @spec approve(:gen_statem.server_ref(), %{optional(String.t()) => :approve | :reject}) :: :ok
@@ -359,7 +371,7 @@ defmodule Normandy.Agents.Turn.Server do
   # :unavailable — the store failed the load at start. A turn request retries it:
   # on success the request is replayed in :idle, otherwise it gets the reason.
   @impl true
-  def handle_event({:call, from}, {:turn, _input}, :unavailable, data) do
+  def handle_event({:call, from}, msg, :unavailable, data) when is_turn_request(msg) do
     case retry_load(data) do
       {:ok, {:next_state, state, new_data, actions}} ->
         {:next_state, state, new_data, actions ++ [:postpone]}
@@ -398,12 +410,15 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
-  def handle_event({:call, from}, {:turn, user_input}, :idle, data) do
+  def handle_event({:call, from}, {:turn, user_input}, :idle, data),
+    do: handle_event({:call, from}, {:turn, user_input, nil}, :idle, data)
+
+  def handle_event({:call, from}, {:turn, user_input, caller_ctx}, :idle, data) do
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
 
     with {:ok, repairs} <- close_batch(data, missing),
          {:ok, config} <- admit(last_config(repairs, data.config), user_input) do
-      start_turn(from, user_input, config, repairs, data)
+      start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->
         {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
@@ -510,8 +525,8 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # A turn request mid-turn is postponed and replayed when we re-enter :idle.
-  def handle_event({:call, _from}, {:turn, _input}, state, _data)
-      when state in [:running, :awaiting_approval] do
+  def handle_event({:call, _from}, msg, state, _data)
+      when is_turn_request(msg) and state in [:running, :awaiting_approval] do
     {:keep_state_and_data, :postpone}
   end
 
@@ -567,7 +582,7 @@ defmodule Normandy.Agents.Turn.Server do
   # Store order mirrors memory order: interrupted results, then the user message.
   # Memory must end up holding exactly what reached the store: a failed write keeps
   # the config as of the last stored result, so the next turn repairs only the rest.
-  defp start_turn(from, user_input, config, repairs, data) do
+  defp start_turn(from, {user_input, caller_ctx}, config, repairs, data) do
     with {:ok, repaired} <- persist_interrupted(data, repairs),
          :ok <- persist_user_message(data, config, user_input, repaired) do
       state =
@@ -577,7 +592,8 @@ defmodule Normandy.Agents.Turn.Server do
           output_schema: config.output_schema
         )
 
-      data = %{data | config: config, pending_reply: from, run_span: start_run_span(data, config)}
+      run_span = start_run_span(data, config, caller_ctx)
+      data = %{data | config: config, pending_reply: from, run_span: run_span}
       {state, effects} = Turn.step(state, :start)
       interpret(effects, %{data | turn_state: state})
     else
@@ -591,7 +607,13 @@ defmodule Normandy.Agents.Turn.Server do
   # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
   # several gen_statem events, so :start and :stop/:exception are emitted by
   # hand. A parked turn resumed by a restarted server has no :start, so no stop.
-  defp start_run_span(data, config) do
+  #
+  # The caller's OTel context is attached in this (long-lived) process before
+  # :start, so a bridged run span nests under the caller's span; stop_run_span/3
+  # detaches it again so it does not leak into the next turn.
+  defp start_run_span(data, config, caller_ctx) do
+    caller_ctx_token = OtelCtx.attach(caller_ctx)
+
     meta = %{
       model: config.model,
       agent_name: config.name,
@@ -607,12 +629,12 @@ defmodule Normandy.Agents.Turn.Server do
       meta
     )
 
-    %{start: start, meta: meta}
+    %{start: start, meta: meta, caller_ctx_token: caller_ctx_token}
   end
 
   defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
 
-  defp stop_run_span(%Data{run_span: %{start: start, meta: meta}}, event, extra) do
+  defp stop_run_span(%Data{run_span: %{start: start, meta: meta} = span}, event, extra) do
     now = System.monotonic_time()
 
     :telemetry.execute(
@@ -620,6 +642,8 @@ defmodule Normandy.Agents.Turn.Server do
       %{duration: now - start, monotonic_time: now},
       Map.merge(meta, extra)
     )
+
+    OtelCtx.detach(span.caller_ctx_token)
   end
 
   defp last_config([], default), do: default
@@ -820,10 +844,14 @@ defmodule Normandy.Agents.Turn.Server do
   # by the :running :DOWN clause → fails the turn gracefully) WITHOUT taking
   # down this gen_statem. The spawned process waits for the monitor ref before
   # replying so the result is tagged with the same ref the :DOWN would carry.
+  #
+  # The worker gets this process's OTel context (the run span's, when a bridge
+  # made it current at run :start), so its llm_call and tool spans nest under run.
   defp spawn_task(data, kind, fun) do
     server = self()
     handlers = data.handlers
     current = data
+    otel_ctx = OtelCtx.capture()
 
     pid =
       spawn(fn ->
@@ -832,7 +860,10 @@ defmodule Normandy.Agents.Turn.Server do
             {:monitor_ref, r} -> r
           end
 
-        run_while_server_alive(server, ref, fn -> fun.(handlers, current) end)
+        run_while_server_alive(server, ref, fn ->
+          OtelCtx.restore(otel_ctx)
+          fun.(handlers, current)
+        end)
       end)
 
     ref = Process.monitor(pid)
