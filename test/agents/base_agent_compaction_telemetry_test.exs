@@ -50,6 +50,12 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
            }
   end
 
+  test "a chat turn with no tool calls runs the compactor before calling the model", %{ref: ref} do
+    {_agent, _response} = BaseAgent.run(agent(%{compacted: false}), "hello")
+
+    assert_receive {[:normandy, :agent, :compaction], ^ref, _measurements, %{compacted: false}}
+  end
+
   test "a compactor run that did not compact is still observable", %{ref: ref} do
     BaseAgent.compact_turn_memory(agent(%{compacted: false}), %Normandy.Agents.Turn.State{}, %{
       iterations_left: 3

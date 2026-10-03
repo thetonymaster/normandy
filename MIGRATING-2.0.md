@@ -71,6 +71,10 @@ fallback), and `Normandy.Agents.ConverseResult.normalize/1` always returns one.
 - **Compaction now runs on current models.** Before, the static table didn't know them, so
   a real compactor silently did nothing. Now memory gets truncated, and the `:summarize`
   strategy makes extra paid LLM calls.
+- **Compaction runs at the start of every turn,** before the first LLM call, as well as after
+  each tool batch. In 1.x it ran only after tool batches, so an agent that never called a tool
+  never compacted and its memory grew without bound. A `[:normandy, :agent, :compaction]`
+  telemetry event reports every compactor run (token counts, strategy, whether it compacted).
 - **Compaction makes a network call:** one Models API request per model per agent config.
   Coordinators that discard the config `BaseAgent.run/2` returns (batch, orchestrators, agent
   processes) repeat it on every run.

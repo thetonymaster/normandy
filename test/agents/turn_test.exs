@@ -50,13 +50,22 @@ defmodule Normandy.Agents.TurnTest do
   end
 
   describe "step/2 provisioning" do
-    test ":start transitions to :assistant_streaming and emits iteration + call_llm" do
+    test ":start parks in :steering and asks to compact before the first LLM call" do
       s = Turn.new(max_iterations: 5, response_model: :rm)
 
       {s2, effects} = Turn.step(s, :start)
 
-      assert s2.status == :assistant_streaming
+      assert s2.status == :steering
       assert s2.iterations_left == 5
+      assert effects == [{:maybe_compact, %{iterations_left: 5}}]
+    end
+
+    test "compaction_done after :start emits iteration 1 + the first call_llm" do
+      {s2, _} = Turn.step(Turn.new(max_iterations: 5, response_model: :rm), :start)
+
+      {s3, effects} = Turn.step(s2, {:compaction_done, %{compacted: false}})
+
+      assert s3.status == :assistant_streaming
 
       assert effects == [
                {:emit_event, :iteration, %{iteration: 1, iterations_left: 5, final: false}},

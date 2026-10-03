@@ -14,7 +14,7 @@ defmodule Normandy.Agents.Turn do
 
   Seven statuses are defined. `:awaiting_approval` (suspend/resume for human
   approval) is entered when a dispatched batch parks calls. `:steering` is a
-  resting state entered at every tool-batch boundary: the core emits a
+  resting state entered when a turn starts and at every tool-batch boundary: the core emits a
   `{:maybe_compact, info}` effect there and resumes on `{:compaction_done, _}`,
   which is where context-window compaction (Phase 5) runs in the shell.
   """
@@ -102,12 +102,11 @@ defmodule Normandy.Agents.Turn do
   Advances the turn one event. Pure: returns `{state', [effect]}` and does no I/O.
   """
   @spec step(State.t(), term()) :: {State.t(), [tuple()]}
+  # A turn starts at the steering boundary too, so a conversation that never calls
+  # a tool still gets compacted before each turn's first LLM call (the
+  # {:compaction_done, _} clauses below then issue that call).
   def step(%State{status: :provisioning} = s, :start) do
-    {%{s | status: :assistant_streaming},
-     [
-       iteration_event(s, false),
-       {:call_llm, %{response_model: s.response_model, final: false}}
-     ]}
+    {%{s | status: :steering}, [{:maybe_compact, %{iterations_left: s.iterations_left}}]}
   end
 
   def step(%State{status: :assistant_streaming, awaiting_final: true} = s, {:llm_response, resp}) do

@@ -89,6 +89,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
 
   test "drive/3 runs the compact handler at the steering boundary and threads acc" do
     # Drive a real turn from :provisioning (via Turn.new) where:
+    # - :start parks in :steering → {:maybe_compact} → compact handler fires → first call
     # - first LLM response carries a tool call  →  :tool_dispatch → :steering → {:maybe_compact}
     #   → compact handler fires → {:compaction_done} → :assistant_streaming (iteration 2)
     # - second LLM response has no tool calls  →  :finalizing → :stopped
@@ -124,7 +125,9 @@ defmodule Normandy.Agents.Turn.DriverTest do
     {acc, final} = Driver.drive(state, handlers, [])
 
     assert final.status == :stopped
-    # compact handler ran exactly once, between the tool result and the next call
+    # compact handler ran twice: before the first call, and between the tool result
+    # and the next call
+    assert_received {:compacted, %{iterations_left: 5}}
     assert_received {:compacted, %{iterations_left: 4}}
     refute_received {:compacted, _}
     assert :compacted in acc
