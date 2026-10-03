@@ -37,6 +37,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   alias Normandy.Coordination.SharedContext
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.WorkflowSpan
 
   @type agent_spec :: %{
           required(:id) => String.t(),
@@ -86,11 +87,21 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   """
   @spec execute([agent_spec()] | [struct()], keyword() | map()) ::
           {:ok, execution_result()} | {:ok, list()}
-  def execute(agents, input_or_opts \\ [])
+  def execute(agents, input_or_opts \\ []) do
+    WorkflowSpan.span(:parallel, %{step_count: length(agents)}, fn ->
+      do_execute(agents, input_or_opts)
+    end)
+  end
+
+  # Runs specs without opening a workflow span, for callers (the hierarchical
+  # coordinator) that already hold one so a call yields exactly one span.
+  @doc false
+  @spec execute_specs([agent_spec()], keyword()) :: {:ok, execution_result()}
+  def execute_specs(agent_specs, opts), do: do_execute(agent_specs, opts)
 
   # Simple API: execute(agents, input) -> {:ok, [results]}
-  def execute(agents, input)
-      when is_list(agents) and (is_map(input) or is_binary(input)) do
+  defp do_execute(agents, input)
+       when is_list(agents) and (is_map(input) or is_binary(input)) do
     # Ensure input is not a struct (use plain maps only for simple API)
     cond do
       is_binary(input) ->
@@ -106,7 +117,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   end
 
   # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
-  def execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
+  defp do_execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
     execute_with_specs(agent_specs, opts)
   end
 
@@ -220,6 +231,12 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   @spec execute_same_input([%{id: String.t(), agent: struct()}], term(), keyword()) ::
           {:ok, execution_result()}
   def execute_same_input(agents, input, opts \\ []) do
+    WorkflowSpan.span(:parallel, %{step_count: length(agents)}, fn ->
+      run_same_input(agents, input, opts)
+    end)
+  end
+
+  defp run_same_input(agents, input, opts) do
     # Convert to full agent specs with same input
     agent_specs =
       Enum.map(agents, fn agent_info ->
@@ -231,7 +248,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
         }
       end)
 
-    execute(agent_specs, opts)
+    do_execute(agent_specs, opts)
   end
 
   @doc """
@@ -242,6 +259,9 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   - `{:ok, {:ok, {agent_id, result}}}` - the agent finished
   - `{:ok, {:error, {agent_id, reason}}}` - the agent raised or exited (see `execute/2`)
   - `{:exit, {agent_id, :timeout}}` - the agent ran past `:timeout` and was stopped
+
+  Emits no `[:normandy, :workflow, :run]` span: the stream is lazy, so it has no
+  defined start and end (a current limitation).
 
   ## Example
 

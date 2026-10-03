@@ -25,6 +25,7 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.{AgentMessage, SharedContext}
+  alias Normandy.Telemetry.WorkflowSpan
 
   @type agent_spec :: %{
           required(:id) => String.t(),
@@ -70,11 +71,15 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   """
   @spec execute([agent_spec()] | [struct()], term(), keyword()) ::
           {:ok, execution_result()} | {:ok, term()} | {:error, term()}
-  def execute(agents, initial_input, opts \\ [])
+  def execute(agents, initial_input, opts \\ []) do
+    WorkflowSpan.span(:sequential, %{step_count: length(agents)}, fn ->
+      do_execute(agents, initial_input, opts)
+    end)
+  end
 
   # Simple API: execute(agents, input) -> {:ok, final_result}
-  def execute(agents, input, [])
-      when is_list(agents) and (is_map(input) or is_binary(input)) do
+  defp do_execute(agents, input, [])
+       when is_list(agents) and (is_map(input) or is_binary(input)) do
     # Check if first element looks like an agent_spec (has :id key)
     case List.first(agents) do
       %{id: _id} ->
@@ -101,7 +106,8 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   end
 
   # Advanced API: execute(agent_specs, input, opts) -> {:ok, execution_result}
-  def execute(agent_specs, initial_input, opts) when is_list(agent_specs) and is_list(opts) do
+  defp do_execute(agent_specs, initial_input, opts)
+       when is_list(agent_specs) and is_list(opts) do
     execute_with_specs(agent_specs, initial_input, opts)
   end
 
@@ -199,6 +205,12 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   @spec execute_with_messages([agent_spec()], AgentMessage.t(), keyword()) ::
           {:ok, [AgentMessage.t()]}
   def execute_with_messages(agent_specs, initial_message, opts \\ []) do
+    WorkflowSpan.span(:sequential, %{step_count: length(agent_specs)}, fn ->
+      run_with_messages(agent_specs, initial_message, opts)
+    end)
+  end
+
+  defp run_with_messages(agent_specs, initial_message, opts) do
     _context = Keyword.get(opts, :shared_context, SharedContext.new())
 
     messages =

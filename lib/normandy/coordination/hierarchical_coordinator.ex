@@ -23,6 +23,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
+  alias Normandy.Telemetry.WorkflowSpan
 
   @type delegation_strategy :: :round_robin | :broadcast | :conditional
   @type t :: %__MODULE__{
@@ -90,6 +91,13 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   """
   @spec execute(t(), term(), keyword()) :: {:ok, term()} | {:error, term()}
   def execute(%__MODULE__{} = coordinator, input, opts \\ []) do
+    # step_count: the coordinator's workers (the delegation plan is not known yet).
+    WorkflowSpan.span(:hierarchical, %{step_count: length(coordinator.workers)}, fn ->
+      run_hierarchy(coordinator, input, opts)
+    end)
+  end
+
+  defp run_hierarchy(coordinator, input, opts) do
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
     max_concurrency = Keyword.get(opts, :max_concurrency, 5)
     manager_prompt = Keyword.get(opts, :manager_prompt)
@@ -104,7 +112,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
         # Step 3: Execute workers
         {:ok, worker_results} =
-          ParallelOrchestrator.execute(worker_specs, max_concurrency: max_concurrency)
+          ParallelOrchestrator.execute_specs(worker_specs, max_concurrency: max_concurrency)
 
         # Step 4: Manager aggregates results
         aggregate_with_manager(coordinator.manager, worker_results, context)
@@ -134,6 +142,12 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   @spec execute_with_tasks(t(), [%{worker_id: String.t(), task: term()}], keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute_with_tasks(%__MODULE__{} = coordinator, tasks, opts \\ []) do
+    WorkflowSpan.span(:hierarchical, %{step_count: length(tasks)}, fn ->
+      run_tasks(coordinator, tasks, opts)
+    end)
+  end
+
+  defp run_tasks(coordinator, tasks, opts) do
     max_concurrency = Keyword.get(opts, :max_concurrency, 5)
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
 
@@ -148,7 +162,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
     # Execute workers
     {:ok, worker_results} =
-      ParallelOrchestrator.execute(worker_specs, max_concurrency: max_concurrency)
+      ParallelOrchestrator.execute_specs(worker_specs, max_concurrency: max_concurrency)
 
     # Aggregate with manager
     aggregate_with_manager(coordinator.manager, worker_results, context)

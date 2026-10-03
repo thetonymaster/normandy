@@ -12,7 +12,14 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.ToolCall
-  alias Normandy.Coordination.{AgentProcess, ParallelOrchestrator, Reactive}
+
+  alias Normandy.Coordination.{
+    AgentProcess,
+    ParallelOrchestrator,
+    Reactive,
+    SequentialOrchestrator
+  }
+
   alias Normandy.Test.{FakeTool, OtelSpanBridge, StubClient}
   alias Normandy.Tools.Registry
 
@@ -520,6 +527,63 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       assert workflow.parent_span_id == caller_span.span_id
       assert run.parent_span_id == workflow.span_id
       assert run.trace_id == caller_span.trace_id
+    end
+  end
+
+  describe "orchestrators" do
+    test "SequentialOrchestrator.execute nests each agent run under its workflow span" do
+      OtelSpanBridge.attach(
+        prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :workflow, :run]]
+      )
+
+      caller = start_caller_span()
+      specs = [%{id: "a", agent: final_agent()}, %{id: "b", agent: final_agent()}]
+      assert {:ok, _} = SequentialOrchestrator.execute(specs, "hi", [])
+      :otel_span.end_span(caller)
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "caller",
+          "normandy.workflow.run",
+          "normandy.agent.run",
+          "normandy.agent.run"
+        ])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      workflow = OtelSpanBridge.fetch_span!(spans, "normandy.workflow.run")
+      runs = Enum.filter(spans, &(&1.name == "normandy.agent.run"))
+
+      assert workflow.parent_span_id == caller_span.span_id
+      assert Enum.all?(runs, &(&1.parent_span_id == workflow.span_id))
+    end
+
+    test "ParallelOrchestrator.execute nests each spawned run under its workflow span" do
+      OtelSpanBridge.attach(
+        prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :workflow, :run]]
+      )
+
+      caller = start_caller_span()
+
+      specs = [
+        %{id: "a", agent: final_agent(), input: %{chat_message: "hi"}},
+        %{id: "b", agent: final_agent(), input: %{chat_message: "hi"}}
+      ]
+
+      assert {:ok, _} = ParallelOrchestrator.execute(specs, [])
+      :otel_span.end_span(caller)
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "caller",
+          "normandy.workflow.run",
+          "normandy.agent.run",
+          "normandy.agent.run"
+        ])
+
+      workflow = OtelSpanBridge.fetch_span!(spans, "normandy.workflow.run")
+      runs = Enum.filter(spans, &(&1.name == "normandy.agent.run"))
+
+      assert Enum.all?(runs, &(&1.parent_span_id == workflow.span_id))
     end
   end
 

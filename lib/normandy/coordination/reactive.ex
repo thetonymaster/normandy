@@ -6,6 +6,10 @@ defmodule Normandy.Coordination.Reactive do
   completion strategies: race (first to finish), all (wait for all), and
   some (wait for N successes).
 
+  These combinators emit no `[:normandy, :workflow, :run]` span of their own (a
+  current limitation): they are the building blocks `Normandy.DSL.Workflow` uses
+  inside its span. Each agent run they start still nests under the caller's span.
+
   ## Examples
 
       # Race: Return first successful result

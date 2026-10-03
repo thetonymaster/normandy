@@ -116,7 +116,10 @@ defmodule Normandy.DSL.Workflow do
   `:exception`) with metadata `:workflow_name` (the module), `:orchestrator`
   (`:workflow`) and `:step_count`. Agent runs started by the workflow's steps
   nest under it, so a trace shows workflow -> run -> llm_call/tool. The
-  coordinators in `Normandy.Coordination` are not wrapped by this span.
+  orchestrators in `Normandy.Coordination` emit the same span from their own
+  entry points (see `Normandy.Telemetry.WorkflowSpan`); `Reactive`'s combinators
+  are building blocks used inside this span and emit none of their own (a current
+  limitation).
 
   ## Features
 
@@ -131,6 +134,7 @@ defmodule Normandy.DSL.Workflow do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.Reactive
+  alias Normandy.Telemetry.WorkflowSpan
 
   defmacro __using__(_opts) do
     quote do
@@ -418,14 +422,10 @@ defmodule Normandy.DSL.Workflow do
         steps = unquote(Macro.escape(steps))
 
         # No content in the metadata: only the workflow's identity and size.
-        metadata = %{
-          workflow_name: __MODULE__,
-          orchestrator: :workflow,
-          step_count: length(steps)
-        }
+        metadata = %{workflow_name: __MODULE__, step_count: length(steps)}
 
-        :telemetry.span([:normandy, :workflow, :run], metadata, fn ->
-          {execute_workflow(steps, agents_map, initial_input, context), metadata}
+        WorkflowSpan.span(:workflow, metadata, fn ->
+          execute_workflow(steps, agents_map, initial_input, context)
         end)
       end
 
