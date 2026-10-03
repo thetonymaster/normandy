@@ -740,7 +740,8 @@ defmodule Normandy.Agents.BaseAgent do
   # and logs when it actually shrinks the conversation. Every run emits
   # [:normandy, :agent, :compaction] (measurements: whichever of :tokens_before,
   # :tokens_after, :tokens_removed the compactor reported; metadata: :agent_name,
-  # :model, :strategy, :compacted), so a compactor that never fires is observable.
+  # :model, :strategy, :compacted, and the compactor's :error / :reason when it
+  # failed or could not size a window), so a compactor that never fires is observable.
   # The default config selects Compactor.NoOp, so this is observably a no-op
   # unless an agent opts into a real compactor.
   @doc false
@@ -757,7 +758,9 @@ defmodule Normandy.Agents.BaseAgent do
         agent_name: config.name,
         model: config.model,
         strategy: Map.get(meta, :strategy),
-        compacted: Map.get(meta, :compacted) == true
+        compacted: Map.get(meta, :compacted) == true,
+        error: Map.get(meta, :error),
+        reason: Map.get(meta, :reason)
       }
     )
 

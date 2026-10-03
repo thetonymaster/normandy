@@ -46,8 +46,29 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
              agent_name: "compacting-agent",
              model: "m",
              strategy: :summarize,
-             compacted: true
+             compacted: true,
+             error: nil,
+             reason: nil
            }
+  end
+
+  test "a compactor that failed or had no window says why in the event", %{ref: ref} do
+    BaseAgent.compact_turn_memory(
+      agent(%{compacted: false, error: {:summarize_failed, :timeout}}),
+      %Normandy.Agents.Turn.State{},
+      %{iterations_left: 3}
+    )
+
+    assert_receive {[:normandy, :agent, :compaction], ^ref, _,
+                    %{error: {:summarize_failed, :timeout}}}
+
+    BaseAgent.compact_turn_memory(
+      agent(%{compacted: false, reason: :no_window}),
+      %Normandy.Agents.Turn.State{},
+      %{iterations_left: 3}
+    )
+
+    assert_receive {[:normandy, :agent, :compaction], ^ref, _, %{reason: :no_window}}
   end
 
   test "a chat turn with no tool calls runs the compactor before calling the model", %{ref: ref} do
