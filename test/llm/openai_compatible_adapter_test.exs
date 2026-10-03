@@ -64,7 +64,10 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       req_options =
         stub(fn conn ->
           Req.Test.json(conn, %{
-            "choices" => [%{"message" => %{"content" => "The answer is 42."}}],
+            "id" => "chatcmpl-42",
+            "choices" => [
+              %{"message" => %{"content" => "The answer is 42."}, "finish_reason" => "stop"}
+            ],
             "usage" => %{"total_tokens" => 10}
           })
         end)
@@ -79,11 +82,12 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       schema = %Normandy.Agents.BaseAgentOutputSchema{}
       msgs = [%Message{role: "user", content: "What is the answer?"}]
 
-      {resp, usage} =
+      {resp, usage, meta} =
         Model.converse(client, "gpt-4o", 0.7, 1024, msgs, schema, [])
 
       assert resp.chat_message == "The answer is 42."
       assert usage == %{"total_tokens" => 10}
+      assert meta == %{response_id: "chatcmpl-42", finish_reason: "stop"}
     end
   end
 

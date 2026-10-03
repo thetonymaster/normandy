@@ -100,6 +100,24 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   @doc false
+  # Per-call facts that are not token usage: the completion id and the first
+  # choice's finish_reason (a string, e.g. "stop"). Keys the body lacks are left out.
+  @spec response_meta(term()) :: map()
+  def response_meta(%{} = body) do
+    finish_reason =
+      case Map.get(body, "choices") do
+        [%{"finish_reason" => reason} | _] -> reason
+        _ -> nil
+      end
+
+    [response_id: Map.get(body, "id"), finish_reason: finish_reason]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  def response_meta(_body), do: %{}
+
+  @doc false
   # Classifies a non-2xx chat-completions response (spec §2).
   @spec __to_llm_error__(integer(), term()) :: LLMError.t()
   def __to_llm_error__(status, body) when is_integer(status) do
@@ -168,7 +186,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
               {:error, Normandy.LLMError.with_usage(error, Map.get(resp_body, "usage"))}
 
             populated ->
-              {populated, Map.get(resp_body, "usage")}
+              {populated, Map.get(resp_body, "usage"), A.response_meta(resp_body)}
           end
 
         {:ok, %Req.Response{status: status, body: resp_body}} ->

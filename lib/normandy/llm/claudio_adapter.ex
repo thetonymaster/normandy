@@ -1077,13 +1077,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # Thinking blocks the API dropped or let through after their history changed
     # (sent only with :thinking_block_binding's beta).
-    case response.input_transformations do
-      [_ | _] = transformations -> Map.put(meta, :input_transformations, transformations)
-      _ -> meta
-    end
+    meta =
+      case response.input_transformations do
+        [_ | _] = transformations -> Map.put(meta, :input_transformations, transformations)
+        _ -> meta
+      end
+
+    # The provider's message id and stop_reason (an atom here, e.g. :end_turn).
+    meta
+    |> put_unless_nil(:response_id, response.id)
+    |> put_unless_nil(:finish_reason, response.stop_reason)
   end
 
   def response_meta(_response), do: %{}
+
+  defp put_unless_nil(map, _key, nil), do: map
+  defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   @doc false
   # The served model's thinking and redacted_thinking blocks, in order and in

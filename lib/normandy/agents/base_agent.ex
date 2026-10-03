@@ -31,6 +31,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
@@ -635,7 +636,16 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp call_turn_llm(config, state, %{response_model: response_model}) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
-    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    llm_metadata =
+      %{model: config.model, iteration: iteration, agent_name: config.name}
+      |> Map.merge(
+        Provider.request_metadata(config,
+          stream: false,
+          response_model: response_model || Map.get(config, :output_schema),
+          tools?: has_tools?(config)
+        )
+      )
 
     with_llm_call_span(config, llm_metadata, fn ->
       {r, usage, response_meta} =
@@ -660,7 +670,14 @@ defmodule Normandy.Agents.BaseAgent do
           tool_call_count: length(tool_calls),
           usage: usage
         })
-        |> Map.merge(Map.take(response_meta, [:served_by, :input_transformations]))
+        |> Map.merge(
+          Map.take(response_meta, [
+            :served_by,
+            :input_transformations,
+            :response_id,
+            :finish_reason
+          ])
+        )
 
       {r, meta}
     end)
@@ -962,7 +979,16 @@ defmodule Normandy.Agents.BaseAgent do
   # caught in run_stream_turn/3, which raises the wrapped LLMError.
   defp call_stream_llm(config, state, callback) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
-    llm_metadata = %{model: config.model, iteration: iteration, agent_name: config.name}
+
+    llm_metadata =
+      %{model: config.model, iteration: iteration, agent_name: config.name}
+      |> Map.merge(
+        Provider.request_metadata(config,
+          stream: true,
+          response_model: nil,
+          tools?: has_tools?(config)
+        )
+      )
 
     final_message =
       with_llm_call_span(config, llm_metadata, fn ->
@@ -977,6 +1003,7 @@ defmodule Normandy.Agents.BaseAgent do
   # :exception rather than :stop.
   defp stream_llm_attempt(config, state, callback, llm_metadata) do
     {messages, prefix_key} = build_stream_messages(config)
+    {callback, first_chunk} = track_first_chunk(callback)
 
     case stream_response_from_llm(
            config,
@@ -992,6 +1019,7 @@ defmodule Normandy.Agents.BaseAgent do
          llm_metadata
          |> Map.merge(%{has_tool_calls: tcs != [], tool_call_count: length(tcs)})
          |> Map.merge(stream_meta(final_message))
+         |> Map.merge(first_chunk_meta(first_chunk))
          |> put_usage(Map.get(final_message, :usage))}
 
       {:error, error} ->
@@ -1010,9 +1038,46 @@ defmodule Normandy.Agents.BaseAgent do
         _ -> %{}
       end
 
+    served_by =
+      served_by
+      |> put_present(:response_id, Map.get(final_message, :id))
+      |> put_present(:finish_reason, Map.get(final_message, :stop_reason))
+
     case Map.get(final_message, :input_transformations) do
       [_ | _] = transformations -> Map.put(served_by, :input_transformations, transformations)
       _ -> served_by
+    end
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
+
+  # Wraps the stream callback to note when the first content delta (text or
+  # thinking) arrives. Returns the wrapped callback and a tracker holding the
+  # start time and the elapsed native time (+1, so 0 means "not seen").
+  defp track_first_chunk(callback) when is_function(callback, 2) do
+    started_at = System.monotonic_time()
+    seen = :atomics.new(1, [])
+
+    wrapped = fn event, data ->
+      if event in [:text_delta, :thinking_delta] and :atomics.get(seen, 1) == 0 do
+        :atomics.put(seen, 1, System.monotonic_time() - started_at + 1)
+      end
+
+      callback.(event, data)
+    end
+
+    {wrapped, seen}
+  end
+
+  defp track_first_chunk(callback), do: {callback, nil}
+
+  defp first_chunk_meta(nil), do: %{}
+
+  defp first_chunk_meta(seen) do
+    case :atomics.get(seen, 1) do
+      0 -> %{}
+      elapsed -> %{time_to_first_chunk: elapsed - 1}
     end
   end
 
