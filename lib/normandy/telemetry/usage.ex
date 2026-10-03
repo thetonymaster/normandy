@@ -66,8 +66,10 @@ defmodule Normandy.Telemetry.Usage do
   defp sources(usage) do
     usage = to_map(usage)
 
-    case fetch(usage, :iterations) do
-      [_ | _] = iterations -> iterations |> Enum.map(&to_map/1) |> Enum.reject(&(&1 == %{}))
+    with [_ | _] = iterations <- fetch(usage, :iterations),
+         [_ | _] = maps <- iterations |> Enum.map(&to_map/1) |> Enum.reject(&(&1 == %{})) do
+      maps
+    else
       _ -> [usage]
     end
   end

@@ -1142,10 +1142,52 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp add_usage(usage, nil), do: usage
 
   defp add_usage(%{} = a, %{} = b) do
-    Map.merge(to_usage_map(a), to_usage_map(b), fn
-      _key, x, y when is_integer(x) and is_integer(y) -> x + y
-      _key, _x, y -> y
-    end)
+    a = to_usage_map(a)
+    b = to_usage_map(b)
+
+    merged =
+      Map.merge(a, b, fn
+        _key, x, y when is_integer(x) and is_integer(y) -> x + y
+        _key, _x, y -> y
+      end)
+
+    # The top-level counts above are summed, but `iterations` must not be
+    # overwritten: Normandy.Telemetry.Usage bills the sum over iterations when
+    # they are present. Each side contributes its iterations, or one synthetic
+    # iteration built from its top-level counts.
+    if iterations_of(a) == [] and iterations_of(b) == [] do
+      merged
+    else
+      merged
+      |> Map.delete("iterations")
+      |> Map.put(:iterations, side_iterations(a) ++ side_iterations(b))
+    end
+  end
+
+  defp iterations_of(usage) do
+    case Map.get(usage, :iterations) || Map.get(usage, "iterations") do
+      [_ | _] = iterations -> iterations
+      _ -> []
+    end
+  end
+
+  @iteration_count_keys ~w(input_tokens output_tokens cache_read_input_tokens cache_creation_input_tokens)
+
+  defp side_iterations(usage) do
+    case iterations_of(usage) do
+      [] ->
+        counts =
+          for key <- @iteration_count_keys,
+              n = Map.get(usage, String.to_existing_atom(key)) || Map.get(usage, key),
+              is_integer(n),
+              into: %{},
+              do: {key, n}
+
+        [counts]
+
+      iterations ->
+        iterations
+    end
   end
 
   defp to_usage_map(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__)

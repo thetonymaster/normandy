@@ -94,4 +94,9 @@ defmodule Normandy.Telemetry.UsageTest do
 
     assert Usage.normalize(%{input_tokens: 2, iterations: nil}) == %{input_tokens: 2}
   end
+
+  test "iterations with no usable entries fall back to the top-level counts" do
+    assert Usage.normalize(%{input_tokens: 2, output_tokens: 3, iterations: [nil, "x", %{}]}) ==
+             %{input_tokens: 2, output_tokens: 3}
+  end
 end
