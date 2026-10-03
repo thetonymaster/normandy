@@ -10,6 +10,7 @@ defmodule NormandyTest.E2E.Distributed do
   alias Normandy.Behaviours.{Config, PolicyEngine}
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Behaviours.SessionStore.Postgres, as: PG
+  alias Normandy.Telemetry.OtelCtx
 
   @registry :e2e_registry
   @supervisor :e2e_turn_sup
@@ -141,12 +142,20 @@ defmodule NormandyTest.E2E.Distributed do
         ConfigTemplate.from_config(config(), @template, :eager)
       )
 
-  def run_turn(sid, text) do
+  # `carrier` is the primary's trace context as a W3C carrier (OtelCtx.inject/1): the
+  # call runs under it, as a caller on this node would, so the turn's spans join the
+  # scenario's trace. `[]` (no OTel) leaves the context alone.
+  def run_turn(sid, text, carrier \\ []) do
+    OtelCtx.restore(OtelCtx.extract(carrier))
     {:ok, r} = Turn.Session.run([config: config()] ++ session_opts(sid), %{chat_message: text})
     r.chat_message
   end
 
-  def approve(sid, decisions), do: Turn.Session.approve(session_opts(sid), decisions)
+  def approve(sid, decisions, carrier \\ []) do
+    OtelCtx.restore(OtelCtx.extract(carrier))
+    Turn.Session.approve(session_opts(sid), decisions)
+  end
+
   def owner(sid), do: HReg.whereis(@registry, sid)
 
   def forward_event(name, meta), do: sink({:session_event, node(), name, meta})

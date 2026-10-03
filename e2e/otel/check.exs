@@ -138,17 +138,32 @@ defmodule E2E.OtelCheck do
         other -> ["roots: expected the one e2e root, got #{inspect(Enum.map(other, & &1.name))}"]
       end
 
-    root_v ++ Enum.flat_map(spans, &span_rules(&1, by_id, Map.get(children, &1.id, [])))
+    # A turn resumed on another node (11_distributed) lost its first run span with the
+    # node that ran it: that span was still open, so it was never exported, and the spans
+    # it had already ended point at it. Only a resumed turn's spans may have such a parent.
+    resumed_turns =
+      for %{type: :run, attrs: %{"normandy.resumed" => true} = a} <- spans,
+          into: MapSet.new(),
+          do: a["normandy.turn_id"]
+
+    root_v ++
+      Enum.flat_map(
+        spans,
+        &span_rules(&1, by_id, Map.get(children, &1.id, []), resumed_turns)
+      )
   end
 
-  defp span_rules(%{type: :root}, _by_id, _children), do: []
+  defp span_rules(%{type: :root}, _by_id, _children, _resumed_turns), do: []
 
-  defp span_rules(span, by_id, children) do
+  defp span_rules(span, by_id, children, resumed_turns) do
     parent = Map.get(by_id, span.parent)
 
     cond do
       span.parent in [nil, ""] ->
         []
+
+      is_nil(parent) and MapSet.member?(resumed_turns, span.attrs["normandy.turn_id"]) ->
+        attr_rules(span)
 
       is_nil(parent) ->
         [v(span, "parent #{span.parent} is not in the trace")]

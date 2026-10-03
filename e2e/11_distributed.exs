@@ -37,6 +37,17 @@ u = System.unique_integer([:positive])
 peers = Map.new([:a, :b], fn k -> {pid, node} = Normandy.ClusterCase.start_peer(:"e2e_#{k}_#{u}"); {node, pid} end)
 nodes = Map.keys(peers)
 
+# With NORMANDY_E2E_OTLP the peers bridge their own spans (before boot starts :opentelemetry
+# there), and every call below carries the trace context, as a caller on that node would.
+if E2E.OtelBridge.enabled?() do
+  for node <- nodes do
+    :erpc.call(node, Code, :require_file, [Path.expand("otel_bridge.exs", __DIR__)])
+    :ok = :erpc.call(node, E2E.OtelBridge, :setup_peer, ["11_distributed", node(), Application.get_all_env(:opentelemetry)])
+  end
+end
+
+carrier = Normandy.Telemetry.OtelCtx.inject(Normandy.Telemetry.OtelCtx.capture())
+
 for node <- nodes do
   :ok = :erpc.call(node, D, :boot, [Application.get_all_env(:normandy), Application.get_all_env(:claudio), repo_opts, node()], 30_000)
 end
@@ -52,7 +63,7 @@ sid = "e2e-dist-#{u}"
 :ok = :erpc.call(a, D, :prepare, [sid])
 
 turn = fn node, n, text ->
-  r = :erpc.call(node, D, :run_turn, [sid, text], 120_000)
+  r = :erpc.call(node, D, :run_turn, [sid, text, carrier], 120_000)
   S.turn(n, "#{text}   (via #{node})", r)
   r
 end
@@ -64,7 +75,7 @@ S.narrate("Turn 3 asks for a refund; the gated tool parks the turn awaiting appr
 spawn(fn ->
   # This caller's node is stopped below, so its call ends in :noconnection by design.
   try do
-    r = :erpc.call(a, D, :run_turn, [sid, "Issue a refund for order A-77 using the issue_refund tool."], :infinity)
+    r = :erpc.call(a, D, :run_turn, [sid, "Issue a refund for order A-77 using the issue_refund tool.", carrier], :infinity)
     send(main, {:turn3_caller, :returned, r})
   catch
     kind, reason -> send(main, {:turn3_caller, kind, reason})
@@ -107,7 +118,7 @@ end
 
 S.assert!("the revived server is alive on #{survivor}", :erpc.call(survivor, Process, :alive?, [new_pid]), inspect(new_pid))
 
-:ok = :erpc.call(survivor, D, :approve, [sid, Map.new(ids, &{&1, :approve})])
+:ok = :erpc.call(survivor, D, :approve, [sid, Map.new(ids, &{&1, :approve}), carrier])
 
 receive do
   {:tool_ran, node, order} -> S.assert!("the approved refund ran on the survivor", node == survivor and order == "A-77", inspect({node, order}))

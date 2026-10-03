@@ -40,27 +40,10 @@ defmodule E2E.OtelBridge do
 
   @doc "Points the SDK at the collector, attaches the handlers and opens the scenario root span."
   def setup(scenario_id) do
-    endpoint = System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-
-    :ok =
-      :otel_simple_processor.set_exporter(:opentelemetry_exporter, %{
-        protocol: :http_protobuf,
-        endpoints: [endpoint]
-      })
-
     {:ok, _} = Agent.start_link(fn -> %{spans: 0, events: 0, errors: []} end, name: @stats)
-    :persistent_term.put({__MODULE__, :scenario}, scenario_id)
+    start_export(scenario_id, @stats)
 
-    events =
-      for(span <- @spans, suffix <- [:start, :stop, :exception], do: span ++ [suffix]) ++
-        @point_events
-
-    # Resolved once: get_application_tracer/1 scans the loaded applications, which took
-    # ~2 ms per call here and skewed every span start that called it.
-    tracer = :opentelemetry.get_application_tracer(__MODULE__)
-    :persistent_term.put({__MODULE__, :tracer}, tracer)
-
-    :ok = :telemetry.attach_many(@handler, events, &__MODULE__.handle/4, nil)
+    tracer = :persistent_term.get({__MODULE__, :tracer})
 
     root =
       :otel_tracer.start_span(:otel_ctx.get_current(), tracer, "e2e " <> scenario_id, %{
@@ -75,6 +58,50 @@ defmodule E2E.OtelBridge do
 
     IO.puts("OTEL_TRACE_ID #{trace_id}")
     :ok
+  end
+
+  @doc """
+  Bridges a peer node's events into the same trace: starts the SDK there and counts into
+  the primary's stats, so `report/0` on the primary covers every node. Opens no root span:
+  the peer's runs nest under the context the primary passes with each call. `otel_env` is
+  the primary's `:opentelemetry` env (the simple processor `start_export/2` points at the
+  collector; a peer has only the defaults).
+  """
+  def setup_peer(scenario_id, primary, otel_env) do
+    if List.keymember?(Application.started_applications(), :opentelemetry, 0),
+      do:
+        raise(
+          "setup_peer/3 must run before :opentelemetry starts on #{node()}: its env is read at start"
+        )
+
+    Application.put_all_env(opentelemetry: otel_env)
+    {:ok, _} = Application.ensure_all_started(:opentelemetry)
+    # The exporter's HTTP client (inets); the primary starts it as a test dependency.
+    {:ok, _} = Application.ensure_all_started(:opentelemetry_exporter)
+    start_export(scenario_id, {@stats, primary})
+  end
+
+  defp start_export(scenario_id, stats) do
+    endpoint = System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+
+    :ok =
+      :otel_simple_processor.set_exporter(:opentelemetry_exporter, %{
+        protocol: :http_protobuf,
+        endpoints: [endpoint]
+      })
+
+    :persistent_term.put({__MODULE__, :scenario}, scenario_id)
+    :persistent_term.put({__MODULE__, :stats}, stats)
+
+    # Resolved once: get_application_tracer/1 scans the loaded applications, which took
+    # ~2 ms per call here and skewed every span start that called it.
+    :persistent_term.put({__MODULE__, :tracer}, :opentelemetry.get_application_tracer(__MODULE__))
+
+    events =
+      for(span <- @spans, suffix <- [:start, :stop, :exception], do: span ++ [suffix]) ++
+        @point_events
+
+    :ok = :telemetry.attach_many(@handler, events, &__MODULE__.handle/4, nil)
   end
 
   @doc "Ends the root span (synchronous export) and prints the bridge's counters."
@@ -126,7 +153,7 @@ defmodule E2E.OtelBridge do
     token = :otel_ctx.attach(:otel_tracer.set_current_span(parent, span))
     key = key(prefix, meta)
     Process.put(@open_key, [{key, span, token} | Process.get(@open_key, [])])
-    Agent.update(@stats, &%{&1 | spans: &1.spans + 1})
+    Agent.update(stats(), __MODULE__, :bump, [:spans])
   end
 
   defp close(
@@ -194,7 +221,7 @@ defmodule E2E.OtelBridge do
 
     span = :otel_tracer.current_span_ctx(:otel_ctx.get_current())
     _ = :otel_span.add_event(span, Enum.map_join(event, ".", &Atom.to_string/1), attrs)
-    Agent.update(@stats, &%{&1 | events: &1.events + 1})
+    Agent.update(stats(), __MODULE__, :bump, [:events])
   end
 
   # --- names and attributes (Normandy.Telemetry "OpenTelemetry GenAI mapping") ----------
@@ -386,8 +413,16 @@ defmodule E2E.OtelBridge do
   defp compact(map), do: map |> Enum.reject(fn {_k, v} -> is_nil(v) end) |> Map.new()
 
   defp scenario, do: :persistent_term.get({__MODULE__, :scenario}, "unknown")
+  defp stats, do: :persistent_term.get({__MODULE__, :stats})
+
+  # MFA updates, not closures: a peer's update runs on the primary, where a fun from the
+  # peer's separately compiled copy of this module may not match.
+  @doc false
+  def bump(stats, key), do: Map.update!(stats, key, &(&1 + 1))
+  @doc false
+  def add_error(stats, details), do: %{stats | errors: stats.errors ++ [details]}
 
   defp error(details) do
-    Agent.update(@stats, &%{&1 | errors: &1.errors ++ [Map.put(details, :pid, self())]})
+    Agent.update(stats(), __MODULE__, :add_error, [Map.put(details, :pid, self())])
   end
 end
