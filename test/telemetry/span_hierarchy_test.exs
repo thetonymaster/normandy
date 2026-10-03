@@ -8,9 +8,11 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.{BaseAgent, ToolCallResponse, Turn}
+  alias Normandy.Batch.Processor
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Coordination.{AgentProcess, ParallelOrchestrator, Reactive}
   alias Normandy.Test.{FakeTool, OtelSpanBridge, StubClient}
   alias Normandy.Tools.Registry
 
@@ -195,6 +197,140 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
 
       assert run.parent_span_id == :undefined
       refute run.trace_id == caller_span.trace_id
+    end
+  end
+
+  defp final_agent do
+    BaseAgent.init(%{client: counted_client(false), model: "test-model"})
+  end
+
+  # Asserts every run span is a direct child of the caller span, in its trace.
+  defp assert_runs_under_caller(caller, run_count) do
+    :otel_span.end_span(caller)
+
+    spans =
+      OtelSpanBridge.await_spans(["caller" | List.duplicate("normandy.agent.run", run_count)])
+
+    caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+    runs = Enum.filter(spans, &(&1.name == "normandy.agent.run"))
+
+    assert length(runs) == run_count
+    assert Enum.all?(runs, &(&1.parent_span_id == caller_span.span_id))
+    assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
+  end
+
+  describe "coordination fan-out" do
+    test "Reactive.all nests each agent run under the caller" do
+      caller = start_caller_span()
+
+      assert {:ok, _} = Reactive.all([final_agent(), final_agent()], %{chat_message: "hi"})
+
+      assert_runs_under_caller(caller, 2)
+    end
+
+    test "Reactive.race nests the agent runs under the caller" do
+      caller = start_caller_span()
+
+      assert {:ok, _} = Reactive.race([final_agent(), final_agent()], %{chat_message: "hi"})
+
+      # The loser may be killed before its run span ends; the winner always ends.
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.agent.run"])
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+
+      assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
+    end
+
+    test "Reactive.some nests the agent runs under the caller" do
+      caller = start_caller_span()
+
+      assert {:ok, _} =
+               Reactive.some([final_agent(), final_agent()], %{chat_message: "hi"}, count: 1)
+
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.agent.run"])
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+
+      assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
+    end
+
+    test "ParallelOrchestrator.execute nests each spec run under the caller" do
+      caller = start_caller_span()
+
+      specs = [
+        %{id: "a", agent: final_agent(), input: %{chat_message: "hi"}},
+        %{id: "b", agent: final_agent(), input: %{chat_message: "hi"}}
+      ]
+
+      assert {:ok, %{success: true}} = ParallelOrchestrator.execute(specs, [])
+
+      assert_runs_under_caller(caller, 2)
+    end
+
+    test "ParallelOrchestrator.execute_stream nests each spec run under the caller" do
+      caller = start_caller_span()
+
+      specs = [%{id: "a", agent: final_agent(), input: %{chat_message: "hi"}}]
+
+      assert [{:ok, {:ok, {"a", _}}}] =
+               ParallelOrchestrator.execute_stream(specs) |> Enum.to_list()
+
+      assert_runs_under_caller(caller, 1)
+    end
+
+    test "Batch.Processor.process_batch nests each item run under the caller" do
+      caller = start_caller_span()
+
+      assert {:ok, _} =
+               Processor.process_batch(final_agent(), [
+                 %{chat_message: "one"},
+                 %{chat_message: "two"}
+               ])
+
+      assert_runs_under_caller(caller, 2)
+    end
+
+    test "AgentProcess.run (inline) nests the run under the caller" do
+      {:ok, pid} = AgentProcess.start_link(agent: final_agent())
+      caller = start_caller_span()
+
+      assert {:ok, _} = AgentProcess.run(pid, %{chat_message: "hi"})
+
+      assert_runs_under_caller(caller, 1)
+    end
+
+    test "AgentProcess.run (inline) does not leak the caller context into the next call" do
+      {:ok, pid} = AgentProcess.start_link(agent: final_agent())
+      caller = start_caller_span()
+
+      assert {:ok, _} = AgentProcess.run(pid, %{chat_message: "hi"})
+      assert_runs_under_caller(caller, 1)
+
+      # The old message shape carries no context: its run must be a root span.
+      assert {:ok, _} = GenServer.call(pid, {:run, %{chat_message: "again"}})
+      spans = OtelSpanBridge.await_spans(["normandy.agent.run"])
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+
+      assert run.parent_span_id == :undefined
+    end
+
+    test "AgentProcess.run (server engine) nests the run under the caller" do
+      {:ok, pid} = AgentProcess.start_link(agent: final_agent(), turn_engine: :server)
+      caller = start_caller_span()
+
+      assert {:ok, _} = AgentProcess.run(pid, %{chat_message: "hi"})
+
+      assert_runs_under_caller(caller, 1)
+    end
+
+    test "AgentProcess.cast nests the run under the caller" do
+      {:ok, pid} = AgentProcess.start_link(agent: final_agent())
+      caller = start_caller_span()
+
+      :ok = AgentProcess.cast(pid, %{chat_message: "hi"}, reply_to: self())
+      assert_receive {:agent_result, _, {:ok, _}}, 5_000
+
+      assert_runs_under_caller(caller, 1)
     end
   end
 end

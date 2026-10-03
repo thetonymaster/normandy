@@ -41,6 +41,7 @@ defmodule Normandy.Batch.Processor do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Telemetry.OtelCtx
 
   @type batch_option ::
           {:max_concurrency, pos_integer()}
@@ -124,11 +125,16 @@ defmodule Normandy.Batch.Processor do
     # exit carries them via zip_input_on_exit), so the callbacks run here in
     # the caller with a true completion count, and ordered results can be
     # put back in input order.
+    parent_otel_ctx = OtelCtx.capture()
+
     {outcomes, _completed} =
       inputs
       |> Stream.with_index()
       |> Task.async_stream(
-        fn {input, index} -> {index, input, process_single(agent, input)} end,
+        fn {input, index} ->
+          OtelCtx.restore(parent_otel_ctx)
+          {index, input, process_single(agent, input)}
+        end,
         max_concurrency: max_concurrency,
         timeout: timeout,
         on_timeout: :kill_task,

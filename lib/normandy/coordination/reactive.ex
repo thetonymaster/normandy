@@ -30,6 +30,7 @@ defmodule Normandy.Coordination.Reactive do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Coordination.Reactive
+  alias Normandy.Telemetry.OtelCtx
 
   @type agent_or_pid :: struct() | pid()
   @type result :: {:ok, term()} | {:error, term()}
@@ -80,11 +81,14 @@ defmodule Normandy.Coordination.Reactive do
     ref = make_ref()
 
     # Start all agent tasks
+    parent_otel_ctx = OtelCtx.capture()
+
     tasks =
       agents
       |> Enum.with_index()
       |> Enum.map(fn {agent, idx} ->
         Task.async(fn ->
+          OtelCtx.restore(parent_otel_ctx)
           agent_id = "agent_#{idx}"
           result = execute_agent(agent, input)
 
@@ -153,10 +157,13 @@ defmodule Normandy.Coordination.Reactive do
       |> Enum.map(fn {agent, idx} -> {agent, "agent_#{idx}"} end)
 
     # Execute with Task.async_stream
+    parent_otel_ctx = OtelCtx.capture()
+
     results =
       Task.async_stream(
         agent_specs,
         fn {agent, agent_id} ->
+          OtelCtx.restore(parent_otel_ctx)
           result = execute_agent(agent, input)
           if on_complete, do: on_complete.(agent_id, result)
           {agent_id, result}
@@ -233,11 +240,14 @@ defmodule Normandy.Coordination.Reactive do
       ref = make_ref()
 
       # Start all agent tasks
+      parent_otel_ctx = OtelCtx.capture()
+
       tasks =
         agents
         |> Enum.with_index()
         |> Enum.map(fn {agent, idx} ->
           Task.async(fn ->
+            OtelCtx.restore(parent_otel_ctx)
             agent_id = "agent_#{idx}"
             result = execute_agent(agent, input)
 

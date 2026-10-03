@@ -58,6 +58,7 @@ defmodule Normandy.Coordination.AgentProcess do
   @agent_id_key :"$normandy_agent_id"
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Telemetry.OtelCtx
 
   @type agent_id :: String.t()
   @type run_opts :: [
@@ -115,7 +116,7 @@ defmodule Normandy.Coordination.AgentProcess do
   @spec run(GenServer.server(), term(), keyword()) :: {:ok, term()} | {:error, term()}
   def run(server, input, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 60_000)
-    GenServer.call(server, {:run, input}, timeout)
+    GenServer.call(server, {:run, input, OtelCtx.capture()}, timeout)
   end
 
   @doc """
@@ -140,7 +141,7 @@ defmodule Normandy.Coordination.AgentProcess do
   @spec cast(GenServer.server(), term(), keyword()) :: :ok
   def cast(server, input, opts \\ []) do
     reply_to = Keyword.get(opts, :reply_to)
-    GenServer.cast(server, {:run_async, input, reply_to})
+    GenServer.cast(server, {:run_async, input, reply_to, OtelCtx.capture()})
   end
 
   @doc """
@@ -382,15 +383,22 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
-  def handle_call({:run, input}, from, %{turn_engine: :server} = state) do
+  def handle_call({:run, input}, from, state), do: handle_call({:run, input, nil}, from, state)
+
+  # The caller's OTel context rides in the call so the run nests under the
+  # caller's span. The two-element shape (no context) is still accepted.
+  def handle_call({:run, input, otel_ctx}, from, %{turn_engine: :server} = state) do
     start_time = System.monotonic_time(:millisecond)
-    ref = spawn_run(state, prepare_input(input))
+    ref = spawn_run(state, prepare_input(input), otel_ctx)
     {:noreply, %{state | pending_runs: Map.put(state.pending_runs, ref, {from, start_time})}}
   end
 
   @impl true
-  def handle_call({:run, input}, _from, state) do
+  def handle_call({:run, input, otel_ctx}, _from, state) do
     start_time = System.monotonic_time(:millisecond)
+    # This process serves many callers: detach afterwards so one caller's
+    # context never leaks into the next call.
+    token = OtelCtx.attach(otel_ctx)
 
     result =
       try do
@@ -420,6 +428,8 @@ defmodule Normandy.Coordination.AgentProcess do
         e ->
           Logger.error("Agent #{state.agent_id} failed: #{Exception.message(e)}")
           {:reply, {:error, {:exception, e, __STACKTRACE__}}, state}
+      after
+        OtelCtx.detach(token)
       end
 
     result
@@ -489,13 +499,17 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
-  def handle_cast({:run_async, input, reply_to}, %{turn_engine: :server} = state) do
+  def handle_cast({:run_async, input, reply_to}, state),
+    do: handle_cast({:run_async, input, reply_to, nil}, state)
+
+  def handle_cast({:run_async, input, reply_to, otel_ctx}, %{turn_engine: :server} = state) do
     opts = session_opts(state)
     agent_id = state.agent_id
     user_input = prepare_input(input)
 
     _ =
       Task.start(fn ->
+        OtelCtx.restore(otel_ctx)
         # Guarantee reply_to always hears back: a raised/exited turn must not be
         # lost silently. Mirrors the inline path's handle_async_run/3 error shape,
         # plus a catch for exits/throws (Turn.Session.run can crash the turn).
@@ -522,10 +536,11 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
-  def handle_cast({:run_async, input, reply_to}, state) do
+  def handle_cast({:run_async, input, reply_to, otel_ctx}, state) do
     # Spawn task to run agent without blocking GenServer
     {:ok, _task_pid} =
       Task.start(fn ->
+        OtelCtx.restore(otel_ctx)
         result = handle_async_run(state.agent, input, state.agent_id)
 
         if reply_to do
@@ -545,12 +560,14 @@ defmodule Normandy.Coordination.AgentProcess do
 
   # Spawn a monitored, UNLINKED worker that runs the turn and tags its reply
   # with the monitor ref (so {:run_result, ref, …} and {:DOWN, ref, …} correlate).
-  defp spawn_run(state, user_input) do
+  defp spawn_run(state, user_input, otel_ctx) do
     server = self()
     opts = session_opts(state)
 
     worker =
       spawn(fn ->
+        OtelCtx.restore(otel_ctx)
+
         ref =
           receive do
             {:monitor_ref, r} -> r

@@ -25,6 +25,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.SharedContext
+  alias Normandy.Telemetry.OtelCtx
 
   @type agent_spec :: %{
           required(:id) => String.t(),
@@ -132,10 +133,15 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     ordered = Keyword.get(opts, :ordered, false)
 
     # Execute agents in parallel using Task.async_stream
+    parent_otel_ctx = OtelCtx.capture()
+
     results =
       Task.async_stream(
         agent_specs,
-        &{Map.fetch!(&1, :id), run_spec(&1, on_complete)},
+        fn spec ->
+          OtelCtx.restore(parent_otel_ctx)
+          {Map.fetch!(spec, :id), run_spec(spec, on_complete)}
+        end,
         max_concurrency: max_concurrency,
         timeout: timeout,
         # A slow agent fails on its own instead of exiting the caller.
@@ -239,9 +245,12 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     max_concurrency = Keyword.get(opts, :max_concurrency, 10)
     timeout = Keyword.get(opts, :timeout, 300_000)
 
+    parent_otel_ctx = OtelCtx.capture()
+
     Task.async_stream(
       agent_specs,
       fn spec ->
+        OtelCtx.restore(parent_otel_ctx)
         agent_id = Map.fetch!(spec, :id)
 
         case run_spec(spec, nil) do
