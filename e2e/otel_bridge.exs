@@ -249,6 +249,7 @@ defmodule E2E.OtelBridge do
       "gen_ai.output.type" => if(meta[:structured_output], do: "json"),
       "server.address" => meta[:server_address],
       "normandy.iteration" => meta[:iteration],
+      "normandy.purpose" => to_s(meta[:purpose]),
       "normandy.structured_output" => meta[:structured_output]
     }
   end
