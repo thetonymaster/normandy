@@ -116,6 +116,20 @@ defmodule Normandy.Telemetry do
       The model sees the same `{:error, message}`; tool failures are returned, not
       raised, so they usually end in `:stop` with `status: :error`.
 
+  ### `[:normandy, :memory, :command, :start | :stop | :exception]`
+
+  One `Normandy.Tools.Memory` command, inside its `[:normandy, :tool, :execute]` span.
+
+    * Start metadata: `command` (`"view" | "create" | "str_replace" | "insert" | "delete" |
+      "rename"`, or `nil` when the model sent none) and `store` (the `MemoryStore` module).
+      With the tool's `telemetry_include_paths: true` it adds `namespace` and `path`; both
+      are off by default because they can carry personal data.
+    * Stop measurements add `bytes_read`, `bytes_written` and `cas_retries`.
+    * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type`
+      (`:not_found | :conflict_exhausted | :invalid_path | :read_only | :too_large |
+      :no_match | :ambiguous_match | :invalid_line | :exists | :backend | :invalid_input`).
+      Command errors are returned to the model, not raised, so they end in `:stop`.
+
   ### `[:normandy, :workflow, :run, :start | :stop | :exception]`
 
   A multi-agent run: `Workflow.execute/1`, and the entry points of
