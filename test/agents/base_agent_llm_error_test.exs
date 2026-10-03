@@ -6,6 +6,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.LLMError
   alias Normandy.Test.StubClient
+  alias Normandy.Test.TelemetryCapture
 
   # Each converse/7 call is reported to the test process, then errors or raises.
   defp error_client(error),
@@ -53,19 +54,14 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
   end
 
   test "llm_call :exception reason carries the usage paid before the failure" do
+    # The non-streaming llm_call span runs in the calling process, so a handler
+    # running in any other process belongs to a concurrent test.
     test_pid = self()
-    id = "llm-error-usage-#{System.unique_integer([:positive])}"
 
-    :telemetry.attach(
-      id,
-      [:normandy, :agent, :llm_call, :exception],
-      fn _event, _measurements, metadata, _ ->
-        send(test_pid, {:llm_call_exception, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(id) end)
+    ref =
+      TelemetryCapture.attach([[:normandy, :agent, :llm_call, :exception]], fn _meta ->
+        self() == test_pid
+      end)
 
     e =
       LLMError.with_usage(
@@ -75,7 +71,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
     assert_raise LLMError, fn -> BaseAgent.run(agent(error_client(e)), input()) end
 
-    assert_received {:llm_call_exception, %{reason: %LLMError{} = reason}}
+    assert_received {:telemetry, ^ref, _, %{reason: %LLMError{} = reason}}
     assert reason.usage == %{input_tokens: 30, output_tokens: 6}
     assert reason.usage_counts == %{input_tokens: 30, output_tokens: 6}
   end

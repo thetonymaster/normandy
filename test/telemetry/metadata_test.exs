@@ -6,6 +6,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Telemetry.Metadata
+  alias Normandy.Test.TelemetryCapture
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
 
@@ -41,20 +42,6 @@ defmodule NormandyTest.Telemetry.MetadataTest do
         end
       end
     end
-  end
-
-  defp attach(events) do
-    parent = self()
-    id = "metadata-test-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach_many(
-      id,
-      events,
-      fn event, _m, meta, _ -> send(parent, {:span, event, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(id) end)
   end
 
   defp tool_agent(extra) do
@@ -101,13 +88,17 @@ defmodule NormandyTest.Telemetry.MetadataTest do
 
   describe "BaseAgent spans" do
     test "run stop, llm_call and tool spans carry the same turn id and the session" do
-      attach([
-        [:normandy, :agent, :run, :stop],
-        [:normandy, :agent, :llm_call, :start],
-        [:normandy, :tool, :execute, :start]
-      ])
-
       {name, agent} = tool_agent(%{session_id: "sess-3"})
+
+      TelemetryCapture.attach_span(
+        [
+          [:normandy, :agent, :run, :stop],
+          [:normandy, :agent, :llm_call, :start],
+          [:normandy, :tool, :execute, :start]
+        ],
+        agent_name: name
+      )
+
       {config, _} = BaseAgent.run(agent, %{chat_message: "go"})
       turn_id = AgentMemory.get_current_turn_id(config.memory)
       assert is_binary(turn_id)
@@ -133,8 +124,8 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     end
 
     test "without a session no session keys appear" do
-      attach([[:normandy, :agent, :run, :start]])
       {name, agent} = tool_agent(%{})
+      TelemetryCapture.attach_span([[:normandy, :agent, :run, :start]], agent_name: name)
       BaseAgent.run(agent, %{chat_message: "go"})
 
       assert_received {:span, [:normandy, :agent, :run, :start], meta}
@@ -165,7 +156,11 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     end
 
     test "start carries turn id and conversation id; stop shares them" do
-      attach([[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :stop]])
+      TelemetryCapture.attach_span(
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :stop]],
+        session_id: "s-meta"
+      )
+
       srv = start_server("s-meta", server_config(%{}))
 
       assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "go"})
@@ -180,7 +175,10 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     end
 
     test "llm_call spans inside the server carry the session" do
-      attach([[:normandy, :agent, :llm_call, :start]])
+      TelemetryCapture.attach_span([[:normandy, :agent, :llm_call, :start]],
+        session_id: "s-meta-llm"
+      )
+
       srv = start_server("s-meta-llm", server_config(%{}))
 
       assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "go"})
@@ -189,8 +187,12 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                        %{session_id: "s-meta-llm", conversation_id: "s-meta-llm", turn_id: _}}
     end
 
+    @tag :capture_log
     test "rejected input emits run :start and :exception like BaseAgent, same reply" do
-      attach([[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]])
+      TelemetryCapture.attach_span(
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+        session_id: "s-rejected"
+      )
 
       config = server_config(%{input_guardrails: [{BlockAll, []}]})
       srv = start_server("s-rejected", config)
@@ -210,14 +212,21 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                          reason: {:rejected, %Normandy.Guardrails.ViolationError{}}
                        }}
 
-      {_, agent} = tool_agent(%{input_guardrails: [{BlockAll, []}], tool_registry: nil})
+      {name, agent} = tool_agent(%{input_guardrails: [{BlockAll, []}], tool_registry: nil})
+
+      TelemetryCapture.attach_span(
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+        agent_name: name
+      )
 
       assert_raise Normandy.Guardrails.ViolationError, fn ->
         BaseAgent.run(agent, %{chat_message: "far too long"})
       end
 
-      assert_received {:span, [:normandy, :agent, :run, :start], _}
-      assert_received {:span, [:normandy, :agent, :run, :exception], %{kind: :error}}
+      assert_received {:span, [:normandy, :agent, :run, :start], %{agent_name: ^name}}
+
+      assert_received {:span, [:normandy, :agent, :run, :exception],
+                       %{agent_name: ^name, kind: :error}}
     end
   end
 end

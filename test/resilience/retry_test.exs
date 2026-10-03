@@ -1,6 +1,8 @@
 defmodule Normandy.Resilience.RetryTest do
   use ExUnit.Case, async: true
 
+  @moduletag :capture_log
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Resilience.Retry
 

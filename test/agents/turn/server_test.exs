@@ -18,6 +18,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
+  alias Normandy.Test.TelemetryCapture
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
   defmodule Resp do
@@ -304,7 +305,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
                  Turn.Server.run(srv, "what is my ssn?")
       end)
 
-    refute log =~ "handler"
+    # Not a bare "handler": :telemetry logs "function passed as a handler" info lines
+    # for other async tests' local-function handlers, which capture_log also sees.
+    refute log =~ "Turn.Server handler"
     {:ok, entries} = InMemory.history(store, "s-output-block")
     refute Enum.any?(entries, &(&1.role == "assistant"))
 
@@ -1887,12 +1890,14 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert_received {:telemetry, ^stop_ref, _, %{outcome: :approved}}
     end
 
+    # Every handler is pinned to this test's session: other async modules park
+    # turns too, and their approval/run events would otherwise land in our mailbox.
     defp attach_approval_span(sid) do
-      start_ref = attach_telemetry([:normandy, :turn, :approval, :start])
-      stop_ref = attach_telemetry([:normandy, :turn, :approval, :stop])
-      run_ref = attach_telemetry([:normandy, :agent, :run, :stop])
-      exc_ref = attach_telemetry([:normandy, :agent, :run, :exception])
-      {start_ref, stop_ref, run_ref, exc_ref, sid}
+      pinned = fn event -> TelemetryCapture.attach([event], session_id: sid) end
+
+      {pinned.([:normandy, :turn, :approval, :start]),
+       pinned.([:normandy, :turn, :approval, :stop]), pinned.([:normandy, :agent, :run, :stop]),
+       pinned.([:normandy, :agent, :run, :exception]), sid}
     end
 
     test "approval span: duration covers the park, run stop carries approval_wait" do
