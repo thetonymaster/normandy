@@ -214,6 +214,15 @@ old shapes. An old-version server that receives a new shape has no matching clau
 crashes. When callers and servers run on different nodes, upgrade the nodes that host
 `Turn.Server` and `AgentProcess` before the nodes that call or approve them.
 
+The persisted `Turn.State` also gains a `trace_carrier` field. A state saved before 2.0 loads
+without it (`Turn.Server` reads it with `Map.get/3`). The reverse direction does not hold on
+every store: the Postgres and Redis stores decode with `binary_to_term(bin, [:safe])`
+(`SessionStore.Codec`), which raises `ArgumentError` for an atom the node does not know, and a
+pre-2.0 node has no `trace_carrier` atom. ETS, Mnesia and InMemory keep the term as is, so an old
+node loads it and ignores the extra key. Found by reading the codecs, not by running a mixed
+cluster: on Postgres or Redis, do not let a pre-2.0 node resume a session that a 2.0 node last
+saved mid-turn. The server-nodes-first order above avoids that.
+
 ## 14. Telemetry additions
 
 The telemetry events are catalogued in `Normandy.Telemetry`. Existing events, measurements and

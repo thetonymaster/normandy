@@ -37,7 +37,8 @@ defmodule Normandy.Coordination.Reactive do
   agent's `[:normandy, :agent, :run]` span never closes on its own, so these
   functions emit a synthetic `[:normandy, :agent, :run, :exception]` with
   `reason: :killed` for each agent struct they kill before its run returns
-  (not for one killed in `on_complete`), possibly without a matching `:start`; the `llm_call`/`tool` spans open inside it stay open.
+  (not for one killed in `on_complete`), possibly without a matching `:start`; the
+  `llm_call`/`tool` spans open inside it stay open.
   Agent processes (pids) are not killed, only the task waiting on them, so
   their runs end normally. See `Normandy.Telemetry.KilledRun`.
   """

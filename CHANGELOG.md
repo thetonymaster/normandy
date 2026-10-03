@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{:run_async, input, reply_to, ctx}`. New servers still accept the old shapes, but an old-version
   server that receives a new shape crashes. **Rolling deploy: upgrade the nodes that host servers
   (`Turn.Server`, `AgentProcess`) before the nodes that call or approve them.**
+- The `normandy llm call stop` log line's `input_tokens` is now the normalized count (Anthropic:
+  input plus cache read and write), matching the span's normalized `input_tokens`. Log parsers that
+  summed the old value on Anthropic will see larger numbers when prompt caching is on.
 
 ### Fixed
 

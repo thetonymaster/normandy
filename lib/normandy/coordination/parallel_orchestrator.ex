@@ -29,8 +29,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   `execute_stream/2` emit a synthetic `[:normandy, :agent, :run, :exception]`
   with `reason: :killed` for it (`execute_stream/2` when the timed-out element
   is consumed) unless its run had already returned and the timeout hit its
-  `:transform` or `:on_agent_complete` callback, possibly without a matching `:start`; the `llm_call`/`tool`
-  spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
+  `:transform` or `:on_agent_complete` callback, possibly without a matching `:start`;
+  the `llm_call`/`tool` spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
   """
 
   alias Normandy.Agents.BaseAgent
@@ -270,7 +270,8 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       stream
       |> Stream.each(fn
         {:ok, {:ok, {agent_id, result}}} -> IO.puts("Agent \#{agent_id}: \#{inspect(result)}")
-        {:ok, {:error, {agent_id, reason}}} -> IO.puts("Agent \#{agent_id} failed: \#{inspect(reason)}")
+        {:ok, {:error, {agent_id, reason}}} ->
+          IO.puts("Agent \#{agent_id} failed: \#{inspect(reason)}")
         {:exit, {agent_id, :timeout}} -> IO.puts("Agent \#{agent_id} timed out")
       end)
       |> Stream.run()
