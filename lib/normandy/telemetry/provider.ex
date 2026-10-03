@@ -13,13 +13,16 @@ defmodule Normandy.Telemetry.Provider do
 
   `Normandy.Agents.Model` is implemented by third parties, so no function is
   added to it: a custom client names its provider with `options: %{provider: :my_provider}`.
+  A client that wraps another (retries, caching, fault injection) does the same with the
+  wrapped client's provider, `provider(inner)`: spans see only the outer struct.
   `nil` means "unknown" and callers leave the key out of the metadata.
 
   ## llm_call stop metadata (set by the adapters and BaseAgent)
 
     * `:response_id` - the provider's message/completion id
-    * `:finish_reason` - the provider's stop reason, always a string
-      (`"end_turn"`, `"stop"`); an atom reported by a client is converted
+    * `:finish_reason` - the provider's stop reason as a string (`"end_turn"`,
+      `"stop"`); an atom reported by a client is converted. Absent when the provider
+      sent none, e.g. a stream an incremental guardrail halted before its end
     * `:time_to_first_chunk` - streaming only; native time units (convert with
       `System.convert_time_unit/3`) from the start of the stream attempt that
       delivered it (retry backoff is not counted) to the first content chunk: a

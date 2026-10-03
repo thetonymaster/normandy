@@ -3,11 +3,13 @@
 # consolidated under MIX_ENV=test, so this defimpl takes effect at runtime).
 defmodule E2E.FaultClient do
   @moduledoc false
-  defstruct [:inner, :counter, faults: MapSet.new()]
+  # options.provider names the wrapped client's provider (Normandy.Telemetry.Provider):
+  # the run and llm_call spans read it from this struct, not from `inner`.
+  defstruct [:inner, :counter, options: %{}, faults: MapSet.new()]
 
   def new(%Normandy.LLM.ClaudioAdapter{} = inner, fault_indices) do
     {:ok, counter} = Agent.start_link(fn -> 0 end)
-    %__MODULE__{inner: inner, counter: counter, faults: MapSet.new(fault_indices)}
+    %__MODULE__{inner: inner, counter: counter, faults: MapSet.new(fault_indices), options: %{provider: Normandy.Telemetry.Provider.provider(inner)}}
   end
 
   def converse_calls(%__MODULE__{counter: c}), do: Agent.get(c, & &1)
