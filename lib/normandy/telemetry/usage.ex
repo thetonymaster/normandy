@@ -26,6 +26,13 @@ defmodule Normandy.Telemetry.Usage do
   top-level counts cover only the returned one), the billed totals are the sum
   over the iterations and the top-level counts are ignored.
 
+  OpenAI-shaped usage (`prompt_tokens`, `completion_tokens`, optionally
+  `prompt_tokens_details.cached_tokens`) is recognized too, when the map has no
+  `input_tokens`: `prompt_tokens` already includes cached tokens, so it is the
+  `:input_tokens` total as is, `completion_tokens` is `:output_tokens`, and
+  `cached_tokens` (when present) is `:cache_read_input_tokens`. OpenAI reports no
+  cache writes.
+
   The raw `usage` map on `[:normandy, :agent, :llm_call, :stop]` is unchanged;
   these keys are added beside it.
   """
@@ -58,7 +65,7 @@ defmodule Normandy.Telemetry.Usage do
   def normalize(usage) do
     usage
     |> sources()
-    |> Enum.map(&counts/1)
+    |> Enum.map(&(&1 |> openai_to_anthropic() |> counts()))
     |> Enum.reduce(%{}, fn counts, acc -> Map.merge(acc, counts, fn _k, a, b -> a + b end) end)
     |> total_input()
   end
@@ -77,6 +84,30 @@ defmodule Normandy.Telemetry.Usage do
   defp to_map(%_{} = struct), do: struct |> Map.from_struct() |> Map.delete(:__meta__)
   defp to_map(%{} = map), do: map
   defp to_map(_other), do: %{}
+
+  # Rewrites OpenAI-shaped usage into the Anthropic field names so the same
+  # summing applies: uncached input = prompt_tokens - cached_tokens.
+  defp openai_to_anthropic(source) do
+    prompt = fetch(source, :prompt_tokens)
+
+    if is_integer(prompt) and not is_integer(fetch(source, :input_tokens)) do
+      cached = cached_tokens(source)
+      uncached = %{input_tokens: max(prompt - (cached || 0), 0)}
+      base = Map.put(uncached, :output_tokens, fetch(source, :completion_tokens))
+      if cached, do: Map.put(base, :cache_read_input_tokens, cached), else: base
+    else
+      source
+    end
+  end
+
+  defp cached_tokens(source) do
+    with %{} = details <- fetch(source, :prompt_tokens_details),
+         n when is_integer(n) <- fetch(details, :cached_tokens) do
+      n
+    else
+      _ -> nil
+    end
+  end
 
   # Per-source counts under the pre-sum names; absent counts are omitted.
   defp counts(source) do

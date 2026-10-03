@@ -99,4 +99,35 @@ defmodule Normandy.Telemetry.UsageTest do
     assert Usage.normalize(%{input_tokens: 2, output_tokens: 3, iterations: [nil, "x", %{}]}) ==
              %{input_tokens: 2, output_tokens: 3}
   end
+
+  describe "OpenAI-shaped usage" do
+    test "string keys: prompt_tokens is the input total, completion_tokens the output" do
+      assert Usage.normalize(%{"prompt_tokens" => 9, "completion_tokens" => 4}) ==
+               %{input_tokens: 9, output_tokens: 4}
+    end
+
+    test "atom keys work too" do
+      assert Usage.normalize(%{prompt_tokens: 9, completion_tokens: 4}) ==
+               %{input_tokens: 9, output_tokens: 4}
+    end
+
+    test "cached_tokens is reported as cache read without being added again" do
+      usage = %{
+        "prompt_tokens" => 100,
+        "completion_tokens" => 7,
+        "prompt_tokens_details" => %{"cached_tokens" => 60}
+      }
+
+      assert Usage.normalize(usage) ==
+               %{input_tokens: 100, output_tokens: 7, cache_read_input_tokens: 60}
+    end
+
+    test "absent counts are omitted" do
+      assert Usage.normalize(%{"prompt_tokens" => 5}) == %{input_tokens: 5}
+    end
+
+    test "a map with input_tokens keeps Anthropic semantics" do
+      assert Usage.normalize(%{input_tokens: 5, prompt_tokens: 99}) == %{input_tokens: 5}
+    end
+  end
 end

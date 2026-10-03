@@ -148,6 +148,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
                )
 
       assert error.usage == %{"prompt_tokens" => 9, "completion_tokens" => 4}
+      assert error.usage_counts == %{input_tokens: 9, output_tokens: 4}
     end
 
     test "a schema without :chat_message has nothing to fall back to: :invalid_output" do
