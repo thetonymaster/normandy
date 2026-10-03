@@ -202,7 +202,11 @@ defmodule Normandy.Agents.Turn.Supervisor.HordeTest do
       sup = :"hsup_#{System.unique_integer([:positive])}"
       {:ok, outer} = HSup.start_link(name: sup, max_restarts: 1, max_seconds: 60)
 
-      crash_each(outer, eager_sessions(sup, 2))
+      # Not crash_each/2: a restart can fail once while the fresh registry rejects the
+      # :via registration (see HReg.new/1), and the failed attempt counts too, so the
+      # supervisor may give up after the first kill. That only ends it sooner; with the
+      # default limit (100) two kills would not, which is what this test tells apart.
+      for {_sid, _reg, pid} <- eager_sessions(sup, 2), do: Process.exit(pid, :kill)
 
       assert_receive {:EXIT, ^outer, _reason}, 2_000, supervisor_reports()
     end
