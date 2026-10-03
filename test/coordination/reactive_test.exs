@@ -84,6 +84,35 @@ defmodule Normandy.Coordination.ReactiveTest do
   end
 
   describe "all/3" do
+    # An agent whose LLM call never returns, so it always runs past the timeout.
+    defp stuck_agent do
+      BaseAgent.init(%{
+        client: %Normandy.Test.StubClient{reply: fn _ -> receive do: (:never -> :ok) end},
+        model: "stuck-model"
+      })
+    end
+
+    test "keeps the other results when an agent times out" do
+      assert {:ok, results} =
+               Reactive.all([create_test_agent(), stuck_agent(), create_test_agent()], "test",
+                 timeout: 100
+               )
+
+      assert %{
+               "agent_0" => {:ok, _},
+               "agent_1" => {:error, {:exit, :timeout}},
+               "agent_2" => {:ok, _}
+             } = results
+    end
+
+    test "fail_fast still stops on an agent that times out" do
+      assert {:error, {:exit, :timeout}} =
+               Reactive.all([stuck_agent(), create_test_agent()], "test",
+                 timeout: 100,
+                 fail_fast: true
+               )
+    end
+
     test "waits for all agents to complete" do
       agents = [create_test_agent(), create_test_agent(), create_test_agent()]
 

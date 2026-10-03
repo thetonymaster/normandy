@@ -158,9 +158,13 @@ defmodule Normandy.Coordination.Reactive do
 
   ## Returns
 
-  - `{:ok, %{agent_id => result}}` - Map of all results
+  - `{:ok, %{agent_id => result}}` - Map of all results. An agent that runs
+    past `:timeout` (the limit applies to each agent) is stopped and appears
+    as `{:error, {:exit, :timeout}}`; one whose task exits otherwise, as
+    `{:error, {:exit, reason}}`
   - `{:error, reason}` - If fail_fast is true and an agent fails
-  - `{:error, :timeout}` - If timeout is reached
+  - `{:error, {:exit, reason}}` - If fail_fast is true and an agent exits or
+    times out
   """
   @spec all([agent_or_pid()], term(), keyword()) :: {:ok, %{String.t() => result()}} | result()
   def all(agents, input, opts \\ []) when is_list(agents) do
@@ -205,11 +209,11 @@ defmodule Normandy.Coordination.Reactive do
               {:cont, {:ok, Map.put(acc, agent_id, result)}}
           end
 
-        {:exit, reason}, _acc ->
+        {:exit, {agent_id, reason}}, {:ok, acc} ->
           if fail_fast do
             {:halt, {:error, {:exit, reason}}}
           else
-            {:cont, {:ok, %{}}}
+            {:cont, {:ok, Map.put(acc, agent_id, {:error, {:exit, reason}})}}
           end
       end)
 
@@ -368,13 +372,13 @@ defmodule Normandy.Coordination.Reactive do
   end
 
   # A task killed past the timeout before its run returned left its agent's run
-  # span open: report it. Strips the input zip_input_on_exit added, keeping the
-  # `{:exit, reason}` shape callers see.
-  defp report_kill({:exit, {{agent, _agent_id, idx}, reason}}, run_marks, timeout, otel_ctx) do
+  # span open: report it. Reduces the input zip_input_on_exit added to the
+  # agent id.
+  defp report_kill({:exit, {{agent, agent_id, idx}, reason}}, run_marks, timeout, otel_ctx) do
     if reason == :timeout and not KilledRun.run_done?(run_marks, idx),
       do: KilledRun.emit_timeout(agent, timeout, otel_ctx)
 
-    {:exit, reason}
+    {:exit, {agent_id, reason}}
   end
 
   defp report_kill(result, _run_marks, _timeout, _otel_ctx), do: result
