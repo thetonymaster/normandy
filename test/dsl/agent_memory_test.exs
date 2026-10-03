@@ -50,4 +50,25 @@ defmodule Normandy.DSL.AgentMemoryTest do
       PlainAgent.new(client: client(), memory_store: {InMemory, InMemory.new()})
     end
   end
+
+  test "a :store in the memory declaration fails to compile, naming memory_store:" do
+    assert_raise ArgumentError, ~r/memory\/1 does not take :store; .*memory_store:/, fn ->
+      Code.compile_string("""
+      defmodule Normandy.DSL.AgentMemoryTest.StoreDeclared do
+        use Normandy.DSL.Agent
+
+        agent do
+          model("claude-haiku-4-5-20251001")
+          memory(store: {Normandy.Behaviours.MemoryStore.InMemory, :h})
+        end
+      end
+      """)
+    end
+  end
+
+  test "a non-literal declaration carrying :store raises from new/1" do
+    assert_raise ArgumentError, ~r/does not take :store/, fn ->
+      Normandy.DSL.Agent.memory_tool!(MemAgent, [store: :x], {InMemory, :h})
+    end
+  end
 end

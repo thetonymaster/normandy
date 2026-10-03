@@ -220,6 +220,8 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @store_declared_msg "memory/1 does not take :store; pass the store at runtime with new(memory_store: {module, handle})"
+
   @doc """
   Declares persistent memory (`Normandy.Tools.Memory`). Takes `Memory.new/1`'s options
   except `:store`, which a handle such as a Redis connection cannot supply at compile
@@ -227,6 +229,10 @@ defmodule Normandy.DSL.Agent do
   `tool_context` (`new/1`'s `:tool_context`).
   """
   defmacro memory(opts \\ []) do
+    # A literal declaration is rejected at compile time; memory_tool!/3 covers the rest.
+    if Keyword.keyword?(opts) and Keyword.has_key?(opts, :store),
+      do: raise(ArgumentError, @store_declared_msg)
+
     quote do
       Module.put_attribute(__MODULE__, :agent_memory, unquote(opts))
     end
@@ -391,6 +397,8 @@ defmodule Normandy.DSL.Agent do
               "#{inspect(agent_module)} declares memory; pass memory_store: {module, handle} to new/1"
 
       {opts, store} ->
+        if Keyword.has_key?(opts, :store), do: raise(ArgumentError, @store_declared_msg)
+
         Memory.new([{:store, store} | opts])
     end
   end
