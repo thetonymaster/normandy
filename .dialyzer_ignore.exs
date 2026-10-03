@@ -18,6 +18,10 @@
   # an error result instead of crashing the turn (audit SCHEMA-6).
   {"lib/normandy/tools/executor.ex", :pattern_match_cov},
 
+  # test/support/lazy_via_registry.ex register/3: the stub raises on purpose (a :via-named
+  # server must never self-register), so "only terminates with explicit exception" is the point.
+  {"test/support/lazy_via_registry.ex", :no_return},
+
   # --- Tooling false positives ---
 
   # behaviours/session_store/postgres/migration.ex up/0 + down/0 (lines 15, 24, 36): idiomatic

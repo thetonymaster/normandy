@@ -118,7 +118,7 @@ defmodule NormandyTest.E2E.Runner do
 
     case outcome do
       :timeout ->
-        System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+        _ = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
 
         Map.merge(base, %{
           status: :timeout,
@@ -176,6 +176,8 @@ defmodule NormandyTest.E2E.Runner do
     )
   end
 
+  # main/1 always ends in System.halt/1: it is the process exit of `mix e2e`.
+  @dialyzer {:nowarn_function, main: 1}
   def main(argv) do
     all = discover("e2e")
     key = System.get_env("ANTHROPIC_API_KEY") || System.get_env("API_KEY")
