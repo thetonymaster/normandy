@@ -1012,6 +1012,51 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert_receive {:event, :awaiting_approval, %{parked: 1, resumed: true}}, 1_000
   end
 
+  # A Turn.State persisted before trace_carrier existed decodes without the key.
+  test "a resumed turn persisted without a trace carrier emits run :start with resumed: true" do
+    test_pid = self()
+    sid = "s-resume-legacy"
+    call = %ToolCall{id: "pk1", name: "billing", input: %{}}
+
+    parked =
+      %Turn.State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: %Resp{},
+        output_schema: %Resp{},
+        pending_calls: [call],
+        parked_calls: [call],
+        held_results: []
+      }
+      |> Map.delete(:trace_carrier)
+
+    store = InMemory.new()
+    :ok = InMemory.save_turn_state(store, sid, parked)
+
+    :telemetry.attach(
+      {__MODULE__, sid},
+      [:normandy, :agent, :run, :start],
+      &__MODULE__.handle_telemetry/4,
+      {test_pid, sid}
+    )
+
+    on_exit(fn -> :telemetry.detach({__MODULE__, sid}) end)
+
+    {:ok, _srv} =
+      Turn.Server.start_link(
+        session_id: sid,
+        config: base_config(),
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        resume_policy: :eager,
+        subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+      )
+
+    assert_receive {:event, :awaiting_approval, %{parked: 1, resumed: true}}, 1_000
+    assert_received {:telemetry, ^sid, _, %{session_id: ^sid, resumed: true}}
+  end
+
   test "starts under a Horde :via name and is discoverable via whereis" do
     reg = Horde.new()
     sid = "via-#{System.unique_integer([:positive])}"
@@ -1827,6 +1872,19 @@ defmodule Normandy.Agents.Turn.ServerTest do
                        }}
 
       refute_received {:telemetry, ^ref, _, %{session_id: "s-denied-rejected"}}
+    end
+
+    test "an approval cast without an approver context (older sender) is still handled" do
+      {_s, stop_ref, _r, _e, _} = attach_approval_span("s-alegacy")
+      {srv, _store} = start_approval_server("s-alegacy", approval_timeout_ms: 5_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      :ok = :gen_statem.cast(srv, {:approval, %{"pk1" => :approve}})
+
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+      assert_received {:tool_ran, "billing"}
+      assert_received {:telemetry, ^stop_ref, _, %{outcome: :approved}}
     end
 
     defp attach_approval_span(sid) do

@@ -19,6 +19,10 @@ defmodule Normandy.Telemetry.OtelCtx do
       serving many requests), so one request's context does not leak into the
       next.
 
+  A context lives only in memory. To keep one across a restart, `inject/1`
+  turns it into a W3C text-map carrier (a list of string pairs) that can be
+  persisted, and `extract/1` rebuilds a context from that carrier.
+
   ## Usage
 
       parent_ctx = Normandy.Telemetry.OtelCtx.capture()
@@ -67,6 +71,45 @@ defmodule Normandy.Telemetry.OtelCtx do
       # Soft dependency, see capture/0.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(OpenTelemetry.Ctx, :attach, [ctx])
+    end
+  end
+
+  @doc """
+  Writes `ctx` into a W3C text-map carrier (`[{"traceparent", ...}]`, plus
+  `tracestate`/`baggage` when present) with the globally configured
+  propagator. `[]` when `ctx` is `nil`, holds no span, or OTel is absent.
+
+  Unlike a context, a carrier is plain strings, so it can be persisted and
+  read back by another process, node or Normandy release.
+  """
+  @spec inject(term() | nil) :: [{String.t(), String.t()}]
+  def inject(nil), do: []
+
+  def inject(ctx) do
+    if Code.ensure_loaded?(:otel_propagator_text_map) do
+      # Soft dependency, see capture/0.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(:otel_propagator_text_map, :inject_from, [ctx, []])
+    else
+      []
+    end
+  end
+
+  @doc """
+  Rebuilds a context from a carrier written by `inject/1`, without touching
+  the calling process's current context; install it with `attach/1`. `nil`
+  for an empty carrier or when OTel is absent.
+  """
+  @spec extract([{String.t(), String.t()}]) :: term() | nil
+  def extract([]), do: nil
+
+  def extract(carrier) when is_list(carrier) do
+    if Code.ensure_loaded?(:otel_propagator_text_map) and Code.ensure_loaded?(:otel_ctx) do
+      # Soft dependency, see capture/0.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      empty = apply(:otel_ctx, :new, [])
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(:otel_propagator_text_map, :extract_to, [empty, carrier])
     end
   end
 

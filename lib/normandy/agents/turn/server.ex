@@ -32,7 +32,7 @@ defmodule Normandy.Agents.Turn.Server do
   parks in the turn, 0 if never parked). `BaseAgent.run/2` never parks, so its run
   events carry no `approval_wait`. A turn resumed after a restart that lands in
   `:awaiting_approval` opens a fresh approval span (the old one died with the old
-  process, and the resumed run has no run span).
+  process) inside the resumed run's span.
     * `:idle_timeout_ms` — idle time before passivation (default 60_000).
 
   A Tier-2 `Turn.Session` saves `:approval_timeout_ms`, `:on_approval_timeout` and
@@ -65,6 +65,22 @@ defmodule Normandy.Agents.Turn.Server do
   Each turn started by `run/2` emits `[:normandy, :agent, :run, :start]`, then
   `:stop` or `:exception` (`kind: :error`, `reason`), with `model`, `agent_name`
   and `session_id` metadata, like `BaseAgent.run/2`.
+
+  A turn that a restarted server resumes (eager resume) emits a run `:start` of its
+  own with `resumed: true` in the metadata, and later `:stop` or `:exception`; its
+  `approval_wait` counts only the parks after the restart. The OpenTelemetry context
+  of the original `run/2` caller is saved with the turn state as a W3C text-map
+  carrier (`Turn.State.trace_carrier`), and the resumed run's `:start` fires with
+  that context current, so a bridged run span becomes a child of the original
+  caller's span, in its trace. Parenting is the only relation a telemetry bridge can
+  express (it reads the current context); a span link would need bridge support. The
+  original run span is not the parent: it ends when the old server stops, or is
+  never exported when the old server was killed, while the caller's span is.
+
+  `approve/2` carries the approver's OpenTelemetry context. It is current while the
+  approval `:stop` and the `[:normandy, :tool, :denied]` events of rejected calls
+  fire, so a handler can correlate them with the approver's trace; the run keeps its
+  own context.
 
   A server that stops with a turn in flight, through a callback-initiated stop or
   `:gen_statem.stop/3`, emits `:exception` with `kind: :exit` and the stop reason in
@@ -166,9 +182,14 @@ defmodule Normandy.Agents.Turn.Server do
   def run(server, user_input),
     do: :gen_statem.call(server, {:turn, user_input, OtelCtx.capture()}, :infinity)
 
-  @doc "Deliver approval decisions to a parked server (Task 6)."
+  @doc """
+  Deliver approval decisions to a parked server.
+
+  The caller's OpenTelemetry context travels with the decisions; see "Telemetry".
+  """
   @spec approve(:gen_statem.server_ref(), %{optional(String.t()) => :approve | :reject}) :: :ok
-  def approve(server, decisions), do: :gen_statem.cast(server, {:approval, decisions})
+  def approve(server, decisions),
+    do: :gen_statem.cast(server, {:approval, decisions, OtelCtx.capture()})
 
   # ---- :gen_statem callbacks ----
 
@@ -389,9 +410,14 @@ defmodule Normandy.Agents.Turn.Server do
   # so we pass a minimal provider map derived from the template's model.
   defp token_provider(%{model: model}), do: %{model: model}
 
+  # An approval sent by a caller running an older Normandy (another node during a
+  # rolling deploy) carries no approver context.
+  @impl true
+  def handle_event(:cast, {:approval, decisions}, state, data),
+    do: handle_event(:cast, {:approval, decisions, nil}, state, data)
+
   # :unavailable — the store failed the load at start. A turn request retries it:
   # on success the request is replayed in :idle, otherwise it gets the reason.
-  @impl true
   def handle_event({:call, from}, msg, :unavailable, data) when is_turn_request(msg) do
     case retry_load(data) do
       {:ok, {:next_state, state, new_data, actions}} ->
@@ -404,7 +430,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   # An approval for a session whose turn could not be loaded: load it now, or drop
   # the decision (there is no parked turn to give it to).
-  def handle_event(:cast, {:approval, _decisions}, :unavailable, data) do
+  def handle_event(:cast, {:approval, _decisions, _approver_ctx}, :unavailable, data) do
     case retry_load(data) do
       {:ok, {:next_state, state, new_data, actions}} ->
         {:next_state, state, new_data, actions ++ [:postpone]}
@@ -454,6 +480,8 @@ defmodule Normandy.Agents.Turn.Server do
   # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
   # silently while persisting at each boundary.
   def handle_event(:internal, :resume, :idle, data) do
+    data = start_resumed_run_span(data)
+
     case close_resumed_batch(data) do
       {:ok, data} ->
         {state, effects} = Turn.resume(data.turn_state)
@@ -505,16 +533,20 @@ defmodule Normandy.Agents.Turn.Server do
   # :awaiting_approval — out-of-band approval decisions for a parked turn.
   # Each call the core will reject (Turn.rejected_calls/2, its own split) gets a
   # [:normandy, :tool, :denied] event here.
-  def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
+  def handle_event(:cast, {:approval, decisions, approver_ctx}, :awaiting_approval, data) do
     %Turn.State{parked_calls: parked} = data.turn_state
 
     rejected = Turn.rejected_calls(parked, decisions)
 
-    for call <- rejected do
-      Dispatch.emit_denied(data.config, call, :approval_rejected)
-    end
+    data =
+      with_approver_ctx(approver_ctx, data, fn ->
+        for call <- rejected do
+          Dispatch.emit_denied(data.config, call, :approval_rejected)
+        end
 
-    data = stop_approval_span(data, approval_outcome(length(parked), length(rejected)))
+        stop_approval_span(data, approval_outcome(length(parked), length(rejected)))
+      end)
+
     {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
     interpret(effects, %{data | turn_state: state})
   end
@@ -522,7 +554,7 @@ defmodule Normandy.Agents.Turn.Server do
   # A stale/duplicate/late approval cast (double-click, or arriving after the turn
   # already resumed or finalized) lands in a state with no parked calls. Drop it
   # rather than let an unhandled event crash (and transient-restart) the server.
-  def handle_event(:cast, {:approval, _decisions}, _state, _data) do
+  def handle_event(:cast, {:approval, _decisions, _approver_ctx}, _state, _data) do
     :keep_state_and_data
   end
 
@@ -631,6 +663,10 @@ defmodule Normandy.Agents.Turn.Server do
           output_schema: config.output_schema
         )
 
+      # The caller's context, persisted with every save of the turn state, so a
+      # restarted server can resume the turn in the caller's trace.
+      state = %{state | trace_carrier: OtelCtx.inject(caller_ctx)}
+
       run_span = start_run_span(data, config, caller_ctx, Metadata.turn_id(config))
 
       data = %{
@@ -653,17 +689,18 @@ defmodule Normandy.Agents.Turn.Server do
 
   # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
   # several gen_statem events, so :start and :stop/:exception are emitted by
-  # hand. A parked turn resumed by a restarted server has no :start, so no stop.
+  # hand. A turn resumed by a restarted server gets its own :start (resumed: true).
   #
   # The caller's OTel context is attached in this (long-lived) process before
   # :start, so a bridged run span nests under the caller's span; stop_run_span/3
   # detaches it again so it does not leak into the next turn.
-  defp start_run_span(data, config, caller_ctx, turn_id) do
+  defp start_run_span(data, config, caller_ctx, turn_id, extra_meta \\ %{}) do
     caller_ctx_token = OtelCtx.attach(caller_ctx)
 
     meta =
       %{session_id: data.session_id}
       |> Map.merge(Metadata.run(config, turn_id: turn_id))
+      |> Map.merge(extra_meta)
       |> Map.put(:telemetry_span_context, make_ref())
 
     start = System.monotonic_time()
@@ -690,6 +727,16 @@ defmodule Normandy.Agents.Turn.Server do
     })
   end
 
+  # The run span of a turn a restarted server resumes, under the original caller's
+  # context rebuilt from the persisted carrier (see "Telemetry" in the moduledoc).
+  # Map.get: a Turn.State persisted before trace_carrier existed decodes without it.
+  defp start_resumed_run_span(data) do
+    caller_ctx = data.turn_state |> Map.get(:trace_carrier, []) |> OtelCtx.extract()
+    turn_id = Metadata.turn_id(data.config)
+    run_span = start_run_span(data, data.config, caller_ctx, turn_id, %{resumed: true})
+    %{data | run_span: run_span, approval_wait: 0}
+  end
+
   defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
 
   defp stop_run_span(%Data{run_span: %{start: start, meta: meta} = span} = data, event, extra) do
@@ -707,10 +754,14 @@ defmodule Normandy.Agents.Turn.Server do
   # The [:normandy, :turn, :approval, :start | :stop] span around one park. Hand-emitted
   # (not :telemetry.span/3) because the park and the resume are different callbacks.
   # Both events carry the same telemetry_span_context so bridges can pair them. A turn
-  # re-entering :awaiting_approval after a restart (durable resume) opens a fresh span;
-  # the earlier span died with the old process and the new run has no run span.
+  # re-entering :awaiting_approval after a restart (durable resume) opens a fresh span
+  # inside the resumed run's span; the earlier span died with the old process.
+  #
+  # outer_ctx is the OTel context current before :start (the run's), which
+  # with_approver_ctx/3 makes current again after the approval is handled.
   defp start_approval_span(%Data{approval_span: nil} = data) do
     parked = data.turn_state.parked_calls
+    outer_ctx = OtelCtx.capture()
     start = System.monotonic_time()
 
     meta = %{
@@ -726,7 +777,7 @@ defmodule Normandy.Agents.Turn.Server do
       meta
     )
 
-    %{data | approval_span: %{start: start, meta: meta}}
+    %{data | approval_span: %{start: start, meta: meta, outer_ctx: outer_ctx}}
   end
 
   defp start_approval_span(data), do: data
@@ -747,6 +798,26 @@ defmodule Normandy.Agents.Turn.Server do
     )
 
     %{data | approval_span: nil, approval_wait: data.approval_wait + duration}
+  end
+
+  # Runs `fun` (which closes the approval span) with the approver's context current,
+  # then makes the run's context current again so the work after the approval is not
+  # reparented. Not OtelCtx.detach/1: a bridge that ended a bridged approval span on
+  # :stop has already put back the context current at its :start, and detaching our
+  # token would then make the ended approval span current again.
+  defp with_approver_ctx(nil, _data, fun), do: fun.()
+
+  defp with_approver_ctx(approver_ctx, data, fun) do
+    outer_ctx =
+      case data.approval_span do
+        %{outer_ctx: ctx} -> ctx
+        nil -> OtelCtx.capture()
+      end
+
+    _token = OtelCtx.attach(approver_ctx)
+    result = fun.()
+    _token = OtelCtx.attach(outer_ctx)
+    result
   end
 
   defp approval_outcome(_total, 0), do: :approved

@@ -262,6 +262,195 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
     end
   end
 
+  # A server whose "weather" tool needs approval, so the turn parks after the
+  # first LLM call. Returns its start options so a test can restart it on the
+  # same store.
+  defp approval_server_opts(client) do
+    test_pid = self()
+
+    config =
+      BaseAgent.init(%{
+        client: client,
+        model: "test-model",
+        tool_registry: Registry.new([%FakeTool{}])
+      })
+
+    policy = %Normandy.Behaviours.Config{
+      policy:
+        {Normandy.Behaviours.PolicyEngine.Ruleset,
+         rules: [%{match: "weather", action: :require_approval, rule_id: "R1"}],
+         default_action: :allow}
+    }
+
+    [
+      session_id: "span-#{System.unique_integer([:positive])}",
+      config: %{config | behaviours: policy},
+      store: {InMemory, InMemory.new()},
+      registry: {Native, Native.new()},
+      approval_timeout_ms: 5_000,
+      subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+    ]
+  end
+
+  # Runs a turn from a fresh process with `ctx` current; replies {:run_result, _}.
+  defp run_async_with_ctx(srv, input, ctx) do
+    parent = self()
+
+    spawn(fn ->
+      OpenTelemetry.Ctx.attach(ctx)
+      send(parent, {:run_result, Turn.Server.run(srv, input)})
+    end)
+  end
+
+  @doc false
+  def forward_event(event, measurements, metadata, pid) do
+    current = :otel_tracer.current_span_ctx(:otel_ctx.get_current())
+    send(pid, {:telemetry, event, measurements, metadata, current})
+  end
+
+  defp attach_forward(events) do
+    id = {__MODULE__, make_ref()}
+    :ok = :telemetry.attach_many(id, events, &__MODULE__.forward_event/4, self())
+    on_exit(fn -> :telemetry.detach(id) end)
+  end
+
+  describe "Turn.Server durable resume" do
+    test "a resumed parked turn emits run :start (resumed: true) under the original trace" do
+      Process.flag(:trap_exit, true)
+      opts = approval_server_opts(counted_client(true))
+      {:ok, first} = Turn.Server.start_link(opts)
+
+      caller = start_caller_span()
+      run_async_with_ctx(first, %{chat_message: "hi"}, :otel_ctx.get_current())
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+      # The restarted server and the approver know nothing of the caller's context.
+      OpenTelemetry.Ctx.attach(:otel_ctx.new())
+      :ok = :gen_statem.stop(first, :shutdown, 5_000)
+      :otel_span.end_span(caller)
+
+      before = OtelSpanBridge.await_spans(["caller", "normandy.agent.run"])
+      caller_span = OtelSpanBridge.fetch_span!(before, "caller")
+      first_run = OtelSpanBridge.fetch_span!(before, "normandy.agent.run")
+
+      attach_forward([
+        [:normandy, :agent, :run, :start],
+        [:normandy, :turn, :approval, :start]
+      ])
+
+      {:ok, second} = Turn.Server.start_link(Keyword.put(opts, :resume_policy, :eager))
+      assert_receive {:event, :awaiting_approval, %{parked: 1, resumed: true}}, 2_000
+
+      sid = opts[:session_id]
+
+      assert_received {:telemetry, [:normandy, :agent, :run, :start], _,
+                       %{session_id: ^sid, resumed: true}, _}
+
+      # A durable resume into :awaiting_approval opens a fresh approval span.
+      assert_received {:telemetry, [:normandy, :turn, :approval, :start], _,
+                       %{session_id: ^sid, count: 1}, _}
+
+      :ok = Turn.Server.approve(second, %{"call_1" => :approve})
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "normandy.agent.run",
+          "normandy.tool.execute",
+          "normandy.agent.llm_call"
+        ])
+
+      resumed_run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+      tool = OtelSpanBridge.fetch_span!(spans, "normandy.tool.execute")
+      llm_call = OtelSpanBridge.fetch_span!(spans, "normandy.agent.llm_call")
+
+      assert first_run.parent_span_id == caller_span.span_id
+      assert resumed_run.trace_id == caller_span.trace_id
+      assert resumed_run.parent_span_id == caller_span.span_id
+      refute resumed_run.span_id == first_run.span_id
+      assert tool.parent_span_id == resumed_run.span_id
+      assert llm_call.parent_span_id == resumed_run.span_id
+    end
+  end
+
+  describe "Turn.Server.approve/2" do
+    test "the approval :stop sees the approver's context; the run is not reparented" do
+      attach_forward([[:normandy, :turn, :approval, :stop]])
+      {:ok, srv} = Turn.Server.start_link(approval_server_opts(counted_client(true)))
+
+      caller = start_caller_span()
+      run_async_with_ctx(srv, %{chat_message: "hi"}, :otel_ctx.get_current())
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+      tracer = :opentelemetry.get_application_tracer(__MODULE__)
+      approver = :otel_tracer.start_span(:otel_ctx.new(), tracer, "approver", %{})
+      OpenTelemetry.Ctx.attach(:otel_tracer.set_current_span(:otel_ctx.new(), approver))
+
+      :ok = Turn.Server.approve(srv, %{"call_1" => :approve})
+      assert_receive {:run_result, {:ok, _}}, 5_000
+
+      :otel_span.end_span(approver)
+      :otel_span.end_span(caller)
+
+      assert_received {:telemetry, [:normandy, :turn, :approval, :stop], _, _, seen}
+      assert :otel_span.trace_id(seen) == :otel_span.trace_id(approver)
+
+      assert_run_children_under_run()
+    end
+
+    # With the approval span itself bridged, the bridge restores the run's context on
+    # :stop; the server must not then put the approval span's context back.
+    test "a bridged approval span does not leak into the work after approval" do
+      OtelSpanBridge.attach(
+        prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :turn, :approval]]
+      )
+
+      {:ok, srv} = Turn.Server.start_link(approval_server_opts(counted_client(true)))
+
+      caller = start_caller_span()
+      run_async_with_ctx(srv, %{chat_message: "hi"}, :otel_ctx.get_current())
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+
+      tracer = :opentelemetry.get_application_tracer(__MODULE__)
+      approver = :otel_tracer.start_span(:otel_ctx.new(), tracer, "approver", %{})
+      OpenTelemetry.Ctx.attach(:otel_tracer.set_current_span(:otel_ctx.new(), approver))
+
+      :ok = Turn.Server.approve(srv, %{"call_1" => :approve})
+      assert_receive {:run_result, {:ok, _}}, 5_000
+
+      :otel_span.end_span(approver)
+      :otel_span.end_span(caller)
+
+      spans = assert_run_children_under_run()
+      approval = OtelSpanBridge.fetch_span!(spans, "normandy.turn.approval")
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+      assert approval.parent_span_id == run.span_id
+    end
+  end
+
+  # The tool and the post-approval llm_call nest under the run, in the caller's trace.
+  defp assert_run_children_under_run do
+    spans =
+      OtelSpanBridge.await_spans([
+        "caller",
+        "approver",
+        "normandy.agent.run",
+        "normandy.tool.execute",
+        "normandy.agent.llm_call",
+        "normandy.agent.llm_call"
+      ])
+
+    caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+    run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+    tool = OtelSpanBridge.fetch_span!(spans, "normandy.tool.execute")
+    llm_calls = Enum.filter(spans, &(&1.name == "normandy.agent.llm_call"))
+
+    assert run.parent_span_id == caller_span.span_id
+    assert tool.parent_span_id == run.span_id
+    assert Enum.all?(llm_calls, &(&1.parent_span_id == run.span_id))
+    assert Enum.all?(llm_calls, &(&1.trace_id == caller_span.trace_id))
+    spans
+  end
+
   defp final_agent do
     BaseAgent.init(%{client: counted_client(false), model: "test-model"})
   end

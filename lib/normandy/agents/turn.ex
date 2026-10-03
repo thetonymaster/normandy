@@ -25,7 +25,7 @@ defmodule Normandy.Agents.Turn do
   alias Normandy.Components.ToolResult
 
   defmodule State do
-    @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`). `tokens_compacted` is the estimated tokens of this turn's messages removed by in-turn compaction (feeds the task budget's `remaining`)."
+    @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`). `tokens_compacted` is the estimated tokens of this turn's messages removed by in-turn compaction (feeds the task budget's `remaining`). `trace_carrier` is the W3C text-map carrier of the OpenTelemetry context the turn was started under (`[]` without OTel); the core never reads it, the durable shell persists it so a resumed turn keeps its trace."
 
     @type status ::
             :provisioning
@@ -51,7 +51,8 @@ defmodule Normandy.Agents.Turn do
             last_response: term() | nil,
             final_response: term() | nil,
             stop_reason: :completed | :max_iterations | nil,
-            error: term() | nil
+            error: term() | nil,
+            trace_carrier: [{String.t(), String.t()}]
           }
 
     defstruct status: :provisioning,
@@ -67,7 +68,8 @@ defmodule Normandy.Agents.Turn do
               last_response: nil,
               final_response: nil,
               stop_reason: nil,
-              error: nil
+              error: nil,
+              trace_carrier: []
   end
 
   @doc """
