@@ -1829,6 +1829,177 @@ defmodule Normandy.Agents.Turn.ServerTest do
       refute_received {:telemetry, ^ref, _, %{session_id: "s-denied-rejected"}}
     end
 
+    defp attach_approval_span(sid) do
+      start_ref = attach_telemetry([:normandy, :turn, :approval, :start])
+      stop_ref = attach_telemetry([:normandy, :turn, :approval, :stop])
+      run_ref = attach_telemetry([:normandy, :agent, :run, :stop])
+      exc_ref = attach_telemetry([:normandy, :agent, :run, :exception])
+      {start_ref, stop_ref, run_ref, exc_ref, sid}
+    end
+
+    test "approval span: duration covers the park, run stop carries approval_wait" do
+      {start_ref, stop_ref, run_ref, _exc, _} = attach_approval_span("s-aspan")
+      {srv, _store} = start_approval_server("s-aspan", approval_timeout_ms: 5_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      Process.sleep(100)
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+      assert_receive {:run_result, {:ok, %Resp{content: "done"}}}, 2_000
+
+      assert_received {:telemetry, ^start_ref, %{system_time: st, monotonic_time: _},
+                       %{
+                         session_id: "s-aspan",
+                         tool_names: ["billing"],
+                         count: 1,
+                         telemetry_span_context: ctx
+                       }}
+
+      assert is_integer(st)
+
+      assert_received {:telemetry, ^stop_ref, %{duration: d, monotonic_time: _},
+                       %{
+                         session_id: "s-aspan",
+                         outcome: :approved,
+                         tool_names: ["billing"],
+                         count: 1,
+                         telemetry_span_context: ^ctx
+                       }}
+
+      assert System.convert_time_unit(d, :native, :millisecond) >= 100
+
+      assert_received {:telemetry, ^run_ref, %{approval_wait: wait, duration: run_d},
+                       %{session_id: "s-aspan"}}
+
+      assert wait == d
+      assert run_d >= wait
+    end
+
+    test "outcome is :rejected when the decision rejects every call" do
+      {_s, stop_ref, _r, _e, _} = attach_approval_span("s-arej")
+      {srv, _store} = start_approval_server("s-arej", approval_timeout_ms: 5_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :reject})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_received {:telemetry, ^stop_ref, %{duration: _}, %{outcome: :rejected}}
+    end
+
+    test "outcome is :expired on expiry, alongside the aggregate expired event" do
+      {_s, stop_ref, run_ref, _e, _} = attach_approval_span("s-aexp")
+      {srv, _store} = start_approval_server("s-aexp", [])
+
+      run_async(srv, "go")
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_received {:telemetry, ^stop_ref, %{duration: d}, %{outcome: :expired}}
+      assert System.convert_time_unit(d, :native, :millisecond) >= 40
+
+      assert_received {:telemetry, ^run_ref, %{approval_wait: ^d}, %{session_id: "s-aexp"}}
+    end
+
+    test "outcome is :mixed when some calls are approved and others rejected" do
+      {_s, stop_ref, _r, _e, _} = attach_approval_span("s-amix")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      call_llm = fn _c, _s, _r ->
+        n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+        if n == 0 do
+          %Resp{
+            content: "",
+            tool_calls: [
+              %ToolCall{id: "pk1", name: "billing", input: %{}},
+              %ToolCall{id: "pk2", name: "billing", input: %{}}
+            ]
+          }
+        else
+          %Resp{content: "done", tool_calls: nil}
+        end
+      end
+
+      {srv, _store} =
+        start_approval_server("s-amix",
+          approval_timeout_ms: 5_000,
+          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        )
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 2}}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve, "pk2" => :reject})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_received {:telemetry, ^stop_ref, _, %{outcome: :mixed, count: 2}}
+    end
+
+    test "approval_wait sums every park in the turn" do
+      {_s, stop_ref, run_ref, _e, _} = attach_approval_span("s-atwice")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      call_llm = fn _c, _s, _r ->
+        n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+        if n < 2 do
+          %Resp{
+            content: "",
+            tool_calls: [%ToolCall{id: "pk#{n}", name: "billing", input: %{}}]
+          }
+        else
+          %Resp{content: "done", tool_calls: nil}
+        end
+      end
+
+      {srv, _store} =
+        start_approval_server("s-atwice",
+          approval_timeout_ms: 5_000,
+          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        )
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      Process.sleep(50)
+      :ok = Turn.Server.approve(srv, %{"pk0" => :approve})
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      Process.sleep(50)
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_received {:telemetry, ^stop_ref, %{duration: d1}, %{outcome: :approved}}
+      assert_received {:telemetry, ^stop_ref, %{duration: d2}, %{outcome: :approved}}
+      assert_received {:telemetry, ^run_ref, %{approval_wait: wait}, %{session_id: "s-atwice"}}
+      assert wait == d1 + d2
+      assert System.convert_time_unit(wait, :native, :millisecond) >= 100
+    end
+
+    test "a turn that never parks has approval_wait 0 and no approval span" do
+      {start_ref, _stop, run_ref, _e, _} = attach_approval_span("s-anone")
+      {srv, _store} = start_server("s-anone", base_config())
+      assert {:ok, _} = Turn.Server.run(srv, "go")
+
+      assert_received {:telemetry, ^run_ref, %{approval_wait: 0}, %{session_id: "s-anone"}}
+      refute_received {:telemetry, ^start_ref, _, %{session_id: "s-anone"}}
+    end
+
+    test "terminating while parked closes the approval span with :terminated before the run exception" do
+      Process.flag(:trap_exit, true)
+      {_s, stop_ref, _r, exc_ref, _} = attach_approval_span("s-aterm")
+      {srv, _store} = start_approval_server("s-aterm", approval_timeout_ms: 5_000)
+
+      run_async(srv, "go")
+      assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+      :ok = :gen_statem.stop(srv, :shutdown, 5_000)
+
+      assert_receive {:telemetry, ^stop_ref, %{duration: _}, %{outcome: :terminated}}, 1_000
+
+      assert_receive {:telemetry, ^exc_ref, %{approval_wait: w},
+                      %{session_id: "s-aterm", kind: :exit}},
+                     1_000
+
+      assert w > 0
+    end
+
     test "an invalid :on_approval_timeout raises ArgumentError naming the key and value" do
       assert_raise ArgumentError,
                    ~r/Turn\.Server\.start_link\/1: invalid :on_approval_timeout, expected :continue or :fail, got: :sometimes/,

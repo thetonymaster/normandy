@@ -22,6 +22,17 @@ defmodule Normandy.Agents.Turn.Server do
       Expiry emits `[:normandy, :turn, :approval, :expired]` for the batch and a
       `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a
       rejected call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
+
+  Each park is wrapped in a `[:normandy, :turn, :approval, :start | :stop]` span
+  (hand-emitted; both events carry the same `:telemetry_span_context`). `:start`
+  metadata: `session_id`, `tool_names`, `count`. `:stop` adds `outcome` (`:approved`,
+  `:rejected`, `:mixed`, `:expired`, or `:terminated` when the server stops while
+  parked) and measures `duration`. The run span stays one span across parks; its
+  `:stop`/`:exception` measurements add `approval_wait` (native units, the sum of all
+  parks in the turn, 0 if never parked). `BaseAgent.run/2` never parks, so its run
+  events carry no `approval_wait`. A turn resumed after a restart that lands in
+  `:awaiting_approval` opens a fresh approval span (the old one died with the old
+  process, and the resumed run has no run span).
     * `:idle_timeout_ms` — idle time before passivation (default 60_000).
 
   A Tier-2 `Turn.Session` saves `:approval_timeout_ms`, `:on_approval_timeout` and
@@ -117,6 +128,8 @@ defmodule Normandy.Agents.Turn.Server do
               template_provider: nil,
               resume_policy: :lazy,
               run_span: nil,
+              approval_span: nil,
+              approval_wait: 0,
               start_opts: nil,
               retry_ms: nil
   end
@@ -495,10 +508,13 @@ defmodule Normandy.Agents.Turn.Server do
   def handle_event(:cast, {:approval, decisions}, :awaiting_approval, data) do
     %Turn.State{parked_calls: parked} = data.turn_state
 
-    for call <- Turn.rejected_calls(parked, decisions) do
+    rejected = Turn.rejected_calls(parked, decisions)
+
+    for call <- rejected do
       Dispatch.emit_denied(data.config, call, :approval_rejected)
     end
 
+    data = stop_approval_span(data, approval_outcome(length(parked), length(rejected)))
     {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
     interpret(effects, %{data | turn_state: state})
   end
@@ -529,6 +545,8 @@ defmodule Normandy.Agents.Turn.Server do
     )
 
     Enum.each(parked, &Dispatch.emit_denied(data.config, &1, :approval_expired))
+
+    data = stop_approval_span(data, :expired)
 
     {state, effects} =
       Turn.step(data.turn_state, {:approval_expired, %{mode: mode, timeout_ms: ms}})
@@ -578,6 +596,8 @@ defmodule Normandy.Agents.Turn.Server do
   # no callback.
   @impl true
   def terminate(reason, _state, data) do
+    data = stop_approval_span(data, :terminated)
+
     stop_run_span(data, :exception, %{kind: :exit, reason: reason, stacktrace: []})
   end
 
@@ -612,7 +632,15 @@ defmodule Normandy.Agents.Turn.Server do
         )
 
       run_span = start_run_span(data, config, caller_ctx, Metadata.turn_id(config))
-      data = %{data | config: config, pending_reply: from, run_span: run_span}
+
+      data = %{
+        data
+        | config: config,
+          pending_reply: from,
+          run_span: run_span,
+          approval_wait: 0
+      }
+
       {state, effects} = Turn.step(state, :start)
       interpret(effects, %{data | turn_state: state})
     else
@@ -655,7 +683,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp emit_rejected_run(data, caller_ctx, exception) do
     span = start_run_span(data, data.config, caller_ctx, nil)
 
-    stop_run_span(%{data | run_span: span}, :exception, %{
+    stop_run_span(%{data | run_span: span, approval_wait: 0}, :exception, %{
       kind: :error,
       reason: {:rejected, exception},
       stacktrace: []
@@ -664,17 +692,66 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
 
-  defp stop_run_span(%Data{run_span: %{start: start, meta: meta} = span}, event, extra) do
+  defp stop_run_span(%Data{run_span: %{start: start, meta: meta} = span} = data, event, extra) do
     now = System.monotonic_time()
 
     :telemetry.execute(
       [:normandy, :agent, :run, event],
-      %{duration: now - start, monotonic_time: now},
+      %{duration: now - start, monotonic_time: now, approval_wait: data.approval_wait},
       Map.merge(meta, extra)
     )
 
     OtelCtx.detach(span.caller_ctx_token)
   end
+
+  # The [:normandy, :turn, :approval, :start | :stop] span around one park. Hand-emitted
+  # (not :telemetry.span/3) because the park and the resume are different callbacks.
+  # Both events carry the same telemetry_span_context so bridges can pair them. A turn
+  # re-entering :awaiting_approval after a restart (durable resume) opens a fresh span;
+  # the earlier span died with the old process and the new run has no run span.
+  defp start_approval_span(%Data{approval_span: nil} = data) do
+    parked = data.turn_state.parked_calls
+    start = System.monotonic_time()
+
+    meta = %{
+      session_id: data.session_id,
+      tool_names: Enum.map(parked, & &1.name),
+      count: length(parked),
+      telemetry_span_context: make_ref()
+    }
+
+    :telemetry.execute(
+      [:normandy, :turn, :approval, :start],
+      %{system_time: System.system_time(), monotonic_time: start},
+      meta
+    )
+
+    %{data | approval_span: %{start: start, meta: meta}}
+  end
+
+  defp start_approval_span(data), do: data
+
+  # Closes the open approval span (no-op when none is open) and adds its duration to
+  # the turn's approval_wait. outcome: :approved | :rejected | :mixed | :expired, or
+  # :terminated when the server stops while parked.
+  defp stop_approval_span(%Data{approval_span: nil} = data, _outcome), do: data
+
+  defp stop_approval_span(%Data{approval_span: %{start: start, meta: meta}} = data, outcome) do
+    now = System.monotonic_time()
+    duration = now - start
+
+    :telemetry.execute(
+      [:normandy, :turn, :approval, :stop],
+      %{duration: duration, monotonic_time: now},
+      Map.put(meta, :outcome, outcome)
+    )
+
+    %{data | approval_span: nil, approval_wait: data.approval_wait + duration}
+  end
+
+  defp approval_outcome(_total, 0), do: :approved
+  defp approval_outcome(total, total), do: :rejected
+  defp approval_outcome(_total, _rejected), do: :mixed
 
   defp last_config([], default), do: default
   defp last_config(repairs, _default), do: repairs |> List.last() |> elem(2)
@@ -762,6 +839,8 @@ defmodule Normandy.Agents.Turn.Server do
   # :running. {:finalize}/{:fail} reply and return to :idle.
 
   defp interpret([], %Data{turn_state: %Turn.State{status: :awaiting_approval}} = data) do
+    data = start_approval_span(data)
+
     {:next_state, :awaiting_approval, data,
      {:state_timeout, data.approval_timeout_ms, :approval_expiry}}
   end
