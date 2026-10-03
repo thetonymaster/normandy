@@ -21,6 +21,8 @@ defmodule Normandy.Tools.Executor do
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.BaseTool
+  alias Normandy.Tools.Context
+  alias Normandy.Tools.ContextualTool
   alias Normandy.Tools.Registry
 
   @type execution_result :: {:ok, term()} | {:error, String.t()}
@@ -32,7 +34,8 @@ defmodule Normandy.Tools.Executor do
   @type error_type :: :exception | :exit | :timeout | :tool_error | :invalid_result
   @type execution_options :: [
           timeout: pos_integer(),
-          max_retries: non_neg_integer()
+          max_retries: non_neg_integer(),
+          context: Context.t()
         ]
 
   @default_timeout 30_000
@@ -45,6 +48,7 @@ defmodule Normandy.Tools.Executor do
 
     * `:timeout` - Maximum execution time in milliseconds (default: 30000)
     * `:max_retries` - Number of retry attempts on failure (default: 0)
+    * `:context` - a `%Normandy.Tools.Context{}`; a `Normandy.Tools.ContextualTool` runs with it
 
   ## Examples
 
@@ -62,7 +66,7 @@ defmodule Normandy.Tools.Executor do
 
     case Registry.get(registry, tool_name) do
       {:ok, tool} ->
-        execute_with_retries(tool, max_retries, timeout!(opts, tool))
+        execute_with_retries(tool, max_retries, timeout!(opts, tool), opts[:context])
 
       :error ->
         {:error, "Tool '#{tool_name}' not found in registry"}
@@ -93,7 +97,7 @@ defmodule Normandy.Tools.Executor do
   @spec execute_tool_classified(struct(), execution_options()) ::
           {{:ok, term()}, nil} | {{:error, String.t()}, error_type()}
   def execute_tool_classified(tool, opts \\ []) do
-    execute_with_timeout(tool, timeout!(opts, tool))
+    execute_with_timeout(tool, timeout!(opts, tool), opts[:context])
   end
 
   @doc """
@@ -130,7 +134,7 @@ defmodule Normandy.Tools.Executor do
 
       Task.async(fn ->
         OtelCtx.restore(parent_ctx)
-        execute_with_retries(tool, max_retries, timeout)
+        execute_with_retries(tool, max_retries, timeout, opts[:context])
       end)
     end)
     |> Enum.map(&Task.await(&1, :infinity))
@@ -195,22 +199,22 @@ defmodule Normandy.Tools.Executor do
     retries
   end
 
-  defp execute_with_retries(tool, retries_left, timeout) do
-    {result, _error_type} = execute_with_timeout(tool, timeout)
+  defp execute_with_retries(tool, retries_left, timeout, context) do
+    {result, _error_type} = execute_with_timeout(tool, timeout, context)
 
     case result do
       {:ok, result} ->
         {:ok, result}
 
       {:error, _reason} when retries_left > 0 ->
-        execute_with_retries(tool, retries_left - 1, timeout)
+        execute_with_retries(tool, retries_left - 1, timeout, context)
 
       {:error, _reason} = error ->
         error
     end
   end
 
-  defp execute_with_timeout(tool, timeout) do
+  defp execute_with_timeout(tool, timeout, context) do
     parent_ctx = OtelCtx.capture()
 
     task =
@@ -218,7 +222,7 @@ defmodule Normandy.Tools.Executor do
         OtelCtx.restore(parent_ctx)
 
         try do
-          tool |> BaseTool.run() |> check_result()
+          tool |> run_tool(context) |> check_result()
         rescue
           error ->
             {{:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"},
@@ -240,6 +244,16 @@ defmodule Normandy.Tools.Executor do
         {{:error, "Tool execution timeout after #{timeout}ms"}, :timeout}
     end
   end
+
+  # A contextual tool runs with the context when there is one; without it, its own
+  # BaseTool.run/1 reports that it needs one.
+  defp run_tool(tool, %Context{} = context) do
+    if ContextualTool.impl_for(tool),
+      do: ContextualTool.run(tool, context),
+      else: BaseTool.run(tool)
+  end
+
+  defp run_tool(tool, nil), do: BaseTool.run(tool)
 
   defp check_result({:ok, _value} = ok), do: {ok, nil}
   defp check_result({:error, _reason} = error), do: {error, :tool_error}
