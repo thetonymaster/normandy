@@ -20,3 +20,10 @@ config :normandy, Normandy.TestRepo,
   priv: "priv/test_repo"
 
 config :normandy, :redis_url, System.get_env("REDIS_URL", "redis://localhost:6379")
+
+# No OTLP exporter in tests (silences the "opentelemetry_exporter not found" log).
+# The simple processor exports synchronously; `Normandy.Test.OtelSpanBridge.attach/1`
+# points it at the test process.
+config :opentelemetry,
+  traces_exporter: :none,
+  processors: [{:otel_simple_processor, %{}}]
