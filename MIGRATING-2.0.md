@@ -43,6 +43,10 @@ SystemPromptGenerator.generate_prompt(spec)
   still sent as JSON.
 - A `:summarize` compaction stores its summary as a plain string
   (`"Previous conversation summary: ..."`), not a `BaseAgentOutputSchema`.
+- The default summarization prompt changed. It tells the model to keep facts the user stated
+  word for word and to carry an earlier summary's facts forward; the 1.x prompt asked for a
+  concise summary and lost such facts after a few rounds. Direct `Summarizer` callers can
+  pass `:prompt`; the `:summarize` compactor always uses the default.
 - `Turn.Server` stores the admitted user input (a map cast to the input schema), the value
   memory holds, instead of the raw argument to `run/2`.
 
