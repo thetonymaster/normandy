@@ -190,6 +190,21 @@ defmodule Normandy.Context.SummarizerTest do
       assert String.contains?(summary_msg.content, "Previous conversation summary")
     end
 
+    test "the summary reaches the model as plain text, not a JSON-wrapped schema", %{
+      client: client
+    } do
+      memory =
+        Enum.reduce(1..8, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i}")
+        end)
+
+      agent = %{memory: memory, model: "test-model", config: %{}}
+      {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 2)
+
+      [summary | _] = AgentMemory.history(compressed.memory)
+      assert summary.content =~ ~r/\APrevious conversation summary: /
+    end
+
     test "keeps all messages if below keep_recent threshold", %{client: client} do
       memory =
         AgentMemory.new_memory()

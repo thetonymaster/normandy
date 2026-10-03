@@ -232,12 +232,10 @@ defmodule Normandy.Context.Summarizer do
     # Start from a fresh entry-graph memory, preserving the active turn id.
     memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
-    # Add summary message first - wrap in proper IO schema struct
-    summary_content = %Normandy.Agents.BaseAgentOutputSchema{
-      chat_message: "Previous conversation summary: " <> summary
-    }
-
-    memory = AgentMemory.add_message(memory, summary_role, summary_content)
+    # The summary goes first, as plain text: wrapped in a schema it reached the model
+    # as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not conversation.
+    memory =
+      AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
 
     # Add recent messages in chronological order, each under its original turn.
     # The summary (added above) takes current_turn_id. Their thinking was produced
