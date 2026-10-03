@@ -12,9 +12,6 @@ agent =
     model: S.model(),
     max_tokens: 300,
     name: "s02",
-    prompt_specification: %Normandy.Components.PromptSpecification{
-      background: ["You are a helpful assistant in one ongoing conversation; remember what the user tells you."]
-    },
     behaviours: %Config{
       compactor: {Compactor.WindowManager, [strategy: :summarize, max_tokens: 1_200, reserved_tokens: 200]}
     }
