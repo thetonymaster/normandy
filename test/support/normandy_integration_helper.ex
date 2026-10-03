@@ -53,8 +53,7 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
       options:
         Keyword.get(opts, :options, %{
           timeout: 60_000,
-          enable_caching: true,
-          max_retries: 3
+          enable_caching: true
         })
     }
   end

@@ -84,7 +84,6 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
   - `:enable_caching` - Enable prompt caching (default: true)
   - `:timeout` - Request timeout in ms (default: 60_000)
-  - `:max_retries` - Max retry attempts (default: 3)
 
   ## Example
 
@@ -101,8 +100,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
       api_key: api_key,
       options: %{
         timeout: Keyword.get(opts, :timeout, 60_000),
-        enable_caching: Keyword.get(opts, :enable_caching, true),
-        max_retries: Keyword.get(opts, :max_retries, 3)
+        enable_caching: Keyword.get(opts, :enable_caching, true)
       }
     }
   end
