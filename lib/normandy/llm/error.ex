@@ -98,7 +98,8 @@ defmodule Normandy.LLMError do
 
   @doc """
   Attaches the raw usage already billed before the failure (and its normalized counts).
-  A `nil` usage, or an error that already carries usage, is returned unchanged.
+  A `nil` usage is ignored, and the first usage wins: an error that already carries usage
+  is returned unchanged.
   """
   @spec with_usage(t(), map() | struct() | nil) :: t()
   def with_usage(%__MODULE__{usage: nil} = error, usage) when not is_nil(usage) do

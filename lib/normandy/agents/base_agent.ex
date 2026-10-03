@@ -1348,7 +1348,7 @@ defmodule Normandy.Agents.BaseAgent do
               # credo:disable-for-next-line Credo.Check.Refactor.Nesting
               case StreamProcessor.stream_error(events) do
                 nil -> {:ok, StreamProcessor.build_final_message(events)}
-                %LLMError{} = error -> {:error, error}
+                %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
               end
           end
 
@@ -1433,11 +1433,23 @@ defmodule Normandy.Agents.BaseAgent do
 
     case stream_error do
       %LLMError{} = error ->
-        {:error, error}
+        {:error, stream_error_with_usage(error, events)}
 
       nil ->
         build_incremental_final_message(events, final_acc)
     end
+  end
+
+  # The events received before a stream failed still bill: attach their usage
+  # (message_start input/cache counts, message_delta output) to the error.
+  defp stream_error_with_usage(%LLMError{} = error, events) do
+    usage =
+      events
+      |> Enum.filter(&match?(%{type: type} when type in ["message_start", "message_delta"], &1))
+      |> StreamProcessor.build_final_message()
+      |> Map.get(:usage)
+
+    LLMError.with_usage(error, if(usage == %{}, do: nil, else: usage))
   end
 
   defp build_incremental_final_message(events, final_acc) do

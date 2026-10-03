@@ -121,6 +121,35 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
                )
     end
 
+    test "the failed call's usage rides on the :invalid_output error" do
+      req_options =
+        stub(fn conn ->
+          Req.Test.json(conn, %{
+            "choices" => [%{"message" => %{"content" => "just prose"}}],
+            "usage" => %{"prompt_tokens" => 9, "completion_tokens" => 4}
+          })
+        end)
+
+      client = %Adapter{
+        api_key: "test-key",
+        base_url: "https://example.test/v1",
+        options: %{on_parse_failure: :error, req_options: req_options}
+      }
+
+      assert {:error, %Normandy.LLMError{type: :invalid_output} = error} =
+               Model.converse(
+                 client,
+                 "gpt-4o",
+                 nil,
+                 1024,
+                 [],
+                 %Normandy.Agents.BaseAgentOutputSchema{},
+                 []
+               )
+
+      assert error.usage == %{"prompt_tokens" => 9, "completion_tokens" => 4}
+    end
+
     test "a schema without :chat_message has nothing to fall back to: :invalid_output" do
       assert {:error, %Normandy.LLMError{type: :invalid_output}} = converse_prose(%{}, %Answer{})
     end

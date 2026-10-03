@@ -58,6 +58,40 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     assert_raise LLMError, "LLM call failed: stream: Overloaded", fn -> stream(agent) end
   end
 
+  defp usage_start(usage),
+    do: %{type: "message_start", message: %{"id" => "m", "role" => "assistant", "usage" => usage}}
+
+  defp reason_of(fun) do
+    fun.()
+    flunk("expected an LLMError")
+  rescue
+    e in LLMError -> e
+  end
+
+  test "a stream that errors after message_start carries its usage on the error" do
+    events = [
+      usage_start(%{"input_tokens" => 12}),
+      block(),
+      delta("Hel"),
+      error_event()
+    ]
+
+    e = reason_of(fn -> stream(agent(events)) end)
+    assert e.usage_counts == %{input_tokens: 12}
+  end
+
+  test "incremental-guardrail stream that errors also carries usage" do
+    events = [
+      usage_start(%{"input_tokens" => 12}),
+      block(),
+      delta("Hel"),
+      error_event()
+    ]
+
+    e = reason_of(fn -> stream(agent(events, @incremental)) end)
+    assert e.usage_counts == %{input_tokens: 12}
+  end
+
   test "a failed stream emits an llm_call :exception span, not :stop" do
     id = {__MODULE__, self(), make_ref()}
     test_pid = self()

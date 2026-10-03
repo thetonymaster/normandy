@@ -164,8 +164,11 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
           content = A.extract_text(resp_body)
 
           case populate(content, response_model, client, model, temperature, max_tokens, messages) do
-            {:error, %Normandy.LLMError{}} = error -> error
-            populated -> {populated, Map.get(resp_body, "usage")}
+            {:error, %Normandy.LLMError{} = error} ->
+              {:error, Normandy.LLMError.with_usage(error, Map.get(resp_body, "usage"))}
+
+            populated ->
+              {populated, Map.get(resp_body, "usage")}
           end
 
         {:ok, %Req.Response{status: status, body: resp_body}} ->
