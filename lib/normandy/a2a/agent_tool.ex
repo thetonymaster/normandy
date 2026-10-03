@@ -95,7 +95,7 @@ defmodule Normandy.A2A.AgentTool do
         opts
 
       carrier ->
-        headers = Keyword.get(opts, :headers, [])
+        headers = opts |> Keyword.get(:headers, []) |> Enum.to_list()
         taken = MapSet.new(headers, fn {name, _} -> String.downcase(to_string(name)) end)
         trace = Enum.reject(carrier, fn {name, _} -> String.downcase(name) in taken end)
         Keyword.put(opts, :headers, headers ++ trace)

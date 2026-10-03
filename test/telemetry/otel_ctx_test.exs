@@ -43,6 +43,11 @@ defmodule NormandyTest.Telemetry.OtelCtxTest do
       assert OtelCtx.extract([]) == nil
     end
 
+    test "is nil when the carrier holds no valid span context" do
+      assert OtelCtx.extract([{"traceparent", "garbage"}]) == nil
+      assert OtelCtx.extract([{"x-tenant", "t1"}]) == nil
+    end
+
     test "does not change the calling process's current context" do
       {ctx, _span} = ctx_with_span()
       before = :otel_ctx.get_current()

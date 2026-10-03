@@ -111,11 +111,11 @@ defmodule Normandy.A2A.Server do
   Like `handle_message/2`, joining the caller's trace from `carrier`.
 
   `carrier` is the incoming request's headers as `[{name, value}]` (a Plug
-  `conn.req_headers` works as is). When it has a W3C `traceparent` and
+  `conn.req_headers` works as is). When it has a valid W3C `traceparent` and
   OpenTelemetry is loaded, the extracted context is attached for the duration
   of the call (and the previous one put back after), so the agent's spans join
-  the remote caller's trace. Without a `traceparent` the current context is
-  left alone. If your HTTP instrumentation already extracted the trace into a
+  the remote caller's trace. Without one (absent or malformed) the current
+  context is left alone. If your HTTP instrumentation already extracted the trace into a
   server span, call `handle_message/2` instead so the agent nests under that
   span.
 
@@ -128,7 +128,11 @@ defmodule Normandy.A2A.Server do
           {:ok, Claudio.A2A.Task.t()} | {:error, term()}
   def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message, carrier)
       when is_list(carrier) do
-    token = carrier |> trace_ctx() |> OtelCtx.attach()
+    token =
+      carrier
+      |> Enum.map(fn {name, value} -> {to_string(name), value} end)
+      |> trace_ctx()
+      |> OtelCtx.attach()
 
     try do
       request_span(config, message)
@@ -137,9 +141,10 @@ defmodule Normandy.A2A.Server do
     end
   end
 
-  # Only a carrier that names a parent replaces the current context: extracting
-  # from headers without one would detach the request from any span the caller
-  # (e.g. HTTP instrumentation) already made current.
+  # Only a carrier that names a valid parent replaces the current context:
+  # extracting from headers without one would detach the request from any span
+  # the caller (e.g. HTTP instrumentation) already made current. `extract/1` is
+  # nil for a malformed `traceparent`, and `attach(nil)` is a no-op.
   defp trace_ctx(carrier) do
     if Enum.any?(carrier, fn {name, _} -> String.downcase(name) == "traceparent" end) do
       OtelCtx.extract(carrier)

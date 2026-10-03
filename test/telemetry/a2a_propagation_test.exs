@@ -113,6 +113,17 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       assert List.keymember?(headers, "traceparent", 0)
     end
 
+    test "accepts map transport headers under an active span", %{bypass: bypass} do
+      serve_a2a(bypass, self())
+      tool = agent_tool(bypass, transport_opts: [headers: %{"x-tenant" => "t1"}])
+
+      assert {:ok, _text} = with_caller_span(fn -> BaseTool.run(tool) end)
+
+      assert_received {:request_headers, headers}
+      assert {"x-tenant", "t1"} in headers
+      assert List.keymember?(headers, "traceparent", 0)
+    end
+
     test "sends no traceparent without an active span", %{bypass: bypass} do
       serve_a2a(bypass, self())
 
@@ -157,6 +168,35 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       caller = OtelSpanBridge.fetch_span!(spans, "caller")
       request = OtelSpanBridge.fetch_span!(spans, "normandy.a2a.request")
       assert request.parent_span_id == caller.span_id
+    end
+
+    test "a malformed traceparent keeps the current context as parent" do
+      message = Message.new(:user, [Part.text("hi")])
+
+      with_caller_span(fn ->
+        assert {:ok, _task} =
+                 Server.handle_message(remote_agent(), message, [{"traceparent", "garbage"}])
+      end)
+
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.a2a.request"])
+      caller = OtelSpanBridge.fetch_span!(spans, "caller")
+      request = OtelSpanBridge.fetch_span!(spans, "normandy.a2a.request")
+      assert request.parent_span_id == caller.span_id
+    end
+
+    test "accepts atom header names" do
+      message = Message.new(:user, [Part.text("hi")])
+
+      assert {:ok, _task} =
+               Server.handle_message(remote_agent(), message, [
+                 {:"x-tenant", "t1"},
+                 {:traceparent, @traceparent}
+               ])
+
+      spans = OtelSpanBridge.await_spans(["normandy.a2a.request"])
+      request = OtelSpanBridge.fetch_span!(spans, "normandy.a2a.request")
+      assert request.trace_id == @trace_id
+      assert request.parent_span_id == @parent_span_id
     end
   end
 

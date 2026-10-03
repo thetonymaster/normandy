@@ -98,7 +98,9 @@ defmodule Normandy.Telemetry.OtelCtx do
   @doc """
   Rebuilds a context from a carrier written by `inject/1`, without touching
   the calling process's current context; install it with `attach/1`. `nil`
-  for an empty carrier or when OTel is absent.
+  for an empty carrier, a carrier with no valid span context (no or a
+  malformed `traceparent`), or when OTel is absent, so a caller that attaches
+  the result keeps its current context.
   """
   @spec extract([{String.t(), String.t()}]) :: term() | nil
   def extract([]), do: nil
@@ -109,8 +111,17 @@ defmodule Normandy.Telemetry.OtelCtx do
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
       empty = apply(:otel_ctx, :new, [])
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(:otel_propagator_text_map, :extract_to, [empty, carrier])
+      ctx = apply(:otel_propagator_text_map, :extract_to, [empty, carrier])
+      if valid_span?(ctx), do: ctx
     end
+  end
+
+  defp valid_span?(ctx) do
+    # Soft dependency, see capture/0.
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    span_ctx = apply(:otel_tracer, :current_span_ctx, [ctx])
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    span_ctx != :undefined and apply(:otel_span, :is_valid, [span_ctx])
   end
 
   @doc """
