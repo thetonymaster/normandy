@@ -55,7 +55,10 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:output_guardrails) => [Normandy.Guardrails.spec()],
           optional(:output_guardrails_streaming_mode) => :accumulate | :incremental,
           optional(:output_guardrails_chunk_size) => pos_integer(),
-          optional(:output_guardrails_on_violation) => :block | :warn
+          optional(:output_guardrails_on_violation) => :block | :warn,
+          optional(:name) => String.t() | nil,
+          optional(:behaviours) => Normandy.Behaviours.Config.t(),
+          optional(:mcp_servers) => term()
         }
 
   @spec init(config_input()) :: BaseAgentConfig.t()
