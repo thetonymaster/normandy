@@ -32,9 +32,6 @@ agent =
     model: S.model(),
     max_tokens: 200,
     name: "s08",
-    prompt_specification: %Normandy.Components.PromptSpecification{
-      background: ["You are a helpful assistant in one ongoing conversation; remember what the user tells you."]
-    },
     output_guardrails: [{ForbiddenSubstrings, terms: ["PINEAPPLE"]}],
     output_guardrails_streaming_mode: :incremental,
     output_guardrails_chunk_size: 20

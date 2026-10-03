@@ -37,14 +37,7 @@ end
 S.narrate("AgentPool of 2 processes, three rounds of two concurrent transactions.")
 
 pool_config =
-  Map.merge(base, %{
-    name: "s10-pool",
-    prompt_specification: %PromptSpecification{
-      background: [
-        "You are a helpful assistant in one ongoing conversation; remember what the user tells you."
-      ]
-    }
-  })
+  Map.merge(base, %{name: "s10-pool"})
 
 {:ok, pool} = AgentPool.start_link(agent_config: pool_config, size: 2, max_overflow: 0)
 

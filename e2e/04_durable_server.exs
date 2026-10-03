@@ -18,10 +18,7 @@ opts = [
     client: S.client(),
     model: S.model(),
     max_tokens: 200,
-    name: "s04",
-    prompt_specification: %Normandy.Components.PromptSpecification{
-      background: ["You are a helpful assistant in one ongoing conversation; remember what the user tells you."]
-    }
+    name: "s04"
   }),
   store: {InMemory, store},
   registry: {Native, reg},
