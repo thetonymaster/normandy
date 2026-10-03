@@ -29,8 +29,9 @@ defmodule Normandy.Telemetry.Request do
 
   ## Metadata
 
-  Start: `:model`, `:provider` (when known), `:stream`, `:attempt`, `:kind`
-  (`:initial | :retry | :json_retry | :structured_fallback`), and the llm_call's
+  Start: `:model`, `:provider` (when known), `:stream`, `:attempt`, `:request_kind`
+  (`:initial | :retry | :json_retry | :structured_fallback`; not `:kind`, which the
+  exception event uses for the error class), and the llm_call's
   ids (`:turn_id`, `:session_id`, `:conversation_id`) and `:agent_name` when the
   tracker carries them. Stop adds `:status` (`:ok`), `:response_id`,
   `:finish_reason` (a string) and this request's normalized token counts
@@ -60,9 +61,13 @@ defmodule Normandy.Telemetry.Request do
   @type kind :: :initial | :retry | :json_retry | :structured_fallback
   @type outcome :: {:ok, map()} | {:error, LLMError.t()}
 
-  @doc "A tracker for one llm_call; `metadata` is added to every request span's start."
+  @doc """
+  A tracker for one llm_call; `metadata` (nil values dropped) is added to every
+  request span's start.
+  """
   @spec new(map()) :: t()
-  def new(metadata \\ %{}), do: %__MODULE__{counters: :counters.new(4, []), metadata: metadata}
+  def new(metadata \\ %{}),
+    do: %__MODULE__{counters: :counters.new(4, []), metadata: reject_nil(metadata)}
 
   @doc """
   Notes that the caller is about to call `converse/7` (or start a stream attempt)
@@ -108,7 +113,7 @@ defmodule Normandy.Telemetry.Request do
       tracker
       |> tracker_metadata()
       |> Map.merge(reject_nil(metadata))
-      |> Map.merge(%{attempt: attempt, kind: kind, telemetry_span_context: make_ref()})
+      |> Map.merge(%{attempt: attempt, request_kind: kind, telemetry_span_context: make_ref()})
 
     start_time = System.monotonic_time()
 

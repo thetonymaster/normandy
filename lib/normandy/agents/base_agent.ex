@@ -1043,7 +1043,8 @@ defmodule Normandy.Agents.BaseAgent do
            config,
            messages,
            stream_opts(config, callback) ++ task_budget_call_opts(config, state),
-           {first_chunk, tracker}
+           first_chunk,
+           tracker
          ) do
       {:ok, final_message} ->
         # The prefix this response was produced under, stamped when it is appended.
@@ -1390,7 +1391,7 @@ defmodule Normandy.Agents.BaseAgent do
   # that the caller has seen output, and a retry would show it twice.
   # Each attempt is one [:normandy, :llm, :request] span, emitted here because the
   # stream is consumed here (adapters emit none for stream_converse/7).
-  defp stream_response_from_llm(config, messages, opts, {first_chunk, tracker}) do
+  defp stream_response_from_llm(config, messages, opts, first_chunk, tracker) do
     delivered = :atomics.new(1, [])
     opts = Keyword.update(opts, :callback, nil, &track_delivery(&1, delivered))
 

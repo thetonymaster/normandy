@@ -26,10 +26,22 @@ defprotocol Normandy.Agents.Model do
     - max_tokens: Maximum tokens to generate
     - messages: List of conversation messages
     - response_model: Expected response schema
-    - opts: Optional keyword list with :tools key for tool schemas. BaseAgent also
-      passes `:request_tracker` (a `Normandy.Telemetry.Request`); an implementation
-      may wrap each provider request in `Normandy.Telemetry.Request.span/5` with it
-      to emit `[:normandy, :llm, :request]` spans, and may ignore it otherwise
+    - opts: Optional keyword list with :tools key for tool schemas. Two telemetry
+      options may also be present; an implementation may ignore both:
+      - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed by
+        BaseAgent (one per llm_call) and by the JSON retry loop
+      - `:request_kind` - `:json_retry` when `Normandy.LLM.JsonDeserializer`
+        re-asks after an unparseable response; absent otherwise
+
+      To emit a `[:normandy, :llm, :request]` span per provider request, wrap each
+      request in `Normandy.Telemetry.Request.span/5`, passing
+      `opts[:request_tracker]`, the kind (`opts[:request_kind]`, or
+      `:structured_fallback`/`nil` as the implementation knows), metadata
+      (`%{model: model, provider: :my_provider, stream: false}`), the request
+      function, and an outcome function mapping its result to
+      `{:ok, Normandy.Telemetry.Request.stop_metadata(id, finish_reason, usage)}` or
+      `{:error, %Normandy.LLMError{}}`. With `nil` as the kind the span is
+      `:initial` or `:retry` from the tracker's count.
 
   ## Returns
     Structured response conforming to response_model.

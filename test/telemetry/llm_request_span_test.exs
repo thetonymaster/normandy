@@ -100,10 +100,10 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       assert start.model == "claude-opus-5-5"
       assert start.provider == :anthropic
       assert start.attempt == 1
-      assert start.kind == :initial
+      assert start.request_kind == :initial
       assert start.stream == false
       assert is_binary(start.turn_id)
-      assert start.agent_name == nil or is_binary(start.agent_name)
+      refute Map.has_key?(start, :agent_name)
 
       assert stop.attempt == 1
       assert stop.response_id == "msg_ok"
@@ -133,13 +133,14 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       )
 
       assert [
-               {:start, %{attempt: 1, kind: :initial}},
+               {:start, %{attempt: 1, request_kind: :initial}},
                {:exception, failed},
-               {:start, %{attempt: 2, kind: :retry}},
+               {:start, %{attempt: 2, request_kind: :retry}},
                {:stop, %{attempt: 2, status: :ok}}
              ] = request_events()
 
       assert failed.kind == :error
+      assert failed.request_kind == :initial
       assert %LLMError{type: :rate_limit} = failed.reason
       assert failed.attempt == 1
 
@@ -159,9 +160,9 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       BaseAgent.run(agent(client), "hello")
 
       assert [
-               {:start, %{attempt: 1, kind: :initial}},
+               {:start, %{attempt: 1, request_kind: :initial}},
                {:stop, %{attempt: 1, response_id: "msg_bad"}},
-               {:start, %{attempt: 2, kind: :json_retry}},
+               {:start, %{attempt: 2, request_kind: :json_retry}},
                {:stop, %{attempt: 2, response_id: "msg_ok"}}
              ] = request_events()
 
@@ -181,9 +182,9 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       BaseAgent.run(agent(client), "hello")
 
       assert [
-               {:start, %{attempt: 1, kind: :initial}},
+               {:start, %{attempt: 1, request_kind: :initial}},
                {:exception, %{reason: %LLMError{type: :invalid_request}}},
-               {:start, %{attempt: 2, kind: :structured_fallback}},
+               {:start, %{attempt: 2, request_kind: :structured_fallback}},
                {:stop, %{attempt: 2}}
              ] = request_events()
 
@@ -191,6 +192,38 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       assert call.attempts == 2
       assert call.json_retries == 0
       assert call.structured_fallback == true
+    end
+
+    test "a failed structured fallback's exception carries request_kind and kind: :error" do
+      client =
+        claudio(__MODULE__.FallbackFails, %{}, fn
+          0, conn -> error_reply(conn, 400, "invalid_request_error", "output_format unsupported")
+          _n, conn -> error_reply(conn, 401, "authentication_error", "bad key")
+        end)
+
+      assert_raise LLMError, fn -> BaseAgent.run(agent(client), "hello") end
+
+      assert [
+               {:start, %{request_kind: :initial}},
+               {:exception, %{request_kind: :initial, kind: :error}},
+               {:start, %{request_kind: :structured_fallback}},
+               {:exception, failed}
+             ] = request_events()
+
+      assert failed.kind == :error
+      assert failed.request_kind == :structured_fallback
+      assert failed.attempt == 2
+      assert %LLMError{type: :authentication} = failed.reason
+    end
+
+    test "a named agent's request spans carry agent_name" do
+      client =
+        claudio(__MODULE__.Named, %{}, fn _n, conn -> Req.Test.json(conn, reply(@valid)) end)
+
+      BaseAgent.run(agent(client, %{name: "researcher"}), "hello")
+
+      assert [{:start, %{agent_name: "researcher"}}, {:stop, %{agent_name: "researcher"}}] =
+               request_events()
     end
 
     test "attempt numbers keep counting across a BaseAgent retry after inner requests" do
@@ -206,7 +239,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
         "hello"
       )
 
-      starts = for {:start, m} <- request_events(), do: {m.attempt, m.kind}
+      starts = for {:start, m} <- request_events(), do: {m.attempt, m.request_kind}
       assert starts == [{1, :initial}, {2, :json_retry}, {3, :retry}]
 
       call = llm_call_stop()
@@ -228,7 +261,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
         []
       )
 
-      assert [{:start, %{attempt: 1, kind: :initial}}, {:stop, _}] = request_events()
+      assert [{:start, %{attempt: 1, request_kind: :initial}}, {:stop, _}] = request_events()
     end
   end
 
@@ -257,7 +290,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
 
       assert [{:start, start}, {:stop, stop}] = request_events()
       assert start.provider == :openai_compatible
-      assert start.kind == :initial
+      assert start.request_kind == :initial
       assert stop.response_id == "chatcmpl-1"
       assert stop.finish_reason == "stop"
       assert stop.input_tokens == 4
@@ -357,9 +390,10 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       )
 
       assert [
-               {:start, %{attempt: 1, kind: :initial, stream: true, provider: :anthropic}},
+               {:start,
+                %{attempt: 1, request_kind: :initial, stream: true, provider: :anthropic}},
                {:exception, %{reason: %LLMError{}}},
-               {:start, %{attempt: 2, kind: :retry, stream: true}},
+               {:start, %{attempt: 2, request_kind: :retry, stream: true}},
                {:stop, stop}
              ] = request_events()
 
