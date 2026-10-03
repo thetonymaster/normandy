@@ -1,4 +1,6 @@
 # e2e/support.exs — shared by every e2e/NN_*.exs scenario. Loaded with Code.require_file.
+Code.require_file("otel_bridge.exs", __DIR__)
+
 defmodule E2E.Support do
   @moduledoc false
 
@@ -24,8 +26,14 @@ defmodule E2E.Support do
     :ok = :telemetry.attach("e2e-claudio-calls", [:claudio, :messages, :create, :stop], &__MODULE__.on_call/4, nil)
     :ok = :telemetry.attach_many("e2e-probes", @probe_events, &__MODULE__.on_event/4, nil)
     IO.puts("\n=== #{id} (live-call cap #{cap}) ===")
+    if otel?(), do: E2E.OtelBridge.setup(id)
     :ok
   end
+
+  # NORMANDY_E2E_OTLP=1 exports Normandy's spans to e2e/otel's Tempo (see e2e/otel_bridge.exs).
+  defp otel?, do: System.get_env("NORMANDY_E2E_OTLP") not in [nil, "", "0", "false"]
+
+  defp otel_report, do: if(otel?(), do: E2E.OtelBridge.report())
 
   @doc false
   def on_call(_event, measurements, _meta, _config), do: count_remote_call(measurements)
@@ -47,6 +55,7 @@ defmodule E2E.Support do
 
     if n > cap do
       IO.puts("INVARIANT FAILED: live-call cap #{cap} exceeded (#{n})")
+      otel_report()
       System.halt(2)
     end
 
@@ -77,6 +86,7 @@ defmodule E2E.Support do
 
   def assert!(label, _falsy, msg) do
     IO.puts("INVARIANT FAILED: #{label} — #{msg}")
+    otel_report()
     System.halt(2)
   end
 
@@ -106,6 +116,7 @@ defmodule E2E.Support do
   def finish do
     %{id: id, calls: n, t0: t0} = Agent.get(__MODULE__, & &1)
     ms = System.monotonic_time(:millisecond) - t0
+    otel_report()
     IO.puts("\nLIVE CALLS USED: #{n}")
     IO.puts("E2E_RESULT " <> Jason.encode!(%{scenario: id, calls: n, ms: ms}))
   end

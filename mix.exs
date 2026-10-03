@@ -184,7 +184,9 @@ defmodule Normandy.MixProject do
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:opentelemetry, "~> 1.5", only: :test},
-      {:opentelemetry_api, "~> 1.4", only: :test}
+      {:opentelemetry_api, "~> 1.4", only: :test},
+      # OTLP export for `NORMANDY_E2E_OTLP=1 mix e2e` (e2e/otel_bridge.exs).
+      {:opentelemetry_exporter, "~> 1.8", only: :test}
     ] ++ e2e_deps()
   end
 
