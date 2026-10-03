@@ -50,8 +50,11 @@ defmodule Normandy.Telemetry do
 
   One LLM call of a run (an iteration of the tool loop), covering all the provider
   requests behind it (retries, JSON parse retries, the structured-outputs fallback).
+  `Normandy.Context.Summarizer` emits one per summary request too (compaction runs it
+  inside the run), so a run's token totals include its summaries.
 
-    * Start metadata: `model`, `iteration` (1-based), `agent_name`, the ids, `stream`
+    * Start metadata: `model`, `iteration` (1-based; absent on a summary call),
+      `purpose` (`:summary`, only on a summary call), `agent_name`, the ids, `stream`
       (boolean, always present), `structured_output` (boolean, always present),
       `provider`, `max_tokens`, `temperature` (only when set; Opus 4.7+ rejects it),
       `effort`, `server_address` (host of the client's base URL; absent when the

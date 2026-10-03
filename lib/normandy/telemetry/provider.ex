@@ -72,8 +72,18 @@ defmodule Normandy.Telemetry.Provider do
   `structured_output` is whether native structured outputs are requested for this
   call: true only for a Claudio client, a non-streaming call, no tools, and a
   response schema the translator can express.
+
+  `config` is a `BaseAgentConfig`, or any map with the three keys read here.
   """
-  @spec request_metadata(struct(), keyword()) :: map()
+  @spec request_metadata(
+          %{
+            :client => term(),
+            :max_tokens => term(),
+            :temperature => term(),
+            optional(atom()) => term()
+          },
+          keyword()
+        ) :: map()
   def request_metadata(config, opts) do
     client = config.client
     stream? = Keyword.get(opts, :stream, false)

@@ -19,6 +19,11 @@ defmodule Normandy.Context.Summarizer do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
+  alias Normandy.LLMError
+  alias Normandy.Telemetry.Metadata
+  alias Normandy.Telemetry.Provider
+  alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.Usage
 
   # Compaction summarizes its own earlier summaries, so a fact the conversation has moved
   # past must be carried forward explicitly or a later round drops it.
@@ -73,7 +78,7 @@ defmodule Normandy.Context.Summarizer do
     ]
 
     # Call LLM to generate summary
-    call_llm_for_summary(client, model, temperature, max_tokens, summarization_messages)
+    call_llm_for_summary(client, agent, model, temperature, max_tokens, summarization_messages)
   end
 
   @doc """
@@ -210,13 +215,37 @@ defmodule Normandy.Context.Summarizer do
               "#{inspect(Map.keys(agent))}"
   end
 
-  defp call_llm_for_summary(client, model, temperature, max_tokens, messages) do
+  defp call_llm_for_summary(client, agent, model, temperature, max_tokens, messages) do
     # Create a proper struct response model for text output
     response_model = %Normandy.Agents.BaseAgentOutputSchema{chat_message: ""}
 
-    case ConverseResult.normalize(
-           Model.converse(client, model, temperature, max_tokens, messages, response_model, [])
-         ) do
+    metadata =
+      %{model: model, agent_name: Map.get(agent, :name), purpose: :summary}
+      |> Map.merge(Metadata.ids(agent))
+      |> Map.merge(
+        Provider.request_metadata(
+          %{client: client, max_tokens: max_tokens, temperature: temperature},
+          stream: false,
+          response_model: response_model
+        )
+      )
+
+    # The summary's provider requests carry the agent's ids, like a turn's do.
+    tracker =
+      metadata
+      |> Map.take([:agent_name, :turn_id, :session_id, :conversation_id])
+      |> Request.new()
+
+    llm_call_span(metadata, tracker, fn ->
+      Request.note_call(tracker)
+
+      client
+      |> Model.converse(model, temperature, max_tokens, messages, response_model,
+        request_tracker: tracker
+      )
+      |> ConverseResult.normalize()
+    end)
+    |> case do
       {:ok, {%{chat_message: summary}, _usage, _meta}}
       when is_binary(summary) and summary != "" ->
         {:ok, summary}
@@ -227,9 +256,78 @@ defmodule Normandy.Context.Summarizer do
       {:ok, {other, _usage, _meta}} ->
         {:error, {:unexpected_response, other}}
 
-      {:error, %Normandy.LLMError{}} = error ->
+      {:error, %LLMError{}} = error ->
         error
     end
+  end
+
+  # The summary request is an [:normandy, :agent, :llm_call] span (see
+  # Normandy.Telemetry), so its tokens count with the agent's other calls. Emitted by
+  # hand, as :telemetry.span/3 would: the returned {:error, %LLMError{}} must end it
+  # in :exception without being raised, which would also turn a raising client's
+  # LLMError into a return value.
+  defp llm_call_span(metadata, tracker, fun) do
+    start_time = System.monotonic_time()
+    metadata = Map.put(metadata, :telemetry_span_context, make_ref())
+
+    :telemetry.execute(
+      [:normandy, :agent, :llm_call, :start],
+      %{monotonic_time: start_time, system_time: System.system_time()},
+      metadata
+    )
+
+    result =
+      try do
+        fun.()
+      catch
+        kind, reason ->
+          llm_call_exception(metadata, start_time, kind, reason, __STACKTRACE__)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    case result do
+      {:ok, {_response, usage, meta}} ->
+        stop_time = System.monotonic_time()
+
+        stop_metadata =
+          metadata
+          |> Map.put(:usage, usage)
+          |> Map.merge(Usage.normalize(usage))
+          |> Map.merge(response_metadata(meta))
+          |> Map.merge(Request.summary(tracker))
+
+        :telemetry.execute(
+          [:normandy, :agent, :llm_call, :stop],
+          %{duration: stop_time - start_time, monotonic_time: stop_time},
+          stop_metadata
+        )
+
+      {:error, %LLMError{} = error} ->
+        llm_call_exception(metadata, start_time, :error, error, [])
+    end
+
+    result
+  end
+
+  defp llm_call_exception(metadata, start_time, kind, reason, stacktrace) do
+    stop_time = System.monotonic_time()
+
+    :telemetry.execute(
+      [:normandy, :agent, :llm_call, :exception],
+      %{duration: stop_time - start_time, monotonic_time: stop_time},
+      Map.merge(metadata, %{kind: kind, reason: reason, stacktrace: stacktrace})
+    )
+  end
+
+  defp response_metadata(meta) do
+    meta
+    |> Map.take([:served_by, :response_id, :finish_reason])
+    |> Map.update(:finish_reason, nil, fn
+      reason when is_atom(reason) and reason != nil -> Atom.to_string(reason)
+      reason -> reason
+    end)
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp rebuild_memory_with_summary(original_memory, summary, summary_role, recent_messages) do

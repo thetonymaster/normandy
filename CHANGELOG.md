@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
 - `Reactive.all/3` keeps the results it collected when an agent exits or times out.
 - `Turn.Server` closes the run span on `terminate/3` and ignores stray messages.
+- `Context.Summarizer`'s summary request is an `[:normandy, :agent, :llm_call]` span (`purpose: :summary`,
+  no `iteration`) with the agent's name and ids, and its provider requests carry them too. Before, its
+  requests had no llm_call and no ids, so compaction tokens were missing from llm_call totals.
 
 - - -
 ## [v1.3.0](https://github.com/thetonymaster/normandy/compare/6416cea35d8b120370c644dcd9a297dec67df829..v1.3.0) - 2026-06-23

@@ -9,6 +9,7 @@ defmodule Normandy.Context.SummarizerTest do
   alias Normandy.Context.Summarizer
   alias Normandy.Test.MockSummarizerClient
   alias Normandy.Test.StubClient
+  alias Normandy.Test.TelemetryCapture
 
   # Sends each request's messages to `notify`, then returns a fixed summary.
   defmodule RecordingClient do
@@ -150,6 +151,58 @@ defmodule Normandy.Context.SummarizerTest do
 
       assert {:error, %Normandy.LLMError{type: :rate_limit}} =
                Summarizer.summarize_messages(agent.client, agent, messages)
+    end
+  end
+
+  describe "telemetry" do
+    setup do
+      name = "summarizer-#{System.unique_integer([:positive])}"
+
+      TelemetryCapture.attach_span(
+        [
+          [:normandy, :agent, :llm_call, :start],
+          [:normandy, :agent, :llm_call, :stop],
+          [:normandy, :agent, :llm_call, :exception]
+        ],
+        agent_name: name
+      )
+
+      {:ok, name: name}
+    end
+
+    defp named_agent(name, reply) do
+      agent = BaseAgent.init(%{client: %StubClient{reply: reply}, model: "test-model"})
+      %{agent | name: name, memory: AgentMemory.initialize_turn(agent.memory)}
+    end
+
+    test "a summary call is an llm_call span with the agent's ids and its tokens", %{name: name} do
+      agent =
+        named_agent(name, fn rm ->
+          {%{rm | chat_message: "summary"}, %{"input_tokens" => 40, "output_tokens" => 9}}
+        end)
+
+      turn_id = AgentMemory.get_current_turn_id(agent.memory)
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      assert {:ok, "summary"} = Summarizer.summarize_messages(agent.client, agent, messages)
+
+      assert_received {:span, [:normandy, :agent, :llm_call, :start], start}
+      assert %{purpose: :summary, model: "test-model", turn_id: ^turn_id, stream: false} = start
+      refute Map.has_key?(start, :iteration)
+
+      assert_received {:span, [:normandy, :agent, :llm_call, :stop], stop}
+      assert %{input_tokens: 40, output_tokens: 9, attempts: 1, purpose: :summary} = stop
+    end
+
+    test "a failed summary call ends the span with the LLMError", %{name: name} do
+      error = Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)
+      agent = named_agent(name, fn _ -> {:error, error} end)
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      assert {:error, ^error} = Summarizer.summarize_messages(agent.client, agent, messages)
+
+      assert_received {:span, [:normandy, :agent, :llm_call, :exception], meta}
+      assert %{kind: :error, reason: ^error, purpose: :summary} = meta
     end
   end
 
