@@ -24,6 +24,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.ToolCall
   alias Normandy.Hooks.BaseAgentGlue
+  alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
@@ -644,7 +645,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
-    Driver.drive(state, non_streaming_handlers(), config)
+    Driver.drive(state, HookHandlers.wrap(non_streaming_handlers(), config), config)
   end
 
   @doc false
@@ -1009,7 +1010,9 @@ defmodule Normandy.Agents.BaseAgent do
       )
 
     try do
-      {config, final_state} = Driver.drive(state, streaming_handlers(callback), config)
+      {config, final_state} =
+        Driver.drive(state, HookHandlers.wrap(streaming_handlers(callback), config), config)
+
       {config, Map.drop(final_state.final_response, [:tool_calls, :prefix_key])}
     catch
       {:stream_turn_error, error} ->

@@ -12,6 +12,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
+  alias Normandy.Test.KeepLastCompactor
 
   # The FSM finalizes on a response with no tool_calls. Normandy.Test.TurnConfig.Resp has
   # no BaseIOSchema impl; this one does, so AgentMemory.history/1 can render memory.
@@ -279,6 +280,61 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       assert ServerGlue.fail_outcome({:approval_timeout, ["t"]}) ==
                {:error, {:approval_timeout, ["t"]}}
+    end
+  end
+
+  describe "before_llm and after_compact with the server's handlers" do
+    # start/3 always passes custom handlers (a stubbed call_llm): these tests prove the
+    # hooks do not depend on BaseAgent's own handler functions.
+    test "before_llm runs once per LLM call" do
+      {:ok, srv} = start(sid(), [probe()])
+
+      assert {:ok, _} = Turn.Server.run(srv, "hello")
+      assert_receive {:hook, :p, :before_llm, [%{final: false}, _ctx]}
+      refute_received {:hook, :p, :before_llm, _}
+    end
+
+    test "a before_llm halt replies {:hook_halted, e} and on_turn_end sees the same" do
+      {:ok, srv} = start(sid(), [probe(returns: [before_llm: {:halt, "budget"}])])
+
+      assert {:error,
+              {:hook_halted,
+               %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget"} = e}} =
+               Turn.Server.run(srv, "hello")
+
+      assert_receive {:hook, :p, :on_turn_end, [{:error, {:hook_halted, ^e}}, _ctx]}
+      assert Process.alive?(srv)
+    end
+
+    test "after_compact gets dropped entries under their store ids; injections stay out of the store" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe(returns: [after_compact: {:inject, ["remember: metric"]}])]
+
+      behaviours = %Config{
+        hooks: hooks,
+        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+      }
+
+      {:ok, srv} =
+        start(session, hooks, store: {InMemory, store}, config: %{behaviours: behaviours})
+
+      assert {:ok, _} = Turn.Server.run(srv, "one")
+      {:ok, first_turn} = InMemory.history(store, session)
+
+      assert {:ok, _} = Turn.Server.run(srv, "two")
+      assert_receive {:hook, :p, :after_compact, [dropped, _meta, _ctx]}
+      assert Enum.map(dropped, & &1.id) == Enum.map(first_turn, & &1.id)
+
+      {:ok, stored} = InMemory.history(store, session)
+      refute Enum.any?(stored, &(&1.content == "remember: metric"))
+
+      {_state, data} = :sys.get_state(srv)
+
+      assert Enum.any?(
+               AgentMemory.messages(data.config.memory),
+               &(&1.content == "remember: metric")
+             )
     end
   end
 end

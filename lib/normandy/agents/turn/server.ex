@@ -11,6 +11,8 @@ defmodule Normandy.Agents.Turn.Server do
 
     * `:handlers` — a `Turn.Driver.Handlers` set (default
       `BaseAgent.non_streaming_handlers/0`). A `nil` `:emit` is skipped.
+      Hook modules' `before_llm` and `after_compact` run around whichever set is used
+      (`Normandy.Hooks.Handlers`).
     * `:subscriber` — `fn event_name, meta -> any end`, called in the server process
       for every event. A crash in it is logged, reported as
       `[:normandy, :turn, :subscriber, :exception]` telemetry, and ignored.
@@ -106,6 +108,7 @@ defmodule Normandy.Agents.Turn.Server do
       admission did (`:admit`: an `on_prompt` hook or an input guardrail crashing under
       `on_error: :reraise`, or a hook's return-contract violation).
     * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
+    * `{:hook_halted, %Normandy.HookHaltError{}}` — a `before_llm` hook halted the turn.
     * `{:persist_failed, reason}` — the session store rejected a write.
     * Core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
 
@@ -131,6 +134,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.Hooks.Runner
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Telemetry.Metadata
@@ -315,7 +319,11 @@ defmodule Normandy.Agents.Turn.Server do
       template_provider: template_provider,
       resume_policy: resume_policy,
       subscriber: Keyword.get(opts, :subscriber),
-      handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
+      handlers:
+        HookHandlers.wrap(
+          Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
+          config
+        ),
       turn_state: turn_state,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
@@ -1012,9 +1020,7 @@ defmodule Normandy.Agents.Turn.Server do
         )
 
       {:call_llm, request} ->
-        spawn_task(data, :llm, fn h, d ->
-          {:llm_response, h.call_llm.(d.config, d.turn_state, request)}
-        end)
+        spawn_task(data, :llm, &call_llm_event(&1, &2, request))
 
       {:dispatch_tools, calls} ->
         spawn_task(data, :tools, fn _h, d -> dispatch(d, calls) end)
@@ -1055,6 +1061,15 @@ defmodule Normandy.Agents.Turn.Server do
   defp advance(rest, data, event) do
     {state, effects} = Turn.step(data.turn_state, event)
     interpret(effects ++ rest, %{data | turn_state: state})
+  end
+
+  # The worker's event for a :call_llm effect. A before_llm halt (raised by the hook
+  # wrapper, Normandy.Hooks.Handlers) fails the turn with {:hook_halted, e} rather than
+  # {:task_down, _}.
+  defp call_llm_event(handlers, data, request) do
+    {:llm_response, handlers.call_llm.(data.config, data.turn_state, request)}
+  rescue
+    e in Normandy.HookHaltError -> {:llm_error, {:hook_halted, e}}
   end
 
   # Spawn a MONITORED, UNLINKED task that computes its event and sends it back
