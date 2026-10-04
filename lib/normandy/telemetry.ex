@@ -133,6 +133,21 @@ defmodule Normandy.Telemetry do
       :invalid_input`).
       Command errors are returned to the model, not raised, so they end in `:stop`.
 
+  ### `[:normandy, :hook, :start | :stop | :exception]`
+
+  One hook module call (`Normandy.Hooks.Runner`): one span per `{module, opts}` entry per
+  event, for entries whose module exports the event's callback. No hooks, no spans.
+
+    * Start metadata: `event` (`:on_session_start | :on_passivate | :on_prompt |
+      :before_llm | :before_tool | :after_tool | :after_compact | :on_turn_end`), `hook`
+      (the module), `agent_name`, `session_id`, `turn_id`; `before_tool` and `after_tool`
+      add `tool_call_id` and `tool`.
+    * Stop metadata adds `result`: `:cont` (passed the value on unchanged), `:rewrite`,
+      `:halt`, `:inject`, `:ok`, or `:rescued` (a crash rescued under `on_error: :open` or
+      `:closed`, or on a logged-only event).
+    * `:exception` fires when a crash propagates (`on_error: :reraise`) or a return value
+      breaks the callback's contract.
+
   ### `[:normandy, :workflow, :run, :start | :stop | :exception]`
 
   A multi-agent run: `Workflow.execute/1`, and the entry points of
