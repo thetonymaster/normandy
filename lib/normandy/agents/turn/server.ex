@@ -883,10 +883,10 @@ defmodule Normandy.Agents.Turn.Server do
   # config holds only the results that reached the store.
   defp persist_interrupted(data, repairs) do
     result =
-      Enum.reduce_while(repairs, {:ok, data.config}, fn {_call, result, folded}, acc ->
-        case append_to_store(data, data.config, "tool", result) do
+      Enum.reduce_while(repairs, {:ok, data.config}, fn {_call, result, folded}, {:ok, prev} ->
+        case append_to_store(data, data.config, "tool", result, new_entry_id(prev, folded)) do
           :ok -> {:cont, {:ok, folded}}
-          {:error, reason} -> {:halt, {:error, elem(acc, 1), reason}}
+          {:error, reason} -> {:halt, {:error, prev, reason}}
         end
       end)
 
@@ -932,7 +932,7 @@ defmodule Normandy.Agents.Turn.Server do
           fn -> data.handlers.append.(data.config, role, content) end,
           fn config ->
             # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case append_to_store(data, config, role, content) do
+            case append_to_store(data, config, role, content, new_entry_id(data.config, config)) do
               :ok -> interpret(rest, %{data | config: config})
               # Memory must match the store: do not adopt `config` when the write failed,
               # so the next turn's repair sees exactly what the store lacks.
@@ -1204,10 +1204,13 @@ defmodule Normandy.Agents.Turn.Server do
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
     do: mod.save_turn_state(handle, sid, turn_state)
 
-  # The entry carries the turn id the memory gave this message, so a memory
-  # rebuilt from the store keeps the turn boundaries.
-  defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, config, role, content) do
+  # The entry carries the turn id the memory gave this message, so a memory rebuilt from
+  # the store keeps the turn boundaries, and the entry id the memory gave it, so a
+  # rehydrated memory has the ids the live one had (after_compact hooks deduplicate on
+  # them).
+  defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, config, role, content, id) do
     case mod.append_entry(handle, sid, %Normandy.Components.AgentMemory.Entry{
+           id: id,
            turn_id: current_turn_id(config),
            role: role,
            content: content
@@ -1216,6 +1219,14 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  # The id of the entry `after_config`'s memory gained over `before`'s; nil when the
+  # append handler added none (the store then assigns one).
+  defp new_entry_id(%{memory: %AgentMemory{head: head}}, %{memory: %AgentMemory{head: head}}),
+    do: nil
+
+  defp new_entry_id(_before, %{memory: %AgentMemory{head: head}}), do: head
+  defp new_entry_id(_before, _after), do: nil
 
   defp current_turn_id(%{memory: %AgentMemory{current_turn_id: id}}), do: id
   defp current_turn_id(_config), do: nil
@@ -1226,7 +1237,10 @@ defmodule Normandy.Agents.Turn.Server do
   defp persist_user_message(_data, _config, nil, _repaired), do: :ok
 
   defp persist_user_message(data, config, _user_input, repaired) do
-    with {:error, reason} <- append_to_store(data, config, "user", config.current_user_input),
+    id = new_entry_id(repaired, config)
+
+    with {:error, reason} <-
+           append_to_store(data, config, "user", config.current_user_input, id),
          do: {:error, repaired, reason}
   end
 

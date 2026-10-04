@@ -2488,4 +2488,46 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert Process.alive?(b)
     end
   end
+
+  describe "entry ids" do
+    test "the store keeps the id memory gave each message" do
+      store = InMemory.new()
+
+      handlers = %{
+        BaseAgent.non_streaming_handlers()
+        | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
+      }
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: "s-entry-ids",
+          config: base_config(),
+          store: {InMemory, store},
+          registry: {Native, Native.new()},
+          handlers: handlers
+        )
+
+      assert {:ok, _} = Turn.Server.run(srv, "hello")
+      {_state, data} = :sys.get_state(srv)
+      {:ok, stored} = InMemory.history(store, "s-entry-ids")
+
+      assert [_user, _assistant] = stored
+
+      assert Enum.map(stored, & &1.id) ==
+               data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
+    end
+
+    test "interrupted results and the user message after them keep their ids too" do
+      {srv, store} = start_dangling_server("s-entry-ids-dangling", %{})
+      capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, "next") end)
+
+      {_state, data} = :sys.get_state(srv)
+      {:ok, stored} = InMemory.history(store, "s-entry-ids-dangling")
+
+      assert Enum.map(stored, & &1.role) == ["user", "assistant", "tool", "user", "assistant"]
+
+      assert Enum.map(stored, & &1.id) ==
+               data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
+    end
+  end
 end

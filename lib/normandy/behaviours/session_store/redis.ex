@@ -80,7 +80,7 @@ if Code.ensure_loaded?(Redix) do
 
       with {:ok, [_ | _] = raw} <-
              Redix.command(conn, ["XRANGE", stream_key(ns, session_id), "-", "+"]),
-           true <- Enum.any?(raw, fn [id, _fields] -> id == from_entry_id end) do
+           true <- Enum.any?(raw, &entry_matches?(&1, from_entry_id)) do
         prefix = take_through(raw, from_entry_id)
         new_id = "fork_#{System.unique_integer([:positive])}"
 
@@ -227,16 +227,19 @@ if Code.ensure_loaded?(Redix) do
       raw
       |> Enum.reduce({nil, []}, fn [stream_id, kv], {prev_id, acc} ->
         m = kv_to_map(kv)
+        # The id the writer gave the entry (Turn.Server writes memory's), else the stream id
+        # (entries written without one, including every entry before 2.0).
+        id = blank_to_nil(m["id"]) || stream_id
 
         entry = %Entry{
-          id: stream_id,
+          id: id,
           parent_id: prev_id,
           turn_id: blank_to_nil(m["turn_id"]),
           role: m["role"],
           content: decode(m["content"])
         }
 
-        {stream_id, [entry | acc]}
+        {id, [entry | acc]}
       end)
       |> elem(1)
       |> Enum.reverse()
@@ -253,10 +256,17 @@ if Code.ensure_loaded?(Redix) do
 
     defp take_through(raw, target_id) do
       raw
-      |> Enum.reduce_while([], fn [id, _] = item, acc ->
-        if id == target_id, do: {:halt, Enum.reverse([item | acc])}, else: {:cont, [item | acc]}
+      |> Enum.reduce_while([], fn item, acc ->
+        if entry_matches?(item, target_id),
+          do: {:halt, Enum.reverse([item | acc])},
+          else: {:cont, [item | acc]}
       end)
     end
+
+    # An entry is addressed by the id history/2 returned: the stored `id` field, else the
+    # stream id.
+    defp entry_matches?([stream_id, kv], target_id),
+      do: stream_id == target_id or kv_to_map(kv)["id"] == target_id
 
     defp kv_to_map(kv) do
       kv |> Enum.chunk_every(2) |> Map.new(fn [k, v] -> {k, v} end)

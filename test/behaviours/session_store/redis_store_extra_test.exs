@@ -59,4 +59,24 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
     rebuilt = entries |> AgentMemory.from_entries() |> AgentMemory.entry_chain()
     assert Enum.map(rebuilt, & &1.content) == ["a", "b", "d"]
   end
+
+  test "history returns the id an entry was appended with; stream id when none", %{handle: h} do
+    {:ok, _} = Redis.append_entry(h, "s-ids", %{e("user", "a") | id: "mem-1"})
+    {:ok, stream_id} = Redis.append_entry(h, "s-ids", e("assistant", "b"))
+
+    {:ok, [first, second]} = Redis.history(h, "s-ids")
+    assert first.id == "mem-1"
+    assert second.id == stream_id
+    assert second.parent_id == "mem-1"
+  end
+
+  test "fork accepts the id history returned", %{handle: h} do
+    {:ok, _} = Redis.append_entry(h, "s-fork-ids", %{e("user", "a") | id: "mem-1"})
+    {:ok, _} = Redis.append_entry(h, "s-fork-ids", %{e("assistant", "b") | id: "mem-2"})
+    {:ok, _} = Redis.append_entry(h, "s-fork-ids", %{e("user", "c") | id: "mem-3"})
+
+    {:ok, forked} = Redis.fork(h, "s-fork-ids", "mem-2")
+    {:ok, entries} = Redis.history(h, forked)
+    assert Enum.map(entries, &{&1.id, &1.content}) == [{"mem-1", "a"}, {"mem-2", "b"}]
+  end
 end
