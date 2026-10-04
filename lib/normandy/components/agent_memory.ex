@@ -42,14 +42,16 @@ defmodule Normandy.Components.AgentMemory do
   Appends a message to the active branch.
 
   `turn_id:` stores the message under that turn instead of `current_turn_id`;
-  compaction uses it to keep each kept message's turn.
+  compaction uses it to keep each kept message's turn. `id:` gives the entry that id
+  instead of a new one (compaction keeps a kept message's id, which compactors report
+  dropped entries by); it must not already be in `memory`.
   """
   @spec add_message(t(), String.t(), term(), keyword()) :: t()
   def add_message(%__MODULE__{} = memory, role, content, opts \\ []) do
-    opts = Keyword.validate!(opts, [:turn_id])
+    opts = Keyword.validate!(opts, [:turn_id, :id])
     memory = if memory.current_turn_id == nil, do: initialize_turn(memory), else: memory
 
-    id = UUID.uuid4()
+    id = Keyword.get(opts, :id) || UUID.uuid4()
 
     entry = %Entry{
       id: id,

@@ -11,7 +11,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   `opts` flow straight to `WindowManager.new/1` (`:strategy`, `:reserved_tokens`,
   `:max_tokens`). The `:summarize` strategy needs `acc.client`; if summarization
   fails it returns the original `acc` with `%{compacted: false, error: reason}`
-  rather than crashing the turn.
+  rather than crashing the turn. Its meta carries `:dropped`, the removed entries
+  (see `Normandy.Behaviours.Compactor`).
   """
   @behaviour Normandy.Behaviours.Compactor
 
@@ -46,14 +47,16 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     case WM.ensure_within_limit(acc, manager) do
       {:ok, acc2} ->
         after_tokens = WM.estimate_conversation_tokens(acc2.memory)
+        dropped = dropped_entries(acc.memory, acc2.memory)
 
         {acc2,
          %{
            compacted: after_tokens < before,
            tokens_before: before,
            tokens_after: after_tokens,
-           tokens_removed: tokens_removed_this_turn(acc.memory, acc2.memory),
-           strategy: manager.strategy
+           tokens_removed: tokens_removed_this_turn(acc.memory, dropped),
+           strategy: manager.strategy,
+           dropped: dropped
          }}
 
       {:error, reason} ->
@@ -61,23 +64,25 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     end
   end
 
-  # Gross estimated tokens of the messages compaction removed that belong to the
-  # current turn: what the task-budget `remaining` must subtract (Anthropic
-  # task-budgets doc, "Carrying a budget across compaction"). Earlier turns were
-  # never this task's spend, and a summary is new in `after`, so it's never in the
-  # removed set. Keyed on to_json(content): kept content is stored in its JSON form.
-  defp tokens_removed_this_turn(before_memory, after_memory) do
-    turn_id = AgentMemory.get_current_turn_id(before_memory)
-    removed = message_keys(before_memory) -- message_keys(after_memory)
-
-    removed
-    |> Enum.filter(fn {id, _role, _content} -> id == turn_id end)
-    |> Enum.map(fn {_id, _role, content} -> WM.estimate_message_content_tokens(content) + 10 end)
-    |> Enum.sum()
+  # The entries of `before` that `after` no longer holds, oldest first. Every strategy
+  # keeps a kept message's entry id and gives a summary a new one, so this is exactly
+  # what compaction removed.
+  defp dropped_entries(before_memory, after_memory) do
+    kept = MapSet.new(AgentMemory.entry_chain(after_memory), & &1.id)
+    Enum.reject(AgentMemory.entry_chain(before_memory), &MapSet.member?(kept, &1.id))
   end
 
-  defp message_keys(memory) do
-    for msg <- AgentMemory.messages(memory),
-        do: {msg.turn_id, msg.role, BaseIOSchema.to_json(msg.content)}
+  # Gross estimated tokens of the dropped messages that belong to the current turn:
+  # what the task budget's `remaining` must subtract (Anthropic task-budgets doc,
+  # "Carrying a budget across compaction"). Earlier turns were never this task's
+  # spend, and a summary is new, so it is never dropped. Content is estimated in its
+  # JSON form, the form the model was sent.
+  defp tokens_removed_this_turn(before_memory, dropped) do
+    turn_id = AgentMemory.get_current_turn_id(before_memory)
+
+    dropped
+    |> Enum.filter(&(&1.turn_id == turn_id))
+    |> Enum.map(&(WM.estimate_message_content_tokens(BaseIOSchema.to_json(&1.content)) + 10))
+    |> Enum.sum()
   end
 end

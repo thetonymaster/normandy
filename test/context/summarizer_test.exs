@@ -504,4 +504,24 @@ defmodule Normandy.Context.SummarizerTest do
     |> Enum.find(&(&1.role == "assistant" and is_list(&1.content)))
     |> Map.fetch!(:content)
   end
+
+  describe "compress_conversation/3 and entry ids" do
+    test "kept messages keep their entry ids; the summary is a new entry",
+         %{agent: agent, client: client} do
+      memory =
+        Enum.reduce(1..8, AgentMemory.new_memory(), fn i, m ->
+          AgentMemory.add_message(m, "user", "message #{i}")
+        end)
+
+      {:ok, compressed} =
+        Summarizer.compress_conversation(client, %{agent | memory: memory}, keep_recent: 3)
+
+      before = AgentMemory.entry_chain(memory)
+      [summary | kept] = AgentMemory.entry_chain(compressed.memory)
+
+      assert summary.content =~ "Previous conversation summary"
+      refute summary.id in Enum.map(before, & &1.id)
+      assert Enum.map(kept, & &1.id) == before |> Enum.take(-3) |> Enum.map(& &1.id)
+    end
+  end
 end

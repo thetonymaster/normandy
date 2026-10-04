@@ -36,6 +36,50 @@ defmodule Normandy.Behaviours.CompactorTest do
       end)
     end
 
+    test "meta.dropped holds the removed entries, oldest first; kept entries keep their ids" do
+      msgs = for i <- 1..40, do: {"user", "message number #{i} padding"}
+      acc = %{memory: mem_with(msgs)}
+
+      {result, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80}, reserved_tokens: 16)
+
+      before = AgentMemory.entry_chain(acc.memory)
+      kept = AgentMemory.entry_chain(result.memory)
+
+      assert meta.compacted
+      assert meta.dropped == Enum.take(before, length(before) - length(kept))
+      assert Enum.map(kept, & &1.id) == before |> Enum.take(-length(kept)) |> Enum.map(& &1.id)
+    end
+
+    test "nothing removed: meta.dropped is []" do
+      acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}])}
+      {_result, meta} = WMCompactor.maybe_compact(acc, %{model: "m", window: 200_000}, [])
+      assert meta.dropped == []
+    end
+
+    test ":summarize reports the summarized entries as dropped, never the summary" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+
+      acc = %{
+        memory: mem_with(msgs),
+        client: %Normandy.Test.MockSummarizerClient{summary_response: "a short summary"},
+        model: "m"
+      }
+
+      {result, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+          strategy: :summarize,
+          reserved_tokens: 64
+        )
+
+      before = AgentMemory.entry_chain(acc.memory)
+      [summary | kept] = AgentMemory.entry_chain(result.memory)
+
+      refute summary.id in Enum.map(before, & &1.id)
+      assert meta.dropped == Enum.take(before, length(before) - length(kept))
+      assert Enum.map(kept, & &1.id) == before |> Enum.take(-length(kept)) |> Enum.map(& &1.id)
+    end
+
     test "no window in ctx and no explicit max_tokens → skips, reason :no_window" do
       acc = %{memory: mem_with([{"user", "hi"}])}
 

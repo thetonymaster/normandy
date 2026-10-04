@@ -233,6 +233,31 @@ defmodule Normandy.Context.WindowManagerTest do
   end
 
   describe "truncate_conversation/2 with :oldest_first strategy" do
+    test "kept messages keep their entry ids" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "First message that is quite long")
+        |> AgentMemory.add_message("assistant", "First response that is quite long")
+        |> AgentMemory.add_message("user", "Second message that is quite long")
+        |> AgentMemory.add_message("assistant", "Second response that is quite long")
+        |> AgentMemory.add_message("user", "Third message that is quite long")
+        |> AgentMemory.add_message("assistant", "Third response that is quite long")
+
+      {:ok, truncated} =
+        WindowManager.truncate_conversation(%{memory: memory, config: %{}}, manager)
+
+      kept = AgentMemory.entry_chain(truncated.memory)
+      assert length(kept) < 6
+
+      assert Enum.map(kept, & &1.id) ==
+               memory
+               |> AgentMemory.entry_chain()
+               |> Enum.take(-length(kept))
+               |> Enum.map(& &1.id)
+    end
+
     test "kept messages lose their thinking: their history changed" do
       manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
       agent = %{memory: memory_ending_in_thinking_round(), config: %{}}

@@ -453,6 +453,13 @@ defmodule NormandyTest.Components.AgentMemoryTest do
   end
 
   describe "add_message/4" do
+    test "id: gives the entry that id instead of a new one" do
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", id: "entry-1")
+
+      assert [%Entry{id: "entry-1", content: "x"}] = AgentMemory.entry_chain(memory)
+      assert memory.head == "entry-1"
+    end
+
     test "turn_id: stores the message under the given turn, not the current one" do
       memory =
         AgentMemory.new_memory()

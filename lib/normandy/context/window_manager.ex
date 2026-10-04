@@ -282,9 +282,9 @@ defmodule Normandy.Context.WindowManager do
     if current_tokens <= target_tokens do
       {:ok, agent}
     else
-      # Remove oldest messages until under limit. history/1 and messages/1 are
-      # the same chain in the same order: take the kept suffix's turn ids from
-      # messages/1 so each kept message stays in its own turn.
+      # Remove oldest messages until under limit. history/1 and entry_chain/1 are
+      # the same chain in the same order: the kept suffix's entries give each kept
+      # message its turn and its entry id.
       history = AgentMemory.history(agent.memory)
       {fitting, _removed} = split_to_fit(history, target_tokens)
 
@@ -299,13 +299,12 @@ defmodule Normandy.Context.WindowManager do
 
       keep_messages = Enum.take(history, -keep)
 
-      kept_turn_ids =
+      kept_entries =
         agent.memory
-        |> AgentMemory.messages()
-        |> Enum.map(& &1.turn_id)
+        |> AgentMemory.entry_chain()
         |> Enum.take(-length(keep_messages))
 
-      new_memory = rebuild_memory(Enum.zip(keep_messages, kept_turn_ids), agent.memory)
+      new_memory = rebuild_memory(Enum.zip(keep_messages, kept_entries), agent.memory)
       {:ok, %{agent | memory: new_memory}}
     end
   end
@@ -391,11 +390,13 @@ defmodule Normandy.Context.WindowManager do
     # rebuilt entries stay grouped exactly as before.
     memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
-    # Add messages in chronological order, each under its original turn. Their
-    # thinking was produced after the removed messages, so it no longer applies.
-    Enum.reduce(kept, memory, fn {msg, turn_id}, mem ->
+    # Add messages in chronological order, each under its original turn and entry id
+    # (a compactor reports what it dropped by entry id). Their thinking was produced
+    # after the removed messages, so it no longer applies.
+    Enum.reduce(kept, memory, fn {msg, entry}, mem ->
       AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(msg.content),
-        turn_id: turn_id
+        turn_id: entry.turn_id,
+        id: entry.id
       )
     end)
   end

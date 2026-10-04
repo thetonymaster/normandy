@@ -22,6 +22,14 @@ defmodule Normandy.Behaviours.Compactor do
   subtracts it) and `:strategy`. The default impl `NoOp` performs no work and
   preserves current (non-compacting) behavior — the design's default-off
   principle.
+
+  `meta` may also carry `:dropped`: the `%Normandy.Components.AgentMemory.Entry{}`
+  structs the compactor removed from the active branch, oldest first, each with the id
+  it had in `acc.memory` and its original content. A compactor that fills it keeps each
+  kept message under its entry id (`AgentMemory.add_message/4`'s `:id`), so a message is
+  reported under one id for as long as the memory lives. `after_compact` hooks
+  (`Normandy.Behaviours.Hooks`) run only when `:dropped` is non-empty. The WindowManager
+  impl fills it; `NoOp` does not.
   """
 
   @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil}
