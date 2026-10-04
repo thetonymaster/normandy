@@ -33,24 +33,44 @@ it cannot be serialized), and the namespace goes in the config, which is persist
 session's config template:
 
 ```elixir
+alias Normandy.Agents.Turn
 alias Normandy.Agents.Turn.Session
 alias Normandy.Behaviours.AgentTemplate.Catalog
+alias Normandy.Behaviours.SessionRegistry.Native
 alias Normandy.Tools.Registry
 
-Catalog.put(MyApp.AgentTemplates, "support-bot", %{
-  tool_registry: Registry.new([Memory.new(store: {MemoryStore.Redis, redis_handle})]),
-  before_hooks: [],
-  after_hooks: [],
-  client_builder: fn token -> build_client(token) end
-})
+# Once at boot, on every node (distributed_sessions.md has the full Tier-2 setup).
+{:ok, _} = Catalog.start_link(name: MyApp.AgentTemplates)
+{:ok, _} = Turn.Supervisor.start_link(name: MyApp.TurnSupervisor)
+{:ok, _} = Native.start_link(name: MyApp.SessionRegistry)
+
+:ok =
+  Catalog.put(MyApp.AgentTemplates, "support-bot", %{
+    tool_registry: Registry.new([Memory.new(store: {MemoryStore.Redis, {redis_conn, "myapp"}})]),
+    before_hooks: [],
+    after_hooks: [],
+    client_builder: fn token -> build_client(token) end
+  })
+
+# The session config carries only the namespace; the memory tool comes from the
+# supplement. (A Tier-2 config also needs a node-local CredentialProvider in its
+# `behaviours`; see distributed_sessions.md.)
+session_config =
+  BaseAgent.init(%{
+    client: client,
+    model: "claude-sonnet-4-5",
+    tool_context: %{memory_namespace: "acme/user-42"}
+  })
 
 Session.run(
   [
     session_id: sid,
-    registry: MyApp.SessionRegistry,
+    registry: {Native, MyApp.SessionRegistry},
+    supervisor: MyApp.TurnSupervisor,
     store: session_store,
     template_provider: {Catalog, MyApp.AgentTemplates},
-    config: %{config | tool_context: %{memory_namespace: "acme/user-42"}}
+    template_id: "support-bot",
+    config: session_config
   ],
   input
 )
@@ -110,7 +130,7 @@ Memory.new(
 - A path is resolved by longest matching mount prefix; everything else belongs to the
   context namespace.
 - A write to a `:read_only` mount returns `Error: {path} is read-only`.
-- `rename` across two namespaces is refused (`Error: cannot rename across mounts`); there is
+- `rename` across mounts is refused (`Error: cannot rename across mounts`); there is
   no cross-mount move.
 - A mount key must be a canonical path under `/memories` (not `/memories` itself and not
   ending in `/`); `new/1` raises otherwise.
@@ -174,12 +194,13 @@ found again.
 
 ## Erasure
 
-`MemoryStore.delete_namespace/2` removes every document in a namespace atomically. It is
+Every backend's `delete_namespace/2` callback removes every document in a namespace
+atomically. Call it on the backend module with that backend's handle. It is
 application-only: the model cannot call it (the tool's `delete` cannot remove `/memories`
 itself). Use it for account deletion and data-subject requests.
 
 ```elixir
-:ok = MemoryStore.delete_namespace({MemoryStore.Postgres, MyApp.Repo}, "acme/user-42")
+:ok = MemoryStore.Postgres.delete_namespace(MyApp.Repo, "acme/user-42")
 ```
 
 ## Security
