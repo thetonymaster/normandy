@@ -54,20 +54,39 @@ defmodule Normandy.Behaviours.MemoryStore.PostgresTest do
     assert :not_found = Postgres.get(repo, ns, "b")
   end
 
+  defmodule ConnectionLostRepo do
+    # Every statement raises DBConnection.ConnectionError, as when the pool has no live
+    # connection: the other half of backend/1's rescue.
+    def query(_sql, _params), do: raise(DBConnection.ConnectionError, "connection lost")
+    def query!(_sql, _params), do: raise(DBConnection.ConnectionError, "connection lost")
+    def transaction(_fun), do: raise(DBConnection.ConnectionError, "connection lost")
+  end
+
+  defp backend_calls(repo) do
+    [
+      list: fn -> Postgres.list(repo, "n", "") end,
+      get: fn -> Postgres.get(repo, "n", "a") end,
+      put_new: fn -> Postgres.put(repo, "n", "a", "x", :new) end,
+      put_any: fn -> Postgres.put(repo, "n", "a", "x", :any) end,
+      put_cas: fn -> Postgres.put(repo, "n", "a", "x", 1) end,
+      delete_any: fn -> Postgres.delete(repo, "n", "a", :any) end,
+      delete_cas: fn -> Postgres.delete(repo, "n", "a", 1) end,
+      delete_tree: fn -> Postgres.delete_tree(repo, "n", "a") end,
+      rename: fn -> Postgres.rename(repo, "n", "a", "b") end,
+      delete_namespace: fn -> Postgres.delete_namespace(repo, "n") end
+    ]
+  end
+
   test "a failing backend is {:error, _}, never :not_found" do
-    for {name, call} <- [
-          list: fn -> Postgres.list(MissingTableRepo, "n", "") end,
-          get: fn -> Postgres.get(MissingTableRepo, "n", "a") end,
-          put_new: fn -> Postgres.put(MissingTableRepo, "n", "a", "x", :new) end,
-          put_any: fn -> Postgres.put(MissingTableRepo, "n", "a", "x", :any) end,
-          put_cas: fn -> Postgres.put(MissingTableRepo, "n", "a", "x", 1) end,
-          delete_any: fn -> Postgres.delete(MissingTableRepo, "n", "a", :any) end,
-          delete_cas: fn -> Postgres.delete(MissingTableRepo, "n", "a", 1) end,
-          delete_tree: fn -> Postgres.delete_tree(MissingTableRepo, "n", "a") end,
-          rename: fn -> Postgres.rename(MissingTableRepo, "n", "a", "b") end,
-          delete_namespace: fn -> Postgres.delete_namespace(MissingTableRepo, "n") end
-        ] do
+    for {name, call} <- backend_calls(MissingTableRepo) do
       assert {:error, %Postgrex.Error{}} = call.(), "#{name} did not report the backend error"
+    end
+  end
+
+  test "a lost connection is {:error, %DBConnection.ConnectionError{}}, never :not_found" do
+    for {name, call} <- backend_calls(ConnectionLostRepo) do
+      assert {:error, %DBConnection.ConnectionError{message: "connection lost"}} = call.(),
+             "#{name} did not report the connection error"
     end
   end
 
