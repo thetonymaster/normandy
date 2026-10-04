@@ -2543,4 +2543,181 @@ defmodule Normandy.Agents.Turn.ServerTest do
                data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
     end
   end
+
+  describe "after_tool on results the core or the server builds" do
+    # Marks a result and reports its call id; outputs here are maps (interrupted results).
+    defmodule MarkAudited do
+      use Normandy.Behaviours.Hooks
+
+      @impl true
+      def after_tool(_call, result, _ctx, opts) do
+        send(opts[:notify], {:after_tool, result.tool_call_id})
+        {:cont, %{result | output: Map.put(result.output, :audited, true)}}
+      end
+    end
+
+    defp approval_config(after_hooks) do
+      %{
+        config_with_notify(self())
+        | behaviours: %Normandy.Behaviours.Config{
+            policy:
+              {Normandy.Behaviours.PolicyEngine.Ruleset,
+               rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+               default_action: :allow},
+            hooks: [{Normandy.Test.Hooks.Probe, notify: Normandy.Test.Hooks.sink(), tag: :audit}],
+            after_hooks: after_hooks
+          }
+      }
+    end
+
+    # The first LLM call asks for `calls`; every later one answers.
+    defp parking_llm(calls) do
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      fn _c, _s, _r ->
+        if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0,
+          do: %Resp{content: "", tool_calls: calls},
+          else: %Resp{content: "done", tool_calls: nil}
+      end
+    end
+
+    defp start_parking(sid, config, calls, server_opts \\ []) do
+      test_pid = self()
+
+      Turn.Server.start_link(
+        [
+          session_id: sid,
+          config: config,
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: parking_llm(calls)},
+          subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
+        ] ++ server_opts
+      )
+    end
+
+    defp billing(id), do: %ToolCall{id: id, name: "billing", input: %{}}
+
+    defp run_in_background(srv) do
+      parent = self()
+      spawn(fn -> send(parent, {:run_result, Turn.Server.run(srv, "go")}) end)
+    end
+
+    defp reporting_after_hook do
+      test_pid = self()
+
+      fn _config, call, result ->
+        send(test_pid, {:fun_after, call.id})
+        result
+      end
+    end
+
+    test "a rejected call's result passes after_tool once; the function after-hooks never see it" do
+      {:ok, srv} =
+        start_parking("s-hook-reject", approval_config([reporting_after_hook()]), [billing("pk1")])
+
+      run_in_background(srv)
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :reject})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_receive {:hook, :audit, :after_tool,
+                      [%ToolCall{id: "pk1"}, %ToolResult{tool_call_id: "pk1", is_error: true}, _]}
+
+      refute_received {:hook, :audit, :after_tool, _}
+      refute_received {:fun_after, "pk1"}
+    end
+
+    test "expired results pass after_tool once before an on_approval_timeout: :fail turn fails" do
+      # run/2 blocks until the 30 ms window expires: the timeout is a lower bound, no race.
+      {:ok, srv} =
+        start_parking(
+          "s-hook-expire",
+          approval_config([reporting_after_hook()]),
+          [billing("pk1")],
+          approval_timeout_ms: 30,
+          on_approval_timeout: :fail
+        )
+
+      assert {:error, {:approval_timeout, ["pk1"]}} = Turn.Server.run(srv, "go")
+
+      assert_receive {:hook, :audit, :after_tool,
+                      [
+                        %ToolCall{id: "pk1"},
+                        %ToolResult{tool_call_id: "pk1", output: %{expired: true}},
+                        _
+                      ]}
+
+      refute_received {:hook, :audit, :after_tool, _}
+      refute_received {:fun_after, "pk1"}
+    end
+
+    test "a mixed decision: the held rejection and the approved result each pass once" do
+      {:ok, srv} =
+        start_parking("s-hook-mixed", approval_config([]), [billing("pk1"), billing("pk2")])
+
+      run_in_background(srv)
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve, "pk2" => :reject})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_receive {:hook, :audit, :after_tool,
+                      [%ToolCall{id: "pk2"}, %ToolResult{tool_call_id: "pk2", is_error: true}, _]}
+
+      assert_receive {:hook, :audit, :after_tool,
+                      [%ToolCall{id: "pk1"}, %ToolResult{tool_call_id: "pk1"}, _]}
+
+      refute_received {:hook, :audit, :after_tool, _}
+    end
+
+    test "an approved call's result passes after_tool exactly once" do
+      {:ok, srv} = start_parking("s-hook-approve", approval_config([]), [billing("pk1")])
+
+      run_in_background(srv)
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      assert_receive {:hook, :audit, :after_tool, [%ToolCall{id: "pk1"}, _, _]}
+      refute_received {:hook, :audit, :after_tool, _}
+    end
+
+    test "an interrupted result passes after_tool once and is stored as rewritten" do
+      sink = Normandy.Test.Hooks.sink()
+      overrides = %{behaviours: %Normandy.Behaviours.Config{hooks: [{MarkAudited, notify: sink}]}}
+      {srv, store} = start_dangling_server("s-hook-dangling", overrides)
+
+      capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, "next") end)
+
+      assert_received {:after_tool, "t1"}
+      refute_received {:after_tool, _}
+
+      {:ok, entries} = InMemory.history(store, "s-hook-dangling")
+
+      assert Enum.any?(entries, fn e ->
+               match?(
+                 %ToolResult{tool_call_id: "t1", output: %{audited: true, interrupted: true}},
+                 e.content
+               )
+             end)
+    end
+
+    test "a rejected input reports no interrupted result; the accepted one after it, once" do
+      sink = Normandy.Test.Hooks.sink()
+
+      overrides = %{
+        input_schema: %RequiredQueryInput{},
+        behaviours: %Normandy.Behaviours.Config{hooks: [{MarkAudited, notify: sink}]}
+      }
+
+      {srv, _store} = start_dangling_server("s-hook-dangling-reject", overrides)
+
+      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      refute_received {:after_tool, _}
+
+      capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, %{"query" => "q"}) end)
+      assert_received {:after_tool, "t1"}
+      refute_received {:after_tool, _}
+    end
+  end
 end

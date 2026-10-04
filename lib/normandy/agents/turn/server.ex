@@ -128,6 +128,9 @@ defmodule Normandy.Agents.Turn.Server do
   it unanswered. The next turn whose input is admitted (a rejected input repairs
   nothing) appends an `interrupted: true` tool result for each missing call, in memory
   and store, before the user message, and logs a warning.
+  Each interrupted result passes the hook modules' `after_tool` once
+  (`Normandy.Behaviours.Hooks`); so do the results the core builds for approval
+  rejections and expiries.
   If a store write fails part-way, memory keeps only the results the store accepted,
   so the next turn completes the repair without duplicating any result. The same
   holds for tool results written during a turn: a rejected write is not adopted into
@@ -655,8 +658,7 @@ defmodule Normandy.Agents.Turn.Server do
         stop_approval_span(data, approval_outcome(length(parked), length(rejected)))
       end)
 
-    {state, effects} = Turn.step(data.turn_state, {:approval, decisions})
-    interpret(effects, %{data | turn_state: state})
+    interpret_built(data, rejected, Turn.step(data.turn_state, {:approval, decisions}))
   end
 
   # A stale/duplicate/late approval cast (double-click, or arriving after the turn
@@ -688,10 +690,8 @@ defmodule Normandy.Agents.Turn.Server do
 
     data = stop_approval_span(data, :expired)
 
-    {state, effects} =
-      Turn.step(data.turn_state, {:approval_expired, %{mode: mode, timeout_ms: ms}})
-
-    interpret(effects, %{data | turn_state: state})
+    step = Turn.step(data.turn_state, {:approval_expired, %{mode: mode, timeout_ms: ms}})
+    interpret_built(data, parked, step)
   end
 
   # Idle long enough → passivate. Final turn state is already persisted; on_passivate
@@ -955,22 +955,32 @@ defmodule Normandy.Agents.Turn.Server do
   # A failed or killed turn can leave the last assistant tool_use without results;
   # the Claude API rejects the next request unless every tool_use is answered. Fold
   # an interrupted result per missing call into memory (no turn exists yet, so a
-  # crashing append replies instead of going through fail/2). Returns one
+  # crashing append or hook replies instead of going through fail/2). Each result
+  # passes after_tool first, like any result the model sees; callers admit the turn's
+  # input before this, so a rejected input reports none. Returns one
   # {call, result, config_after_this_result} per missing call.
   defp close_batch(_data, []), do: {:ok, []}
 
   defp close_batch(data, missing) do
-    call_handler(data, :append, fn ->
-      {repairs, _config} =
-        Enum.map_reduce(missing, data.config, fn call, config ->
-          result = interrupted_result(call)
-          folded = data.handlers.append.(config, "tool", result)
-          {{call, result, folded}, folded}
-        end)
+    with {:ok, results} <-
+           call_handler(data, :after_tool, fn -> interrupted_results(data.config, missing) end) do
+      call_handler(data, :append, fn ->
+        {repairs, _config} =
+          missing
+          |> Enum.zip(results)
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+          |> Enum.map_reduce(data.config, fn {call, result}, config ->
+            folded = data.handlers.append.(config, "tool", result)
+            {{call, result, folded}, folded}
+          end)
 
-      repairs
-    end)
+        repairs
+      end)
+    end
   end
+
+  defp interrupted_results(config, missing),
+    do: Enum.map(missing, &ServerGlue.after_tool(config, &1, interrupted_result(&1)))
 
   # :steering is persisted once per tool batch, so a server killed while a later
   # batch ran restarts from a :steering state whose history already ends in that
@@ -1033,6 +1043,20 @@ defmodule Normandy.Agents.Turn.Server do
   # advance the core in-line (convert/validate/guard) or just side-effect
   # (append/emit/persist). A blocking effect spawns a monitored Task and parks in
   # :running. {:finalize}/{:fail} reply and return to :idle.
+
+  # The core answers rejected and expired calls itself. Their results pass after_tool
+  # here, in the callback whose step built them (in the append effects it returned, or
+  # in the held results it keeps while approved calls run), so each passes exactly once
+  # and no state outlives the callback. A crashing hook fails the turn like a crashing
+  # handler; the next turn repairs the batch's unanswered calls.
+  defp interpret_built(data, calls, {state, effects}) do
+    case call_handler(data, :after_tool, fn ->
+           ServerGlue.after_tool_built(data.config, calls, {state, effects})
+         end) do
+      {:ok, {state, effects}} -> interpret(effects, %{data | turn_state: state})
+      {:crashed, reason} -> fail(%{data | turn_state: state}, reason)
+    end
+  end
 
   defp interpret([], %Data{turn_state: %Turn.State{status: :awaiting_approval}} = data) do
     data = start_approval_span(data)
