@@ -180,6 +180,9 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
     BaseAgent.init(config)
   end
 
+  def handle_violation(_event, measurements, metadata, parent),
+    do: send(parent, {:telemetry, measurements, metadata})
+
   defp collect_callback do
     parent = self()
     {fn type, data -> send(parent, {:cb, type, data}) end, parent}
@@ -213,10 +216,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       :telemetry.attach(
         "test-accumulate-#{inspect(ref)}",
         [:normandy, :agent, :guardrail, :violation],
-        fn _event, measurements, metadata, _ ->
-          send(parent, {:telemetry, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_violation/4,
+        parent
       )
 
       {cb, _} = collect_callback()
@@ -348,10 +349,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       :telemetry.attach(
         "test-incremental-#{inspect(ref)}",
         [:normandy, :agent, :guardrail, :violation],
-        fn _event, measurements, metadata, _ ->
-          send(parent, {:telemetry, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_violation/4,
+        parent
       )
 
       {cb, _} = collect_callback()

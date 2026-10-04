@@ -53,6 +53,11 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     })
   end
 
+  def handle_compaction(_event, measurements, metadata, {test_pid, name}) do
+    if metadata.agent_name == name,
+      do: send(test_pid, {:compaction, measurements, metadata})
+  end
+
   # Every agent turn emits this event, and telemetry handlers are global, so concurrent
   # async tests' events would reach this test too. Forward only this test's agent's.
   setup do
@@ -65,11 +70,8 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       :telemetry.attach(
         handler_id,
         [:normandy, :agent, :compaction],
-        fn _event, measurements, metadata, _ ->
-          if metadata.agent_name == name,
-            do: send(test_pid, {:compaction, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_compaction/4,
+        {test_pid, name}
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)

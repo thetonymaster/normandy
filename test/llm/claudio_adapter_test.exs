@@ -193,6 +193,11 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       refute log =~ @secret
     end
 
+    # Handlers are global and the module is async: only this test's process.
+    def handle_fallback(_event, _measurements, meta, parent) do
+      if self() == parent, do: send(parent, {:fallback_meta, meta})
+    end
+
     test "telemetry carries the failure tag and size, not the model output" do
       parent = self()
       id = "parse-failure-#{System.unique_integer([:positive])}"
@@ -200,11 +205,8 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
       :telemetry.attach(
         id,
         [:normandy, :json_deserializer, :fallback],
-        fn _, _, meta, _ ->
-          # Handlers are global and the module is async: only this test's process.
-          if self() == parent, do: send(parent, {:fallback_meta, meta})
-        end,
-        nil
+        &__MODULE__.handle_fallback/4,
+        parent
       )
 
       on_exit(fn -> :telemetry.detach(id) end)

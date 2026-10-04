@@ -200,6 +200,9 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
     end
   end
 
+  def handle_request(event, _measurements, metadata, test_pid),
+    do: send(test_pid, {event, metadata})
+
   describe "[:normandy, :a2a, :request] telemetry" do
     setup do
       test_pid = self()
@@ -209,8 +212,8 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
         :telemetry.attach_many(
           handler_id,
           [[:normandy, :a2a, :request, :start], [:normandy, :a2a, :request, :stop]],
-          fn event, _measurements, metadata, _ -> send(test_pid, {event, metadata}) end,
-          nil
+          &__MODULE__.handle_request/4,
+          test_pid
         )
 
       on_exit(fn -> :telemetry.detach(handler_id) end)

@@ -497,6 +497,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert_receive {:DOWN, ^ref, :process, ^llm_pid, _}, 1_000
   end
 
+  def handle_run_event(event, measurements, meta, parent) do
+    if meta[:session_id], do: send(parent, {:run_event, event, measurements, meta})
+  end
+
   describe "run telemetry" do
     setup do
       parent = self()
@@ -509,10 +513,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
           [:normandy, :agent, :run, :stop],
           [:normandy, :agent, :run, :exception]
         ],
-        fn event, measurements, meta, _ ->
-          if meta[:session_id], do: send(parent, {:run_event, event, measurements, meta})
-        end,
-        nil
+        &__MODULE__.handle_run_event/4,
+        parent
       )
 
       on_exit(fn -> :telemetry.detach(id) end)
@@ -569,10 +571,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
       :telemetry.attach_many(
         id,
         [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
-        fn event, measurements, meta, _ ->
-          if meta[:session_id], do: send(parent, {:run_event, event, measurements, meta})
-        end,
-        nil
+        &__MODULE__.handle_run_event/4,
+        parent
       )
 
       on_exit(fn -> :telemetry.detach(id) end)

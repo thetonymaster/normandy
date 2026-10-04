@@ -218,6 +218,12 @@ defmodule Normandy.DSL.WorkflowTest do
     end
   end
 
+  # Orchestrator spans from concurrent async tests carry no :workflow_name.
+  def handle_workflow_span(event, _m, metadata, parent) do
+    if Map.get(metadata, :workflow_name) == SequentialWorkflow,
+      do: send(parent, {event, metadata})
+  end
+
   describe "telemetry" do
     test "execute/1 emits one [:normandy, :workflow, :run] span with identity and size only" do
       client = %NormandyTest.Support.ModelMockup{}
@@ -230,12 +236,8 @@ defmodule Normandy.DSL.WorkflowTest do
       :telemetry.attach_many(
         handler_id,
         [[:normandy, :workflow, :run, :start], [:normandy, :workflow, :run, :stop]],
-        fn event, _m, metadata, _ ->
-          # Orchestrator spans from concurrent async tests carry no :workflow_name.
-          if Map.get(metadata, :workflow_name) == SequentialWorkflow,
-            do: send(parent, {event, metadata})
-        end,
-        nil
+        &__MODULE__.handle_workflow_span/4,
+        parent
       )
 
       on_exit(fn -> :telemetry.detach(handler_id) end)

@@ -28,17 +28,19 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
       :telemetry.attach(
         handler_id,
         @exception,
-        fn _event, measurements, metadata, _config ->
-          if metadata.agent_name == name do
-            send(test_pid, {:run_exception, measurements, metadata, current_span_ctx()})
-          end
-        end,
-        nil
+        &__MODULE__.handle_exception/4,
+        {test_pid, name}
       )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     %{name: name}
+  end
+
+  def handle_exception(_event, measurements, metadata, {test_pid, name}) do
+    if metadata.agent_name == name do
+      send(test_pid, {:run_exception, measurements, metadata, current_span_ctx()})
+    end
   end
 
   defp current_span_ctx, do: OpenTelemetry.Tracer.current_span_ctx()

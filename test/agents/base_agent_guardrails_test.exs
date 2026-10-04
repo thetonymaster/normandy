@@ -29,6 +29,9 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
   end
 
+  def handle_event(event, measurements, metadata, test_pid),
+    do: send(test_pid, {:telemetry, event, measurements, metadata})
+
   defp base_config(extra) do
     Map.merge(
       %{
@@ -165,10 +168,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       :telemetry.attach(
         handler_id,
         [:normandy, :agent, :guardrail, :violation],
-        fn event, measurements, metadata, _ ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_event/4,
+        test_pid
       )
 
       try do

@@ -23,6 +23,8 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
 
   defp specs, do: [%{id: "a", agent: agent("a")}, %{id: "b", agent: agent("b")}]
 
+  def handle_span(event, _m, metadata, {parent, ref}), do: send(parent, {ref, event, metadata})
+
   # Runs `fun` and returns every workflow span event seen. Telemetry handlers are
   # global, so the module is not async.
   defp workflow_spans(fun) do
@@ -33,10 +35,8 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
     :telemetry.attach_many(
       handler_id,
       [[:normandy, :workflow, :run, :start], [:normandy, :workflow, :run, :stop]],
-      fn event, _m, metadata, _ ->
-        send(parent, {ref, event, metadata})
-      end,
-      nil
+      &__MODULE__.handle_span/4,
+      {parent, ref}
     )
 
     try do

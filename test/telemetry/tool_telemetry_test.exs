@@ -23,6 +23,10 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
     def call_tool(_client, "search", _args, _opts), do: {:ok, "found"}
   end
 
+  def handle_event(event, measurements, meta, {parent, agent_name}) do
+    if meta[:agent_name] == agent_name, do: send(parent, {:event, event, measurements, meta})
+  end
+
   # Telemetry handlers are global and these tests run async: forward only the
   # events of this test's agent.
   defp attach(events, agent_name) do
@@ -32,10 +36,8 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
     :telemetry.attach_many(
       id,
       events,
-      fn event, measurements, meta, _ ->
-        if meta[:agent_name] == agent_name, do: send(parent, {:event, event, measurements, meta})
-      end,
-      nil
+      &__MODULE__.handle_event/4,
+      {parent, agent_name}
     )
 
     on_exit(fn -> :telemetry.detach(id) end)

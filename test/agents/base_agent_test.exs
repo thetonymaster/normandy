@@ -145,6 +145,10 @@ defmodule NormandyTest.BaseAgentsTest do
     end
   end
 
+  def handle_event(event, measurements, metadata, {parent, ref, name}) do
+    if metadata[:agent_name] == name, do: send(parent, {ref, event, measurements, metadata})
+  end
+
   describe "telemetry" do
     test "emits telemetry events during run", %{agent: agent} do
       parent = self()
@@ -155,10 +159,6 @@ defmodule NormandyTest.BaseAgentsTest do
       agent = %{agent | name: name}
       handler_id = "base-agent-telemetry-#{inspect(ref)}"
 
-      handler = fn event, measurements, metadata, _config ->
-        if metadata[:agent_name] == name, do: send(parent, {ref, event, measurements, metadata})
-      end
-
       events = [
         [:normandy, :agent, :run, :start],
         [:normandy, :agent, :run, :stop],
@@ -166,7 +166,7 @@ defmodule NormandyTest.BaseAgentsTest do
         [:normandy, :agent, :llm_call, :stop]
       ]
 
-      :telemetry.attach_many(handler_id, events, handler, nil)
+      :telemetry.attach_many(handler_id, events, &__MODULE__.handle_event/4, {parent, ref, name})
 
       try do
         BaseAgent.run(agent, "hello")

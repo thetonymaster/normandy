@@ -93,6 +93,11 @@ defmodule NormandyTest.BaseAgentAdmitTest do
     end
   end
 
+  def handle_decision(event, measurements, metadata, {test_pid, name}) do
+    if metadata[:agent_name] == name,
+      do: send(test_pid, {:telemetry, event, measurements, metadata})
+  end
+
   describe "admit telemetry" do
     # Telemetry is global: each test's agent gets a unique name and the handler
     # keeps only that agent's events, so the refutes hold under async tests.
@@ -107,11 +112,8 @@ defmodule NormandyTest.BaseAgentAdmitTest do
           [:normandy, :agent, :guardrail, :decision],
           [:normandy, :agent, :guardrail, :violation]
         ],
-        fn event, measurements, metadata, _ ->
-          if metadata[:agent_name] == name,
-            do: send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_decision/4,
+        {test_pid, name}
       )
 
       on_exit(fn -> :telemetry.detach(handler_id) end)

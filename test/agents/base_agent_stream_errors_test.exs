@@ -92,6 +92,15 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     assert e.usage_counts == %{input_tokens: 12}
   end
 
+  # Handlers are global and the module is async: only report this test's own process.
+  def handle_llm_call(event, _measurements, _metadata, test_pid) do
+    if self() == test_pid, do: send(test_pid, {:llm_call_event, event})
+  end
+
+  def handle_exception(_event, _measurements, metadata, test_pid) do
+    if self() == test_pid, do: send(test_pid, {:exception_metadata, metadata})
+  end
+
   test "a failed stream emits an llm_call :exception span, not :stop" do
     id = {__MODULE__, self(), make_ref()}
     test_pid = self()
@@ -102,11 +111,8 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
         [:normandy, :agent, :llm_call, :stop],
         [:normandy, :agent, :llm_call, :exception]
       ],
-      fn event, _measurements, _metadata, _config ->
-        # Handlers are global and the module is async: only report this test's own process.
-        if self() == test_pid, do: send(test_pid, {:llm_call_event, event})
-      end,
-      nil
+      &__MODULE__.handle_llm_call/4,
+      test_pid
     )
 
     on_exit(fn -> :telemetry.detach(id) end)
@@ -125,10 +131,8 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     :telemetry.attach(
       id,
       [:normandy, :agent, :llm_call, :exception],
-      fn _event, _measurements, metadata, _config ->
-        if self() == test_pid, do: send(test_pid, {:exception_metadata, metadata})
-      end,
-      nil
+      &__MODULE__.handle_exception/4,
+      test_pid
     )
 
     on_exit(fn -> :telemetry.detach(id) end)

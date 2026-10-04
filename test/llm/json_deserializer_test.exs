@@ -500,6 +500,11 @@ defmodule Normandy.LLM.JsonDeserializerTest do
                )
     end
 
+    # Handlers are global and the module is async: only this test's process.
+    def handle_recovery(name, measurements, metadata, %{test_pid: pid}) do
+      if self() == pid, do: send(pid, {:telemetry, name, measurements, metadata})
+    end
+
     test "emits [:normandy, :json_deserializer, :recovery] on successful recovery" do
       handler_id = "recovery-telemetry-test-#{System.unique_integer([:positive])}"
       test_pid = self()
@@ -507,10 +512,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       :telemetry.attach(
         handler_id,
         [:normandy, :json_deserializer, :recovery],
-        fn name, measurements, metadata, %{test_pid: pid} ->
-          # Handlers are global and the module is async: only this test's process.
-          if self() == pid, do: send(pid, {:telemetry, name, measurements, metadata})
-        end,
+        &__MODULE__.handle_recovery/4,
         %{test_pid: test_pid}
       )
 

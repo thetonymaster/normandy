@@ -114,6 +114,10 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
   end
 
+  def handle_span(event, _measurements, metadata, {parent, name, ref}) do
+    if metadata[:agent_name] == name, do: send(parent, {ref, event})
+  end
+
   # Runs `fun` on `agent` (renamed uniquely) with a temporary handler forwarding
   # that agent's `agent.run` start/stop to the test process, then asserts EXACTLY
   # ONE of each was emitted. The run is synchronous, so by the time `fun` returns
@@ -131,10 +135,8 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         [:normandy, :agent, :run, :start],
         [:normandy, :agent, :run, :stop]
       ],
-      fn event, _measurements, metadata, _ ->
-        if metadata[:agent_name] == name, do: send(parent, {ref, event})
-      end,
-      nil
+      &__MODULE__.handle_span/4,
+      {parent, name, ref}
     )
 
     try do
