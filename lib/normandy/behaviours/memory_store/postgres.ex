@@ -58,13 +58,16 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     @impl true
     def put(repo, ns, path, content, :new) do
-      sql = "INSERT INTO #{@table} VALUES ($1, $2, $3, 1, $4) ON CONFLICT DO NOTHING"
+      sql =
+        "INSERT INTO #{@table} (namespace, path, content, version, updated_at) VALUES ($1, $2, $3, 1, $4) ON CONFLICT DO NOTHING"
+
       backend(fn -> repo.query(sql, [ns, path, content, now()]) |> one_row(1) end)
     end
 
     def put(repo, ns, path, content, :any) do
       sql = """
-      INSERT INTO #{@table} VALUES ($1, $2, $3, 1, $4)
+      INSERT INTO #{@table} (namespace, path, content, version, updated_at)
+      VALUES ($1, $2, $3, 1, $4)
       ON CONFLICT (namespace, path) DO UPDATE
         SET content = EXCLUDED.content, version = #{@table}.version + 1, updated_at = EXCLUDED.updated_at
       RETURNING version
@@ -126,32 +129,44 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     @impl true
     def rename(repo, ns, from, to) do
       backend(fn ->
-        repo.transaction(fn ->
-          moving = lock_moving(repo, ns, from)
-
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          cond do
-            moving == [] ->
-              :not_found
-
-            destination_taken?(repo, ns, to) ->
-              {:error, :exists}
-
-            true ->
-              %{num_rows: n} =
-                repo.query!(
-                  "UPDATE #{@table} SET path = $3::text || substr(path, length($2::text) + 1) WHERE namespace = $1 AND path = ANY($4::text[])",
-                  [ns, from, to, moving]
-                )
-
-              {:ok, n}
+        try do
+          repo.transaction(fn -> rename_in_transaction(repo, ns, from, to) end)
+          |> case do
+            {:ok, reply} -> reply
+            {:error, _} = error -> error
           end
-        end)
-        |> case do
-          {:ok, reply} -> reply
-          {:error, _} = error -> error
+        rescue
+          # A concurrent put(:new) or rename into `to` created the destination after
+          # destination_taken?/3 looked; the UPDATE lost the unique-key race. The
+          # transaction has already rolled back.
+          e in Postgrex.Error ->
+            case e do
+              %{postgres: %{code: :unique_violation}} -> {:error, :exists}
+              _ -> reraise e, __STACKTRACE__
+            end
         end
       end)
+    end
+
+    defp rename_in_transaction(repo, ns, from, to) do
+      moving = lock_moving(repo, ns, from)
+
+      cond do
+        moving == [] ->
+          :not_found
+
+        destination_taken?(repo, ns, to) ->
+          {:error, :exists}
+
+        true ->
+          %{num_rows: n} =
+            repo.query!(
+              "UPDATE #{@table} SET path = $3::text || substr(path, length($2::text) + 1) WHERE namespace = $1 AND path = ANY($4::text[])",
+              [ns, from, to, moving]
+            )
+
+          {:ok, n}
+      end
     end
 
     @impl true
@@ -174,9 +189,11 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
           [path]
 
         [] ->
+          # ORDER BY: overlapping directory renames must take row locks in the same
+          # order, or they can deadlock.
           %{rows: rows} =
             repo.query!(
-              "SELECT path FROM #{@table} WHERE namespace = $1 AND starts_with(path, $2) FOR UPDATE",
+              "SELECT path FROM #{@table} WHERE namespace = $1 AND starts_with(path, $2) ORDER BY path COLLATE \"C\" FOR UPDATE",
               [ns, from <> "/"]
             )
 
