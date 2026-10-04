@@ -298,7 +298,25 @@ defmodule Normandy.Tools.Memory.Commands do
   defp line_of(prefix), do: newlines(prefix) + 1
   defp newlines(s), do: length(:binary.matches(s, "\n"))
 
-  defp store(%Memory{store: {mod, handle}}, fun, args), do: apply(mod, fun, [handle | args])
+  # A dead or wedged store (stopped Agent, deleted ETS table, dead Redix connection)
+  # exits or raises instead of returning {:error, _}; it is still a backend failure
+  # (spec §2/§3). Only the store call is wrapped, so a bug in Commands still crashes.
+  # The reason names the exit tag or exception module only, never its payload.
+  defp store(%Memory{store: {mod, handle}}, fun, args) do
+    apply(mod, fun, [handle | args])
+  rescue
+    e -> {:error, {:exception, e.__struct__}}
+  catch
+    :exit, reason -> {:error, {:exit, exit_tag(reason)}}
+  end
+
+  defp exit_tag(reason) when is_atom(reason), do: reason
+
+  defp exit_tag(reason)
+       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
+       do: elem(reason, 0)
+
+  defp exit_tag(_reason), do: :unknown
 
   defp backend(reason),
     do: {:error, :backend, "Error: memory store unavailable: #{inspect(reason)}"}

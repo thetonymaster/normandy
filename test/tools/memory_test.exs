@@ -139,6 +139,7 @@ defmodule Normandy.Tools.MemoryTest do
   describe "commands" do
     alias Normandy.Behaviours.MemoryStore
     alias Normandy.Test.{ConflictStore, DownStore}
+    alias Normandy.Tools.Memory.Commands
 
     setup do
       store = InMemory.new()
@@ -527,6 +528,35 @@ defmodule Normandy.Tools.MemoryTest do
             %{"command" => "rename", "old_path" => "/memories/a", "new_path" => "/memories/b"}
           ] do
         assert {:error, "Error: memory store unavailable: :timeout"} = call(t, input)
+      end
+    end
+
+    test "a store that exits or raises is reported as unavailable with error_type :backend" do
+      in_memory = InMemory.new()
+      :ok = Agent.stop(in_memory)
+      {ets_pid, _table} = ets = MemoryStore.ETS.new()
+      :ok = GenServer.stop(ets_pid)
+
+      # A dead Agent exits with :noproc; a dead ETS owner takes its table with it, so the
+      # direct read raises ArgumentError.
+      for {store, why} <- [
+            {{InMemory, in_memory}, "{:exit, :noproc}"},
+            {{MemoryStore.ETS, ets}, "{:exception, ArgumentError}"}
+          ],
+          input <- [
+            %{"command" => "view", "path" => "/memories/a"},
+            %{
+              "command" => "str_replace",
+              "path" => "/memories/a",
+              "old_str" => "a",
+              "new_str" => "b"
+            }
+          ] do
+        t = Memory.prepare_input(Memory.new(store: store), input)
+        text = "Error: memory store unavailable: " <> why
+
+        assert {:error, :backend, ^text} = Commands.run(t, "acme/u-1")
+        assert {:error, ^text} = call(Memory.new(store: store), input)
       end
     end
   end
