@@ -18,9 +18,11 @@ have two limits.
   compaction drops, or audit a turn's outcome. Telemetry observes most of these points, but
   telemetry cannot change an outcome and is not meant to run application logic.
 
-There is also an audit gap in today's tool hooks: results `Turn.Server` synthesizes itself —
-approval rejected (`server.ex:545`), approval expired (`server.ex:580`), interrupted-batch
-repair (`server.ex:869`) — never pass through `after_hooks`.
+There is also an audit gap in today's tool hooks: tool results produced without running the
+tool through `Dispatch.execute/4` never pass through `after_hooks`. These are approval
+rejected and approval expired (built by the pure core, `turn.ex:425` and `turn.ex:434`, and
+appended by `Turn.Server`), and interrupted-batch repair (built by `Turn.Server`,
+`server.ex:869`).
 
 ## Decisions (approved by Q)
 
@@ -133,7 +135,7 @@ Line numbers are as of `b241330`.
 | `on_prompt` | Start of `BaseAgent.admit_turn_input/2` (`base_agent.ex:584`), non-`nil` input, **before** schema validation and input guardrails | The rewritten input is what is validated, guarded and appended. Not run by the standalone `BaseAgent.admit/2,3`. |
 | `before_llm` | `call_turn_llm` (`base_agent.ex:653`) and `call_stream_llm` (`base_agent.ex:1014`), before the `llm_call` span | `{:halt, reason}` ends the turn. In `Turn.Server` this runs inside the spawned call task. |
 | `before_tool` | `Dispatch.classify/3`, before the existing `run_before_hooks` (`dispatch.ex:219`) | As today: rewrite input (not the call id) or halt with a `%ToolResult{}`; a halt emits `[:normandy, :tool, :denied]` with `:hook_halt`. `execute_approved` (`server.ex:1280`) does not re-run it; it ran at classify. |
-| `after_tool` | `Dispatch.execute/4`, before the existing `run_after_hooks` (`dispatch.ex:264`); **and** on every result `Turn.Server` synthesizes (`server.ex:545`, `580`, `869`) | Rewrite the result. The synthesized results also pass through the existing `after_hooks` functions (a behavior change; see Public contract changes). The result's `tool_call_id` is forced back to the call's id, as today. |
+| `after_tool` | `Dispatch.execute/4`, before the existing `run_after_hooks` (`dispatch.ex:264`); **and**, in `Turn.Server`, on approval-rejected and approval-expired results when their `{:append_message, "tool", result}` effect is interpreted (the Server records those call ids at the approval cast, `server.ex:537`, and at expiry, `server.ex:564`), and on interrupted results in `close_batch` (`server.ex:836`) | Rewrite the result. The synthesized results also pass through the existing `after_hooks` functions (a behavior change; see Public contract changes). The result's `tool_call_id` is forced back to the call's id, as today. |
 | `after_compact` | `BaseAgent.compact_turn_memory/3` (`base_agent.ex:800`), only when `meta.compacted` is true | `dropped` is the messages in memory before compaction that are not in memory after it, in their original order. Injected texts are appended to the compacted memory. |
 | `on_turn_end` | `BaseAgent`: `with_agent_run_span` (`base_agent.ex:1681`), success and exception paths. `Turn.Server`: `:finalize` (`server.ex:997`), `:fail` (`server.ex:1007`), `emit_rejected_run` (`server.ex:720`) | None (logged-only). On the exception path the original exception is re-raised after the hook. |
 
@@ -146,6 +148,9 @@ says hooks do not run there), and `Turn.Server.terminate/3` (no session-end even
   `lib/normandy/exceptions.ex`).
 - `Turn.Server` replies `{:error, {:hook_halted, event, reason}}` and returns to `:idle`, and
   ends the run span with `:exception`.
+  For `before_llm` the Server's call task rescues the `HookHaltError` and feeds
+  `{:llm_error, {:hook_halted, :before_llm, reason}}` to the core, whose `{:fail, reason}`
+  produces that reply. For `on_prompt`, `admit/2` rescues it and the Server replies directly.
 - A `before_llm` halt after a tool batch leaves memory as an LLM error would today: the tool
   results are kept and the turn is not completed.
 - A `before_tool` halt is not a turn halt: it produces the tool result, as today.
@@ -162,13 +167,16 @@ says hooks do not run there), and `Turn.Server.terminate/3` (no session-end even
 `{:inject, texts}` appends each text as a `"user"` message to memory, in order.
 
 - **After compaction** the injected message follows a tool-results message, so the history
-  has two user messages in a row. The Anthropic API combines consecutive same-role turns, but
-  the Claudio adapter's conversion has not been checked. A test sends such a history through
-  the adapter's message conversion and asserts a valid request. If it fails, injected text
-  is merged into the preceding user message instead, and this spec is updated.
-- **Persistence.** In `Turn.Server`, injected messages are persisted the same way the
-  compacted memory (`after_compact`) or session entries (`on_session_start`) are. The plan
-  verifies how the Server persists compacted memory before wiring this.
+  has two user messages in a row. This is already normal: each tool result is its own `"tool"`
+  message, sent as its own `user` message (`claudio_adapter.ex:667-681`), and nothing in
+  Normandy or Claudio merges or rejects consecutive same-role messages (the API combines
+  them). A test pins the request shape.
+- **Persistence.** `on_session_start` injections are written with the Server's
+  `append_to_store/4`, after the in-memory append, so they survive a rehydrate.
+  `after_compact` injections are **memory-only**, exactly like compaction itself: the Server
+  never persists compacted memory (the `SessionStore` is append-only and a rehydrate rebuilds
+  the uncompacted chain, `server.ex:355`), so after a rehydrate the dropped messages are back
+  and the injection is not needed. A later compaction fires `after_compact` again.
 - `on_prompt` cannot inject: it rewrites the input instead.
 
 ### 8. Telemetry
@@ -206,7 +214,8 @@ A span per entry call: `[:normandy, :hook, :start | :stop | :exception]`.
 - **Server-synthesized results** pass through `after_tool` and the function `after_hooks`.
 - **Persistence:** hooks survive a `ConfigTemplate` round trip and a Server rehydrate; a
   template without `hooks` rebuilds with `[]`; `on_session_start` fires for a fresh session
-  and not after rehydrate; injected messages survive a rehydrate.
+  and not after rehydrate; session-start injections survive a rehydrate; `after_compact`
+  injections are not written to the store.
 - **Injection request shape:** the consecutive-user-message test in §7.
 - **Telemetry:** span events and `result` values; catalogue test passes.
 - No live e2e scenario: everything is covered offline, and only Q runs `mix e2e`.
