@@ -66,6 +66,49 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     end
   end
 
+  # Runs `scenario`, in which an `on_timeout: :kill_task` timeout kills a task
+  # blocked in a callback after its run returned, and refutes a killed
+  # exception. `scenario` gets the callback body: it tells the test the
+  # callback was reached (so the run returned and was marked done), then blocks.
+  #
+  # The timeout runs from the task's spawn, so a scheduler stall longer than it
+  # kills the run itself instead, and that kill correctly emits. Such an
+  # attempt never built the scenario: its events are dropped and it is run
+  # again, up to `attempts` times.
+  defp refute_killed_after_run(scenario, attempts \\ 10)
+
+  defp refute_killed_after_run(_scenario, 0),
+    do: flunk("the run never returned before the timeout killed its task")
+
+  defp refute_killed_after_run(scenario, attempts) do
+    test_pid = self()
+    ref = make_ref()
+
+    scenario.(fn ->
+      send(test_pid, {:run_returned, ref})
+      block(nil)
+    end)
+
+    # Coordinators emit from the calling process, so by now any killed
+    # exception is in the mailbox.
+    receive do
+      {:run_returned, ^ref} ->
+        refute_receive {:run_exception, _, _, _}, 50
+    after
+      0 ->
+        flush_run_exceptions()
+        refute_killed_after_run(scenario, attempts - 1)
+    end
+  end
+
+  defp flush_run_exceptions do
+    receive do
+      {:run_exception, _, _, _} -> flush_run_exceptions()
+    after
+      0 -> :ok
+    end
+  end
+
   defp fast_agent(name) do
     agent = BaseAgent.init(%{client: %StubClient{}, model: "fast-model"})
     %{agent | name: name}
@@ -181,13 +224,13 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     end
 
     test "all: a task timed out in on_complete emits nothing", %{name: name} do
-      assert {:ok, _} =
-               Reactive.all([fast_agent(name)], "hi",
-                 timeout: 100,
-                 on_complete: fn _, _ -> block(nil) end
-               )
-
-      refute_receive {:run_exception, _, _, _}, 50
+      refute_killed_after_run(fn after_run ->
+        assert {:ok, _} =
+                 Reactive.all([fast_agent(name)], "hi",
+                   timeout: 100,
+                   on_complete: fn _, _ -> after_run.() end
+                 )
+      end)
     end
 
     test "ParallelOrchestrator.execute: timed out in on_agent_complete emits nothing", %{
@@ -195,24 +238,26 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     } do
       specs = [%{id: "done", agent: fast_agent(name), input: "hi"}]
 
-      assert {:ok, %{errors: %{"done" => {:exit, :timeout}}}} =
-               ParallelOrchestrator.execute(specs,
-                 timeout: 100,
-                 on_agent_complete: fn _, _ -> block(nil) end
-               )
-
-      refute_receive {:run_exception, _, _, _}, 50
+      refute_killed_after_run(fn after_run ->
+        assert {:ok, %{errors: %{"done" => {:exit, :timeout}}}} =
+                 ParallelOrchestrator.execute(specs,
+                   timeout: 100,
+                   on_agent_complete: fn _, _ -> after_run.() end
+                 )
+      end)
     end
 
     test "ParallelOrchestrator.execute_stream: timed out in transform emits nothing", %{
       name: name
     } do
-      specs = [%{id: "done", agent: fast_agent(name), input: "hi", transform: &block/1}]
+      refute_killed_after_run(fn after_run ->
+        specs = [
+          %{id: "done", agent: fast_agent(name), input: "hi", transform: fn _ -> after_run.() end}
+        ]
 
-      assert [{:exit, {"done", :timeout}}] =
-               specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
-
-      refute_receive {:run_exception, _, _, _}, 50
+        assert [{:exit, {"done", :timeout}}] =
+                 specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
+      end)
     end
 
     test "ParallelOrchestrator.execute_stream reports a kill on every enumeration", %{
