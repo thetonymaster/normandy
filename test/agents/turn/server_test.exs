@@ -2203,6 +2203,19 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert Enum.map(entries, & &1.role) == ["user", "assistant"]
     end
 
+    test "a rejected input runs no repair; the accepted input after it repairs once" do
+      {srv, store} =
+        start_dangling_server("s-dangling-reject-then-run", %{input_schema: %RequiredQueryInput{}})
+
+      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      refute_received {:llm_messages, _}
+
+      capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, %{"query" => "q"}) end)
+
+      {:ok, entries} = InMemory.history(store, "s-dangling-reject-then-run")
+      assert Enum.count(entries, &(&1.role == "tool")) == 1
+    end
+
     test "an append crash during repair replies {:handler_crashed, :append, _}; nothing persisted" do
       {srv, store} =
         start_dangling_server("s-dangling-crash", %{}, %{

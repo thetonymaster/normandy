@@ -97,11 +97,14 @@ defmodule Normandy.Agents.Turn.Server do
 
     * `{:rejected, exception}` — the input failed its schema
       (`Normandy.Schema.ValidationError`) or an input guardrail
-      (`Normandy.Guardrails.ViolationError`), and nothing was persisted; or an
-      output guardrail blocked the answer (`Normandy.Guardrails.ViolationError`),
-      and the answer was not saved (the user message was).
+      (`Normandy.Guardrails.ViolationError`), or an `on_prompt` hook halted it
+      (`Normandy.HookHaltError`), and nothing was persisted; or an output guardrail
+      blocked the answer (`Normandy.Guardrails.ViolationError`), and the answer was not
+      saved (the user message was).
     * `{:handler_crashed, name, exception_or_term}` — a synchronous handler
-      (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw.
+      (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw; or
+      admission did (`:admit`: an `on_prompt` hook or an input guardrail crashing under
+      `on_error: :reraise`, or a hook's return-contract violation).
     * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
     * `{:persist_failed, reason}` — the session store rejected a write.
     * Core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
@@ -109,8 +112,9 @@ defmodule Normandy.Agents.Turn.Server do
   ## Interrupted tool calls
 
   A turn that fails or is killed after the assistant's `tool_use` was appended leaves
-  it unanswered. The next turn appends an `interrupted: true` tool result for each
-  missing call, in memory and store, before the user message, and logs a warning.
+  it unanswered. The next turn whose input is admitted (a rejected input repairs
+  nothing) appends an `interrupted: true` tool result for each missing call, in memory
+  and store, before the user message, and logs a warning.
   If a store write fails part-way, memory keeps only the results the store accepted,
   so the next turn completes the repair without duplicating any result. The same
   holds for tool results written during a turn: a rejected write is not adopted into
@@ -477,8 +481,11 @@ defmodule Normandy.Agents.Turn.Server do
   def handle_event({:call, from}, {:turn, user_input, caller_ctx}, :idle, data) do
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
 
-    with {:ok, repairs} <- close_batch(data, missing),
-         {:ok, config} <- admit(last_config(repairs, data.config), user_input) do
+    # Admission first: a rejected input changes nothing, and the interrupted results the
+    # repair builds belong to a turn that runs.
+    with {:ok, admitted} <- admit(data, user_input),
+         {:ok, repairs} <- close_batch(data, missing) do
+      config = BaseAgent.begin_turn(last_config(repairs, data.config), admitted)
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->
@@ -654,13 +661,22 @@ defmodule Normandy.Agents.Turn.Server do
             "got: #{inspect(other)}"
   end
 
-  # Schema and input-guardrail rejections are expected outcomes: reply them as data
-  # without touching state. Anything else admit_turn_input raises is a bug and crashes.
-  defp admit(config, user_input) do
-    {:ok, BaseAgent.admit_turn_input(config, user_input)}
+  # Schema, input-guardrail and on_prompt-hook rejections are expected outcomes: reply
+  # them as data without touching state. Anything else admission raises, exits or throws
+  # (a hook or input guardrail crashing under on_error: :reraise, a hook's contract
+  # violation) is replied as {:handler_crashed, :admit, e} instead of crashing the
+  # session (and, through restart intensity, Turn.Supervisor).
+  defp admit(data, user_input) do
+    {:ok, BaseAgent.admit_input!(data.config, user_input)}
   rescue
-    e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
+    e in [
+      Normandy.Schema.ValidationError,
+      Normandy.Guardrails.ViolationError,
+      Normandy.HookHaltError
+    ] ->
       {:rejected, e}
+  catch
+    kind, reason -> handler_crash(data, :admit, kind, reason, __STACKTRACE__)
   end
 
   # Store order mirrors memory order: interrupted results, then the user message.
@@ -1128,16 +1144,19 @@ defmodule Normandy.Agents.Turn.Server do
   defp call_handler(data, name, fun) do
     {:ok, fun.()}
   catch
-    kind, reason ->
-      stacktrace = __STACKTRACE__
+    kind, reason -> handler_crash(data, name, kind, reason, __STACKTRACE__)
+  end
 
-      Logger.error(
-        "Turn.Server handler #{inspect(name)} crashed (session #{inspect(data.session_id)}): " <>
-          describe_crash(kind, reason, stacktrace) <>
-          "\n" <> Exception.format_stacktrace(arity_only(stacktrace))
-      )
+  # Logs a crash in a handler or hook the server ran (never its values, see
+  # describe_crash/3) and returns {:crashed, {:handler_crashed, name, exception_or_term}}.
+  defp handler_crash(data, name, kind, reason, stacktrace) do
+    Logger.error(
+      "Turn.Server handler #{inspect(name)} crashed (session #{inspect(data.session_id)}): " <>
+        describe_crash(kind, reason, stacktrace) <>
+        "\n" <> Exception.format_stacktrace(arity_only(stacktrace))
+    )
 
-      {:crashed, {:handler_crashed, name, Exception.normalize(kind, reason, stacktrace)}}
+    {:crashed, {:handler_crashed, name, Exception.normalize(kind, reason, stacktrace)}}
   end
 
   defp guard_output(data, value) do

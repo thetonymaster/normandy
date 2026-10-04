@@ -23,6 +23,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.StreamProcessor
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.ToolCall
+  alias Normandy.Hooks.BaseAgentGlue
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
@@ -585,33 +586,61 @@ defmodule Normandy.Agents.BaseAgent do
   @doc false
   def admit_turn_input(config, nil), do: config
 
-  def admit_turn_input(config, user_input) do
-    alias Normandy.Agents.ValidationMiddleware
+  def admit_turn_input(config, user_input),
+    do: begin_turn(config, admit_input!(config, user_input))
 
-    validated_input =
-      case ValidationMiddleware.validate_input(config, user_input) do
-        {:ok, validated} ->
-          validated || user_input
+  @doc false
+  # Admission without the memory append, so Turn.Server can admit a turn's input before
+  # it repairs an interrupted batch: schema validation, on_prompt hooks on the validated
+  # input, validation of a rewritten input, input guardrails. Raises
+  # Normandy.Schema.ValidationError, Normandy.HookHaltError or
+  # Normandy.Guardrails.ViolationError; returns the admitted input.
+  @spec admit_input!(BaseAgentConfig.t(), term()) :: term()
+  def admit_input!(_config, nil), do: nil
 
-        {:error, errors} ->
-          error_msg = ValidationMiddleware.error_message(errors)
+  def admit_input!(config, user_input) do
+    validated = validate_turn_input!(config, user_input)
 
-          raise Normandy.Schema.ValidationError,
-            message: "Agent input validation failed",
-            errors: errors,
-            details: error_msg
+    # A rewrite is validated like a caller's input: a plain map or another struct is
+    # cast and checked against the input schema; a value already of the schema's struct
+    # is trusted, as a caller's is (ValidationMiddleware.validate_input/2).
+    admitted =
+      case BaseAgentGlue.prompt!(config, validated) do
+        ^validated -> validated
+        rewritten -> validate_turn_input!(config, rewritten)
       end
 
-    run_input_guardrails!(config, validated_input)
+    run_input_guardrails!(config, admitted)
+    admitted
+  end
 
+  @doc false
+  # Starts the turn in memory with an admitted input.
+  @spec begin_turn(BaseAgentConfig.t(), term()) :: BaseAgentConfig.t()
+  def begin_turn(config, nil), do: config
+
+  def begin_turn(config, admitted) do
     updated_memory =
       config.memory
       |> AgentMemory.initialize_turn()
-      |> AgentMemory.add_message("user", validated_input)
+      |> AgentMemory.add_message("user", admitted)
 
     config
-    |> Map.put(:current_user_input, validated_input)
+    |> Map.put(:current_user_input, admitted)
     |> Map.put(:memory, updated_memory)
+  end
+
+  defp validate_turn_input!(config, user_input) do
+    case ValidationMiddleware.validate_input(config, user_input) do
+      {:ok, validated} ->
+        validated || user_input
+
+      {:error, errors} ->
+        raise Normandy.Schema.ValidationError,
+          message: "Agent input validation failed",
+          errors: errors,
+          details: ValidationMiddleware.error_message(errors)
+    end
   end
 
   defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
