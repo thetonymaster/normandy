@@ -134,20 +134,29 @@ Memory.new(
   no cross-mount move.
 - A mount key must be a canonical path under `/memories` (not `/memories` itself and not
   ending in `/`); `new/1` raises otherwise.
+- `rename` of a directory into its own subdirectory is refused (`Error: cannot rename
+  /memories/a into its own subdirectory /memories/a/b`), and so is a rename that would make
+  any path under it longer than 255 bytes (`Error: renaming {from} to {to} would make {path}
+  longer than 255 bytes`).
+- `create` on a path that is already a directory (it has documents under it) is refused
+  with `Error: {path} is a directory; choose a file path`.
 
 ## Backends
 
 Every backend implements `Normandy.Behaviours.MemoryStore`: path-addressed documents with
 compare-and-set versions and atomic `rename` / `delete_tree`.
 
-**InMemory and ETS** (node-local, lost on restart; for tests and single-node use):
+**InMemory and ETS** (node-local, lost on restart; for tests and single-node use). Like
+Mnesia, they keep a whole namespace as one value (one row per namespace), so every
+operation's cost grows with the namespace's size. Use these three for small namespaces and
+prefer Postgres or Redis for large or busy ones:
 
 ```elixir
 store = {MemoryStore.InMemory, MemoryStore.InMemory.new()}
 store = {MemoryStore.ETS, MemoryStore.ETS.new()}
 ```
 
-**Mnesia:** create the table once at boot (`:disc_copies` by default; the default table is
+**Mnesia** (one row per namespace; see above): create the table once at boot (`:disc_copies` by default; the default table is
 `:normandy_memory_documents`), and use the table name as the handle.
 
 ```elixir
@@ -178,6 +187,16 @@ namespace cannot be spread across the cluster.
 store = {MemoryStore.Redis, {conn, "myapp"}}
 ```
 
+Operational notes for Redis:
+
+- Run Redis with `maxmemory-policy noeviction`, or with a `volatile-*` policy and no TTLs on
+  the memory keys. If Redis evicts keys, a namespace's index (the sorted set) can list paths
+  whose documents are gone.
+- The Lua scripts read and delete document keys that are not declared in `KEYS` (the script
+  builds them from the prefix and path). Every key carries the namespace's hash tag, so stock
+  Redis Cluster accepts this. A proxy or Redis-compatible server that insists on declared
+  keys (for example Dragonfly in its default mode) may reject the scripts.
+
 `MemoryStore.Redis.new/1` defaults to a random test prefix; in production set `:prefix`
 (or build the `{conn, "myapp"}` handle yourself) so documents survive a restart and are
 found again.
@@ -190,7 +209,16 @@ found again.
 | `max_view_chars` | 16_000 | `Memory.new/1`; longer views are cut with a `view_range` hint |
 | `max_cas_retries` | 3 | `Memory.new/1`; `str_replace` / `insert` retries on conflict |
 | list limit | 1,000 documents | `MemoryStore.list_limit/0`; a longer listing says it stopped |
+| `max_namespace_bytes` | 1_000_000 | `Memory.new/1`; `nil` disables the cap; a write that would exceed it returns `Error: memory is full: writing {path} would bring it to {total} bytes; the limit is {max}. Delete or shorten files first.` |
 | path length | 255 bytes | path validation in the memory tool |
+
+`max_namespace_bytes` is approximate. Two concurrent writers can each pass the check and
+together exceed it. It also sums only the first 1,000 documents the store lists, so for a
+namespace with more it is a lower bound, not a limit. A mount's cap applies to the mount's
+namespace.
+
+The Postgres and Redis backends stamp `updated_at` from the application's clock, so across
+nodes with clock skew it can move backwards.
 
 ## Erasure
 
@@ -216,7 +244,20 @@ itself). Use it for account deletion and data-subject requests.
 - **Paths are validated** before any store call: they must start with `/memories`, and
   `..` segments, empty segments, a trailing slash (except on `/memories`), `\`, control
   characters, `%`-escapes (no URL decoding is applied) and paths over 255 bytes are
-  rejected.
+  rejected. Control and format characters mean the Unicode categories Cc and Cf. Cf also
+  covers the zero-width joiner and non-joiner (U+200D, U+200C), which Persian and Indic text
+  and emoji sequences use, the soft hyphen (U+00AD) and emoji tag characters, so paths that
+  need them are refused.
+- **Backend errors are bounded.** When the store fails, the model sees
+  `Error: memory store unavailable: ` plus a short reason: an exception is reduced to its
+  module name and any other reason is cut at 200 characters. The full reason is logged at
+  warning level (`memory store failure: ...`).
+
+## Reserved name
+
+`memory` is the tool's name. `BaseAgent.register_tool/2` raises `ArgumentError` ("a tool
+named \"memory\" is already registered; pass replace: true to replace it") when a tool with
+that name is registered twice, so do not register another tool named `memory` alongside it.
 
 ## Writing contextual tools
 
@@ -254,5 +295,7 @@ tool run through it returns "<name> requires tool context".
 Each command runs inside a `[:normandy, :memory, :command, :start | :stop | :exception]`
 span nested in the tool-execute span, with `bytes_read`, `bytes_written` and `cas_retries`
 measurements and `command`, `store`, `status` and `error_type` metadata. Namespace and path
-are omitted unless `telemetry_include_paths: true`. See `Normandy.Telemetry` for the full
+are omitted unless `telemetry_include_paths: true`; then the `:stop` event's `namespace` is
+the one the command actually used, so a path inside a mount reports the mount's namespace
+(`:start` carries the session namespace). See `Normandy.Telemetry` for the full
 catalogue.

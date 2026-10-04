@@ -87,7 +87,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   in `test/support/memory_store_contract.ex`
 - **`Normandy.Tools.Memory`** - The `memory` tool (Anthropic memory-tool commands); namespace
   from `tool_context[:memory_namespace]`, never from the struct; `Commands`/`Paths`/`Render`
-  hold command logic, path rules and model-facing text
+  hold command logic, path rules and model-facing text; limits `max_document_bytes`,
+  `max_namespace_bytes` (default 1_000_000, `nil` = no cap), `max_view_chars`, `max_cas_retries`
 - **`Normandy.Tools.Context`** / **`Normandy.Tools.ContextualTool`** - Per-call context built
   from `BaseAgentConfig.tool_context` (plain data, persisted in the config template) and
   passed by every built-in pipeline's `execute_fn`
