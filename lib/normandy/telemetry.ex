@@ -123,11 +123,14 @@ defmodule Normandy.Telemetry do
     * Start metadata: `command` (`"view" | "create" | "str_replace" | "insert" | "delete" |
       "rename"`, or `nil` when the model sent none) and `store` (the `MemoryStore` module).
       With the tool's `telemetry_include_paths: true` it adds `namespace` and `path`; both
-      are off by default because they can carry personal data.
+      are off by default because they can carry personal data. On `:start` the `namespace`
+      is the session namespace; on `:stop` it is the namespace the command actually used,
+      which differs for a path inside a mount.
     * Stop measurements add `bytes_read`, `bytes_written` and `cas_retries`.
     * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type`
       (`:not_found | :conflict_exhausted | :invalid_path | :read_only | :too_large |
-      :no_match | :ambiguous_match | :invalid_line | :exists | :backend | :invalid_input`).
+      :no_match | :ambiguous_match | :invalid_line | :exists | :namespace_full | :backend |
+      :invalid_input`).
       Command errors are returned to the model, not raised, so they end in `:stop`.
 
   ### `[:normandy, :workflow, :run, :start | :stop | :exception]`

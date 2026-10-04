@@ -3,13 +3,34 @@ defmodule Normandy.Tools.Memory.Commands do
   # The six memory commands. Strings follow Anthropic's memory-tool reference. Each
   # returns {:ok, text, stats} or {:error, error_type, text}; Normandy.Tools.Memory turns
   # that into the tool result and telemetry. Every path is validated (locate/4) before
-  # any store call.
+  # any store call. error_type is one of :not_found, :conflict_exhausted, :invalid_path,
+  # :read_only, :too_large, :no_match, :ambiguous_match, :invalid_line, :exists,
+  # :namespace_full, :backend, :invalid_input.
+
+  require Logger
 
   alias Normandy.Behaviours.MemoryStore
   alias Normandy.Tools.Memory
   alias Normandy.Tools.Memory.{Paths, Render}
 
   @root "/memories"
+  @list_limit MemoryStore.list_limit()
+
+  @doc false
+  # The namespace `run/2` uses for the current command: the mount's for a path inside a
+  # mount, else the session's. A path that fails validation resolves nowhere, so the
+  # session's namespace.
+  @spec namespace(Memory.t(), String.t()) :: String.t()
+  def namespace(%Memory{command: nil}, ns), do: ns
+
+  def namespace(%Memory{command: cmd} = tool, ns) do
+    with path when is_binary(path) <- Map.get(cmd, :path) || Map.get(cmd, :old_path),
+         {:ok, path} <- Paths.validate(path) do
+      Paths.resolve(path, ns, tool.mounts).namespace
+    else
+      _ -> ns
+    end
+  end
 
   def run(%Memory{command: nil}, _ns),
     do: {:error, :invalid_input, "Error: no memory command was given"}
@@ -86,7 +107,10 @@ defmodule Normandy.Tools.Memory.Commands do
          :ok <- not_root(loc, "create a file at"),
          {:ok, text} <- text(cmd, :file_text, loc),
          :ok <- fits(tool, loc, text),
-         :ok <- not_directory(tool, loc) do
+         :ok <- not_directory(tool, loc),
+         :ok <- not_under_file(tool, loc),
+         {:ok, others} <- others_bytes(tool, loc, nil),
+         :ok <- within_cap(tool, loc, others, byte_size(text)) do
       case store(tool, :put, [loc.namespace, loc.path, text, :any]) do
         {:ok, _version} ->
           {:ok, "File created successfully at: #{loc.model_path}",
@@ -173,7 +197,9 @@ defmodule Normandy.Tools.Memory.Commands do
 
   # Read-modify-write with compare-and-set. A lost race re-reads and re-applies, up to
   # max_cas_retries extra attempts.
-  defp edit(tool, loc, missing, transform, success, attempt \\ 0) do
+  # The namespace's other documents are listed once, on the first attempt, and carried
+  # through the retries as `others`.
+  defp edit(tool, loc, missing, transform, success, attempt \\ 0, others \\ nil) do
     case store(tool, :get, [loc.namespace, loc.path]) do
       :not_found ->
         {:error, :not_found, missing}
@@ -183,7 +209,9 @@ defmodule Normandy.Tools.Memory.Commands do
 
       {:ok, %{content: content, version: version}} ->
         with {:ok, updated, info} <- transform.(content),
-             :ok <- fits(tool, loc, updated) do
+             :ok <- fits(tool, loc, updated),
+             {:ok, others} <- others_bytes(tool, loc, others),
+             :ok <- within_cap(tool, loc, others, byte_size(updated)) do
           # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case store(tool, :put, [loc.namespace, loc.path, updated, version]) do
             {:ok, _} ->
@@ -195,7 +223,7 @@ defmodule Normandy.Tools.Memory.Commands do
                }}
 
             {:error, :conflict} when attempt < tool.max_cas_retries ->
-              edit(tool, loc, missing, transform, success, attempt + 1)
+              edit(tool, loc, missing, transform, success, attempt + 1, others)
 
             {:error, :conflict} ->
               {:error, :conflict_exhausted,
@@ -292,8 +320,16 @@ defmodule Normandy.Tools.Memory.Commands do
   end
 
   # Renaming a directory to a longer name can push a child past Paths' byte limit, which
-  # would leave documents nobody can address. A document at `from` moves alone.
+  # would leave documents nobody can address. A document at `from` moves alone. A shorter
+  # or equal destination cannot grow anything. A full list page may hide longer paths, so
+  # that case is refused rather than checked in part.
   defp fits_after_move(tool, from, to) do
+    if byte_size(to.path) <= byte_size(from.path),
+      do: :ok,
+      else: fits_after_growth(tool, from, to)
+  end
+
+  defp fits_after_growth(tool, from, to) do
     case store(tool, :get, [from.namespace, from.path]) do
       {:ok, _doc} ->
         :ok
@@ -309,6 +345,11 @@ defmodule Normandy.Tools.Memory.Commands do
     end
   end
 
+  defp check_moved_lengths(entries, from, to) when length(entries) >= @list_limit,
+    do:
+      {:error, :invalid_path,
+       "Error: #{from.model_path} holds too many files to check that renaming it to #{to.model_path} keeps every path within #{Paths.max_bytes()} bytes; rename its subdirectories first"}
+
   defp check_moved_lengths(entries, from, to) do
     entries
     |> Enum.filter(&MemoryStore.under?(&1.path, from.path))
@@ -322,6 +363,63 @@ defmodule Normandy.Tools.Memory.Commands do
         {:error, :invalid_path,
          "Error: renaming #{from.model_path} to #{to.model_path} would make #{long} longer than #{Paths.max_bytes()} bytes"}
     end
+  end
+
+  # A document at an ancestor path would make that path a file and a directory at once.
+  defp not_under_file(tool, loc) do
+    loc.path
+    |> ancestors()
+    |> Enum.reduce_while(:ok, fn ancestor, :ok ->
+      case store(tool, :get, [loc.namespace, ancestor]) do
+        :not_found ->
+          {:cont, :ok}
+
+        {:ok, _doc} ->
+          {:halt,
+           {:error, :exists,
+            "Error: #{Paths.to_model(ancestor, loc.mount)} is a file; cannot create #{loc.model_path} under it"}}
+
+        {:error, reason} ->
+          {:halt, backend(reason)}
+      end
+    end)
+  end
+
+  # Store paths strictly between the root and `path`, shallowest first.
+  defp ancestors(path) do
+    [_root | segments] = String.split(path, "/")
+    parents = Enum.drop(segments, -1)
+
+    parents
+    |> Enum.scan("", fn segment, acc -> acc <> "/" <> segment end)
+    |> Enum.drop(1)
+  end
+
+  # Bytes held by every document in the namespace except the target's current one.
+  # `nil` means not computed yet; no cap means nothing to compute.
+  defp others_bytes(%Memory{max_namespace_bytes: nil}, _loc, _known), do: {:ok, 0}
+  defp others_bytes(_tool, _loc, known) when is_integer(known), do: {:ok, known}
+
+  defp others_bytes(tool, loc, nil) do
+    case store(tool, :list, [loc.namespace, @root]) do
+      {:ok, entries} ->
+        {:ok, entries |> Enum.reject(&(&1.path == loc.path)) |> Enum.map(& &1.size) |> Enum.sum()}
+
+      {:error, reason} ->
+        backend(reason)
+    end
+  end
+
+  defp within_cap(%Memory{max_namespace_bytes: nil}, _loc, _others, _size), do: :ok
+
+  defp within_cap(%Memory{max_namespace_bytes: max}, loc, others, size) do
+    total = others + size
+
+    if total > max,
+      do:
+        {:error, :namespace_full,
+         "Error: memory is full: writing #{loc.model_path} would bring it to #{total} bytes; the limit is #{max}. Delete or shorten files first."},
+      else: :ok
   end
 
   defp fits(tool, loc, text) do
@@ -377,6 +475,26 @@ defmodule Normandy.Tools.Memory.Commands do
 
   defp exit_tag(_reason), do: :unknown
 
-  defp backend(reason),
-    do: {:error, :backend, "Error: memory store unavailable: #{inspect(reason)}"}
+  @reason_chars 200
+
+  # The model sees a bounded reason: an exception reports its module only (a Postgrex
+  # error carries SQL text), anything else is cut. The log keeps the whole reason.
+  defp backend(reason) do
+    Logger.warning(
+      "memory store failure: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
+    )
+
+    {:error, :backend, "Error: memory store unavailable: " <> reason_text(reason)}
+  end
+
+  defp reason_text(%{__exception__: true, __struct__: mod}), do: inspect(mod)
+  defp reason_text({:exception, mod}) when is_atom(mod), do: inspect(mod)
+
+  defp reason_text(reason) do
+    text = inspect(reason)
+
+    if String.length(text) > @reason_chars,
+      do: String.slice(text, 0, @reason_chars) <> "…",
+      else: text
+  end
 end

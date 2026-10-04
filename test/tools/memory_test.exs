@@ -1,6 +1,9 @@
 defmodule Normandy.Tools.MemoryTest do
   use ExUnit.Case, async: true
 
+  # Backend failures log a warning with the full reason.
+  @moduletag :capture_log
+
   alias Normandy.Behaviours.MemoryStore.InMemory
   alias Normandy.Tools.{BaseTool, Context, Memory}
 
@@ -87,6 +90,33 @@ defmodule Normandy.Tools.MemoryTest do
     assert prepared.command.command == "view"
     assert prepared.command.path == "/memories"
     assert prepared.command.file_text == nil
+  end
+
+  test "prepare_input/2: atom-keyed options are ignored, only known command fields are kept, string beats atom" do
+    t = tool()
+
+    prepared =
+      Memory.prepare_input(t, %{
+        "command" => "view",
+        :command => "delete",
+        :path => "/memories/atom",
+        :store => {Evil, :x},
+        :mounts => %{"/memories/x" => {"other", :read_write}},
+        :max_document_bytes => 1,
+        :max_namespace_bytes => 1,
+        "extra" => 1,
+        :bogus => 2
+      })
+
+    assert %{prepared | command: nil} == t
+    assert prepared.command.command == "view"
+    # no string "path": the atom form is the fallback
+    assert prepared.command.path == "/memories/atom"
+
+    assert Map.keys(prepared.command) |> Enum.sort() ==
+             Enum.sort(
+               ~w(command path view_range file_text old_str new_str insert_line insert_text old_path new_path)a
+             )
   end
 
   test "a missing namespace raises, naming the key and the keys present" do
@@ -684,7 +714,7 @@ defmodule Normandy.Tools.MemoryTest do
       # direct read raises ArgumentError.
       for {store, why} <- [
             {{InMemory, in_memory}, "{:exit, :noproc}"},
-            {{MemoryStore.ETS, ets}, "{:exception, ArgumentError}"}
+            {{MemoryStore.ETS, ets}, "ArgumentError"}
           ],
           input <- [
             %{"command" => "view", "path" => "/memories/a"},
@@ -701,6 +731,310 @@ defmodule Normandy.Tools.MemoryTest do
         assert {:error, :backend, ^text} = Commands.run(t, "acme/u-1")
         assert {:error, ^text} = call(Memory.new(store: store), input)
       end
+    end
+  end
+
+  describe "deferred batch B" do
+    import ExUnit.CaptureLog
+    alias Normandy.Behaviours.MemoryStore
+    alias Normandy.Test.{FullListStore, RawErrorStore, RecordingStore}
+    alias Normandy.Tools.Memory.Commands
+
+    defp create_in(t, path, text, ns \\ "acme/u-1"),
+      do: typed(t, %{"command" => "create", "path" => path, "file_text" => text}, ns)
+
+    defp doc(store, ns, path) do
+      case InMemory.get(store, ns, path) do
+        {:ok, %{content: c}} -> c
+        other -> other
+      end
+    end
+
+    # B1
+    test "max_namespace_bytes: default, nil, and bad values" do
+      assert tool().max_namespace_bytes == 1_000_000
+      assert tool(max_namespace_bytes: nil).max_namespace_bytes == nil
+      assert tool(max_namespace_bytes: 5).max_namespace_bytes == 5
+
+      for bad <- [0, -1, 1.5, "x"] do
+        assert_raise ArgumentError, ~r/:max_namespace_bytes must be .*got: #{inspect(bad)}/, fn ->
+          tool(max_namespace_bytes: bad)
+        end
+      end
+    end
+
+    test "a create that would exceed the namespace cap is refused and nothing is written" do
+      store = InMemory.new()
+      t = Memory.new(store: {InMemory, store}, max_namespace_bytes: 10)
+      assert {:ok, _, _} = create_in(t, "/memories/a", "123456")
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: writing /memories/b would bring it to 12 bytes; the limit is 10. Delete or shorten files first."} =
+               create_in(t, "/memories/b", "123456")
+
+      assert InMemory.get(store, "acme/u-1", "/memories/b") == :not_found
+    end
+
+    test "str_replace and insert that would exceed the cap are refused, the document is unchanged" do
+      store = InMemory.new()
+      t = Memory.new(store: {InMemory, store}, max_namespace_bytes: 10)
+      create_in(t, "/memories/a", "12345")
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: writing /memories/a would bring it to 13 bytes" <> _} =
+               typed(t, %{
+                 "command" => "str_replace",
+                 "path" => "/memories/a",
+                 "old_str" => "5",
+                 "new_str" => "123456789"
+               })
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: writing /memories/a would bring it to 12 bytes" <> _} =
+               typed(t, %{
+                 "command" => "insert",
+                 "path" => "/memories/a",
+                 "insert_line" => 0,
+                 "insert_text" => "abcdef"
+               })
+
+      assert doc(store, "acme/u-1", "/memories/a") == "12345"
+    end
+
+    test "replacing a document does not count its old size twice" do
+      store = InMemory.new()
+      t = Memory.new(store: {InMemory, store}, max_namespace_bytes: 10)
+      create_in(t, "/memories/a", "123456789")
+      assert {:ok, _, _} = create_in(t, "/memories/a", "abcdefghij")
+      assert doc(store, "acme/u-1", "/memories/a") == "abcdefghij"
+    end
+
+    test "the cap counts the mount's namespace for a mounted path" do
+      store = InMemory.new()
+
+      t =
+        Memory.new(
+          store: {InMemory, store},
+          max_namespace_bytes: 10,
+          mounts: %{"/memories/org" => {"acme/org", :read_write}}
+        )
+
+      # The session namespace is full, but the mount's is not.
+      create_in(t, "/memories/own", "1234567890")
+      assert {:ok, _, _} = create_in(t, "/memories/org/a", "123456")
+
+      assert {:error, :namespace_full, "Error: memory is full: writing /memories/org/b" <> _} =
+               create_in(t, "/memories/org/b", "123456")
+
+      assert doc(store, "acme/org", "/memories/a") == "123456"
+    end
+
+    test "nil disables the cap and lists nothing" do
+      t = Memory.new(store: {RecordingStore, self()}, max_namespace_bytes: nil)
+      assert {:ok, _, _} = create_in(t, "/memories/a", String.duplicate("x", 5_000))
+      # the only list is not_directory's, at the document's own path
+      assert_received {:call, :list}
+      refute_received {:call, :list}
+    end
+
+    test "a list failure during the cap check goes through the backend mapping" do
+      t = Memory.new(store: {RawErrorStore, :timeout})
+
+      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
+               create_in(t, "/memories/a", "x")
+    end
+
+    test "the cap is listed once for an edit even when it retries" do
+      defmodule Counting do
+        @behaviour Normandy.Behaviours.MemoryStore
+        def list(pid, _, _) do
+          send(pid, :listed)
+          {:ok, []}
+        end
+
+        def get(_, _, _), do: {:ok, %{content: "alpha", version: 1}}
+        def put(_, _, _, _, _), do: {:error, :conflict}
+        def delete(_, _, _, _), do: :not_found
+        def delete_tree(_, _, _), do: {:ok, 0}
+        def rename(_, _, _, _), do: :not_found
+        def delete_namespace(_, _), do: :ok
+      end
+
+      t = Memory.new(store: {Counting, self()}, max_cas_retries: 2)
+
+      assert {:error, :conflict_exhausted, _} =
+               typed(t, %{
+                 "command" => "str_replace",
+                 "path" => "/memories/a",
+                 "old_str" => "alpha",
+                 "new_str" => "beta"
+               })
+
+      assert_received :listed
+      refute_received :listed
+    end
+
+    # B2
+    test "backend text for an exception struct names only the module, and logs the whole reason" do
+      reason = %RuntimeError{message: "SELECT secret FROM keys WHERE id = 7"}
+      t = Memory.new(store: {RawErrorStore, reason})
+
+      log =
+        capture_log(fn ->
+          assert {:error, :backend, "Error: memory store unavailable: RuntimeError"} =
+                   typed(t, %{"command" => "view", "path" => "/memories/a"})
+        end)
+
+      assert log =~ "SELECT secret FROM keys"
+    end
+
+    test "backend text for the {:exception, mod} wrapper is the module name" do
+      t = Memory.new(store: {RawErrorStore, {:exception, Postgrex.Error}})
+
+      capture_log(fn ->
+        assert {:error, :backend, "Error: memory store unavailable: Postgrex.Error"} =
+                 typed(t, %{"command" => "view", "path" => "/memories/a"})
+      end)
+    end
+
+    test "a long reason is cut at 200 characters plus an ellipsis; short ones are unchanged" do
+      long = String.duplicate("x", 500)
+      t = Memory.new(store: {RawErrorStore, long})
+
+      log =
+        capture_log(fn ->
+          assert {:error, :backend, "Error: memory store unavailable: " <> text} =
+                   typed(t, %{"command" => "view", "path" => "/memories/a"})
+
+          assert String.length(text) == 201
+          assert String.ends_with?(text, "…")
+          assert text == String.slice(inspect(long), 0, 200) <> "…"
+        end)
+
+      assert log =~ long
+
+      capture_log(fn ->
+        for {reason, text} <- [{:timeout, ":timeout"}, {{:exit, :noproc}, "{:exit, :noproc}"}] do
+          t = Memory.new(store: {RawErrorStore, reason})
+
+          assert {:error, :backend, "Error: memory store unavailable: " <> ^text} =
+                   typed(t, %{"command" => "view", "path" => "/memories/a"})
+        end
+      end)
+    end
+
+    # B3
+    test "telemetry :stop reports the mount's namespace when the path resolves into a mount" do
+      id = "memory-ns-#{System.unique_integer([:positive])}"
+      pid = self()
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:normandy, :memory, :command, :stop],
+          &__MODULE__.forward_ns/4,
+          pid
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+
+      t =
+        tool(
+          telemetry_include_paths: true,
+          mounts: %{"/memories/org" => {"acme/org", :read_write}}
+        )
+
+      call(t, %{"command" => "create", "path" => "/memories/org/a", "file_text" => "x"}, "acme/u")
+      assert_receive {:stop, %{namespace: "acme/org", path: "/memories/org/a", status: :ok}}
+
+      call(t, %{"command" => "create", "path" => "/memories/own", "file_text" => "x"}, "acme/u")
+      assert_receive {:stop, %{namespace: "acme/u"}}
+
+      call(
+        t,
+        %{
+          "command" => "rename",
+          "old_path" => "/memories/org/a",
+          "new_path" => "/memories/org/b"
+        },
+        "acme/u"
+      )
+
+      assert_receive {:stop, %{namespace: "acme/org"}}
+
+      call(t, %{"command" => "view", "path" => 5}, "acme/u")
+      assert_receive {:stop, %{namespace: "acme/u", status: :error}}
+    end
+
+    def forward_ns(_event, _m, meta, pid), do: if(self() == pid, do: send(pid, {:stop, meta}))
+
+    # B5
+    test "rename to an equal or shorter path makes no get or list call" do
+      t = Memory.new(store: {RecordingStore, self()})
+
+      for {from, to} <- [{"/memories/abc", "/memories/xyz"}, {"/memories/abc", "/memories/x"}] do
+        assert {:ok, _, _} =
+                 typed(t, %{"command" => "rename", "old_path" => from, "new_path" => to})
+      end
+
+      refute_received {:call, _}
+    end
+
+    test "rename to a longer path past the list limit fails closed" do
+      t = Memory.new(store: {FullListStore, nil})
+
+      assert {:error, :invalid_path,
+              "Error: /memories/a holds too many files to check that renaming it to /memories/abc keeps every path within 255 bytes; rename its subdirectories first"} =
+               typed(t, %{
+                 "command" => "rename",
+                 "old_path" => "/memories/a",
+                 "new_path" => "/memories/abc"
+               })
+
+      assert MemoryStore.list_limit() == 1000
+    end
+
+    # B6
+    test "create under a path that is a file is refused" do
+      store = InMemory.new()
+      t = Memory.new(store: {InMemory, store})
+      create_in(t, "/memories/a", "x")
+
+      for path <- ["/memories/a/b", "/memories/a/b/c"] do
+        assert {:error, :exists,
+                "Error: /memories/a is a file; cannot create " <> ^path <> " under it"} =
+                 create_in(t, path, "y")
+      end
+
+      assert InMemory.get(store, "acme/u-1", "/memories/a/b") == :not_found
+    end
+
+    test "create under a directory, and under a mount root, still works" do
+      store = InMemory.new()
+
+      t =
+        Memory.new(
+          store: {InMemory, store},
+          mounts: %{"/memories/org" => {"acme/org", :read_write}}
+        )
+
+      create_in(t, "/memories/d/one", "x")
+      assert {:ok, _, _} = create_in(t, "/memories/d/two", "y")
+      assert {:ok, _, _} = create_in(t, "/memories/org/new", "z")
+      create_in(t, "/memories/org/f", "x")
+
+      assert {:error, :exists,
+              "Error: /memories/org/f is a file; cannot create /memories/org/f/g under it"} =
+               create_in(t, "/memories/org/f/g", "y")
+    end
+
+    test "an ancestor lookup failure goes through the backend mapping" do
+      t = Memory.new(store: {RawErrorStore, :timeout})
+      assert {:error, :backend, _} = create_in(t, "/memories/a/b", "x")
+    end
+
+    test "Commands module still exposes run/2" do
+      assert function_exported?(Commands, :run, 2)
     end
   end
 end

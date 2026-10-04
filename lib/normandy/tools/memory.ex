@@ -15,8 +15,16 @@ defmodule Normandy.Tools.Memory do
 
   Options (`new/1`): `:store` (required, `{module, handle}`), `:namespace_key`, `:mounts`
   (`%{"/memories/org" => {"acme/org-kb", :read_only | :read_write}}`),
-  `:max_document_bytes` (100_000), `:max_view_chars` (16_000), `:max_cas_retries` (3),
-  `:telemetry_include_paths` (false).
+  `:max_document_bytes` (100_000), `:max_namespace_bytes` (1_000_000), `:max_view_chars`
+  (16_000), `:max_cas_retries` (3), `:telemetry_include_paths` (false).
+
+  `:max_namespace_bytes` (a positive integer, or `nil` for no cap) bounds the total size of
+  the documents in a namespace: `create`, `str_replace` and `insert` that would push the
+  namespace past it are refused with error type `:namespace_full`. The stores keep a
+  namespace as one unit, so its cost grows with its size. The cap is approximate: two
+  concurrent writers can each pass the check and together exceed it, and it only sees the
+  first #{Normandy.Behaviours.MemoryStore.list_limit()} documents of a namespace (the store's list limit), so a
+  namespace with more is under-counted. A mount's cap applies to the mount's namespace.
 
   Memory carries content across sessions, so it is a prompt-injection channel that
   persists: keep a namespace no wider than the trust boundary of the people whose input
@@ -31,6 +39,7 @@ defmodule Normandy.Tools.Memory do
             namespace_key: :memory_namespace,
             mounts: %{},
             max_document_bytes: 100_000,
+            max_namespace_bytes: 1_000_000,
             max_view_chars: 16_000,
             max_cas_retries: 3,
             telemetry_include_paths: false,
@@ -41,6 +50,7 @@ defmodule Normandy.Tools.Memory do
           namespace_key: atom(),
           mounts: %{String.t() => {String.t(), :read_only | :read_write}},
           max_document_bytes: pos_integer(),
+          max_namespace_bytes: pos_integer() | nil,
           max_view_chars: pos_integer(),
           max_cas_retries: non_neg_integer(),
           telemetry_include_paths: boolean(),
@@ -52,6 +62,7 @@ defmodule Normandy.Tools.Memory do
     :namespace_key,
     :mounts,
     :max_document_bytes,
+    :max_namespace_bytes,
     :max_view_chars,
     :max_cas_retries,
     :telemetry_include_paths
@@ -80,6 +91,14 @@ defmodule Normandy.Tools.Memory do
     validate_mounts!(tool.mounts)
     check!(:namespace_key, tool.namespace_key, is_atom(tool.namespace_key), "an atom")
     for key <- [:max_document_bytes, :max_view_chars], do: positive!(key, Map.fetch!(tool, key))
+
+    check!(
+      :max_namespace_bytes,
+      tool.max_namespace_bytes,
+      is_nil(tool.max_namespace_bytes) or
+        (is_integer(tool.max_namespace_bytes) and tool.max_namespace_bytes > 0),
+      "a positive integer or nil"
+    )
 
     check!(
       :max_cas_retries,
@@ -115,13 +134,17 @@ defmodule Normandy.Tools.Memory do
     meta = telemetry_metadata(tool, namespace)
 
     :telemetry.span([:normandy, :memory, :command], meta, fn ->
+      # :start can only name the session namespace; by :stop the path has been resolved,
+      # so a mounted path reports the mount's namespace.
+      stop_meta = stop_namespace(meta, tool, namespace)
+
       case Commands.run(tool, namespace) do
         {:ok, text, stats} ->
-          {{:ok, text}, measurements(stats), Map.put(meta, :status, :ok)}
+          {{:ok, text}, measurements(stats), Map.put(stop_meta, :status, :ok)}
 
         {:error, type, text} ->
           {{:error, text}, measurements(%{}),
-           Map.merge(meta, %{status: :error, error_type: type})}
+           Map.merge(stop_meta, %{status: :error, error_type: type})}
       end
     end)
   end
@@ -212,6 +235,11 @@ defmodule Normandy.Tools.Memory do
       do: Map.merge(base, %{namespace: namespace, path: cmd && (cmd.path || cmd.old_path)}),
       else: base
   end
+
+  defp stop_namespace(%{namespace: _} = meta, tool, session_ns),
+    do: %{meta | namespace: Commands.namespace(tool, session_ns)}
+
+  defp stop_namespace(meta, _tool, _session_ns), do: meta
 
   defp measurements(stats),
     do: Map.merge(%{bytes_read: 0, bytes_written: 0, cas_retries: 0}, stats)
