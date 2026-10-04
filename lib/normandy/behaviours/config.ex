@@ -3,6 +3,7 @@ defmodule Normandy.Behaviours.Config do
   Explicit, per-agent selection of the pluggable behaviours.
 
   One `{module, opts}` ref per behaviour plus the two first-class hook lists.
+  `hooks` is an ordered list of `Normandy.Behaviours.Hooks` entries, persisted with the refs.
   Carried on `BaseAgentConfig.behaviours`; defaults to the all-defaults bundle,
   so the "everything off" path is observably identical to today.
 
@@ -35,6 +36,7 @@ defmodule Normandy.Behaviours.Config do
           budget: ref(),
           before_hooks: [hook()],
           after_hooks: [hook()],
+          hooks: [Normandy.Behaviours.Hooks.entry()],
           credential: ref(),
           compactor: ref(),
           model_catalog: ref(),
@@ -46,6 +48,7 @@ defmodule Normandy.Behaviours.Config do
             budget: {BudgetTracker.NoOp, []},
             before_hooks: [],
             after_hooks: [],
+            hooks: [],
             credential: {CredentialProvider.FromClient, []},
             compactor: {Compactor.NoOp, []},
             model_catalog: {ModelCatalog.ModelsAPI, []},

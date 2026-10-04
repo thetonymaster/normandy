@@ -136,3 +136,27 @@ defmodule Normandy.ModelCatalogError do
       ":max_tokens option to skip the lookup (required for non-Claude clients)."
   end
 end
+
+defmodule Normandy.HookHaltError do
+  @moduledoc """
+  Raised by `Normandy.Agents.BaseAgent` when an `on_prompt` or `before_llm` hook halts the
+  turn. `outcome/1` is how both shells report it: `Turn.Server` replies
+  `{:error, outcome_reason}` and `on_turn_end` hooks receive the outcome.
+  """
+  defexception [:event, :hook, :reason]
+
+  @type t :: %__MODULE__{event: atom(), hook: module(), reason: String.t()}
+
+  @impl true
+  def message(%__MODULE__{event: event, hook: hook, reason: reason}) do
+    "hook #{inspect(hook)} halted #{event}: #{reason}"
+  end
+
+  @doc """
+  An `on_prompt` halt is a rejection (the input never became a turn, nothing is stored):
+  `{:rejected, e}`. A `before_llm` halt fails a started turn: `{:error, {:hook_halted, e}}`.
+  """
+  @spec outcome(t()) :: {:rejected, t()} | {:error, {:hook_halted, t()}}
+  def outcome(%__MODULE__{event: :on_prompt} = e), do: {:rejected, e}
+  def outcome(%__MODULE__{} = e), do: {:error, {:hook_halted, e}}
+end
