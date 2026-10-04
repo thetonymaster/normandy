@@ -2,7 +2,7 @@ defmodule Normandy.DSL.AgentMemoryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.MemoryStore.InMemory
-  alias Normandy.Tools.{Memory, Registry}
+  alias Normandy.Tools.{BaseTool, Memory, Registry}
 
   defmodule MemAgent do
     use Normandy.DSL.Agent
@@ -18,6 +18,24 @@ defmodule Normandy.DSL.AgentMemoryTest do
 
     agent do
       model("claude-haiku-4-5-20251001")
+    end
+  end
+
+  defmodule BadNamespaceKeyAgent do
+    use Normandy.DSL.Agent
+
+    agent do
+      model("claude-haiku-4-5-20251001")
+      memory(namespace_key: "not_an_atom")
+    end
+  end
+
+  defmodule UnknownOptionAgent do
+    use Normandy.DSL.Agent
+
+    agent do
+      model("claude-haiku-4-5-20251001")
+      memory(bogus_option: 1)
     end
   end
 
@@ -70,5 +88,40 @@ defmodule Normandy.DSL.AgentMemoryTest do
     assert_raise ArgumentError, ~r/does not take :store/, fn ->
       Normandy.DSL.Agent.memory_tool!(MemAgent, [store: :x], {InMemory, :h})
     end
+  end
+
+  test "a bad memory option raises at new/1, not at compile time" do
+    store = {InMemory, InMemory.new()}
+
+    assert_raise ArgumentError, ~r/:namespace_key must be an atom, got: "not_an_atom"/, fn ->
+      BadNamespaceKeyAgent.new(client: client(), memory_store: store)
+    end
+  end
+
+  test "an unknown memory option raises at new/1" do
+    store = {InMemory, InMemory.new()}
+
+    assert_raise ArgumentError, ~r/unknown option :bogus_option; allowed: :store/, fn ->
+      UnknownOptionAgent.new(client: client(), memory_store: store)
+    end
+  end
+
+  test "a non-map tool_context raises through new/1" do
+    store = {InMemory, InMemory.new()}
+
+    assert_raise ArgumentError, ~r/tool_context must be a map of plain data, got: "acme"/, fn ->
+      MemAgent.new(client: client(), memory_store: store, tool_context: "acme")
+    end
+  end
+
+  test "a plain agent has no memory tool; a memory agent's tool is named \"memory\"" do
+    {:ok, plain} = PlainAgent.new(client: client())
+    # no tool was registered, so the registry is never built
+    assert plain.tool_registry == nil
+
+    {:ok, agent} = MemAgent.new(client: client(), memory_store: {InMemory, InMemory.new()})
+    assert {:ok, tool} = Registry.get(agent.tool_registry, "memory")
+    assert BaseTool.tool_name(tool) == "memory"
+    assert "memory" in Registry.list_names(agent.tool_registry)
   end
 end
