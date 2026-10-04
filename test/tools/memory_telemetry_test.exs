@@ -12,14 +12,16 @@ defmodule Normandy.Tools.MemoryTelemetryTest do
       :telemetry.attach(
         id,
         [:normandy, :memory, :command, :stop],
-        fn _event, measurements, meta, _config ->
-          # handlers run in the emitting process; ignore events from other async tests
-          if self() == test_pid, do: send(test_pid, {:stop, measurements, meta})
-        end,
-        nil
+        &__MODULE__.forward/4,
+        test_pid
       )
 
     on_exit(fn -> :telemetry.detach(id) end)
+  end
+
+  # Handlers run in the emitting process; ignore events from other async tests.
+  def forward(_event, measurements, meta, test_pid) do
+    if self() == test_pid, do: send(test_pid, {:stop, measurements, meta})
   end
 
   defp call(tool, input) do
