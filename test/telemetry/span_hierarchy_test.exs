@@ -350,12 +350,15 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
 
       sid = opts[:session_id]
 
+      # The server emits run :start before notifying the subscriber, so it is already here.
       assert_received {:telemetry, [:normandy, :agent, :run, :start], _,
                        %{session_id: ^sid, resumed: true}, _}
 
-      # A durable resume into :awaiting_approval opens a fresh approval span.
-      assert_received {:telemetry, [:normandy, :turn, :approval, :start], _,
-                       %{session_id: ^sid, count: 1}, _}
+      # A durable resume into :awaiting_approval opens a fresh approval span. The server
+      # emits approval :start only after the :awaiting_approval subscriber event, so wait.
+      assert_receive {:telemetry, [:normandy, :turn, :approval, :start], _,
+                      %{session_id: ^sid, count: 1}, _},
+                     2_000
 
       :ok = Turn.Server.approve(second, %{"call_1" => :approve})
 
