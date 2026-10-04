@@ -85,3 +85,49 @@ defmodule Normandy.Test.FullListStore do
   def rename(_, _, _, _), do: {:ok, 1}
   def delete_namespace(_, _), do: :ok
 end
+
+defmodule Normandy.Test.CapListDownStore do
+  @moduledoc """
+  A MemoryStore whose list of the namespace root fails while every other list is empty.
+  The handle picks get/3: `:absent` finds nothing, `:present` finds a document.
+  """
+  @behaviour Normandy.Behaviours.MemoryStore
+  def list(_, _, "/memories"), do: {:error, :timeout}
+  def list(_, _, _), do: {:ok, []}
+  def get(:present, _, _), do: {:ok, %{content: "alpha", version: 1}}
+  def get(:absent, _, _), do: :not_found
+  def put(_, _, _, _, _), do: {:ok, 1}
+  def delete(_, _, _, _), do: :not_found
+  def delete_tree(_, _, _), do: {:ok, 0}
+  def rename(_, _, _, _), do: :not_found
+  def delete_namespace(_, _), do: :ok
+end
+
+defmodule Normandy.Test.AncestorDownStore do
+  @moduledoc "A MemoryStore where every list succeeds empty but a get of /memories/a fails."
+  @behaviour Normandy.Behaviours.MemoryStore
+  def list(_, _, _), do: {:ok, []}
+  def get(_, _, "/memories/a"), do: {:error, :timeout}
+  def get(_, _, _), do: :not_found
+  def put(_, _, _, _, _), do: {:ok, 1}
+  def delete(_, _, _, _), do: :not_found
+  def delete_tree(_, _, _), do: {:ok, 0}
+  def rename(_, _, _, _), do: :not_found
+  def delete_namespace(_, _), do: :ok
+end
+
+defmodule Normandy.Test.CountingStore do
+  @moduledoc "A MemoryStore (handle: a pid) that reports every list and whose writes always conflict."
+  @behaviour Normandy.Behaviours.MemoryStore
+  def list(pid, _, _) do
+    send(pid, :listed)
+    {:ok, []}
+  end
+
+  def get(_, _, _), do: {:ok, %{content: "alpha", version: 1}}
+  def put(_, _, _, _, _), do: {:error, :conflict}
+  def delete(_, _, _, _), do: :not_found
+  def delete_tree(_, _, _), do: {:ok, 0}
+  def rename(_, _, _, _), do: :not_found
+  def delete_namespace(_, _), do: :ok
+end

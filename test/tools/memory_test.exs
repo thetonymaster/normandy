@@ -1,9 +1,6 @@
 defmodule Normandy.Tools.MemoryTest do
   use ExUnit.Case, async: true
 
-  # Backend failures log a warning with the full reason.
-  @moduletag :capture_log
-
   alias Normandy.Behaviours.MemoryStore.InMemory
   alias Normandy.Tools.{BaseTool, Context, Memory}
 
@@ -459,6 +456,7 @@ defmodule Normandy.Tools.MemoryTest do
                })
     end
 
+    @tag :capture_log
     test "rename: a list error while sizing a directory rename is a backend error" do
       t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
 
@@ -492,6 +490,7 @@ defmodule Normandy.Tools.MemoryTest do
       assert {:ok, %{content: "w"}} = InMemory.get(store, "acme/u-1", "/memories/ab")
     end
 
+    @tag :capture_log
     test "create: a list error while checking for a directory is a backend error" do
       t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
 
@@ -499,6 +498,7 @@ defmodule Normandy.Tools.MemoryTest do
                typed(t, %{"command" => "create", "path" => "/memories/a", "file_text" => "y"})
     end
 
+    @tag :capture_log
     test "view of a directory and delete of a directory report a failing list/delete_tree" do
       t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
 
@@ -534,6 +534,7 @@ defmodule Normandy.Tools.MemoryTest do
       end
     end
 
+    @tag :capture_log
     test "invalid paths never reach the store (Review Focus #2)" do
       down = Memory.new(store: {DownStore, nil})
       bad = "/memories/../etc/passwd"
@@ -678,6 +679,7 @@ defmodule Normandy.Tools.MemoryTest do
                })
     end
 
+    @tag :capture_log
     test "a backend failure is reported as unavailable, never as missing (Review Focus #4)" do
       t = Memory.new(store: {DownStore, nil})
 
@@ -704,6 +706,7 @@ defmodule Normandy.Tools.MemoryTest do
       end
     end
 
+    @tag :capture_log
     test "a store that exits or raises is reported as unavailable with error_type :backend" do
       in_memory = InMemory.new()
       :ok = Agent.stop(in_memory)
@@ -737,7 +740,16 @@ defmodule Normandy.Tools.MemoryTest do
   describe "deferred batch B" do
     import ExUnit.CaptureLog
     alias Normandy.Behaviours.MemoryStore
-    alias Normandy.Test.{FullListStore, RawErrorStore, RecordingStore}
+
+    alias Normandy.Test.{
+      AncestorDownStore,
+      CapListDownStore,
+      CountingStore,
+      FullListStore,
+      RawErrorStore,
+      RecordingStore
+    }
+
     alias Normandy.Tools.Memory.Commands
 
     defp create_in(t, path, text, ns \\ "acme/u-1"),
@@ -837,30 +849,25 @@ defmodule Normandy.Tools.MemoryTest do
       refute_received {:call, :list}
     end
 
+    @tag :capture_log
     test "a list failure during the cap check goes through the backend mapping" do
-      t = Memory.new(store: {RawErrorStore, :timeout})
+      absent = Memory.new(store: {CapListDownStore, :absent})
+      present = Memory.new(store: {CapListDownStore, :present})
 
       assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
-               create_in(t, "/memories/a", "x")
+               create_in(absent, "/memories/a", "x")
+
+      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
+               typed(present, %{
+                 "command" => "str_replace",
+                 "path" => "/memories/a",
+                 "old_str" => "alpha",
+                 "new_str" => "beta"
+               })
     end
 
     test "the cap is listed once for an edit even when it retries" do
-      defmodule Counting do
-        @behaviour Normandy.Behaviours.MemoryStore
-        def list(pid, _, _) do
-          send(pid, :listed)
-          {:ok, []}
-        end
-
-        def get(_, _, _), do: {:ok, %{content: "alpha", version: 1}}
-        def put(_, _, _, _, _), do: {:error, :conflict}
-        def delete(_, _, _, _), do: :not_found
-        def delete_tree(_, _, _), do: {:ok, 0}
-        def rename(_, _, _, _), do: :not_found
-        def delete_namespace(_, _), do: :ok
-      end
-
-      t = Memory.new(store: {Counting, self()}, max_cas_retries: 2)
+      t = Memory.new(store: {CountingStore, self()}, max_cas_retries: 2)
 
       assert {:error, :conflict_exhausted, _} =
                typed(t, %{
@@ -875,6 +882,7 @@ defmodule Normandy.Tools.MemoryTest do
     end
 
     # B2
+    @tag :capture_log
     test "backend text for an exception struct names only the module, and logs the whole reason" do
       reason = %RuntimeError{message: "SELECT secret FROM keys WHERE id = 7"}
       t = Memory.new(store: {RawErrorStore, reason})
@@ -888,6 +896,7 @@ defmodule Normandy.Tools.MemoryTest do
       assert log =~ "SELECT secret FROM keys"
     end
 
+    @tag :capture_log
     test "backend text for the {:exception, mod} wrapper is the module name" do
       t = Memory.new(store: {RawErrorStore, {:exception, Postgrex.Error}})
 
@@ -897,6 +906,7 @@ defmodule Normandy.Tools.MemoryTest do
       end)
     end
 
+    @tag :capture_log
     test "a long reason is cut at 200 characters plus an ellipsis; short ones are unchanged" do
       long = String.duplicate("x", 500)
       t = Memory.new(store: {RawErrorStore, long})
@@ -1028,13 +1038,18 @@ defmodule Normandy.Tools.MemoryTest do
                create_in(t, "/memories/org/f/g", "y")
     end
 
+    @tag :capture_log
     test "an ancestor lookup failure goes through the backend mapping" do
-      t = Memory.new(store: {RawErrorStore, :timeout})
-      assert {:error, :backend, _} = create_in(t, "/memories/a/b", "x")
+      t = Memory.new(store: {AncestorDownStore, nil})
+
+      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
+               create_in(t, "/memories/a/b", "x")
     end
 
-    test "Commands module still exposes run/2" do
-      assert function_exported?(Commands, :run, 2)
+    test "a file at /memories/a does not block create under the sibling /memories/ab" do
+      t = Memory.new(store: {InMemory, InMemory.new()})
+      create_in(t, "/memories/a", "x")
+      assert {:ok, _, _} = create_in(t, "/memories/ab/x", "y")
     end
   end
 end
