@@ -33,8 +33,8 @@ defmodule Normandy.Tools.Memory.PathsTest do
     end
   end
 
-  test "rejects every Unicode control character (Cc), C0 and C1, without echoing the path" do
-    for c <- [0x01, 0x1B, 0x7F, 0x85, 0x9F] do
+  test "rejects every Unicode control (Cc) and format (Cf) character without echoing the path" do
+    for c <- [0x01, 0x1B, 0x7F, 0x85, 0x9F, 0x202E, 0x200B, 0xFEFF] do
       # Also outside /memories and holding `\`: the control-character check comes first,
       # so no error message carries the raw control character back to the model.
       for p <- [
@@ -42,7 +42,7 @@ defmodule Normandy.Tools.Memory.PathsTest do
             "/etc/" <> <<c::utf8>>,
             "/memories/\\" <> <<c::utf8>>
           ] do
-        assert {:error, :invalid_path, "Error: path contains a control character"} =
+        assert {:error, :invalid_path, "Error: path contains a control or format character"} =
                  Paths.validate(p),
                "for #{inspect(p)}"
       end

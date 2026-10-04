@@ -16,14 +16,28 @@ defmodule Normandy.Tools.Memory.Paths do
 
   def validate(path) when is_binary(path) do
     cond do
-      not String.valid?(path) -> invalid("path is not valid UTF-8 for #{inspect(path)}")
-      # Unicode category Cc (C0, DEL and C1), checked before any error that echoes the path.
-      String.match?(path, ~r/\p{Cc}/u) -> invalid("path contains a control character")
-      byte_size(path) > @max_bytes -> invalid("path is longer than #{@max_bytes} bytes")
-      not MemoryStore.at_or_under?(path, @root) -> invalid("#{path} is outside /memories")
-      String.contains?(path, ["\\", "%"]) -> invalid("#{path} contains \\ or %")
-      bad_segment?(path) -> invalid("#{path} has an empty, . or .. segment")
-      true -> {:ok, path}
+      not String.valid?(path) ->
+        invalid("path is not valid UTF-8 for #{inspect(path)}")
+
+      # Unicode categories Cc (C0, DEL, C1) and Cf (bidi overrides, zero-width, BOM), checked
+      # before any error that echoes the path.
+      String.match?(path, ~r/[\p{Cc}\p{Cf}]/u) ->
+        invalid("path contains a control or format character")
+
+      byte_size(path) > @max_bytes ->
+        invalid("path is longer than #{@max_bytes} bytes")
+
+      not MemoryStore.at_or_under?(path, @root) ->
+        invalid("#{path} is outside /memories")
+
+      String.contains?(path, ["\\", "%"]) ->
+        invalid("#{path} contains \\ or %")
+
+      bad_segment?(path) ->
+        invalid("#{path} has an empty, . or .. segment")
+
+      true ->
+        {:ok, path}
     end
   end
 
