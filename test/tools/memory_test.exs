@@ -469,6 +469,41 @@ defmodule Normandy.Tools.MemoryTest do
                typed(t, %{"command" => "create", "path" => "/memories/a", "file_text" => "y"})
     end
 
+    test "view of a directory and delete of a directory report a failing list/delete_tree" do
+      t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
+
+      for input <- [
+            %{"command" => "view", "path" => "/memories/d"},
+            %{"command" => "delete", "path" => "/memories/d"}
+          ] do
+        assert {:error, :backend, "Error: memory store unavailable: :timeout"} = typed(t, input)
+      end
+    end
+
+    test "read-only mounts refuse every write command" do
+      store = InMemory.new()
+
+      t =
+        Memory.new(
+          store: {InMemory, store},
+          mounts: %{"/memories/org" => {"acme/kb", :read_only}}
+        )
+
+      ro = "/memories/org/policy.md"
+      msg = "Error: #{ro} is read-only"
+
+      for input <- [
+            %{"command" => "create", "path" => ro, "file_text" => "x"},
+            %{"command" => "str_replace", "path" => ro, "old_str" => "a", "new_str" => "b"},
+            %{"command" => "insert", "path" => ro, "insert_line" => 0, "insert_text" => "x"},
+            %{"command" => "delete", "path" => ro},
+            %{"command" => "rename", "old_path" => ro, "new_path" => "/memories/x"},
+            %{"command" => "rename", "old_path" => "/memories/x", "new_path" => ro}
+          ] do
+        assert {:error, :read_only, ^msg} = typed(t, input), "for #{inspect(input)}"
+      end
+    end
+
     test "invalid paths never reach the store (Review Focus #2)" do
       down = Memory.new(store: {DownStore, nil})
       bad = "/memories/../etc/passwd"
