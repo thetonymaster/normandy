@@ -5,6 +5,11 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
 
   use Normandy.MemoryStoreContract, impl: Redis
 
+  # Every test gets a fresh random key prefix; drop its keys so runs leave the shared Redis clean.
+  setup %{handle: {_conn, prefix}} do
+    on_exit(fn -> delete_prefix(prefix) end)
+  end
+
   test "a script missing from the server cache is reloaded (NOSCRIPT fallback)", %{
     handle: {conn, _} = h,
     ns: ns
@@ -48,6 +53,19 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
       # a stale key layout would find nothing and pass vacuously
       assert indexed >= 1
       assert length(hashes) == indexed, "round #{round}: #{inspect(hashes)} vs #{indexed} indexed"
+    end
+  end
+
+  # A separate connection: the test's own may already be gone when on_exit runs.
+  defp delete_prefix(prefix) do
+    url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+    {:ok, conn} = Redix.start_link(url)
+
+    try do
+      for key <- scan(conn, prefix <> "*", "0", []),
+          do: {:ok, _} = Redix.command(conn, ["DEL", key])
+    after
+      Redix.stop(conn)
     end
   end
 
