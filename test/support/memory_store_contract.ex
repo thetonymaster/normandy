@@ -236,6 +236,32 @@ defmodule Normandy.MemoryStoreContract do
         assert content |> String.split("\n") |> length() == 21
       end
 
+      test "concurrent str_replaces through the memory tool lose no edit", %{handle: h, ns: ns} do
+        tool = Memory.new(store: {@store, h}, max_cas_retries: 100)
+        start = Enum.map_join(1..20, "\n", &"slot-#{&1}:todo")
+        {:ok, _} = @store.put(h, ns, "/memories/slots.md", start, :new)
+        ctx = %Context{tool_call_id: "c", values: %{memory_namespace: ns}}
+
+        1..20
+        |> Enum.map(fn i ->
+          Task.async(fn ->
+            input = %{
+              "command" => "str_replace",
+              "path" => "/memories/slots.md",
+              "old_str" => "slot-#{i}:todo",
+              "new_str" => "slot-#{i}:done"
+            }
+
+            Memory.run(Memory.prepare_input(tool, input), ctx)
+          end)
+        end)
+        |> Enum.map(&Task.await(&1, 15_000))
+        |> Enum.each(&assert({:ok, _} = &1))
+
+        {:ok, %{content: content}} = @store.get(h, ns, "/memories/slots.md")
+        assert content == Enum.map_join(1..20, "\n", &"slot-#{&1}:done")
+      end
+
       test "concurrent renames and writes leave no orphaned or duplicated document", %{
         handle: h,
         ns: ns
