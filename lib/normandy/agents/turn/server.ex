@@ -58,6 +58,16 @@ defmodule Normandy.Agents.Turn.Server do
   on this node, or invalid hook opts) is handled the same way: the server waits
   `:unavailable`, retries, and replies that reason.
 
+  ## Session start
+
+  A session whose store holds no entries and no turn state is new. Its
+  `on_session_start` hooks (`Normandy.Behaviours.Hooks`) run as the first event after
+  `init/1` returns, so the supervisor starting the server is not blocked by them. What
+  they inject is stored as one user message. A hook crash (`{:handler_crashed,
+  :on_session_start, e}`) or a store fault writing that message (`{:persist_failed,
+  reason}`) sends the server `:unavailable`, which retries both like a load. A session
+  whose hooks injected nothing is still new on its next start, and runs them again.
+
   ## Events (`:subscriber`)
 
     * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
@@ -227,7 +237,7 @@ defmodule Normandy.Agents.Turn.Server do
     # So a store fault starts the server :unavailable, retrying the load.
     case load_session(opts, store, session_id) do
       {:ok, config, template, turn_state} ->
-        init_data(opts, config, template, turn_state)
+        opts |> init_data(config, template, turn_state) |> with_session_start()
 
       {:error, reason} ->
         unavailable(opts, reason)
@@ -244,11 +254,16 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   defp unavailable(opts, reason) do
+    {data, actions} = unavailable_data(opts, reason)
+    {:ok, :unavailable, data, actions}
+  end
+
+  defp unavailable_data(opts, reason) do
     session_id = Keyword.fetch!(opts, :session_id)
 
     Logger.warning(
-      "Turn.Server could not load session #{inspect(session_id)} from the store " <>
-        "(#{inspect(reason)}); retrying"
+      "Turn.Server could not start session #{inspect(session_id)} " <>
+        "(#{describe_reason(reason)}); retrying"
     )
 
     data = %Data{
@@ -260,18 +275,27 @@ defmodule Normandy.Agents.Turn.Server do
       retry_ms: @retry_initial_ms
     }
 
-    {:ok, :unavailable, data,
-     [{{:timeout, :retry}, @retry_initial_ms, :retry}, idle_timeout(data)]}
+    {data, [{{:timeout, :retry}, @retry_initial_ms, :retry}, idle_timeout(data)]}
   end
 
-  # Loads the session again. On success the transition is the one init/1 would
-  # have made; the retry timer is cancelled.
+  # A handler crash was logged where it happened, and its exception can carry hook data:
+  # name the handler only. Store reasons are logged as before.
+  defp describe_reason({:handler_crashed, name, _exception}),
+    do: "handler #{inspect(name)} crashed"
+
+  defp describe_reason(reason), do: inspect(reason)
+
+  # Loads the session again. On success the transition is the one init/1 would have
+  # made, except that a new session's on_session_start hooks run here, inline: a caller
+  # or the retry timer triggered this, and a failure must reach that caller now. The
+  # retry timer is cancelled.
   defp retry_load(%Data{start_opts: opts}) do
     store = Keyword.fetch!(opts, :store)
     session_id = Keyword.fetch!(opts, :session_id)
 
-    with {:ok, config, template, turn_state} <- load_session(opts, store, session_id) do
-      {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state)
+    with {:ok, config, template, turn_state} <- load_session(opts, store, session_id),
+         {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state),
+         {:ok, data} <- start_session_if_new(data) do
       {:ok, {:next_state, :idle, data, [{{:timeout, :retry}, :cancel} | List.wrap(actions)]}}
     end
   end
@@ -327,13 +351,49 @@ defmodule Normandy.Agents.Turn.Server do
       turn_state: turn_state,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
-      idle_timeout_ms: timeouts.idle_timeout_ms
+      idle_timeout_ms: timeouts.idle_timeout_ms,
+      start_opts: opts
     }
 
     if data.resume_policy == :eager and resumable?(data.turn_state) do
       {:ok, :idle, data, [{:next_event, :internal, :resume}]}
     else
       {:ok, :idle, data, idle_timeout(data)}
+    end
+  end
+
+  # A new session's on_session_start hooks run as the first event after init/1 returns,
+  # so a slow hook does not block the supervisor starting this server and a crashing one
+  # sends it :unavailable instead of failing the start.
+  defp with_session_start({:ok, :idle, data, _actions} = init) do
+    if ServerGlue.session_start?(data.config, data.turn_state),
+      do: {:ok, :idle, data, [{:next_event, :internal, :session_start}]},
+      else: init
+  end
+
+  defp start_session_if_new(data) do
+    if ServerGlue.session_start?(data.config, data.turn_state),
+      do: start_session(data),
+      else: {:ok, data}
+  end
+
+  # Runs on_session_start and stores what it injects as one user message, so the store
+  # holds all of it or none: a retry finds the session new again only while nothing was
+  # stored.
+  defp start_session(data) do
+    case call_handler(data, :on_session_start, fn -> ServerGlue.session_start(data.config) end) do
+      {:ok, nil} -> {:ok, data}
+      {:ok, text} -> store_session_start(data, text)
+      {:crashed, reason} -> {:error, reason}
+    end
+  end
+
+  defp store_session_start(data, text) do
+    config = %{data.config | memory: AgentMemory.add_message(data.config.memory, "user", text)}
+
+    case append_to_store(data, config, "user", text, new_entry_id(data.config, config)) do
+      :ok -> {:ok, %{data | config: config}}
+      {:error, reason} -> {:error, {:persist_failed, reason}}
     end
   end
 
@@ -510,6 +570,20 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # The first event of a new session (with_session_start/1). A crash or a store fault
+  # sends the server :unavailable, which retries the load and the hook on its backoff
+  # and on each run/2, replying the reason meanwhile.
+  def handle_event(:internal, :session_start, :idle, data) do
+    case start_session(data) do
+      {:ok, data} ->
+        {:keep_state, data, idle_timeout(data)}
+
+      {:error, reason} ->
+        {data, actions} = unavailable_data(data.start_opts, reason)
+        {:next_state, :unavailable, data, actions}
+    end
+  end
+
   # Eager auto-resume: drive the persisted in-flight turn to completion. No caller
   # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
   # silently while persisting at each boundary.
@@ -620,10 +694,16 @@ defmodule Normandy.Agents.Turn.Server do
     interpret(effects, %{data | turn_state: state})
   end
 
-  # Idle long enough → passivate. Final turn state is already persisted; just stop.
-  # An :unavailable server nobody calls stops too; the next caller starts it again.
+  # Idle long enough → passivate. Final turn state is already persisted; on_passivate
+  # hooks run (logged-only, through call_handler/3), then the server stops. An
+  # :unavailable server nobody calls stops too, with no hooks (it loaded no config); the
+  # next caller starts it again.
   def handle_event(:state_timeout, :passivate, state, data)
       when state in [:idle, :unavailable] do
+    _ =
+      if state == :idle and Runner.hooks?(data.config),
+        do: call_handler(data, :on_passivate, fn -> Runner.passivate(data.config) end)
+
     {:stop, :normal, data}
   end
 

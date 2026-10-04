@@ -3,6 +3,8 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
   @moduletag :capture_log
 
+  import ExUnit.CaptureLog
+
   alias Normandy.Agents.{BaseAgent, BaseAgentConfig, ConfigTemplate, Turn}
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.Config
@@ -60,6 +62,21 @@ defmodule Normandy.Hooks.ServerHooksTest do
     def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
     def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
     def history(h, sid), do: InMemory.history(h, sid)
+  end
+
+  # Holds on_session_start until released: start_link returning while it waits proves
+  # the hook runs after init/1.
+  defmodule HoldsSessionStart do
+    use Normandy.Behaviours.Hooks
+
+    @impl true
+    def on_session_start(_ctx, opts) do
+      send(opts[:notify], :session_start_running)
+
+      receive do
+        :release -> :ok
+      end
+    end
   end
 
   # Built directly, as a :config start takes it (Turn.Server saves no template for a
@@ -335,6 +352,125 @@ defmodule Normandy.Hooks.ServerHooksTest do
                AgentMemory.messages(data.config.memory),
                &(&1.content == "remember: metric")
              )
+    end
+  end
+
+  describe "on_session_start" do
+    test "a new session runs it after init; its texts are stored as one user message" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe(returns: [on_session_start: {:inject, ["profile: metric", "plan: pro"]}])]
+
+      {:ok, srv} = start(session, hooks, store: {InMemory, store})
+
+      assert_receive {:hook, :p, :on_session_start, [ctx]}
+      assert %Normandy.Hooks.Context{session_id: ^session, turn_id: nil} = ctx
+
+      {_state, data} = :sys.get_state(srv)
+
+      assert {:ok, [%{role: "user", content: "profile: metric\n\nplan: pro"}]} =
+               InMemory.history(store, session)
+
+      assert ["profile: metric\n\nplan: pro"] =
+               data.config.memory |> AgentMemory.messages() |> Enum.map(& &1.content)
+    end
+
+    test "start_link returns before the hook runs" do
+      sink = TestHooks.sink()
+      test = self()
+
+      # The server is linked to its starter and stops with it, so the starter stays alive.
+      starter =
+        spawn_link(fn ->
+          send(test, {:started, start(sid(), [{HoldsSessionStart, notify: sink}])})
+
+          receive do
+            :done -> :ok
+          end
+        end)
+
+      assert_receive {:started, {:ok, srv}}, 2_000
+      assert_receive :session_start_running
+      send(srv, :release)
+      assert {:idle, _} = :sys.get_state(srv)
+      send(starter, :done)
+    end
+
+    test "a restarted session that stored its injection does not run it again" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe(returns: [on_session_start: {:inject, ["profile: metric"]}])]
+
+      {:ok, srv} = start(session, hooks, store: {InMemory, store})
+      assert_receive {:hook, :p, :on_session_start, _}
+      :ok = :gen_statem.stop(srv)
+
+      {:ok, srv2} = start(session, hooks, store: {InMemory, store})
+      {_state, data} = :sys.get_state(srv2)
+
+      refute_received {:hook, :p, :on_session_start, _}
+
+      assert ["profile: metric"] =
+               data.config.memory |> AgentMemory.messages() |> Enum.map(& &1.content)
+    end
+
+    test "a session whose hooks injected nothing runs them again on its next start" do
+      store = InMemory.new()
+      session = sid()
+
+      {:ok, srv} = start(session, [probe()], store: {InMemory, store})
+      assert_receive {:hook, :p, :on_session_start, _}
+      :ok = :gen_statem.stop(srv)
+
+      {:ok, _srv2} = start(session, [probe()], store: {InMemory, store})
+      assert_receive {:hook, :p, :on_session_start, _}
+    end
+
+    test "a crash under :reraise leaves the server :unavailable, replying the crash" do
+      {:ok, srv} = start(sid(), [probe(returns: [on_session_start: {:raise, "crm down"}])])
+
+      assert {:unavailable, _} = :sys.get_state(srv)
+
+      assert {:error, {:handler_crashed, :on_session_start, %RuntimeError{message: "crm down"}}} =
+               Turn.Server.run(srv, "hello")
+
+      assert Process.alive?(srv)
+    end
+
+    test "a crash under :open is logged and the session starts without injection" do
+      hooks = [probe(on_error: :open, returns: [on_session_start: {:raise, "crm down"}])]
+
+      log =
+        capture_log(fn ->
+          {:ok, srv} = start(sid(), hooks)
+          assert {:ok, _} = Turn.Server.run(srv, "hello")
+        end)
+
+      assert log =~ "on_session_start crashed: RuntimeError: crm down"
+    end
+
+    test "a store fault writing the injection leaves the server :unavailable" do
+      hooks = [probe(returns: [on_session_start: {:inject, ["profile: metric"]}])]
+      {:ok, srv} = start(sid(), hooks, store: {UserAppendFailStore, UserAppendFailStore.new()})
+
+      assert {:unavailable, _} = :sys.get_state(srv)
+      assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hello")
+    end
+  end
+
+  describe "on_passivate" do
+    test "runs when the idle server passivates; a crash still stops it normally" do
+      # Linked by start_link and trapping exits, the test sees the stop reason however
+      # soon passivation fires: no monitor to race.
+      Process.flag(:trap_exit, true)
+
+      {:ok, srv} =
+        start(sid(), [probe(returns: [on_passivate: {:raise, "late"}])], idle_timeout_ms: 50)
+
+      assert_receive {:hook, :p, :on_passivate, [%Normandy.Hooks.Context{event: :on_passivate}]},
+                     1_000
+
+      assert_receive {:EXIT, ^srv, :normal}, 1_000
     end
   end
 end
