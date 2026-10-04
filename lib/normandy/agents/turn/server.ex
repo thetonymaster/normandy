@@ -132,6 +132,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Hooks.Runner
+  alias Normandy.Hooks.ServerGlue
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
 
@@ -490,10 +491,14 @@ defmodule Normandy.Agents.Turn.Server do
     else
       {:rejected, exception} ->
         emit_rejected_run(data, caller_ctx, exception)
-        {:keep_state, data, [{:reply, from, {:error, {:rejected, exception}}}]}
+        :gen_statem.reply(from, {:error, {:rejected, exception}})
+        turn_end(data, data.config, {:rejected, exception}, turn_id: nil)
+        {:keep_state, data}
 
       {:crashed, reason} ->
-        {:keep_state, data, [{:reply, from, {:error, reason}}]}
+        :gen_statem.reply(from, {:error, reason})
+        turn_end(data, data.config, {:error, reason}, turn_id: nil)
+        {:keep_state, data}
     end
   end
 
@@ -710,7 +715,9 @@ defmodule Normandy.Agents.Turn.Server do
       interpret(effects, %{data | turn_state: state})
     else
       {:error, stored, reason} ->
-        {:keep_state, %{data | config: stored}, [{:reply, from, persist_failed(reason)}]}
+        :gen_statem.reply(from, persist_failed(reason))
+        turn_end(data, config, persist_failed(reason))
+        {:keep_state, %{data | config: stored}}
     end
   end
 
@@ -1030,6 +1037,7 @@ defmodule Normandy.Agents.Turn.Server do
         _ = persist_turn_state(data, data.turn_state)
         stop_run_span(data, :stop, %{})
         reply(data, {:ok, value})
+        turn_end(data, data.config, {:ok, value})
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
 
       {:fail, reason} ->
@@ -1037,6 +1045,7 @@ defmodule Normandy.Agents.Turn.Server do
         _ = persist_turn_state(data, data.turn_state)
         stop_run_span(data, :exception, %{kind: :error, reason: reason, stacktrace: []})
         reply(data, {:error, reason})
+        turn_end(data, data.config, ServerGlue.fail_outcome(reason))
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
     end
   end
@@ -1145,6 +1154,16 @@ defmodule Normandy.Agents.Turn.Server do
     {:ok, fun.()}
   catch
     kind, reason -> handler_crash(data, name, kind, reason, __STACKTRACE__)
+  end
+
+  # on_turn_end is logged-only (the Runner logs a crashing hook and ignores its return);
+  # call_handler/3 is the belt over those braces. Callers run it after the reply.
+  defp turn_end(data, config, outcome, ctx_opts \\ []) do
+    _ =
+      if Runner.hooks?(config),
+        do: call_handler(data, :on_turn_end, fn -> Runner.turn_end(config, outcome, ctx_opts) end)
+
+    :ok
   end
 
   # Logs a crash in a handler or hook the server ran (never its values, see

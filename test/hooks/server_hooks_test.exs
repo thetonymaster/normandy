@@ -9,6 +9,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.{AgentMemory, PromptSpecification}
+  alias Normandy.Hooks.ServerGlue
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
 
@@ -31,6 +32,33 @@ defmodule Normandy.Hooks.ServerHooksTest do
     io_schema "Input requiring a query" do
       field(:query, :string, description: "query", required: true)
     end
+  end
+
+  # Holds on_turn_end until released: run/2 returning while it waits proves the reply
+  # went out first.
+  defmodule HoldsTurnEnd do
+    use Normandy.Behaviours.Hooks
+
+    @impl true
+    def on_turn_end(_outcome, _ctx, opts) do
+      send(opts[:notify], :turn_end_running)
+
+      receive do
+        :release -> :ok
+      end
+    end
+  end
+
+  # Fails every "user" append; everything else goes to InMemory.
+  defmodule UserAppendFailStore do
+    @moduledoc false
+    alias Normandy.Behaviours.SessionStore.InMemory
+    def new, do: InMemory.new()
+    def append_entry(_h, _sid, %{role: "user"}), do: {:error, :disk_full}
+    def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
+    def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
+    def history(h, sid), do: InMemory.history(h, sid)
   end
 
   # Built directly, as a :config start takes it (Turn.Server saves no template for a
@@ -80,7 +108,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
   defp sid, do: "server-hooks-#{System.unique_integer([:positive])}"
 
-  defp probe(opts), do: {Probe, [notify: TestHooks.sink(), tag: :p] ++ opts}
+  defp probe(opts \\ []), do: {Probe, [notify: TestHooks.sink(), tag: :p] ++ opts}
 
   describe "hook entries checked at load" do
     test "a hook module missing on this node keeps the server :unavailable with the reason" do
@@ -183,6 +211,74 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       assert {:ok, %Resp{content: "hi"}} = Turn.Server.run(srv, "hello")
       assert_receive {:hook, :tmpl, :on_prompt, ["hello", _ctx]}
+    end
+  end
+
+  describe "on_turn_end" do
+    test "a completed turn reports {:ok, final} with the turn's id" do
+      {:ok, srv} = start(sid(), [probe()])
+
+      assert {:ok, %Resp{content: "hi"} = final} = Turn.Server.run(srv, "hello")
+      assert_receive {:hook, :p, :on_turn_end, [{:ok, ^final}, ctx]}
+      refute is_nil(ctx.turn_id)
+    end
+
+    test "the caller gets the reply before on_turn_end runs" do
+      {:ok, srv} = start(sid(), [{HoldsTurnEnd, notify: TestHooks.sink()}])
+
+      task = Task.async(fn -> Turn.Server.run(srv, "hello") end)
+      assert {:ok, {:ok, %Resp{content: "hi"}}} = Task.yield(task, 2_000)
+      assert_receive :turn_end_running
+      send(srv, :release)
+    end
+
+    test "a crashing or contract-violating on_turn_end changes neither the reply nor the server" do
+      {:ok, crashing} = start(sid(), [probe(returns: [on_turn_end: {:raise, "audit down"}])])
+      assert {:ok, _} = Turn.Server.run(crashing, "hello")
+
+      {:ok, violating} = start(sid(), [probe(returns: [on_turn_end: :done])])
+      assert {:ok, _} = Turn.Server.run(violating, "hello")
+
+      assert Process.alive?(crashing)
+      assert Process.alive?(violating)
+    end
+
+    test "a rejected input reports {:rejected, e} with no turn id" do
+      {:ok, srv} = start(sid(), [probe()], config: %{input_schema: %QueryInput{}})
+
+      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
+               Turn.Server.run(srv, %{})
+
+      assert_receive {:hook, :p, :on_turn_end,
+                      [
+                        {:rejected, %Normandy.Schema.ValidationError{}},
+                        %Normandy.Hooks.Context{turn_id: nil}
+                      ]}
+    end
+
+    test "an admission crash reports {:error, {:handler_crashed, :admit, e}}" do
+      {:ok, srv} = start(sid(), [probe(returns: [on_prompt: {:raise, "x"}])])
+
+      assert {:error, {:handler_crashed, :admit, _}} = Turn.Server.run(srv, "hello")
+
+      assert_receive {:hook, :p, :on_turn_end,
+                      [{:error, {:handler_crashed, :admit, %RuntimeError{}}}, _ctx]}
+    end
+
+    test "a failed write of the turn's first message reports {:error, {:persist_failed, reason}}" do
+      {:ok, srv} =
+        start(sid(), [probe()], store: {UserAppendFailStore, UserAppendFailStore.new()})
+
+      assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hello")
+      assert_receive {:hook, :p, :on_turn_end, [{:error, {:persist_failed, :disk_full}}, _ctx]}
+    end
+
+    test "ServerGlue.fail_outcome/1: an output-guardrail block is a rejection, the rest errors" do
+      e = %Normandy.Guardrails.ViolationError{message: "blocked", violations: []}
+      assert ServerGlue.fail_outcome({:rejected, e}) == {:rejected, e}
+
+      assert ServerGlue.fail_outcome({:approval_timeout, ["t"]}) ==
+               {:error, {:approval_timeout, ["t"]}}
     end
   end
 end

@@ -1715,6 +1715,9 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp put_turn_id(stop_metadata, _result), do: stop_metadata
 
+  # on_turn_end runs after the run span closes, on both outcomes, so its time is not
+  # the run's and its hook span is not the run's child; a raised run's exception is
+  # re-raised unchanged after the hook (the Runner never raises for on_turn_end).
   defp with_agent_run_span(config, telemetry_metadata, fun) do
     :telemetry.span([:normandy, :agent, :run], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy agent run start",
@@ -1748,6 +1751,15 @@ defmodule Normandy.Agents.BaseAgent do
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
     end)
+  catch
+    kind, reason ->
+      stacktrace = __STACKTRACE__
+      BaseAgentGlue.turn_end_raised(config, kind, reason, stacktrace)
+      :erlang.raise(kind, reason, stacktrace)
+  else
+    result ->
+      BaseAgentGlue.turn_end_ok(config, result)
+      result
   end
 
   defp with_llm_call_span(config, telemetry_metadata, fun) do
