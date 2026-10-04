@@ -16,6 +16,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.ValidationMiddleware
   alias Normandy.Batch.Processor
   alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
@@ -121,6 +122,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     _ = validate_client_options!(Map.get(config, :client))
     :ok = validate_policy_opts!(Map.get(config, :behaviours))
+    :ok = validate_hooks!(Map.get(config, :behaviours))
 
     case Map.get(config, :retry_options) do
       nil -> :ok
@@ -853,6 +855,12 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp validate_policy_opts!(_behaviours), do: :ok
+
+  # Hook entries are checked where the config is made, like the policy's opts.
+  defp validate_hooks!(%Normandy.Behaviours.Config{hooks: hooks}),
+    do: Hooks.validate_entries!(hooks)
+
+  defp validate_hooks!(_behaviours), do: :ok
 
   @doc false
   # A real compactor sizes against the model's context window. With no pinned

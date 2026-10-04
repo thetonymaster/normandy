@@ -12,7 +12,8 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   Everything else travels in the template: model and sampling settings, tool
   limits, prompt, schemas, memory cap, `initial_memory`, `retry_options`, JSON
-  retry settings, guardrails, `tool_context`, and behaviour module refs. These must be plain
+  retry settings, guardrails, `tool_context`, behaviour module refs and hook entries
+  (`Normandy.Behaviours.Hooks`; their opts must be plain data and hold no secrets). These must be plain
   data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
   `tool_context` must hold no secrets: the template is stored in plaintext.
   A template saved before these fields existed rebuilds with their defaults.
@@ -20,6 +21,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
 
   # Plain-data config fields carried as-is. A template saved before 2.0 lacks
@@ -66,11 +68,19 @@ defmodule Normandy.Agents.ConfigTemplate do
         compactor: b.compactor,
         model_catalog: b.model_catalog,
         session_store: b.session_store,
-        session_registry: b.session_registry
+        session_registry: b.session_registry,
+        hooks: storable_hooks!(b.hooks)
       }
     }
     |> Map.merge(storable_fields!(c))
     |> Map.put(:node_local_fields, Enum.reject(@node_local_fields, &(Map.fetch!(c, &1) == nil)))
+  end
+
+  # Hook entries travel as given; validate_entries!/2 (load: false) refuses opts that
+  # are not plain data, as unstorable?/1 does for the fields above.
+  defp storable_hooks!(hooks) do
+    :ok = Hooks.validate_entries!(hooks, load: false)
+    hooks
   end
 
   # A function or pid would be persisted as a term that only works on this
@@ -125,6 +135,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       model_catalog: refs.model_catalog,
       session_store: refs.session_store,
       session_registry: refs.session_registry,
+      hooks: Map.get(refs, :hooks, []),
       before_hooks: supplement.before_hooks,
       after_hooks: supplement.after_hooks
     }

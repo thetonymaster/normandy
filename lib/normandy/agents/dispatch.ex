@@ -26,6 +26,17 @@ defmodule Normandy.Agents.Dispatch do
   Registry misses and invalid or schema-failing input are errors, not denials,
   and emit nothing.
 
+  ## `after_tool`
+
+  `Pipeline.after_tool` (`fn config, call, result -> result end`, default `nil`) runs on
+  every result the chokepoint returns: executed, budget-denied, every `classify/3` denial
+  (registry miss, invalid or schema-failing input, a before-hook halt, a policy deny) and
+  `dispatch_one/3`'s interim approval denial. It runs before the function `after_hooks`,
+  which see only results of tools that ran, and the result answers the call's id
+  whatever it returns. `Normandy.Behaviours.Config.to_pipeline/1` sets it from the agent's
+  hook modules. For a denial it receives the call as the model sent it (input
+  normalized); for an executed result, the call the before-hooks produced.
+
   ## `execute_fn`
 
   `execute_fn` is called as `(config, prepared, tool_name)` when it has arity 3,
@@ -66,14 +77,16 @@ defmodule Normandy.Agents.Dispatch do
             execute_fn:
               (map(), struct(), String.t() -> Executor.execution_result())
               | (map(), struct(), String.t(), ToolCall.t() -> Executor.execution_result()),
-            after_hooks: [function()]
+            after_hooks: [function()],
+            after_tool: (map(), ToolCall.t(), ToolResult.t() -> ToolResult.t()) | nil
           }
     defstruct before_hooks: [],
               policy_fn: nil,
               budget_check_fn: nil,
               budget_record_fn: nil,
               execute_fn: nil,
-              after_hooks: []
+              after_hooks: [],
+              after_tool: nil
   end
 
   @doc """
@@ -205,10 +218,21 @@ defmodule Normandy.Agents.Dispatch do
           | {:needs_approval, struct(), ToolCall.t(), map()}
   def classify(config, tool_call, pipeline \\ default_pipeline())
 
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def classify(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     call = %{call | input: normalize_tool_input(call.input)}
 
+    case route(config, call, pipeline) do
+      {:deny, %ToolResult{} = result} -> {:deny, answer(config, call, result, pipeline)}
+      verdict -> verdict
+    end
+  end
+
+  def classify(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
+    classify(config, to_tool_call(raw_call), pipeline)
+  end
+
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defp route(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case Registry.get(config.tool_registry, call.name) do
       {:ok, _tool} when not is_map(call.input) ->
         {:deny, invalid_input_result(call)}
@@ -245,9 +269,12 @@ defmodule Normandy.Agents.Dispatch do
     end
   end
 
-  def classify(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
-    classify(config, to_tool_call(raw_call), pipeline)
-  end
+  # Every result the model will see passes the after_tool slot once; the result answers
+  # the call's id whatever the slot returns.
+  defp answer(_config, _call, result, %Pipeline{after_tool: nil}), do: result
+
+  defp answer(config, call, result, %Pipeline{after_tool: after_tool}),
+    do: %{after_tool.(config, call, result) | tool_call_id: call.id}
 
   @doc """
   Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
@@ -261,11 +288,12 @@ defmodule Normandy.Agents.Dispatch do
       :ok ->
         result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
+        result = answer(config, call, result, pipeline)
         %{run_after_hooks(config, call, result, pipeline.after_hooks) | tool_call_id: call.id}
 
       {:error, reason} ->
         emit_denied(config, call, :budget)
-        budget_denial_result(call, reason)
+        answer(config, call, budget_denial_result(call, reason), pipeline)
     end
   end
 
@@ -297,9 +325,14 @@ defmodule Normandy.Agents.Dispatch do
 
   def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case classify(config, call, pipeline) do
-      {:execute, prepared, call} -> execute(config, prepared, call, pipeline)
-      {:deny, %ToolResult{} = result} -> result
-      {:needs_approval, _prepared, call, info} -> policy_denial(config, call, info, true)
+      {:execute, prepared, call} ->
+        execute(config, prepared, call, pipeline)
+
+      {:deny, %ToolResult{} = result} ->
+        result
+
+      {:needs_approval, _prepared, call, info} ->
+        answer(config, call, policy_denial(config, call, info, true), pipeline)
     end
   end
 

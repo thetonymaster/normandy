@@ -52,6 +52,10 @@ defmodule Normandy.Agents.Turn.Server do
   An approval that arrives while the load fails is dropped with a warning. With no
   call for `:idle_timeout_ms`, the server stops normally.
 
+  A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
+  on this node, or invalid hook opts) is handled the same way: the server waits
+  `:unavailable`, retries, and replies that reason.
+
   ## Events (`:subscriber`)
 
     * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
@@ -120,8 +124,10 @@ defmodule Normandy.Agents.Turn.Server do
 
   alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
   alias Normandy.Agents.ConfigTemplate
+  alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Hooks.Runner
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
 
@@ -221,6 +227,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp load_session(opts, store, session_id) do
     with {:ok, config, template} <- start_config(opts, store, session_id),
+         :ok <- check_hooks(config),
          {:ok, config} <- with_stored_memory(config, store, session_id),
          {:ok, turn_state} <- load_turn_state(store, session_id) do
       {:ok, config, template, turn_state}
@@ -332,6 +339,12 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  # A hook list this node cannot run (a hook module not deployed here, invalid opts) is
+  # reported like a store fault: the server waits :unavailable and retries, instead of
+  # failing the start into a supervisor restart loop or running without its hooks.
+  defp check_hooks(nil), do: :ok
+  defp check_hooks(config), do: Hooks.check_entries(Runner.entries(config))
 
   # A missing supplement or a failed credential lookup is reported like a store
   # fault, so the server waits :unavailable and retries instead of crashing into a

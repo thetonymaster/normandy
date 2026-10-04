@@ -8,7 +8,7 @@ defmodule Normandy.Behaviours.Config do
   so the "everything off" path is observably identical to today.
 
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
-  `before_hooks`, `after_hooks`) into a `%Normandy.Agents.Dispatch.Pipeline{}`.
+  `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`) into a `%Normandy.Agents.Dispatch.Pipeline{}`.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
   the dependency points Phase 2 → Phase 1. The `credential`, `compactor`,
   `model_catalog`, `session_store`, and `session_registry` slots are not
@@ -26,6 +26,7 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Behaviours.SessionRegistry
   alias Normandy.Behaviours.SessionStore
+  alias Normandy.Hooks.Runner
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
 
@@ -70,8 +71,9 @@ defmodule Normandy.Behaviours.Config do
     {budget_mod, budget_opts} = bundle.budget
 
     %Pipeline{
-      before_hooks: bundle.before_hooks,
+      before_hooks: module_before_tool(bundle) ++ bundle.before_hooks,
       after_hooks: bundle.after_hooks,
+      after_tool: module_after_tool(bundle),
       policy_fn: fn config, call, tool ->
         policy_mod.check(call, %{config: config, tool: tool, opts: policy_opts})
       end,
@@ -89,5 +91,23 @@ defmodule Normandy.Behaviours.Config do
 
   defp scope(config) do
     %{agent: Map.get(config, :name), model: Map.get(config, :model)}
+  end
+
+  # Hook modules run ahead of the function hooks: one adapter at the head of
+  # before_hooks (a module halt skips the functions, since Dispatch stops at the first
+  # halt) and the after_tool slot, which Dispatch applies to every result. The adapter
+  # runs the hooks of the config the call is dispatched with (the agent's, whose
+  # behaviours this bundle is). No entry exporting the callback, no adapter: the
+  # pipeline is exactly what it was before hooks.
+  defp module_before_tool(bundle) do
+    if Runner.handles?(%{behaviours: bundle}, :before_tool),
+      do: [fn config, call -> Runner.before_tool(config, call) end],
+      else: []
+  end
+
+  defp module_after_tool(bundle) do
+    if Runner.handles?(%{behaviours: bundle}, :after_tool),
+      do: fn config, call, result -> Runner.after_tool(config, call, result) end,
+      else: nil
   end
 end

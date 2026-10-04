@@ -174,6 +174,34 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       }
     end
 
+    test "hooks travel in the template" do
+      supp = round_trip_supplement()
+      hooks = [{Normandy.Test.Hooks.Probe, tag: :audit, on_error: :open}]
+      config = %{full_config(supp) | behaviours: %{full_config(supp).behaviours | hooks: hooks}}
+
+      rebuilt = config |> ConfigTemplate.from_config("t") |> ConfigTemplate.rebuild(supp, "TOKEN")
+
+      assert rebuilt.behaviours.hooks == hooks
+    end
+
+    test "a template saved before hooks existed rebuilds with []" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+      tmpl = %{tmpl | behaviours_refs: Map.delete(tmpl.behaviours_refs, :hooks)}
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").behaviours.hooks == []
+    end
+
+    test "from_config refuses hook opts that are not plain data" do
+      supp = round_trip_supplement()
+      hooks = [{Normandy.Test.Hooks.Probe, notify: self()}]
+      config = %{full_config(supp) | behaviours: %{full_config(supp).behaviours | hooks: hooks}}
+
+      assert_raise ArgumentError, ~r/must be plain data/, fn ->
+        ConfigTemplate.from_config(config, "t")
+      end
+    end
+
     test "tool_context travels in the template" do
       supp = round_trip_supplement()
       config = %{full_config(supp) | tool_context: %{memory_namespace: "acme/u-7"}}
