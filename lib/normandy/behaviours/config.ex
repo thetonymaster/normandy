@@ -55,9 +55,9 @@ defmodule Normandy.Behaviours.Config do
   @doc """
   Builds a `%Dispatch.Pipeline{}` from the dispatch-path slots of the bundle.
 
-  `nil` resolves to the default bundle. `execute_fn` is set to the bare executor
-  (matching `Dispatch.default_pipeline/0`); callers that need telemetry (e.g.
-  `BaseAgent`) override `execute_fn` after building.
+  `nil` resolves to the default bundle. `execute_fn` is set to the bare executor, which
+  passes the call's `%Normandy.Tools.Context{}` (matching `Dispatch.default_pipeline/0`);
+  callers that need telemetry (e.g. `BaseAgent`) override `execute_fn` after building.
   """
   @spec to_pipeline(t() | nil) :: Pipeline.t()
   def to_pipeline(nil), do: to_pipeline(%__MODULE__{})

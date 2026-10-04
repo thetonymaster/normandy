@@ -77,7 +77,8 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
-  The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing the call's `%Normandy.Tools.Context{}`.
+  The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing
+  the call's `%Normandy.Tools.Context{}`.
   Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
   to add telemetry, and later phases override the behaviour functions.
   """
