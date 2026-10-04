@@ -13,6 +13,10 @@ defmodule Normandy.Agents.Turn.Inline do
   supported via the optional `:compact` dep (default no-op); streaming,
   guardrails, validation, persistence and approval shells come in later phases.
 
+  Lifecycle hooks (`Normandy.Behaviours.Hooks`) have no site here: this shell calls only
+  its `deps`. Tool hooks run when `:dispatch` dispatches through an agent pipeline
+  (`Dispatch.dispatch_one/3` with `BaseAgent.base_agent_pipeline/1`); no other event runs.
+
   `deps` is a map of side-effecting functions:
     * `:call_llm` — `fn request -> {:ok, response} | {:error, reason} end` (required)
     * `:dispatch` — `fn calls -> [%ToolResult{}] end` (required)

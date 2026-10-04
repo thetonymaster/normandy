@@ -264,6 +264,33 @@ event named in old changelog entries never existed (the LLM call span is
   `Normandy.Behaviours.MemoryStore.Mnesia.create_tables/1`. See
   `docs/guides/agent-memory.md`.
 
+## 16. Lifecycle hooks
+
+- New: `Normandy.Behaviours.Hooks` modules on `Behaviours.Config.hooks` (see
+  `docs/guides/hooks.md`). Nothing changes for an agent that sets none. Config templates
+  gain `behaviours_refs.hooks`; templates saved earlier rebuild with `[]`.
+- New replies from `Turn.Server.run/2`: `{:error, {:rejected, %Normandy.HookHaltError{}}}`
+  (an `on_prompt` hook halted the input), `{:error, {:hook_halted,
+  %Normandy.HookHaltError{}}}` (a `before_llm` hook halted the turn),
+  `{:error, {:handler_crashed, :admit | :after_tool | :on_session_start, e}}` and
+  `{:error, {:invalid_hooks, message}}` (a hook module missing on this node). `BaseAgent`
+  raises `Normandy.HookHaltError` for both halts.
+- **Behaviour change:** in `Turn.Server`, an admission that raises something other than a
+  rejection (an input guardrail crashing, for example) now replies `{:error,
+  {:handler_crashed, :admit, e}}` instead of crashing the session.
+- **Behaviour change:** `Turn.Server` now admits a turn's input before it repairs an
+  interrupted tool batch; a rejected input repairs nothing (it stored nothing before too).
+- **Behaviour change:** compaction keeps each kept message's entry id, and `Turn.Server`
+  stores each message under the id its memory gave it, on every session store.
+  `SessionStore.Redis.history/2` now returns the id an entry was written with (the stream id
+  for entries written without one), and `fork/3` accepts either. Code that relied on
+  compaction minting new ids, or on store-assigned ids, must not.
+- `Normandy.Behaviours.Compactor` meta may carry `:dropped` (the removed entries);
+  `Compactor.WindowManager` fills it. A custom compactor fills it to trigger
+  `after_compact` hooks. `AgentMemory.add_message/4` accepts `:id`.
+- `Dispatch.Pipeline` gains `after_tool` (default `nil`). The function `after_hooks` are
+  unchanged: they still see only results of tools that ran.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

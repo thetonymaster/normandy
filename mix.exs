@@ -44,7 +44,8 @@ defmodule Normandy.MixProject do
           "MIGRATING-2.0.md",
           "ROADMAP.md",
           "docs/guides/distributed_sessions.md",
-          "docs/guides/agent-memory.md"
+          "docs/guides/agent-memory.md",
+          "docs/guides/hooks.md"
           # TODO: Add guides
           # "guides/getting_started.md",
           # "guides/multi_agent_coordination.md",

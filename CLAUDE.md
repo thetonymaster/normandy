@@ -93,6 +93,19 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   from `BaseAgentConfig.tool_context` (plain data, persisted in the config template) and
   passed by every built-in pipeline's `execute_fn`
 
+### Lifecycle Hooks
+
+- **`Normandy.Behaviours.Hooks`** - Ordered `{module, opts}` entries on `Behaviours.Config.hooks`
+  (persisted in the config template; opts plain data, checked at `BaseAgent.init/1`); optional
+  callbacks `on_session_start`, `on_passivate`, `on_prompt`, `before_llm`, `before_tool`,
+  `after_tool`, `after_compact`, `on_turn_end`; `use` checks callback names and arities
+- **`Normandy.Hooks.Runner`** - The only caller of hook modules: order, rewrites, halts,
+  `:on_error`, return contracts, the `[:normandy, :hook, *]` span; call sites in
+  `Normandy.Hooks.BaseAgentGlue`, `Normandy.Hooks.ServerGlue`, `Normandy.Hooks.Handlers`
+  (wraps any handler set with `before_llm`/`after_compact`) and `Config.to_pipeline/1`
+  (tool hooks; `after_tool` sees every tool result once). No hook outcome terminates
+  `Turn.Server`; no hook timeouts
+
 ### Prompt System
 
 - **`Normandy.Components.SystemPromptGenerator`** - Generates system prompts
