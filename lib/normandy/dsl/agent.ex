@@ -53,9 +53,11 @@ defmodule Normandy.DSL.Agent do
   - Generated helper functions
   - Tool registration support
   - Memory management helpers
+  - `hooks` - lifecycle hook modules (`Normandy.Behaviours.Hooks`), `[{Mod, opts}]`
   """
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
   alias Normandy.Tools.Memory
@@ -65,6 +67,7 @@ defmodule Normandy.DSL.Agent do
       import Normandy.DSL.Agent
       Module.register_attribute(__MODULE__, :agent_config, accumulate: false)
       Module.register_attribute(__MODULE__, :agent_tools, accumulate: true)
+      Module.register_attribute(__MODULE__, :agent_hooks, accumulate: false)
       @before_compile Normandy.DSL.Agent
     end
   end
@@ -337,6 +340,31 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @doc """
+  Declares lifecycle hooks (`Normandy.Behaviours.Hooks`): an ordered list of
+  `{module, opts}` entries, once per agent. They run before any `hooks` in a
+  `behaviours:` given to `new/1`. A literal list is checked at compile time (shape,
+  `:on_error`, plain-data opts); modules and their `validate_opts!/1` are checked when
+  `new/1` builds the agent.
+
+      hooks [{MyApp.Hooks.Redact, []}, {MyApp.Hooks.Audit, on_error: :open}]
+  """
+  defmacro hooks(entries) do
+    expanded = Macro.prewalk(entries, &Macro.expand(&1, __CALLER__))
+
+    if Macro.quoted_literal?(expanded),
+      do: Hooks.validate_entries!(expanded, load: false)
+
+    quote do
+      if Module.get_attribute(__MODULE__, :agent_hooks) != nil do
+        raise ArgumentError,
+              "hooks/1 is declared twice in #{inspect(__MODULE__)}; declare one list"
+      end
+
+      Module.put_attribute(__MODULE__, :agent_hooks, unquote(entries))
+    end
+  end
+
   # The BaseAgent.init/1 options a DSL agent can override in new/1, plus
   # :max_messages. :client is passed on its own.
   @override_keys [
@@ -403,6 +431,15 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
+  @doc false
+  # Declared hooks first, then any given at runtime in `behaviours:`.
+  def put_declared_hooks(config, []), do: config
+
+  def put_declared_hooks(config, declared) do
+    behaviours = Map.get(config, :behaviours) || %Normandy.Behaviours.Config{}
+    Map.put(config, :behaviours, %{behaviours | hooks: declared ++ behaviours.hooks})
+  end
+
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro __before_compile__(_env) do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
@@ -423,6 +460,7 @@ defmodule Normandy.DSL.Agent do
         output_instructions: Module.get_attribute(__MODULE__, :agent_output_instructions),
         tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse(),
         memory: Module.get_attribute(__MODULE__, :agent_memory),
+        hooks: Module.get_attribute(__MODULE__, :agent_hooks) || [],
         input_guardrails: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
         output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, []),
         output_guardrails_streaming_mode:
@@ -557,6 +595,7 @@ defmodule Normandy.DSL.Agent do
           steps: @agent_compile_config.steps,
           output_instructions: @agent_compile_config.output_instructions,
           tools: @agent_compile_config.tools,
+          hooks: @agent_compile_config.hooks,
           max_messages: @agent_compile_config.max_messages,
           input_guardrails: @agent_compile_config.input_guardrails,
           output_guardrails: @agent_compile_config.output_guardrails,
@@ -592,6 +631,7 @@ defmodule Normandy.DSL.Agent do
         Normandy.DSL.Agent.validate_overrides!(__MODULE__, overrides)
 
         config = Map.merge(base_config, Map.new(overrides))
+        config = Normandy.DSL.Agent.put_declared_hooks(config, @agent_compile_config.hooks)
         max_messages = Map.get(config, :max_messages, @agent_compile_config.max_messages)
 
         # BaseAgent.init/1 takes the cap through the memory, not a :max_messages key.
