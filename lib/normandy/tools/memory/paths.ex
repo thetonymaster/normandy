@@ -9,6 +9,7 @@ defmodule Normandy.Tools.Memory.Paths do
   @max_bytes 255
 
   def root, do: @root
+  def max_bytes, do: @max_bytes
 
   # The root alone may carry a trailing slash (spec §3); it normalises to the root.
   def validate(@root <> "/"), do: {:ok, @root}

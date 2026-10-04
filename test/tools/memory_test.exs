@@ -363,6 +363,112 @@ defmodule Normandy.Tools.MemoryTest do
                })
     end
 
+    defp typed(tool, input, ns \\ "acme/u-1"),
+      do: Commands.run(Memory.prepare_input(tool, input), ns)
+
+    test "rename: a directory into its own subtree is refused and nothing moves", %{
+      store: store,
+      t: t
+    } do
+      call(t, %{"command" => "create", "path" => "/memories/a/c", "file_text" => "x"})
+
+      for new <- ["/memories/a/b", "/memories/a/b/deeper", "/memories/a"] do
+        assert {:error, :invalid_input,
+                "Error: cannot rename /memories/a into its own subdirectory " <> ^new} =
+                 typed(t, %{
+                   "command" => "rename",
+                   "old_path" => "/memories/a",
+                   "new_path" => new
+                 })
+      end
+
+      assert {:ok, %{content: "x"}} = InMemory.get(store, "acme/u-1", "/memories/a/c")
+    end
+
+    test "rename: a sibling that shares a prefix is not a subdirectory", %{store: store, t: t} do
+      call(t, %{"command" => "create", "path" => "/memories/a/c", "file_text" => "x"})
+
+      assert {:ok, "Successfully renamed /memories/a to /memories/ab"} =
+               call(t, %{
+                 "command" => "rename",
+                 "old_path" => "/memories/a",
+                 "new_path" => "/memories/ab"
+               })
+
+      assert {:ok, %{content: "x"}} = InMemory.get(store, "acme/u-1", "/memories/ab/c")
+    end
+
+    test "rename: a directory rename that pushes a child past 255 bytes is refused", %{
+      store: store,
+      t: t
+    } do
+      child = "/memories/a/" <> String.duplicate("x", 235)
+      assert byte_size(child) == 247
+      {:ok, _} = InMemory.put(store, "acme/u-1", child, "x", :new)
+      new = "/memories/" <> String.duplicate("n", 12)
+      offending = new <> "/" <> String.duplicate("x", 235)
+      assert byte_size(offending) == 258
+
+      assert {:error, :invalid_path, msg} =
+               typed(t, %{"command" => "rename", "old_path" => "/memories/a", "new_path" => new})
+
+      assert msg ==
+               "Error: renaming /memories/a to #{new} would make #{offending} longer than 255 bytes"
+
+      assert {:ok, %{content: "x"}} = InMemory.get(store, "acme/u-1", child)
+
+      # Exactly 255 bytes still moves.
+      ok_new = "/memories/" <> String.duplicate("n", 9)
+      assert byte_size(ok_new <> "/" <> String.duplicate("x", 235)) == 255
+
+      assert {:ok, _, _} =
+               typed(t, %{
+                 "command" => "rename",
+                 "old_path" => "/memories/a",
+                 "new_path" => ok_new
+               })
+    end
+
+    test "rename: a list error while sizing a directory rename is a backend error" do
+      t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
+
+      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
+               typed(t, %{
+                 "command" => "rename",
+                 "old_path" => "/memories/a",
+                 "new_path" => "/memories/b"
+               })
+    end
+
+    test "create on a directory path is refused; overwriting a file still works", %{
+      store: store,
+      t: t
+    } do
+      call(t, %{"command" => "create", "path" => "/memories/a/c", "file_text" => "x"})
+
+      assert {:error, :exists, "Error: /memories/a is a directory; choose a file path"} =
+               typed(t, %{"command" => "create", "path" => "/memories/a", "file_text" => "y"})
+
+      assert :not_found = InMemory.get(store, "acme/u-1", "/memories/a")
+
+      # A sibling sharing the prefix is not a child.
+      assert {:ok, _} =
+               call(t, %{"command" => "create", "path" => "/memories/ab", "file_text" => "z"})
+
+      # Overwriting a document that has no children keeps working.
+      assert {:ok, _} =
+               call(t, %{"command" => "create", "path" => "/memories/ab", "file_text" => "w"})
+
+      assert {:ok, %{content: "w"}} = InMemory.get(store, "acme/u-1", "/memories/ab")
+    end
+
+    test "create: a list error while checking for a directory is a backend error" do
+      t = Memory.new(store: {Normandy.Test.DirDownStore, nil})
+
+      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
+               typed(t, %{"command" => "create", "path" => "/memories/a", "file_text" => "y"})
+    end
+
     test "invalid paths never reach the store (Review Focus #2)" do
       down = Memory.new(store: {DownStore, nil})
       bad = "/memories/../etc/passwd"

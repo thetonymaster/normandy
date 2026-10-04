@@ -85,7 +85,8 @@ defmodule Normandy.Tools.Memory.Commands do
     with {:ok, loc} <- locate(tool, ns, cmd.path, :write),
          :ok <- not_root(loc, "create a file at"),
          {:ok, text} <- text(cmd, :file_text, loc),
-         :ok <- fits(tool, loc, text) do
+         :ok <- fits(tool, loc, text),
+         :ok <- not_directory(tool, loc) do
       case store(tool, :put, [loc.namespace, loc.path, text, :any]) do
         {:ok, _version} ->
           {:ok, "File created successfully at: #{loc.model_path}",
@@ -151,7 +152,9 @@ defmodule Normandy.Tools.Memory.Commands do
     with {:ok, from} <- locate(tool, ns, cmd.old_path, :write),
          {:ok, to} <- locate(tool, ns, cmd.new_path, :write),
          :ok <- not_root(from, "rename"),
-         :ok <- same_mount(from, to) do
+         :ok <- same_mount(from, to),
+         :ok <- not_into_itself(from, to),
+         :ok <- fits_after_move(tool, from, to) do
       case store(tool, :rename, [from.namespace, from.path, to.path]) do
         {:ok, _n} ->
           {:ok, "Successfully renamed #{from.model_path} to #{to.model_path}", %{}}
@@ -264,6 +267,62 @@ defmodule Normandy.Tools.Memory.Commands do
 
   defp same_mount(_from, _to),
     do: {:error, :invalid_input, "Error: cannot rename across mounts"}
+
+  # Directories are only path prefixes, so a document at a directory's own path would
+  # hide everything under it.
+  defp not_directory(tool, loc) do
+    case store(tool, :list, [loc.namespace, loc.path]) do
+      {:ok, entries} ->
+        if Enum.any?(entries, &MemoryStore.under?(&1.path, loc.path)),
+          do: {:error, :exists, "Error: #{loc.model_path} is a directory; choose a file path"},
+          else: :ok
+
+      {:error, reason} ->
+        backend(reason)
+    end
+  end
+
+  # Both paths are in the same namespace here (same_mount/2), so store paths compare.
+  defp not_into_itself(from, to) do
+    if MemoryStore.at_or_under?(to.path, from.path),
+      do:
+        {:error, :invalid_input,
+         "Error: cannot rename #{from.model_path} into its own subdirectory #{to.model_path}"},
+      else: :ok
+  end
+
+  # Renaming a directory to a longer name can push a child past Paths' byte limit, which
+  # would leave documents nobody can address. A document at `from` moves alone.
+  defp fits_after_move(tool, from, to) do
+    case store(tool, :get, [from.namespace, from.path]) do
+      {:ok, _doc} ->
+        :ok
+
+      :not_found ->
+        case store(tool, :list, [from.namespace, from.path]) do
+          {:ok, entries} -> check_moved_lengths(entries, from, to)
+          {:error, reason} -> backend(reason)
+        end
+
+      {:error, reason} ->
+        backend(reason)
+    end
+  end
+
+  defp check_moved_lengths(entries, from, to) do
+    entries
+    |> Enum.filter(&MemoryStore.under?(&1.path, from.path))
+    |> Enum.map(&Paths.to_model(MemoryStore.reparent(&1.path, from.path, to.path), to.mount))
+    |> Enum.find(&(byte_size(&1) > Paths.max_bytes()))
+    |> case do
+      nil ->
+        :ok
+
+      long ->
+        {:error, :invalid_path,
+         "Error: renaming #{from.model_path} to #{to.model_path} would make #{long} longer than #{Paths.max_bytes()} bytes"}
+    end
+  end
 
   defp fits(tool, loc, text) do
     n = byte_size(text)
