@@ -49,9 +49,15 @@ defmodule Normandy.Integration.AgentProcessServerLiveTest do
     agent = AgentProcess.get_agent(pid)
     contents = Enum.map(AgentMemory.entry_chain(agent.memory), & &1.content)
 
-    assert Enum.any?(contents, fn c ->
-             c == %{chat_message: "Reply with exactly the single word: pong"}
-           end),
+    assert Enum.any?(
+             contents,
+             &match?(
+               %Normandy.Agents.BaseAgentInputSchema{
+                 chat_message: "Reply with exactly the single word: pong"
+               },
+               &1
+             )
+           ),
            "expected the user message to be reconstructed from the store; got: #{inspect(contents)}"
 
     :ok = AgentProcess.stop(pid)
