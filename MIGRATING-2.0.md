@@ -327,8 +327,10 @@ For the same reason, an `:exception` `reason` that is not one of Normandy's own 
 bug: a `KeyError` from a client, a tool or a hook) is emitted as
 `%Normandy.TurnError{type: :task_down, reason: %{exception: KeyError}}`, and a `TurnError`'s
 non-Normandy `:reason` as `%{exception: module}`; a raw Erlang error (`{:badkey, k, map}`) is
-normalized to its exception first. The raise, and the exception replied to the caller, keep it
-whole. `error.type` for such a run is now `task_down`, not the exception module.
+normalized to its exception first. Inside an exit reason or a thrown term, such an exception is
+reduced at any depth of its tuples and lists, and every `{reason, stacktrace}` pair loses its
+stacktrace; the term's other values are kept. The raise, and the exception replied to the caller,
+keep it whole. `error.type` for such a run is now `task_down`, not the exception module.
 
 ## 15. Agent memory and tool context
 

@@ -73,7 +73,9 @@ defmodule Normandy.Telemetry.Span do
   # The keys every Normandy :exception event adds: `kind`, the `reason` as
   # Normandy.TurnError.redact/1 leaves it, and an empty `stacktrace`. A caught :error
   # is normalized first, so a raw {:badkey, key, map} is a KeyError reduced to its
-  # module rather than the map. Exits and throws keep their term.
+  # module rather than the map. An exit or throw term loses every stacktrace in it
+  # (TurnError.drop_stacktraces/1) and has its non-domain exceptions reduced; the rest of
+  # the term is kept.
   @spec exception_metadata(:error | :exit | :throw, term(), Exception.stacktrace()) :: map()
   def exception_metadata(:error, reason, stacktrace) do
     exception = Exception.normalize(:error, reason, stacktrace)
@@ -81,7 +83,11 @@ defmodule Normandy.Telemetry.Span do
   end
 
   def exception_metadata(kind, reason, _stacktrace),
-    do: %{kind: kind, reason: TurnError.redact(reason), stacktrace: []}
+    do: %{
+      kind: kind,
+      reason: reason |> TurnError.drop_stacktraces() |> TurnError.redact(),
+      stacktrace: []
+    }
 
   defp normalize({result, stop_metadata}), do: {result, %{}, stop_metadata}
   defp normalize({_result, _measurements, _stop_metadata} = triple), do: triple

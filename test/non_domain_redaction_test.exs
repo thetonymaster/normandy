@@ -26,6 +26,15 @@ defmodule Normandy.NonDomainRedactionTest do
   # Every term below is walked in full: no truncation can hide the secret.
   defp leaks?(term), do: inspect(term, limit: :infinity, printable_limit: :infinity) =~ @secret
 
+  # A GenServer.call to a process that raised exits with the exception, its stacktrace
+  # (arguments included) and the call, message included.
+  defp exit_reason do
+    {{%KeyError{key: :k, term: "SECRET-EXC"}, [{M, :f, ["SECRET-ARG"], [line: 1]}]},
+     {GenServer, :call, [:server, {:msg, "CALLMSG-2"}, 5000]}}
+  end
+
+  defp full(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
+
   defp agent(name, reply),
     do: BaseAgent.init(%{client: %StubClient{reply: reply}, model: "m", name: name})
 
@@ -68,6 +77,22 @@ defmodule Normandy.NonDomainRedactionTest do
       assert_received {:span, [:normandy, :agent, :run, :exception], meta}
       refute leaks?(meta)
       assert %TurnError{type: :task_down, reason: %{exception: KeyError}} = meta.reason
+    end
+
+    test "an exit carrying a bug and a stacktrace emits neither; the call message stays" do
+      name = "redact-#{System.unique_integer([:positive])}"
+      TelemetryCapture.attach_span([[:normandy, :agent, :run, :exception]], agent_name: name)
+
+      assert catch_exit(BaseAgent.run(agent(name, fn _rm -> exit(exit_reason()) end), "hi")) ==
+               exit_reason()
+
+      assert_received {:span, [:normandy, :agent, :run, :exception], %{kind: :exit} = meta}
+      text = full(meta)
+      refute text =~ "SECRET-EXC"
+      refute text =~ "SECRET-ARG"
+      assert text =~ "%{exception: KeyError}"
+      # Not an exception: exit payload terms are emitted as they are (Q may decide more).
+      assert text =~ "CALLMSG-2"
     end
 
     test "a domain exception's telemetry reason is unchanged" do
@@ -131,6 +156,29 @@ defmodule Normandy.NonDomainRedactionTest do
       assert_received {:span, [:normandy, :agent, :run, :exception], meta}
       refute leaks?(meta)
       assert %TurnError{type: :task_down, reason: %{exception: KeyError}} = meta.reason
+    end
+
+    test "a worker exit carrying a bug: persisted and emitted without it or its stacktrace" do
+      sid = "redact-exit-#{System.unique_integer([:positive])}"
+      {srv, store} = start_server(sid, %{call_llm: fn _c, _s, _r -> exit(exit_reason()) end})
+
+      assert {:error, %TurnError{type: :task_down, reason: {%KeyError{}, _call}} = replied} =
+               Turn.Server.run(srv, "hello")
+
+      assert full(replied) =~ "SECRET-EXC"
+
+      assert {:ok, %Turn.State{status: :failed, error: persisted}} =
+               InMemory.load_turn_state(store, sid)
+
+      assert_received {:span, [:normandy, :agent, :run, :exception], meta}
+
+      for term <- [persisted, meta] do
+        text = full(term)
+        refute text =~ "SECRET-EXC"
+        refute text =~ "SECRET-ARG"
+        assert text =~ "%{exception: KeyError}"
+        assert text =~ "CALLMSG-2"
+      end
     end
 
     test "a handler's KeyError keeps the handler name and loses its fields" do

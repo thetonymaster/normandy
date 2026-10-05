@@ -204,6 +204,17 @@ defmodule Normandy.TurnErrorTest do
       assert TurnError.redact({:shutdown, :normal}) == {:shutdown, :normal}
     end
 
+    test "a non-domain exception nested in tuples and lists is reduced at any depth" do
+      llm = Normandy.LLMError.new(type: :rate_limit, retryable?: true)
+      reason = {@key_error, {GenServer, :call, [:pid, [@key_error, llm], 5000]}}
+
+      assert TurnError.redact(%TurnError{type: :task_down, reason: reason}).reason ==
+               {%{exception: KeyError},
+                {GenServer, :call, [:pid, [%{exception: KeyError}, llm], 5000]}}
+
+      assert TurnError.redact({:shutdown, [@key_error]}) == {:shutdown, [%{exception: KeyError}]}
+    end
+
     test "is idempotent" do
       once = TurnError.redact(@key_error)
       assert TurnError.redact(once) == once

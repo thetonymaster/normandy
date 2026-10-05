@@ -43,9 +43,11 @@ defmodule Normandy.TurnError do
   every telemetry `:exception` `reason`, are redacted: a `:reason` that is an exception
   other than Normandy's own (a `KeyError`, a `MatchError`) is `%{exception: KeyError}`,
   because its fields and its message can hold the value it failed on, and a bare one is
-  emitted as `%TurnError{type: :task_down, reason: %{exception: KeyError}}`. Normandy's
-  own exceptions, and reasons that are not exceptions (exit reasons, thrown terms, store
-  reasons, tool call ids), are kept.
+  emitted as `%TurnError{type: :task_down, reason: %{exception: KeyError}}`. The same
+  holds for such an exception at any depth of the tuples and lists in a reason (an exit
+  reason `{%KeyError{}, {GenServer, :call, args}}` keeps only `%{exception: KeyError}`).
+  Normandy's own exceptions, and the rest of a reason that is not an exception (an exit
+  reason's other terms, a thrown term, a store reason, tool call ids), are kept.
   """
 
   require Logger
@@ -127,21 +129,34 @@ defmodule Normandy.TurnError do
   # %{exception: Module}, because its fields and its message can hold the value it
   # failed on. A bare one becomes the :task_down TurnError from_reason/1 would make of
   # it; a TurnError keeps its type and handler and has its reason reduced the same way,
-  # nested TurnErrors included. Every other term is returned as is. Idempotent.
+  # nested TurnErrors included. Tuples and lists (an exit reason, a GenServer.call's
+  # arguments) are walked, so a non-domain exception is reduced at any depth; other
+  # terms (maps, structs, a call's message) are kept. Stacktraces are not dropped here:
+  # see drop_stacktraces/1. Idempotent.
   @spec redact(term()) :: term()
   def redact(%__MODULE__{reason: reason} = error), do: %{error | reason: redact_reason(reason)}
 
   def redact(exception) when is_exception(exception),
     do: if(domain?(exception), do: exception, else: redact(task_down(exception)))
 
-  def redact(term), do: term
+  def redact(term), do: redact_reason(term)
 
   defp redact_reason(%__MODULE__{} = error), do: redact(error)
 
   defp redact_reason(%module{} = exception) when is_exception(exception),
     do: if(domain?(exception), do: exception, else: %{exception: module})
 
+  defp redact_reason(tuple) when is_tuple(tuple),
+    do: tuple |> Tuple.to_list() |> redact_list() |> List.to_tuple()
+
+  defp redact_reason(list) when is_list(list), do: redact_list(list)
+
   defp redact_reason(term), do: term
+
+  # Walks a list, an improper one included (its tail is redacted as a term).
+  defp redact_list([head | tail]), do: [redact_reason(head) | redact_list(tail)]
+  defp redact_list([]), do: []
+  defp redact_list(tail), do: redact_reason(tail)
 
   @doc false
   # A worker's exit reason as a TurnError, with every stacktrace dropped from it: a
