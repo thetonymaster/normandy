@@ -24,8 +24,8 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
           retry_options: [
-            max_retries: 3,
-            initial_delay: 100,
+            max_attempts: 4,
+            base_delay: 100,
             max_delay: 1000,
             jitter: true
           ]
@@ -44,7 +44,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_no_retry =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          retry_options: [max_retries: 0]
+          retry_options: [max_attempts: 1]
         )
 
       {_updated_agent, response} =
