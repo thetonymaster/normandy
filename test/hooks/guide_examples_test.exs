@@ -49,6 +49,9 @@ defmodule Normandy.Hooks.GuideExamplesTest do
         capture: :all_but_first
       )
 
+    # The guide's module is run by hand below; registering it with ExUnit after
+    # the suite started fails under --trace and --slowest.
+    source = String.replace(source, "use ExUnit.Case,", "use ExUnit.Case, register: false,")
     [{module, _binary}] = Code.compile_string(source)
     tests = module.__ex_unit__().tests
     assert length(tests) == 2
