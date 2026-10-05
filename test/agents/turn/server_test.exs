@@ -2689,6 +2689,14 @@ defmodule Normandy.Agents.Turn.ServerTest do
       def after_tool(_call, _result, _ctx, _opts), do: raise("audit down")
     end
 
+    # Rewrites every result to an output JSON cannot express.
+    defmodule TupleOutput do
+      use Normandy.Behaviours.Hooks
+
+      @impl true
+      def after_tool(_call, result, _ctx, _opts), do: {:cont, %{result | output: {:ok, 1}}}
+    end
+
     defp approval_config(after_hooks) do
       %{
         config_with_notify(self())
@@ -2759,6 +2767,30 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       refute_received {:hook, :audit, :after_tool, _}
       refute_received {:fun_after, "pk1"}
+    end
+
+    test "an after_tool output JSON cannot express on a rejected result is an error result; the session goes on" do
+      config = approval_config([])
+      config = %{config | behaviours: %{config.behaviours | hooks: [{TupleOutput, []}]}}
+      {:ok, srv} = start_parking("s-hook-reject-tuple", config, [billing("pk1")])
+
+      run_in_background(srv)
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :reject})
+      assert_receive {:run_result, {:ok, _}}, 2_000
+
+      # The history, with the rewritten result in it, still encodes: another turn runs.
+      assert {:ok, _} = Turn.Server.run(srv, "again")
+
+      {_state, data} = :sys.get_state(srv)
+
+      assert [%ToolResult{is_error: true, output: %{error: error}}] =
+               for(
+                 %{content: %ToolResult{} = r} <- AgentMemory.messages(data.config.memory),
+                 do: r
+               )
+
+      assert error == "the tool ran, but its output cannot be sent as JSON: it contains a tuple"
     end
 
     test "expired results pass after_tool once before an on_approval_timeout: :fail turn fails" do

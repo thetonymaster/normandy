@@ -281,11 +281,15 @@ defmodule Normandy.Agents.Dispatch do
   # Hooks (before-hook halts, after_tool, after_hooks) may build any %ToolResult{},
   # and memory keeps it for every later request. So the encodability check runs on
   # the final result, the last point before it can reach memory.
-  defp ensure_encodable(%ToolResult{output: output} = result)
-       when is_binary(output) or is_number(output),
-       do: result
+  @doc false
+  # Also called by Normandy.Hooks.ServerGlue on the results it rewrites through
+  # after_tool (interrupted, rejected and expired results), which skip Dispatch.
+  @spec ensure_encodable(ToolResult.t()) :: ToolResult.t()
+  def ensure_encodable(%ToolResult{output: output} = result)
+      when is_binary(output) or is_number(output),
+      do: result
 
-  defp ensure_encodable(%ToolResult{output: output} = result) do
+  def ensure_encodable(%ToolResult{output: output} = result) do
     case Normandy.JSON.encode(output) do
       {:ok, _json} -> result
       {:error, exception} -> %{result | output: unencodable_output(exception), is_error: true}

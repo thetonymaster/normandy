@@ -79,7 +79,9 @@ defmodule Normandy.Hooks.ServerGlue do
   def after_tool(config, call, %ToolResult{} = result) do
     if Runner.handles?(config, :after_tool) do
       call = Dispatch.to_tool_call(call)
+
       %{Runner.after_tool(config, call, result) | tool_call_id: call.id}
+      |> Dispatch.ensure_encodable()
     else
       result
     end
@@ -110,7 +112,9 @@ defmodule Normandy.Hooks.ServerGlue do
 
   defp answer_built(config, by_id, %ToolResult{tool_call_id: id} = result)
        when is_map_key(by_id, id),
-       do: %{Runner.after_tool(config, Map.fetch!(by_id, id), result) | tool_call_id: id}
+       do:
+         %{Runner.after_tool(config, Map.fetch!(by_id, id), result) | tool_call_id: id}
+         |> Dispatch.ensure_encodable()
 
   defp answer_built(_config, _by_id, result), do: result
 end
