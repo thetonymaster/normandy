@@ -4,6 +4,10 @@ defmodule Normandy.Agents.BaseAgent do
 
   BaseAgent manages agent state, memory, and LLM interactions through a
   stateful configuration approach.
+
+  `run/3` returns `{:ok, config, output}` or `{:error, exception}` for Normandy's own
+  failures (listed on `run/3`) and raises for bugs; `run!/3` returns
+  `{config, output}` and raises either way.
   """
 
   require Logger
@@ -42,6 +46,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Registry
+  alias Normandy.TurnError
 
   @type config_input :: %{
           required(:client) => struct(),
@@ -425,11 +430,49 @@ defmodule Normandy.Agents.BaseAgent do
   defp default_retry_if({:error, :open}), do: false
   defp default_retry_if(_), do: false
 
-  @spec run(BaseAgentConfig.t(), struct() | map() | nil) :: {BaseAgentConfig.t(), struct()}
-  def run(
-        %BaseAgentConfig{tool_registry: tool_registry} = config,
-        user_input \\ nil
-      ) do
+  @doc """
+  Runs one turn: validates `user_input` against the input schema, calls the model (and
+  the tools it asks for, when the agent has tools) and returns the answer converted to
+  the output schema.
+
+  Returns `{:ok, config, output}`, where `config` holds the turn in its memory, or
+  `{:error, exception}` when Normandy's own checks or the model failed:
+  `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
+  `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. Any other exception (a bug in a
+  tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
+  turn is lost: keep using the config you passed in.
+
+  `user_input` may be `nil` to continue the conversation without a new user message.
+
+  Accepts `opts`:
+  - `:stream` - Boolean, enables streaming mode
+  - `:on_chunk` - Callback function for streaming chunks (required with `stream: true`)
+
+  ## Example
+
+      {:ok, agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
+
+      {:ok, agent, response} =
+        BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: &IO.write/1)
+  """
+  @spec run(BaseAgentConfig.t(), term(), keyword()) ::
+          {:ok, BaseAgentConfig.t(), term()} | {:error, Exception.t()}
+  def run(config, user_input \\ nil, opts \\ []) do
+    {config, output} = run!(config, user_input, opts)
+    {:ok, config, output}
+  rescue
+    e -> if TurnError.domain?(e), do: {:error, e}, else: reraise(e, __STACKTRACE__)
+  end
+
+  @doc """
+  Like `run/3`, but returns `{config, output}` and raises the exception `run/3` would
+  return.
+  """
+  @spec run!(BaseAgentConfig.t(), term(), keyword()) :: {BaseAgentConfig.t(), term()}
+  def run!(config, user_input \\ nil, opts \\ [])
+
+  def run!(%BaseAgentConfig{tool_registry: tool_registry} = config, user_input, []) do
     metadata = Metadata.run(config)
 
     with_agent_run_span(config, metadata, fn ->
@@ -448,20 +491,7 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  @doc """
-  Run the agent with optional streaming support.
-
-  Accepts a keyword list as the third argument with options:
-  - `:stream` - Boolean, enables streaming mode
-  - `:on_chunk` - Callback function for streaming chunks
-
-  ## Example
-
-      BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: fn chunk ->
-        IO.write(chunk)
-      end)
-  """
-  def run(config, user_input, opts) when is_list(opts) do
+  def run!(config, user_input, opts) when is_list(opts) do
     stream = Keyword.get(opts, :stream, false)
     on_chunk = Keyword.get(opts, :on_chunk)
 
@@ -492,7 +522,7 @@ defmodule Normandy.Agents.BaseAgent do
               "BaseAgent.run/3: stream: true requires :on_chunk (a 1- or 2-arity callback)"
       end
 
-      run(config, user_input)
+      run!(config, user_input, [])
     end
   end
 
@@ -552,9 +582,9 @@ defmodule Normandy.Agents.BaseAgent do
   # Returns {config, final_response}. Input validation + guardrails + memory init
   # are admission control performed before :start (they raise on failure, as the
   # pre-FSM loop did). Order: schema validation, on_prompt hooks (a rewrite is
-  # re-validated), then input guardrails. LLM failures raise inside the :call_llm handler (parity:
-  # exceptions propagate out of run/2), so the FSM's :failed path is only reached
-  # on an unexpected event-sequencing bug.
+  # re-validated), then input guardrails. LLM failures raise inside the :call_llm handler
+  # (parity: exceptions propagate out of run!/3; run/3 returns the domain ones), so the
+  # FSM's :failed path is only reached on an unexpected event-sequencing bug.
 
   @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil) ::
           {BaseAgentConfig.t(), struct()}
@@ -1712,7 +1742,7 @@ defmodule Normandy.Agents.BaseAgent do
   # the run's and its hook span is not the run's child; a raised run's exception is
   # re-raised unchanged after the hook (the Runner never raises for on_turn_end).
   defp with_agent_run_span(config, telemetry_metadata, fun) do
-    :telemetry.span([:normandy, :agent, :run], telemetry_metadata, fn ->
+    span_without_stacktrace([:normandy, :agent, :run], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy agent run start",
         agent: log_agent_name(config),
         iteration: 0,
@@ -1756,7 +1786,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp with_llm_call_span(config, telemetry_metadata, fun) do
-    :telemetry.span([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
+    span_without_stacktrace([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy llm call start",
         agent: log_agent_name(config),
         model: config.model,
@@ -1810,6 +1840,51 @@ defmodule Normandy.Agents.BaseAgent do
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
     end)
+  end
+
+  # :telemetry.span/3 with the same events, measurements and metadata (including the
+  # shared telemetry_span_context), except that the :exception event's stacktrace is
+  # [] (decision 6: a stacktrace is logged, never emitted). The run and llm_call spans
+  # use it; the raise itself keeps its stacktrace.
+  defp span_without_stacktrace(event_prefix, start_metadata, fun) do
+    start_time = System.monotonic_time()
+    start_metadata = Map.put_new(start_metadata, :telemetry_span_context, make_ref())
+
+    :telemetry.execute(
+      event_prefix ++ [:start],
+      %{monotonic_time: start_time, system_time: System.system_time()},
+      start_metadata
+    )
+
+    {result, stop_metadata} =
+      try do
+        fun.()
+      catch
+        kind, reason ->
+          stop_time = System.monotonic_time()
+
+          :telemetry.execute(
+            event_prefix ++ [:exception],
+            %{duration: stop_time - start_time, monotonic_time: stop_time},
+            Map.merge(start_metadata, %{kind: kind, reason: reason, stacktrace: []})
+          )
+
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    stop_time = System.monotonic_time()
+
+    :telemetry.execute(
+      event_prefix ++ [:stop],
+      %{duration: stop_time - start_time, monotonic_time: stop_time},
+      Map.put_new(
+        stop_metadata,
+        :telemetry_span_context,
+        start_metadata.telemetry_span_context
+      )
+    )
+
+    result
   end
 
   defp with_tool_execute_span(config, tool_name, telemetry_metadata, fun) do

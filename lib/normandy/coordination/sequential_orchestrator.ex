@@ -252,7 +252,7 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
     agent_input = prepare_input(input)
 
     # Run agent
-    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
+    {_updated_agent, response} = BaseAgent.run!(agent, agent_input)
 
     # Extract result from response
     result = extract_result(response)

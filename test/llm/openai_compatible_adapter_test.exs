@@ -356,7 +356,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       }
 
       agent = BaseAgent.init(%{client: client, model: "gpt-4o"})
-      BaseAgent.run(agent, "hi")
+      BaseAgent.run!(agent, "hi")
 
       assert_received {:openai_body, body}
       refute Map.has_key?(body, "temperature")

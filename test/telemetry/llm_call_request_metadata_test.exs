@@ -51,7 +51,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
     }
   end
 
-  defp run_it(agent), do: BaseAgent.run(agent, "hello")
+  defp run_it(agent), do: BaseAgent.run!(agent, "hello")
 
   describe "Provider.provider/1" do
     test "names the known adapters" do

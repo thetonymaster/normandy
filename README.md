@@ -65,7 +65,7 @@ agent =
   })
 
 # 3. Run a turn
-{agent, response} =
+{:ok, agent, response} =
   Normandy.Agents.BaseAgent.run(agent, %{
     chat_message: "Explain Elixir's actor model in one sentence."
   })

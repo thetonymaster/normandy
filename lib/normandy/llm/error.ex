@@ -3,7 +3,8 @@ defmodule Normandy.LLMError do
   A failed LLM call.
 
   Adapters return `{:error, %Normandy.LLMError{}}` from `Normandy.Agents.Model.converse/3`;
-  `Normandy.Agents.BaseAgent` raises it once retries (if configured) are exhausted.
+  Once retries (if configured) are exhausted, `Normandy.Agents.BaseAgent.run/3` returns it
+  as `{:error, %Normandy.LLMError{}}` and `run!/3` raises it.
 
   `type: :unsupported` means the client can't do what was asked (a client without
   streaming answering `Normandy.Agents.Model.stream/3`); it is never retryable.

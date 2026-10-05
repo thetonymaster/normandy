@@ -107,7 +107,7 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
     }
 
     {metadata, _log} =
-      run_and_capture_stop(stub_client(usage), &BaseAgent.run(&1, "hello"))
+      run_and_capture_stop(stub_client(usage), &BaseAgent.run!(&1, "hello"))
 
     assert metadata.usage == usage
     assert metadata.input_tokens == 130
@@ -120,7 +120,7 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
     {metadata, _log} =
       run_and_capture_stop(
         %StubClient{reply: fn rm -> Map.put(rm, :chat_message, "hi") end},
-        &BaseAgent.run(&1, "hello")
+        &BaseAgent.run!(&1, "hello")
       )
 
     for key <- @normalized, do: refute(Map.has_key?(metadata, key), "unexpected #{key}")
@@ -158,7 +158,7 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
     usage = %{input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100}
 
     {_metadata, log} =
-      run_and_capture_stop(stub_client(usage), &BaseAgent.run(&1, "hello"))
+      run_and_capture_stop(stub_client(usage), &BaseAgent.run!(&1, "hello"))
 
     assert log =~ "normandy llm call stop"
     assert log =~ "input_tokens=110"

@@ -30,7 +30,7 @@ S.narrate("Ten turns; the window is small enough that memory must be summarised 
   turns
   |> Enum.with_index(1)
   |> Enum.reduce({agent, nil}, fn {text, n}, {agent, _} ->
-    {agent, r} = BaseAgent.run(agent, %{chat_message: text})
+    {:ok, agent, r} = BaseAgent.run(agent, %{chat_message: text})
     S.turn(n, text, r.chat_message)
     {agent, r.chat_message}
   end)

@@ -29,7 +29,7 @@ defmodule Normandy.LLM.JsonDeserializer do
         # enable_json_retry: false         # no retries
       })
 
-      {agent, response} = BaseAgent.run(agent, input)
+      {:ok, agent, response} = BaseAgent.run(agent, input)
 
   ## Manual Usage
 

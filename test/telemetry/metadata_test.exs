@@ -106,7 +106,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
         agent_name: name
       )
 
-      {config, _} = BaseAgent.run(agent, %{chat_message: "go"})
+      {config, _} = BaseAgent.run!(agent, %{chat_message: "go"})
       turn_id = AgentMemory.get_current_turn_id(config.memory)
       assert is_binary(turn_id)
 
@@ -133,7 +133,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     test "without a session no session keys appear" do
       {name, agent} = tool_agent(%{})
       TelemetryCapture.attach_span([[:normandy, :agent, :run, :start]], agent_name: name)
-      BaseAgent.run(agent, %{chat_message: "go"})
+      BaseAgent.run!(agent, %{chat_message: "go"})
 
       assert_received {:span, [:normandy, :agent, :run, :start], meta}
       assert meta.agent_name == name
@@ -227,7 +227,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
       )
 
       assert_raise Normandy.Guardrails.ViolationError, fn ->
-        BaseAgent.run(agent, %{chat_message: "far too long"})
+        BaseAgent.run!(agent, %{chat_message: "far too long"})
       end
 
       assert_received {:span, [:normandy, :agent, :run, :start], %{agent_name: ^name}}

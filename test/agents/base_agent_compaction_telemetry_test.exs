@@ -121,7 +121,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
   end
 
   test "a chat turn with no tool calls runs the compactor before calling the model" do
-    {_agent, _response} = BaseAgent.run(agent(%{compacted: false}), "hello")
+    {_agent, _response} = BaseAgent.run!(agent(%{compacted: false}), "hello")
 
     assert_receive {:compaction, _measurements, %{compacted: false}}
   end

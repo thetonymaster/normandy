@@ -93,7 +93,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
     test "one request: start and stop carry the request facts" do
       client = claudio(__MODULE__.One, %{}, fn _n, conn -> Req.Test.json(conn, reply(@valid)) end)
 
-      BaseAgent.run(agent(client), "hello")
+      BaseAgent.run!(agent(client), "hello")
 
       assert [{:start, start}, {:stop, stop}] = request_events()
 
@@ -127,7 +127,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
           _n, conn -> Req.Test.json(conn, reply(@valid))
         end)
 
-      BaseAgent.run(
+      BaseAgent.run!(
         agent(client, %{retry_options: [max_attempts: 2, base_delay: 1, jitter: false]}),
         "hello"
       )
@@ -157,7 +157,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
           _n, conn -> Req.Test.json(conn, reply(@valid))
         end)
 
-      BaseAgent.run(agent(client), "hello")
+      BaseAgent.run!(agent(client), "hello")
 
       assert [
                {:start, %{attempt: 1, request_kind: :initial}},
@@ -179,7 +179,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
           _n, conn -> Req.Test.json(conn, reply(@valid))
         end)
 
-      BaseAgent.run(agent(client), "hello")
+      BaseAgent.run!(agent(client), "hello")
 
       assert [
                {:start, %{attempt: 1, request_kind: :initial}},
@@ -201,7 +201,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
           _n, conn -> error_reply(conn, 401, "authentication_error", "bad key")
         end)
 
-      assert_raise LLMError, fn -> BaseAgent.run(agent(client), "hello") end
+      assert_raise LLMError, fn -> BaseAgent.run!(agent(client), "hello") end
 
       assert [
                {:start, %{request_kind: :initial}},
@@ -220,7 +220,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
       client =
         claudio(__MODULE__.Named, %{}, fn _n, conn -> Req.Test.json(conn, reply(@valid)) end)
 
-      BaseAgent.run(agent(client, %{name: "researcher"}), "hello")
+      BaseAgent.run!(agent(client, %{name: "researcher"}), "hello")
 
       assert [{:start, %{agent_name: "researcher"}}, {:stop, %{agent_name: "researcher"}}] =
                request_events()
@@ -234,7 +234,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
           _n, conn -> Req.Test.json(conn, reply(@valid))
         end)
 
-      BaseAgent.run(
+      BaseAgent.run!(
         agent(client, %{retry_options: [max_attempts: 2, base_delay: 1, jitter: false]}),
         "hello"
       )
@@ -287,7 +287,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
         options: %{req_options: [plug: {Req.Test, __MODULE__.OpenAI}, retry: false]}
       }
 
-      BaseAgent.run(agent(client), "hello")
+      BaseAgent.run!(agent(client), "hello")
 
       assert [{:start, start}, {:stop, stop}] = request_events()
       assert start.provider == :openai_compatible
@@ -310,7 +310,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
         options: %{req_options: [plug: {Req.Test, __MODULE__.OpenAIErr}, retry: false]}
       }
 
-      assert_raise LLMError, fn -> BaseAgent.run(agent(client), "hello") end
+      assert_raise LLMError, fn -> BaseAgent.run!(agent(client), "hello") end
 
       assert [
                {:start, _},
@@ -324,7 +324,7 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
     test "llm_call stop counts BaseAgent's converse calls as attempts" do
       client = %StubClient{reply: fn model -> Map.put(model, :chat_message, "hi") end}
 
-      BaseAgent.run(agent(client), "hello")
+      BaseAgent.run!(agent(client), "hello")
 
       assert request_events() == []
       call = llm_call_stop()

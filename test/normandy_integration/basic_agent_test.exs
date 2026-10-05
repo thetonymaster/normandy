@@ -29,7 +29,7 @@ defmodule Normandy.Integration.BasicAgentTest do
   describe "Basic agent conversation" do
     test "agent responds to simple question", %{agent: agent} do
       {_updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What is 2+2? Just give me the number."})
+        BaseAgent.run!(agent, %{chat_message: "What is 2+2? Just give me the number."})
 
       assert is_binary(response.chat_message)
       assert response.chat_message =~ "4"
@@ -37,12 +37,12 @@ defmodule Normandy.Integration.BasicAgentTest do
 
     test "agent maintains conversation context", %{agent: agent} do
       {agent, response1} =
-        BaseAgent.run(agent, %{chat_message: "I like apples."})
+        BaseAgent.run!(agent, %{chat_message: "I like apples."})
 
       assert is_binary(response1.chat_message)
 
       {_agent, response2} =
-        BaseAgent.run(agent, %{chat_message: "What fruit did I say I like?"})
+        BaseAgent.run!(agent, %{chat_message: "What fruit did I say I like?"})
 
       assert is_binary(response2.chat_message)
       assert String.downcase(response2.chat_message) =~ "apple"
@@ -64,7 +64,7 @@ defmodule Normandy.Integration.BasicAgentTest do
 
       # Ask for real-time weather - model cannot know this without using the tool
       {updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What's the current weather in San Francisco?"})
+        BaseAgent.run!(agent, %{chat_message: "What's the current weather in San Francisco?"})
 
       assert is_binary(response.chat_message)
       # Response should contain weather-related information

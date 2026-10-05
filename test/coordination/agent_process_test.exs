@@ -1,6 +1,7 @@
 defmodule Normandy.Coordination.AgentProcessTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.BaseAgent
@@ -83,6 +84,66 @@ defmodule Normandy.Coordination.AgentProcessTest do
 
       # Should work with normal timeout
       assert {:ok, _result} = AgentProcess.run(pid, "test", timeout: 5000)
+    end
+  end
+
+  describe "inline failures" do
+    defp raising_agent do
+      BaseAgent.init(%{
+        client: %Normandy.Test.StubClient{reply: fn _rm -> raise "client bug" end},
+        model: "m"
+      })
+    end
+
+    test "run/3 replies a Normandy failure as the bare exception", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+
+      capture_log(fn ->
+        assert {:error, %Normandy.Schema.ValidationError{}} =
+                 AgentProcess.run(pid, %{custom: "data"})
+      end)
+
+      assert Process.alive?(pid)
+    end
+
+    test "run/3 replies a raised bug as the bare exception and logs arities only" do
+      {:ok, pid} = AgentProcess.start_link(agent: raising_agent(), agent_id: "buggy")
+
+      log =
+        capture_log(fn ->
+          assert {:error, %RuntimeError{message: "client bug"}} = AgentProcess.run(pid, "go")
+        end)
+
+      assert log =~ "Agent buggy raised RuntimeError"
+      assert log =~ ~r/Normandy\.Agents\.BaseAgent\.\S+\/\d+/
+      assert Process.alive?(pid)
+    end
+
+    test "cast/3 sends a Normandy failure as the bare exception", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent, agent_id: "async_invalid")
+
+      capture_log(fn ->
+        :ok = AgentProcess.cast(pid, %{custom: "data"}, reply_to: self())
+
+        assert_receive {:agent_result, "async_invalid",
+                        {:error, %Normandy.Schema.ValidationError{}}},
+                       1000
+      end)
+    end
+
+    test "cast/3 sends a raised bug as the bare exception and logs it" do
+      {:ok, pid} = AgentProcess.start_link(agent: raising_agent(), agent_id: "async_buggy")
+
+      log =
+        capture_log(fn ->
+          :ok = AgentProcess.cast(pid, "go", reply_to: self())
+
+          assert_receive {:agent_result, "async_buggy",
+                          {:error, %RuntimeError{message: "client bug"}}},
+                         1000
+        end)
+
+      assert log =~ "Async agent async_buggy raised RuntimeError"
     end
   end
 

@@ -98,7 +98,7 @@ defmodule Normandy.LLM.ClaudioAdapterJsonRetryTest do
           enable_json_retry: false
         })
 
-      BaseAgent.run(agent, "hi")
+      BaseAgent.run!(agent, "hi")
       assert requests() == 1
     end
 
@@ -113,7 +113,7 @@ defmodule Normandy.LLM.ClaudioAdapterJsonRetryTest do
         })
 
       assert agent.enable_json_retry
-      BaseAgent.run(agent, "hi")
+      BaseAgent.run!(agent, "hi")
       assert requests() == 2
     end
   end

@@ -50,7 +50,7 @@ defmodule Normandy.Agents.ModelProtocolTest do
     agent = BaseAgent.init(%{client: %OneXClient{}, model: "m"})
 
     assert_raise ArgumentError, ~r/must return \{:ok, %Normandy.LLM.Response\{\}\}/, fn ->
-      BaseAgent.run(agent, %{chat_message: "hi"})
+      BaseAgent.run!(agent, %{chat_message: "hi"})
     end
   end
 
@@ -66,7 +66,7 @@ defmodule Normandy.Agents.ModelProtocolTest do
   test "the default max_tokens reaches the request" do
     client = %Normandy.Test.StubClient{notify: self()}
     agent = BaseAgent.init(%{client: client, model: "m"})
-    BaseAgent.run(agent, %{chat_message: "hi"})
+    BaseAgent.run!(agent, %{chat_message: "hi"})
 
     assert_receive {:converse, %Request{max_tokens: 16_000, system: system, messages: messages},
                     _opts}

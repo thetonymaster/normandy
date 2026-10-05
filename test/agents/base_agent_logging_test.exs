@@ -99,7 +99,7 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
 
   test "emits structured lifecycle logs for agent, llm, and tool spans", %{agent: agent} do
     {_agent, response} =
-      BaseAgent.run(agent, %BaseAgentInputSchema{chat_message: "What is 5 + 3?"})
+      BaseAgent.run!(agent, %BaseAgentInputSchema{chat_message: "What is 5 + 3?"})
 
     assert response.chat_message == "Task completed"
     Logger.flush()
@@ -131,7 +131,7 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
     {:ok, agent} = NamedDSLAgent.new(client: %LoggingToolCallClient{})
 
     {_agent, _response} =
-      BaseAgent.run(agent, %BaseAgentInputSchema{chat_message: "Hello from planner"})
+      BaseAgent.run!(agent, %BaseAgentInputSchema{chat_message: "Hello from planner"})
 
     Logger.flush()
 

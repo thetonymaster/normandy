@@ -402,7 +402,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     {:ok, agent} = StructuredAgent.new(client: client)
 
     # Run the agent
-    {updated_agent, response} = StructuredAgent.run(agent, "List 3 benefits of Elixir")
+    {updated_agent, response} = StructuredAgent.run!(agent, "List 3 benefits of Elixir")
 
     # Use pattern matching to verify response structure
     assert is_map(response)
@@ -411,7 +411,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     assert AgentMemory.count_messages(updated_agent.memory) > 0
 
     # Run again to test memory accumulation
-    {updated_agent2, response2} = StructuredAgent.run(updated_agent, "And what about OTP?")
+    {updated_agent2, response2} = StructuredAgent.run!(updated_agent, "And what about OTP?")
 
     assert is_map(response2)
 

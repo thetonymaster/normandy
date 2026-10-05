@@ -16,6 +16,18 @@ defmodule Normandy.TelemetryCatalogueTest do
        [:normandy, :llm, :request, :stop],
        [:normandy, :llm, :request, :exception]
      ]},
+    # BaseAgent.span_without_stacktrace/3 builds `event_prefix ++ [:start | :stop |
+    # :exception]`, three call sites; with_agent_run_span/3 and with_llm_call_span/3
+    # pass the run and llm_call prefixes.
+    {"lib/normandy/agents/base_agent.ex", 3,
+     [
+       [:normandy, :agent, :run, :start],
+       [:normandy, :agent, :run, :stop],
+       [:normandy, :agent, :run, :exception],
+       [:normandy, :agent, :llm_call, :start],
+       [:normandy, :agent, :llm_call, :stop],
+       [:normandy, :agent, :llm_call, :exception]
+     ]},
     # Turn.Server.stop_run_span/3 emits `[:normandy, :agent, :run, event]` with event
     # :stop or :exception (the :start is a literal elsewhere in the same file).
     {"lib/normandy/agents/turn/server.ex", 1,

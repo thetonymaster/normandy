@@ -61,7 +61,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       caller = :otel_tracer.start_span(:otel_ctx.get_current(), tracer, "caller", %{})
       OpenTelemetry.Ctx.attach(:otel_tracer.set_current_span(:otel_ctx.get_current(), caller))
 
-      {_agent, _response} = BaseAgent.run(agent, %{chat_message: "hi"})
+      {_agent, _response} = BaseAgent.run!(agent, %{chat_message: "hi"})
 
       :otel_span.end_span(caller)
 
@@ -130,7 +130,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
           retry_options: [max_attempts: 2, base_delay: 1, jitter: false]
         })
 
-      BaseAgent.run(agent, "hello")
+      BaseAgent.run!(agent, "hello")
 
       spans =
         OtelSpanBridge.await_spans([

@@ -106,7 +106,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "hello"}
 
-      {_updated, response} = BaseAgent.run(config, mock_input)
+      {_updated, response} = BaseAgent.run!(config, mock_input)
 
       assert %BaseAgentOutputSchema{} = response
     end
@@ -115,7 +115,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "hello"}
 
-      {updated, _response} = BaseAgent.run(config, mock_input)
+      {updated, _response} = BaseAgent.run!(config, mock_input)
 
       history = AgentMemory.history(updated.memory)
       roles = Enum.map(history, & &1.role)
@@ -126,7 +126,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "world"}
 
-      {updated, _response} = BaseAgent.run(config, mock_input)
+      {updated, _response} = BaseAgent.run!(config, mock_input)
 
       assert updated.current_user_input == mock_input
     end
@@ -134,7 +134,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     test "nil input skips user-message admission — only assistant message in history" do
       config = no_tools_agent()
 
-      {updated, response} = BaseAgent.run(config, nil)
+      {updated, response} = BaseAgent.run!(config, nil)
 
       # The admit_turn_input/2 nil branch returns config unchanged, so no
       # "user" message is ever appended. The FSM finalizes by appending one
@@ -164,7 +164,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
 
       input = %BaseAgentInputSchema{chat_message: "hi"}
 
-      {updated, response} = BaseAgent.run(config, input)
+      {updated, response} = BaseAgent.run!(config, input)
 
       # The strip emptied tool_calls before the FSM saw the response, so the turn
       # finalized to the output schema and never appended a "tool" role (no

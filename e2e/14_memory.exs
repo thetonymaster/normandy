@@ -22,7 +22,7 @@ session = fn namespace ->
 end
 
 ask = fn agent, n, text ->
-  {_agent, r} = BaseAgent.run(agent, %{chat_message: text})
+  {:ok, _agent, r} = BaseAgent.run(agent, %{chat_message: text})
   S.turn(n, text, r.chat_message)
   r.chat_message
 end

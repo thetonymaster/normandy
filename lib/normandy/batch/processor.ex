@@ -271,7 +271,7 @@ defmodule Normandy.Batch.Processor do
   # Process a single input through the agent. The per-item timeout is applied
   # by Task.async_stream, which kills a task that runs past it.
   defp process_single(agent, input) do
-    {_updated_agent, response} = BaseAgent.run(agent, input)
+    {_updated_agent, response} = BaseAgent.run!(agent, input)
     {:ok, response}
   rescue
     error ->

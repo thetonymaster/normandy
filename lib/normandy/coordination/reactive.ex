@@ -48,6 +48,7 @@ defmodule Normandy.Coordination.Reactive do
   alias Normandy.Coordination.Reactive
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.TurnError
 
   @type agent_or_pid :: struct() | pid()
   @type result :: {:ok, term()} | {:error, term()}
@@ -396,12 +397,12 @@ defmodule Normandy.Coordination.Reactive do
 
   def execute_agent(agent, input) do
     # Agent struct
-    agent_input = prepare_input(input)
-    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
-    {:ok, response}
+    case BaseAgent.run(agent, prepare_input(input)) do
+      {:ok, _updated_agent, response} -> {:ok, response}
+      {:error, exception} -> {:error, exception}
+    end
   rescue
-    e ->
-      {:error, {:exception, e, __STACKTRACE__}}
+    e -> TurnError.log_raised("Reactive agent", e, __STACKTRACE__)
   end
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do

@@ -24,27 +24,27 @@ breaker = agent.circuit_breaker
 input = %{chat_message: "Reply with the single word: ready"}
 
 attempt = fn ->
-  try do
-    {:ok, BaseAgent.run(agent, input)}
-  rescue
-    e in Normandy.LLMError -> {:raised, e}
+  case BaseAgent.run(agent, input) do
+    {:ok, agent, r} -> {:ok, {agent, r}}
+    {:error, %Normandy.LLMError{} = e} -> {:failed, e}
+    {:error, e} -> raise e
   end
 end
 
 S.narrate("Run 1: two injected 529s exhaust the retry budget.")
-{:raised, e1} = attempt.()
-S.assert!("run 1 raises the overloaded error after retrying", e1.type == :overloaded, inspect(e1))
+{:failed, e1} = attempt.()
+S.assert!("run 1 fails with the overloaded error after retrying", e1.type == :overloaded, inspect(e1))
 S.assert!("run 1 made 2 attempts", E2E.FaultClient.converse_calls(client) == 2, "#{E2E.FaultClient.converse_calls(client)}")
 S.assert!("one exhausted run leaves the breaker closed", CircuitBreaker.state(breaker) == :closed, inspect(CircuitBreaker.state(breaker)))
 
 S.narrate("Run 2: two more 529s — the second breaker failure opens it.")
-{:raised, e2} = attempt.()
-S.assert!("run 2 raises overloaded", e2.type == :overloaded, inspect(e2))
+{:failed, e2} = attempt.()
+S.assert!("run 2 fails with overloaded", e2.type == :overloaded, inspect(e2))
 S.assert!("the breaker is open", CircuitBreaker.state(breaker) == :open, inspect(CircuitBreaker.state(breaker)))
 
 S.narrate("Run 3: the open breaker fails fast.")
-{:raised, e3} = attempt.()
-S.assert!("run 3 raises circuit_open", e3.type == :circuit_open, inspect(e3))
+{:failed, e3} = attempt.()
+S.assert!("run 3 fails with circuit_open", e3.type == :circuit_open, inspect(e3))
 S.assert!("run 3 never reached the client", E2E.FaultClient.converse_calls(client) == 4, "#{E2E.FaultClient.converse_calls(client)}")
 S.assert!("no live request so far", S.calls() == 0, "#{S.calls()}")
 

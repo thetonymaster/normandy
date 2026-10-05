@@ -3,8 +3,9 @@ defmodule Normandy.Telemetry.KilledRun do
   Synthetic `[:normandy, :agent, :run, :exception]` for an agent run that a
   coordinator killed.
 
-  `BaseAgent.run` wraps the run in a `:telemetry.span/3`. When the process
-  running it is killed (a `Reactive.race`/`Reactive.some` loser shut down with
+  `BaseAgent.run` wraps the run in a span (`:start`, then `:stop` or
+  `:exception`). When the process running it is killed (a
+  `Reactive.race`/`Reactive.some` loser shut down with
   `:brutal_kill`, or a `Task.async_stream` task stopped by
   `on_timeout: :kill_task`), the span's `:stop`/`:exception` never fires. The
   coordinator that did the killing calls `emit/3` instead, so a handler still

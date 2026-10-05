@@ -31,7 +31,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         model: "claude-opus-5-5"
       })
 
-      {agent, response} = Normandy.Agents.BaseAgent.run(agent, user_input)
+      {:ok, agent, response} = Normandy.Agents.BaseAgent.run(agent, user_input)
 
   ## Configuration
 

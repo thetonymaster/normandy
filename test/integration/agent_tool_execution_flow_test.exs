@@ -26,7 +26,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
 
       # Ask agent to perform calculation
       {updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What is 15 + 27?"})
+        BaseAgent.run!(agent, %{chat_message: "What is 15 + 27?"})
 
       # Verify response contains the correct answer
       assert response.chat_message =~ "42"

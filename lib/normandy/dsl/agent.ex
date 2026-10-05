@@ -32,7 +32,7 @@ defmodule Normandy.DSL.Agent do
       {:ok, agent} = MyResearchAgent.new(client: my_client)
 
       # Run the agent
-      {updated_agent, response} = MyResearchAgent.run(agent, "Research quantum computing")
+      {:ok, updated_agent, response} = MyResearchAgent.run(agent, "Research quantum computing")
 
   ## Without DSL (for comparison)
 
@@ -280,10 +280,11 @@ defmodule Normandy.DSL.Agent do
 
   Calling this macro twice for the same stage replaces the previous list.
 
-  An input violation always raises. An output violation blocks the answer by
-  default: `run` raises `Normandy.Guardrails.ViolationError` and the answer is
-  not saved to memory. Pass `on_violation: :warn` (output only) to log the
-  violation and return the answer instead. Telemetry is emitted either way.
+  An input violation always fails the run. An output violation blocks the answer
+  by default: `run` returns `{:error, %Normandy.Guardrails.ViolationError{}}`
+  (`run!` raises it) and the answer is not saved to memory. Pass
+  `on_violation: :warn` (output only) to log the violation and return the answer
+  instead. Telemetry is emitted either way.
   Streaming output reports violations through `:guardrail_violations` and the
   callback instead; see `Normandy.Guardrails`.
 
@@ -568,20 +569,19 @@ defmodule Normandy.DSL.Agent do
       end
 
       @doc """
-      Runs the agent with input.
+      Runs the agent with input; see `Normandy.Agents.BaseAgent.run/3`.
 
       ## Examples
 
-          {updated_agent, response} = MyAgent.run(agent, "Hello!")
-          {updated_agent, response} = MyAgent.run(agent, %{chat_message: "Hello!"})
+          {:ok, agent, response} = MyAgent.run(agent, "Hello!")
+          {:ok, agent, response} = MyAgent.run(agent, %{chat_message: "Hello!"})
       """
-      def run(agent, input) do
-        BaseAgent.run(agent, prepare_input(input))
-      end
+      def run(agent, input, opts \\ []) when is_list(opts),
+        do: BaseAgent.run(agent, prepare_input(input), opts)
 
-      def run(agent, input, opts) when is_list(opts) do
-        BaseAgent.run(agent, prepare_input(input), opts)
-      end
+      @doc "Like `run/3`, but returns `{agent, response}` and raises on failure."
+      def run!(agent, input, opts \\ []) when is_list(opts),
+        do: BaseAgent.run!(agent, prepare_input(input), opts)
 
       @doc """
       Runs the agent with tools enabled.

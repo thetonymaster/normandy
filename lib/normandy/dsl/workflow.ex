@@ -536,13 +536,16 @@ defmodule Normandy.DSL.Workflow do
         end
       end
 
-      # BaseAgent.run/2 raises on failure; return it as the step's error, the
-      # same shape a parallel or race step gets from Reactive.
+      # BaseAgent.run/2 returns Normandy's failures as {:error, exception} and raises
+      # a bug; both become the step's {:error, exception} (the bug's stacktrace is
+      # logged), the same shape a parallel or race step gets from Reactive.
       defp run_agent(agent, input) do
-        {_updated_agent, response} = BaseAgent.run(agent, prepare_input(input))
-        {:ok, response}
+        case BaseAgent.run(agent, prepare_input(input)) do
+          {:ok, _updated_agent, response} -> {:ok, response}
+          {:error, exception} -> {:error, exception}
+        end
       rescue
-        e -> {:error, {:exception, e, __STACKTRACE__}}
+        e -> Normandy.TurnError.log_raised("Workflow agent", e, __STACKTRACE__)
       end
 
       defp name_results(results, agent_infos) do

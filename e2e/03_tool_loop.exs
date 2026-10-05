@@ -73,7 +73,7 @@ S.narrate("Three turns; the store carries state between turns, an after-hook rew
   turns
   |> Enum.with_index(1)
   |> Enum.map_reduce(agent, fn {text, n}, agent ->
-    {agent, r} = BaseAgent.run(agent, %{chat_message: text})
+    {:ok, agent, r} = BaseAgent.run(agent, %{chat_message: text})
     S.turn(n, text, r.chat_message)
     {r.chat_message, agent}
   end)

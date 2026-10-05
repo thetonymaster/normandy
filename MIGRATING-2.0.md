@@ -107,7 +107,8 @@ error); in 1.x it was `type: :unknown`.
   and the compactor's `:error` / `:reason` when it failed).
   Consequence: an agent with no tools and a real compactor now resolves its context window on
   every run. With a client that isn't a `ClaudioAdapter` and no pinned `:max_tokens`, that
-  lookup fails and `run/2` raises `Normandy.ModelCatalogError` before the first LLM call, where
+  lookup fails and `run/2` returns `{:error, %Normandy.ModelCatalogError{}}` (`run!/2` raises
+  it) before the first LLM call, where
   1.x silently never compacted. Pin `:max_tokens` (see below).
 - **Compaction makes a network call:** one Models API request per model per agent config.
   Coordinators that discard the config `BaseAgent.run/2` returns (batch, orchestrators, agent
@@ -164,13 +165,21 @@ If your app uses the optional Postgres session store, Normandy now requires `pos
 `>= 0.22.4` (was `~> 0.19`). Earlier releases carry EEF-CVE-2026-66838 and
 EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 
-## 11. LLM failures raise `Normandy.LLMError`
+## 11. LLM failures are `Normandy.LLMError`; `run` returns tuples
 
 - `Model.converse/3` returns `{:error, %Normandy.LLMError{}}` on failure (see §4). Code
   that calls `converse/3` directly must handle it.
-- `BaseAgent.run/2` and the DSL's `run/1-3` raise `Normandy.LLMError` when a returned
-  failure (`{:error, _}` from `converse/3`) is final, and when the circuit is open
-  (`type: :circuit_open`). Rescue `Normandy.LLMError` for these.
+- `BaseAgent.run/2,3` (and a DSL agent's `run/2,3`) return `{:ok, config, response}` or
+  `{:error, exception}`, where the exception is a `Normandy.LLMError`,
+  `Schema.ValidationError`, `Guardrails.ViolationError`, `HookHaltError`,
+  `ModelCatalogError` or `TurnError`. Other exceptions (bugs) still raise.
+  `run!/2,3` keeps 1.x's shape: `{config, response}`, raising the same exceptions. The
+  quickest migration is `run(` → `run!(`.
+- `AgentProcess.run/3`, `Reactive` results and workflow step errors are `{:error, exception}`
+  (was `{:error, {:exception, exception, stacktrace}}`); the stacktrace is logged.
+- A final returned LLM failure (`{:error, _}` from `converse/3`) and an open circuit
+  (`type: :circuit_open`) are a `Normandy.LLMError`: `{:error, %Normandy.LLMError{}}` from
+  `run/2,3`, raised by `run!/2,3`.
 - An exception raised by `converse/3` is re-raised with its original type. With a circuit
   breaker enabled it used to arrive wrapped as `RuntimeError "LLM call failed: <msg>"`; that
   wrapper is gone, so rescue the original exception type (it is not an `LLMError`).
@@ -183,8 +192,8 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
   receives `{:error, %Normandy.LLMError{}}` for returned failures.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
-  response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and raise from
-  `run/2`. `on_parse_failure: :error` returns `type: :invalid_output`.
+  response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and from
+  `run/2` (`run!/2` raises it). `on_parse_failure: :error` returns `type: :invalid_output`.
 - `stream_response/3` and `stream_with_tools/3` raise `Normandy.LLMError` when the stream
   fails. They used to return `{config, %{error: reason}}`. A stream that ends without
   `message_stop` is now a failure, not a complete message.
@@ -261,6 +270,11 @@ if you attach handlers: `[:normandy, :agent, :run, :exception]` can be synthetic
 (`reason: :killed`) and arrive without a matching `:start`, and the `[:normandy, :llm, :call, *]`
 event named in old changelog entries never existed (the LLM call span is
 `[:normandy, :agent, :llm_call, *]`; `[:normandy, :llm, :request, *]` is new).
+
+The `stacktrace` of `BaseAgent`'s `[:normandy, :agent, :run, :exception]` and
+`[:normandy, :agent, :llm_call, :exception]` is now always `[]` (1.x passed the real one,
+as `:telemetry.span/3` does). A stacktrace can hold call arguments such as the config, so
+Normandy logs it and never emits it.
 
 ## 15. Agent memory and tool context
 

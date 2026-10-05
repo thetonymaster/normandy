@@ -106,7 +106,7 @@ defmodule Normandy.AppEnvConfigTest do
           model: "m"
         })
 
-      BaseAgent.run(agent, "hello")
+      BaseAgent.run!(agent, "hello")
       assert_received {:converse, %Normandy.LLM.Request{system: system}, _opts}
       assert system =~ "schema-by-adapter"
     end

@@ -52,7 +52,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.Agents.BaseAgent`** - Core agent implementation
   - `init/1` - Initialize agent with `BaseAgentConfig` (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters)
-  - `run/2` - Execute agent turn with optional user input, returns `{updated_config, response}`
+  - `run/3` - Execute agent turn; returns `{:ok, config, response}` or `{:error, exception}` (Normandy errors only; bugs raise); `run!/3` returns `{config, response}` and raises
   - `get_response/2` - Get LLM response using prompt specification
   - `reset_memory/1` - Reset conversation to initial state
   - Context provider management: `register_context_provider/3`, `get_context_provider/2`, `delete_context_provider/2`

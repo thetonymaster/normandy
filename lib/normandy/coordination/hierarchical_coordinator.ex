@@ -216,7 +216,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   end
 
   defp execute_manager(manager, input, _context) do
-    {_updated_manager, response} = BaseAgent.run(manager, input)
+    {_updated_manager, response} = BaseAgent.run!(manager, input)
 
     # Extract delegation plan from response
     plan = extract_delegation_plan(response)
@@ -350,7 +350,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     aggregation_input = %{chat_message: aggregation_message(worker_results)}
 
     try do
-      {_updated_manager, response} = BaseAgent.run(manager, aggregation_input)
+      {_updated_manager, response} = BaseAgent.run!(manager, aggregation_input)
 
       result =
         Map.get(response, :chat_message) ||

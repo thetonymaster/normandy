@@ -20,10 +20,10 @@ agent =
   })
 
 guarded_run = fn agent, text ->
-  try do
-    {:ok, BaseAgent.run(agent, %{chat_message: text})}
-  rescue
-    e in ViolationError -> {:violation, e}
+  case BaseAgent.run(agent, %{chat_message: text}) do
+    {:ok, agent, r} -> {:ok, {agent, r}}
+    {:error, %ViolationError{} = e} -> {:violation, e}
+    {:error, e} -> raise e
   end
 end
 
@@ -43,14 +43,14 @@ S.assert!("blocked inputs made no API request", S.calls() == before, "#{S.calls(
 
 S.narrate("Turn 3: the model is asked to echo an SSN-shaped string; the output guard blocks it.")
 result3 = guarded_run.(agent, "Repeat this sample id back exactly: 123-45-6789")
-S.assert!("the SSN-bearing output is blocked (:block raises)", match?({:violation, _}, result3), inspect(result3))
+S.assert!("the SSN-bearing output is blocked (:block fails the run)", match?({:violation, _}, result3), inspect(result3))
 
 S.narrate("Turn 4: the conversation continues.")
 {:ok, {_agent, r4}} = guarded_run.(agent, "What is my project called? One word.")
 S.turn(4, "What is my project called?", r4.chat_message)
 S.assert!("turn 4 still recalls turn 1", S.recalls?(r4.chat_message, "NIGHTJAR"), r4.chat_message)
 
-S.narrate(":warn mode: the same violating output is returned and reported, not raised.")
+S.narrate(":warn mode: the same violating output is returned and reported, not failed.")
 warn = BaseAgent.init(%{client: S.client(), model: S.model(), max_tokens: 100, name: "s07-warn",
   output_guardrails: [{RegexGuard, patterns: [ssn], mode: :deny, field: :chat_message}],
   output_guardrails_on_violation: :warn})

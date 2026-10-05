@@ -137,7 +137,7 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
         model: "test-model"
       })
 
-    assert {:error, {:first, {:exception, %RuntimeError{message: "first failed"}, _}}} =
+    assert {:error, {:first, %RuntimeError{message: "first failed"}}} =
              TransformWorkflow.execute(
                agents: %{agents() | FirstAgent => failing},
                initial_input: "x"

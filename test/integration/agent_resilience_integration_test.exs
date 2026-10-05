@@ -32,7 +32,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         )
 
       {_updated_agent, response} =
-        BaseAgent.run(agent_with_retry, %{chat_message: "What is 2+2?"})
+        BaseAgent.run!(agent_with_retry, %{chat_message: "What is 2+2?"})
 
       # Should eventually succeed even with potential transient issues
       assert response.chat_message != nil
@@ -48,7 +48,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
         )
 
       {_updated_agent, response} =
-        BaseAgent.run(agent_no_retry, %{chat_message: "Hello"})
+        BaseAgent.run!(agent_no_retry, %{chat_message: "Hello"})
 
       assert response.chat_message != nil
     end
@@ -68,7 +68,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
 
       # Should work normally when circuit is closed
       {_updated_agent, response} =
-        BaseAgent.run(agent_with_cb, %{chat_message: "Test message"})
+        BaseAgent.run!(agent_with_cb, %{chat_message: "Test message"})
 
       assert response.chat_message != nil
     end
@@ -82,17 +82,17 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
 
       # Make multiple successful calls
       {agent_with_cb, response1} =
-        BaseAgent.run(agent_with_cb, %{chat_message: "First"})
+        BaseAgent.run!(agent_with_cb, %{chat_message: "First"})
 
       assert response1.chat_message != nil
 
       {agent_with_cb, response2} =
-        BaseAgent.run(agent_with_cb, %{chat_message: "Second"})
+        BaseAgent.run!(agent_with_cb, %{chat_message: "Second"})
 
       assert response2.chat_message != nil
 
       {_agent_with_cb, response3} =
-        BaseAgent.run(agent_with_cb, %{chat_message: "Third"})
+        BaseAgent.run!(agent_with_cb, %{chat_message: "Third"})
 
       assert response3.chat_message != nil
     end
@@ -102,7 +102,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
     test "agent handles API errors gracefully", %{agent: agent} do
       # Even with potential API issues, agent should return structured response
       {_updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What is the meaning of life?"})
+        BaseAgent.run!(agent, %{chat_message: "What is the meaning of life?"})
 
       assert is_map(response)
       assert Map.has_key?(response, :chat_message)
@@ -111,13 +111,13 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
     test "agent maintains state across successful and failed requests", %{agent: agent} do
       # First successful request
       {agent, response1} =
-        BaseAgent.run(agent, %{chat_message: "Remember that my favorite color is blue"})
+        BaseAgent.run!(agent, %{chat_message: "Remember that my favorite color is blue"})
 
       assert response1.chat_message != nil
 
       # Even if there were transient failures, conversation should continue
       {_agent, response2} =
-        BaseAgent.run(agent, %{chat_message: "What color did I just mention?"})
+        BaseAgent.run!(agent, %{chat_message: "What color did I just mention?"})
 
       # Should remember the conversation
       assert is_binary(response2.chat_message)
@@ -125,11 +125,11 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
 
     test "memory persists after errors", %{agent: agent} do
       {agent, _response1} =
-        BaseAgent.run(agent, %{chat_message: "My name is Alice"})
+        BaseAgent.run!(agent, %{chat_message: "My name is Alice"})
 
       # Even with potential failures, memory should be intact
       {agent2, _response2} =
-        BaseAgent.run(agent, %{chat_message: "What's my name?"})
+        BaseAgent.run!(agent, %{chat_message: "What's my name?"})
 
       # Should have conversation history
       assert AgentMemory.count_messages(agent2.memory) != 0
@@ -148,7 +148,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
 
       # Should complete within timeout
       {_updated_agent, response} =
-        BaseAgent.run(agent_with_timeout, %{chat_message: "Quick question: what is 1+1?"})
+        BaseAgent.run!(agent_with_timeout, %{chat_message: "Quick question: what is 1+1?"})
 
       assert response.chat_message != nil
     end
@@ -157,7 +157,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       start_time = System.monotonic_time(:millisecond)
 
       {_updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Say 'hello'"})
+        BaseAgent.run!(agent, %{chat_message: "Say 'hello'"})
 
       duration = System.monotonic_time(:millisecond) - start_time
 
@@ -172,7 +172,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       # Make several requests in sequence
       results =
         for i <- 1..3 do
-          {_agent, response} = BaseAgent.run(agent, %{chat_message: "Count #{i}"})
+          {_agent, response} = BaseAgent.run!(agent, %{chat_message: "Count #{i}"})
           response
         end
 
@@ -183,9 +183,9 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
 
     test "agent handles rapid sequential requests", %{agent: agent} do
       # Test that agent can handle requests without artificial delays
-      {agent, r1} = BaseAgent.run(agent, %{chat_message: "First"})
-      {agent, r2} = BaseAgent.run(agent, %{chat_message: "Second"})
-      {_agent, r3} = BaseAgent.run(agent, %{chat_message: "Third"})
+      {agent, r1} = BaseAgent.run!(agent, %{chat_message: "First"})
+      {agent, r2} = BaseAgent.run!(agent, %{chat_message: "Second"})
+      {_agent, r3} = BaseAgent.run!(agent, %{chat_message: "Third"})
 
       assert r1.chat_message != nil
       assert r2.chat_message != nil

@@ -82,7 +82,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # This should succeed after retries
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
     end
@@ -100,7 +100,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # Should work on first try
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 1 attempts"
     end
@@ -126,7 +126,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           ]
         })
 
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
     end
@@ -150,11 +150,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
       # First two calls should fail and open circuit
       assert_raise RuntimeError, "Service unavailable", fn ->
-        BaseAgent.run(agent, %{chat_message: "test1"})
+        BaseAgent.run!(agent, %{chat_message: "test1"})
       end
 
       assert_raise RuntimeError, "Service unavailable", fn ->
-        BaseAgent.run(agent, %{chat_message: "test2"})
+        BaseAgent.run!(agent, %{chat_message: "test2"})
       end
 
       # Circuit should be open
@@ -164,7 +164,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert_raise Normandy.LLMError,
                    "LLM call failed: circuit_open: circuit breaker is open",
                    fn ->
-                     BaseAgent.run(agent, %{chat_message: "test3"})
+                     BaseAgent.run!(agent, %{chat_message: "test3"})
                    end
 
       # Clean up
@@ -194,7 +194,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
       # Open circuit
       assert_raise RuntimeError, "Service unavailable", fn ->
-        BaseAgent.run(agent, %{chat_message: "fail"})
+        BaseAgent.run!(agent, %{chat_message: "fail"})
       end
 
       assert CircuitBreaker.state(agent.circuit_breaker) == :open
@@ -208,7 +208,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       agent = %{agent | client: updated_client}
 
       # Should transition to half-open and succeed
-      {agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success"
       assert CircuitBreaker.state(agent.circuit_breaker) == :closed
@@ -235,7 +235,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
       assert agent.circuit_breaker == nil
 
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 1 attempts"
     end
@@ -261,7 +261,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # Should retry and succeed without opening circuit
-      {agent, response} = BaseAgent.run(agent, %{chat_message: "test"})
+      {agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
       assert CircuitBreaker.state(agent.circuit_breaker) == :closed
@@ -292,15 +292,15 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
 
       # First few calls will retry and fail
       assert_raise RuntimeError, "Temporary network error", fn ->
-        BaseAgent.run(agent, %{chat_message: "test1"})
+        BaseAgent.run!(agent, %{chat_message: "test1"})
       end
 
       assert_raise RuntimeError, "Temporary network error", fn ->
-        BaseAgent.run(agent, %{chat_message: "test2"})
+        BaseAgent.run!(agent, %{chat_message: "test2"})
       end
 
       assert_raise RuntimeError, "Temporary network error", fn ->
-        BaseAgent.run(agent, %{chat_message: "test3"})
+        BaseAgent.run!(agent, %{chat_message: "test3"})
       end
 
       # Circuit should be open now
@@ -312,7 +312,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert_raise Normandy.LLMError,
                    "LLM call failed: circuit_open: circuit breaker is open",
                    fn ->
-                     BaseAgent.run(agent, %{chat_message: "test4"})
+                     BaseAgent.run!(agent, %{chat_message: "test4"})
                    end
 
       attempt_count_after = Agent.get(attempts, & &1)

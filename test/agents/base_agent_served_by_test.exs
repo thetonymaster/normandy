@@ -21,7 +21,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
     do: send(test_pid, {:stop, metadata})
 
   # Returns {stop_metadata, captured_log}. Logs are captured so the run stays quiet.
-  defp run_and_capture_stop(client, run \\ &BaseAgent.run(&1, "hello")) do
+  defp run_and_capture_stop(client, run \\ &BaseAgent.run!(&1, "hello")) do
     test_pid = self()
     id = "served-by-#{System.unique_integer([:positive])}"
 

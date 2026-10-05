@@ -110,7 +110,7 @@ defmodule NormandyTest.BaseAgentsTest do
     mock_input = %BaseAgentInputSchema{chat_message: "hello"}
     mock_output = %BaseAgentOutputSchema{}
 
-    {agent, response} = BaseAgent.run(agent, mock_input)
+    {agent, response} = BaseAgent.run!(agent, mock_input)
     assert response == mock_output
     assert Map.get(agent, :current_user_input) == mock_input
   end
@@ -169,7 +169,7 @@ defmodule NormandyTest.BaseAgentsTest do
       :telemetry.attach_many(handler_id, events, &__MODULE__.handle_event/4, {parent, ref, name})
 
       try do
-        BaseAgent.run(agent, "hello")
+        BaseAgent.run!(agent, "hello")
 
         # Check for run events
         assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{agent_name: ^name}}

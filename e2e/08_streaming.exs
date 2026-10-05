@@ -39,7 +39,7 @@ agent =
 
 stream_turn = fn agent, n, text ->
   reset.()
-  {agent, response} = BaseAgent.run(agent, %{chat_message: text}, stream: true, on_chunk: on_chunk)
+  {:ok, agent, response} = BaseAgent.run(agent, %{chat_message: text}, stream: true, on_chunk: on_chunk)
   s = streamed.()
   S.turn(n, text, s.text)
   {agent, response, s}

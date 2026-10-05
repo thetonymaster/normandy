@@ -184,7 +184,7 @@ defmodule Normandy.A2A.Server do
       end
 
     try do
-      {_updated_config, response} = BaseAgent.run(config, user_input)
+      {_updated_config, response} = BaseAgent.run!(config, user_input)
 
       # Convert response to A2A task
       response_text = extract_response_text(response)

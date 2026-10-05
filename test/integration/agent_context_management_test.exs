@@ -19,11 +19,11 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
   describe "Context window management" do
     test "agent tracks conversation history", %{agent: agent} do
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "My name is Bob"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "My favorite color is green"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "My name is Bob"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "My favorite color is green"})
 
       {agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What's my name and favorite color?"})
+        BaseAgent.run!(agent, %{chat_message: "What's my name and favorite color?"})
 
       # Should remember both pieces of information
       history = AgentMemory.messages(agent.memory)
@@ -44,7 +44,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
       final_agent =
         Enum.reduce(conversation, agent, fn msg, acc_agent ->
-          {updated_agent, _response} = BaseAgent.run(acc_agent, %{chat_message: msg})
+          {updated_agent, _response} = BaseAgent.run!(acc_agent, %{chat_message: msg})
           updated_agent
         end)
 
@@ -63,7 +63,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       }
 
       {_updated_agent, response} =
-        BaseAgent.run(agent_with_system, %{chat_message: "Tell me about the weather"})
+        BaseAgent.run!(agent_with_system, %{chat_message: "Tell me about the weather"})
 
       # System message should influence response (might use pirate language)
       assert is_binary(response.chat_message)
@@ -71,15 +71,15 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
     test "memory persists across multiple interactions", %{agent: agent} do
       # First interaction
-      {agent, r1} = BaseAgent.run(agent, %{chat_message: "Remember the number 42"})
+      {agent, r1} = BaseAgent.run!(agent, %{chat_message: "Remember the number 42"})
       assert r1.chat_message != nil
 
       # Second interaction
-      {agent, r2} = BaseAgent.run(agent, %{chat_message: "What number should you remember?"})
+      {agent, r2} = BaseAgent.run!(agent, %{chat_message: "What number should you remember?"})
       assert is_binary(r2.chat_message)
 
       # Third interaction
-      {agent, r3} = BaseAgent.run(agent, %{chat_message: "Add 8 to that number"})
+      {agent, r3} = BaseAgent.run!(agent, %{chat_message: "Add 8 to that number"})
       assert is_binary(r3.chat_message)
 
       # Memory should contain all interactions
@@ -93,7 +93,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       long_message = String.duplicate("This is a test sentence. ", 100)
 
       {_updated_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Summarize this: #{long_message}"})
+        BaseAgent.run!(agent, %{chat_message: "Summarize this: #{long_message}"})
 
       assert is_binary(response.chat_message)
       assert response.chat_message != ""
@@ -104,7 +104,7 @@ defmodule Normandy.Integration.AgentContextManagementTest do
       final_agent =
         Enum.reduce(1..10, agent, fn i, acc_agent ->
           {updated_agent, _response} =
-            BaseAgent.run(acc_agent, %{chat_message: "Message #{i}"})
+            BaseAgent.run!(acc_agent, %{chat_message: "Message #{i}"})
 
           updated_agent
         end)
@@ -114,8 +114,8 @@ defmodule Normandy.Integration.AgentContextManagementTest do
     end
 
     test "memory structure is maintained", %{agent: agent} do
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "First message"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "Second message"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "First message"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "Second message"})
 
       # Verify memory structure
       assert is_list(AgentMemory.messages(agent.memory))
@@ -129,11 +129,11 @@ defmodule Normandy.Integration.AgentContextManagementTest do
   describe "Conversation summarization" do
     test "agent can summarize its own conversation", %{agent: agent} do
       # Have a short conversation
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "Let's talk about space"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "Tell me about Mars"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "Let's talk about space"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "Tell me about Mars"})
 
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Can you summarize what we discussed?"})
+        BaseAgent.run!(agent, %{chat_message: "Can you summarize what we discussed?"})
 
       # Should be able to summarize
       assert is_binary(response.chat_message)
@@ -142,11 +142,11 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
     test "summarization maintains key information", %{agent: agent} do
       # Give important information
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "My phone number is 555-1234"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "My email is test@example.com"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "My phone number is 555-1234"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "My email is test@example.com"})
 
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What contact info did I provide?"})
+        BaseAgent.run!(agent, %{chat_message: "What contact info did I provide?"})
 
       # Should remember both pieces of info
       assert is_binary(response.chat_message)
@@ -156,11 +156,11 @@ defmodule Normandy.Integration.AgentContextManagementTest do
   describe "Context retrieval and relevance" do
     test "agent retrieves relevant context", %{agent: agent} do
       # Set up context
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "I like pizza"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "I like pasta"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "I like pizza"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "I like pasta"})
 
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What foods do I like?"})
+        BaseAgent.run!(agent, %{chat_message: "What foods do I like?"})
 
       # Should retrieve both mentions
       assert is_binary(response.chat_message)
@@ -168,14 +168,14 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
     test "recent context is prioritized", %{agent: agent} do
       # Older message
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "My favorite color was blue"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "My favorite color was blue"})
 
       # More recent message
       {agent, _r2} =
-        BaseAgent.run(agent, %{chat_message: "Actually, my favorite color is red now"})
+        BaseAgent.run!(agent, %{chat_message: "Actually, my favorite color is red now"})
 
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What's my favorite color?"})
+        BaseAgent.run!(agent, %{chat_message: "What's my favorite color?"})
 
       # Should use most recent information
       assert is_binary(response.chat_message)
@@ -183,12 +183,12 @@ defmodule Normandy.Integration.AgentContextManagementTest do
 
     test "unrelated context doesn't interfere", %{agent: agent} do
       # Add some unrelated context
-      {agent, _r1} = BaseAgent.run(agent, %{chat_message: "The sky is blue"})
-      {agent, _r2} = BaseAgent.run(agent, %{chat_message: "Water is wet"})
+      {agent, _r1} = BaseAgent.run!(agent, %{chat_message: "The sky is blue"})
+      {agent, _r2} = BaseAgent.run!(agent, %{chat_message: "Water is wet"})
 
       # Ask specific question
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "What is 5 + 5?"})
+        BaseAgent.run!(agent, %{chat_message: "What is 5 + 5?"})
 
       # Should answer correctly despite unrelated context
       assert is_binary(response.chat_message)

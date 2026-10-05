@@ -23,7 +23,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
         output_schema: output_schema
       })
 
-    BaseAgent.run(agent, "hi")
+    BaseAgent.run!(agent, "hi")
     assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
     prompt
   end
@@ -49,7 +49,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
       })
       |> BaseAgent.register_tool(%Normandy.Tools.Examples.Calculator{})
 
-    {_agent, response} = BaseAgent.run(agent, "hi")
+    {_agent, response} = BaseAgent.run!(agent, "hi")
 
     assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
     refute prompt =~ "tool_calls"

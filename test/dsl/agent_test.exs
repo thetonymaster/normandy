@@ -199,7 +199,7 @@ defmodule Normandy.DSL.AgentTest do
       client = %NormandyTest.Support.ModelMockup{}
       {:ok, agent} = TestAgent.new(client: client)
 
-      {_updated_agent, response} = TestAgent.run(agent, "test input")
+      {_updated_agent, response} = TestAgent.run!(agent, "test input")
 
       assert is_map(response)
     end
@@ -208,7 +208,7 @@ defmodule Normandy.DSL.AgentTest do
       client = %NormandyTest.Support.ModelMockup{}
       {:ok, agent} = TestAgent.new(client: client)
 
-      {_updated_agent, response} = TestAgent.run(agent, %{chat_message: "test"})
+      {_updated_agent, response} = TestAgent.run!(agent, %{chat_message: "test"})
 
       assert is_map(response)
     end
@@ -225,7 +225,7 @@ defmodule Normandy.DSL.AgentTest do
         }
       ]
 
-      {updated_agent, _response} = TestAgent.run(agent, blocks)
+      {updated_agent, _response} = TestAgent.run!(agent, blocks)
 
       user_msg =
         Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
@@ -239,7 +239,7 @@ defmodule Normandy.DSL.AgentTest do
       client = %NormandyTest.Support.ModelMockup{}
       {:ok, agent} = TestAgent.new(client: client)
 
-      {updated_agent, _response} = TestAgent.run(agent, "plain text")
+      {updated_agent, _response} = TestAgent.run!(agent, "plain text")
 
       user_msg =
         Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
@@ -254,7 +254,7 @@ defmodule Normandy.DSL.AgentTest do
       client = %NormandyTest.Support.ModelMockup{}
       {:ok, agent} = TestAgent.new(client: client)
 
-      {updated_agent, _response} = TestAgent.run(agent, %{chat_message: "test"})
+      {updated_agent, _response} = TestAgent.run!(agent, %{chat_message: "test"})
 
       user_msg =
         Enum.find(AgentMemory.messages(updated_agent.memory), fn msg ->
@@ -271,7 +271,7 @@ defmodule Normandy.DSL.AgentTest do
       {:ok, agent} = TestAgent.new(client: client)
 
       # Run to add to memory
-      {agent, _} = TestAgent.run(agent, "first message")
+      {agent, _} = TestAgent.run!(agent, "first message")
       assert AgentMemory.count_messages(agent.memory) > 0
 
       # Reset
@@ -289,12 +289,12 @@ defmodule Normandy.DSL.AgentTest do
       assert agent != nil
 
       # Run once
-      {agent, response1} = TestAgent.run(agent, "hello")
+      {agent, response1} = TestAgent.run!(agent, "hello")
       assert is_map(response1)
       assert AgentMemory.count_messages(agent.memory) > 0
 
       # Run again (memory should accumulate)
-      {agent, response2} = TestAgent.run(agent, "goodbye")
+      {agent, response2} = TestAgent.run!(agent, "goodbye")
       assert is_map(response2)
       assert AgentMemory.count_messages(agent.memory) > 2
 

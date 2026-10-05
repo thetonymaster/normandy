@@ -59,6 +59,7 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.TurnError
 
   @type agent_id :: String.t()
   @type run_opts :: [
@@ -113,7 +114,7 @@ defmodule Normandy.Coordination.AgentProcess do
 
       {:ok, result} = AgentProcess.run(pid, "What is AI?")
   """
-  @spec run(GenServer.server(), term(), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec run(GenServer.server(), term(), keyword()) :: {:ok, term()} | {:error, Exception.t()}
   def run(server, input, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 60_000)
     GenServer.call(server, {:run, input, OtelCtx.capture()}, timeout)
@@ -402,32 +403,29 @@ defmodule Normandy.Coordination.AgentProcess do
 
     result =
       try do
-        # Prepare input
-        agent_input = prepare_input(input)
+        case BaseAgent.run(state.agent, prepare_input(input)) do
+          {:ok, updated_agent, response} ->
+            runtime = System.monotonic_time(:millisecond) - start_time
 
-        # Run agent
-        {updated_agent, response} = BaseAgent.run(state.agent, agent_input)
+            updated_state = %{
+              state
+              | agent: updated_agent,
+                run_count: state.run_count + 1,
+                last_run: DateTime.utc_now(),
+                total_runtime_ms: state.total_runtime_ms + runtime
+            }
 
-        # Extract result
-        result = extract_result(response)
+            {:reply, {:ok, extract_result(response)}, updated_state}
 
-        # Update state with new agent
-        end_time = System.monotonic_time(:millisecond)
-        runtime = end_time - start_time
-
-        updated_state = %{
-          state
-          | agent: updated_agent,
-            run_count: state.run_count + 1,
-            last_run: DateTime.utc_now(),
-            total_runtime_ms: state.total_runtime_ms + runtime
-        }
-
-        {:reply, {:ok, result}, updated_state}
+          {:error, exception} ->
+            Logger.error("Agent #{state.agent_id} failed: #{Exception.message(exception)}")
+            {:reply, {:error, exception}, state}
+        end
       rescue
+        # A bug, not a Normandy error: reply it instead of crashing the process. The
+        # stacktrace is logged (arities only), never replied.
         e ->
-          Logger.error("Agent #{state.agent_id} failed: #{Exception.message(e)}")
-          {:reply, {:error, {:exception, e, __STACKTRACE__}}, state}
+          {:reply, TurnError.log_raised("Agent #{state.agent_id}", e, __STACKTRACE__), state}
       after
         OtelCtx.detach(token)
       end
@@ -646,14 +644,12 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   defp handle_async_run(agent, input, agent_id) do
-    agent_input = prepare_input(input)
-    {_updated_agent, response} = BaseAgent.run(agent, agent_input)
-    result = extract_result(response)
-    {:ok, result}
+    case BaseAgent.run(agent, prepare_input(input)) do
+      {:ok, _updated_agent, response} -> {:ok, extract_result(response)}
+      {:error, exception} -> {:error, exception}
+    end
   rescue
-    e ->
-      Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
-      {:error, {:exception, e, __STACKTRACE__}}
+    e -> TurnError.log_raised("Async agent #{agent_id}", e, __STACKTRACE__)
   end
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers

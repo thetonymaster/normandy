@@ -37,7 +37,7 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
   end
 
   test "the default reaches the client on run/2" do
-    BaseAgent.run(init(), %{chat_message: "hi"})
+    BaseAgent.run!(init(), %{chat_message: "hi"})
     assert_receive {:max_tokens, 16_000}
   end
 

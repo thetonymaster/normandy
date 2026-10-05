@@ -65,7 +65,7 @@ S.narrate("Eight turns on one agent; facts seeded in turns 1-3 must survive to t
   turns
   |> Enum.with_index(1)
   |> Enum.map_reduce(agent, fn {text, n}, agent ->
-    {agent, r} = BaseAgent.run(agent, %{chat_message: text})
+    {:ok, agent, r} = BaseAgent.run(agent, %{chat_message: text})
     S.turn(n, text, r.chat_message)
 
     S.assert!("turn #{n} returns a typed Answer",
@@ -104,14 +104,14 @@ S.assert!("a later call read from the prompt cache",
 S.narrate("Structured-outputs kill switch: same schema through the legacy parse path.")
 
 legacy = BaseAgent.init(%{client: S.client(%{structured_outputs: false}), model: S.model(), max_tokens: 300, output_schema: struct!(E2E.S01.Answer)})
-{_, r} = BaseAgent.run(legacy, %{chat_message: "I collect stamps. Acknowledge briefly."})
+{:ok, _, r} = BaseAgent.run(legacy, %{chat_message: "I collect stamps. Acknowledge briefly."})
 S.turn(1, "I collect stamps.", r.chat_message)
 S.assert!("legacy path returns a typed Answer", is_struct(r, E2E.S01.Answer) and is_list(r.facts_remembered), inspect(r))
 
 S.narrate("Open :map field: structured outputs can't express it, so the legacy fallback runs.")
 
 open = BaseAgent.init(%{client: S.client(), model: S.model(), max_tokens: 300, output_schema: struct!(E2E.S01.OpenMeta)})
-{_, r} = BaseAgent.run(open, %{chat_message: "Say hello and put any small metadata about your answer in meta."})
+{:ok, _, r} = BaseAgent.run(open, %{chat_message: "Say hello and put any small metadata about your answer in meta."})
 S.turn(1, "Say hello (open map)", r.chat_message)
 S.assert!("open-map schema falls back and returns a map field", is_struct(r, E2E.S01.OpenMeta) and is_map(r.meta), inspect(r))
 

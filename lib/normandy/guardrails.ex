@@ -70,8 +70,9 @@ defmodule Normandy.Guardrails do
   On the non-streaming path (`BaseAgent.run/2`, `Turn.Server`), output guards
   run on the validated answer before it is saved to memory:
 
-  - `:block` (default) — `run` raises `Normandy.Guardrails.ViolationError`
-    (`Turn.Server.run/2` replies `{:error, {:rejected, exception}}`) and the
+  - `:block` (default) — `run` returns
+    `{:error, %Normandy.Guardrails.ViolationError{}}` (`run!` raises it;
+    `Turn.Server.run/2` replies `{:error, {:rejected, exception}}`) and the
     answer is not saved.
   - `:warn` — the violation is logged and the answer is returned and saved.
 

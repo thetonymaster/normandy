@@ -52,7 +52,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
 
   describe "on_prompt" do
     test "the hook receives the validated input" do
-      BaseAgent.run(agent([probe()], %{input_schema: %QueryInput{}}), %{"query" => "q"})
+      BaseAgent.run!(agent([probe()], %{input_schema: %QueryInput{}}), %{"query" => "q"})
 
       assert_received {:hook, :p, :on_prompt,
                        [%QueryInput{query: "q"}, %Context{event: :on_prompt, turn_id: nil}]}
@@ -60,7 +60,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
 
     test "a rewrite is what memory holds" do
       hooks = [probe(returns: [on_prompt: {:cont, input("[redacted]")}])]
-      {config, _response} = BaseAgent.run(agent(hooks), input("my ssn is 1"))
+      {config, _response} = BaseAgent.run!(agent(hooks), input("my ssn is 1"))
 
       assert_received {:hook, :p, :on_prompt,
                        [%BaseAgentInputSchema{chat_message: "my ssn is 1"}, _ctx]}
@@ -73,7 +73,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
       agent = agent(hooks, %{input_schema: %QueryInput{}})
 
       assert_raise Normandy.Schema.ValidationError, fn ->
-        BaseAgent.run(agent, %{"query" => "fine"})
+        BaseAgent.run!(agent, %{"query" => "fine"})
       end
 
       refute_received {:converse, _, _}
@@ -83,7 +83,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
       hooks = [probe(returns: [on_prompt: {:cont, %QueryInput{query: nil}}])]
 
       {config, _response} =
-        BaseAgent.run(agent(hooks, %{input_schema: %QueryInput{}}), %{"query" => "q"})
+        BaseAgent.run!(agent(hooks, %{input_schema: %QueryInput{}}), %{"query" => "q"})
 
       assert user_contents(config) == [%QueryInput{query: nil}]
     end
@@ -91,13 +91,13 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     test "a halt raises HookHaltError before memory or the LLM is touched" do
       agent = agent([probe(returns: [on_prompt: {:halt, "off-topic"}])])
 
-      error = assert_raise Normandy.HookHaltError, fn -> BaseAgent.run(agent, input("hi")) end
+      error = assert_raise Normandy.HookHaltError, fn -> BaseAgent.run!(agent, input("hi")) end
       assert %Normandy.HookHaltError{event: :on_prompt, hook: Probe, reason: "off-topic"} = error
       refute_received {:converse, _, _}
     end
 
     test "a nil input runs no on_prompt hook" do
-      BaseAgent.run(agent([probe()]), nil)
+      BaseAgent.run!(agent([probe()]), nil)
       refute_received {:hook, :p, :on_prompt, _}
     end
 
@@ -123,7 +123,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
       name = "hooks-turn-end-#{System.unique_integer([:positive])}"
       TelemetryCapture.attach_span([[:normandy, :agent, :run, :stop]], agent_name: name)
 
-      {config, response} = BaseAgent.run(agent([probe()], %{name: name}), input("hi"))
+      {config, response} = BaseAgent.run!(agent([probe()], %{name: name}), input("hi"))
 
       ordered =
         Enum.filter(
@@ -142,7 +142,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
 
     test "an on_prompt halt reports {:rejected, %HookHaltError{}} with no turn id" do
       agent = agent([probe(returns: [on_prompt: {:halt, "no"}])])
-      catch_error(BaseAgent.run(agent, input("hi")))
+      catch_error(BaseAgent.run!(agent, input("hi")))
 
       assert_received {:hook, :p, :on_turn_end,
                        [
@@ -153,7 +153,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
 
     test "a schema rejection reports {:rejected, %ValidationError{}}" do
       agent = agent([probe()], %{input_schema: %QueryInput{}})
-      catch_error(BaseAgent.run(agent, %{}))
+      catch_error(BaseAgent.run!(agent, %{}))
 
       assert_received {:hook, :p, :on_turn_end,
                        [{:rejected, %Normandy.Schema.ValidationError{}}, _ctx]}
@@ -162,7 +162,9 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     test "a failing run reports {:error, exception} and raises the original error" do
       agent = agent([probe()], %{client: raising_client()})
 
-      assert_raise ArgumentError, "transport blew up", fn -> BaseAgent.run(agent, input("hi")) end
+      assert_raise ArgumentError, "transport blew up", fn ->
+        BaseAgent.run!(agent, input("hi"))
+      end
 
       assert_received {:hook, :p, :on_turn_end,
                        [
@@ -174,22 +176,22 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     @tag :capture_log
     test "a crashing on_turn_end changes neither a result nor a raised error" do
       crashing = [probe(returns: [on_turn_end: {:raise, "audit down"}])]
-      assert {_config, _response} = BaseAgent.run(agent(crashing), input("hi"))
+      assert {_config, _response} = BaseAgent.run!(agent(crashing), input("hi"))
 
       assert_raise ArgumentError, "transport blew up", fn ->
-        BaseAgent.run(agent(crashing, %{client: raising_client()}), input("hi"))
+        BaseAgent.run!(agent(crashing, %{client: raising_client()}), input("hi"))
       end
     end
 
     test "an on_turn_end return value is ignored, on success and on failure" do
       assert {_config, _response} =
-               BaseAgent.run(agent([probe(returns: [on_turn_end: :done])]), input("hi"))
+               BaseAgent.run!(agent([probe(returns: [on_turn_end: :done])]), input("hi"))
 
       failing =
         agent([probe(returns: [on_turn_end: {:error, :audit}])], %{client: raising_client()})
 
       assert_raise ArgumentError, "transport blew up", fn ->
-        BaseAgent.run(failing, input("hi"))
+        BaseAgent.run!(failing, input("hi"))
       end
     end
 

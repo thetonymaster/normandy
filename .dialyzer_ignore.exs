@@ -8,11 +8,6 @@
   # --- Verified-dead defensive clauses (intentional guards Dialyzer proves unreachable
   # --- given current success typings; kept on purpose, so suppressed rather than deleted).
 
-  # a2a/server.ex extract_response_text/1 (lines 148, 158): `response` from BaseAgent.run/2 is
-  # always a struct, so the is_binary clause and the non-map catch-all are unreachable defense.
-  {"lib/normandy/a2a/server.ex", :guard_fail},
-  {"lib/normandy/a2a/server.ex", :pattern_match_cov},
-
   # tools/executor.ex check_result/1: BaseTool.run/1's spec allows only {:ok, _} and
   # {:error, _}, but a third-party tool can return anything; the catch-all turns that into
   # an error result instead of crashing the turn (audit SCHEMA-6).

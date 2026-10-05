@@ -46,7 +46,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
 
   describe "before_llm" do
     test "runs before each LLM call with the call's info" do
-      BaseAgent.run(agent(%Config{hooks: [probe()]}), input("hi"))
+      BaseAgent.run!(agent(%Config{hooks: [probe()]}), input("hi"))
 
       assert [
                {:hook, :p, :before_llm, [%{final: false, iterations_left: left}, _ctx]},
@@ -63,7 +63,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
     test "a halt raises HookHaltError, skips the LLM and reports the halt at turn end" do
       agent = agent(%Config{hooks: [probe(returns: [before_llm: {:halt, "budget spent"}])]})
 
-      error = assert_raise Normandy.HookHaltError, fn -> BaseAgent.run(agent, input("hi")) end
+      error = assert_raise Normandy.HookHaltError, fn -> BaseAgent.run!(agent, input("hi")) end
 
       assert %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget spent"} =
                error
@@ -120,7 +120,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
       memory = seeded_memory()
       [old1, old2, _old3] = AgentMemory.entry_chain(memory)
 
-      BaseAgent.run(agent(keep_two([probe()]), %{memory: memory}), input("now"))
+      BaseAgent.run!(agent(keep_two([probe()]), %{memory: memory}), input("now"))
 
       assert_received {:hook, :p, :after_compact, [dropped, meta, _ctx]}
       assert dropped == [old1, old2]
@@ -132,7 +132,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
       hooks = [probe(returns: [after_compact: {:inject, ["remember: prefers metric"]}])]
 
       {config, _response} =
-        BaseAgent.run(agent(keep_two(hooks), %{memory: seeded_memory()}), input("now"))
+        BaseAgent.run!(agent(keep_two(hooks), %{memory: seeded_memory()}), input("now"))
 
       contents = config.memory |> AgentMemory.messages() |> Enum.map(& &1.content)
 
@@ -152,7 +152,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
         hooks: [probe()]
       }
 
-      BaseAgent.run(agent(behaviours), input("hi"))
+      BaseAgent.run!(agent(behaviours), input("hi"))
       refute_received {:hook, :p, :after_compact, _}
     end
 
@@ -170,7 +170,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
         hooks: [probe()]
       }
 
-      {config, _response} = BaseAgent.run(agent(behaviours, %{memory: memory}), input("now"))
+      {config, _response} = BaseAgent.run!(agent(behaviours, %{memory: memory}), input("now"))
 
       assert_received {:hook, :p, :after_compact, [dropped, _meta, _ctx]}
       dropped_ids = Enum.map(dropped, & &1.id)

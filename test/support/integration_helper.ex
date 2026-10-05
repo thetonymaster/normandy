@@ -147,7 +147,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
   """
   def verify_api_connection do
     agent = create_real_agent()
-    {_updated_agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
+    {_updated_agent, response} = BaseAgent.run!(agent, %{chat_message: "Hello"})
     {:ok, response}
   rescue
     e -> {:error, e}
@@ -214,7 +214,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
   ## Example
 
       {duration, response} = measure_time(fn ->
-        BaseAgent.run(agent, input)
+        BaseAgent.run!(agent, input)
       end)
   """
   def measure_time(fun) do

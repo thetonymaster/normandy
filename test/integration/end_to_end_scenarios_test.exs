@@ -29,7 +29,7 @@ defmodule Normandy.Integration.EndToEndScenariosTest do
 
       inquiry = %{chat_message: "I can't log into my account"}
 
-      {_classifier, classification} = BaseAgent.run(classifier, inquiry)
+      {_classifier, classification} = BaseAgent.run!(classifier, inquiry)
 
       assert is_binary(classification.chat_message)
       # Should classify as technical issue
@@ -58,10 +58,10 @@ defmodule Normandy.Integration.EndToEndScenariosTest do
 
       topic = %{chat_message: "Write about the benefits of exercise"}
 
-      {_generator, draft} = BaseAgent.run(generator, topic)
+      {_generator, draft} = BaseAgent.run!(generator, topic)
       assert is_binary(draft.chat_message)
 
-      {_refiner, final_content} = BaseAgent.run(refiner, draft)
+      {_refiner, final_content} = BaseAgent.run!(refiner, draft)
       assert is_binary(final_content.chat_message)
     end
   end

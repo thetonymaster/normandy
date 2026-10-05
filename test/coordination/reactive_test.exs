@@ -371,8 +371,18 @@ defmodule Normandy.Coordination.ReactiveTest do
       # Map with chat_message
       assert {:ok, _} = Reactive.race(agents, %{chat_message: "map input"})
 
-      # A map without chat_message is rejected by the default input schema
-      assert {:error, :all_failed} = Reactive.race(agents, %{custom: "data"})
+      # A map without chat_message is rejected by the default input schema. race
+      # reports only :all_failed; each agent's ValidationError reaches on_complete.
+      test_pid = self()
+
+      assert {:error, :all_failed} =
+               Reactive.race(agents, %{custom: "data"},
+                 on_complete: fn id, result -> send(test_pid, {:race_done, id, result}) end
+               )
+
+      for id <- ["agent_0", "agent_1"] do
+        assert_receive {:race_done, ^id, {:error, %Normandy.Schema.ValidationError{}}}
+      end
     end
 
     test "all handles different input types" do
@@ -380,7 +390,13 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert {:ok, _} = Reactive.all(agents, "string")
       assert {:ok, _} = Reactive.all(agents, %{chat_message: "msg"})
-      assert {:ok, _} = Reactive.all(agents, %{data: 42})
+      assert {:ok, results} = Reactive.all(agents, %{data: 42})
+      assert map_size(results) == 2
+
+      assert Enum.all?(
+               Map.values(results),
+               &match?({:error, %Normandy.Schema.ValidationError{}}, &1)
+             )
     end
 
     test "some handles different input types" do
@@ -388,7 +404,19 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert {:ok, _} = Reactive.some(agents, "string", count: 1)
       assert {:ok, _} = Reactive.some(agents, %{chat_message: "msg"}, count: 1)
-      assert {:error, _} = Reactive.some(agents, %{data: 42}, count: 1)
+      # some reports only :insufficient_successes; each agent's ValidationError
+      # reaches on_complete.
+      test_pid = self()
+
+      assert {:error, :insufficient_successes} =
+               Reactive.some(agents, %{data: 42},
+                 count: 1,
+                 on_complete: fn id, result -> send(test_pid, {:some_done, id, result}) end
+               )
+
+      for id <- ["agent_0", "agent_1"] do
+        assert_receive {:some_done, ^id, {:error, %Normandy.Schema.ValidationError{}}}
+      end
     end
   end
 end
