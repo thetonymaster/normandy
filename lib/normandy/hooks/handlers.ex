@@ -2,13 +2,15 @@ defmodule Normandy.Hooks.Handlers do
   @moduledoc """
   Wraps a `Normandy.Agents.Turn.Driver.Handlers` set so `before_llm` and `after_compact`
   hooks run whatever handlers a shell was given: BaseAgent's own sets, or the `:handlers`
-  a caller passes to `Turn.Server`. Each shell wraps its set once, and the default sets
-  hold no hook calls, so no hook runs twice. A config with no entry exporting a callback
-  gets its handler back unwrapped.
+  a caller passes to `Turn.Server`. BaseAgent wraps its set once per drive; Turn.Server
+  keeps its set unwrapped and, in `Normandy.Hooks.ServerGlue`, wraps a copy whose
+  `call_llm` or `compact` is a stub, so it can tell a hook's crash from the client's or
+  the compactor's. The default sets hold no hook calls, so no hook runs twice. A config
+  with no entry exporting a callback gets its handler back unwrapped.
 
   `wrap/2` is not idempotent: wrapping a set twice runs each hook twice. A handler set is
-  a `Driver.Handlers` struct with no room for a "wrapped" marker, so wrap exactly once,
-  at the shell that drives the set.
+  a `Driver.Handlers` struct with no room for a "wrapped" marker, so never wrap a set
+  that is already wrapped.
   """
 
   alias Normandy.Agents.Turn.Driver
@@ -16,7 +18,7 @@ defmodule Normandy.Hooks.Handlers do
   alias Normandy.HookHaltError
   alias Normandy.Hooks.Runner
 
-  # Internal to the shells (BaseAgent, Turn.Server); see the moduledoc: wrap once.
+  # Internal to the shells (BaseAgent, Turn.Server); see the moduledoc: never wrap a wrapped set.
   @doc false
   @spec wrap(Driver.Handlers.t(), map() | nil) :: Driver.Handlers.t()
   def wrap(%Driver.Handlers{} = handlers, config) do
