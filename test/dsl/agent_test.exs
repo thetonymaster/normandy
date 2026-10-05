@@ -179,10 +179,10 @@ defmodule Normandy.DSL.AgentTest do
       end
     end
 
-    test "run/3 with stream: true and no :on_chunk raises instead of running non-streaming" do
+    test "run/3 with stream: true raises with a stream/3 hint instead of running non-streaming" do
       {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
-      assert_raise ArgumentError, ~r/stream: true requires :on_chunk/, fn ->
+      assert_raise ArgumentError, ~r/BaseAgent.stream\/3/, fn ->
         TestAgent.run(agent, "hi", stream: true)
       end
     end

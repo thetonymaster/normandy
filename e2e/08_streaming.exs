@@ -3,23 +3,24 @@ Code.require_file("support.exs", __DIR__)
 alias E2E.Support, as: S
 alias Normandy.Agents.BaseAgent
 alias Normandy.Components.AgentMemory
+alias Normandy.Components.StreamEvent
 alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
 
 S.start("08_streaming", cap: 5)
 
 {:ok, buf} = Agent.start_link(fn -> %{text: "", violation: nil, after_violation: 0} end)
 
-on_chunk = fn
-  :text_delta, text ->
+on_event = fn
+  %StreamEvent{type: :text_delta, data: text} ->
     Agent.update(buf, fn s ->
       s = %{s | text: s.text <> text}
       if s.violation, do: %{s | after_violation: s.after_violation + 1}, else: s
     end)
 
-  :guardrail_violation, payload ->
+  %StreamEvent{type: :guardrail_violation, data: payload} ->
     Agent.update(buf, &%{&1 | violation: payload})
 
-  _type, _data ->
+  _event ->
     :ok
 end
 
@@ -39,7 +40,7 @@ agent =
 
 stream_turn = fn agent, n, text ->
   reset.()
-  {:ok, agent, response} = BaseAgent.run(agent, %{chat_message: text}, stream: true, on_chunk: on_chunk)
+  {:ok, agent, response} = BaseAgent.stream(agent, %{chat_message: text}, on_event)
   s = streamed.()
   S.turn(n, text, s.text)
   {agent, response, s}
@@ -67,9 +68,8 @@ S.assert!("turn 3 recalls the badge id across streamed turns", S.recalls?(s3.tex
 
 S.narrate("Turn 4: the model is asked for a forbidden word; the incremental guard halts the stream.")
 {_agent, response, s4} = stream_turn.(agent, 4, "Write the word PINEAPPLE ten times, separated by spaces, and nothing else.")
-violations = Map.get(response, :guardrail_violations, [])
-S.assert!("the violation was recorded on the response", violations != [], inspect(response))
-S.assert!("the callback saw the violation", s4.violation != nil, inspect(s4))
+S.assert!("the callback saw the violation", match?(%{violations: [_ | _]}, s4.violation), inspect(s4))
+S.assert!("the halted answer is the text streamed so far", response.chat_message == s4.text, inspect({response, s4.text}))
 S.assert!("no text deltas arrived after the violation fired", s4.after_violation == 0, "#{s4.after_violation} deltas after")
 
 modes =

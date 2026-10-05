@@ -83,7 +83,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
         |> BaseAgent.init()
         |> BaseAgent.register_tool(%ContextProbe{})
 
-      BaseAgent.stream_with_tools(config, input("go"), fn _, _ -> :ok end)
+      {:ok, _config, _response} = BaseAgent.stream(config, input("go"), fn _ -> :ok end)
 
       # StreamingProbeClient makes two calls: the tool_use round, then the text answer.
       assert_received {:hook, :p, :before_llm, _}
@@ -92,7 +92,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
     end
   end
 
-  test "a before_llm halt on the streaming path raises HookHaltError and fires on_turn_end once" do
+  test "a before_llm halt on the streaming path returns HookHaltError and fires on_turn_end once" do
     config =
       %{
         client: %StreamingProbeClient{},
@@ -103,10 +103,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
       |> BaseAgent.init()
       |> BaseAgent.register_tool(%ContextProbe{})
 
-    error =
-      assert_raise Normandy.HookHaltError, fn ->
-        BaseAgent.stream_with_tools(config, input("go"), fn _, _ -> :ok end)
-      end
+    assert {:error, error} = BaseAgent.stream(config, input("go"), fn _ -> :ok end)
 
     assert %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget spent"} =
              error

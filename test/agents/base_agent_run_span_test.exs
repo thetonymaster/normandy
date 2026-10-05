@@ -2,11 +2,11 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
   @moduledoc """
   Locks in the contract: EXACTLY ONE `[:normandy, :agent, :run]` span is emitted
   per agent invocation, regardless of which public entry point is used
-  (`run/2`, `run/3` streaming, or `run_with_tools/2` directly).
+  (`run/2`, `run!/2` or `stream/3`, with or without tools).
 
   Downstream OTel consumers map this span to the GenAI semantic-convention
-  `gen_ai.operation.name = "invoke_agent"`. A missing span (consumer calls
-  `run_with_tools/2` directly) drops `invoke_agent` from traces; a duplicated
+  `gen_ai.operation.name = "invoke_agent"`. A missing span drops `invoke_agent`
+  from traces; a duplicated
   span (double-wrap) corrupts agent timing. Both failure modes are asserted here.
 
   `:telemetry` handlers are global, so each run gets an agent name no other
@@ -45,7 +45,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
   end
 
-  # Minimal streaming client so `run/3` (stream: true) drives `stream_response`
+  # Minimal streaming client so `stream/3` drives a stream
   # to a clean stop. Event sequence mirrors the proven mock in
   # base_agent_streaming_test.exs.
   defmodule StreamingClient do
@@ -126,7 +126,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     refute_receive {^ref, [:normandy, :agent, :run, :stop]}
   end
 
-  test "run_with_tools/2 called directly emits exactly one agent.run span" do
+  test "run!/2 without tools emits exactly one agent.run span" do
     agent =
       BaseAgent.init(%{
         client: %NormandyTest.Support.ModelMockup{},
@@ -134,7 +134,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         temperature: 0.7
       })
 
-    assert_exactly_one_run_span(agent, &BaseAgent.run_with_tools(&1, "hello"))
+    assert_exactly_one_run_span(agent, &BaseAgent.run!(&1, "hello"))
   end
 
   test "run/2 with a tool registry emits exactly one agent.run span (no double-wrap)" do
@@ -150,7 +150,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     assert_exactly_one_run_span(agent, &BaseAgent.run!(&1, %{chat_message: "hi"}))
   end
 
-  test "run/3 streaming emits exactly one agent.run span" do
+  test "stream/3 emits exactly one agent.run span" do
     agent =
       BaseAgent.init(%{
         client: %StreamingClient{},
@@ -158,26 +158,24 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         temperature: 0.7
       })
 
-    callback = fn _type, _payload -> :ok end
-
     assert_exactly_one_run_span(agent, fn agent ->
-      BaseAgent.run!(agent, %{chat_message: "Hello"}, stream: true, on_chunk: callback)
+      {:ok, _agent, _response} =
+        BaseAgent.stream(agent, %{chat_message: "Hello"}, fn _event -> :ok end)
     end)
   end
 
-  for {fun, name} <- [
-        {:stream_response, "stream_response/3"},
-        {:stream_with_tools, "stream_with_tools/3"}
-      ] do
-    test "#{name} called directly emits exactly one agent.run span" do
-      agent =
-        BaseAgent.init(%{client: %StreamingClient{}, model: "claude-3", temperature: 0.7})
+  test "stream/3 with a tool registry emits exactly one agent.run span" do
+    agent =
+      BaseAgent.init(%{
+        client: %StreamingClient{},
+        model: "claude-3",
+        temperature: 0.7,
+        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+      })
 
-      callback = fn _type, _payload -> :ok end
-
-      assert_exactly_one_run_span(agent, fn agent ->
-        apply(BaseAgent, unquote(fun), [agent, %{chat_message: "Hello"}, callback])
-      end)
-    end
+    assert_exactly_one_run_span(agent, fn agent ->
+      {:ok, _agent, _response} =
+        BaseAgent.stream(agent, %{chat_message: "Hello"}, fn _event -> :ok end)
+    end)
   end
 end

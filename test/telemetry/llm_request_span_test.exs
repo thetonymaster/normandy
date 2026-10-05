@@ -400,11 +400,12 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
             |> Plug.Conn.send_resp(200, sse(@stream_events))
         end)
 
-      BaseAgent.stream_response(
-        agent(client, %{retry_options: [max_attempts: 2, base_delay: 1, jitter: false]}),
-        "hello",
-        fn _, _ -> :ok end
-      )
+      {:ok, _config, _response} =
+        BaseAgent.stream(
+          agent(client, %{retry_options: [max_attempts: 2, base_delay: 1, jitter: false]}),
+          "hello",
+          fn _ -> :ok end
+        )
 
       assert [
                {:start,

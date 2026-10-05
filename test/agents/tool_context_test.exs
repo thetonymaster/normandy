@@ -27,7 +27,7 @@ defmodule Normandy.Agents.ToolContextTest do
   test "a BaseAgent turn hands the contextual tool the session's context" do
     config = agent(%{tool_context: %{memory_namespace: "acme/u-1"}})
 
-    {_config, _response} = BaseAgent.run_with_tools(config, %{chat_message: "go"})
+    {_config, _response} = BaseAgent.run!(config, %{chat_message: "go"})
 
     assert_receive {:probe_ctx,
                     %Context{
@@ -43,8 +43,8 @@ defmodule Normandy.Agents.ToolContextTest do
     config =
       agent(%{client: %StreamingProbeClient{}, tool_context: %{memory_namespace: "acme/stream"}})
 
-    {_config, _response} =
-      BaseAgent.stream_with_tools(config, %{chat_message: "go"}, fn _, _ -> :ok end)
+    {:ok, _config, _response} =
+      BaseAgent.stream(config, %{chat_message: "go"}, fn _ -> :ok end)
 
     assert_receive {:probe_ctx,
                     %Context{tool_call_id: "call_1", values: %{memory_namespace: "acme/stream"}}}

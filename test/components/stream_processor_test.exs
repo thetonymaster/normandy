@@ -215,87 +215,6 @@ defmodule Normandy.Components.StreamProcessorTest do
     end
   end
 
-  describe "process_with_callback/2" do
-    test "invokes callback for text deltas" do
-      events = [
-        %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "Hello"}},
-        %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => " world"}}
-      ]
-
-      callback = fn
-        :text_delta, text -> send(self(), {:text, text})
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:text, "Hello"}
-      assert_received {:text, " world"}
-    end
-
-    test "invokes callback for tool use start" do
-      events = [
-        %{
-          type: "content_block_start",
-          content_block: %{"type" => "tool_use", "name" => "calculator"}
-        }
-      ]
-
-      callback = fn
-        :tool_use_start, tool -> send(self(), {:tool, tool["name"]})
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:tool, "calculator"}
-    end
-
-    test "invokes callback for message lifecycle" do
-      events = [
-        %{type: "message_start", message: %{"id" => "msg_123"}},
-        %{type: "message_stop"}
-      ]
-
-      callback = fn
-        :message_start, msg -> send(self(), {:start, msg["id"]})
-        :message_stop, _ -> send(self(), :stop)
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:start, "msg_123"}
-      assert_received :stop
-    end
-
-    test "returns final accumulated message" do
-      events = [
-        %{
-          type: "message_start",
-          message: %{"id" => "msg_123", "model" => "claude-3", "role" => "assistant"}
-        },
-        %{
-          type: "content_block_start",
-          content_block: %{"type" => "text", "text" => ""},
-          index: 0
-        },
-        %{
-          type: "content_block_delta",
-          delta: %{"type" => "text_delta", "text" => "Hello"},
-          index: 0
-        }
-      ]
-
-      callback = fn _, _ -> :ok end
-
-      {:ok, result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert result.id == "msg_123"
-      assert length(result.content) == 1
-    end
-  end
-
   describe "stream_error/1" do
     @complete [
       %{type: "message_start", message: %{"id" => "m"}},
@@ -410,44 +329,6 @@ defmodule Normandy.Components.StreamProcessorTest do
                ]
              } =
                StreamProcessor.build_final_message(events)
-    end
-  end
-
-  describe "process_with_callback/2 failures" do
-    @events [
-      %{type: "message_start", message: %{}},
-      %{type: "content_block_start", content_block: %{"type" => "text", "text" => ""}, index: 0},
-      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "a"}, index: 0},
-      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "b"}, index: 0},
-      %{type: "message_stop"}
-    ]
-
-    test "a callback returning {:error, reason} stops processing and returns it" do
-      parent = self()
-
-      callback = fn
-        :text_delta, text ->
-          send(parent, {:delta, text})
-          {:error, :stop_here}
-
-        _, _ ->
-          :ok
-      end
-
-      assert {:error, :stop_here} = StreamProcessor.process_with_callback(@events, callback)
-      assert_received {:delta, "a"}
-      refute_received {:delta, "b"}
-    end
-
-    test "a callback that raises is not turned into {:error, exception}" do
-      callback = fn
-        :text_delta, _ -> raise "callback bug"
-        _, _ -> :ok
-      end
-
-      assert_raise RuntimeError, "callback bug", fn ->
-        StreamProcessor.process_with_callback(@events, callback)
-      end
     end
   end
 end

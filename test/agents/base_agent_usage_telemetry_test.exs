@@ -140,7 +140,7 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
       )
 
     {metadata, _log} =
-      run_and_capture_stop(client, &BaseAgent.stream_response(&1, "hello", fn _, _ -> :ok end))
+      run_and_capture_stop(client, &BaseAgent.stream(&1, "hello", fn _ -> :ok end))
 
     assert metadata.usage["input_tokens"] == 10
     assert metadata.usage["output_tokens"] == 7

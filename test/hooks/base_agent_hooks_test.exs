@@ -112,7 +112,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
         |> BaseAgent.init()
         |> BaseAgent.register_tool(%ContextProbe{})
 
-      BaseAgent.stream_with_tools(config, input("go"), fn _, _ -> :ok end)
+      {:ok, _config, _response} = BaseAgent.stream(config, input("go"), fn _ -> :ok end)
 
       assert_received {:hook, :p, :on_prompt, [%BaseAgentInputSchema{chat_message: "go"}, _ctx]}
     end
@@ -219,7 +219,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
         |> BaseAgent.init()
         |> BaseAgent.register_tool(%ContextProbe{})
 
-      {_config, _response} = BaseAgent.stream_with_tools(config, input("go"), fn _, _ -> :ok end)
+      {:ok, _config, _response} = BaseAgent.stream(config, input("go"), fn _ -> :ok end)
 
       assert_received {:hook, :p, :on_turn_end, [{:ok, _}, _ctx]}
       refute_received {:hook, :p, :on_turn_end, _}

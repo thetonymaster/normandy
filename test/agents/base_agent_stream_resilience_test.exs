@@ -66,7 +66,7 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
     {BaseAgent.init(Map.merge(%{client: client, model: "claude-opus-5-5"}, config)), attempts}
   end
 
-  defp stream(agent), do: BaseAgent.stream_response(agent, "hi", fn _, _ -> :ok end)
+  defp stream(agent), do: BaseAgent.stream(agent, "hi", fn _event -> :ok end)
   defp attempts(counter), do: Agent.get(counter, & &1)
 
   @retry %{retry_options: [max_attempts: 3, base_delay: 1, max_delay: 2, jitter: false]}
@@ -74,14 +74,14 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
   test "a stream that fails before any event is retried under retry_options" do
     {agent, counter} = agent([fail_times: 2], @retry)
 
-    assert {_config, _response} = stream(agent)
+    assert {:ok, _config, _response} = stream(agent)
     assert attempts(counter) == 3
   end
 
   test "a stream that fails after an event reached the callback is not retried" do
     {agent, counter} = agent([fail_times: 1, deliver_before_fail: true], @retry)
 
-    assert_raise LLMError, fn -> stream(agent) end
+    assert {:error, %LLMError{type: :overloaded}} = stream(agent)
     assert attempts(counter) == 1
   end
 
@@ -92,10 +92,9 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
         circuit_breaker_options: [failure_threshold: 1, timeout: 60_000]
       })
 
-    assert_raise LLMError, fn -> stream(agent) end
+    assert {:error, %LLMError{}} = stream(agent)
 
-    error = assert_raise LLMError, fn -> stream(agent) end
-    assert error.type == :circuit_open
+    assert {:error, %LLMError{type: :circuit_open}} = stream(agent)
     assert attempts(counter) == 1
   end
 end

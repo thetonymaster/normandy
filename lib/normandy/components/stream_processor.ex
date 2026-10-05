@@ -6,7 +6,6 @@ defmodule Normandy.Components.StreamProcessor do
   handle text deltas, and build final responses from event streams.
   """
 
-  alias Normandy.Components.StreamEvent
   alias Normandy.LLMError
 
   @doc """
@@ -41,7 +40,6 @@ defmodule Normandy.Components.StreamProcessor do
   defp error_event_detail(_error), do: "error event in stream"
 
   defp message_stop?(%{type: "message_stop"}), do: true
-  defp message_stop?(%StreamEvent{type: :message_stop}), do: true
   defp message_stop?(_event), do: false
 
   defp stream_failure(detail, reason),
@@ -78,55 +76,18 @@ defmodule Normandy.Components.StreamProcessor do
       events = Enum.to_list(stream)
       final_message = StreamProcessor.build_final_message(events)
   """
-  @spec build_final_message([StreamEvent.t() | map()]) :: map()
+  @spec build_final_message([map()]) :: map()
   def build_final_message(events) when is_list(events) do
     Enum.reduce(events, %{content: [], usage: %{}, stop_reason: nil}, fn event, acc ->
       process_event(event, acc)
     end)
   end
 
-  @doc """
-  Invokes a callback for each event type.
-
-  Callbacks receive `(event_type, data)` and return `:ok` (any other value but
-  `{:error, reason}` is treated the same). `{:error, reason}` stops processing
-  and is returned. A callback that raises is not caught.
-
-  ## Example
-
-      callback = fn
-        :text_delta, text -> IO.write(text)
-        :tool_use, tool -> IO.puts("Tool: \#{tool.name}")
-        _, _ -> :ok
-      end
-
-      StreamProcessor.process_with_callback(stream, callback)
-  """
-  @spec process_with_callback(Enumerable.t(), function()) :: {:ok, map()} | {:error, term()}
-  def process_with_callback(event_stream, callback) when is_function(callback, 2) do
-    result =
-      Enum.reduce_while(event_stream, [], fn event, events ->
-        case invoke_callback(event, callback) do
-          {:error, _reason} = error -> {:halt, error}
-          _ok -> {:cont, [event | events]}
-        end
-      end)
-
-    case result do
-      {:error, _reason} = error -> error
-      events -> {:ok, events |> Enum.reverse() |> build_final_message()}
-    end
-  end
-
   # Private functions
-
-  defp text_delta?(%StreamEvent{type: :content_block_delta, delta: %{"type" => "text_delta"}}),
-    do: true
 
   defp text_delta?(%{type: "content_block_delta", delta: %{"type" => "text_delta"}}), do: true
   defp text_delta?(_), do: false
 
-  defp extract_text_delta(%StreamEvent{delta: %{"text" => text}}), do: text
   defp extract_text_delta(%{delta: %{"text" => text}}), do: text
   defp extract_text_delta(_), do: nil
 
@@ -258,46 +219,4 @@ defmodule Normandy.Components.StreamProcessor do
   end
 
   defp maybe_update_usage(acc, _usage), do: acc
-
-  defp invoke_callback(
-         %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}},
-         callback
-       ) do
-    callback.(:text_delta, text)
-  end
-
-  defp invoke_callback(
-         %{type: "content_block_start", content_block: %{"type" => "tool_use"} = tool},
-         callback
-       ) do
-    callback.(:tool_use_start, tool)
-  end
-
-  defp invoke_callback(
-         %{type: "content_block_delta", delta: %{"type" => "thinking_delta", "thinking" => text}},
-         callback
-       ) do
-    callback.(:thinking_delta, text)
-  end
-
-  defp invoke_callback(%{type: "message_start", message: message}, callback) do
-    callback.(:message_start, message)
-  end
-
-  defp invoke_callback(%{type: "message_stop"}, callback) do
-    callback.(:message_stop, %{})
-  end
-
-  # Routes synthetic guardrail_violation events through the callback.
-  # Expected event shape: `%{type: "guardrail_violation", stage: :output,
-  # mode: :accumulate | :incremental, violations: [...]}`. The callback
-  # receives `{:guardrail_violation, %{stage:, mode:, violations:}}` with
-  # `:type` stripped. BaseAgent's streaming guardrail paths currently fire
-  # the callback directly; this clause exists for callers that route a
-  # synthetic event list through `process_with_callback/2`.
-  defp invoke_callback(%{type: "guardrail_violation"} = event, callback) do
-    callback.(:guardrail_violation, Map.delete(event, :type))
-  end
-
-  defp invoke_callback(_, _callback), do: :ok
 end

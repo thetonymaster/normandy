@@ -291,7 +291,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
       end)
     end
 
-    defp stream_it(agent), do: BaseAgent.stream_response(agent, "hello", fn _, _ -> :ok end)
+    defp stream_it(agent), do: BaseAgent.stream(agent, "hello", fn _event -> :ok end)
 
     test "start metadata carries the request facts with stream true" do
       client = stream_client(__MODULE__.S1, %{effort: :low})

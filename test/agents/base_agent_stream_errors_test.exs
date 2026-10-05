@@ -4,6 +4,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.StreamEvent
   alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
   alias Normandy.LLMError
 
@@ -43,8 +44,14 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     )
   end
 
-  defp stream(agent),
-    do: BaseAgent.stream_response(agent, %{chat_message: "hi"}, fn _, _ -> :ok end)
+  defp stream(agent, callback \\ fn _event -> :ok end),
+    do: BaseAgent.stream(agent, %{chat_message: "hi"}, callback)
+
+  # The LLMError stream/3 returns for a failed stream.
+  defp error_of(agent) do
+    assert {:error, %LLMError{} = error} = stream(agent)
+    error
+  end
 
   @incremental %{
     output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
@@ -52,21 +59,14 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     output_guardrails_chunk_size: 5
   }
 
-  test "a mid-stream error event raises" do
+  test "a mid-stream error event is an LLMError" do
     agent = agent([start(), block(), delta("Hel"), error_event()])
 
-    assert_raise LLMError, "LLM call failed: stream: Overloaded", fn -> stream(agent) end
+    assert Exception.message(error_of(agent)) == "LLM call failed: stream: Overloaded"
   end
 
   defp usage_start(usage),
     do: %{type: "message_start", message: %{"id" => "m", "role" => "assistant", "usage" => usage}}
-
-  defp reason_of(fun) do
-    fun.()
-    flunk("expected an LLMError")
-  rescue
-    e in LLMError -> e
-  end
 
   test "a stream that errors after message_start carries its usage on the error" do
     events = [
@@ -76,7 +76,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
       error_event()
     ]
 
-    e = reason_of(fn -> stream(agent(events)) end)
+    e = error_of(agent(events))
     assert e.usage_counts == %{input_tokens: 12}
   end
 
@@ -88,7 +88,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
       error_event()
     ]
 
-    e = reason_of(fn -> stream(agent(events, @incremental)) end)
+    e = error_of(agent(events, @incremental))
     assert e.usage_counts == %{input_tokens: 12}
   end
 
@@ -118,7 +118,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     on_exit(fn -> :telemetry.detach(id) end)
 
     agent = agent([start(), block(), delta("Hel"), error_event()])
-    assert_raise LLMError, fn -> stream(agent) end
+    error_of(agent)
 
     assert_received {:llm_call_event, [:normandy, :agent, :llm_call, :exception]}
     refute_received {:llm_call_event, [:normandy, :agent, :llm_call, :stop]}
@@ -149,7 +149,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
     log =
       ExUnit.CaptureLog.capture_log([metadata: [:reason]], fn ->
-        assert_raise LLMError, fn -> stream(agent) end
+        error_of(agent)
       end)
 
     assert_received {:exception_metadata, metadata}
@@ -158,20 +158,19 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     refute log =~ "sk-fv1-secret"
   end
 
-  test "an {:error, _} item in the stream raises" do
+  test "an {:error, _} item in the stream is an LLMError" do
     agent = agent([start(), block(), delta("Hel"), {:error, :closed}])
 
-    assert %LLMError{type: :stream, reason: :closed} =
-             assert_raise(LLMError, fn -> stream(agent) end)
+    assert %LLMError{type: :stream, reason: :closed} = error_of(agent)
   end
 
-  test "a stream that ends without message_stop raises" do
+  test "a stream that ends without message_stop is an LLMError" do
     agent = agent([start(), block(), delta("Hel")])
 
-    assert_raise LLMError, ~r/stream ended before message_stop/, fn -> stream(agent) end
+    assert Exception.message(error_of(agent)) =~ "stream ended before message_stop"
   end
 
-  test "a connection-time error raises it" do
+  test "a connection-time error is returned as is" do
     e = LLMError.new(type: :rate_limit, status: 429, retryable?: true)
 
     agent =
@@ -181,20 +180,19 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
         temperature: nil
       })
 
-    assert ^e = assert_raise(LLMError, fn -> stream(agent) end)
+    assert {:error, ^e} = stream(agent)
   end
 
-  test "incremental guardrails: a mid-stream error event raises (not a guardrail halt)" do
+  test "incremental guardrails: a mid-stream error event is an LLMError (not a guardrail halt)" do
     agent = agent([start(), block(), delta("Hello there"), error_event()], @incremental)
 
-    assert_raise LLMError, ~r/Overloaded/, fn -> stream(agent) end
+    assert Exception.message(error_of(agent)) =~ "Overloaded"
   end
 
-  test "incremental guardrails: an {:error, _} item raises" do
+  test "incremental guardrails: an {:error, _} item is an LLMError" do
     agent = agent([start(), block(), delta("Hello there"), {:error, :closed}], @incremental)
 
-    assert %LLMError{type: :stream, reason: :closed} =
-             assert_raise(LLMError, fn -> stream(agent) end)
+    assert %LLMError{type: :stream, reason: :closed} = error_of(agent)
   end
 
   test "incremental guardrails: a tail-check violation does not mask a stream error" do
@@ -202,14 +200,24 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     config = Map.put(config, :output_guardrails_chunk_size, 100)
     agent = agent([start(), block(), delta("badwd"), error_event()], config)
 
-    assert_raise LLMError, ~r/Overloaded/, fn -> stream(agent) end
+    assert Exception.message(error_of(agent)) =~ "Overloaded"
   end
 
   test "incremental guardrails: a violation halt is not an error" do
     agent =
       agent([start(), block(), delta("this has a badword in it"), delta(" more")], @incremental)
 
-    {_agent, response} = stream(agent)
-    assert response.guardrail_violations != []
+    test_pid = self()
+
+    assert {:ok, _agent, _response} =
+             stream(agent, fn
+               %StreamEvent{type: :guardrail_violation, data: data} ->
+                 send(test_pid, {:violation, data})
+
+               _event ->
+                 :ok
+             end)
+
+    assert_received {:violation, %{mode: :incremental, violations: [_ | _]}}
   end
 end

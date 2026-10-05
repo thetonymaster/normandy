@@ -90,7 +90,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
   end
 
-  describe "BaseAgent.run_with_tools/2" do
+  describe "BaseAgent.run!/2 with tools" do
     setup do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       registry = Registry.new([calc])
@@ -109,7 +109,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
     test "executes tool and returns final response", %{agent: agent} do
       user_input = %{chat_message: "What is 5 + 3?"}
-      {updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       # Should return the final output schema (BaseAgentOutputSchema)
       assert %BaseAgentOutputSchema{} = response
@@ -136,7 +136,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
       user_input = %{chat_message: "Calculate something"}
 
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       assert response != nil
     end
@@ -211,10 +211,10 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
       user_input = %{chat_message: "First message"}
 
-      {agent, _response} = BaseAgent.run_with_tools(agent, user_input)
+      {agent, _response} = BaseAgent.run!(agent, user_input)
 
       # Now run without user input
-      {updated_agent, response} = BaseAgent.run_with_tools(agent, nil)
+      {updated_agent, response} = BaseAgent.run!(agent, nil)
 
       assert response != nil
       assert updated_agent.memory != nil
@@ -255,7 +255,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       user_input = %{chat_message: "Test error"}
 
       # Should not crash, should handle error
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       assert response != nil
       assert response.chat_message == "Handled error"
@@ -374,7 +374,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
       user_input = %{chat_message: "trigger hostile tool call"}
 
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
       assert response != nil
 
       # If the legacy `String.to_atom/1` reducer had still been in place,
@@ -490,7 +490,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
 
       {elapsed_us, {_agent, response}} =
-        :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{chat_message: "fan out"}) end)
+        :timer.tc(fn -> BaseAgent.run!(agent, %{chat_message: "fan out"}) end)
 
       {elapsed_us, response, SleepyProbe.max_observed()}
     end
@@ -542,7 +542,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      {agent, _response} = BaseAgent.run_with_tools(agent, %{chat_message: "fan out"})
+      {agent, _response} = BaseAgent.run!(agent, %{chat_message: "fan out"})
 
       # AgentMemory.messages/1 returns the conversation chronological.
       tool_msgs =

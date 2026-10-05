@@ -23,6 +23,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Components.StreamEvent
   alias Normandy.Components.StreamProcessor
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.ToolCall
@@ -447,17 +448,12 @@ defmodule Normandy.Agents.BaseAgent do
   turn is lost: keep using the config you passed in.
 
   `user_input` may be `nil` to continue the conversation without a new user message.
-
-  Accepts `opts`:
-  - `:stream` - Boolean, enables streaming mode
-  - `:on_chunk` - Callback function for streaming chunks (required with `stream: true`)
+  `run/3` takes no options yet: any option raises `ArgumentError`. To stream, use
+  `stream/3`.
 
   ## Example
 
       {:ok, agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
-
-      {:ok, agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: &IO.write/1)
   """
   @spec run(BaseAgentConfig.t(), term(), keyword()) ::
           {:ok, BaseAgentConfig.t(), term()} | {:error, Exception.t()}
@@ -465,7 +461,7 @@ defmodule Normandy.Agents.BaseAgent do
     {config, output} = run!(config, user_input, opts)
     {:ok, config, output}
   rescue
-    e -> if TurnError.domain?(e), do: {:error, e}, else: reraise(e, __STACKTRACE__)
+    e -> domain_error(e, __STACKTRACE__)
   end
 
   @doc """
@@ -473,99 +469,75 @@ defmodule Normandy.Agents.BaseAgent do
   return.
   """
   @spec run!(BaseAgentConfig.t(), term(), keyword()) :: {BaseAgentConfig.t(), term()}
-  def run!(config, user_input \\ nil, opts \\ [])
-
-  def run!(%BaseAgentConfig{tool_registry: tool_registry} = config, user_input, []) do
+  def run!(%BaseAgentConfig{} = config, user_input \\ nil, opts \\ []) when is_list(opts) do
+    check_run_opts!(opts)
     metadata = Metadata.run(config)
 
-    with_agent_run_span(config, metadata, fn ->
-      result =
-        if tool_registry != nil && Registry.count(tool_registry) > 0 do
-          # Call the private run_turn/2 directly, NOT the public run_with_tools/2:
-          # run_with_tools/2 now opens its own agent.run span, so routing through
-          # it here would double-wrap and emit two nested agent.run spans.
-          run_turn(config, user_input)
-        else
-          # No tools registered, use simple response
-          run_without_tools(config, user_input)
-        end
-
-      {result, metadata}
-    end)
-  end
-
-  # Matches the config too: with no stream this clause calls run!/3 with [], and a
-  # non-config must fail with FunctionClauseError here, not re-enter it forever.
-  def run!(%BaseAgentConfig{} = config, user_input, opts) when is_list(opts) do
-    stream = Keyword.get(opts, :stream, false)
-    on_chunk = Keyword.get(opts, :on_chunk)
-
-    if stream and on_chunk do
-      metadata = Metadata.run(config)
-
-      # Convert arity-1 callback to arity-2 if needed
-      callback =
-        if is_function(on_chunk, 1) do
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          fn
-            :text_delta, text -> on_chunk.(text)
-            _, _ -> :ok
-          end
-        else
-          on_chunk
-        end
-
-      # stream_with_tools/3 and stream_response/3 are both run_stream_turn/3 (the
-      # tool loop is the FSM's), and each opens its own run span, so call the
-      # private turn here to keep a single span.
-      with_agent_run_span(config, metadata, fn ->
-        {run_stream_turn(config, user_input, callback), metadata}
-      end)
-    else
-      if stream do
-        raise ArgumentError,
-              "BaseAgent.run/3: stream: true requires :on_chunk (a 1- or 2-arity callback)"
-      end
-
-      run!(config, user_input, [])
-    end
-  end
-
-  # Private function for simple runs without tool support.
-  # Delegates to the Turn FSM production interpreter (Phase 1c).
-  defp run_without_tools(config, user_input) do
-    run_turn(config, user_input)
-  end
-
-  @doc """
-  Run the agent with tool calling support.
-
-  This method handles the full tool execution loop:
-  1. Send user input to LLM
-  2. If LLM requests tool calls, execute them
-  3. Send tool results back to LLM
-  4. Repeat until LLM provides final response or max iterations reached
-
-  ## Parameters
-    - config: Agent configuration
-    - user_input: Optional user input to start the conversation
-
-  ## Returns
-    Tuple of {updated_config, final_response}
-
-  ## Examples
-
-      iex> {config, response} = BaseAgent.run_with_tools(agent, user_input)
-
-  """
-  @spec run_with_tools(BaseAgentConfig.t(), struct() | nil) ::
-          {BaseAgentConfig.t(), struct()}
-  def run_with_tools(config, user_input \\ nil) do
-    metadata = Metadata.run(config)
-
+    # run_turn/2 runs the tool loop when the agent has tools (turn_response_model/1).
     with_agent_run_span(config, metadata, fn ->
       {run_turn(config, user_input), metadata}
     end)
+  end
+
+  # run/3 takes no options yet (Wave 3 adds them with NimbleOptions).
+  defp check_run_opts!([]), do: :ok
+
+  defp check_run_opts!(opts) do
+    keys = Keyword.keys(opts)
+
+    hint =
+      if Enum.any?(keys, &(&1 in [:stream, :on_chunk])),
+        do: " Streaming moved to BaseAgent.stream/3.",
+        else: ""
+
+    raise ArgumentError,
+          "BaseAgent.run/3: unknown options #{inspect(keys)}; run/3 takes no options.#{hint}"
+  end
+
+  @doc """
+  Runs one turn like `run/3`, streaming the model's output to `callback` as it arrives.
+
+  `callback` receives a `Normandy.Components.StreamEvent` per event (text and thinking
+  deltas, tool calls and results, guardrail reports). The return value is `run/3`'s:
+  `{:ok, config, output}` with the answer converted to the output schema, or
+  `{:error, exception}`. A client that can't stream gives
+  `{:error, %Normandy.LLMError{type: :unsupported}}`.
+
+  `retry_options` and the circuit breaker apply, but a stream is retried only until its
+  first event reaches the callback, so no output is shown twice. Output guardrails
+  report (`:guardrail_violation` event, telemetry) and don't block: the text was already
+  delivered; with `output_guardrails_streaming_mode: :incremental` a violation stops
+  the stream at the next chunk boundary.
+
+  ## Example
+
+      {:ok, agent, response} =
+        BaseAgent.stream(agent, "Explain OTP", fn
+          %StreamEvent{type: :text_delta, data: text} -> IO.write(text)
+          _event -> :ok
+        end)
+  """
+  @spec stream(BaseAgentConfig.t(), term(), (StreamEvent.t() -> any())) ::
+          {:ok, BaseAgentConfig.t(), term()} | {:error, Exception.t()}
+  def stream(%BaseAgentConfig{} = config, user_input, callback) when is_function(callback, 1) do
+    metadata = Metadata.run(config)
+
+    {config, output} =
+      with_agent_run_span(config, metadata, fn ->
+        {run_stream_turn(config, user_input, callback), metadata}
+      end)
+
+    {:ok, config, output}
+  rescue
+    e -> domain_error(e, __STACKTRACE__)
+  end
+
+  # run/3 and stream/3 return Normandy's own failures (TurnError.domain?/1) and raise
+  # everything else unchanged.
+  defp domain_error(exception, stacktrace) do
+    if TurnError.domain?(exception),
+      do: {:error, exception},
+      else: reraise(exception, stacktrace)
   end
 
   @doc false
@@ -1034,19 +1006,21 @@ defmodule Normandy.Agents.BaseAgent do
 
   # ── End Turn FSM production interpreter ──────────────────────────────────────
 
-  # Streaming analog of run_turn/2. Admission (input guardrails + memory init,
-  # NO schema validation — streaming parity) before Turn.step(:start), then drive
-  # the FSM with the streaming handler set. Returns {config, final_response}; the
-  # synthetic :tool_calls key (added so the FSM could branch) and the :prefix_key
-  # stamp are stripped from the returned response. A thrown stream error is raised
-  # as a Normandy.LLMError.
-  defp run_stream_turn(config, user_input, callback) when is_function(callback, 2) do
-    config = admit_stream_turn_input(config, user_input)
+  # A streamed answer is the accumulated message map, never the output schema, so the
+  # core always converts it (Turn.convert_needed?/1).
+  @streamed_message :streamed_message
+
+  # Streaming analog of run_turn/2: the same admission, then the FSM driven with the
+  # streaming handler set. Returns {config, output}, the output converted to the output
+  # schema (streaming_handlers/2). A thrown stream error is raised as a
+  # Normandy.LLMError.
+  defp run_stream_turn(config, user_input, callback) when is_function(callback, 1) do
+    config = admit_turn_input(config, user_input)
 
     state =
       Turn.new(
         max_iterations: config.max_tool_iterations,
-        response_model: turn_response_model(config),
+        response_model: @streamed_message,
         output_schema: config.output_schema
       )
 
@@ -1054,31 +1028,34 @@ defmodule Normandy.Agents.BaseAgent do
       {config, final_state} =
         Driver.drive(state, HookHandlers.wrap(streaming_handlers(callback), config), config)
 
-      {config, Map.drop(final_state.final_response, [:tool_calls, :prefix_key])}
+      {config, final_state.final_response}
     catch
       {:stream_turn_error, error} ->
         raise LLMError.wrap(error)
     end
   end
 
-  # Streaming admits input exactly as run/2 does: on_prompt hooks (with the rewrite
-  # re-validated), input guardrails, then the memory turn.
-  defp admit_stream_turn_input(config, user_input), do: admit_turn_input(config, user_input)
-
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
 
   @doc false
+  # The forced-final call (max_tool_iterations reached) skips the core's convert step,
+  # because a non-streaming call asks the model for the output schema itself. A
+  # streamed answer is always a message map, so that call converts it here.
   def streaming_handlers(callback) do
     %Driver.Handlers{
-      call_llm: fn config, state, _request -> call_stream_llm(config, state, callback) end,
+      call_llm: fn
+        config, state, %{final: true} ->
+          message = call_stream_llm(config, state, callback)
+          stream_output(config, message, config.output_schema, callback)
+
+        config, state, _request ->
+          call_stream_llm(config, state, callback)
+      end,
       dispatch_tools: fn config, calls -> dispatch_stream_tools(config, calls, callback) end,
-      convert: fn _config, raw, _output_schema -> raw end,
-      # Output guardrails run in the `validate` slot, NOT `guard`: the driver
-      # threads `validate`'s return value forward (so the :guardrail_violations
-      # tag that run_streaming_output_guardrails attaches survives onto the
-      # returned response), but DISCARDS `guard`'s return. Do not swap these —
-      # moving guardrails to `guard` would silently drop the violations tag.
-      validate: fn config, value -> run_streaming_output_guardrails(config, value, callback) end,
+      convert: fn config, message, output_schema ->
+        stream_output(config, message, output_schema, callback)
+      end,
+      validate: &validate_turn_output/2,
       guard: fn _config, _value -> :ok end,
       append: fn config, role, content -> append_stream_message(config, role, content) end,
       compact: &compact_turn_memory/3,
@@ -1086,9 +1063,30 @@ defmodule Normandy.Agents.BaseAgent do
     }
   end
 
+  # Accumulate-mode output guardrails run on the streamed text before it is converted;
+  # they report, they don't block (the text already reached the caller).
+  defp stream_output(config, message, output_schema, callback) do
+    run_streaming_output_guardrails(config, message, callback)
+    convert_stream_output(config, message, output_schema)
+  end
+
+  # The streamed message as the output schema, the way the non-streaming path returns
+  # it: a :chat_message schema gets the text; any other schema parses the text as JSON
+  # (the system prompt carried the schema, see build_stream_request/1) under the same
+  # :on_parse_failure policy (parse_text_output!/3). With no output schema, the message
+  # comes back without the keys the FSM and memory needed (:tool_calls, :prefix_key).
+  defp convert_stream_output(_config, message, nil),
+    do: Map.drop(message, [:tool_calls, :prefix_key])
+
+  defp convert_stream_output(_config, message, %{chat_message: _} = schema),
+    do: Map.put(schema, :chat_message, unwrap_llm_content(extract_streaming_text(message)))
+
+  defp convert_stream_output(config, message, %{__struct__: _} = schema),
+    do: parse_text_output!(config, extract_streaming_text(message), schema)
+
   # Streams one LLM call to a final message, augmenting it with a :tool_calls key
   # so the pure FSM (which branches on .tool_calls) can dispatch. Tool calls are
-  # stripped for no-tools agents (parity: stream_response never executed tools),
+  # stripped for no-tools agents (parity: a no-tools stream never executes tools),
   # mirroring call_turn_llm's no-tools strip. A stream failure is thrown past the
   # driver (from inside the llm_call span, so the span emits :exception) and
   # caught in run_stream_turn/3, which raises the wrapped LLMError.
@@ -1129,7 +1127,7 @@ defmodule Normandy.Agents.BaseAgent do
     {callback, first_chunk} = track_first_chunk(callback)
     tracker = request_tracker(config)
 
-    case stream_response_from_llm(config, request, callback, first_chunk, tracker) do
+    case stream_from_llm(config, request, callback, first_chunk, tracker) do
       {:ok, final_message} ->
         # The prefix this response was produced under, stamped when it is appended.
         final_message = Map.put(final_message, :prefix_key, prefix_key)
@@ -1188,28 +1186,23 @@ defmodule Normandy.Agents.BaseAgent do
   # Returns the wrapped callback and a tracker: an atomics array whose slot 1 holds
   # the elapsed native time + 1 (0 = not seen) and slot 2 the start of the current
   # attempt, which mark_attempt_start/1 resets so retry backoff is not counted.
-  defp track_first_chunk(callback) when is_function(callback, 2) do
+  defp track_first_chunk(callback) when is_function(callback, 1) do
     tracker = :atomics.new(2, [])
     mark_attempt_start(tracker)
 
-    wrapped = fn event, data ->
-      if event in [:text_delta, :thinking_delta, :tool_use_start] and
+    wrapped = fn %StreamEvent{type: type} = event ->
+      if type in [:text_delta, :thinking_delta, :tool_use_start] and
            :atomics.get(tracker, 1) == 0 do
         :atomics.put(tracker, 1, System.monotonic_time() - :atomics.get(tracker, 2) + 1)
       end
 
-      callback.(event, data)
+      callback.(event)
     end
 
     {wrapped, tracker}
   end
 
-  defp track_first_chunk(callback), do: {callback, nil}
-
-  defp mark_attempt_start(nil), do: :ok
   defp mark_attempt_start(tracker), do: :atomics.put(tracker, 2, System.monotonic_time())
-
-  defp first_chunk_meta(nil), do: %{}
 
   defp first_chunk_meta(tracker) do
     case :atomics.get(tracker, 1) do
@@ -1229,7 +1222,7 @@ defmodule Normandy.Agents.BaseAgent do
       fn call ->
         OtelCtx.restore(parent_otel_ctx)
         result = execute_one_streaming_tool_call(config, call)
-        callback.(:tool_result, result)
+        callback.(%StreamEvent{type: :tool_result, data: result})
         result
       end,
       ordered: true,
@@ -1241,11 +1234,11 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Assistant turns are persisted as a %ToolCallResponse{} built from content
-  # blocks so tool_use survives AgentMemory.history/1 re-serialization; any
-  # :guardrail_violations is dropped (build produces a fresh struct without it),
-  # as is the synthetic :tool_calls key added in call_stream_llm/3 for FSM
-  # branching (the fresh struct doesn't carry it through persistence).
-  # Other roles (e.g. "tool") persist their content unchanged.
+  # blocks so tool_use survives AgentMemory.history/1 re-serialization; the
+  # synthetic :tool_calls key added in call_stream_llm/3 for FSM branching is
+  # dropped (the fresh struct doesn't carry it through persistence). The final
+  # answer, already converted to the output schema, and other roles (e.g. "tool")
+  # persist unchanged.
   defp append_stream_message(config, "assistant", content) do
     tool_calls = extract_tool_calls(content) || []
     message = build_streaming_assistant_response(content, tool_calls)
@@ -1257,117 +1250,6 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # ── End streaming Turn FSM handlers ──────────────────────────────────────────
-
-  @doc """
-  Stream a response from the LLM with real-time callbacks.
-
-  This method enables streaming mode, allowing you to process LLM responses
-  as they're generated. Callbacks are invoked for each event type.
-
-  ## Parameters
-    - config: Agent configuration
-    - user_input: Optional user input (can be nil to continue conversation)
-    - callback: Function `(event_type, data) -> :ok` called for each event
-
-  ## Event Types
-    - `:text_delta` - Incremental text content
-    - `:tool_use_start` - Tool call beginning
-    - `:thinking_delta` - Extended thinking content
-    - `:message_start` - Stream beginning
-    - `:message_stop` - Stream complete
-
-  ## Returns
-    `{config, final_response}` - Updated config and accumulated response
-
-  ## Raises
-    `Normandy.LLMError` when the stream fails to start, carries an `error` event
-    or `{:error, _}` item, or ends without `message_stop`.
-
-  ## Compared with `run/2`
-    - Input goes through the same schema validation and input guardrails.
-    - `retry_options` and the circuit breaker apply, but a stream is retried only
-      until its first event reaches the callback, so no output is shown twice.
-    - The final response is the accumulated message map; it is not converted to
-      the output schema.
-
-  ## Example
-
-      callback = fn
-        :text_delta, text -> IO.write(text)
-        :tool_use_start, tool -> IO.puts("\\nCalling tool: \#{tool["name"]}")
-        _, _ -> :ok
-      end
-
-      {agent, response} = BaseAgent.stream_response(agent, input, callback)
-  """
-  @spec stream_response(BaseAgentConfig.t(), struct() | nil, function()) ::
-          {BaseAgentConfig.t(), map()}
-  def stream_response(config, user_input \\ nil, callback) when is_function(callback, 2) do
-    metadata = Metadata.run(config)
-
-    with_agent_run_span(config, metadata, fn ->
-      {run_stream_turn(config, user_input, callback), metadata}
-    end)
-  end
-
-  @doc """
-  Stream responses with tool calling support.
-
-  Combines streaming and tool execution - as the LLM streams its response,
-  tool calls are detected and executed, with results fed back into the stream.
-
-  ## Parameters
-    - config: Agent configuration
-    - user_input: Optional user input to start the conversation
-    - callback: Function `(event_type, data) -> :ok` called for each event
-
-  ## Event Types
-    - `:text_delta` - Incremental text content
-    - `:tool_use_start` - Tool call beginning
-    - `:tool_result` - Tool execution result (custom event)
-    - `:thinking_delta` - Extended thinking content
-    - `:message_start` - Stream beginning
-    - `:message_stop` - Stream complete
-    - `:guardrail_violation` - Output guardrail violation
-
-  ## Returns
-    `{config, final_response}` - Updated config and accumulated response
-
-  ## Raises
-    `Normandy.LLMError` when the stream fails to start, carries an `error` event
-    or `{:error, _}` item, or ends without `message_stop`. Streams are not retried.
-
-  ## Guardrail Semantics
-
-  If `:output_guardrails_streaming_mode` is `:incremental` and a violation
-  fires mid-stream, the current iteration is halted and any in-flight
-  `tool_use` content block is stripped from the returned response — the
-  caller won't execute a tool whose arguments were still streaming. Tool
-  results from *earlier* iterations remain in memory; memory commits
-  happen after each stream ends, not after the loop completes.
-
-  ## Example
-
-      callback = fn
-        :text_delta, text -> IO.write(text)
-        :tool_use_start, tool -> IO.puts("\\nCalling tool: \#{tool["name"]}")
-        :tool_result, result -> IO.puts("Tool result: \#{inspect(result)}")
-        _, _ -> :ok
-      end
-
-      {agent, response} = BaseAgent.stream_with_tools(agent, input, callback)
-
-  """
-  @spec stream_with_tools(BaseAgentConfig.t(), struct() | nil, function()) ::
-          {BaseAgentConfig.t(), struct()}
-  def stream_with_tools(config = %BaseAgentConfig{}, user_input \\ nil, callback)
-      when is_function(callback, 2) do
-    metadata = Metadata.run(config)
-
-    with_agent_run_span(config, metadata, fn ->
-      {run_stream_turn(config, user_input, callback), metadata}
-    end)
-  end
 
   # Extract tool calls from streaming response
   defp extract_tool_calls(%{content: content}) when is_list(content) do
@@ -1443,8 +1325,14 @@ defmodule Normandy.Agents.BaseAgent do
   # The request for a streaming LLM call, with thinking left out where the system
   # prompt or tools changed since it was produced (see get_response_with_usage/3),
   # and the prefix key this request runs under.
+  # A non-chat output schema goes in the system prompt, as on the tool-loop path
+  # (prompt_output_schema/2): the streamed text is parsed into it. A chat schema
+  # streams plain text, so it shows none.
   defp build_stream_request(config) do
-    system_prompt = SystemPromptGenerator.generate_prompt(config.prompt_specification)
+    system_prompt =
+      config.prompt_specification
+      |> SystemPromptGenerator.generate_prompt()
+      |> with_output_schema(prompt_output_schema(%ToolCallResponse{}, config))
 
     tool_schemas =
       if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
@@ -1478,7 +1366,7 @@ defmodule Normandy.Agents.BaseAgent do
   # that the caller has seen output, and a retry would show it twice.
   # Each attempt is one [:normandy, :llm, :request] span, emitted here because the
   # stream is consumed here (adapters emit none for stream/3).
-  defp stream_response_from_llm(config, request, callback, first_chunk, tracker) do
+  defp stream_from_llm(config, request, callback, first_chunk, tracker) do
     delivered = :atomics.new(1, [])
     callback = track_delivery(callback, delivered)
 
@@ -1527,14 +1415,12 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp stream_request_outcome({:error, %LLMError{} = error}), do: {:error, error}
 
-  defp track_delivery(callback, delivered) when is_function(callback, 2) do
-    fn event, data ->
+  defp track_delivery(callback, delivered) when is_function(callback, 1) do
+    fn event ->
       :atomics.put(delivered, 1, 1)
-      callback.(event, data)
+      callback.(event)
     end
   end
-
-  defp track_delivery(callback, _delivered), do: callback
 
   defp stream_error(%LLMError{} = error), do: {:error, error}
   defp stream_error(reason), do: raise_llm_call_error(reason)
@@ -1573,35 +1459,45 @@ defmodule Normandy.Agents.BaseAgent do
 
   # The events the stream callback receives, from the adapter-neutral stream events
   # (Normandy.Agents.Model, "Stream events"). Everything else is not delivered.
+  defp deliver_stream_event(%{type: "message_start", message: message}, callback),
+    do:
+      callback.(%StreamEvent{
+        type: :message_start,
+        data: %{id: message["id"], model: message["model"]}
+      })
+
   defp deliver_stream_event(
          %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}},
          callback
        ),
-       do: callback.(:text_delta, text)
+       do: callback.(%StreamEvent{type: :text_delta, data: text})
 
   defp deliver_stream_event(
          %{type: "content_block_delta", delta: %{"type" => "thinking_delta", "thinking" => text}},
          callback
        ),
-       do: callback.(:thinking_delta, text)
+       do: callback.(%StreamEvent{type: :thinking_delta, data: text})
 
   defp deliver_stream_event(
          %{type: "content_block_start", content_block: %{"type" => "tool_use"} = tool},
          callback
        ),
-       do: callback.(:tool_use_start, tool)
+       do:
+         callback.(%StreamEvent{
+           type: :tool_use_start,
+           data: %{id: tool["id"], name: tool["name"]}
+         })
 
-  defp deliver_stream_event(%{type: "message_start", message: message}, callback),
-    do: callback.(:message_start, message)
+  defp deliver_stream_event(%{type: "message_stop"}, callback),
+    do: callback.(%StreamEvent{type: :message_stop, data: nil})
 
-  defp deliver_stream_event(%{type: "message_stop"}, callback), do: callback.(:message_stop, %{})
   defp deliver_stream_event(_event, _callback), do: :ok
 
   # Consumes a stream event-by-event, running output guards every
   # `output_guardrails_chunk_size` bytes of accumulated text. On violation,
   # halts consumption, emits telemetry + the :guardrail_violation callback
   # event, strips any partial tool-use block from the response, and returns
-  # `{:ok, final_message_with_violations}`. A stream that failed (error event,
+  # `{:ok, final_message}`. A stream that failed (error event,
   # {:error, _} item, no message_stop) without a guardrail halt returns
   # `{:error, %LLMError{}}`; a guardrail halt is a deliberate stop, not a failure.
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
@@ -1687,18 +1583,10 @@ defmodule Normandy.Agents.BaseAgent do
   defp build_incremental_final_message(events, final_acc) do
     final_message = StreamProcessor.build_final_message(events)
 
-    final_message =
-      case final_acc.violations do
-        [] ->
-          Map.put(final_message, :guardrail_violations, [])
-
-        violations ->
-          final_message
-          |> strip_partial_tool_use()
-          |> Map.put(:guardrail_violations, violations)
-      end
-
-    {:ok, final_message}
+    case final_acc.violations do
+      [] -> {:ok, final_message}
+      _violations -> {:ok, strip_partial_tool_use(final_message)}
+    end
   end
 
   defp report_incremental_violation(config, guards, violations, callback) do
@@ -1707,13 +1595,10 @@ defmodule Normandy.Agents.BaseAgent do
       mode: :incremental
     })
 
-    if is_function(callback, 2) do
-      callback.(:guardrail_violation, %{
-        stage: :output,
-        mode: :incremental,
-        violations: violations
-      })
-    end
+    callback.(%StreamEvent{
+      type: :guardrail_violation,
+      data: %{stage: :output, mode: :incremental, violations: violations}
+    })
 
     :ok
   end
@@ -2415,36 +2300,25 @@ defmodule Normandy.Agents.BaseAgent do
   # Dispatches by mode: :accumulate runs guards after the stream completes
   # (logged and reported, not blocked: the text already reached the caller); :incremental is a
   # no-op here because guards already ran at chunk boundaries inside
-  # `consume_stream_with_incremental_guards/3`.
-  #
-  # Returns the final_response with :guardrail_violations populated ([] on pass).
-  defp run_streaming_output_guardrails(
-         %BaseAgentConfig{output_guardrails: []} = _config,
-         final_response,
-         _callback
-       ) do
-    Map.put_new(final_response, :guardrail_violations, [])
-  end
+  # `consume_stream_with_incremental_guards/3`. Returns :ok.
+  defp run_streaming_output_guardrails(%BaseAgentConfig{output_guardrails: []}, _message, _cb),
+    do: :ok
 
   defp run_streaming_output_guardrails(
-         %BaseAgentConfig{output_guardrails_streaming_mode: :incremental} = _config,
-         final_response,
+         %BaseAgentConfig{output_guardrails_streaming_mode: :incremental},
+         _message,
          _callback
-       ) do
-    # Guards already ran at chunk boundaries; :guardrail_violations is set.
-    Map.put_new(final_response, :guardrail_violations, [])
-  end
+       ),
+       do: :ok
 
   defp run_streaming_output_guardrails(
          %BaseAgentConfig{output_guardrails: guards} = config,
-         final_response,
+         message,
          callback
        ) do
-    text = extract_streaming_text(final_response)
-
-    case Normandy.Guardrails.run(guards, text) do
+    case Normandy.Guardrails.run(guards, extract_streaming_text(message)) do
       {:ok, _} ->
-        Map.put(final_response, :guardrail_violations, [])
+        :ok
 
       {:error, violations} ->
         emit_guardrail_violation(:output, config, guards, violations, %{
@@ -2452,20 +2326,18 @@ defmodule Normandy.Agents.BaseAgent do
           mode: :accumulate
         })
 
-        IO.warn(
-          "Agent streaming output guardrail violation: " <>
-            ValidationMiddleware.error_message(violations)
+        # No violation text: it quotes the output.
+        log_lifecycle(:warning, "normandy agent streaming output guardrail violation",
+          agent: log_agent_name(config),
+          guards: Enum.map(guards, &guard_module/1)
         )
 
-        if is_function(callback, 2) do
-          callback.(:guardrail_violation, %{
-            stage: :output,
-            mode: :accumulate,
-            violations: violations
-          })
-        end
+        callback.(%StreamEvent{
+          type: :guardrail_violation,
+          data: %{stage: :output, mode: :accumulate, violations: violations}
+        })
 
-        Map.put(final_response, :guardrail_violations, violations)
+        :ok
     end
   end
 

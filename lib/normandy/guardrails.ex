@@ -76,7 +76,7 @@ defmodule Normandy.Guardrails do
 
   ## Output violations (`:output_guardrails_on_violation`)
 
-  On the non-streaming path (`BaseAgent.run/2`, `Turn.Server`), output guards
+  On the non-streaming path (`BaseAgent.run/3`, `Turn.Server`), output guards
   run on the validated answer before it is saved to memory:
 
   - `:block` (default) — `run` returns
@@ -90,32 +90,33 @@ defmodule Normandy.Guardrails do
 
   ## Streaming
 
-  Input guardrails run on streaming entry points (`BaseAgent.stream_response/3`,
-  `BaseAgent.stream_with_tools/3`) before the LLM call — violations raise the
-  same as non-streaming paths.
+  Input guardrails run on `BaseAgent.stream/3` before the LLM call, as on
+  `BaseAgent.run/3`: a violation returns `{:error, %Normandy.Guardrails.ViolationError{}}`.
 
   Output guardrails run on streaming in one of two modes, configured per agent:
 
   - `:accumulate` (default) — guards run on the **concatenated assistant text**
     (text blocks from the streamed response, joined) after the stream
-    completes. A violation is logged and reported on the response, not
-    blocked: the content has already reached the caller. This differs from the non-streaming path, which guards the
-    validated schema struct — streaming never produces one, so field-targeting
-    guards (e.g. `{ForbiddenSubstrings, field: :summary}`) do not apply in
-    streaming mode. Use bare string guards (no `:field`) for streaming output.
+    completes. A violation is logged and reported through a
+    `%Normandy.Components.StreamEvent{type: :guardrail_violation}` and telemetry,
+    not blocked: the content has already reached the caller. This differs from the
+    non-streaming path, which guards the validated schema struct: streaming guards
+    the text before it is converted, so field-targeting guards (e.g.
+    `{ForbiddenSubstrings, field: :summary}`) do not apply in streaming mode. Use
+    bare string guards (no `:field`) for streaming output.
 
   - `:incremental` — guards run every `:output_guardrails_chunk_size` bytes of
     accumulated assistant text. On violation, the stream is halted, a
-    `:guardrail_violation` event is emitted to the caller callback, any
-    partial tool-use block is dropped, and the returned response carries
-    `:guardrail_violations`. Follows NVIDIA NeMo Guardrails' chunking approach.
+    `:guardrail_violation` event is emitted to the caller callback and telemetry,
+    and any partial tool-use block is dropped; the text streamed so far is
+    converted to the output schema. Follows NVIDIA NeMo Guardrails' chunking approach.
 
   `RequiredFields` is terminal-only and does not apply to either streaming
   mode (no schema struct to inspect).
 
-  Both modes populate the `:guardrail_violations` field on the returned
-  response (list, empty on pass) and emit the
-  `[:normandy, :agent, :guardrail, :violation]` telemetry event with metadata
+  Both modes deliver a `:guardrail_violation` stream event with data
+  `%{stage: :output, mode: :accumulate | :incremental, violations: violations}` and emit
+  the `[:normandy, :agent, :guardrail, :violation]` telemetry event with metadata
   `streaming: true` and `mode: :accumulate | :incremental`.
 
   ## Telemetry

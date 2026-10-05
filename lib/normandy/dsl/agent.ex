@@ -178,8 +178,8 @@ defmodule Normandy.DSL.Agent do
   back to the LLM stays in the LLM's tool-call order (`Task.async_stream` is
   invoked with `ordered: true`).
 
-  Streaming callback ordering: `BaseAgent.stream_with_tools/3` invokes
-  `callback.(:tool_result, result)` from inside each worker as soon as that
+  Streaming callback ordering: `BaseAgent.stream/3` delivers
+  `%StreamEvent{type: :tool_result}` from inside each worker as soon as that
   tool finishes. At `max_tool_concurrency > 1`, callers therefore observe
   `:tool_result` events in **completion order**, not LLM-call order — a
   100ms tool that fires after a 500ms tool will still emit its `:tool_result`
@@ -285,8 +285,8 @@ defmodule Normandy.DSL.Agent do
   (`run!` raises it) and the answer is not saved to memory. Pass
   `on_violation: :warn` (output only) to log the violation and return the answer
   instead. Telemetry is emitted either way.
-  Streaming output reports violations through `:guardrail_violations` and the
-  callback instead; see `Normandy.Guardrails`.
+  Streaming output (`stream/3`) reports violations through the
+  `:guardrail_violation` stream event and telemetry instead; see `Normandy.Guardrails`.
 
   ## Example
 
@@ -583,16 +583,9 @@ defmodule Normandy.DSL.Agent do
       def run!(agent, input, opts \\ []) when is_list(opts),
         do: BaseAgent.run!(agent, prepare_input(input), opts)
 
-      @doc """
-      Runs the agent with tools enabled.
-
-      ## Examples
-
-          {updated_agent, response} = MyAgent.run_with_tools(agent, "Calculate 2+2")
-      """
-      def run_with_tools(agent, input) do
-        BaseAgent.run_with_tools(agent, prepare_input(input))
-      end
+      @doc "Streams a turn; see `Normandy.Agents.BaseAgent.stream/3`."
+      def stream(agent, input, callback) when is_function(callback, 1),
+        do: BaseAgent.stream(agent, prepare_input(input), callback)
 
       @doc """
       Resets the agent's memory.

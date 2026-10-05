@@ -1,75 +1,33 @@
 defmodule Normandy.Components.StreamEvent do
   @moduledoc """
-  Represents a Server-Sent Event (SSE) from a streaming LLM response.
+  What a `Normandy.Agents.BaseAgent.stream/3` callback receives, in stream order.
 
-  Stream events are emitted incrementally as the LLM generates content,
-  allowing for real-time display and processing.
+  | `type` | `data` |
+  |---|---|
+  | `:message_start` | `%{id: String.t() \\| nil, model: String.t() \\| nil}` |
+  | `:text_delta` | the new text |
+  | `:thinking_delta` | the new thinking text |
+  | `:tool_use_start` | `%{id: String.t(), name: String.t()}`; the input arrives later |
+  | `:tool_result` | the `%Normandy.Components.ToolResult{}` of a finished tool call |
+  | `:guardrail_violation` | `%{stage: :output, mode: :accumulate \\| :incremental, violations: list()}` |
+  | `:message_stop` | `nil` |
 
-  ## Event Types
-
-  - `:message_start` - Stream begins, contains initial metadata
-  - `:content_block_start` - New content block begins (text, tool_use, thinking)
-  - `:content_block_delta` - Incremental content update
-  - `:content_block_stop` - Content block complete
-  - `:message_delta` - Message-level update (stop_reason, usage)
-  - `:message_stop` - Stream complete
-  - `:ping` - Keep-alive ping
-  - `:error` - Error occurred
-
-  ## Delta Types
-
-  - `text_delta` - Incremental text content
-  - `input_json_delta` - Incremental tool input JSON
-  - `thinking_delta` - Extended thinking content
-
-  ## Example
-
-      # Text delta event
-      %StreamEvent{
-        type: :content_block_delta,
-        index: 0,
-        delta: %{type: "text_delta", text: "Hello"}
-      }
-
-      # Tool use delta
-      %StreamEvent{
-        type: :content_block_delta,
-        index: 1,
-        delta: %{type: "input_json_delta", partial_json: "{\\"location\\":"}
-      }
+  With tools, one `stream/3` call streams several model messages, each from
+  `:message_start` to `:message_stop`, with `:tool_result` events between them. With
+  `max_tool_concurrency > 1`, `:tool_result` events arrive in completion order.
   """
 
-  use Normandy.Schema
+  @enforce_keys [:type]
+  defstruct [:type, :data]
 
-  @type event_type ::
+  @type type ::
           :message_start
-          | :content_block_start
-          | :content_block_delta
-          | :content_block_stop
-          | :message_delta
+          | :text_delta
+          | :thinking_delta
+          | :tool_use_start
+          | :tool_result
+          | :guardrail_violation
           | :message_stop
-          | :ping
-          | :error
 
-  @type delta_type :: :text_delta | :input_json_delta | :thinking_delta
-
-  @type t :: %__MODULE__{
-          type: event_type(),
-          index: integer() | nil,
-          delta: map() | nil,
-          content_block: map() | nil,
-          message: map() | nil,
-          usage: map() | nil,
-          error: String.t() | nil
-        }
-
-  schema do
-    field(:type, :string)
-    field(:index, :integer, default: nil)
-    field(:delta, :map, default: nil)
-    field(:content_block, :map, default: nil)
-    field(:message, :map, default: nil)
-    field(:usage, :map, default: nil)
-    field(:error, :string, default: nil)
-  end
+  @type t :: %__MODULE__{type: type(), data: term()}
 end

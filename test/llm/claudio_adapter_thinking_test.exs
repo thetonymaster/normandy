@@ -10,6 +10,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
   alias Normandy.Agents.Model
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.Message
+  alias Normandy.Components.StreamEvent
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Test.FakeTool
   alias Normandy.Tools.Registry
@@ -127,7 +128,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.run_with_tools(agent, "weather?")
+      BaseAgent.run!(agent, "weather?")
 
       assert_received {:body, _first}
       assert_received {:body, second}
@@ -151,7 +152,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           max_tool_iterations: 1
         })
 
-      BaseAgent.run_with_tools(agent, "weather?")
+      BaseAgent.run!(agent, "weather?")
 
       assert_received {:body, first}
       assert_received {:body, forced}
@@ -175,8 +176,8 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      {agent, _} = BaseAgent.run_with_tools(agent, "weather?")
-      BaseAgent.run_with_tools(%{agent | model: "claude-sonnet-5-5"}, "and tomorrow?")
+      {agent, _} = BaseAgent.run!(agent, "weather?")
+      BaseAgent.run!(%{agent | model: "claude-sonnet-5-5"}, "and tomorrow?")
 
       assert_received {:body, _first}
       assert_received {:body, _second}
@@ -220,7 +221,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.run_with_tools(agent, "weather?")
+      BaseAgent.run!(agent, "weather?")
 
       assert_received {:body, _first}
       assert_received {:body, second}
@@ -319,7 +320,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           counter: :counters.new(1, [])
         })
 
-      BaseAgent.stream_with_tools(agent, "weather?", fn _, _ -> :ok end)
+      BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
 
       assert_received {:body, first}
       assert_received {:body, second}
@@ -340,7 +341,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.stream_with_tools(agent, "weather?", fn event, data ->
+      BaseAgent.stream(agent, "weather?", fn %StreamEvent{type: event, data: data} ->
         send(test_pid, {:event, event, data})
         :ok
       end)
@@ -358,7 +359,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.stream_with_tools(agent, "weather?", fn _, _ -> :ok end)
+      BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
 
       assert_received {:body, _first}
       assert_received {:body, second}

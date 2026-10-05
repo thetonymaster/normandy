@@ -80,7 +80,7 @@ ServerConfig.allow_tools(server, ["search_events", "fetch_data"])
 `ArgumentError` naming your implementation. `JsonDeserializer.deserialize_with_retry/5`
 takes `(content, schema, client, %Request{}, opts)` instead of eight arguments.
 
-Streaming (`BaseAgent.stream_response/3`, `stream_with_tools/3`) with a client that
+Streaming (`BaseAgent.stream/3`, see §20) with a client that
 can't stream fails with `Normandy.LLMError` `type: :unsupported` (the client's own
 error); in 1.x it was `type: :unknown`.
 
@@ -194,9 +194,9 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
   response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and from
   `run/2` (`run!/2` raises it). `on_parse_failure: :error` returns `type: :invalid_output`.
-- `stream_response/3` and `stream_with_tools/3` raise `Normandy.LLMError` when the stream
-  fails. They used to return `{config, %{error: reason}}`. A stream that ends without
-  `message_stop` is now a failure, not a complete message.
+- `stream/3` returns `{:error, %Normandy.LLMError{}}` when the stream fails (see §20). 1.x's
+  `stream_response/3` and `stream_with_tools/3` returned `{config, %{error: reason}}`. A
+  stream that ends without `message_stop` is now a failure, not a complete message.
 
 ## 12. `Turn.Server` failure replies and approval expiry
 
@@ -404,6 +404,38 @@ that schema in its system prompt, and its final text is parsed into it. In 1.x t
 schema returns `{:error, %Normandy.LLMError{type: :invalid_output}}` (under both
 `on_parse_failure` policies: such a schema has no `:chat_message` to fall back to), from
 `run/2` and from `Turn.Server.run/2`.
+
+A tool-using agent whose custom output schema has a `:chat_message` field gets only that
+field filled from the final text; its other fields stay unset, so any of them marked
+`required: true` now fails validation (`{:error, %Normandy.Schema.ValidationError{}}`).
+Make them optional, or drop `:chat_message` so the text is parsed as JSON into the schema.
+
+The OpenAI-compatible adapter parses its text the same way: its `:invalid_output`
+`LLMError.reason` is the parse failure itself, no longer `{:max_retries_reached, reason}`,
+and the `[:normandy, :json_deserializer, :fallback]` metadata `reason` is the failure's tag
+(it was `:max_retries_reached`).
+
+## 20. Entry points: `run/3`, `run!/3`, `stream/3`
+
+| 1.x | 2.0 |
+|---|---|
+| `run(agent, input)` → `{agent, response}` | `run(agent, input)` → `{:ok, agent, response}` / `{:error, e}`, or `run!(agent, input)` → `{agent, response}` |
+| `run_with_tools(agent, input)` | `run(agent, input)`: it runs the tool loop when tools are registered |
+| `stream_response(agent, input, fn event, data -> ... end)` | `stream(agent, input, fn %StreamEvent{type: event, data: data} -> ... end)` |
+| `stream_with_tools(agent, input, callback)` | `stream(agent, input, callback)` |
+| `run(agent, input, stream: true, on_chunk: f)` | `stream(agent, input, f)` (raises `ArgumentError` otherwise) |
+| DSL `MyAgent.run_with_tools/2` | `MyAgent.run/2`; streaming is `MyAgent.stream/3` |
+
+- `stream/3` returns the answer converted to the output schema, like `run/3` (1.x returned
+  the raw message map with its content blocks).
+- Callbacks take one argument, a `%Normandy.Components.StreamEvent{type, data}`; the old
+  `StreamEvent` (an SSE event with `:delta`, `:content_block`, ...) is gone. `:tool_use_start`
+  data is `%{id:, name:}`, not the raw string-keyed block.
+- The streamed response no longer has `:guardrail_violations`; violations arrive as a
+  `:guardrail_violation` event and `[:normandy, :agent, :guardrail, :violation]` telemetry.
+- A client that can't stream gives `{:error, %LLMError{type: :unsupported}}`.
+- `StreamProcessor.process_with_callback/2` (arity-2 callbacks) is gone; `stream/3` is the
+  one streaming path.
 
 ## New, non-breaking
 

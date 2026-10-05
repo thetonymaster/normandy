@@ -33,9 +33,8 @@ defmodule Normandy.Telemetry do
 
   ### `[:normandy, :agent, :run, :start | :stop | :exception]`
 
-  One agent run: `BaseAgent.run/2`, `run_with_tools/2`, `stream_response/3`,
-  `stream_with_tools/3`, and each turn of `Turn.Server` (which emits these by hand;
-  see "Turn.Server" below). It is the root of the agent's span tree: llm_call and
+  One agent run: `BaseAgent.run/3`, `run!/3` or `stream/3`, and each turn of
+  `Turn.Server` (which emits these by hand; see "Turn.Server" below). It is the root of the agent's span tree: llm_call and
   tool spans run inside it.
 
     * Start metadata: `model`, `agent_name` (always present, may be `nil`), `provider`

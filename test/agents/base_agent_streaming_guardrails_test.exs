@@ -1,11 +1,14 @@
 defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
-  # async: false — captures :stderr (IO.warn) and refutes on it; stderr capture
-  # is global, so another test's warning would break the refute.
+  # async: false — the guardrail telemetry handlers are global and forward every
+  # violation event to the test process.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.StreamEvent
   alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
+  alias Normandy.Test.FakeTool
 
   # Streaming mock that yields events lazily so Enum.reduce_while can halt
   # mid-stream. Matches the real Claudio adapter's Stream.map behaviour: Normandy
@@ -145,21 +148,21 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
   defp collect_callback do
     parent = self()
-    {fn type, data -> send(parent, {:cb, type, data}) end, parent}
+    {fn %StreamEvent{type: type, data: data} -> send(parent, {:cb, type, data}) end, parent}
   end
 
   describe "accumulate mode (default)" do
-    test "no violation → :guardrail_violations is empty and response returned" do
-      agent = base_config([])
+    test "no violation → no :guardrail_violation event and the answer returned" do
+      agent = base_config([{ForbiddenSubstrings, terms: ["badword"]}])
       {cb, _} = collect_callback()
 
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
 
-      assert Map.get(response, :guardrail_violations) == []
-      assert is_list(response.content)
+      assert %BaseAgentOutputSchema{chat_message: "Hello world"} = response
+      refute_received {:cb, :guardrail_violation, _}
     end
 
-    test "violation → warning emitted, telemetry fires, response carries violations" do
+    test "violation → warning logged without the output, telemetry fires, event delivered" do
       client = %LazyStreamClient{text_chunks: %{chunks: ["ok ", "BADWORD here"]}}
 
       agent =
@@ -182,21 +185,15 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
       {cb, _} = collect_callback()
 
-      {_agent, response} =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          result = BaseAgent.stream_response(agent, nil, cb)
-          send(self(), {:result, result})
-        end)
-        |> then(fn _io ->
-          receive do
-            {:result, r} -> r
-          after
-            100 -> flunk("no result captured")
-          end
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
+          # Reported, not blocked: the answer is returned.
+          assert response.chat_message == "ok BADWORD here"
         end)
 
-      assert [violation | _] = response.guardrail_violations
-      assert violation.constraint == :forbidden_substring
+      assert log =~ "normandy agent streaming output guardrail violation"
+      refute log =~ "BADWORD"
 
       assert_received {:telemetry, %{count: 1}, metadata}
       assert metadata.streaming == true
@@ -206,6 +203,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       assert_received {:cb, :guardrail_violation, payload}
       assert payload.stage == :output
       assert payload.mode == :accumulate
+      assert [violation | _] = payload.violations
+      assert violation.constraint == :forbidden_substring
 
       :telemetry.detach("test-accumulate-#{inspect(ref)}")
     end
@@ -223,21 +222,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
       {cb, _} = collect_callback()
 
-      {updated_agent, response} =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          result = BaseAgent.stream_response(agent, nil, cb)
-          send(self(), {:result, result})
-        end)
-        |> then(fn _io ->
-          receive do
-            {:result, r} -> r
-          after
-            100 -> flunk("no result captured")
-          end
-        end)
+      {:ok, updated_agent, _response} = BaseAgent.stream(agent, nil, cb)
 
-      # Returned response still carries violations for the caller.
-      assert response.guardrail_violations != []
+      # The caller still gets the violations, through the callback.
+      assert_received {:cb, :guardrail_violation, %{violations: [_ | _]}}
 
       # But assistant-role memory entries must not carry the violation metadata,
       # otherwise matched terms/paths feed back into the next LLM call.
@@ -253,15 +241,15 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
       end
     end
 
-    test "shape parity: returns {config, response} and response has expected keys" do
+    test "shape parity: returns {:ok, config, output} like run/3" do
       agent = base_config([])
       {cb, _} = collect_callback()
 
-      {updated_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, updated_agent, response} = BaseAgent.stream(agent, nil, cb)
 
       assert %Normandy.Agents.BaseAgentConfig{} = updated_agent
-      assert Map.has_key?(response, :content)
-      assert Map.has_key?(response, :guardrail_violations)
+      assert %BaseAgentOutputSchema{} = response
+      refute Map.has_key?(response, :guardrail_violations)
     end
   end
 
@@ -281,9 +269,9 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
       {cb, _} = collect_callback()
 
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
 
-      assert response.guardrail_violations == []
+      assert response.chat_message == String.duplicate("a", 50) <> "safe end"
       refute_received {:cb, :guardrail_violation, _}
     end
 
@@ -315,10 +303,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
       {cb, _} = collect_callback()
 
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
 
-      assert [violation | _] = response.guardrail_violations
-      assert violation.constraint == :forbidden_substring
+      # Halted: the answer holds the text streamed up to the violation.
+      assert response.chat_message == "Hello BADWORD "
 
       assert_received {:telemetry, %{count: 1}, metadata}
       assert metadata.streaming == true
@@ -326,6 +314,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
       assert_received {:cb, :guardrail_violation, payload}
       assert payload.mode == :incremental
+      assert [violation | _] = payload.violations
+      assert violation.constraint == :forbidden_substring
 
       # The second chunk's text should NOT have been emitted to the callback —
       # halt fires before we process it.
@@ -359,9 +349,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
         })
 
       {cb, _} = collect_callback()
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
 
-      assert response.guardrail_violations == []
+      assert response.chat_message == String.duplicate("a", 25)
+      refute_received {:cb, :guardrail_violation, _}
     end
 
     test "tail-of-stream check catches violations when total output < chunk_size" do
@@ -381,11 +372,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
         })
 
       {cb, _} = collect_callback()
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, _response} = BaseAgent.stream(agent, nil, cb)
 
-      assert [violation | _] = response.guardrail_violations
+      assert_received {:cb, :guardrail_violation, %{violations: [violation | _]}}
       assert violation.constraint == :forbidden_substring
-      assert_received {:cb, :guardrail_violation, _payload}
     end
 
     test "tail-of-stream check catches violations after a prior successful check" do
@@ -406,37 +396,36 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
         })
 
       {cb, _} = collect_callback()
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, _response} = BaseAgent.stream(agent, nil, cb)
 
-      assert [violation | _] = response.guardrail_violations
+      assert_received {:cb, :guardrail_violation, %{violations: [violation | _]}}
       assert violation.constraint == :forbidden_substring
-      assert_received {:cb, :guardrail_violation, _payload}
     end
 
-    test "violation strips partial tool_use content blocks from response" do
+    test "violation strips partial tool_use content blocks, so the tool never runs" do
       # Stream emits a partial tool_use content block BEFORE the text delta
       # that triggers the violation. On halt, strip_partial_tool_use should
-      # remove the tool_use so the caller can't execute a tool a halted
+      # remove the tool_use so the agent can't execute a tool a halted
       # stream was about to invoke.
       agent =
-        BaseAgent.init(%{
+        %{
           client: %ToolUseStreamClient{},
           model: "claude-3",
           temperature: 0.0,
           output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
           output_guardrails_streaming_mode: :incremental,
           output_guardrails_chunk_size: 5
-        })
+        }
+        |> BaseAgent.init()
+        |> BaseAgent.register_tool(%FakeTool{name: "calculator", notify: self()})
 
       {cb, _} = collect_callback()
-      {_agent, response} = BaseAgent.stream_response(agent, nil, cb)
+      {:ok, _agent, response} = BaseAgent.stream(agent, nil, cb)
 
-      assert [_ | _] = response.guardrail_violations
-
-      refute Enum.any?(response.content, fn
-               %{"type" => "tool_use"} -> true
-               _ -> false
-             end)
+      assert_received {:cb, :guardrail_violation, %{violations: [_ | _]}}
+      refute_received {:tool_ran, "calculator"}
+      refute_received {:cb, :tool_result, _}
+      assert response.chat_message == "BADWORD here"
     end
   end
 

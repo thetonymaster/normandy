@@ -182,7 +182,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = with_tools_agent()
       user_input = %BaseAgentInputSchema{chat_message: "What is 5 + 3?"}
 
-      {updated, response} = BaseAgent.run_with_tools(config, user_input)
+      {updated, response} = BaseAgent.run!(config, user_input)
 
       # The final response should be the converted output schema
       assert %BaseAgentOutputSchema{} = response

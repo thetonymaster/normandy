@@ -138,7 +138,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
 
     defp stream_and_capture_stop(client) do
       run_and_capture_stop(client, fn agent ->
-        BaseAgent.stream_response(agent, "hello", fn _, _ -> :ok end)
+        BaseAgent.stream(agent, "hello", fn _ -> :ok end)
       end)
     end
 

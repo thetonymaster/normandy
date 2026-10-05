@@ -38,13 +38,10 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
              BaseAgent.run(agent(&rate_limited/1), %{chat_message: "hello"})
   end
 
-  test "run/3 with stream: true returns a stream failure as {:error, %LLMError{}}" do
+  test "stream/3 returns a stream failure as {:error, %LLMError{}}" do
     # StubClient.stream/3 answers {:error, %LLMError{type: :unsupported}}.
     assert {:error, %LLMError{type: :unsupported}} =
-             BaseAgent.run(agent(& &1), %{chat_message: "hello"},
-               stream: true,
-               on_chunk: fn _ -> :ok end
-             )
+             BaseAgent.stream(agent(& &1), %{chat_message: "hello"}, fn _ -> :ok end)
   end
 
   test "run/2 returns invalid input as {:error, %ValidationError{}}" do
@@ -69,11 +66,10 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
     end
   end
 
-  # A non-config used to loop forever in run!/3 (its opts clause re-entered itself).
+  # A non-config used to loop forever in run!/3 (its old opts clause re-entered itself).
   @tag timeout: 5_000
   test "run!/2 and run/2 raise FunctionClauseError for a non-config" do
     assert_raise FunctionClauseError, fn -> BaseAgent.run!(%{}, nil) end
-    assert_raise FunctionClauseError, fn -> BaseAgent.run!(%{}, nil, stream: false) end
     assert_raise FunctionClauseError, fn -> BaseAgent.run(%{}, nil) end
     assert_raise FunctionClauseError, fn -> BaseAgent.run({:ok, %{}}, %{chat_message: "x"}) end
   end

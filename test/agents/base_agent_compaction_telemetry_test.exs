@@ -129,7 +129,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
   test "a streamed turn runs the compactor before its first stream call" do
     config = agent(%{compacted: false}, %NotifyingStreamClient{notify: self()})
 
-    {_config, _response} = BaseAgent.stream_response(config, "hello", fn _, _ -> :ok end)
+    {:ok, _config, _response} = BaseAgent.stream(config, "hello", fn _ -> :ok end)
 
     assert {:messages, [first | _]} = Process.info(self(), :messages)
     assert {:compaction, _, _} = first

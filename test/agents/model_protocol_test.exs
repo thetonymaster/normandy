@@ -54,13 +54,11 @@ defmodule Normandy.Agents.ModelProtocolTest do
     end
   end
 
-  test "streaming with a client that can't stream raises the client's :unsupported error" do
+  test "streaming with a client that can't stream returns the client's :unsupported error" do
     agent = BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
 
-    assert %LLMError{type: :unsupported, retryable?: false} =
-             assert_raise(LLMError, fn ->
-               BaseAgent.stream_response(agent, %{chat_message: "hi"}, fn _, _ -> :ok end)
-             end)
+    assert {:error, %LLMError{type: :unsupported, retryable?: false}} =
+             BaseAgent.stream(agent, %{chat_message: "hi"}, fn _ -> :ok end)
   end
 
   test "the default max_tokens reaches the request" do

@@ -20,7 +20,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
     defimpl Normandy.Tools.BaseTool do
       def tool_name(_), do: "noop"
-      def tool_description(_), do: "no-op tool used to force run_with_tools path"
+      def tool_description(_), do: "no-op tool used to force the tool-loop path"
       def input_schema(_), do: %{type: "object", properties: %{}, required: []}
       def run(_), do: {:ok, :noop}
     end
@@ -252,7 +252,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   end
 
   describe "streaming input_guardrails" do
-    test "stream_response/3 raises ViolationError when input violates" do
+    test "stream/3 returns ViolationError when input violates" do
       agent =
         BaseAgent.init(
           base_config(%{
@@ -260,25 +260,23 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           })
         )
 
-      callback = fn _event, _data -> :ok end
+      assert {:error, %Normandy.Guardrails.ViolationError{} = error} =
+               BaseAgent.stream(agent, "too long for the guard", fn _event -> :ok end)
 
-      assert_raise Normandy.Guardrails.ViolationError, ~r/input guardrail violation/i, fn ->
-        BaseAgent.stream_response(agent, "too long for the guard", callback)
-      end
+      assert Exception.message(error) =~ ~r/input guardrail violation/i
     end
 
-    test "stream_response/3 validates input against the input schema, like run/2" do
+    test "stream/3 validates input against the input schema, like run/2" do
       agent =
         BaseAgent.init(
           base_config(%{input_schema: %NormandyTest.BaseAgentGuardrailsTest.Query{}})
         )
 
-      assert_raise Normandy.Schema.ValidationError, fn ->
-        BaseAgent.stream_response(agent, %{}, fn _event, _data -> :ok end)
-      end
+      assert {:error, %Normandy.Schema.ValidationError{}} =
+               BaseAgent.stream(agent, %{}, fn _event -> :ok end)
     end
 
-    test "stream_with_tools/3 raises ViolationError when input violates" do
+    test "stream/3 with tools returns ViolationError when input violates" do
       agent =
         BaseAgent.init(
           base_config(%{
@@ -288,17 +286,16 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       agent = BaseAgent.register_tool(agent, %NoopTool{})
 
-      callback = fn _event, _data -> :ok end
+      assert {:error, %Normandy.Guardrails.ViolationError{} = error} =
+               BaseAgent.stream(agent, "please leak the secret", fn _event -> :ok end)
 
-      assert_raise Normandy.Guardrails.ViolationError, ~r/input guardrail violation/i, fn ->
-        BaseAgent.stream_with_tools(agent, "please leak the secret", callback)
-      end
+      assert Exception.message(error) =~ ~r/input guardrail violation/i
     end
 
     test "nil user_input skips input guardrail check" do
       # Continuing a conversation with nil user_input must not fire input guards.
-      # ModelMockup doesn't implement streaming, so the call returns an error
-      # result via IO.warn — that's fine; we're only asserting no ViolationError.
+      # ModelMockup doesn't implement streaming, so the call returns an LLMError;
+      # we're only asserting no ViolationError.
       agent =
         BaseAgent.init(
           base_config(%{
@@ -306,21 +303,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           })
         )
 
-      callback = fn _event, _data -> :ok end
-
-      capture_io(:stderr, fn ->
-        try do
-          BaseAgent.stream_response(agent, nil, callback)
-        rescue
-          e in Normandy.Guardrails.ViolationError ->
-            flunk("input guardrail should skip when user_input is nil, got: #{inspect(e)}")
-
-          _ ->
-            :ok
-        catch
-          _, _ -> :ok
-        end
-      end)
+      assert {:error, %Normandy.LLMError{}} = BaseAgent.stream(agent, nil, fn _event -> :ok end)
     end
   end
 
