@@ -109,7 +109,10 @@ defmodule Normandy.Guardrails do
     accumulated assistant text. On violation, the stream is halted, a
     `:guardrail_violation` event is emitted to the caller callback and telemetry,
     and any partial tool-use block is dropped; the text streamed so far is
-    converted to the output schema. Follows NVIDIA NeMo Guardrails' chunking approach.
+    converted to the output schema: a `:chat_message` schema gets that text; for a
+    non-chat schema, partial text that does not parse into it makes `stream/3` return
+    `{:error, %Normandy.LLMError{type: :invalid_output}}`. Follows NVIDIA NeMo
+    Guardrails' chunking approach.
 
   `RequiredFields` is terminal-only and does not apply to either streaming
   mode (no schema struct to inspect).
