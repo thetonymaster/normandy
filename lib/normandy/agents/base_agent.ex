@@ -1708,13 +1708,9 @@ defmodule Normandy.Agents.BaseAgent do
         )
 
         {result, stop_metadata}
-      rescue
-        error ->
-          log_span_exception("normandy agent exception", config, :error, error)
-          reraise(error, __STACKTRACE__)
       catch
         kind, reason ->
-          log_span_exception("normandy agent exception", config, kind, reason)
+          log_run_exception(config, kind, reason, __STACKTRACE__)
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
     end)
@@ -1739,50 +1735,32 @@ defmodule Normandy.Agents.BaseAgent do
 
       started_at = System.monotonic_time()
 
-      try do
-        {result, stop_metadata} = fun.()
-        duration_ms = elapsed_ms(started_at)
-        stop_metadata = merge_normalized_usage(stop_metadata, result)
-        input_tokens = Map.get(stop_metadata, :input_tokens)
-        output_tokens = Map.get(stop_metadata, :output_tokens)
+      {result, stop_metadata} = fun.()
+      duration_ms = elapsed_ms(started_at)
+      stop_metadata = merge_normalized_usage(stop_metadata, result)
+      input_tokens = Map.get(stop_metadata, :input_tokens)
+      output_tokens = Map.get(stop_metadata, :output_tokens)
 
-        log_metadata = [
-          agent: log_agent_name(config),
-          model: config.model,
-          iteration: telemetry_metadata.iteration,
-          duration_ms: duration_ms,
-          input_tokens: input_tokens,
-          output_tokens: output_tokens,
-          has_tool_calls: Map.get(stop_metadata, :has_tool_calls, false)
-        ]
+      log_metadata = [
+        agent: log_agent_name(config),
+        model: config.model,
+        iteration: telemetry_metadata.iteration,
+        duration_ms: duration_ms,
+        input_tokens: input_tokens,
+        output_tokens: output_tokens,
+        has_tool_calls: Map.get(stop_metadata, :has_tool_calls, false)
+      ]
 
-        log_metadata =
-          case Map.fetch(stop_metadata, :served_by) do
-            {:ok, served_by} -> log_metadata ++ [served_by: served_by]
-            :error -> log_metadata
-          end
+      log_metadata =
+        case Map.fetch(stop_metadata, :served_by) do
+          {:ok, served_by} -> log_metadata ++ [served_by: served_by]
+          :error -> log_metadata
+        end
 
-        log_lifecycle(:info, "normandy llm call stop", log_metadata)
-        log_dropped_thinking(Map.get(stop_metadata, :input_transformations, []), log_metadata)
+      log_lifecycle(:info, "normandy llm call stop", log_metadata)
+      log_dropped_thinking(Map.get(stop_metadata, :input_transformations, []), log_metadata)
 
-        {result, stop_metadata}
-      rescue
-        error ->
-          log_span_exception("normandy llm call exception", config, :error, error,
-            model: config.model,
-            iteration: telemetry_metadata.iteration
-          )
-
-          reraise(error, __STACKTRACE__)
-      catch
-        kind, reason ->
-          log_span_exception("normandy llm call exception", config, kind, reason,
-            model: config.model,
-            iteration: telemetry_metadata.iteration
-          )
-
-          :erlang.raise(kind, reason, __STACKTRACE__)
-      end
+      {result, stop_metadata}
     end)
   end
 
@@ -1795,26 +1773,16 @@ defmodule Normandy.Agents.BaseAgent do
 
       started_at = System.monotonic_time()
 
-      try do
-        {result, stop_metadata} = fun.()
+      {result, stop_metadata} = fun.()
 
-        log_lifecycle(:info, "normandy tool execute stop",
-          agent: log_agent_name(config),
-          tool: tool_name,
-          duration_ms: elapsed_ms(started_at),
-          status: Map.get(stop_metadata, :status, :ok)
-        )
+      log_lifecycle(:info, "normandy tool execute stop",
+        agent: log_agent_name(config),
+        tool: tool_name,
+        duration_ms: elapsed_ms(started_at),
+        status: Map.get(stop_metadata, :status, :ok)
+      )
 
-        {result, stop_metadata}
-      rescue
-        error ->
-          log_span_exception("normandy tool exception", config, :error, error, tool: tool_name)
-          reraise(error, __STACKTRACE__)
-      catch
-        kind, reason ->
-          log_span_exception("normandy tool exception", config, kind, reason, tool: tool_name)
-          :erlang.raise(kind, reason, __STACKTRACE__)
-      end
+      {result, stop_metadata}
     end)
   end
 
@@ -1861,24 +1829,22 @@ defmodule Normandy.Agents.BaseAgent do
     Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
   end
 
-  defp log_span_exception(message, config, kind, reason, extra_metadata \\ []) do
-    log_lifecycle(
-      :error,
-      message,
-      [
+  # A run's Normandy error reaches the caller (run/3 returns it, run!/3 raises it) and
+  # its telemetry, so it is not logged. Anything else is a bug: logged once, here, by
+  # kind, module and arity-only stacktrace (TurnError.format_raised/3), never by message
+  # or value. The llm_call and tool spans inside the run don't log a failure: it
+  # reaches this span.
+  defp log_run_exception(config, kind, reason, stacktrace) do
+    unless kind == :error and is_exception(reason) and TurnError.domain?(reason) do
+      log_lifecycle(
+        :error,
+        "normandy agent exception: " <> TurnError.format_raised(kind, reason, stacktrace),
         agent: log_agent_name(config),
-        kind: kind,
-        reason: format_exception_reason(reason)
-      ] ++ extra_metadata
-    )
-  end
-
-  defp format_exception_reason(reason) do
-    if Kernel.is_exception(reason) do
-      Exception.message(reason)
-    else
-      inspect(reason)
+        kind: kind
+      )
     end
+
+    :ok
   end
 
   # The API dropped a replayed thinking block because its history changed since it

@@ -213,12 +213,13 @@ defmodule Normandy.Hooks.RunnerTest do
              ) == :t
     end
 
-    test ":open logs the hook, event, exception and message, and passes the value on" do
+    test ":open logs the hook, event and exception module, not the message, and passes the value on" do
       config =
         config([probe(:a, on_error: :open, returns: [on_prompt: {:raise, "boom"}]), probe(:b)])
 
       log = capture_log(fn -> assert Runner.prompt(config, "hi") == {:cont, "hi"} end)
-      assert log =~ "hook Normandy.Test.Hooks.Probe on_prompt crashed: RuntimeError: boom"
+      assert log =~ "hook Normandy.Test.Hooks.Probe on_prompt crashed: RuntimeError"
+      refute log =~ "boom"
       assert_received {:hook, :b, :on_prompt, ["hi", _]}
 
       exit_log =
@@ -271,7 +272,8 @@ defmodule Normandy.Hooks.RunnerTest do
         config([probe(:a, on_error: :open, returns: [before_tool: {:raise, "boom"}]), probe(:b)])
 
       log = capture_log(fn -> assert Runner.before_tool(tool, call()) == {:cont, call()} end)
-      assert log =~ "before_tool crashed: RuntimeError: boom"
+      assert log =~ "before_tool crashed: RuntimeError"
+      refute log =~ "boom"
       assert_received {:hook, :b, :before_tool, [_call, _ctx]}
 
       after_tool =
@@ -282,7 +284,8 @@ defmodule Normandy.Hooks.RunnerTest do
           assert Runner.after_tool(after_tool, call(), result()) == result()
         end)
 
-      assert log =~ "after_tool crashed: RuntimeError: boom"
+      assert log =~ "after_tool crashed: RuntimeError"
+      refute log =~ "boom"
       assert_received {:hook, :b, :after_tool, [_call, _result, _ctx]}
     end
 

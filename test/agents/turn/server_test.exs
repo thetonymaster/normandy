@@ -1605,7 +1605,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
         end)
 
       assert log =~ "handler :validate crashed"
-      assert log =~ "validate boom"
+      assert log =~ "RuntimeError"
+      refute log =~ "validate boom"
       assert Process.alive?(srv)
 
       assert {:ok, %Turn.State{status: :failed}} =
@@ -1661,7 +1662,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
         end)
 
       assert log =~ "subscriber crashed"
-      assert log =~ "subscriber boom"
+      assert log =~ "RuntimeError"
+      refute log =~ "subscriber boom"
 
       assert_received {:telemetry, ^ref, %{count: 1},
                        %{session_id: "s-sub-raise", event: :iteration, kind: :error}}
@@ -1706,7 +1708,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       refute log =~ "SENTINEL-123"
     end
 
-    test "an exit with a tuple term logs the tag but not the payload" do
+    test "an exit logs its kind but not its term" do
       append = fn _config, _role, _content ->
         exit({:timeout, {GenServer, :call, [self(), "SENTINEL-456", 5000]}})
       end
@@ -1721,7 +1723,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
                    Turn.Server.run(srv, "hi")
         end)
 
-      assert log =~ "{:timeout, ...}"
+      assert log =~ "handler :append crashed (session \"s-exit-secret\"): exit"
+      refute log =~ ":timeout"
       refute log =~ "SENTINEL-456"
     end
   end

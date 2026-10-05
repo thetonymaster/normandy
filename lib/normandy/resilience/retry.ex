@@ -39,6 +39,8 @@ defmodule Normandy.Resilience.Retry do
 
   require Logger
 
+  alias Normandy.TurnError
+
   @type retry_option ::
           {:max_attempts, pos_integer()}
           | {:base_delay, pos_integer()}
@@ -206,7 +208,7 @@ defmodule Normandy.Resilience.Retry do
       delay = calculate_delay(attempt, config)
 
       Logger.warning(
-        "Retry attempt #{attempt}/#{config.max_attempts} failed: #{inspect(error)}. " <>
+        "Retry attempt #{attempt}/#{config.max_attempts} failed: #{describe(error)}. " <>
           "Retrying in #{delay}ms..."
       )
 
@@ -214,11 +216,21 @@ defmodule Normandy.Resilience.Retry do
       do_retry(fun, config, attempt + 1, [error | errors])
     else
       if attempt < config.max_attempts,
-        do: Logger.warning("Non-retryable error: #{inspect(error)}")
+        do: Logger.warning("Non-retryable error: #{describe(error)}")
 
       {:error, {error, attempt, Enum.reverse([error | errors])}}
     end
   end
+
+  # A raise, exit or throw is logged by kind and module only (its message, payload and
+  # stacktrace arguments can hold the value it failed on); a returned error as it is.
+  defp describe({:exception, exception, stacktrace}),
+    do: TurnError.describe_raised(:error, exception, stacktrace)
+
+  defp describe({kind, _payload}) when kind in [:exit, :throw],
+    do: TurnError.describe_raised(kind, nil, [])
+
+  defp describe(error), do: inspect(error)
 
   # Runs the function, turning a raise, exit or throw into an error value.
   defp execute_safely(fun) do

@@ -1296,8 +1296,7 @@ defmodule Normandy.Agents.Turn.Server do
       unless TurnError.domain?(e) do
         Logger.error(
           "Turn.Server #{kind} worker raised (session #{inspect(data.session_id)}): " <>
-            describe_crash(:error, e, __STACKTRACE__) <>
-            "\n" <> TurnError.format_stacktrace(__STACKTRACE__)
+            TurnError.format_raised(:error, e, __STACKTRACE__)
         )
       end
 
@@ -1352,7 +1351,7 @@ defmodule Normandy.Agents.Turn.Server do
       Logger.error(
         "Turn.Server subscriber crashed on #{inspect(name)} " <>
           "(session #{inspect(data.session_id)}): " <>
-          describe_crash(kind, reason, __STACKTRACE__)
+          TurnError.format_raised(kind, reason, __STACKTRACE__)
       )
 
       :telemetry.execute(
@@ -1384,12 +1383,11 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Logs a crash in a handler or hook the server ran (never its values, see
-  # describe_crash/3) and returns {:crashed, {:handler_crashed, name, exception_or_term}}.
+  # TurnError.format_raised/3) and returns {:crashed, {:handler_crashed, name, exception_or_term}}.
   defp handler_crash(data, name, kind, reason, stacktrace) do
     Logger.error(
       "Turn.Server handler #{inspect(name)} crashed (session #{inspect(data.session_id)}): " <>
-        describe_crash(kind, reason, stacktrace) <>
-        "\n" <> TurnError.format_stacktrace(stacktrace)
+        TurnError.format_raised(kind, reason, stacktrace)
     )
 
     # The reason is persisted with the failed turn state: no stacktrace in it (an exit
@@ -1422,38 +1420,6 @@ defmodule Normandy.Agents.Turn.Server do
       {:crashed, reason} -> fail(data, reason)
     end
   end
-
-  # Log text must never carry handler values. Handlers receive and return the config
-  # (client credentials, req_options), and Exception.message/1 of a MatchError,
-  # CaseClauseError, BadMapError, WithClauseError or an ErlangError embeds the offending
-  # value; so do exit terms like {:timeout, {GenServer, :call, [pid, msg, t]}}. Only
-  # RuntimeError and ArgumentError messages (author-written strings) are logged; for
-  # anything else, the kind, struct name or tag, never the payload. The reply to the
-  # caller keeps the full term.
-  defp describe_crash(kind, reason, stacktrace) do
-    case Exception.normalize(kind, reason, stacktrace) do
-      %mod{} = e when kind == :error and mod in [RuntimeError, ArgumentError] ->
-        "error #{inspect(mod)}: " <> Exception.message(e)
-
-      %mod{} when kind == :error ->
-        "error #{inspect(mod)}"
-
-      term ->
-        "#{kind} " <> describe_term(term)
-    end
-  end
-
-  defp describe_term(term) when is_atom(term), do: inspect(term)
-
-  defp describe_term(term)
-       when is_tuple(term) and tuple_size(term) > 0 and is_atom(elem(term, 0)),
-       do: "{#{inspect(elem(term, 0))}, ...}"
-
-  defp describe_term(term) when is_tuple(term), do: "a tuple"
-  defp describe_term(term) when is_map(term), do: "a map"
-  defp describe_term(term) when is_list(term), do: "a list"
-  defp describe_term(term) when is_binary(term), do: "a binary"
-  defp describe_term(_term), do: "a term"
 
   defp reply(%Data{pending_reply: nil}, _msg), do: :ok
   defp reply(%Data{pending_reply: from}, msg), do: :gen_statem.reply(from, msg)

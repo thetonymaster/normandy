@@ -417,8 +417,8 @@ defmodule Normandy.Coordination.AgentProcess do
 
             {:reply, {:ok, extract_result(response)}, updated_state}
 
+          # A Normandy error is replied, not logged: its telemetry records it.
           {:error, exception} ->
-            Logger.error("Agent #{state.agent_id} failed: #{Exception.message(exception)}")
             {:reply, {:error, exception}, state}
         end
       rescue
@@ -521,7 +521,8 @@ defmodule Normandy.Coordination.AgentProcess do
           catch
             kind, reason ->
               Logger.error(
-                "Async agent #{agent_id} #{kind}\n" <> TurnError.format_stacktrace(__STACKTRACE__)
+                "Async agent #{agent_id} raised " <>
+                  TurnError.format_raised(kind, reason, __STACKTRACE__)
               )
 
               {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}

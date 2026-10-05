@@ -208,16 +208,35 @@ defmodule Normandy.TurnError do
   end
 
   @doc false
+  # A raised failure for a log line: the exception's module for an :error (a raw Erlang
+  # error normalized first), the kind ("exit", "throw") otherwise, then the stacktrace
+  # with arities only. Never
+  # the exception's message, a thrown term or an exit reason: each can hold the value it
+  # failed on (a KeyError's map, a MatchError's term, a GenServer.call exit's message).
+  # Every log line Normandy writes for a raise, exit or throw uses it.
+  @spec format_raised(:error | :exit | :throw, term(), Exception.stacktrace()) :: String.t()
+  def format_raised(kind, reason, stacktrace),
+    do: describe_raised(kind, reason, stacktrace) <> "\n" <> format_stacktrace(stacktrace)
+
+  @doc false
+  # format_raised/3 without the stacktrace, for a one-line log (a retry warning).
+  @spec describe_raised(:error | :exit | :throw, term(), Exception.stacktrace()) :: String.t()
+  def describe_raised(:error, reason, stacktrace) do
+    %module{} = Exception.normalize(:error, reason, stacktrace)
+    inspect(module)
+  end
+
+  def describe_raised(kind, _reason, _stacktrace) when kind in [:exit, :throw],
+    do: Atom.to_string(kind)
+
+  @doc false
   # For a boundary that replies a raised bug instead of crashing (AgentProcess, Reactive,
-  # a workflow step): logs `who`, the exception's module and the stacktrace (arities
-  # only), and returns {:error, exception}. The stacktrace is never returned.
+  # a workflow step): logs `who` and format_raised/3, and returns {:error, exception}.
+  # The stacktrace is never returned.
   @spec log_raised(String.t(), Exception.t(), Exception.stacktrace()) ::
           {:error, Exception.t()}
   def log_raised(who, exception, stacktrace) do
-    Logger.error(
-      "#{who} raised #{inspect(exception.__struct__)}\n" <> format_stacktrace(stacktrace)
-    )
-
+    Logger.error("#{who} raised " <> format_raised(:error, exception, stacktrace))
     {:error, exception}
   end
 

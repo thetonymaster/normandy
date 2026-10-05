@@ -674,7 +674,8 @@ defmodule Normandy.Hooks.ServerHooksTest do
           assert {:ok, _} = Turn.Server.run(srv, "hello")
         end)
 
-      assert log =~ "on_session_start crashed: RuntimeError: crm down"
+      assert log =~ "on_session_start crashed: RuntimeError"
+      refute log =~ "crm down"
     end
 
     test "a store fault writing the injection leaves the server :unavailable" do

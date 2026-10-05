@@ -215,16 +215,15 @@ defmodule Normandy.A2A.Server do
     end
   end
 
-  # The remote caller is outside this system: it gets a generic error, and the
-  # detail (which can name internals) stays in the log. The stacktrace keeps arities,
-  # never arguments (TurnError.format_stacktrace/1).
+  # The remote caller is outside this system: it gets a generic error, and the log gets
+  # the kind, the exception module and the stacktrace with arities only
+  # (TurnError.format_raised/3): never a message, a thrown term or an exit reason.
   defp agent_failed(kind, reason, stacktrace) do
     require Logger
 
     Logger.error(
-      "A2A Server handle_message: the agent failed\n" <>
-        Exception.format_banner(kind, reason, stacktrace) <>
-        "\n" <> TurnError.format_stacktrace(stacktrace)
+      "A2A Server handle_message: the agent failed: " <>
+        TurnError.format_raised(kind, reason, stacktrace)
     )
 
     {:error, :agent_failed}

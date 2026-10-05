@@ -40,6 +40,7 @@ defmodule Normandy.Hooks.Runner do
   alias Normandy.Components.ToolResult
   alias Normandy.Hooks.Context
   alias Normandy.Telemetry.Span
+  alias Normandy.TurnError
 
   @arity Map.new(Hooks.events())
   @logged_only [:on_turn_end, :on_passivate]
@@ -305,7 +306,8 @@ defmodule Normandy.Hooks.Runner do
 
       {:crashed, kind, reason, stacktrace} ->
         Logger.error(
-          "hook #{inspect(mod)} #{event} crashed: #{describe(kind, reason, stacktrace)}"
+          "hook #{inspect(mod)} #{event} crashed: " <>
+            TurnError.format_raised(kind, reason, stacktrace)
         )
 
         {{:rescued, policy, crash_reason(mod, kind, reason, stacktrace)}, :rescued}
@@ -368,22 +370,6 @@ defmodule Normandy.Hooks.Runner do
   end
 
   # ── crash descriptions ──────────────────────────────────────────────────────
-
-  # Log text: the exception module, plus the message of a RuntimeError or ArgumentError
-  # (author-written text) cut to 200 characters; never an exit or throw payload or another
-  # exception's message, which can carry the hook's data (Turn.Server logs handler crashes
-  # by the same rule).
-  defp describe(:error, reason, stacktrace) do
-    case Exception.normalize(:error, reason, stacktrace) do
-      %mod{} = e when mod in [RuntimeError, ArgumentError] ->
-        "#{inspect(mod)}: " <> String.slice(Exception.message(e), 0, 200)
-
-      %mod{} ->
-        inspect(mod)
-    end
-  end
-
-  defp describe(kind, _reason, _stacktrace), do: Atom.to_string(kind)
 
   # A halt reason reaches the model or the caller: the exception module or the kind only.
   defp crash_reason(mod, :error, reason, stacktrace) do

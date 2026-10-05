@@ -144,7 +144,7 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     assert meta.stacktrace == []
   end
 
-  test "a failed stream's exception telemetry and log line do not carry the config" do
+  test "a failed stream's exception telemetry does not carry the config, and it is not logged" do
     id = {__MODULE__, self(), make_ref()}
     test_pid = self()
 
@@ -174,7 +174,8 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
     assert_received {:exception_metadata, metadata}
     refute inspect(metadata, limit: :infinity, printable_limit: :infinity) =~ "sk-fv1-secret"
-    assert log =~ "normandy llm call exception"
+    # A returned Normandy error is recorded by telemetry, not logged.
+    refute log =~ "[error]"
     refute log =~ "sk-fv1-secret"
   end
 
