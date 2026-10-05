@@ -161,7 +161,7 @@ defmodule Normandy.MixProject do
     [
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
-      {:telemetry, "~> 1.0"},
+      {:telemetry, "~> 1.3"},
       {:claudio, path: "../Claudio"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
