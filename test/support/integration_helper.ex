@@ -243,16 +243,4 @@ defmodule NormandyTest.Support.IntegrationHelper do
       text: ""
     }
   end
-
-  @doc """
-  Creates a weather tool for testing.
-
-  This tool fetches real weather data, ensuring models must use it
-  as they cannot know current weather conditions.
-  """
-  def create_weather_tool do
-    %Normandy.Tools.Examples.Weather{
-      city: ""
-    }
-  end
 end

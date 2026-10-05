@@ -603,3 +603,11 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `inspect/1` text.
 - `Normandy.LLM.JsonDeserializer.get_json_adapter/0` is removed. The `:adapter` option
   of `parse_and_validate/3` and `deserialize_with_retry/5` defaults to `Normandy.JSON`.
+
+## 24. The example tools are no longer in the package
+
+`Normandy.Tools.Examples.Calculator`, `EnhancedCalculator`, `ListProcessor`,
+`StringManipulator` and `Weather` are removed from the library. They were test
+fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
+1.x source into your application. The weather tool is in the repository at
+`examples/tools/weather.ex` (as `MyApp.Tools.Weather`).

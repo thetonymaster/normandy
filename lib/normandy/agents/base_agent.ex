@@ -1952,8 +1952,7 @@ defmodule Normandy.Agents.BaseAgent do
   ## Examples
 
       iex> agent = BaseAgent.init(config)
-      iex> tool = %Normandy.Tools.Examples.Calculator{}
-      iex> agent = BaseAgent.register_tool(agent, tool)
+      iex> agent = BaseAgent.register_tool(agent, %MyApp.Tools.Search{})
 
   """
   @spec register_tool(BaseAgentConfig.t(), struct()) :: BaseAgentConfig.t()

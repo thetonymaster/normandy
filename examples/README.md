@@ -31,6 +31,14 @@ Then run:
 CustomerSupport.CLI.start()
 ```
 
+### 2. A tool that calls an HTTP API
+
+**Location**: `tools/weather.ex`
+
+`MyApp.Tools.Weather` fetches current weather from Open-Meteo (no API key needed).
+Copy it into your application and rename the module. It is not part of the Normandy
+package.
+
 ## Phoenix LiveView Integration
 
 While we don't have a complete Phoenix example yet, here's how to integrate Normandy with Phoenix LiveView:

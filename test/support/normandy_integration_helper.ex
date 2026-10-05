@@ -85,15 +85,17 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
     }
   end
 
-  @doc """
-  Creates a weather tool for testing.
+  @weather_source Path.expand("../../examples/tools/weather.ex", __DIR__)
 
-  This tool fetches real weather data, ensuring models must use it
-  as they cannot know current weather conditions.
+  @doc """
+  Creates the example weather tool (`examples/tools/weather.ex`).
+
+  It fetches real weather data, so a model must call it: it cannot know current
+  conditions. It lives in `examples/`, which mix does not compile, so it is
+  compiled here, on first use, only by the live tests that call this.
   """
   def create_weather_tool do
-    %Normandy.Tools.Examples.Weather{
-      city: ""
-    }
+    _ = unless Code.ensure_loaded?(MyApp.Tools.Weather), do: Code.compile_file(@weather_source)
+    struct(MyApp.Tools.Weather, city: "")
   end
 end

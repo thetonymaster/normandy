@@ -1,19 +1,14 @@
-defmodule Normandy.Tools.Examples.Weather do
+defmodule MyApp.Tools.Weather do
   @moduledoc """
-  A weather tool that fetches current weather data from Open-Meteo API.
+  An example tool that fetches current weather from the Open-Meteo API (no API key).
 
-  This tool is designed for integration testing to verify actual tool usage,
-  as models cannot know real-time weather data and must use the tool.
+  Copy it into your application and rename the module. Normandy's live test
+  `test/normandy_integration/basic_agent_test.exs` uses it: a model cannot know
+  current weather, so it must call the tool.
 
-  ## Examples
+      agent = Normandy.Agents.BaseAgent.register_tool(agent, %MyApp.Tools.Weather{})
 
-      iex> {:ok, weather} = Weather.validate(%{city: "San Francisco"})
-      iex> Normandy.Tools.BaseTool.run(weather)
-      {:ok, "Current weather in San Francisco: 15.2°C, Clear sky"}
-
-  ## API
-
-  Uses the free Open-Meteo API (https://open-meteo.com/) which requires no API key.
+  Supported cities are the keys of `@city_coords`.
   """
 
   use Normandy.Tools.SchemaBaseTool

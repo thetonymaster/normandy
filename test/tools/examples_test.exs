@@ -4,6 +4,20 @@ defmodule NormandyTest.Tools.ExamplesTest do
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
 
+  test "the example tools are test fixtures, not part of the library" do
+    for name <- ~w(Calculator EnhancedCalculator ListProcessor StringManipulator) do
+      module = Module.concat(Normandy.Tools.Examples, name)
+      assert Code.ensure_loaded?(module), "#{inspect(module)} is not compiled in the test env"
+      source = module.module_info(:compile) |> Keyword.fetch!(:source) |> List.to_string()
+
+      assert source =~ "/test/support/tools/",
+             "#{inspect(module)} is compiled from #{source}, expected test/support/tools/"
+    end
+
+    refute Code.ensure_loaded?(Normandy.Tools.Examples.Weather),
+           "Normandy.Tools.Examples.Weather is still compiled from lib/"
+  end
+
   describe "Calculator tool" do
     test "performs addition" do
       tool = %Calculator{operation: "add", a: 10, b: 5}
