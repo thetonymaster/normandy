@@ -79,9 +79,11 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
       BaseAgent.init(%{
         client: %StubClient{reply: fn rm -> %{rm | chat_message: "my ssn is 123-45-6789"} end},
         model: "m",
-        output_guardrails: [
-          {Normandy.Guardrails.Builtins.RegexGuard,
-           patterns: [~r/\d{3}-\d{2}-\d{4}/], mode: :deny, field: :chat_message}
+        guardrails: [
+          output: [
+            {Normandy.Guardrails.Builtins.RegexGuard,
+             patterns: [~r/\d{3}-\d{2}-\d{4}/], mode: :deny, field: :chat_message}
+          ]
         ]
       })
 

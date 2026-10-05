@@ -90,7 +90,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     when the schema has no `:chat_message` field to put the raw text in
 
   Claudio's client-level `retry:` (in `req_options` or the client config) retries HTTP
-  failures before Normandy sees them; enabling it together with `retry_options`
+  failures before Normandy sees them; enabling it together with the agent's `retry`
   multiplies the attempts.
 
   `validate_options!/1` checks the option combinations and values above once, up front;

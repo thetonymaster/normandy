@@ -335,7 +335,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
 
       {_start, stop} =
         capture(client, &stream_it/1, %{
-          retry_options: [max_attempts: 2, base_delay: 300, jitter: false]
+          retry: [max_attempts: 2, base_delay: 300, jitter: false]
         })
 
       ms = System.convert_time_unit(stop.time_to_first_chunk, :native, :millisecond)

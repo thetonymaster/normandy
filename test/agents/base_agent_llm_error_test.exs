@@ -33,7 +33,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
   @retry [max_attempts: 3, base_delay: 10, max_delay: 20]
 
-  test "without retry_options an LLM error raises on the first call" do
+  test "without retry an LLM error raises on the first call" do
     e = LLMError.new(type: :server, status: 500, retryable?: true)
     agent = agent(error_client(e))
 
@@ -46,7 +46,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
   test "a retryable error is attempted max_attempts times, then raised" do
     e = LLMError.new(type: :overloaded, status: 529, retryable?: true)
-    agent = agent(error_client(e), %{retry_options: @retry})
+    agent = agent(error_client(e), %{retry: @retry})
 
     raised = assert_raise LLMError, fn -> BaseAgent.run!(agent, input()) end
     assert raised == e
@@ -78,7 +78,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
   test "a non-retryable error is attempted once, then raised" do
     e = LLMError.new(type: :authentication, status: 401, retryable?: false)
-    agent = agent(error_client(e), %{retry_options: @retry})
+    agent = agent(error_client(e), %{retry: @retry})
 
     assert_raise LLMError, ~r/authentication \(401\)/, fn -> BaseAgent.run!(agent, input()) end
     assert calls() == 1
@@ -95,7 +95,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
     agent =
       agent(error_client(e), %{
-        retry_options: Keyword.put(@retry, :retry_if, retry_if)
+        retry: Keyword.put(@retry, :retry_if, retry_if)
       })
 
     assert_raise LLMError, fn -> BaseAgent.run!(agent, input()) end
@@ -106,7 +106,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
   test "a custom retry_if that refuses an exception re-raises the original exception" do
     agent =
       agent(raising_client(), %{
-        retry_options: Keyword.put(@retry, :retry_if, fn _ -> false end)
+        retry: Keyword.put(@retry, :retry_if, fn _ -> false end)
       })
 
     assert_raise ArgumentError, "transport blew up", fn -> BaseAgent.run!(agent, input()) end
@@ -114,7 +114,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
   end
 
   test "an exception under the circuit breaker (no retry) is re-raised with its original type" do
-    agent = agent(raising_client(), %{enable_circuit_breaker: true})
+    agent = agent(raising_client(), %{circuit_breaker: []})
 
     assert_raise ArgumentError, "transport blew up", fn -> BaseAgent.run!(agent, input()) end
     assert calls() == 1
@@ -134,8 +134,7 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
     agent =
       agent(error_client(e), %{
-        enable_circuit_breaker: true,
-        circuit_breaker_options: [failure_threshold: 2, timeout: 60_000]
+        circuit_breaker: [failure_threshold: 2, timeout: 60_000]
       })
 
     assert_raise LLMError, ~r/server/, fn -> BaseAgent.run!(agent, input()) end

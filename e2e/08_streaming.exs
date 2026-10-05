@@ -33,9 +33,7 @@ agent =
     model: S.model(),
     max_tokens: 200,
     name: "s08",
-    output_guardrails: [{ForbiddenSubstrings, terms: ["PINEAPPLE"]}],
-    output_guardrails_streaming_mode: :incremental,
-    output_guardrails_chunk_size: 20
+    guardrails: [output: [{ForbiddenSubstrings, terms: ["PINEAPPLE"]}], streaming_mode: :incremental, chunk_size: 20]
   })
 
 stream_turn = fn agent, n, text ->

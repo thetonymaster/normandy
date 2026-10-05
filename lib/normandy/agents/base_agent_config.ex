@@ -4,6 +4,12 @@ defmodule Normandy.Agents.BaseAgentConfig do
 
   Stores all stateful information for an agent including schemas,
   memory, model configuration, and prompt specifications.
+
+  Option groups: `retry` (`Normandy.Resilience.Retry` options or `nil`), `circuit_breaker`
+  (`Normandy.Resilience.CircuitBreaker` options or `nil`; `circuit_breaker_pid` is the
+  breaker `BaseAgent.init/1` started, node-local) and `guardrails`
+  (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`). A `guardrails` list
+  built by hand may leave keys out: `guardrail/2` reads a missing key as its default.
   """
 
   use Normandy.Schema
@@ -19,6 +25,23 @@ defmodule Normandy.Agents.BaseAgentConfig do
   @spec default_max_tokens() :: pos_integer()
   def default_max_tokens, do: @default_max_tokens
 
+  @default_guardrails [
+    input: [],
+    output: [],
+    streaming_mode: :accumulate,
+    chunk_size: 200,
+    on_violation: :block
+  ]
+
+  @typedoc "The `guardrails` group; see `Normandy.Guardrails`."
+  @type guardrails :: [
+          input: [Normandy.Guardrails.spec()],
+          output: [Normandy.Guardrails.spec()],
+          streaming_mode: :accumulate | :incremental,
+          chunk_size: pos_integer(),
+          on_violation: :block | :warn
+        ]
+
   @type t :: %__MODULE__{
           input_schema: struct(),
           output_schema: struct(),
@@ -33,17 +56,14 @@ defmodule Normandy.Agents.BaseAgentConfig do
           tool_registry: Registry.t() | nil,
           max_tool_iterations: pos_integer(),
           max_tool_concurrency: pos_integer(),
-          retry_options: keyword() | nil,
-          circuit_breaker: pid() | nil,
+          retry: keyword() | nil,
+          circuit_breaker: keyword() | nil,
+          circuit_breaker_pid: pid() | nil,
           enable_json_retry: boolean(),
           json_retry_max_attempts: pos_integer(),
           name: String.t() | nil,
           mcp_servers: list() | nil,
-          input_guardrails: [Normandy.Guardrails.spec()],
-          output_guardrails: [Normandy.Guardrails.spec()],
-          output_guardrails_streaming_mode: :accumulate | :incremental,
-          output_guardrails_chunk_size: pos_integer(),
-          output_guardrails_on_violation: :block | :warn,
+          guardrails: guardrails(),
           behaviours: Normandy.Behaviours.Config.t() | nil,
           resolved_context_window: {String.t(), pos_integer()} | nil,
           session_id: String.t() | nil,
@@ -68,19 +88,29 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:tool_registry, :struct, default: nil)
     field(:max_tool_iterations, :integer, default: 5)
     field(:max_tool_concurrency, :integer, default: 1)
-    field(:retry_options, :map, default: nil)
+    field(:retry, :any, default: nil)
     field(:circuit_breaker, :any, default: nil)
+    field(:circuit_breaker_pid, :any, default: nil)
     field(:enable_json_retry, :boolean, default: true)
     field(:json_retry_max_attempts, :integer, default: 2)
     field(:mcp_servers, :any, default: nil)
-    field(:input_guardrails, :any, default: [])
-    field(:output_guardrails, :any, default: [])
-    field(:output_guardrails_streaming_mode, :any, default: :accumulate)
-    field(:output_guardrails_chunk_size, :integer, default: 200)
-    field(:output_guardrails_on_violation, :any, default: :block)
+    field(:guardrails, :any, default: @default_guardrails)
     field(:behaviours, :any, default: nil)
     field(:resolved_context_window, :any, default: nil)
     field(:session_id, :string, default: nil)
     field(:tool_context, :map, default: %{})
   end
+
+  @doc "The `guardrails` a config has when it sets none."
+  @spec default_guardrails() :: guardrails()
+  def default_guardrails, do: @default_guardrails
+
+  @doc """
+  One `guardrails` setting of `config`; a key left out of a hand-built `guardrails` list
+  reads as its default (`default_guardrails/0`).
+  """
+  @spec guardrail(t(), :input | :output | :streaming_mode | :chunk_size | :on_violation) ::
+          term()
+  def guardrail(%__MODULE__{guardrails: guardrails}, key) when is_list(guardrails),
+    do: Keyword.get_lazy(guardrails, key, fn -> Keyword.fetch!(@default_guardrails, key) end)
 end

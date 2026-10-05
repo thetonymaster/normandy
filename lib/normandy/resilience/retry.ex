@@ -133,7 +133,7 @@ defmodule Normandy.Resilience.Retry do
   @doc """
   Checks retry options without running anything, raising `ArgumentError` on an
   unknown option or a bad value. `BaseAgent.init/1` calls it for
-  `:retry_options`, so a mistake surfaces when the agent is built.
+  `:retry`, so a mistake surfaces when the agent is built.
   """
   @spec validate_options!(retry_options()) :: :ok
   def validate_options!(opts) do

@@ -159,14 +159,17 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         output_schema: SomeOutput,
         memory: AgentMemory.new_memory(7),
         initial_memory: AgentMemory.add_message(AgentMemory.new_memory(7), "user", "seed"),
-        retry_options: [max_attempts: 4, base_delay: 10],
+        retry: [max_attempts: 4, base_delay: 10],
+        circuit_breaker: [failure_threshold: 3],
         enable_json_retry: true,
         json_retry_max_attempts: 5,
-        input_guardrails: [SomeGuard, {OtherGuard, [limit: 3]}],
-        output_guardrails: [{OutGuard, []}],
-        output_guardrails_streaming_mode: :incremental,
-        output_guardrails_chunk_size: 64,
-        output_guardrails_on_violation: :warn,
+        guardrails: [
+          input: [SomeGuard, {OtherGuard, [limit: 3]}],
+          output: [{OutGuard, []}],
+          streaming_mode: :incremental,
+          chunk_size: 64,
+          on_violation: :warn
+        ],
         tool_context: %{memory_namespace: "acme/u-1"},
         client: supp.client_builder.("TOKEN"),
         tool_registry: supp.tool_registry,
@@ -279,8 +282,8 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         }
       ]
 
-      supp = round_trip_supplement(%{circuit_breaker: cb, mcp_servers: servers})
-      config = %{full_config(supp) | circuit_breaker: cb, mcp_servers: servers}
+      supp = round_trip_supplement(%{circuit_breaker_pid: cb, mcp_servers: servers})
+      config = %{full_config(supp) | circuit_breaker_pid: cb, mcp_servers: servers}
 
       tmpl = ConfigTemplate.from_config(config, "t")
       blob = :erlang.term_to_binary(tmpl)
@@ -290,11 +293,11 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
     end
 
-    test "rebuild raises when the template had a circuit breaker and the supplement has none" do
+    test "rebuild raises when the template had a circuit breaker pid and the supplement has none" do
       supp = round_trip_supplement()
-      tmpl = ConfigTemplate.from_config(%{full_config(supp) | circuit_breaker: self()}, "t")
+      tmpl = ConfigTemplate.from_config(%{full_config(supp) | circuit_breaker_pid: self()}, "t")
 
-      assert_raise ArgumentError, ~r/:circuit_breaker/, fn ->
+      assert_raise ArgumentError, ~r/:circuit_breaker_pid/, fn ->
         ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
       end
     end
@@ -309,13 +312,13 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       end
     end
 
-    test "from_config refuses a function in retry_options" do
+    test "from_config refuses a function in the retry options" do
       config = %{
         full_config(round_trip_supplement())
-        | retry_options: [retry_if: fn _ -> true end]
+        | retry: [retry_if: fn _ -> true end]
       }
 
-      assert_raise ArgumentError, ~r/from_config\/2.*:retry_options.*function/, fn ->
+      assert_raise ArgumentError, ~r/from_config\/2.*:retry .*function/, fn ->
         ConfigTemplate.from_config(config, "t")
       end
     end
@@ -323,10 +326,10 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     test "from_config refuses a function in guardrail options" do
       config = %{
         full_config(round_trip_supplement())
-        | input_guardrails: [{SomeGuard, [check: fn _ -> :ok end]}]
+        | guardrails: [input: [{SomeGuard, [check: fn _ -> :ok end]}]]
       }
 
-      assert_raise ArgumentError, ~r/:input_guardrails/, fn ->
+      assert_raise ArgumentError, ~r/from_config\/2: :guardrails contains a function/, fn ->
         ConfigTemplate.from_config(config, "t")
       end
     end

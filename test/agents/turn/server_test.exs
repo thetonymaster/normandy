@@ -310,8 +310,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     config = %{
       base_config()
-      | output_guardrails: [
-          {Normandy.Guardrails.Builtins.ForbiddenSubstrings, terms: ["SSN"], field: :content}
+      | guardrails: [
+          output: [
+            {Normandy.Guardrails.Builtins.ForbiddenSubstrings, terms: ["SSN"], field: :content}
+          ]
         ]
     }
 
@@ -1576,7 +1578,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     test "an input guardrail block replies the ViolationError" do
       config = %{
         base_config()
-        | input_guardrails: [{Normandy.Guardrails.Builtins.MaxLength, limit: 5}]
+        | guardrails: [input: [{Normandy.Guardrails.Builtins.MaxLength, limit: 5}]]
       }
 
       {srv, _store} = start_server("s-rej-guard", config)

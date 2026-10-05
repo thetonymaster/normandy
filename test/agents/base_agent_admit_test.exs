@@ -48,12 +48,12 @@ defmodule NormandyTest.BaseAgentAdmitTest do
     end
 
     test "returns :ok when the input guardrails pass" do
-      agent = BaseAgent.init(base_config(%{input_guardrails: [{MaxLength, limit: 100}]}))
+      agent = BaseAgent.init(base_config(%{guardrails: [input: [{MaxLength, limit: 100}]]}))
       assert BaseAgent.admit(agent, "fine") == :ok
     end
 
     test "returns {:block, violations} instead of raising when a guard rejects" do
-      agent = BaseAgent.init(base_config(%{input_guardrails: [{MaxLength, limit: 5}]}))
+      agent = BaseAgent.init(base_config(%{guardrails: [input: [{MaxLength, limit: 5}]]}))
 
       assert {:block, [violation]} = BaseAgent.admit(agent, "too long input")
       assert violation.constraint == :max_length
@@ -64,7 +64,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
         BaseAgent.init(
           base_config(%{
             client: %StubClient{notify: self()},
-            input_guardrails: [{MaxLength, limit: 5}]
+            guardrails: [input: [{MaxLength, limit: 5}]]
           })
         )
 
@@ -77,7 +77,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
 
   describe "admit/3" do
     test "threads context to a guard implementing check/3" do
-      agent = BaseAgent.init(base_config(%{input_guardrails: [ContextGate]}))
+      agent = BaseAgent.init(base_config(%{guardrails: [input: [ContextGate]]}))
 
       assert {:block, [violation]} = BaseAgent.admit(agent, "x", %{allow: false})
       assert violation.constraint == :needs_allow
@@ -86,7 +86,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
     end
 
     test "defaults context to an empty map (admit/2 == admit/3 with %{})" do
-      agent = BaseAgent.init(base_config(%{input_guardrails: [ContextGate]}))
+      agent = BaseAgent.init(base_config(%{guardrails: [input: [ContextGate]]}))
 
       # No :allow in the empty default context → blocked.
       assert {:block, _} = BaseAgent.admit(agent, "x")
@@ -122,7 +122,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
 
     test "emits a :decision{outcome: :block} and a :violation event on rejection", %{name: name} do
       agent =
-        BaseAgent.init(base_config(%{name: name, input_guardrails: [{MaxLength, limit: 1}]}))
+        BaseAgent.init(base_config(%{name: name, guardrails: [input: [{MaxLength, limit: 1}]]}))
 
       assert {:block, _} = BaseAgent.admit(agent, "xx")
 
@@ -141,7 +141,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
 
     test "emits a :decision{outcome: :admit} on a pass", %{name: name} do
       agent =
-        BaseAgent.init(base_config(%{name: name, input_guardrails: [{MaxLength, limit: 100}]}))
+        BaseAgent.init(base_config(%{name: name, guardrails: [input: [{MaxLength, limit: 100}]]}))
 
       assert BaseAgent.admit(agent, "fine") == :ok
 
@@ -166,7 +166,7 @@ defmodule NormandyTest.BaseAgentAdmitTest do
         BaseAgent.init(
           base_config(%{
             name: name,
-            input_guardrails: [{CrashGuard, on_error: :closed}]
+            guardrails: [input: [{CrashGuard, on_error: :closed}]]
           })
         )
 

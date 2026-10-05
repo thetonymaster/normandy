@@ -69,27 +69,22 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       type_doc: "`t:integer/0`",
       doc: "Tool calls run at once; a value below 1 counts as 1."
     ],
-    retry_options: [
+    retry: [
       type: {:custom, __MODULE__, :retry, []},
       default: nil,
       type_doc: "`t:keyword/0` or `nil`",
       doc: "`Normandy.Resilience.Retry` options for LLM calls; `nil` makes one attempt."
     ],
-    enable_circuit_breaker: [
-      type: :boolean,
-      default: false,
-      doc: "Starts a `Normandy.Resilience.CircuitBreaker` linked to the caller."
-    ],
-    circuit_breaker_options: [
-      type: :keyword_list,
-      default: [],
-      keys: [
-        failure_threshold: [type: :pos_integer, doc: "Failures before it opens."],
-        success_threshold: [type: :pos_integer, doc: "Successes that close it from half-open."],
-        timeout: [type: :pos_integer, doc: "Milliseconds open before half-open."],
-        half_open_max_calls: [type: :pos_integer, doc: "Calls let through when half-open."]
-      ],
-      doc: "The circuit breaker's options."
+    circuit_breaker: [
+      type: {:custom, __MODULE__, :circuit_breaker, []},
+      default: nil,
+      type_doc: "`t:keyword/0` or `nil`",
+      doc:
+        "Starts a `Normandy.Resilience.CircuitBreaker`, linked to the caller, with these " <>
+          "options: `:failure_threshold` (failures before it opens), `:success_threshold` " <>
+          "(successes that close it from half-open), `:timeout` (milliseconds open before " <>
+          "half-open), `:half_open_max_calls` (calls let through when half-open). `[]` uses " <>
+          "the breaker's defaults; `nil` starts none."
     ],
     enable_json_retry: [
       type: :boolean,
@@ -97,30 +92,29 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       doc: "Asks the model again when its JSON does not parse."
     ],
     json_retry_max_attempts: [type: :pos_integer, default: 2, doc: "JSON re-asks per call."],
-    input_guardrails: [
-      type: {:list, @guard_spec},
+    guardrails: [
+      type: :keyword_list,
       default: [],
-      doc: "Guards for the input (`Normandy.Guardrails`)."
-    ],
-    output_guardrails: [
-      type: {:list, @guard_spec},
-      default: [],
-      doc: "Guards for the answer (`Normandy.Guardrails`)."
-    ],
-    output_guardrails_streaming_mode: [
-      type: {:in, [:accumulate, :incremental]},
-      default: :accumulate,
-      doc: "When `stream/3` checks the output guards."
-    ],
-    output_guardrails_chunk_size: [
-      type: :pos_integer,
-      default: 200,
-      doc: "Bytes of streamed text between incremental checks."
-    ],
-    output_guardrails_on_violation: [
-      type: {:in, [:block, :warn]},
-      default: :block,
-      doc: "What an output violation does."
+      keys: [
+        input: [type: {:list, @guard_spec}, default: [], doc: "Guards for the input."],
+        output: [type: {:list, @guard_spec}, default: [], doc: "Guards for the answer."],
+        streaming_mode: [
+          type: {:in, [:accumulate, :incremental]},
+          default: :accumulate,
+          doc: "When `stream/3` checks the output guards."
+        ],
+        chunk_size: [
+          type: :pos_integer,
+          default: 200,
+          doc: "Bytes of streamed text between incremental checks."
+        ],
+        on_violation: [
+          type: {:in, [:block, :warn]},
+          default: :block,
+          doc: "What an output violation does."
+        ]
+      ],
+      doc: "`Normandy.Guardrails` guards and how they apply."
     ],
     name: [type: {:or, [:string, nil]}, default: nil, doc: "The agent's name."],
     session_id: [
@@ -161,6 +155,26 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       "cap the memory with memory: Normandy.Components.AgentMemory.new_memory(max_messages)"
   ]
 
+  # 1.x init/1 options that 2.0 renamed or regrouped.
+  @renamed [
+    retry_options: "was renamed to :retry",
+    enable_circuit_breaker:
+      "was removed: circuit_breaker: [] (or the breaker's options) starts a breaker",
+    circuit_breaker_options: "was renamed to :circuit_breaker",
+    input_guardrails: "moved to guardrails: [input: ...]",
+    output_guardrails: "moved to guardrails: [output: ...]",
+    output_guardrails_streaming_mode: "moved to guardrails: [streaming_mode: ...]",
+    output_guardrails_chunk_size: "moved to guardrails: [chunk_size: ...]",
+    output_guardrails_on_violation: "moved to guardrails: [on_violation: ...]"
+  ]
+
+  @breaker_schema NimbleOptions.new!(
+                    failure_threshold: [type: :pos_integer],
+                    success_threshold: [type: :pos_integer],
+                    timeout: [type: :pos_integer],
+                    half_open_max_calls: [type: :pos_integer]
+                  )
+
   @init {BaseAgent, :init, 1}
 
   @doc false
@@ -188,12 +202,22 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   end
 
   @doc false
-  # Raises for a key in @hints that `schema` does not itself accept, naming the key, where
-  # the setting lives, and `schema`'s options.
+  # Raises for a 1.x key in @renamed, naming its 2.0 home, and for a key in @hints that
+  # `schema` does not itself accept, naming where the setting lives and `schema`'s options.
   @spec check_misnamed!(term(), NimbleOptions.t(), {module(), atom(), arity()}) :: :ok
   def check_misnamed!(opts, %NimbleOptions{} = schema, {mod, fun, arity}) do
     keys = option_keys(opts)
     supported = Keyword.keys(schema.schema)
+    prefix = "#{inspect(mod)}.#{fun}/#{arity}"
+
+    case Enum.find(@renamed, fn {key, _change} -> key in keys end) do
+      {key, change} ->
+        raise ArgumentError,
+              "#{prefix}: #{inspect(key)} #{change} in 2.0; see MIGRATING-2.0.md §22"
+
+      nil ->
+        :ok
+    end
 
     case Enum.find(@hints, fn {key, _hint} -> key in keys and key not in supported end) do
       nil ->
@@ -201,7 +225,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
 
       {key, hint} ->
         raise ArgumentError,
-              "#{inspect(mod)}.#{fun}/#{arity}: unknown option #{inspect(key)}; #{hint}; " <>
+              "#{prefix}: unknown option #{inspect(key)}; #{hint}; " <>
                 "supported: #{Enum.map_join(supported, ", ", &inspect/1)}"
     end
   end
@@ -290,4 +314,33 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
 
   def retry(other),
     do: {:error, "expected a keyword list or nil, got #{Describe.type_of(other)}"}
+
+  @doc false
+  def circuit_breaker(nil), do: {:ok, nil}
+
+  def circuit_breaker(opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      validate_breaker(opts)
+    else
+      {:error, "expected a keyword list or nil, got a list that is not one"}
+    end
+  end
+
+  def circuit_breaker(other),
+    do: {:error, "expected a keyword list or nil, got #{Describe.type_of(other)}"}
+
+  # Unknown keys in the house style ("unknown option :x; supported: ..."), like
+  # Normandy.Options; any other error is NimbleOptions' message.
+  defp validate_breaker(opts) do
+    supported = Enum.map_join(Keyword.keys(@breaker_schema.schema), ", ", &inspect/1)
+
+    with [] <- Enum.uniq(Keyword.keys(opts) -- Keyword.keys(@breaker_schema.schema)),
+         {:ok, validated} <- NimbleOptions.validate(opts, @breaker_schema) do
+      {:ok, validated}
+    else
+      {:error, %NimbleOptions.ValidationError{} = error} -> {:error, Exception.message(error)}
+      [key] -> {:error, "unknown option #{inspect(key)}; supported: #{supported}"}
+      keys -> {:error, "unknown options #{inspect(keys)}; supported: #{supported}"}
+    end
+  end
 end

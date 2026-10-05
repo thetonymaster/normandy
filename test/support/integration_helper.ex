@@ -113,8 +113,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
   - `:model` - Model to use (default: "claude-haiku-4-5-20251001")
   - `:temperature` - Temperature (default: 0.7)
   - `:enable_caching` - Enable prompt caching (default: true)
-  - `:retry_options` - Retry configuration
-  - `:enable_circuit_breaker` - Enable circuit breaker (default: false)
+  - `:retry` - Retry configuration
+  - `:circuit_breaker` - Circuit breaker options; starts one (default: nil, none)
 
   ## Example
 
@@ -132,9 +132,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
       model: Keyword.get(opts, :model, default_model()),
       temperature: Keyword.get(opts, :temperature, 0.7),
       max_tokens: Keyword.get(opts, :max_tokens, 1024),
-      retry_options: Keyword.get(opts, :retry_options),
-      enable_circuit_breaker: Keyword.get(opts, :enable_circuit_breaker, false),
-      circuit_breaker_options: Keyword.get(opts, :circuit_breaker_options, [])
+      retry: Keyword.get(opts, :retry),
+      circuit_breaker: Keyword.get(opts, :circuit_breaker)
     }
 
     BaseAgent.init(config)

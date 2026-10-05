@@ -118,7 +118,7 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
       BaseAgent.init(
         model: "m",
         client: client(),
-        enable_circuit_breaker: true,
+        circuit_breaker: [],
         max_tool_iterations: 0
       )
     end
@@ -128,14 +128,14 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
 
   test "an unknown circuit breaker option is named" do
     assert_raise ArgumentError,
-                 "Normandy.Agents.BaseAgent.init/1: unknown option :error_threshold in " <>
-                   ":circuit_breaker_options; supported: :failure_threshold, " <>
+                 "Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker option: " <>
+                   "unknown option :error_threshold; supported: :failure_threshold, " <>
                    ":success_threshold, :timeout, :half_open_max_calls",
                  fn ->
                    BaseAgent.init(
                      model: "m",
                      client: client(),
-                     circuit_breaker_options: [error_threshold: 3]
+                     circuit_breaker: [error_threshold: 3]
                    )
                  end
   end

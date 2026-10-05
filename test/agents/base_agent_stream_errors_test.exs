@@ -54,9 +54,11 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
   end
 
   @incremental %{
-    output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-    output_guardrails_streaming_mode: :incremental,
-    output_guardrails_chunk_size: 5
+    guardrails: [
+      output: [{ForbiddenSubstrings, terms: ["badword"]}],
+      streaming_mode: :incremental,
+      chunk_size: 5
+    ]
   }
 
   test "a mid-stream error event is an LLMError" do
@@ -217,8 +219,15 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
   end
 
   test "incremental guardrails: a tail-check violation does not mask a stream error" do
-    config = Map.put(@incremental, :output_guardrails, [{ForbiddenSubstrings, terms: ["badwd"]}])
-    config = Map.put(config, :output_guardrails_chunk_size, 100)
+    config = %{
+      @incremental
+      | guardrails: [
+          output: [{ForbiddenSubstrings, terms: ["badwd"]}],
+          streaming_mode: :incremental,
+          chunk_size: 100
+        ]
+    }
+
     agent = agent([start(), block(), delta("badwd"), error_event()], config)
 
     assert Exception.message(error_of(agent)) =~ "Overloaded"

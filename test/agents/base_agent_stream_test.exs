@@ -238,7 +238,7 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
   test "a stream that fails after output reached the callback is not retried" do
     calls = :counters.new(1, [])
     client = %ScriptedTextClient{text: "abcd", fail_after_first_delta: true, calls: calls}
-    a = agent(client, %{retry_options: [max_attempts: 3, base_delay: 1]})
+    a = agent(client, %{retry: [max_attempts: 3, base_delay: 1]})
 
     assert {:error, %LLMError{type: :stream}} = BaseAgent.stream(a, "hi", collect())
     assert :counters.get(calls, 1) == 1

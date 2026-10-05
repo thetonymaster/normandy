@@ -78,7 +78,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          retry_options: Retry.preset(:quick)
+          retry: Retry.preset(:quick)
         })
 
       # This should succeed after retries
@@ -115,7 +115,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          retry_options: [
+          retry: [
             max_attempts: 3,
             base_delay: 10,
             retry_on: [:network_error],
@@ -141,8 +141,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          enable_circuit_breaker: true,
-          circuit_breaker_options: [
+          circuit_breaker: [
             failure_threshold: 2,
             timeout: 100
           ]
@@ -158,7 +157,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       end
 
       # Circuit should be open
-      assert CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker_pid) == :open
 
       # Third call should fail fast
       assert_raise Normandy.LLMError,
@@ -168,8 +167,8 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
                    end
 
       # Clean up
-      if agent.circuit_breaker do
-        GenServer.stop(agent.circuit_breaker)
+      if agent.circuit_breaker_pid do
+        GenServer.stop(agent.circuit_breaker_pid)
       end
     end
 
@@ -184,8 +183,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          enable_circuit_breaker: true,
-          circuit_breaker_options: [
+          circuit_breaker: [
             failure_threshold: 1,
             success_threshold: 1,
             timeout: 50
@@ -197,7 +195,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         BaseAgent.run!(agent, %{chat_message: "fail"})
       end
 
-      assert CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker_pid) == :open
 
       # Wait for half-open
       Process.sleep(100)
@@ -211,13 +209,13 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success"
-      assert CircuitBreaker.state(agent.circuit_breaker) == :closed
+      assert CircuitBreaker.state(agent.circuit_breaker_pid) == :closed
 
       # Clean up
       Agent.stop(client_ref)
 
-      if agent.circuit_breaker do
-        GenServer.stop(agent.circuit_breaker)
+      if agent.circuit_breaker_pid do
+        GenServer.stop(agent.circuit_breaker_pid)
       end
     end
 
@@ -233,7 +231,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           temperature: 0.7
         })
 
-      assert agent.circuit_breaker == nil
+      assert agent.circuit_breaker_pid == nil
 
       {_agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
@@ -253,9 +251,8 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          retry_options: [max_attempts: 3, base_delay: 10],
-          enable_circuit_breaker: true,
-          circuit_breaker_options: [
+          retry: [max_attempts: 3, base_delay: 10],
+          circuit_breaker: [
             failure_threshold: 5
           ]
         })
@@ -264,10 +261,10 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       {agent, response} = BaseAgent.run!(agent, %{chat_message: "test"})
 
       assert response.chat_message == "Success after 2 attempts"
-      assert CircuitBreaker.state(agent.circuit_breaker) == :closed
+      assert CircuitBreaker.state(agent.circuit_breaker_pid) == :closed
 
-      if agent.circuit_breaker do
-        GenServer.stop(agent.circuit_breaker)
+      if agent.circuit_breaker_pid do
+        GenServer.stop(agent.circuit_breaker_pid)
       end
     end
 
@@ -282,9 +279,8 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           client: client,
           model: "test-model",
           temperature: 0.7,
-          retry_options: [max_attempts: 10, base_delay: 10, max_delay: 20],
-          enable_circuit_breaker: true,
-          circuit_breaker_options: [
+          retry: [max_attempts: 10, base_delay: 10, max_delay: 20],
+          circuit_breaker: [
             failure_threshold: 3,
             timeout: 100
           ]
@@ -304,7 +300,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       end
 
       # Circuit should be open now
-      assert CircuitBreaker.state(agent.circuit_breaker) == :open
+      assert CircuitBreaker.state(agent.circuit_breaker_pid) == :open
 
       # Next call should fail fast (no retries due to open circuit)
       attempt_count_before = Agent.get(attempts, & &1)
@@ -320,8 +316,8 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       # Should not have retried (circuit is open)
       assert attempt_count_after == attempt_count_before
 
-      if agent.circuit_breaker do
-        GenServer.stop(agent.circuit_breaker)
+      if agent.circuit_breaker_pid do
+        GenServer.stop(agent.circuit_breaker_pid)
       end
     end
   end

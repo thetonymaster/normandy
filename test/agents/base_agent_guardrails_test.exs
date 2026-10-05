@@ -49,12 +49,12 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     )
   end
 
-  describe "input_guardrails" do
+  describe "guardrails :input" do
     test "raises ViolationError when an input guardrail rejects" do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [{MaxLength, limit: 5}]
+            guardrails: [input: [{MaxLength, limit: 5}]]
           })
         )
 
@@ -65,7 +65,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
     test "map input to the default schema is checked as its text" do
       agent =
-        BaseAgent.init(base_config(%{input_guardrails: [{MaxLength, limit: 5}]}))
+        BaseAgent.init(base_config(%{guardrails: [input: [{MaxLength, limit: 5}]]}))
 
       assert {:error, %Normandy.Guardrails.ViolationError{}} =
                BaseAgent.run(agent, %{chat_message: "way too long"})
@@ -85,7 +85,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
            :allow
          end}
 
-      agent = BaseAgent.init(base_config(%{input_guardrails: [guard]}))
+      agent = BaseAgent.init(base_config(%{guardrails: [input: [guard]]}))
 
       assert {:ok, _, _} = BaseAgent.run(agent, "plain text")
       assert_received {:fast_path, "plain text"}
@@ -100,7 +100,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [{MaxLength, limit: 100}]
+            guardrails: [input: [{MaxLength, limit: 100}]]
           })
         )
 
@@ -113,8 +113,10 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [
-              {ForbiddenSubstrings, terms: ["ignore previous", "leak"]}
+            guardrails: [
+              input: [
+                {ForbiddenSubstrings, terms: ["ignore previous", "leak"]}
+              ]
             ]
           })
         )
@@ -138,12 +140,12 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
   end
 
-  describe "output_guardrails" do
+  describe "guardrails :output" do
     test "an output violation raises ViolationError by default" do
       # ModelMockup returns an empty BaseAgentOutputSchema (chat_message: nil).
       agent =
         BaseAgent.init(
-          base_config(%{output_guardrails: [{RequiredFields, fields: [:chat_message]}]})
+          base_config(%{guardrails: [output: [{RequiredFields, fields: [:chat_message]}]]})
         )
 
       error =
@@ -154,10 +156,10 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       assert [%{guard: RequiredFields} | _] = error.violations
     end
 
-    test "an invalid :output_guardrails_on_violation is rejected at init" do
+    test "an invalid guardrails :on_violation is rejected at init" do
       assert_raise ArgumentError,
-                   ~r/:output_guardrails_on_violation option: expected one of \[:block, :warn\], got: :log/,
-                   fn -> BaseAgent.init(base_config(%{output_guardrails_on_violation: :log})) end
+                   ~r/:on_violation option: expected one of \[:block, :warn\], got: :log \(in options \[:guardrails\]\)/,
+                   fn -> BaseAgent.init(base_config(%{guardrails: [on_violation: :log]})) end
     end
 
     test "with on_violation :warn it logs a warning and does not halt" do
@@ -166,8 +168,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            output_guardrails: [{RequiredFields, fields: [:chat_message]}],
-            output_guardrails_on_violation: :warn
+            guardrails: [output: [{RequiredFields, fields: [:chat_message]}], on_violation: :warn]
           })
         )
 
@@ -185,7 +186,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            output_guardrails: [{MaxLength, limit: 100, field: :chat_message}]
+            guardrails: [output: [{MaxLength, limit: 100, field: :chat_message}]]
           })
         )
 
@@ -216,7 +217,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           BaseAgent.init(
             base_config(%{
               name: "test-agent",
-              input_guardrails: [{MaxLength, limit: 1}]
+              guardrails: [input: [{MaxLength, limit: 1}]]
             })
           )
 
@@ -238,27 +239,29 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   end
 
   describe "init/1 fail-fast validation" do
-    test "raises ArgumentError when :input_guardrails is not a list" do
+    test "raises ArgumentError when guardrails :input is not a list" do
       assert_raise ArgumentError,
-                   ~r/:input_guardrails option: expected list, got: :not_a_list/,
+                   ~r/:input option: expected list, got: :not_a_list \(in options \[:guardrails\]\)/,
                    fn ->
-                     BaseAgent.init(base_config(%{input_guardrails: :not_a_list}))
+                     BaseAgent.init(base_config(%{guardrails: [input: :not_a_list]}))
                    end
     end
 
-    test "raises ArgumentError when :output_guardrails is not a list" do
-      assert_raise ArgumentError, ~r/:output_guardrails option: expected list, got: a map/, fn ->
-        BaseAgent.init(base_config(%{output_guardrails: %{not: "a list"}}))
-      end
+    test "raises ArgumentError when guardrails :output is not a list" do
+      assert_raise ArgumentError,
+                   ~r/:output option: expected list, got: a map \(in options \[:guardrails\]\)/,
+                   fn ->
+                     BaseAgent.init(base_config(%{guardrails: [output: %{not: "a list"}]}))
+                   end
     end
   end
 
-  describe "streaming input_guardrails" do
+  describe "streaming guardrails :input" do
     test "stream/3 returns ViolationError when input violates" do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [{MaxLength, limit: 3}]
+            guardrails: [input: [{MaxLength, limit: 3}]]
           })
         )
 
@@ -282,7 +285,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [{ForbiddenSubstrings, terms: ["leak"]}]
+            guardrails: [input: [{ForbiddenSubstrings, terms: ["leak"]}]]
           })
         )
 
@@ -301,7 +304,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent =
         BaseAgent.init(
           base_config(%{
-            input_guardrails: [{MaxLength, limit: 1}]
+            guardrails: [input: [{MaxLength, limit: 1}]]
           })
         )
 
@@ -346,7 +349,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
   end
 
-  describe "output_guardrails on exhausted tool loop" do
+  describe "guardrails :output on exhausted tool loop" do
     test "max-iterations branch still runs output guardrails" do
       # max_tool_iterations: 1. MockCapClient returns a ToolCall on the first
       # LLM call → NoopTool dispatches → iterations_left hits 0 → Turn FSM
@@ -360,8 +363,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           base_config(%{
             client: %MockCapClient{},
             max_tool_iterations: 1,
-            output_guardrails: [{RequiredFields, fields: [:chat_message]}],
-            output_guardrails_on_violation: :warn
+            guardrails: [output: [{RequiredFields, fields: [:chat_message]}], on_violation: :warn]
           })
         )
 

@@ -453,12 +453,16 @@ defmodule Normandy.DSL.Agent do
 
     config =
       base_config
-      |> Map.merge(Map.new(overrides))
+      |> Map.merge(Map.new(overrides), &merge_override/3)
       |> put_declared_hooks(compile_config.hooks)
       |> put_memory_cap(max_messages)
 
     {config, memory_store}
   end
+
+  # A :guardrails override changes only the keys it gives; the rest stay as declared.
+  defp merge_override(:guardrails, declared, given), do: Keyword.merge(declared, given)
+  defp merge_override(_key, _declared, given), do: given
 
   # BaseAgent.init/1 takes the cap through the memory; a given :memory wins.
   defp put_memory_cap(config, nil), do: config
@@ -523,14 +527,15 @@ defmodule Normandy.DSL.Agent do
         tools: Module.get_attribute(__MODULE__, :agent_tools, []) |> Enum.reverse(),
         memory: Module.get_attribute(__MODULE__, :agent_memory),
         hooks: Module.get_attribute(__MODULE__, :agent_hooks) || [],
-        input_guardrails: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
-        output_guardrails: Module.get_attribute(__MODULE__, :agent_output_guardrails, []),
-        output_guardrails_streaming_mode:
-          Module.get_attribute(__MODULE__, :agent_output_guardrails_streaming_mode, :accumulate),
-        output_guardrails_chunk_size:
-          Module.get_attribute(__MODULE__, :agent_output_guardrails_chunk_size, 200),
-        output_guardrails_on_violation:
-          Module.get_attribute(__MODULE__, :agent_output_guardrails_on_violation, :block)
+        guardrails: [
+          input: Module.get_attribute(__MODULE__, :agent_input_guardrails, []),
+          output: Module.get_attribute(__MODULE__, :agent_output_guardrails, []),
+          streaming_mode:
+            Module.get_attribute(__MODULE__, :agent_output_guardrails_streaming_mode, :accumulate),
+          chunk_size: Module.get_attribute(__MODULE__, :agent_output_guardrails_chunk_size, 200),
+          on_violation:
+            Module.get_attribute(__MODULE__, :agent_output_guardrails_on_violation, :block)
+        ]
       }
 
       # Store additional config at compile time
@@ -618,12 +623,7 @@ defmodule Normandy.DSL.Agent do
           tools: @agent_compile_config.tools,
           hooks: @agent_compile_config.hooks,
           max_messages: @agent_compile_config.max_messages,
-          input_guardrails: @agent_compile_config.input_guardrails,
-          output_guardrails: @agent_compile_config.output_guardrails,
-          output_guardrails_streaming_mode:
-            @agent_compile_config.output_guardrails_streaming_mode,
-          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size,
-          output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
+          guardrails: @agent_compile_config.guardrails
         }
       end
 
@@ -636,12 +636,7 @@ defmodule Normandy.DSL.Agent do
           max_tokens: @agent_compile_config.max_tokens,
           max_tool_concurrency: @agent_compile_config.max_tool_concurrency,
           name: @agent_name,
-          input_guardrails: @agent_compile_config.input_guardrails,
-          output_guardrails: @agent_compile_config.output_guardrails,
-          output_guardrails_streaming_mode:
-            @agent_compile_config.output_guardrails_streaming_mode,
-          output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size,
-          output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
+          guardrails: @agent_compile_config.guardrails
         }
       end
 

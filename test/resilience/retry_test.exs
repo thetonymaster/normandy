@@ -329,12 +329,12 @@ defmodule Normandy.Resilience.RetryTest do
       end
     end
 
-    test "BaseAgent.init checks :retry_options when the agent is built" do
+    test "BaseAgent.init checks :retry when the agent is built" do
       assert_raise ArgumentError, ~r/unknown option :max_attemps/, fn ->
         BaseAgent.init(%{
           client: %NormandyTest.Support.ModelMockup{},
           model: "m",
-          retry_options: [max_attemps: 3]
+          retry: [max_attemps: 3]
         })
       end
     end

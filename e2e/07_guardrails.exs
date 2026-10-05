@@ -15,8 +15,7 @@ agent =
     model: S.model(),
     max_tokens: 200,
     name: "s07",
-    input_guardrails: [{ForbiddenSubstrings, terms: ["ignore previous instructions"], field: :chat_message}],
-    output_guardrails: [{MaxLength, limit: 600, field: :chat_message}, {RegexGuard, patterns: [ssn], mode: :deny, field: :chat_message}]
+    guardrails: [input: [{ForbiddenSubstrings, terms: ["ignore previous instructions"], field: :chat_message}], output: [{MaxLength, limit: 600, field: :chat_message}, {RegexGuard, patterns: [ssn], mode: :deny, field: :chat_message}]]
   })
 
 guarded_run = fn agent, text ->
@@ -52,8 +51,7 @@ S.assert!("turn 4 still recalls turn 1", S.recalls?(r4.chat_message, "NIGHTJAR")
 
 S.narrate(":warn mode: the same violating output is returned and reported, not failed.")
 warn = BaseAgent.init(%{client: S.client(), model: S.model(), max_tokens: 100, name: "s07-warn",
-  output_guardrails: [{RegexGuard, patterns: [ssn], mode: :deny, field: :chat_message}],
-  output_guardrails_on_violation: :warn})
+  guardrails: [output: [{RegexGuard, patterns: [ssn], mode: :deny, field: :chat_message}], on_violation: :warn]})
 {:ok, {_, rw}} = guarded_run.(warn, "Repeat this sample id back exactly: 123-45-6789")
 S.turn(1, "(warn) Repeat 123-45-6789", rw.chat_message)
 S.assert!(":warn returns the response", is_binary(rw.chat_message), inspect(rw))

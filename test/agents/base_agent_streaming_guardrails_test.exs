@@ -135,7 +135,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.5,
-          output_guardrails: guards
+          guardrails: [output: guards]
         },
         Map.new(extra)
       )
@@ -170,7 +170,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}]
+          guardrails: [output: [{ForbiddenSubstrings, terms: ["badword"]}]]
         })
 
       ref = :erlang.make_ref()
@@ -217,7 +217,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}]
+          guardrails: [output: [{ForbiddenSubstrings, terms: ["badword"]}]]
         })
 
       {cb, _} = collect_callback()
@@ -262,9 +262,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 20
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["badword"]}],
+            streaming_mode: :incremental,
+            chunk_size: 20
+          ]
         })
 
       {cb, _} = collect_callback()
@@ -286,9 +288,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 10
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["badword"]}],
+            streaming_mode: :incremental,
+            chunk_size: 10
+          ]
         })
 
       ref = :erlang.make_ref()
@@ -343,9 +347,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["zzz"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 10
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["zzz"]}],
+            streaming_mode: :incremental,
+            chunk_size: 10
+          ]
         })
 
       {cb, _} = collect_callback()
@@ -366,9 +372,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 100
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["badword"]}],
+            streaming_mode: :incremental,
+            chunk_size: 100
+          ]
         })
 
       {cb, _} = collect_callback()
@@ -390,9 +398,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: client,
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 10
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["badword"]}],
+            streaming_mode: :incremental,
+            chunk_size: 10
+          ]
         })
 
       {cb, _} = collect_callback()
@@ -412,9 +422,11 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: %ToolUseStreamClient{},
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails: [{ForbiddenSubstrings, terms: ["badword"]}],
-          output_guardrails_streaming_mode: :incremental,
-          output_guardrails_chunk_size: 5
+          guardrails: [
+            output: [{ForbiddenSubstrings, terms: ["badword"]}],
+            streaming_mode: :incremental,
+            chunk_size: 5
+          ]
         }
         |> BaseAgent.init()
         |> BaseAgent.register_tool(%FakeTool{name: "calculator", notify: self()})
@@ -438,7 +450,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
                        client: %LazyStreamClient{},
                        model: "claude-3",
                        temperature: 0.0,
-                       output_guardrails_streaming_mode: :bogus
+                       guardrails: [streaming_mode: :bogus]
                      })
                    end
     end
@@ -449,7 +461,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: %LazyStreamClient{},
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails_chunk_size: 0
+          guardrails: [chunk_size: 0]
         })
       end
     end
@@ -460,7 +472,7 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           client: %LazyStreamClient{},
           model: "claude-3",
           temperature: 0.0,
-          output_guardrails_chunk_size: "big"
+          guardrails: [chunk_size: "big"]
         })
       end
     end
@@ -473,8 +485,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
           temperature: 0.0
         })
 
-      assert agent.output_guardrails_streaming_mode == :accumulate
-      assert agent.output_guardrails_chunk_size == 200
+      assert agent.guardrails[:streaming_mode] == :accumulate
+      assert agent.guardrails[:chunk_size] == 200
     end
   end
 end

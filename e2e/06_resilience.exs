@@ -15,12 +15,11 @@ agent =
     model: S.model(),
     max_tokens: 50,
     name: "s06",
-    retry_options: [max_attempts: 2, base_delay: 100, max_delay: 200, jitter: false],
-    enable_circuit_breaker: true,
-    circuit_breaker_options: [failure_threshold: 2, success_threshold: 1, timeout: 3_000]
+    retry: [max_attempts: 2, base_delay: 100, max_delay: 200, jitter: false],
+    circuit_breaker: [failure_threshold: 2, success_threshold: 1, timeout: 3_000]
   })
 
-breaker = agent.circuit_breaker
+breaker = agent.circuit_breaker_pid
 input = %{chat_message: "Reply with the single word: ready"}
 
 attempt = fn ->

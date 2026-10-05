@@ -20,9 +20,9 @@ defmodule Normandy.Guardrails do
       iex> Guardrails.run([{MaxLength, limit: 100}], "ok")
       {:ok, "ok"}
 
-  Attach a guard list to an agent by setting `:input_guardrails` or
-  `:output_guardrails` on `Normandy.Agents.BaseAgentConfig`, or via the
-  `guardrails/2` macro in `Normandy.DSL.Agent`.
+  Attach a guard list to an agent with `guardrails: [input: ..., output: ...]` in
+  `Normandy.Agents.BaseAgent.init/1`, or with the `guardrails/2` macro in
+  `Normandy.DSL.Agent`.
 
   ## Pre-charge admission
 
@@ -74,7 +74,7 @@ defmodule Normandy.Guardrails do
   `constraint: :off_topic` lets the caller render scope-specific messaging
   without parsing strings. Extra keys on the violation map are allowed.
 
-  ## Output violations (`:output_guardrails_on_violation`)
+  ## Output violations (`guardrails: [on_violation: ...]`)
 
   On the non-streaming path (`BaseAgent.run/3`, `Turn.Server`), output guards
   run on the validated answer before it is saved to memory:
@@ -105,7 +105,7 @@ defmodule Normandy.Guardrails do
     `{ForbiddenSubstrings, field: :summary}`) do not apply in streaming mode. Use
     bare string guards (no `:field`) for streaming output.
 
-  - `:incremental` — guards run every `:output_guardrails_chunk_size` bytes of
+  - `:incremental` — guards run every `guardrails[:chunk_size]` bytes of
     accumulated assistant text. On violation, the stream is halted, a
     `:guardrail_violation` event is emitted to the caller callback and telemetry,
     and any partial tool-use block is dropped; the text streamed so far is

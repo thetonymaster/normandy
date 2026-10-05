@@ -6,13 +6,13 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   Excluded from the template (resolved node-locally instead): `client` (built from
   the token), `tool_registry` and `before/after_hooks` (from the supplement), and
-  `circuit_breaker` and `mcp_servers` (from the supplement; the template records
+  `circuit_breaker_pid` and `mcp_servers` (from the supplement; the template records
   only that they were set, and `rebuild/3` raises if the supplement lacks one).
   `current_user_input` and `resolved_context_window` are transient and not kept.
 
   Everything else travels in the template: model and sampling settings, tool
-  limits, prompt, schemas, memory cap, `initial_memory`, `retry_options`, JSON
-  retry settings, guardrails, `tool_context`, behaviour module refs and hook entries
+  limits, prompt, schemas, memory cap, `initial_memory`, the `retry` and
+  `circuit_breaker` options, JSON retry settings, `guardrails`, `tool_context`, behaviour module refs and hook entries
   (`Normandy.Behaviours.Hooks`; their opts must be plain data and hold no secrets).
   These must be plain data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
   `tool_context` must hold no secrets: the template is stored in plaintext.
@@ -28,21 +28,18 @@ defmodule Normandy.Agents.ConfigTemplate do
   # them, so `rebuild/3` leaves the struct defaults in place for missing keys.
   @data_fields [
     :initial_memory,
-    :retry_options,
+    :retry,
+    :circuit_breaker,
     :enable_json_retry,
     :json_retry_max_attempts,
-    :input_guardrails,
-    :output_guardrails,
-    :output_guardrails_streaming_mode,
-    :output_guardrails_chunk_size,
-    :output_guardrails_on_violation,
+    :guardrails,
     :tool_context
   ]
 
   # Fields a template cannot hold (a linked pid; MCP settings that may carry an
   # authorization token). The template records which were set, and `rebuild/3`
   # takes them from the supplement.
-  @node_local_fields [:circuit_breaker, :mcp_servers]
+  @node_local_fields [:circuit_breaker_pid, :mcp_servers]
 
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do

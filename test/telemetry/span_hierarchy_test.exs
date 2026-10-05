@@ -127,7 +127,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
           },
           model: "claude-opus-5-5",
           temperature: nil,
-          retry_options: [max_attempts: 2, base_delay: 1, jitter: false]
+          retry: [max_attempts: 2, base_delay: 1, jitter: false]
         })
 
       BaseAgent.run!(agent, "hello")

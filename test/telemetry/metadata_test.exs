@@ -201,7 +201,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
         session_id: "s-rejected"
       )
 
-      config = server_config(%{input_guardrails: [{BlockAll, []}]})
+      config = server_config(%{guardrails: [input: [{BlockAll, []}]]})
       srv = start_server("s-rejected", config)
 
       assert {:error, %Normandy.Guardrails.ViolationError{}} =
@@ -220,7 +220,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                          stacktrace: []
                        }}
 
-      {name, agent} = tool_agent(%{input_guardrails: [{BlockAll, []}], tool_registry: nil})
+      {name, agent} = tool_agent(%{guardrails: [input: [{BlockAll, []}]], tool_registry: nil})
 
       TelemetryCapture.attach_span(
         [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],

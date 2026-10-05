@@ -69,9 +69,9 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
   defp stream(agent), do: BaseAgent.stream(agent, "hi", fn _event -> :ok end)
   defp attempts(counter), do: Agent.get(counter, & &1)
 
-  @retry %{retry_options: [max_attempts: 3, base_delay: 1, max_delay: 2, jitter: false]}
+  @retry %{retry: [max_attempts: 3, base_delay: 1, max_delay: 2, jitter: false]}
 
-  test "a stream that fails before any event is retried under retry_options" do
+  test "a stream that fails before any event is retried under retry" do
     {agent, counter} = agent([fail_times: 2], @retry)
 
     assert {:ok, _config, _response} = stream(agent)
@@ -88,8 +88,7 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
   test "stream failures count toward the circuit breaker" do
     {agent, counter} =
       agent([fail_times: 10], %{
-        enable_circuit_breaker: true,
-        circuit_breaker_options: [failure_threshold: 1, timeout: 60_000]
+        circuit_breaker: [failure_threshold: 1, timeout: 60_000]
       })
 
     assert {:error, %LLMError{}} = stream(agent)

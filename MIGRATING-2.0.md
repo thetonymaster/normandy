@@ -197,8 +197,8 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
   including non-retryable ones such as `:authentication` or `:invalid_request`, so a
   persistently bad request can open the circuit.
 - Enabling Claudio's client-level `retry:` (in `req_options` or the client config) together with
-  `retry_options` multiplies attempts, because Claudio retries HTTP failures before Normandy sees
-  them.
+  the agent's `retry` options multiplies attempts, because Claudio retries HTTP failures before
+  Normandy sees them.
 - The default `retry_if` retries errors whose `retryable?` is true. A custom `retry_if`
   receives `{:error, %Normandy.LLMError{}}` for returned failures.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
@@ -497,7 +497,7 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `nil`, `:memory` an `AgentMemory` or `nil`, `:prompt_specification`, `:tool_registry` and
   `:behaviours` their structs or `nil`, `:tool_context` a map, `:name`/`:session_id` strings or
   `nil`, `:json_retry_max_attempts` a positive integer, guard lists `module | {module, opts}`.
-- `:circuit_breaker_options` accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
+- `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
   `:half_open_max_calls` only. `:name` is gone: a registered breaker name made a second
   `init/1` with the same options crash.
 - A bad option raises before the circuit breaker starts, so it no longer leaves a linked
@@ -535,6 +535,29 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 
 ## 22. Config groups, the compactor's window pin, and 1.0 session templates
 
+`BaseAgent.init/1` (and DSL `new/1`) group the resilience and guardrail options. Passing a
+1.x name raises `ArgumentError` naming its 2.0 home.
+
+| 1.x option / `BaseAgentConfig` field | 2.0 |
+|---|---|
+| `retry_options: opts` | `retry: opts` |
+| `enable_circuit_breaker: true, circuit_breaker_options: opts` | `circuit_breaker: opts` (`[]` for the defaults; `nil`, the default, starts none) |
+| `config.circuit_breaker` (the pid) | `config.circuit_breaker_pid`; `config.circuit_breaker` is now the options |
+| `input_guardrails: specs` | `guardrails: [input: specs]` |
+| `output_guardrails: specs` | `guardrails: [output: specs]` |
+| `output_guardrails_streaming_mode: m` | `guardrails: [streaming_mode: m]` |
+| `output_guardrails_chunk_size: n` | `guardrails: [chunk_size: n]` |
+| `output_guardrails_on_violation: v` | `guardrails: [on_violation: v]` |
+
+- Keys left out of `guardrails:` keep their defaults; read one setting with
+  `BaseAgentConfig.guardrail(config, :output)`. A `guardrails:` given to a DSL agent's `new/1`
+  changes only the keys it gives.
+- The DSL's `config/0` returns `guardrails: [...]` in place of the five `*_guardrails*` keys.
+- `circuit_breaker:` accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
+  `:half_open_max_calls`. What the breaker does at runtime is unchanged here.
+- An `AgentTemplate` supplement names the node-local breaker `:circuit_breaker_pid` (was
+  `:circuit_breaker`). Templates now store the `retry`, `circuit_breaker` and `guardrails`
+  options.
 - The window pin of a compactor is `:context_window`; 1.x called it `:max_tokens`, the name
   the agent also uses for the answer's limit. `Compactor.WindowManager` with `:max_tokens`
   raises `ArgumentError` at `init/1` (and when it runs). `BaseAgent` reads `:context_window`

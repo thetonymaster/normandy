@@ -80,7 +80,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     # Every check is above: the breaker starts last, so a bad option never leaves a
     # linked process behind.
-    circuit_breaker = start_circuit_breaker(opts)
+    circuit_breaker_pid = start_circuit_breaker(opts)
     memory = Keyword.fetch!(opts, :memory) || AgentMemory.new_memory()
 
     %BaseAgentConfig{
@@ -97,27 +97,28 @@ defmodule Normandy.Agents.BaseAgent do
       tool_registry: Keyword.fetch!(opts, :tool_registry),
       max_tool_iterations: Keyword.fetch!(opts, :max_tool_iterations),
       max_tool_concurrency: Keyword.fetch!(opts, :max_tool_concurrency),
-      retry_options: Keyword.fetch!(opts, :retry_options),
-      circuit_breaker: circuit_breaker,
+      retry: Keyword.fetch!(opts, :retry),
+      circuit_breaker: Keyword.fetch!(opts, :circuit_breaker),
+      circuit_breaker_pid: circuit_breaker_pid,
       enable_json_retry: Keyword.fetch!(opts, :enable_json_retry),
       json_retry_max_attempts: Keyword.fetch!(opts, :json_retry_max_attempts),
       mcp_servers: Keyword.fetch!(opts, :mcp_servers),
       name: Keyword.fetch!(opts, :name),
       session_id: Keyword.fetch!(opts, :session_id),
       tool_context: Keyword.fetch!(opts, :tool_context),
-      input_guardrails: Keyword.fetch!(opts, :input_guardrails),
-      output_guardrails: Keyword.fetch!(opts, :output_guardrails),
-      output_guardrails_streaming_mode: Keyword.fetch!(opts, :output_guardrails_streaming_mode),
-      output_guardrails_chunk_size: Keyword.fetch!(opts, :output_guardrails_chunk_size),
-      output_guardrails_on_violation: Keyword.fetch!(opts, :output_guardrails_on_violation),
+      guardrails: Keyword.fetch!(opts, :guardrails),
       behaviours: behaviours
     }
   end
 
   defp start_circuit_breaker(opts) do
-    if Keyword.fetch!(opts, :enable_circuit_breaker) do
-      {:ok, pid} = CircuitBreaker.start_link(Keyword.fetch!(opts, :circuit_breaker_options))
-      pid
+    case Keyword.fetch!(opts, :circuit_breaker) do
+      nil ->
+        nil
+
+      breaker_opts ->
+        {:ok, pid} = CircuitBreaker.start_link(breaker_opts)
+        pid
     end
   end
 
@@ -152,9 +153,14 @@ defmodule Normandy.Agents.BaseAgent do
           :ok | {:block, [Normandy.Guardrails.Guard.violation()]}
   def admit(config, value, context \\ %{})
 
-  def admit(%BaseAgentConfig{input_guardrails: []}, _value, _context), do: :ok
+  def admit(%BaseAgentConfig{} = config, value, context) do
+    case BaseAgentConfig.guardrail(config, :input) do
+      [] -> :ok
+      guards -> admit_with(config, guards, value, context)
+    end
+  end
 
-  def admit(%BaseAgentConfig{input_guardrails: guards} = config, value, context) do
+  defp admit_with(config, guards, value, context) do
     case Normandy.Guardrails.run(guards, value, context) do
       {:ok, _value} ->
         emit_guardrail_decision(:admit, config, guards, [])
@@ -308,20 +314,20 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Retry (retry_options) inside the circuit breaker (circuit_breaker), each only
+  # Retry (config.retry) inside the circuit breaker (circuit_breaker_pid), each only
   # when configured. `may_retry?` is checked before each retry on top of the
   # retry_if policy; streaming uses it to stop once output reached the caller.
   defp with_resilience(config, call, may_retry? \\ fn -> true end) do
     retryable_call =
-      if config.retry_options do
-        retry_opts = retry_options(config.retry_options, may_retry?)
+      if config.retry do
+        retry_opts = retry_options(config.retry, may_retry?)
         fn -> Retry.with_retry(call, retry_opts) end
       else
         call
       end
 
-    if config.circuit_breaker do
-      CircuitBreaker.call(config.circuit_breaker, retryable_call)
+    if config.circuit_breaker_pid do
+      CircuitBreaker.call(config.circuit_breaker_pid, retryable_call)
     else
       retryable_call.()
     end
@@ -441,10 +447,10 @@ defmodule Normandy.Agents.BaseAgent do
   parse is not re-asked. The same holds for `run/3`'s final answer after a tool loop; a
   `run/3` without tools re-asks through the adapter.
 
-  `retry_options` and the circuit breaker apply, but a stream is retried only until its
+  `retry` and the circuit breaker apply, but a stream is retried only until its
   first event reaches the callback, so no output is shown twice. Output guardrails
   report (`:guardrail_violation` event, telemetry) and don't block: the text was already
-  delivered; with `output_guardrails_streaming_mode: :incremental` a violation stops
+  delivered; with `guardrails: [streaming_mode: :incremental]` a violation stops
   the stream at the next chunk boundary.
 
   ## Example
@@ -1420,21 +1426,16 @@ defmodule Normandy.Agents.BaseAgent do
         stream = Stream.each(stream, &deliver_stream_event(&1, callback))
 
         # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-        case config do
-          %BaseAgentConfig{
-            output_guardrails: [_ | _],
-            output_guardrails_streaming_mode: :incremental
-          } ->
-            consume_stream_with_incremental_guards(stream, config, callback)
+        if incremental_output_guards?(config) do
+          consume_stream_with_incremental_guards(stream, config, callback)
+        else
+          events = Enum.to_list(stream)
 
-          _ ->
-            events = Enum.to_list(stream)
-
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case StreamProcessor.stream_error(events) do
-              nil -> {:ok, StreamProcessor.build_final_message(events)}
-              %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
-            end
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+          case StreamProcessor.stream_error(events) do
+            nil -> {:ok, StreamProcessor.build_final_message(events)}
+            %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
+          end
         end
 
       {:error, %LLMError{}} = error ->
@@ -1479,7 +1480,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp deliver_stream_event(_event, _callback), do: :ok
 
   # Consumes a stream event-by-event, running output guards every
-  # `output_guardrails_chunk_size` bytes of accumulated text. On violation,
+  # `guardrails[:chunk_size]` bytes of accumulated text. On violation,
   # halts consumption, emits telemetry + the :guardrail_violation callback
   # event, strips any partial tool-use block from the response, and returns
   # `{:ok, final_message}`. A stream that failed (error event,
@@ -1487,8 +1488,8 @@ defmodule Normandy.Agents.BaseAgent do
   # `{:error, %LLMError{}}`; a guardrail halt is a deliberate stop, not a failure.
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp consume_stream_with_incremental_guards(stream, config, callback) do
-    guards = config.output_guardrails
-    chunk_size = config.output_guardrails_chunk_size
+    guards = BaseAgentConfig.guardrail(config, :output)
+    chunk_size = BaseAgentConfig.guardrail(config, :chunk_size)
 
     initial = %{events: [], accumulated: "", since_last_check: 0, violations: [], halted?: false}
 
@@ -2149,19 +2150,24 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Runs output guardrails before the answer is appended to memory. A violation
-  # raises (output_guardrails_on_violation: :block, the default), so the answer
+  # raises (guardrails[:on_violation] == :block, the default), so the answer
   # is neither returned nor saved; with :warn it is logged and the turn goes on.
   # Telemetry is emitted either way.
-  defp run_output_guardrails(%BaseAgentConfig{output_guardrails: []}, _value), do: :ok
+  defp run_output_guardrails(%BaseAgentConfig{} = config, value) do
+    case BaseAgentConfig.guardrail(config, :output) do
+      [] -> :ok
+      guards -> check_output(config, guards, value)
+    end
+  end
 
-  defp run_output_guardrails(%BaseAgentConfig{output_guardrails: guards} = config, value) do
+  defp check_output(config, guards, value) do
     case Normandy.Guardrails.run(guards, value) do
       {:ok, _value} ->
         :ok
 
       {:error, violations} ->
         emit_guardrail_violation(:output, config, guards, violations)
-        output_violation(config.output_guardrails_on_violation, violations)
+        output_violation(BaseAgentConfig.guardrail(config, :on_violation), violations)
     end
   end
 
@@ -2232,21 +2238,15 @@ defmodule Normandy.Agents.BaseAgent do
   # (logged and reported, not blocked: the text already reached the caller); :incremental is a
   # no-op here because guards already ran at chunk boundaries inside
   # `consume_stream_with_incremental_guards/3`. Returns :ok.
-  defp run_streaming_output_guardrails(%BaseAgentConfig{output_guardrails: []}, _message, _cb),
-    do: :ok
+  defp run_streaming_output_guardrails(%BaseAgentConfig{} = config, message, callback) do
+    guards = BaseAgentConfig.guardrail(config, :output)
 
-  defp run_streaming_output_guardrails(
-         %BaseAgentConfig{output_guardrails_streaming_mode: :incremental},
-         _message,
-         _callback
-       ),
-       do: :ok
+    if guards == [] or BaseAgentConfig.guardrail(config, :streaming_mode) == :incremental,
+      do: :ok,
+      else: check_streamed_text(config, guards, message, callback)
+  end
 
-  defp run_streaming_output_guardrails(
-         %BaseAgentConfig{output_guardrails: guards} = config,
-         message,
-         callback
-       ) do
+  defp check_streamed_text(config, guards, message, callback) do
     case Normandy.Guardrails.run(guards, extract_streaming_text(message)) do
       {:ok, _} ->
         :ok
@@ -2284,4 +2284,9 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp extract_streaming_text(_), do: ""
+
+  defp incremental_output_guards?(config) do
+    BaseAgentConfig.guardrail(config, :output) != [] and
+      BaseAgentConfig.guardrail(config, :streaming_mode) == :incremental
+  end
 end

@@ -23,7 +23,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_with_retry =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          retry_options: [
+          retry: [
             max_attempts: 4,
             base_delay: 100,
             max_delay: 1000,
@@ -44,7 +44,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_no_retry =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          retry_options: [max_attempts: 1]
+          retry: [max_attempts: 1]
         )
 
       {_updated_agent, response} =
@@ -59,8 +59,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_with_cb =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          enable_circuit_breaker: true,
-          circuit_breaker_options: [
+          circuit_breaker: [
             failure_threshold: 3,
             timeout: 60_000
           ]
@@ -77,7 +76,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_with_cb =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          enable_circuit_breaker: true
+          circuit_breaker: []
         )
 
       # Make multiple successful calls
