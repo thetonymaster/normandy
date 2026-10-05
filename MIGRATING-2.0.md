@@ -482,6 +482,31 @@ and the `[:normandy, :json_deserializer, :fallback]` metadata `reason` is the fa
 - `StreamProcessor.process_with_callback/2` (arity-2 callbacks) is gone; `stream/3` is the
   one streaming path.
 
+## 21. `BaseAgent.init/1` and DSL `new/1` check their options
+
+`BaseAgent.init/1` takes a keyword list or a map, and checks every option before it starts
+anything. In 1.x it took only a map and ignored any key it did not know.
+
+- An unknown option raises `ArgumentError` naming it and listing the supported ones:
+  `temprature:`, `system_prompt:` (use `prompt_specification:`), `tools:` (use
+  `tool_registry:` or `register_tool/2`) and `max_messages:` (use
+  `memory: AgentMemory.new_memory(n)`) used to be dropped silently.
+- A missing `:model` raises `"Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"` (1.x:
+  `KeyError`); a missing `:client` raises `ArgumentError` (1.x: `KeyError`).
+- Values are checked: `:client` must be a struct, `:input_schema`/`:output_schema` a struct or
+  `nil`, `:memory` an `AgentMemory` or `nil`, `:prompt_specification`, `:tool_registry` and
+  `:behaviours` their structs or `nil`, `:tool_context` a map, `:name`/`:session_id` strings or
+  `nil`, `:json_retry_max_attempts` a positive integer, guard lists `module | {module, opts}`.
+- `:circuit_breaker_options` accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
+  `:half_open_max_calls` only. `:name` is gone: a registered breaker name made a second
+  `init/1` with the same options crash.
+- A bad option raises before the circuit breaker starts, so it no longer leaves a linked
+  breaker process behind.
+- The value of a credential-carrying option (`:client`, `:mcp_servers`) never appears in the
+  message.
+- `run/3` and `run!/3` name themselves in their option error, and options that are not a
+  keyword list raise `ArgumentError` instead of `FunctionClauseError`.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

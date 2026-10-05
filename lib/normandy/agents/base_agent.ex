@@ -12,6 +12,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   require Logger
 
+  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
@@ -52,135 +53,72 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Tools.Registry
   alias Normandy.TurnError
 
-  @type config_input :: %{
-          required(:client) => struct(),
-          required(:model) => String.t(),
-          optional(:temperature) => float() | nil,
-          optional(:input_schema) => struct(),
-          optional(:output_schema) => struct(),
-          optional(:memory) => map(),
-          optional(:prompt_specification) => PromptSpecification.t(),
-          optional(:max_tokens) => pos_integer(),
-          optional(:tool_registry) => Registry.t(),
-          optional(:max_tool_iterations) => pos_integer(),
-          optional(:max_tool_concurrency) => integer(),
-          optional(:retry_options) => keyword(),
-          optional(:enable_circuit_breaker) => boolean(),
-          optional(:circuit_breaker_options) => keyword(),
-          optional(:enable_json_retry) => boolean(),
-          optional(:json_retry_max_attempts) => pos_integer(),
-          optional(:input_guardrails) => [Normandy.Guardrails.spec()],
-          optional(:output_guardrails) => [Normandy.Guardrails.spec()],
-          optional(:output_guardrails_streaming_mode) => :accumulate | :incremental,
-          optional(:output_guardrails_chunk_size) => pos_integer(),
-          optional(:output_guardrails_on_violation) => :block | :warn,
-          optional(:name) => String.t() | nil,
-          optional(:behaviours) => Normandy.Behaviours.Config.t() | nil,
-          optional(:mcp_servers) => [struct() | map()] | nil,
-          optional(:tool_context) => map()
-        }
+  @doc """
+  Builds an agent config from `opts`, a keyword list or a map.
 
-  @spec init(config_input()) :: BaseAgentConfig.t()
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  def init(config) do
-    # Validate guardrail config BEFORE starting the circuit breaker process;
-    # otherwise a bad config would leak a linked breaker before we raise.
-    input_guardrails = Map.get(config, :input_guardrails, [])
-    output_guardrails = Map.get(config, :output_guardrails, [])
+  Every option is checked before anything starts: an unknown option, a missing `:client`
+  or `:model`, or a bad value raises `ArgumentError` naming the option (and, for an
+  unknown one, the supported options). Values of credential-carrying options such as
+  `:client` are never shown in the message.
 
-    unless is_list(input_guardrails) do
-      raise ArgumentError,
-            "input_guardrails must be a list of guard specs, got: #{inspect(input_guardrails)}"
-    end
+      agent = BaseAgent.init(client: client, model: "claude-opus-5-5")
 
-    unless is_list(output_guardrails) do
-      raise ArgumentError,
-            "output_guardrails must be a list of guard specs, got: #{inspect(output_guardrails)}"
-    end
+  ## Options
 
-    streaming_mode = Map.get(config, :output_guardrails_streaming_mode, :accumulate)
-    chunk_size = Map.get(config, :output_guardrails_chunk_size, 200)
+  #{Normandy.Options.docs(InitOptions.schema())}
+  """
+  @spec init(keyword() | map()) :: BaseAgentConfig.t()
+  def init(opts) do
+    opts = InitOptions.validate!(opts)
+    client = Keyword.fetch!(opts, :client)
+    behaviours = Keyword.fetch!(opts, :behaviours)
 
-    unless streaming_mode in [:accumulate, :incremental] do
-      raise ArgumentError,
-            "output_guardrails_streaming_mode must be :accumulate or :incremental, got: #{inspect(streaming_mode)}"
-    end
+    _ = validate_compaction_config!(%BaseAgentConfig{client: client, behaviours: behaviours})
+    _ = validate_client_options!(client)
+    :ok = validate_policy_opts!(behaviours)
+    :ok = validate_hooks!(behaviours)
 
-    unless is_integer(chunk_size) and chunk_size > 0 do
-      raise ArgumentError,
-            "output_guardrails_chunk_size must be a positive integer, got: #{inspect(chunk_size)}"
-    end
-
-    on_violation = Map.get(config, :output_guardrails_on_violation, :block)
-
-    unless on_violation in [:block, :warn] do
-      raise ArgumentError,
-            "output_guardrails_on_violation must be :block or :warn, got: #{inspect(on_violation)}"
-    end
-
-    tool_context = Map.get(config, :tool_context, %{})
-
-    unless is_map(tool_context) do
-      raise ArgumentError,
-            "tool_context must be a map of plain data, got: #{inspect(tool_context)}"
-    end
-
-    _ =
-      validate_compaction_config!(%BaseAgentConfig{
-        client: Map.get(config, :client),
-        behaviours: Map.get(config, :behaviours, nil)
-      })
-
-    _ = validate_client_options!(Map.get(config, :client))
-    :ok = validate_policy_opts!(Map.get(config, :behaviours))
-    :ok = validate_hooks!(Map.get(config, :behaviours))
-
-    case Map.get(config, :retry_options) do
-      nil -> :ok
-      retry_options -> Retry.validate_options!(retry_options)
-    end
-
-    # Initialize circuit breaker if enabled
-    circuit_breaker =
-      if Map.get(config, :enable_circuit_breaker, false) do
-        cb_opts = Map.get(config, :circuit_breaker_options, [])
-        {:ok, cb} = CircuitBreaker.start_link(cb_opts)
-        cb
-      else
-        nil
-      end
+    # Every check is above: the breaker starts last, so a bad option never leaves a
+    # linked process behind.
+    circuit_breaker = start_circuit_breaker(opts)
+    memory = Keyword.fetch!(opts, :memory) || AgentMemory.new_memory()
 
     %BaseAgentConfig{
-      input_schema: Map.get(config, :input_schema, nil) || %BaseAgentInputSchema{},
-      output_schema: Map.get(config, :output_schema, nil) || %BaseAgentOutputSchema{},
-      memory: Map.get(config, :memory, nil) || AgentMemory.new_memory(),
-      initial_memory: Map.get(config, :memory, nil) || AgentMemory.new_memory(),
-      prompt_specification: Map.get(config, :prompt_specification) || %PromptSpecification{},
-      client: config.client,
-      model: config.model,
+      input_schema: Keyword.fetch!(opts, :input_schema) || %BaseAgentInputSchema{},
+      output_schema: Keyword.fetch!(opts, :output_schema) || %BaseAgentOutputSchema{},
+      memory: memory,
+      initial_memory: memory,
+      prompt_specification: Keyword.fetch!(opts, :prompt_specification) || %PromptSpecification{},
+      client: client,
+      model: Keyword.fetch!(opts, :model),
       current_user_input: nil,
-      temperature: Map.get(config, :temperature),
-      max_tokens: max_tokens!(config),
-      tool_registry: Map.get(config, :tool_registry, nil),
-      max_tool_iterations:
-        normalize_max_tool_iterations(Map.get(config, :max_tool_iterations, 5)),
-      max_tool_concurrency:
-        normalize_max_tool_concurrency(Map.get(config, :max_tool_concurrency, 1)),
-      retry_options: Map.get(config, :retry_options, nil),
+      temperature: Keyword.fetch!(opts, :temperature),
+      max_tokens: Keyword.fetch!(opts, :max_tokens),
+      tool_registry: Keyword.fetch!(opts, :tool_registry),
+      max_tool_iterations: Keyword.fetch!(opts, :max_tool_iterations),
+      max_tool_concurrency: Keyword.fetch!(opts, :max_tool_concurrency),
+      retry_options: Keyword.fetch!(opts, :retry_options),
       circuit_breaker: circuit_breaker,
-      enable_json_retry: Map.get(config, :enable_json_retry, true),
-      json_retry_max_attempts: Map.get(config, :json_retry_max_attempts, 2),
-      mcp_servers: Map.get(config, :mcp_servers, nil),
-      name: Map.get(config, :name, nil),
-      session_id: Map.get(config, :session_id, nil),
-      tool_context: tool_context,
-      input_guardrails: input_guardrails,
-      output_guardrails: output_guardrails,
-      output_guardrails_streaming_mode: streaming_mode,
-      output_guardrails_chunk_size: chunk_size,
-      output_guardrails_on_violation: on_violation,
-      behaviours: Map.get(config, :behaviours, nil)
+      enable_json_retry: Keyword.fetch!(opts, :enable_json_retry),
+      json_retry_max_attempts: Keyword.fetch!(opts, :json_retry_max_attempts),
+      mcp_servers: Keyword.fetch!(opts, :mcp_servers),
+      name: Keyword.fetch!(opts, :name),
+      session_id: Keyword.fetch!(opts, :session_id),
+      tool_context: Keyword.fetch!(opts, :tool_context),
+      input_guardrails: Keyword.fetch!(opts, :input_guardrails),
+      output_guardrails: Keyword.fetch!(opts, :output_guardrails),
+      output_guardrails_streaming_mode: Keyword.fetch!(opts, :output_guardrails_streaming_mode),
+      output_guardrails_chunk_size: Keyword.fetch!(opts, :output_guardrails_chunk_size),
+      output_guardrails_on_violation: Keyword.fetch!(opts, :output_guardrails_on_violation),
+      behaviours: behaviours
     }
+  end
+
+  defp start_circuit_breaker(opts) do
+    if Keyword.fetch!(opts, :enable_circuit_breaker) do
+      {:ok, pid} = CircuitBreaker.start_link(Keyword.fetch!(opts, :circuit_breaker_options))
+      pid
+    end
   end
 
   @spec reset_memory(BaseAgentConfig.t()) :: BaseAgentConfig.t()
@@ -247,35 +185,6 @@ defmodule Normandy.Agents.BaseAgent do
   def normalize_max_tool_concurrency(other) do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
-  end
-
-  defp max_tokens!(config) do
-    case Map.fetch(config, :max_tokens) do
-      :error ->
-        BaseAgentConfig.default_max_tokens()
-
-      {:ok, n} when is_integer(n) and n > 0 ->
-        n
-
-      {:ok, other} ->
-        raise ArgumentError,
-              "Normandy.Agents.BaseAgent.init/1: :max_tokens must be a positive integer " <>
-                "(the Messages API requires it), got: #{inspect(other)}. Omit it to use " <>
-                "the default of #{BaseAgentConfig.default_max_tokens()}."
-    end
-  end
-
-  # Enforce the `pos_integer()` contract for `:max_tool_iterations`. Unlike
-  # `:max_tool_concurrency` (which clamps), we REJECT values < 1: a 0/negative
-  # iteration budget is a caller bug with no well-defined turn semantics under
-  # the Turn-FSM driver. Non-integers raise for the same reason. Public so the
-  # DSL can reuse it, mirroring normalize_max_tool_concurrency/1.
-  @doc false
-  def normalize_max_tool_iterations(n) when is_integer(n) and n >= 1, do: n
-
-  def normalize_max_tool_iterations(other) do
-    raise ArgumentError,
-          ":max_tool_iterations must be an integer >= 1, got: #{inspect(other)}"
   end
 
   # Translate a `Task.async_stream` element into the underlying tool result.
@@ -449,8 +358,8 @@ defmodule Normandy.Agents.BaseAgent do
   turn is lost: keep using the config you passed in.
 
   `user_input` may be `nil` to continue the conversation without a new user message.
-  `run/3` takes no options yet: any option raises `ArgumentError`. To stream, use
-  `stream/3`.
+  `run/3` takes no options yet: any option, or options that are not a keyword list, raise
+  `ArgumentError` naming `run/3`. To stream, use `stream/3`.
 
   ## Example
 
@@ -459,6 +368,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec run(BaseAgentConfig.t(), term(), keyword()) ::
           {:ok, BaseAgentConfig.t(), term()} | {:error, Exception.t()}
   def run(config, user_input \\ nil, opts \\ []) do
+    :ok = check_run_opts!(opts, :run)
     {config, output} = run!(config, user_input, opts)
     {:ok, config, output}
   rescue
@@ -470,8 +380,8 @@ defmodule Normandy.Agents.BaseAgent do
   return.
   """
   @spec run!(BaseAgentConfig.t(), term(), keyword()) :: {BaseAgentConfig.t(), term()}
-  def run!(%BaseAgentConfig{} = config, user_input \\ nil, opts \\ []) when is_list(opts) do
-    check_run_opts!(opts)
+  def run!(%BaseAgentConfig{} = config, user_input \\ nil, opts \\ []) do
+    :ok = check_run_opts!(opts, :run!)
     metadata = Metadata.run(config)
 
     # run_turn/2 runs the tool loop when the agent has tools (turn_response_model/1).
@@ -480,19 +390,41 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # run/3 takes no options yet (Wave 3 adds them with NimbleOptions).
-  defp check_run_opts!([]), do: :ok
+  # run/3 and run!/3 take no options yet; if one gains options it gets a
+  # Normandy.Options schema instead of this check.
+  # run/3 and run!/3 take no options yet; if one gains options it gets a
+  # Normandy.Options schema instead of this check.
+  defp check_run_opts!([], _fun), do: :ok
 
-  defp check_run_opts!(opts) do
+  defp check_run_opts!(opts, fun) when is_list(opts) do
+    prefix = "Normandy.Agents.BaseAgent.#{fun}/3"
+
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "#{prefix}: expected options as a keyword list, got a list that is not one; " <>
+              "#{fun}/3 takes no options"
+    end
+
     keys = Keyword.keys(opts)
 
     hint =
       if Enum.any?(keys, &(&1 in [:stream, :on_chunk])),
-        do: " Streaming moved to BaseAgent.stream/3.",
+        do: ". Streaming moved to BaseAgent.stream/3",
         else: ""
 
+    names =
+      case keys do
+        [key] -> "option #{inspect(key)}"
+        keys -> "options #{inspect(keys)}"
+      end
+
+    raise ArgumentError, "#{prefix}: unknown #{names}; #{fun}/3 takes no options#{hint}"
+  end
+
+  defp check_run_opts!(other, fun) do
     raise ArgumentError,
-          "BaseAgent.run/3: unknown options #{inspect(keys)}; run/3 takes no options.#{hint}"
+          "Normandy.Agents.BaseAgent.#{fun}/3: expected options as a keyword list, got " <>
+            "#{Describe.type_of(other)}; #{fun}/3 takes no options"
   end
 
   @doc """

@@ -151,9 +151,11 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       config = Map.put(base, :max_tool_iterations, 0)
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(config)
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: 0/,
+                   fn ->
+                     BaseAgent.init(config)
+                   end
     end
 
     test "init/1 rejects negative max_tool_iterations" do
@@ -164,9 +166,11 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, -1))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: -1/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, -1))
+                   end
     end
 
     test "init/1 rejects non-integer max_tool_iterations (float)" do
@@ -177,9 +181,11 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, 1.5))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: 1\.5/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, 1.5))
+                   end
     end
 
     test "init/1 rejects non-integer max_tool_iterations (string)" do
@@ -190,9 +196,11 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, "5"))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: "5"/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, "5"))
+                   end
     end
 
     test "works without user_input (continuing conversation)" do

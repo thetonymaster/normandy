@@ -431,14 +431,16 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
 
   describe "init/1 config validation" do
     test "raises on invalid streaming_mode" do
-      assert_raise ArgumentError, ~r/:accumulate or :incremental/, fn ->
-        BaseAgent.init(%{
-          client: %LazyStreamClient{},
-          model: "claude-3",
-          temperature: 0.0,
-          output_guardrails_streaming_mode: :bogus
-        })
-      end
+      assert_raise ArgumentError,
+                   ~r/expected one of \[:accumulate, :incremental\], got: :bogus/,
+                   fn ->
+                     BaseAgent.init(%{
+                       client: %LazyStreamClient{},
+                       model: "claude-3",
+                       temperature: 0.0,
+                       output_guardrails_streaming_mode: :bogus
+                     })
+                   end
     end
 
     test "raises on non-positive chunk_size" do

@@ -109,9 +109,11 @@ defmodule Normandy.DSL.AgentMemoryTest do
   test "a non-map tool_context raises through new/1" do
     store = {InMemory, InMemory.new()}
 
-    assert_raise ArgumentError, ~r/tool_context must be a map of plain data, got: "acme"/, fn ->
-      MemAgent.new(client: client(), memory_store: store, tool_context: "acme")
-    end
+    assert_raise ArgumentError,
+                 ~r/:tool_context option: expected a plain map \(not a struct\), got: a string \(4 bytes\)/,
+                 fn ->
+                   MemAgent.new(client: client(), memory_store: store, tool_context: "acme")
+                 end
   end
 
   test "a plain agent has no memory tool; a memory agent's tool is named \"memory\"" do

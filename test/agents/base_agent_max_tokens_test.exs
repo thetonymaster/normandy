@@ -48,7 +48,7 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
   test "an explicit nil or non-positive :max_tokens raises with the expected type" do
     for bad <- [nil, 0, -1, "4096"] do
       assert_raise ArgumentError,
-                   ~r/:max_tokens must be a positive integer.*got: #{Regex.escape(inspect(bad))}/,
+                   ~r/:max_tokens option: expected a positive integer \(the Messages API requires it\), got: #{Regex.escape(inspect(bad))}/,
                    fn ->
                      init(%{max_tokens: bad})
                    end

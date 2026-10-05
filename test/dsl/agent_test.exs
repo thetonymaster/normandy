@@ -371,13 +371,23 @@ defmodule Normandy.DSL.AgentTest do
     end
 
     test "non-integer raises ArgumentError to fail-fast on config bugs" do
-      assert_raise ArgumentError, ~r/:max_tool_concurrency must be an integer >= 1/, fn ->
-        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 4.0)
-      end
+      assert_raise ArgumentError,
+                   ~r/:max_tool_concurrency option: expected an integer, got: 4\.0/,
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       max_tool_concurrency: 4.0
+                     )
+                   end
 
-      assert_raise ArgumentError, ~r/:max_tool_concurrency must be an integer >= 1/, fn ->
-        TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: "4")
-      end
+      assert_raise ArgumentError,
+                   ~r/:max_tool_concurrency option: expected an integer, got: "4"/,
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       max_tool_concurrency: "4"
+                     )
+                   end
     end
 
     test "DSL non-integer raises at compile time" do

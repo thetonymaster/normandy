@@ -19,9 +19,15 @@ defmodule Normandy.Agents.ToolContextTest do
   test "init/1 defaults tool_context to %{} and rejects a non-map" do
     assert agent().tool_context == %{}
 
-    assert_raise ArgumentError, ~r/tool_context must be a map/, fn ->
-      BaseAgent.init(%{client: %ScriptedToolClient{}, model: "test", tool_context: [a: 1]})
-    end
+    assert_raise ArgumentError,
+                 ~r/:tool_context option: expected a plain map \(not a struct\), got: a list/,
+                 fn ->
+                   BaseAgent.init(%{
+                     client: %ScriptedToolClient{},
+                     model: "test",
+                     tool_context: [a: 1]
+                   })
+                 end
   end
 
   test "a BaseAgent turn hands the contextual tool the session's context" do

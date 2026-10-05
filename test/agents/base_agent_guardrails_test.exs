@@ -156,7 +156,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
     test "an invalid :output_guardrails_on_violation is rejected at init" do
       assert_raise ArgumentError,
-                   ~r/output_guardrails_on_violation must be :block or :warn, got: :log/,
+                   ~r/:output_guardrails_on_violation option: expected one of \[:block, :warn\], got: :log/,
                    fn -> BaseAgent.init(base_config(%{output_guardrails_on_violation: :log})) end
     end
 
@@ -239,13 +239,15 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
   describe "init/1 fail-fast validation" do
     test "raises ArgumentError when :input_guardrails is not a list" do
-      assert_raise ArgumentError, ~r/input_guardrails must be a list/, fn ->
-        BaseAgent.init(base_config(%{input_guardrails: :not_a_list}))
-      end
+      assert_raise ArgumentError,
+                   ~r/:input_guardrails option: expected list, got: :not_a_list/,
+                   fn ->
+                     BaseAgent.init(base_config(%{input_guardrails: :not_a_list}))
+                   end
     end
 
     test "raises ArgumentError when :output_guardrails is not a list" do
-      assert_raise ArgumentError, ~r/output_guardrails must be a list/, fn ->
+      assert_raise ArgumentError, ~r/:output_guardrails option: expected list, got: a map/, fn ->
         BaseAgent.init(base_config(%{output_guardrails: %{not: "a list"}}))
       end
     end

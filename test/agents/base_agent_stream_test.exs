@@ -265,7 +265,9 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
         BaseAgent.run!(agent(%ScriptedTextClient{text: "x"}), "hi", max_turns: 2)
       end
 
-    assert error.message =~ "unknown options [:max_turns]"
+    assert error.message ==
+             "Normandy.Agents.BaseAgent.run!/3: unknown option :max_turns; run!/3 takes no options"
+
     refute error.message =~ "stream/3"
   end
 
@@ -273,6 +275,24 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
     assert_raise ArgumentError, ~r/BaseAgent.stream\/3/, fn ->
       BaseAgent.run(agent(%ScriptedTextClient{text: "x"}), "hi", stream: true, on_chunk: & &1)
     end
+  end
+
+  test "run/3 and run!/3 name themselves and reject options that are not a keyword list" do
+    agent = agent(%ScriptedTextClient{text: "x"})
+
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.run/3: unknown option :max_turns; run/3 takes no options",
+                 fn -> BaseAgent.run(agent, "hi", max_turns: 2) end
+
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.run/3: expected options as a keyword list, got a " <>
+                   "list that is not one; run/3 takes no options",
+                 fn -> BaseAgent.run(agent, "hi", [1, 2]) end
+
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.run!/3: expected options as a keyword list, got " <>
+                   ":fast; run!/3 takes no options",
+                 fn -> BaseAgent.run!(agent, "hi", :fast) end
   end
 
   describe "a nil output schema is the default chat schema" do

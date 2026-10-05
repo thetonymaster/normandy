@@ -51,7 +51,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 ### Agent System
 
 - **`Normandy.Agents.BaseAgent`** - Core agent implementation
-  - `init/1` - Initialize agent with `BaseAgentConfig` (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters)
+  - `init/1` - Build a `BaseAgentConfig` from a keyword list or map (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters). The schema is `BaseAgent.InitOptions` (NimbleOptions, docs generated into `init/1`); every option is checked through `Normandy.Options.validate!/3` before any process starts, and an unknown one raises `ArgumentError` naming it
   - `run/3` - Execute agent turn; returns `{:ok, config, response}` or `{:error, exception}` (Normandy errors only; bugs raise); `run!/3` returns `{config, response}` and raises; neither takes options yet (any raises `ArgumentError`)
   - `stream/3` - like `run/3`, streaming `%Normandy.Components.StreamEvent{}` to a 1-arity callback; returns the output schema like `run/3`
   - `get_response/2` - Get LLM response using prompt specification
@@ -60,6 +60,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.Agents.BaseAgentConfig`** - Agent state container
   - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window
+
+- **`Normandy.Options`** - `validate!(opts, schema, {mod, fun, arity})` for every public entry point: NimbleOptions schema, map or keyword input, `ArgumentError` prefixed `Mod.fun/arity:`; values of `sensitive_keys/0` (`:client`, `:api_key`, ...) never appear in a message
 
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
   - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}`; `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`

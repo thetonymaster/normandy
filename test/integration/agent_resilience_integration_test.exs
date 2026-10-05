@@ -61,7 +61,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
           temperature: 0.3,
           enable_circuit_breaker: true,
           circuit_breaker_options: [
-            error_threshold: 3,
+            failure_threshold: 3,
             timeout: 60_000
           ]
         )
