@@ -44,12 +44,16 @@ defmodule Normandy.Guardrails.Builtins.SemanticScope do
 
   @behaviour Normandy.Guardrails.Guard
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @impl true
   def check(value, opts), do: check(value, opts, %{})
 
   @impl true
   def check(value, opts, context) do
     classifier = Keyword.fetch!(opts, :classifier)
+    # A default-schema input is classified as its chat_message text.
+    value = Field.extract!(__MODULE__, value, nil)
     fast_path = Keyword.get(opts, :fast_path, fn _value, _context -> :needs_classifier end)
 
     case fast_path.(value, context) do

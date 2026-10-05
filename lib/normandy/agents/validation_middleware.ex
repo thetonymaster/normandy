@@ -45,11 +45,17 @@ defmodule Normandy.Agents.ValidationMiddleware do
       iex> ValidationMiddleware.validate_input(config, %{query: "test"})
       {:ok, %MyInputSchema{query: "test"}}
 
+      iex> ValidationMiddleware.validate_input(
+      ...>   %BaseAgentConfig{input_schema: %BaseAgentInputSchema{}},
+      ...>   "hello"
+      ...> )
+      {:ok, %BaseAgentInputSchema{chat_message: "hello"}}
+
       iex> ValidationMiddleware.validate_input(config, %{invalid: "data"})
       {:error, [%{path: [:query], message: "is required", constraint: :required}]}
   """
-  @spec validate_input(BaseAgentConfig.t(), map() | struct() | nil) ::
-          {:ok, struct() | term()} | {:error, list()} | {:ok, nil}
+  @spec validate_input(BaseAgentConfig.t(), term()) ::
+          {:ok, term()} | {:error, list()}
   def validate_input(%BaseAgentConfig{input_schema: nil}, input), do: {:ok, input}
   def validate_input(%BaseAgentConfig{}, nil), do: {:ok, nil}
 

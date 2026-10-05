@@ -64,6 +64,8 @@ defmodule Normandy.Guardrails do
   schema (whether the caller passed `"text"` or `%{chat_message: "text"}`), or the custom
   schema's struct. A built-in guard with no `:field` option checks the `chat_message` text of
   a default-schema input; with `field: :chat_message` it reads that field of the struct.
+  `SemanticScope` classifies that text too. `RequiredFields` checks named fields, so it stays on
+  the struct.
 
   ## Structured reason
 

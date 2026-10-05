@@ -7,7 +7,13 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
   alias Normandy.Agents.{BaseAgent, ToolCallResponse}
   alias Normandy.Components.{AgentMemory, ToolCall}
-  alias Normandy.Guardrails.Builtins.{ForbiddenSubstrings, MaxLength, RequiredFields}
+
+  alias Normandy.Guardrails.Builtins.{
+    ForbiddenSubstrings,
+    MaxLength,
+    RequiredFields,
+    SemanticScope
+  }
 
   defmodule NoopTool do
     defstruct []
@@ -63,6 +69,31 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       assert {:error, %Normandy.Guardrails.ViolationError{}} =
                BaseAgent.run(agent, %{chat_message: "way too long"})
+    end
+
+    test "SemanticScope receives the chat_message text for string and map input" do
+      me = self()
+
+      guard =
+        {SemanticScope,
+         fast_path: fn value, _ctx ->
+           send(me, {:fast_path, value})
+           :needs_classifier
+         end,
+         classifier: fn value, _ctx ->
+           send(me, {:classifier, value})
+           :allow
+         end}
+
+      agent = BaseAgent.init(base_config(%{input_guardrails: [guard]}))
+
+      assert {:ok, _, _} = BaseAgent.run(agent, "plain text")
+      assert_received {:fast_path, "plain text"}
+      assert_received {:classifier, "plain text"}
+
+      assert {:ok, _, _} = BaseAgent.run(agent, %{chat_message: "from a map"})
+      assert_received {:fast_path, "from a map"}
+      assert_received {:classifier, "from a map"}
     end
 
     test "allows passing inputs through" do
