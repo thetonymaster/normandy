@@ -49,6 +49,8 @@ defmodule Normandy.Hooks.GuideExamplesTest do
         capture: :all_but_first
       )
 
+    assert source =~ "use ExUnit.Case,", "the guide's test module header changed"
+
     # The guide's module is run by hand below; registering it with ExUnit after
     # the suite started fails under --trace and --slowest.
     source = String.replace(source, "use ExUnit.Case,", "use ExUnit.Case, register: false,")
