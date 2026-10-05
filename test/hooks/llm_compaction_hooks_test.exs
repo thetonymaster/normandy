@@ -92,6 +92,29 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
     end
   end
 
+  test "a before_llm halt on the streaming path raises HookHaltError and fires on_turn_end once" do
+    config =
+      %{
+        client: %StreamingProbeClient{},
+        model: "test",
+        name: "llm-hooks-stream-halt",
+        behaviours: %Config{hooks: [probe(returns: [before_llm: {:halt, "budget spent"}])]}
+      }
+      |> BaseAgent.init()
+      |> BaseAgent.register_tool(%ContextProbe{})
+
+    error =
+      assert_raise Normandy.HookHaltError, fn ->
+        BaseAgent.stream_with_tools(config, input("go"), fn _, _ -> :ok end)
+      end
+
+    assert %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget spent"} =
+             error
+
+    assert_received {:hook, :p, :on_turn_end, [{:error, {:hook_halted, ^error}}, _ctx]}
+    refute_received {:hook, :p, :on_turn_end, _}
+  end
+
   describe "after_compact" do
     test "receives the compactor's dropped entries, with their ids, and meta without :dropped" do
       memory = seeded_memory()

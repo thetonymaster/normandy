@@ -103,4 +103,22 @@ defmodule Normandy.DSL.AgentHooksTest do
       mod.new(client: client())
     end
   end
+
+  test "a non-literal declaration skips the compile-time check and fails at new/1" do
+    [{mod, _}] =
+      Code.compile_string("""
+      defmodule Normandy.DSL.AgentHooksTest.NonLiteral do
+        use Normandy.DSL.Agent
+
+        agent do
+          model("m")
+          hooks(List.wrap({Normandy.Test.Hooks.Probe, on_error: :sometimes}))
+        end
+      end
+      """)
+
+    assert_raise ArgumentError, ~r/invalid :on_error/, fn ->
+      mod.new(client: client())
+    end
+  end
 end

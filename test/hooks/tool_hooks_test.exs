@@ -8,6 +8,22 @@ defmodule Normandy.Hooks.ToolHooksTest do
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.{Probe, TurnEndOnly}
 
+  defmodule OverBudget do
+    @moduledoc false
+    @behaviour Normandy.Behaviours.BudgetTracker
+    @impl true
+    def check(_scope, _call, _opts), do: {:error, :cap_exceeded}
+    @impl true
+    def record(_scope, _call, _result, _opts), do: :ok
+  end
+
+  defmodule NeedsApproval do
+    @moduledoc false
+    @behaviour Normandy.Behaviours.PolicyEngine
+    @impl true
+    def check(_call, _ctx), do: {:needs_approval, %{reason: "human review"}}
+  end
+
   defp call(name \\ "probe"), do: %ToolCall{id: "call_1", name: name, input: %{}}
 
   defp agent(behaviours, name \\ "tool-hooks-agent") do
@@ -130,6 +146,35 @@ defmodule Normandy.Hooks.ToolHooksTest do
 
     assert_received {:hook, :m, :after_tool,
                      [%ToolCall{name: "nope"}, %ToolResult{is_error: true}, _ctx]}
+  end
+
+  test "an executed call passes after_tool exactly once" do
+    assert %ToolResult{tool_call_id: "call_1", is_error: false} =
+             dispatch(agent(%Config{hooks: [probe(:m)]}))
+
+    assert_received {:hook, :m, :after_tool, [_call, %ToolResult{is_error: false}, _ctx]}
+    refute_received {:hook, :m, :after_tool, _}
+  end
+
+  test "a budget denial passes after_tool once and never executes the tool" do
+    behaviours = %Config{budget: {OverBudget, []}, hooks: [probe(:m)]}
+
+    assert %ToolResult{tool_call_id: "call_1", is_error: true} = dispatch(agent(behaviours))
+
+    assert_received {:hook, :m, :after_tool, [_call, %ToolResult{is_error: true}, _ctx]}
+    refute_received {:hook, :m, :after_tool, _}
+    refute_received {:probe_ctx, _}
+  end
+
+  test "a needs_approval verdict collapses to a pending denial that passes after_tool once" do
+    behaviours = %Config{policy: {NeedsApproval, []}, hooks: [probe(:m)]}
+
+    assert %ToolResult{tool_call_id: "call_1", is_error: true, output: %{denied: true}} =
+             dispatch(agent(behaviours))
+
+    assert_received {:hook, :m, :after_tool, [_call, %ToolResult{is_error: true}, _ctx]}
+    refute_received {:hook, :m, :after_tool, _}
+    refute_received {:probe_ctx, _}
   end
 
   test "after_tool cannot change which call a result answers" do

@@ -202,6 +202,37 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       end
     end
 
+    test "rebuild refuses a template whose hook entries are malformed, naming the hook" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+
+      bad = fn hooks -> put_in(tmpl.behaviours_refs.hooks, hooks) end
+
+      assert_raise ArgumentError, ~r/invalid :on_error/, fn ->
+        ConfigTemplate.rebuild(
+          bad.([{Normandy.Test.Hooks.Probe, on_error: :sometimes}]),
+          supp,
+          "T"
+        )
+      end
+
+      assert_raise ArgumentError, ~r/must be plain data/, fn ->
+        ConfigTemplate.rebuild(bad.([{Normandy.Test.Hooks.Probe, notify: self()}]), supp, "T")
+      end
+
+      assert_raise ArgumentError, ~r/invalid hook entry/, fn ->
+        ConfigTemplate.rebuild(bad.([Normandy.Test.Hooks.Probe]), supp, "T")
+      end
+    end
+
+    test "rebuild does not require a hook module to exist on this node" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+      tmpl = put_in(tmpl.behaviours_refs.hooks, [{Nope.Missing, []}])
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "T").behaviours.hooks == [{Nope.Missing, []}]
+    end
+
     test "tool_context travels in the template" do
       supp = round_trip_supplement()
       config = %{full_config(supp) | tool_context: %{memory_namespace: "acme/u-7"}}
