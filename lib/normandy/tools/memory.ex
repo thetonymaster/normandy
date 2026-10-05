@@ -31,6 +31,7 @@ defmodule Normandy.Tools.Memory do
   reaches the agent. Never store secrets in memory.
   """
 
+  alias Normandy.Telemetry.Span
   alias Normandy.Tools.Context
   alias Normandy.Tools.Memory.{Commands, Paths}
 
@@ -133,7 +134,7 @@ defmodule Normandy.Tools.Memory do
     namespace = namespace!(tool, ctx)
     meta = telemetry_metadata(tool, namespace)
 
-    :telemetry.span([:normandy, :memory, :command], meta, fn ->
+    Span.span([:normandy, :memory, :command], meta, fn ->
       # :start can only name the session namespace; by :stop the path has been resolved,
       # so a mounted path reports the mount's namespace.
       stop_meta = stop_namespace(meta, tool, namespace)

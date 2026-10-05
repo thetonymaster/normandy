@@ -320,6 +320,22 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
     end
   end
 
+  describe "a raising request" do
+    test "emits :exception with stacktrace: [] and re-raises" do
+      assert_raise RuntimeError, "boom", fn ->
+        Normandy.Telemetry.Request.span(
+          nil,
+          nil,
+          %{model: "m", provider: :test, stream: false},
+          fn -> raise "boom" end,
+          fn _ -> {:ok, %{}} end
+        )
+      end
+
+      assert [{:start, _}, {:exception, %{kind: :error, stacktrace: []}}] = request_events()
+    end
+  end
+
   describe "a client that emits no request spans" do
     test "llm_call stop counts BaseAgent's converse calls as attempts" do
       client = %StubClient{reply: fn model -> Map.put(model, :chat_message, "hi") end}

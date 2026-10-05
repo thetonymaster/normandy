@@ -16,6 +16,7 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
     SequentialOrchestrator
   }
 
+  alias Normandy.Telemetry.WorkflowSpan
   alias Normandy.Test.TaggingClient
 
   defp agent(name),
@@ -131,5 +132,23 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
       assert_one_span(spans, :hierarchical, 1)
       refute Enum.any?(spans, fn {_e, m} -> m.orchestrator == :parallel end)
     end
+  end
+
+  test "a raise inside the span emits :exception with stacktrace: [] and re-raises" do
+    :telemetry.attach(
+      "workflow-exc",
+      [:normandy, :workflow, :run, :exception],
+      &__MODULE__.handle_span/4,
+      {self(), :exc}
+    )
+
+    on_exit(fn -> :telemetry.detach("workflow-exc") end)
+
+    assert_raise RuntimeError, "boom", fn ->
+      WorkflowSpan.span(:workflow, %{step_count: 1}, fn -> raise "boom" end)
+    end
+
+    assert_received {:exc, [:normandy, :workflow, :run, :exception],
+                     %{orchestrator: :workflow, kind: :error, stacktrace: []}}
   end
 end

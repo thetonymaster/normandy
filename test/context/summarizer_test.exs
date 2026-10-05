@@ -213,7 +213,19 @@ defmodule Normandy.Context.SummarizerTest do
       assert {:error, ^error} = Summarizer.summarize_messages(agent.client, agent, messages)
 
       assert_received {:span, [:normandy, :agent, :llm_call, :exception], meta}
-      assert %{kind: :error, reason: ^error, purpose: :summary} = meta
+      assert %{kind: :error, reason: ^error, purpose: :summary, stacktrace: []} = meta
+    end
+
+    test "a raising client ends the span with stacktrace: [] and still raises", %{name: name} do
+      agent = named_agent(name, fn _ -> raise "client bug" end)
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      assert_raise RuntimeError, "client bug", fn ->
+        Summarizer.summarize_messages(agent.client, agent, messages)
+      end
+
+      assert_received {:span, [:normandy, :agent, :llm_call, :exception], meta}
+      assert %{kind: :error, reason: %RuntimeError{}, purpose: :summary, stacktrace: []} = meta
     end
   end
 

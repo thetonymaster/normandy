@@ -302,10 +302,10 @@ if you attach handlers: `[:normandy, :agent, :run, :exception]` can be synthetic
 event named in old changelog entries never existed (the LLM call span is
 `[:normandy, :agent, :llm_call, *]`; `[:normandy, :llm, :request, *]` is new).
 
-The `stacktrace` of `BaseAgent`'s `[:normandy, :agent, :run, :exception]` and
-`[:normandy, :agent, :llm_call, :exception]` is now always `[]` (1.x passed the real one,
-as `:telemetry.span/3` does). A stacktrace can hold call arguments such as the config, so
-Normandy logs it and never emits it.
+The `stacktrace` of every Normandy `:exception` event (agent run, llm_call, tool execute,
+hook, memory command, A2A request, workflow run, LLM request, `Turn.Server`) is now always
+`[]` (1.x passed the real one, as `:telemetry.span/3` does). A stacktrace can hold call
+arguments such as the config, so Normandy logs it and never emits it.
 
 ## 15. Agent memory and tool context
 

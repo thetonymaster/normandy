@@ -42,6 +42,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
@@ -1744,7 +1745,7 @@ defmodule Normandy.Agents.BaseAgent do
   # the run's and its hook span is not the run's child; a raised run's exception is
   # re-raised unchanged after the hook (the Runner never raises for on_turn_end).
   defp with_agent_run_span(config, telemetry_metadata, fun) do
-    span_without_stacktrace([:normandy, :agent, :run], telemetry_metadata, fn ->
+    Span.span([:normandy, :agent, :run], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy agent run start",
         agent: log_agent_name(config),
         iteration: 0,
@@ -1788,7 +1789,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp with_llm_call_span(config, telemetry_metadata, fun) do
-    span_without_stacktrace([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
+    Span.span([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy llm call start",
         agent: log_agent_name(config),
         model: config.model,
@@ -1844,53 +1845,8 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # :telemetry.span/3 with the same events, measurements and metadata (including the
-  # shared telemetry_span_context), except that the :exception event's stacktrace is
-  # [] (decision 6: a stacktrace is logged, never emitted). The run and llm_call spans
-  # use it; the raise itself keeps its stacktrace.
-  defp span_without_stacktrace(event_prefix, start_metadata, fun) do
-    start_time = System.monotonic_time()
-    start_metadata = Map.put_new(start_metadata, :telemetry_span_context, make_ref())
-
-    :telemetry.execute(
-      event_prefix ++ [:start],
-      %{monotonic_time: start_time, system_time: System.system_time()},
-      start_metadata
-    )
-
-    {result, stop_metadata} =
-      try do
-        fun.()
-      catch
-        kind, reason ->
-          stop_time = System.monotonic_time()
-
-          :telemetry.execute(
-            event_prefix ++ [:exception],
-            %{duration: stop_time - start_time, monotonic_time: stop_time},
-            Map.merge(start_metadata, %{kind: kind, reason: reason, stacktrace: []})
-          )
-
-          :erlang.raise(kind, reason, __STACKTRACE__)
-      end
-
-    stop_time = System.monotonic_time()
-
-    :telemetry.execute(
-      event_prefix ++ [:stop],
-      %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.put_new(
-        stop_metadata,
-        :telemetry_span_context,
-        start_metadata.telemetry_span_context
-      )
-    )
-
-    result
-  end
-
   defp with_tool_execute_span(config, tool_name, telemetry_metadata, fun) do
-    :telemetry.span([:normandy, :tool, :execute], telemetry_metadata, fn ->
+    Span.span([:normandy, :tool, :execute], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy tool execute start",
         agent: log_agent_name(config),
         tool: tool_name

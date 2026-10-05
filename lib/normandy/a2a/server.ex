@@ -30,6 +30,7 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.Span
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
 
@@ -119,7 +120,7 @@ defmodule Normandy.A2A.Server do
   server span, call `handle_message/2` instead so the agent nests under that
   span.
 
-  Emits a `[:normandy, :a2a, :request]` `:telemetry.span/3`. Start metadata:
+  Emits a `[:normandy, :a2a, :request]` `Normandy.Telemetry.Span.span/3`. Start metadata:
   `:task_id` (the id of the returned task) and `:agent_name` (`config.name`).
   Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error_type`
   (`:no_text` or `:agent_failed`). No message content is included.
@@ -155,7 +156,7 @@ defmodule Normandy.A2A.Server do
     task_id = generate_task_id()
     metadata = %{task_id: task_id, agent_name: config.name}
 
-    :telemetry.span([:normandy, :a2a, :request], metadata, fn ->
+    Span.span([:normandy, :a2a, :request], metadata, fn ->
       result =
         case message_text(message) do
           "" -> {:error, :no_text}

@@ -446,7 +446,8 @@ defmodule Normandy.Hooks.RunnerTest do
         Runner.prompt(config([probe(:a, returns: [on_prompt: {:raise, "x"}])], name), "hi")
       )
 
-      assert_received {:span, [:normandy, :hook, :exception], %{event: :on_prompt}}
+      assert_received {:span, [:normandy, :hook, :exception],
+                       %{event: :on_prompt, kind: :error, stacktrace: []}}
     end
 
     test "a return-contract violation emits :exception and no :stop" do

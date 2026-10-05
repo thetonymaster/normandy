@@ -18,12 +18,13 @@ defmodule Normandy.Telemetry do
       as "always present".
     * Metadata keys are snake_case atoms, not dotted semconv names. The mapping to
       OpenTelemetry GenAI attributes is in "OpenTelemetry GenAI mapping" below.
-    * Spans follow `:telemetry.span/3`: `:start` has `system_time` and `monotonic_time`
-      measurements, `:stop` and `:exception` have `duration` and `monotonic_time`.
-      `:exception` metadata adds `kind` (`:error | :exit | :throw`), `reason` and
-      `stacktrace`, and each event of one span shares `telemetry_span_context`. The run
-      and llm_call spans' `stacktrace` is always `[]`: a stacktrace can hold call
-      arguments (the config, user data), so Normandy logs it and never emits it.
+    * Spans follow `:telemetry.span/3` (through `Normandy.Telemetry.Span`): `:start` has
+      `system_time` and `monotonic_time` measurements, `:stop` and `:exception` have
+      `duration` and `monotonic_time`. `:exception` metadata adds `kind`
+      (`:error | :exit | :throw`), `reason` and `stacktrace`, and each event of one span
+      shares `telemetry_span_context`. The `stacktrace` of every Normandy `:exception`
+      event is always `[]`: a stacktrace can hold call arguments (the config, user
+      data), so Normandy logs it and never emits it.
     * The ids below appear on run, llm_call, request and tool events when known:
       `turn_id` (the memory turn id), `session_id` (set by `Turn.Server`) and
       `conversation_id` (the session id; there is no other conversation notion).

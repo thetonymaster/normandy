@@ -10,12 +10,17 @@ defmodule Normandy.Telemetry.WorkflowSpan do
   context into the tasks they spawn).
   """
 
+  alias Normandy.Telemetry.Span
+
   @doc """
   Runs `fun` under the span and returns its result.
   """
   @spec span(atom(), map(), (-> result)) :: result when result: var
   def span(orchestrator, metadata, fun) when is_atom(orchestrator) and is_function(fun, 0) do
     metadata = Map.put(metadata, :orchestrator, orchestrator)
-    :telemetry.span([:normandy, :workflow, :run], metadata, fn -> {fun.(), metadata} end)
+
+    Span.span([:normandy, :workflow, :run], metadata, fn ->
+      {fun.(), metadata}
+    end)
   end
 end

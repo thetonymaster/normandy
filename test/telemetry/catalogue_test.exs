@@ -16,18 +16,10 @@ defmodule Normandy.TelemetryCatalogueTest do
        [:normandy, :llm, :request, :stop],
        [:normandy, :llm, :request, :exception]
      ]},
-    # BaseAgent.span_without_stacktrace/3 builds `event_prefix ++ [:start | :stop |
-    # :exception]`, three call sites; with_agent_run_span/3 and with_llm_call_span/3
-    # pass the run and llm_call prefixes.
-    {"lib/normandy/agents/base_agent.ex", 3,
-     [
-       [:normandy, :agent, :run, :start],
-       [:normandy, :agent, :run, :stop],
-       [:normandy, :agent, :run, :exception],
-       [:normandy, :agent, :llm_call, :start],
-       [:normandy, :agent, :llm_call, :stop],
-       [:normandy, :agent, :llm_call, :exception]
-     ]},
+    # Span.span/3 builds `event_prefix ++ [:start | :stop | :exception]`, three call
+    # sites. Its callers pass literal prefixes, which the scan reads as `Span.span`
+    # calls, so these call sites add no events of their own.
+    {"lib/normandy/telemetry/span.ex", 3, []},
     # Turn.Server.stop_run_span/3 emits `[:normandy, :agent, :run, event]` with event
     # :stop or :exception (the :start is a literal elsewhere in the same file).
     {"lib/normandy/agents/turn/server.ex", 1,
@@ -37,7 +29,7 @@ defmodule Normandy.TelemetryCatalogueTest do
      ]}
   ]
 
-  @call_site ~r/:telemetry\.(execute|span)\(\s*(\[[^\]]*\]|[^\s,)]+)/
+  @call_site ~r/(?::telemetry\.|\bSpan\.)(execute|span)\(\s*(\[[^\]]*\]|[^\s,)]+)/
 
   describe "Normandy.Telemetry catalogue" do
     test "every event emitted in lib/ is documented, and every documented event is emitted" do

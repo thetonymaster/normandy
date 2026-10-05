@@ -285,7 +285,7 @@ defmodule Normandy.Context.Summarizer do
         fun.()
       catch
         kind, reason ->
-          llm_call_exception(metadata, start_time, kind, reason, __STACKTRACE__)
+          llm_call_exception(metadata, start_time, kind, reason)
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
@@ -307,19 +307,19 @@ defmodule Normandy.Context.Summarizer do
         )
 
       {:error, %LLMError{} = error} ->
-        llm_call_exception(metadata, start_time, :error, error, [])
+        llm_call_exception(metadata, start_time, :error, error)
     end
 
     result
   end
 
-  defp llm_call_exception(metadata, start_time, kind, reason, stacktrace) do
+  defp llm_call_exception(metadata, start_time, kind, reason) do
     stop_time = System.monotonic_time()
 
     :telemetry.execute(
       [:normandy, :agent, :llm_call, :exception],
       %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.merge(metadata, %{kind: kind, reason: reason, stacktrace: stacktrace})
+      Map.merge(metadata, %{kind: kind, reason: reason, stacktrace: []})
     )
   end
 

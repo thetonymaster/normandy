@@ -39,6 +39,7 @@ defmodule Normandy.Hooks.Runner do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Hooks.Context
+  alias Normandy.Telemetry.Span
 
   @arity Map.new(Hooks.events())
   @logged_only [:on_turn_end, :on_passivate]
@@ -290,7 +291,7 @@ defmodule Normandy.Hooks.Runner do
         extra_meta
       )
 
-    :telemetry.span([:normandy, :hook], meta, fn ->
+    Span.span([:normandy, :hook], meta, fn ->
       {value, result} = invoke_entry(mod, ctx.event, policy, fn -> invoke.(opts) end, classify)
       {value, Map.put(meta, :result, result)}
     end)
