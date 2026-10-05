@@ -267,4 +267,33 @@ defmodule NormandyTest.Tools.ToolsetTest do
       assert "string_manipulator" in names
     end
   end
+
+  describe "1.x tools (Ruling 5)" do
+    defmodule OldStyleTool do
+      @moduledoc false
+      defstruct api_key: "secret-value"
+    end
+
+    test "a struct whose module does not implement Normandy.Tool raises, naming the module" do
+      error =
+        assert_raise ArgumentError, fn -> Toolset.register(Toolset.new(), %OldStyleTool{}) end
+
+      assert error.message ==
+               "Normandy.Tools.Toolset.register/3: NormandyTest.Tools.ToolsetTest.OldStyleTool " <>
+                 "does not implement the Normandy.Tool behaviour. 1.x tools " <>
+                 "(Normandy.Tools.BaseTool, SchemaBaseTool, ContextualTool) are replaced by it " <>
+                 "in 2.0; see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
+
+      refute error.message =~ "secret-value"
+    end
+
+    test "something that is not a struct raises" do
+      error = assert_raise ArgumentError, fn -> Toolset.new([%{name: "x"}]) end
+
+      assert error.message ==
+               "Normandy.Tools.Toolset.register/3: expected a tool struct whose module " <>
+                 "implements Normandy.Tool, got: a map; " <>
+                 "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
+    end
+  end
 end

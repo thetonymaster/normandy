@@ -92,9 +92,17 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   from `tool_context[:memory_namespace]`, never from the struct; `Commands`/`Paths`/`Render`
   hold command logic, path rules and model-facing text; limits `max_document_bytes`,
   `max_namespace_bytes` (default 1_000_000, `nil` = no cap), `max_view_chars`, `max_cas_retries`
-- **`Normandy.Tools.Context`** / **`Normandy.Tools.ContextualTool`** - Per-call context built
-  from `BaseAgentConfig.tool_context` (plain data, persisted in the config template) and
-  passed by every built-in pipeline's `execute_fn`
+- **`Normandy.Tool`** - The one tool contract: `name/1`, `description/1`, `input_schema/1`,
+  `run(tool, %Normandy.Tools.Context{})`; `use Normandy.Tool, name:, description:, input: Schema`
+  generates the first three. The struct holds configuration only; the model's input is
+  validated (`Normandy.Tools.Input`: unknown keys refused, except under a hand-written schema with no `properties`) and arrives as `context.input`
+- **`Normandy.Tools.Toolset`** - Tools by name (`BaseAgentConfig.toolset`); `register/3`
+  options `:timeout` (the call's timeout; a struct field is never read) and `:replace`;
+  `fetch/2`, `fetch!/2`. A struct whose module is not a `Normandy.Tool` raises at
+  registration and in `ConfigTemplate.rebuild/3` (1.x tools)
+- **`Normandy.Tools.Context`** - Per-call context: `input`, plus `values` from
+  `BaseAgentConfig.tool_context` (plain data, persisted in the config template), built by
+  every pipeline through `Dispatch.executor_opts/3`
 
 ### Lifecycle Hooks
 

@@ -3,6 +3,12 @@ defmodule Normandy.Agents.ConfigTemplateTest do
   alias Normandy.Agents.{BaseAgentConfig, ConfigTemplate}
   alias Normandy.Behaviours.Config
   alias Normandy.Components.AgentMemory
+  alias Normandy.Tools.Toolset
+
+  defmodule OldStyleTool do
+    @moduledoc false
+    defstruct []
+  end
 
   test "from_config produces a serializable, secret-free template" do
     config = %BaseAgentConfig{
@@ -113,7 +119,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       }
     }
 
-    tr = %Normandy.Tools.Toolset{tools: %{"t" => %{}}}
+    tr = Toolset.new([%Normandy.Test.FakeTool{name: "t"}])
 
     supp = %{
       toolset: tr,
@@ -185,6 +191,45 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       rebuilt = config |> ConfigTemplate.from_config("t") |> ConfigTemplate.rebuild(supp, "TOKEN")
 
       assert rebuilt.behaviours.hooks == hooks
+    end
+
+    test "a supplement still keyed :tool_registry (1.x) raises, naming the key" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+      old = supp |> Map.delete(:toolset) |> Map.put(:tool_registry, supp.toolset)
+
+      error = assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, old, "TOKEN") end
+
+      assert error.message ==
+               "ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
+                 ":toolset (a %Normandy.Tools.Toolset{} or nil); " <>
+                 "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
+    end
+
+    test "a supplement toolset holding a 1.x tool raises, naming its module" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+      bad = %{supp | toolset: %Toolset{tools: %{"old" => %OldStyleTool{}}}}
+
+      error = assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, bad, "TOKEN") end
+
+      assert error.message =~
+               "ConfigTemplate.rebuild/3: Normandy.Agents.ConfigTemplateTest.OldStyleTool " <>
+                 "does not implement the Normandy.Tool behaviour."
+    end
+
+    test "a supplement :toolset that is not a Toolset raises" do
+      supp = round_trip_supplement()
+      tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
+
+      error =
+        assert_raise ArgumentError, fn ->
+          ConfigTemplate.rebuild(tmpl, %{supp | toolset: [:tool]}, "TOKEN")
+        end
+
+      assert error.message ==
+               "ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
+                 "%Normandy.Tools.Toolset{} or nil, got: a list"
     end
 
     test "a template saved before hooks existed rebuilds with []" do

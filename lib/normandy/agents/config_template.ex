@@ -42,6 +42,8 @@ defmodule Normandy.Agents.ConfigTemplate do
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.Tools.Toolset
 
   # Plain-data config fields carried as-is. A 1.0 template lacks them, so
   # `rebuild/3` leaves the struct defaults in place for missing keys.
@@ -168,7 +170,10 @@ defmodule Normandy.Agents.ConfigTemplate do
   neither `nil` (1.0) nor a positive integer, for a compaction setup that can't size its
   window (see `BaseAgent.validate_compaction_config!/1`), and for a malformed hook entry in
   the template (shape, `:on_error` and plain-data opts; whether the hook module exists on
-  this node is checked later, by `Turn.Server`).
+  this node is checked later, by `Turn.Server`). Raises `ArgumentError` for a supplement
+  that still uses the 1.x key `:tool_registry`, whose `:toolset` is not a
+  `%Normandy.Tools.Toolset{}` or `nil`, or whose toolset holds a struct whose module does not
+  implement `Normandy.Tool`.
   """
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
           BaseAgentConfig.t()
@@ -198,7 +203,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       prompt_specification: tmpl.prompt_specification,
       input_schema: tmpl.input_schema,
       output_schema: tmpl.output_schema,
-      toolset: supplement.toolset,
+      toolset: supplement_toolset!(supplement),
       client: supplement.client_builder.(token),
       behaviours: behaviours,
       memory: AgentMemory.new_memory(Map.get(tmpl, :max_messages))
@@ -299,6 +304,35 @@ defmodule Normandy.Agents.ConfigTemplate do
     raise ArgumentError,
           "ConfigTemplate.rebuild/3: template #{inspect(id)} lacks #{what}, which every " <>
             "Normandy 1.0 and 2.0 template has; it cannot be rebuilt (MIGRATING-2.0.md §22)"
+  end
+
+  # The same pointer as Toolset's @migration (check_tool!/2), kept as a copy: one string.
+  @tools_section "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
+
+  # Ruling 5: the supplement is where a 1.x tool setup can reach a 2.0 node.
+  defp supplement_toolset!(%{tool_registry: _}) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
+            ":toolset (a %Normandy.Tools.Toolset{} or nil); #{@tools_section}"
+  end
+
+  defp supplement_toolset!(%{toolset: nil}), do: nil
+
+  defp supplement_toolset!(%{toolset: %Toolset{} = toolset}) do
+    toolset |> Toolset.list() |> Enum.each(&Toolset.check_tool!(&1, "ConfigTemplate.rebuild/3"))
+    toolset
+  end
+
+  defp supplement_toolset!(%{toolset: other}) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
+            "%Normandy.Tools.Toolset{} or nil, got: #{Describe.type_of(other)}"
+  end
+
+  defp supplement_toolset!(_supplement) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: the supplement has no :toolset (a " <>
+            "%Normandy.Tools.Toolset{} or nil)"
   end
 
   defp node_local_fields!(tmpl, supplement) do

@@ -109,7 +109,9 @@ defmodule Normandy.DSL.Agent do
   - `background` - Background context for prompt (optional)
   - `steps` - Internal reasoning steps (optional)
   - `output_instructions` - Output formatting instructions (optional)
-  - `tool` - Register a tool module (can be called multiple times)
+  - `tool` - Register a tool: `tool MyTool` registers `%MyTool{}`, `tool MyTool, timeout: 60_000`
+    passes registration options (`Normandy.Tools.Toolset.register/3`); can be called multiple
+    times
   - `max_messages` - Maximum messages in memory (optional)
 
   ## Examples
@@ -238,11 +240,13 @@ defmodule Normandy.DSL.Agent do
   end
 
   @doc """
-  Registers a tool module.
+  Registers a tool: `new/1` registers `%module{}` with `opts`
+  (`Normandy.Tools.Toolset.register/3`'s options, e.g. `timeout: 60_000`). A tool whose
+  struct needs configuration is registered at runtime with `BaseAgent.register_tool/3`.
   """
-  defmacro tool(module) do
+  defmacro tool(module, opts \\ []) do
     quote do
-      Module.put_attribute(__MODULE__, :agent_tools, unquote(module))
+      Module.put_attribute(__MODULE__, :agent_tools, {unquote(module), unquote(opts)})
     end
   end
 
@@ -677,9 +681,8 @@ defmodule Normandy.DSL.Agent do
       defp to_list(list) when is_list(list), do: list
 
       defp register_tools(agent) do
-        Enum.reduce(@agent_compile_config.tools, agent, fn tool_module, acc ->
-          tool = struct(tool_module)
-          BaseAgent.register_tool(acc, tool)
+        Enum.reduce(@agent_compile_config.tools, agent, fn {tool_module, opts}, acc ->
+          BaseAgent.register_tool(acc, struct!(tool_module), opts)
         end)
       end
 

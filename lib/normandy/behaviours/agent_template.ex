@@ -15,7 +15,7 @@ defmodule Normandy.Behaviours.AgentTemplate do
   """
 
   @type supplement :: %{
-          required(:toolset) => term(),
+          required(:toolset) => Normandy.Tools.Toolset.t() | nil,
           required(:before_hooks) => [term()],
           required(:after_hooks) => [term()],
           required(:client_builder) => (String.t() -> struct()),

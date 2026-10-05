@@ -259,36 +259,37 @@ itself). Use it for account deletion and data-subject requests.
 named \"memory\" is already registered; pass replace: true to replace it") when a tool with
 that name is registered twice, so do not register another tool named `memory` alongside it.
 
-## Writing contextual tools
+## Tools that read the session context
 
-Any tool can read the per-session context. Implement `Normandy.Tools.BaseTool` as usual,
-plus `Normandy.Tools.ContextualTool.run/2`, which receives a `%Normandy.Tools.Context{}`
-(`values` is `tool_context`; also `session_id`, `agent_name`, `turn_id`, `tool_call_id`).
-Make `BaseTool.run/1` return an error so a caller that bypasses dispatch fails visibly:
+Every tool's `run/2` receives a `%Normandy.Tools.Context{}`: `input` is the call's validated
+input, `values` is `tool_context`, and `session_id`, `agent_name`, `turn_id` and
+`tool_call_id` identify the call.
 
 ```elixir
 defmodule MyApp.Tools.OrderLookup do
-  defstruct [:order_id]
+  defmodule Input do
+    use Normandy.Schema
 
-  defimpl Normandy.Tools.BaseTool do
-    def tool_name(_), do: "order_lookup"
-    def tool_description(_), do: "Looks up one of the current customer's orders."
-    def input_schema(_), do: %{type: "object", properties: %{order_id: %{type: "string"}}, required: ["order_id"]}
-
-    def run(_),
-      do: {:error, "order_lookup requires tool context; it was called outside the dispatch pipeline"}
+    io_schema "Order lookup input" do
+      field(:order_id, :string, required: true, description: "the order id")
+    end
   end
 
-  defimpl Normandy.Tools.ContextualTool do
-    def run(%{order_id: id}, %Normandy.Tools.Context{values: %{customer_id: customer}}),
-      do: MyApp.Orders.fetch(customer, id)
-  end
+  use Normandy.Tool,
+    name: "order_lookup",
+    description: "Looks up one of the current customer's orders.",
+    input: Input
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{order_id: id}, values: %{customer_id: customer}}),
+    do: MyApp.Orders.fetch(customer, id)
 end
 ```
 
-The built-in pipelines pass the context to the tool's `execute_fn` (arity 4). A user-supplied
-arity-3 `execute_fn` cannot receive context: it still runs ordinary tools, but a contextual
-tool run through it returns "<name> requires tool context".
+The customer comes from `tool_context`, which the model cannot set; the order id comes from
+the model and is validated against `Input` before `run/2` is called.
 
 ## Telemetry
 

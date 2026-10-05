@@ -677,3 +677,19 @@ a struct field into the struct, including fields such as `:endpoint` or `:timeou
   `Dispatch.execute_approved/3` runs an approved call. A `PolicyEngine` sees the registered
   tool as `ctx.tool` and the validated input as `ctx.input`.
 - `Context.build/2` is `Context.build(config, call, input)`.
+
+### Rolling upgrades and templates
+
+- Config templates hold no tools: `ConfigTemplate.rebuild/3` takes the toolset from the
+  `AgentTemplate` supplement registered on each node. Rename its `:tool_registry` key to
+  `:toolset`; `rebuild/3` raises `ArgumentError` on the old key, on a `:toolset` that is not a
+  `%Normandy.Tools.Toolset{}` or `nil`, and on a tool whose module does not implement
+  `Normandy.Tool`. `Toolset.register/3` (and `BaseAgent.register_tool/3`) raise the same
+  error for a 1.x tool. Each names what it found (the 1.x key, the type it got, or the
+  tool's module); the old-key and 1.x-tool errors also point at this section.
+- A session parked on an approval under 1.x resumes under 2.0: the parked call's input is
+  validated again when it is approved, and a call whose tool is gone or whose input no
+  longer validates is answered with an error result instead of crashing the server.
+- DSL: `tool MyTool, timeout: 60_000` passes registration options. `tool MyTool` builds
+  `%MyTool{}` with `struct!/1`: a tool with enforced keys raises at `new/1`; register it with
+  `BaseAgent.register_tool/3` after `new/1` instead.

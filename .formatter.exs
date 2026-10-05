@@ -13,6 +13,7 @@ locals_without_parens = [
   steps: 1,
   output_instructions: 1,
   tool: 1,
+  tool: 2,
   memory: 0,
   memory: 1,
   max_messages: 1,

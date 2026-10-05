@@ -92,6 +92,6 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   """
   def create_weather_tool do
     _ = unless Code.ensure_loaded?(MyApp.Tools.Weather), do: Code.compile_file(@weather_source)
-    struct(MyApp.Tools.Weather, city: "")
+    struct(MyApp.Tools.Weather)
   end
 end

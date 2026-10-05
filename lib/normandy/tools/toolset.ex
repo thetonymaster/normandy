@@ -7,6 +7,7 @@ defmodule Normandy.Tools.Toolset do
   `to_tool_schemas/1` produces the tool definitions sent to the model.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Schema.Introspection
   alias Normandy.Tool
 
@@ -56,6 +57,8 @@ defmodule Normandy.Tools.Toolset do
   The name must be 1 to 64 letters, digits, underscores or dashes (what the API accepts);
   anything else raises `ArgumentError` here rather than as a 400 on the first request.
   Registering a second tool with the same name raises `ArgumentError` unless `replace: true`.
+  A struct whose module does not implement `Normandy.Tool` (a 1.x tool) raises
+  `ArgumentError` naming the module.
   An unknown or mistyped option raises `ArgumentError` naming it.
 
   ## Options
@@ -65,6 +68,7 @@ defmodule Normandy.Tools.Toolset do
   @spec register(t(), struct(), keyword()) :: t()
   def register(%__MODULE__{tools: tools, timeouts: timeouts} = toolset, tool, opts \\ []) do
     opts = Normandy.Options.validate!(opts, @register_schema, {__MODULE__, :register, 3})
+    :ok = check_tool!(tool, "Normandy.Tools.Toolset.register/3")
     tool_name = Tool.name(tool)
 
     unless valid_name?(tool_name) do
@@ -86,6 +90,30 @@ defmodule Normandy.Tools.Toolset do
       end
 
     %{toolset | tools: Map.put(tools, tool_name, tool), timeouts: timeouts}
+  end
+
+  @migration "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
+
+  @doc false
+  # Ruling 5: a 1.x tool reaches a 2.0 node only through registration or a template
+  # supplement's toolset (ConfigTemplate.rebuild/3), so both check here. Names the module,
+  # never the struct's values (they can be credentials).
+  @spec check_tool!(term(), String.t()) :: :ok
+  def check_tool!(%module{}, caller) do
+    if Tool.implemented_by?(module) do
+      :ok
+    else
+      raise ArgumentError,
+            "#{caller}: #{inspect(module)} does not implement the Normandy.Tool behaviour. " <>
+              "1.x tools (Normandy.Tools.BaseTool, SchemaBaseTool, ContextualTool) are " <>
+              "replaced by it in 2.0; #{@migration}"
+    end
+  end
+
+  def check_tool!(other, caller) do
+    raise ArgumentError,
+          "#{caller}: expected a tool struct whose module implements Normandy.Tool, got: " <>
+            "#{Describe.type_of(other)}; #{@migration}"
   end
 
   @doc """
