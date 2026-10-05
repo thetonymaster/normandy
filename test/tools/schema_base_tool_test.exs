@@ -297,6 +297,8 @@ defmodule Normandy.Tools.SchemaBaseToolTest do
 
   describe "schema introspection" do
     test "schema module defines __schema__/1" do
+      # function_exported?/3 is false for a module not loaded yet (test order decides).
+      Code.ensure_loaded!(EnhancedCalculator)
       assert function_exported?(EnhancedCalculator, :__schema__, 1)
     end
 

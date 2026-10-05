@@ -382,6 +382,8 @@ defmodule Normandy.Hooks.RunnerTest do
     end
 
     test "the test Probe implements every event" do
+      # function_exported?/3 is false for a module not loaded yet (test order decides).
+      Code.ensure_loaded!(Probe)
       for {event, arity} <- Hooks.events(), do: assert(function_exported?(Probe, event, arity))
     end
   end
