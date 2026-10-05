@@ -5,6 +5,9 @@ defmodule Normandy.LLMError do
   Adapters return `{:error, %Normandy.LLMError{}}` from `Normandy.Agents.Model.converse/7`;
   `Normandy.Agents.BaseAgent` raises it once retries (if configured) are exhausted.
 
+  `type: :unsupported` means the client can't do what was asked (a client without
+  streaming answering `Normandy.Agents.Model.stream/3`); it is never retryable.
+
   - `:type` — failure class (see `t:error_type/0`)
   - `:status` — HTTP status when there was one, else `nil`
   - `:retryable?` — whether a retry can help; set by the adapter that classified the failure
@@ -37,6 +40,7 @@ defmodule Normandy.LLMError do
     :invalid_output,
     :stream,
     :circuit_open,
+    :unsupported,
     :unknown
   ]
 
@@ -54,6 +58,7 @@ defmodule Normandy.LLMError do
           | :invalid_output
           | :stream
           | :circuit_open
+          | :unsupported
           | :unknown
 
   @type t :: %__MODULE__{

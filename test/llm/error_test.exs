@@ -33,6 +33,15 @@ defmodule Normandy.LLMErrorTest do
         LLMError.new(type: :server, retryable?: :yes)
       end
     end
+
+    test ":unsupported is a known type" do
+      assert %Normandy.LLMError{type: :unsupported, retryable?: false} =
+               Normandy.LLMError.new(
+                 type: :unsupported,
+                 retryable?: false,
+                 detail: "no streaming"
+               )
+    end
   end
 
   describe "wrap/1" do
