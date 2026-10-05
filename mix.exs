@@ -163,7 +163,7 @@ defmodule Normandy.MixProject do
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.3"},
       {:claudio, path: "../Claudio"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.6 and >= 0.6.1"},
       {:jason, "~> 1.4"},
       {:bypass, "~> 2.1", only: :test},
       # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
@@ -267,13 +267,16 @@ defmodule Normandy.MixProject do
       name: "normandy",
       licenses: ["MIT"],
       links: %{
-        "GitHub" => "https://github.com/thetonymaster/normandy"
+        "GitHub" => "https://github.com/thetonymaster/normandy",
+        "Changelog" => "https://github.com/thetonymaster/normandy/blob/main/CHANGELOG.md"
       },
       maintainers: ["Antonio Cabrera"],
       files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE CHANGELOG.md),
       exclude_patterns: [
         "priv/plts",
-        "priv/plts/*"
+        "priv/plts/*",
+        "priv/test_repo",
+        "priv/test_repo/*"
       ]
     ]
   end

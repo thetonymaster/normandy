@@ -30,3 +30,6 @@ normandy-*.tar
 
 .envrc
 /e2e/reports/
+
+# Mnesia directory created by tests
+/Mnesia.*
