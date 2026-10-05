@@ -180,12 +180,13 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - Returned errors are no longer logged: `run/2,3`, `stream/3` and `AgentProcess` used to log
   an `LLMError` or a rejected input at `:error` level (`normandy agent exception`,
   `normandy llm call exception`, `Agent <id> failed: ...`). Alert on the
-  `[:normandy, :agent, :run, :exception]` telemetry event instead. Only a bug (an exception
-  that is not Normandy's own, an exit or a throw) is logged, as `normandy agent exception:
-  <Module>` plus its stacktrace, and that line, like every Normandy crash log (`Turn.Server`
-  handlers, hooks, `Retry`, the A2A server), names the exception module or the kind only:
-  never the exception's message, a thrown term or an exit reason, and stacktrace frames
-  keep arities, never arguments.
+  `[:normandy, :agent, :run, :exception]` telemetry event instead. A bug (an exception
+  that is not Normandy's own, an exit or a throw) is no longer logged by `run/2,3` or
+  `stream/3` either: it is raised to the caller. It is logged once, where Normandy turns it
+  into a value (`AgentProcess`, `Reactive`, a workflow step, `Turn.Server`, the A2A server),
+  and that line, like every Normandy crash log (hooks, `Retry`), names the exception module
+  or the kind only: never the exception's message, a thrown term or an exit reason, and
+  stacktrace frames keep arities, never arguments.
 - A final returned LLM failure (`{:error, _}` from `converse/3`) and an open circuit
   (`type: :circuit_open`) are a `Normandy.LLMError`: `{:error, %Normandy.LLMError{}}` from
   `run/2,3`, raised by `run!/2,3`.

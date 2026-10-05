@@ -68,27 +68,15 @@ defmodule Normandy.LogPolicyTest do
       assert error_lines(log) == []
     end
 
-    test "a bug is logged once, by module and arity-only frames, and still raised" do
-      log =
-        capture_log(fn ->
-          assert_raise FunctionClauseError, fn ->
-            BaseAgent.run(agent(fn _ -> picky().only_ok(@secret) end), "hello")
-          end
-        end)
-
-      assert [_one] = error_lines(log)
-      assert log =~ "FunctionClauseError"
-      assert log =~ "only_ok/1"
-      refute log =~ @secret
-    end
-
-    test "a bug's message is not logged" do
+    # The raise carries a bug to the caller; the boundary that turns it into a value
+    # (AgentProcess, Reactive, a workflow step, Turn.Server, A2A) logs it, once.
+    test "a bug is raised, not logged" do
       log =
         capture_log(fn ->
           assert_raise KeyError, fn -> BaseAgent.run(agent(&secret_key_error/1), "hello") end
         end)
 
-      assert log =~ "KeyError"
+      assert error_lines(log) == []
       refute log =~ @secret
     end
   end
@@ -103,13 +91,18 @@ defmodule Normandy.LogPolicyTest do
       assert error_lines(log) == []
     end
 
-    test "a bug is replied whole and logged without its values" do
-      {:ok, pid} = AgentProcess.start_link(agent: agent(&secret_key_error/1))
+    test "a bug is replied whole and logged once, by module and arity-only frames" do
+      {:ok, pid} =
+        AgentProcess.start_link(agent: agent(fn _ -> picky().only_ok(@secret) end))
 
       log =
-        capture_log(fn -> assert {:error, %KeyError{}} = AgentProcess.run(pid, "hello") end)
+        capture_log(fn ->
+          assert {:error, %FunctionClauseError{}} = AgentProcess.run(pid, "hello")
+        end)
 
-      assert log =~ "KeyError"
+      assert [_one] = error_lines(log)
+      assert log =~ "FunctionClauseError"
+      assert log =~ "only_ok/1"
       refute log =~ @secret
     end
   end

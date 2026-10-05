@@ -1695,24 +1695,22 @@ defmodule Normandy.Agents.BaseAgent do
 
       started_at = System.monotonic_time()
 
-      try do
-        {result, stop_metadata} = fun.()
-        stop_metadata = put_turn_id(stop_metadata, result)
-        duration_ms = Map.get(stop_metadata, :duration_ms, elapsed_ms(started_at))
+      # A failure is not logged here. A Normandy error reaches the caller (run/3 returns
+      # it, run!/3 raises it) and the run :exception telemetry; a bug is raised to the
+      # caller, and the boundary that turns it into a value (AgentProcess, Reactive, a
+      # workflow step, Turn.Server, the A2A server) logs it once.
+      {result, stop_metadata} = fun.()
+      stop_metadata = put_turn_id(stop_metadata, result)
+      duration_ms = Map.get(stop_metadata, :duration_ms, elapsed_ms(started_at))
 
-        log_lifecycle(:info, "normandy agent run stop",
-          agent: log_agent_name(config),
-          iterations: completed_iterations(result),
-          status: :ok,
-          duration_ms: duration_ms
-        )
+      log_lifecycle(:info, "normandy agent run stop",
+        agent: log_agent_name(config),
+        iterations: completed_iterations(result),
+        status: :ok,
+        duration_ms: duration_ms
+      )
 
-        {result, stop_metadata}
-      catch
-        kind, reason ->
-          log_run_exception(config, kind, reason, __STACKTRACE__)
-          :erlang.raise(kind, reason, __STACKTRACE__)
-      end
+      {result, stop_metadata}
     end)
   catch
     kind, reason ->
@@ -1827,24 +1825,6 @@ defmodule Normandy.Agents.BaseAgent do
   # same chokepoint pipeline as the non-streaming path.
   defp execute_one_streaming_tool_call(config, tool_call) do
     Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
-  end
-
-  # A run's Normandy error reaches the caller (run/3 returns it, run!/3 raises it) and
-  # its telemetry, so it is not logged. Anything else is a bug: logged once, here, by
-  # kind, module and arity-only stacktrace (TurnError.format_raised/3), never by message
-  # or value. The llm_call and tool spans inside the run don't log a failure: it
-  # reaches this span.
-  defp log_run_exception(config, kind, reason, stacktrace) do
-    unless kind == :error and is_exception(reason) and TurnError.domain?(reason) do
-      log_lifecycle(
-        :error,
-        "normandy agent exception: " <> TurnError.format_raised(kind, reason, stacktrace),
-        agent: log_agent_name(config),
-        kind: kind
-      )
-    end
-
-    :ok
   end
 
   # The API dropped a replayed thinking block because its history changed since it
