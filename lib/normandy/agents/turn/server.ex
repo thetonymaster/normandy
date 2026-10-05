@@ -118,14 +118,16 @@ defmodule Normandy.Agents.Turn.Server do
       admission did (`:admit`: an `on_prompt` hook or an input guardrail crashing under
       `on_error: :reraise`, or a hook's return-contract violation); or an `after_tool`
       hook crashed on a result the server built itself (`:after_tool`: an approval
-      rejected, expired or interrupted result). An `on_session_start` crash
+      rejected, expired or interrupted result); or a `before_llm` or `after_compact` hook
+      crashed or broke its return contract (`:before_llm`, `:after_compact`; the turn
+      fails and `on_turn_end` receives the same reason). An `on_session_start` crash
       (`:on_session_start`) is no `run/2` reply: it sends the server `:unavailable`.
     * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
     * `{:hook_halted, %Normandy.HookHaltError{}}` — a `before_llm` hook halted the turn.
     * `{:persist_failed, reason}` — the session store rejected a write.
-    * `{:task_down, {exception, stacktrace}}` — a hook that runs in the worker task
-      (`before_llm`, `after_compact`, and `before_tool`/`after_tool` inside the tool
-      dispatch) crashed under `on_error: :reraise`. The worker dies, the server stays
+    * `{:task_down, {exception, stacktrace}}` — the worker task died: the LLM call, the
+      compactor or the tool dispatch crashed, including a `before_tool` or `after_tool`
+      hook crashing inside the dispatch under `on_error: :reraise`. The server stays
       alive, the turn fails, and `on_turn_end` receives `{:error, {:task_down, ...}}`.
     * Other core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
 
@@ -154,7 +156,6 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
-  alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.Hooks.Runner
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Telemetry.Metadata
@@ -353,11 +354,9 @@ defmodule Normandy.Agents.Turn.Server do
       template_provider: template_provider,
       resume_policy: resume_policy,
       subscriber: Keyword.get(opts, :subscriber),
-      handlers:
-        HookHandlers.wrap(
-          Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
-          config
-        ),
+      # Unwrapped: before_llm and after_compact run apart from the LLM call and the
+      # compaction (call_llm_event/3, compact_event/3), so their crashes are told apart.
+      handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
       turn_state: turn_state,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
@@ -375,9 +374,9 @@ defmodule Normandy.Agents.Turn.Server do
   # A new session's on_session_start hooks run as the first event after init/1 returns,
   # so a slow hook does not block the supervisor starting this server and a crashing one
   # sends it :unavailable instead of failing the start.
-  defp with_session_start({:ok, :idle, data, _actions} = init) do
+  defp with_session_start({:ok, :idle, data, actions} = init) do
     if ServerGlue.session_start?(data.config, data.turn_state),
-      do: {:ok, :idle, data, [{:next_event, :internal, :session_start}]},
+      do: {:ok, :idle, data, [{:next_event, :internal, :session_start} | List.wrap(actions)]},
       else: init
   end
 
@@ -769,12 +768,12 @@ defmodule Normandy.Agents.Turn.Server do
   defp admit(data, user_input) do
     {:ok, BaseAgent.admit_input!(data.config, user_input)}
   rescue
-    e in [
-      Normandy.Schema.ValidationError,
-      Normandy.Guardrails.ViolationError,
-      Normandy.HookHaltError
-    ] ->
+    e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
       {:rejected, e}
+
+    # An on_prompt halt, the only halt admission runs: {:rejected, e}.
+    e in Normandy.HookHaltError ->
+      Normandy.HookHaltError.outcome(e)
   catch
     kind, reason -> handler_crash(data, :admit, kind, reason, __STACKTRACE__)
   end
@@ -1142,10 +1141,7 @@ defmodule Normandy.Agents.Turn.Server do
         end)
 
       {:maybe_compact, info} ->
-        spawn_task(data, :compact, fn h, d ->
-          {config2, meta} = h.compact.(d.config, d.turn_state, info)
-          {:compact_result, config2, meta}
-        end)
+        spawn_task(data, :compact, &compact_event(&1, &2, info))
 
       {:finalize, value} ->
         # Persist the terminal (:stopped) turn state so the resume reaper can tell a
@@ -1174,13 +1170,42 @@ defmodule Normandy.Agents.Turn.Server do
     interpret(effects ++ rest, %{data | turn_state: state})
   end
 
-  # The worker's event for a :call_llm effect. A before_llm halt (raised by the hook
-  # wrapper, Normandy.Hooks.Handlers) fails the turn with {:hook_halted, e} rather than
-  # {:task_down, _}.
+  # The worker's event for a :call_llm effect. before_llm runs first, apart from the
+  # call: a halt fails the turn with {:hook_halted, e}, a crash with {:handler_crashed,
+  # :before_llm, e}. A crash in the call itself stays {:task_down, _}.
   defp call_llm_event(handlers, data, request) do
-    {:llm_response, handlers.call_llm.(data.config, data.turn_state, request)}
+    with {:ok, :ok} <-
+           worker_hook(data, :before_llm, fn ->
+             ServerGlue.before_llm(handlers, data.config, data.turn_state, request)
+           end) do
+      {:llm_response, handlers.call_llm.(data.config, data.turn_state, request)}
+    end
+  end
+
+  # The worker's event for a :maybe_compact effect, carrying the updated config. A
+  # compactor crash stays {:task_down, _}; an after_compact crash after it fails the turn
+  # with {:handler_crashed, :after_compact, e}.
+  defp compact_event(handlers, data, info) do
+    compacted = handlers.compact.(data.config, data.turn_state, info)
+
+    with {:ok, {config, meta}} <-
+           worker_hook(data, :after_compact, fn ->
+             ServerGlue.after_compact(handlers, data.config, data.turn_state, info, compacted)
+           end) do
+      {:compact_result, config, meta}
+    end
+  end
+
+  # Runs a hook event in the worker task. A halt or a crash (logged by handler_crash/5)
+  # becomes the :llm_error event that fails the turn, instead of the worker's death.
+  defp worker_hook(data, event, fun) do
+    {:ok, fun.()}
   rescue
     e in Normandy.HookHaltError -> {:llm_error, {:hook_halted, e}}
+  catch
+    kind, reason ->
+      {:crashed, crash} = handler_crash(data, event, kind, reason, __STACKTRACE__)
+      {:llm_error, crash}
   end
 
   # Spawn a MONITORED, UNLINKED task that computes its event and sends it back

@@ -5,6 +5,16 @@ defmodule Normandy.Hooks.GuideExamplesTest do
 
   @guide Path.expand("../../docs/guides/hooks.md", __DIR__)
 
+  # Compiled once: compiling an example module twice would warn about the redefinition.
+  setup_all do
+    compiled =
+      for source <- example_modules() do
+        Code.with_diagnostics(fn -> Code.compile_string(source) end)
+      end
+
+    %{compiled: compiled}
+  end
+
   # Every ```elixir block in the guide that defines a MyApp.Hooks.* module.
   defp example_modules do
     ~r/```elixir\n(defmodule MyApp\.Hooks\..*?)```/s
@@ -12,18 +22,37 @@ defmodule Normandy.Hooks.GuideExamplesTest do
     |> List.flatten()
   end
 
-  test "the guide's example hook modules compile without warnings" do
-    sources = example_modules()
-    assert length(sources) == 4
+  # The guide's section under `heading`, up to the next `## ` heading.
+  defp section(heading) do
+    [_before, rest] = String.split(File.read!(@guide), "\n## #{heading}\n", parts: 2)
+    rest |> String.split("\n## ", parts: 2) |> hd()
+  end
 
-    for source <- sources do
-      {_modules, diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(source) end)
+  test "the guide's example hook modules compile without warnings", %{compiled: compiled} do
+    assert length(compiled) == 4
+
+    for {_modules, diagnostics} <- compiled do
       assert diagnostics == [], "example did not compile cleanly: #{inspect(diagnostics)}"
     end
   end
 
-  test "the guide's event table names every event" do
-    guide = File.read!(@guide)
-    for {event, _arity} <- Hooks.events(), do: assert(guide =~ "`#{event}`")
+  test "the Events table has a row for every event" do
+    events = section("Events")
+    for {event, _arity} <- Hooks.events(), do: assert(events =~ "\n| `#{event}(")
+  end
+
+  test "the guide's \"Testing a hook\" example passes" do
+    [source] =
+      Regex.run(
+        ~r/```elixir\n(defmodule MyAppTest\.RedactHookTest.*?)```/s,
+        section("Testing a hook"),
+        capture: :all_but_first
+      )
+
+    [{module, _binary}] = Code.compile_string(source)
+    tests = module.__ex_unit__().tests
+    assert length(tests) == 2
+
+    for test <- tests, do: apply(module, test.name, [%{}])
   end
 end

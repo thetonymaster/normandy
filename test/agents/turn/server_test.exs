@@ -2213,7 +2213,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
       capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, %{"query" => "q"}) end)
 
       {:ok, entries} = InMemory.history(store, "s-dangling-reject-then-run")
-      assert Enum.count(entries, &(&1.role == "tool")) == 1
+
+      assert Enum.map(entries, & &1.role) == ["user", "assistant", "tool", "user", "assistant"]
     end
 
     test "an append crash during repair replies {:handler_crashed, :append, _}; nothing persisted" do
@@ -2530,6 +2531,36 @@ defmodule Normandy.Agents.Turn.ServerTest do
                data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
     end
 
+    test "a restarted server rebuilds memory with the ids the live one had" do
+      store = InMemory.new()
+
+      start = fn ->
+        Turn.Server.start_link(
+          session_id: "s-entry-ids-restart",
+          config: base_config(),
+          store: {InMemory, store},
+          registry: {Native, Native.new()},
+          handlers: %{
+            BaseAgent.non_streaming_handlers()
+            | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
+          }
+        )
+      end
+
+      {:ok, srv} = start.()
+      assert {:ok, _} = Turn.Server.run(srv, "one")
+      assert {:ok, _} = Turn.Server.run(srv, "two")
+      {_state, data} = :sys.get_state(srv)
+      live = data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
+      assert length(live) == 4
+
+      :ok = :gen_statem.stop(srv)
+      {:ok, srv2} = start.()
+      {_state, data2} = :sys.get_state(srv2)
+
+      assert data2.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id) == live
+    end
+
     test "interrupted results and the user message after them keep their ids too" do
       {srv, store} = start_dangling_server("s-entry-ids-dangling", %{})
       capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, "next") end)
@@ -2554,6 +2585,17 @@ defmodule Normandy.Agents.Turn.ServerTest do
         send(opts[:notify], {:after_tool, result.tool_call_id})
         {:cont, %{result | output: Map.put(result.output, :audited, true)}}
       end
+    end
+
+    # Crashes on every result but an interrupted one, so the next turn's repair passes.
+    defmodule RaisesUnlessInterrupted do
+      use Normandy.Behaviours.Hooks
+
+      @impl true
+      def after_tool(_call, %ToolResult{output: %{interrupted: true}} = result, _ctx, _opts),
+        do: {:cont, result}
+
+      def after_tool(_call, _result, _ctx, _opts), do: raise("audit down")
     end
 
     defp approval_config(after_hooks) do
@@ -2650,6 +2692,62 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       refute_received {:hook, :audit, :after_tool, _}
       refute_received {:fun_after, "pk1"}
+    end
+
+    test "a crashing after_tool on a rejected result fails the turn; the next turn repairs it" do
+      config = approval_config([])
+
+      config = %{
+        config
+        | behaviours: %{config.behaviours | hooks: [{RaisesUnlessInterrupted, []}]}
+      }
+
+      {:ok, srv} = start_parking("s-hook-reject-crash", config, [billing("pk1")])
+
+      run_in_background(srv)
+      assert_receive {:event, :awaiting_approval, _}, 2_000
+      :ok = Turn.Server.approve(srv, %{"pk1" => :reject})
+
+      assert_receive {:run_result,
+                      {:error,
+                       {:handler_crashed, :after_tool, %RuntimeError{message: "audit down"}}}},
+                     2_000
+
+      assert Process.alive?(srv)
+      assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "again")
+
+      {_state, data} = :sys.get_state(srv)
+
+      assert [%ToolResult{tool_call_id: "pk1", output: %{interrupted: true}}] =
+               for(
+                 %Message{role: "tool", content: %ToolResult{} = r} <-
+                   AgentMemory.messages(data.config.memory),
+                 do: r
+               )
+    end
+
+    test "on_approval_timeout: :continue — expired and held results each pass after_tool once" do
+      {:ok, srv} =
+        start_parking(
+          "s-hook-expire-continue",
+          approval_config([]),
+          [%ToolCall{id: "w1", name: "weather", input: %{}}, billing("pk1")],
+          approval_timeout_ms: 30,
+          on_approval_timeout: :continue
+        )
+
+      assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "go")
+
+      assert_receive {:hook, :audit, :after_tool, [%ToolCall{id: "w1"}, _, _]}
+
+      assert_receive {:hook, :audit, :after_tool,
+                      [
+                        %ToolCall{id: "pk1"},
+                        %ToolResult{tool_call_id: "pk1", output: %{expired: true}},
+                        _
+                      ]}
+
+      refute_received {:hook, :audit, :after_tool, _}
     end
 
     test "a mixed decision: the held rejection and the approved result each pass once" do

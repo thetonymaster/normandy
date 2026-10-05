@@ -79,6 +79,19 @@ defmodule Normandy.Hooks.ServerHooksTest do
     end
   end
 
+  # Crashes while the Agent registered as opts[:switch] holds :down; injects otherwise.
+  defmodule FlakyProfile do
+    use Normandy.Behaviours.Hooks
+
+    @impl true
+    def on_session_start(_ctx, opts) do
+      case Agent.get(opts[:switch], & &1) do
+        :down -> raise "crm down"
+        :up -> {:inject, ["profile: metric"]}
+      end
+    end
+  end
+
   # Built directly, as a :config start takes it (Turn.Server saves no template for a
   # :config start, server.ex:265-270): BaseAgent.init/1 validation does not run, so the
   # server's own load-time check is what these tests see.
@@ -178,13 +191,46 @@ defmodule Normandy.Hooks.ServerHooksTest do
     end
 
     test "a hook crashing under :reraise replies {:handler_crashed, :admit, e}; the server lives" do
-      {:ok, srv} = start(sid(), [probe(returns: [on_prompt: {:raise, "redactor down"}])])
+      store = InMemory.new()
+      session = sid()
+
+      {:ok, srv} =
+        start(session, [probe(returns: [on_prompt: {:raise, "redactor down"}])],
+          store: {InMemory, store}
+        )
+
+      {_state, before} = :sys.get_state(srv)
 
       assert {:error, {:handler_crashed, :admit, %RuntimeError{message: "redactor down"}}} =
                Turn.Server.run(srv, "hello")
 
       assert Process.alive?(srv)
       assert {:error, {:handler_crashed, :admit, _}} = Turn.Server.run(srv, "again")
+
+      {_state, data} = :sys.get_state(srv)
+      assert data.config.memory == before.config.memory
+      assert {:ok, []} = InMemory.history(store, session)
+    end
+
+    test "a throwing hook replies {:handler_crashed, :admit, thrown}" do
+      {:ok, srv} = start(sid(), [probe(returns: [on_prompt: {:throw, :redactor_gone}])])
+
+      assert {:error, {:handler_crashed, :admit, :redactor_gone}} = Turn.Server.run(srv, "hello")
+      assert Process.alive?(srv)
+    end
+
+    test "a plain-map rewrite the input schema rejects replies {:rejected, %ValidationError{}}" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe(returns: [on_prompt: {:cont, %{"query" => nil}}])]
+
+      {:ok, srv} =
+        start(session, hooks, store: {InMemory, store}, config: %{input_schema: %QueryInput{}})
+
+      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
+               Turn.Server.run(srv, %{"query" => "my ssn is 1"})
+
+      assert {:ok, []} = InMemory.history(store, session)
     end
 
     test "a contract violation is replied the same way" do
@@ -239,6 +285,16 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert {:ok, %Resp{content: "hi"} = final} = Turn.Server.run(srv, "hello")
       assert_receive {:hook, :p, :on_turn_end, [{:ok, ^final}, ctx]}
       refute is_nil(ctx.turn_id)
+      refute_receive {:hook, :p, :on_turn_end, _}, 50
+    end
+
+    test "a turn that fails reports {:error, reason} exactly once" do
+      boom = fn _config, _state, _request -> raise "client down" end
+      {:ok, srv} = start(sid(), [probe()], handlers: %{call_llm: boom})
+
+      assert {:error, {:task_down, _} = reason} = Turn.Server.run(srv, "hello")
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^reason}, _ctx]}
+      refute_receive {:hook, :p, :on_turn_end, _}, 50
     end
 
     test "the caller gets the reply before on_turn_end runs" do
@@ -323,6 +379,104 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert Process.alive?(srv)
     end
 
+    test "a before_llm crash under :reraise replies {:handler_crashed, :before_llm, e}" do
+      {:ok, srv} = start(sid(), [probe(returns: [before_llm: {:raise, "budget down"}])])
+
+      assert {:error, {:handler_crashed, :before_llm, %RuntimeError{message: "budget down"}}} =
+               Turn.Server.run(srv, "hello")
+
+      assert_receive {:hook, :p, :on_turn_end,
+                      [{:error, {:handler_crashed, :before_llm, %RuntimeError{}}}, _ctx]}
+
+      assert Process.alive?(srv)
+    end
+
+    test "a before_llm contract violation is replied the same way" do
+      {:ok, srv} = start(sid(), [probe(returns: [before_llm: :yes])])
+
+      assert {:error, {:handler_crashed, :before_llm, %ArgumentError{}}} =
+               Turn.Server.run(srv, "hello")
+
+      assert Process.alive?(srv)
+    end
+
+    test "an LLM client crash stays {:task_down, _}, not a hook crash" do
+      boom = fn _config, _state, _request -> raise "client down" end
+      {:ok, srv} = start(sid(), [probe()], handlers: %{call_llm: boom})
+
+      assert {:error, {:task_down, {%RuntimeError{message: "client down"}, _stack}}} =
+               Turn.Server.run(srv, "hello")
+
+      assert_received {:hook, :p, :before_llm, _}
+      assert Process.alive?(srv)
+    end
+
+    test "an after_compact crash under :reraise replies {:handler_crashed, :after_compact, e}" do
+      hooks = [probe(returns: [after_compact: {:raise, "archive down"}])]
+
+      behaviours = %Config{
+        hooks: hooks,
+        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+      }
+
+      {:ok, srv} = start(sid(), hooks, config: %{behaviours: behaviours})
+
+      assert {:ok, _} = Turn.Server.run(srv, "one")
+
+      assert {:error, {:handler_crashed, :after_compact, %RuntimeError{message: "archive down"}}} =
+               Turn.Server.run(srv, "two")
+
+      assert_receive {:hook, :p, :on_turn_end,
+                      [{:error, {:handler_crashed, :after_compact, %RuntimeError{}}}, _ctx]}
+
+      assert Process.alive?(srv)
+    end
+
+    test "after a restart, after_compact reports the dropped messages again under the same ids" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe()]
+
+      behaviours = %Config{
+        hooks: hooks,
+        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+      }
+
+      opts = [store: {InMemory, store}, config: %{behaviours: behaviours}]
+      {:ok, srv} = start(session, hooks, opts)
+
+      assert {:ok, _} = Turn.Server.run(srv, "one")
+      assert {:ok, _} = Turn.Server.run(srv, "two")
+      assert_receive {:hook, :p, :after_compact, [dropped, _meta, _ctx]}
+      ids = Enum.map(dropped, & &1.id)
+      assert ids != []
+
+      :ok = :gen_statem.stop(srv)
+      {:ok, srv2} = start(session, hooks, opts)
+
+      assert {:ok, _} = Turn.Server.run(srv2, "three")
+      assert_receive {:hook, :p, :after_compact, [dropped_again, _meta, _ctx]}
+      assert Enum.take(Enum.map(dropped_again, & &1.id), length(ids)) == ids
+    end
+
+    test "a compactor crash stays {:task_down, _}, not a hook crash" do
+      hooks = [probe()]
+      boom = fn _config, _state, _info -> raise "compactor down" end
+
+      behaviours = %Config{
+        hooks: hooks,
+        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+      }
+
+      {:ok, srv} =
+        start(sid(), hooks, handlers: %{compact: boom}, config: %{behaviours: behaviours})
+
+      assert {:error, {:task_down, {%RuntimeError{message: "compactor down"}, _stack}}} =
+               Turn.Server.run(srv, "one")
+
+      assert Process.alive?(srv)
+    end
+
     test "after_compact gets dropped entries under their store ids; injections stay out of the store" do
       store = InMemory.new()
       session = sid()
@@ -356,6 +510,48 @@ defmodule Normandy.Hooks.ServerHooksTest do
   end
 
   describe "on_session_start" do
+    test "the stored injection keeps its memory id, through a turn and a restart" do
+      store = InMemory.new()
+      session = sid()
+      hooks = [probe(returns: [on_session_start: {:inject, ["profile: metric"]}])]
+
+      {:ok, srv} = start(session, hooks, store: {InMemory, store})
+      {_state, data} = :sys.get_state(srv)
+      assert {:ok, [%{id: id}]} = InMemory.history(store, session)
+      assert id == data.config.memory.head
+
+      assert {:ok, _} = Turn.Server.run(srv, "hello")
+      {_state, data} = :sys.get_state(srv)
+      live = data.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
+      {:ok, stored} = InMemory.history(store, session)
+      assert Enum.map(stored, & &1.id) == live
+
+      :ok = :gen_statem.stop(srv)
+      {:ok, srv2} = start(session, hooks, store: {InMemory, store})
+      {_state, data2} = :sys.get_state(srv2)
+      assert data2.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id) == live
+    end
+
+    test "run/2 retries a failed session start; the injection is stored once and the turn runs" do
+      store = InMemory.new()
+      session = sid()
+      switch = :"profile_switch_#{System.unique_integer([:positive])}"
+      {:ok, _} = Agent.start_link(fn -> :down end, name: switch)
+
+      {:ok, srv} = start(session, [{FlakyProfile, switch: switch}], store: {InMemory, store})
+      assert {:unavailable, _} = :sys.get_state(srv)
+
+      Agent.update(switch, fn _ -> :up end)
+      assert {:ok, %Resp{content: "hi"}} = Turn.Server.run(srv, "hello")
+
+      assert {:ok,
+              [
+                %{role: "user", content: "profile: metric"},
+                %{role: "user", content: "hello"},
+                %{role: "assistant"}
+              ]} = InMemory.history(store, session)
+    end
+
     test "a new session runs it after init; its texts are stored as one user message" do
       store = InMemory.new()
       session = sid()

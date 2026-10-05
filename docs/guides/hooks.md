@@ -78,6 +78,11 @@ is trusted, as a caller's would be.
 `turn_id` (`nil` before a turn starts and in session events) and `values` (the agent's
 `tool_context`). It carries no config or credentials.
 
+`after_tool` runs once per result within a server's life, not across a restart: a mixed
+approval decision is stored only once the approved calls finish, so a `Turn.Server` that
+stops before then asks for the decision again, and the rejected calls' results pass
+`after_tool` again.
+
 ## Outcomes and halts
 
 | Halt | `BaseAgent` | `Turn.Server.run/2` | `on_turn_end` sees |
@@ -99,14 +104,22 @@ schema, input-guardrail or output-guardrail rejection; `{:error, reason}` otherw
 | `on_turn_end`, `on_passivate` | logged | logged | logged |
 
 A return value the library consumes (the `Returns` column above, except "ignored") that is
-outside its contract raises `ArgumentError`, whatever `:on_error` says. In `Turn.Server` no
-hook outcome stops the session: a crash in `on_prompt` replies `{:error,
-{:handler_crashed, :admit, e}}`; in `after_tool` on a result the server builds, it fails the
-turn with `{:handler_crashed, :after_tool, e}`; in `on_session_start`, the session waits
-`:unavailable` and retries. A crash under `on_error: :reraise` in a hook that runs in the
-worker task (`before_llm`, `after_compact`, `before_tool`, and `after_tool` inside tool
-dispatch) replies `{:error, {:task_down, {exception, stacktrace}}}`: the server stays
-alive, the turn fails, and `on_turn_end` receives `{:error, {:task_down, ...}}`.
+outside its contract raises `ArgumentError`, whatever `:on_error` says.
+
+In `Turn.Server` no hook outcome stops the session. A crash that propagates (under
+`:reraise`, or a contract violation) is reported this way:
+
+| Crash in | `Turn.Server.run/2` replies | `on_turn_end` sees |
+|---|---|---|
+| `on_prompt` | `{:error, {:handler_crashed, :admit, e}}` | `{:error, {:handler_crashed, :admit, e}}` |
+| `before_llm`, `after_compact` | `{:error, {:handler_crashed, :before_llm \| :after_compact, e}}` | the same `{:error, ...}` |
+| `after_tool` on a result the server builds (approval rejected or expired, interrupted) | `{:error, {:handler_crashed, :after_tool, e}}` | the same `{:error, ...}` |
+| `before_tool`, or `after_tool` inside tool dispatch | `{:error, {:task_down, {e, stacktrace}}}` | the same `{:error, ...}` |
+| `on_session_start` | no turn runs: the session waits `:unavailable`, retries, and replies `{:error, {:handler_crashed, :on_session_start, e}}` meanwhile | nothing |
+
+Except on `on_session_start`, the turn fails; the server stays alive. A `before_tool` or
+`after_tool` crash inside tool dispatch kills the worker task that runs the tools, hence
+`:task_down`; so does a crash in the LLM client or the compactor itself.
 
 ## Injection
 
@@ -276,3 +289,6 @@ name and pass the name in opts (a pid is refused).
 Each hook call is a `[:normandy, :hook, :start | :stop | :exception]` span with `event`,
 `hook`, `agent_name`, `session_id`, `turn_id` (tool events add `tool_call_id` and `tool`);
 `:stop` adds `result`: `:cont`, `:rewrite`, `:halt`, `:inject`, `:ok` or `:rescued`.
+`:rescued` is a crash rescued under `:open` or `:closed`, or on `on_turn_end` or
+`on_passivate`. `:exception` fires when a crash propagates: under `:reraise`, under
+`:closed` on `after_compact` or `on_session_start`, or on a return-contract violation.
