@@ -156,6 +156,27 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
 
     session =
       Turn.Session.new(
+        session_id: sid,
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        template_provider: {RaisingProvider, nil}
+      )
+
+    assert {:error, %TurnError{type: :session_unavailable, reason: reason} = error} =
+             Turn.Session.run(session, "hi")
+
+    assert %ArgumentError{message: "provider bug"} = reason
+    refute contains_stacktrace?(error)
+  end
+
+  test "a server whose start_link raises replies :session_unavailable with no stacktrace" do
+    # DynamicSupervisor.start_child turns a raise in the start function into
+    # {:error, {exception, stacktrace}}; Turn.Server.start_link/1 raises for a bad option.
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    session =
+      Turn.Session.new(
         session_id: "s-bad-opt-#{System.unique_integer([:positive])}",
         store: {InMemory, InMemory.new()},
         registry: {Native, Native.new()},
