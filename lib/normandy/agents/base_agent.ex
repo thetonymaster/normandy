@@ -503,6 +503,11 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}`. A client that can't stream gives
   `{:error, %Normandy.LLMError{type: :unsupported}}`.
 
+  The streamed text is parsed into a non-chat output schema once, under the client's
+  `:on_parse_failure` policy: `enable_json_retry` does not apply, so text that does not
+  parse is not re-asked. The same holds for `run/3`'s final answer after a tool loop; a
+  `run/3` without tools re-asks through the adapter.
+
   `retry_options` and the circuit breaker apply, but a stream is retried only until its
   first event reaches the callback, so no output is shown twice. Output guardrails
   report (`:guardrail_violation` event, telemetry) and don't block: the text was already

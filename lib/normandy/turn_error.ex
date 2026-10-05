@@ -6,7 +6,15 @@ defmodule Normandy.TurnError do
   `{:error, exception}`. The exception is Normandy's own (`Normandy.LLMError`,
   `Normandy.Schema.ValidationError`, `Normandy.Guardrails.ViolationError`,
   `Normandy.HookHaltError`, `Normandy.ModelCatalogError`) when that is what failed, and a
-  `TurnError` otherwise. `:type` says which:
+  `TurnError` otherwise.
+
+  `AgentProcess` differs by turn engine for any other raised exception (a bug, not a
+  Normandy error). With `turn_engine: :server` the turn runs in a worker, and its crash
+  is replied as a `:task_down` `TurnError`. In inline mode (the default) the turn runs in
+  the process itself, and `run/3` and `cast/3` reply that exception bare, as
+  `{:error, exception}`, rather than wrapping it.
+
+  `:type` says which:
 
     * `:handler_crashed` - a handler or hook raised, exited or threw; `:handler` names it
       (`:append`, `:convert`, `:validate`, `:guard`, `:emit`, `:admit`, `:after_tool`,

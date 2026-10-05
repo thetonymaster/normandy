@@ -7,6 +7,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.Model
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.Message
@@ -320,7 +321,8 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           counter: :counters.new(1, [])
         })
 
-      BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "Sunny."}} =
+               BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
 
       assert_received {:body, first}
       assert_received {:body, second}
@@ -341,10 +343,11 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.stream(agent, "weather?", fn %StreamEvent{type: event, data: data} ->
-        send(test_pid, {:event, event, data})
-        :ok
-      end)
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "Sunny."}} =
+               BaseAgent.stream(agent, "weather?", fn %StreamEvent{type: event, data: data} ->
+                 send(test_pid, {:event, event, data})
+                 :ok
+               end)
 
       assert_received {:event, :thinking_delta, "check the weather"}
     end
@@ -359,7 +362,8 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
           tool_registry: Registry.new([%FakeTool{}])
         })
 
-      BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "Sunny."}} =
+               BaseAgent.stream(agent, "weather?", fn _ -> :ok end)
 
       assert_received {:body, _first}
       assert_received {:body, second}
