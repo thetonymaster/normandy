@@ -30,7 +30,7 @@ defmodule NormandyTest.BaseAgentsTest do
     assert Map.get(agent, :client) == %NormandyTest.Support.ModelMockup{}
     assert Map.get(agent, :model) == "claude-haiku-4-5-20251001"
     assert Map.get(agent, :temperature) == 0.9
-    assert Map.get(agent, :max_tokens) == nil
+    assert Map.get(agent, :max_tokens) == 16_000
   end
 
   test "reset memory", %{agent: agent} do

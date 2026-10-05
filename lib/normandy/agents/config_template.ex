@@ -146,7 +146,8 @@ defmodule Normandy.Agents.ConfigTemplate do
     %BaseAgentConfig{
       model: tmpl.model,
       temperature: tmpl.temperature,
-      max_tokens: tmpl.max_tokens,
+      # Templates saved by 1.x store nil for an unset max_tokens; 2.0 sends the default.
+      max_tokens: tmpl.max_tokens || BaseAgentConfig.default_max_tokens(),
       max_tool_iterations: tmpl.max_tool_iterations,
       max_tool_concurrency: tmpl.max_tool_concurrency,
       name: tmpl.name,

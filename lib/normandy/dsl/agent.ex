@@ -15,7 +15,7 @@ defmodule Normandy.DSL.Agent do
           description "Conducts research and analysis"
 
           model "claude-opus-5-5"
-          max_tokens 4096
+          max_tokens 16_000
 
           system_prompt \"\"\"
           You are a helpful research assistant.
@@ -39,7 +39,7 @@ defmodule Normandy.DSL.Agent do
       config = %{
         client: my_client,
         model: "claude-opus-5-5",
-        max_tokens: 4096
+        max_tokens: 16_000
       }
 
       agent = Normandy.Agents.BaseAgent.init(config)
@@ -102,7 +102,7 @@ defmodule Normandy.DSL.Agent do
   - `description` - Agent description (optional)
   - `model` - LLM model to use (required)
   - `temperature` - Sampling temperature, or omit it to send none (default: none; Opus 4.7+ reject sampling parameters)
-  - `max_tokens` - Maximum tokens in response (default: 4096)
+  - `max_tokens` - Maximum tokens in response (default: 16_000)
   - `system_prompt` - System prompt text (optional)
   - `background` - Background context for prompt (optional)
   - `steps` - Internal reasoning steps (optional)
@@ -469,7 +469,12 @@ defmodule Normandy.DSL.Agent do
       @agent_compile_config %{
         model: Module.get_attribute(__MODULE__, :agent_model),
         temperature: Module.get_attribute(__MODULE__, :agent_temperature),
-        max_tokens: Module.get_attribute(__MODULE__, :agent_max_tokens, 4096),
+        max_tokens:
+          Module.get_attribute(
+            __MODULE__,
+            :agent_max_tokens,
+            Normandy.Agents.BaseAgentConfig.default_max_tokens()
+          ),
         max_tool_concurrency:
           Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(
             Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1)

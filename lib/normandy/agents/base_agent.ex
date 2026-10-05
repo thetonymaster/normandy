@@ -51,7 +51,7 @@ defmodule Normandy.Agents.BaseAgent do
           optional(:output_schema) => struct(),
           optional(:memory) => map(),
           optional(:prompt_specification) => PromptSpecification.t(),
-          optional(:max_tokens) => pos_integer() | nil,
+          optional(:max_tokens) => pos_integer(),
           optional(:tool_registry) => Registry.t(),
           optional(:max_tool_iterations) => pos_integer(),
           optional(:max_tool_concurrency) => integer(),
@@ -151,7 +151,7 @@ defmodule Normandy.Agents.BaseAgent do
       model: config.model,
       current_user_input: nil,
       temperature: Map.get(config, :temperature),
-      max_tokens: Map.get(config, :max_tokens, nil),
+      max_tokens: max_tokens!(config),
       tool_registry: Map.get(config, :tool_registry, nil),
       max_tool_iterations:
         normalize_max_tool_iterations(Map.get(config, :max_tool_iterations, 5)),
@@ -238,6 +238,22 @@ defmodule Normandy.Agents.BaseAgent do
   def normalize_max_tool_concurrency(other) do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
+  end
+
+  defp max_tokens!(config) do
+    case Map.fetch(config, :max_tokens) do
+      :error ->
+        BaseAgentConfig.default_max_tokens()
+
+      {:ok, n} when is_integer(n) and n > 0 ->
+        n
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "Normandy.Agents.BaseAgent.init/1: :max_tokens must be a positive integer " <>
+                "(the Messages API requires it), got: #{inspect(other)}. Omit it to use " <>
+                "the default of #{BaseAgentConfig.default_max_tokens()}."
+    end
   end
 
   # Enforce the `pos_integer()` contract for `:max_tool_iterations`. Unlike

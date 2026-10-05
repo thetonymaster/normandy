@@ -11,6 +11,14 @@ defmodule Normandy.Agents.BaseAgentConfig do
   alias Normandy.Components.PromptSpecification
   alias Normandy.Tools.Registry
 
+  # The Messages API requires max_tokens; a nil here would drop the key and
+  # every request would get a 400.
+  @default_max_tokens 16_000
+
+  @doc "The `max_tokens` used when a config sets none: #{@default_max_tokens}."
+  @spec default_max_tokens() :: pos_integer()
+  def default_max_tokens, do: @default_max_tokens
+
   @type t :: %__MODULE__{
           input_schema: struct(),
           output_schema: struct(),
@@ -21,7 +29,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
           initial_memory: map(),
           current_user_input: String.t() | nil,
           temperature: float() | nil,
-          max_tokens: pos_integer() | nil,
+          max_tokens: pos_integer(),
           tool_registry: Registry.t() | nil,
           max_tool_iterations: pos_integer(),
           max_tool_concurrency: pos_integer(),
@@ -56,7 +64,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:initial_memory, :map)
     field(:current_user_input, :string, default: nil)
     field(:temperature, :float, default: nil)
-    field(:max_tokens, :integer, default: nil)
+    field(:max_tokens, :integer, default: @default_max_tokens)
     field(:tool_registry, :struct, default: nil)
     field(:max_tool_iterations, :integer, default: 5)
     field(:max_tool_concurrency, :integer, default: 1)
