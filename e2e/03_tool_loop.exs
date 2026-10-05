@@ -5,33 +5,56 @@ alias Normandy.Agents.BaseAgent
 alias Normandy.Components.ToolResult
 
 defmodule E2E.S03.Calculator do
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    use Normandy.Schema
 
-  tool_schema "calculator", "Exact integer arithmetic. Use for every calculation." do
-    field(:op, :string, required: true, enum: ["add", "multiply"], description: "operation")
-    field(:a, :integer, required: true, description: "left operand")
-    field(:b, :integer, required: true, description: "right operand")
+    io_schema "Exact integer arithmetic. Use for every calculation." do
+      field(:op, :string, required: true, enum: ["add", "multiply"], description: "operation")
+      field(:a, :integer, required: true, description: "left operand")
+      field(:b, :integer, required: true, description: "right operand")
+    end
   end
 
-  def execute(%__MODULE__{op: "add", a: a, b: b}), do: {:ok, Integer.to_string(a + b)}
-  def execute(%__MODULE__{op: "multiply", a: a, b: b}), do: {:ok, Integer.to_string(a * b)}
+  use Normandy.Tool,
+    name: "calculator",
+    description: "Exact integer arithmetic. Use for every calculation.",
+    input: Input
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{op: "add", a: a, b: b}}),
+    do: {:ok, Integer.to_string(a + b)}
+
+  def run(_tool, %Normandy.Tools.Context{input: %Input{op: "multiply", a: a, b: b}}),
+    do: {:ok, Integer.to_string(a * b)}
 end
 
 defmodule E2E.S03.KV do
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    use Normandy.Schema
 
-  tool_schema "kv_store", "A persistent key-value store. put saves a value; get reads one." do
-    field(:action, :string, required: true, enum: ["get", "put"], description: "get or put")
-    field(:key, :string, required: true, description: "the key")
-    field(:value, :string, description: "the value (put only)")
+    io_schema "A persistent key-value store. put saves a value; get reads one." do
+      field(:action, :string, required: true, enum: ["get", "put"], description: "get or put")
+      field(:key, :string, required: true, description: "the key")
+      field(:value, :string, description: "the value (put only)")
+    end
   end
 
-  def execute(%__MODULE__{action: "put", key: k, value: v}) do
+  use Normandy.Tool,
+    name: "kv_store",
+    description: "A persistent key-value store. put saves a value; get reads one.",
+    input: Input
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{action: "put", key: k, value: v}}) do
     Agent.update(E2E.S03.Store, &Map.put(&1, k, v))
     {:ok, "stored #{k}"}
   end
 
-  def execute(%__MODULE__{action: "get", key: k}) do
+  def run(_tool, %Normandy.Tools.Context{input: %Input{action: "get", key: k}}) do
     case Agent.get(E2E.S03.Store, &Map.fetch(&1, k)) do
       {:ok, v} -> {:ok, v}
       :error -> {:error, "no value for #{k}"}

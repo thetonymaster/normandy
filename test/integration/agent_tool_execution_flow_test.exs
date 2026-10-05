@@ -21,7 +21,7 @@ defmodule Normandy.Integration.AgentToolExecutionFlowTest do
   describe "Agent + Tool + LLM end-to-end flow" do
     test "agent executes tool and returns result", %{agent: agent} do
       # Register calculator tool
-      calculator = %Calculator{operation: "add", a: 0, b: 0}
+      calculator = %Calculator{}
       agent = BaseAgent.register_tool(agent, calculator)
 
       # Ask agent to perform calculation

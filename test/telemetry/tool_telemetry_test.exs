@@ -9,14 +9,18 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
   alias Normandy.Tools.Toolset
 
   defmodule RaisingDescriptionTool do
+    use Normandy.Tool, name: "raising_description"
+
     defstruct []
 
-    defimpl Normandy.Tools.BaseTool do
-      def tool_name(_), do: "raising_description"
-      def tool_description(_), do: raise("no description")
-      def input_schema(_), do: %{}
-      def run(_), do: {:ok, "ran"}
-    end
+    @impl Normandy.Tool
+    def description(_tool), do: raise("no description")
+
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{}
+
+    @impl Normandy.Tool
+    def run(_tool, _context), do: {:ok, "ran"}
   end
 
   defmodule MockMCPAdapter do

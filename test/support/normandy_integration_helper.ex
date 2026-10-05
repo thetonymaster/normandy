@@ -78,11 +78,7 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   Creates a simple calculator tool for testing.
   """
   def create_calculator_tool do
-    %Normandy.Tools.Examples.Calculator{
-      operation: "add",
-      a: 0,
-      b: 0
-    }
+    %Normandy.Tools.Examples.Calculator{}
   end
 
   @weather_source Path.expand("../../examples/tools/weather.ex", __DIR__)

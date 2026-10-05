@@ -23,28 +23,45 @@ defmodule E2E.S13.Budget do
 end
 
 defmodule E2E.S13.LookupPrice do
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    use Normandy.Schema
 
-  tool_schema "lookup_price", "Look up today's market price of one fruit, in euros per kilo." do
-    field(:fruit, :string, required: true, description: "one fruit name")
+    io_schema "Look up today's market price of one fruit, in euros per kilo." do
+      field(:fruit, :string, required: true, description: "one fruit name")
+    end
   end
+
+  use Normandy.Tool,
+    name: "lookup_price",
+    description: "Look up today's market price of one fruit, in euros per kilo.",
+    input: Input
+
+  defstruct []
 
   @prices %{"apple" => "2.40", "pear" => "3.15", "plum" => "0.85"}
 
-  def execute(%__MODULE__{fruit: fruit}) do
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{fruit: fruit}}) do
     Agent.update(E2E.S13.Looked, &[String.downcase(fruit) | &1])
     {:ok, "#{fruit}: #{Map.get(@prices, String.downcase(fruit), "unknown")} EUR/kg"}
   end
 end
 
 defmodule E2E.S13.DropTable do
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    use Normandy.Schema
 
-  tool_schema "drop_table", "Drop a database table." do
-    field(:table, :string, required: true, description: "table name")
+    io_schema "Drop a database table." do
+      field(:table, :string, required: true, description: "table name")
+    end
   end
 
-  def execute(%__MODULE__{table: t}) do
+  use Normandy.Tool, name: "drop_table", description: "Drop a database table.", input: Input
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{table: t}}) do
     Agent.update(E2E.S13.Dropped, &[t | &1])
     {:ok, "dropped #{t}"}
   end

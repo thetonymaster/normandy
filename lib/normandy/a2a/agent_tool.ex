@@ -1,6 +1,6 @@
 defmodule Normandy.A2A.AgentTool do
   @moduledoc """
-  Wraps a remote A2A agent as a Normandy `BaseTool`.
+  Wraps a remote A2A agent as a `Normandy.Tool`.
 
   When the LLM calls this tool, a message is sent to the remote agent
   via the A2A protocol and the result is returned.
@@ -11,21 +11,23 @@ defmodule Normandy.A2A.AgentTool do
 
       {:ok, card} = Claudio.A2A.Client.discover("https://agent.example.com")
 
-      tool = AgentTool.new("https://agent.example.com/a2a", card,
-        auth_token: "bearer-token",
-        timeout: 30_000
-      )
+      tool = AgentTool.new("https://agent.example.com/a2a", card, auth_token: "bearer-token")
 
-      agent = BaseAgent.register_tool(agent, tool)
+      agent = BaseAgent.register_tool(agent, tool, timeout: 60_000)
 
+  The tool polls a remote task until it ends; the registration `:timeout` (default
+  `Normandy.Tools.Executor.default_timeout/0`, 30 s) bounds the whole call, so give a
+  remote agent that works for minutes a longer one.
   """
+
+  use Normandy.Tool
 
   alias Claudio.A2A.Client
   alias Claudio.A2A.Message
   alias Claudio.A2A.Part
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Tools.Context
 
-  @default_timeout 60_000
   @poll_interval 1_000
 
   @type t :: %__MODULE__{
@@ -33,9 +35,7 @@ defmodule Normandy.A2A.AgentTool do
           agent_card: Claudio.A2A.AgentCard.t(),
           skill_id: String.t() | nil,
           auth_token: String.t() | nil,
-          transport_opts: keyword(),
-          timeout: pos_integer(),
-          input: map()
+          transport_opts: keyword()
         }
 
   @derive {Inspect, except: [:auth_token]}
@@ -44,9 +44,7 @@ defmodule Normandy.A2A.AgentTool do
     :agent_card,
     :skill_id,
     :auth_token,
-    transport_opts: [],
-    timeout: @default_timeout,
-    input: %{}
+    transport_opts: []
   ]
 
   @doc """
@@ -60,27 +58,26 @@ defmodule Normandy.A2A.AgentTool do
       (`[{name, value}]`) are sent on every request; when OpenTelemetry is
       loaded and a span is active, W3C `traceparent`/`tracestate` headers are
       added beside them (a same-named header you set is kept)
-    - `:timeout` - Maximum time to wait for task completion (default: 60s)
 
+  The call's timeout is a registration option:
+  `BaseAgent.register_tool(agent, tool, timeout: ms)`. Passing `:timeout` here raises
+  `ArgumentError`.
   """
   @spec new(String.t(), Claudio.A2A.AgentCard.t(), keyword()) :: t()
   def new(endpoint, agent_card, opts \\ []) do
+    if Keyword.has_key?(opts, :timeout) do
+      raise ArgumentError,
+            "Normandy.A2A.AgentTool.new/3: :timeout is a registration option in 2.0; pass it " <>
+              "to BaseAgent.register_tool/3 or Normandy.Tools.Toolset.register/3"
+    end
+
     %__MODULE__{
       endpoint: endpoint,
       agent_card: agent_card,
       skill_id: Keyword.get(opts, :skill_id),
       auth_token: Keyword.get(opts, :auth_token),
-      transport_opts: Keyword.get(opts, :transport_opts, []),
-      timeout: Keyword.get(opts, :timeout, @default_timeout)
+      transport_opts: Keyword.get(opts, :transport_opts, [])
     }
-  end
-
-  @doc """
-  Prepares the tool with LLM-provided input parameters.
-  """
-  @spec prepare_input(t(), map()) :: t()
-  def prepare_input(%__MODULE__{} = tool, input) when is_map(input) do
-    %{tool | input: input}
   end
 
   @doc false
@@ -113,10 +110,10 @@ defmodule Normandy.A2A.AgentTool do
   end
 
   @doc false
+  # `deadline` is a monotonic time in ms, or :infinity when the executor's timeout is the
+  # only bound (run/2).
   def poll_for_result(endpoint, task_id, opts, deadline) do
-    now = System.monotonic_time(:millisecond)
-
-    if now >= deadline do
+    if deadline != :infinity and System.monotonic_time(:millisecond) >= deadline do
       {:error, "Task timed out waiting for completion"}
     else
       case Client.get_task(endpoint, task_id, opts) do
@@ -177,82 +174,58 @@ defmodule Normandy.A2A.AgentTool do
     {:error, "Task ended in unexpected state: #{state}"}
   end
 
-  defimpl Normandy.Tools.BaseTool do
-    alias Normandy.A2A.AgentTool
+  @impl Normandy.Tool
+  def name(%__MODULE__{agent_card: card, skill_id: nil}),
+    do: "a2a__#{sanitize_name(card.name)}"
 
-    def tool_name(%{agent_card: card, skill_id: nil}) do
-      "a2a__#{AgentTool.sanitize_name(card.name)}"
+  def name(%__MODULE__{agent_card: card, skill_id: skill_id}),
+    do: "a2a__#{sanitize_name(card.name)}__#{sanitize_name(skill_id)}"
+
+  @impl Normandy.Tool
+  def description(%__MODULE__{agent_card: card, skill_id: nil}),
+    do: "Remote A2A agent: #{card.description}"
+
+  def description(%__MODULE__{agent_card: card, skill_id: skill_id}) do
+    case Enum.find(card.skills, fn s -> s.id == skill_id end) do
+      nil -> "Remote A2A agent: #{card.description} (skill: #{skill_id})"
+      skill -> "#{card.name} - #{skill.description}"
     end
+  end
 
-    def tool_name(%{agent_card: card, skill_id: skill_id}) do
-      "a2a__#{AgentTool.sanitize_name(card.name)}__#{AgentTool.sanitize_name(skill_id)}"
-    end
+  @impl Normandy.Tool
+  def input_schema(_tool) do
+    %{
+      "type" => "object",
+      "properties" => %{
+        "message" => %{
+          "type" => "string",
+          "description" => "Message to send to the remote agent"
+        }
+      },
+      "required" => ["message"]
+    }
+  end
 
-    def tool_description(%{agent_card: card, skill_id: nil}) do
-      "Remote A2A agent: #{card.description}"
-    end
+  @impl Normandy.Tool
+  def run(%__MODULE__{} = tool, %Context{input: %{"message" => message_text}}) do
+    message = Message.new(:user, [Part.text(message_text)])
 
-    def tool_description(%{agent_card: card, skill_id: skill_id}) do
-      skill = Enum.find(card.skills, fn s -> s.id == skill_id end)
+    opts =
+      tool.transport_opts
+      |> Keyword.merge(if(tool.auth_token, do: [auth_token: tool.auth_token], else: []))
+      |> put_trace_headers()
 
-      if skill do
-        "#{card.name} - #{skill.description}"
-      else
-        "Remote A2A agent: #{card.description} (skill: #{skill_id})"
-      end
-    end
+    case Client.send_message(tool.endpoint, message, opts) do
+      {:ok, %Claudio.A2A.Task{} = task} ->
+        if Claudio.A2A.Task.terminal?(task),
+          do: extract_task_result(task),
+          else: poll_for_result(tool.endpoint, task.id, opts, :infinity)
 
-    def input_schema(_tool) do
-      %{
-        "type" => "object",
-        "properties" => %{
-          "message" => %{
-            "type" => "string",
-            "description" => "Message to send to the remote agent"
-          }
-        },
-        "required" => ["message"]
-      }
-    end
+      {:ok, %Claudio.A2A.Message{} = response_msg} ->
+        {:ok, Enum.map_join(response_msg.parts, "\n", fn part -> Map.get(part, :text, "") end)}
 
-    def run(%{
-          endpoint: endpoint,
-          auth_token: auth_token,
-          transport_opts: transport_opts,
-          timeout: timeout,
-          input: input
-        }) do
-      message_text = Map.get(input, "message") || Map.get(input, :message, "")
-
-      message =
-        Message.new(:user, [
-          Part.text(message_text)
-        ])
-
-      opts =
-        transport_opts
-        |> Keyword.merge(if(auth_token, do: [auth_token: auth_token], else: []))
-        |> AgentTool.put_trace_headers()
-
-      case Client.send_message(endpoint, message, opts) do
-        {:ok, %Claudio.A2A.Task{} = task} ->
-          if Claudio.A2A.Task.terminal?(task) do
-            AgentTool.extract_task_result(task)
-          else
-            deadline = System.monotonic_time(:millisecond) + timeout
-            AgentTool.poll_for_result(endpoint, task.id, opts, deadline)
-          end
-
-        {:ok, %Claudio.A2A.Message{} = response_msg} ->
-          text =
-            response_msg.parts
-            |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
-
-          {:ok, text}
-
-        {:error, reason} ->
-          {:error, "A2A request failed: #{inspect(reason)}"}
-      end
+      {:error, reason} ->
+        {:error, "A2A request failed: #{inspect(reason)}"}
     end
   end
 end

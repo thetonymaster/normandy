@@ -19,6 +19,8 @@ defmodule Normandy.Behaviours.Config do
   gone).
   """
 
+  alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.Dispatch.Invocation
   alias Normandy.Agents.Dispatch.Pipeline
   alias Normandy.Behaviours.BudgetTracker
   alias Normandy.Behaviours.Compactor
@@ -26,7 +28,6 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Hooks.Runner
-  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
 
   @type ref :: {module(), keyword()}
@@ -69,8 +70,8 @@ defmodule Normandy.Behaviours.Config do
       before_hooks: module_before_tool(bundle) ++ bundle.before_hooks,
       after_hooks: bundle.after_hooks,
       after_tool: module_after_tool(bundle),
-      policy_fn: fn config, call, tool ->
-        policy_mod.check(call, %{config: config, tool: tool, opts: policy_opts})
+      policy_fn: fn config, call, %Invocation{tool: tool, input: input} ->
+        policy_mod.check(call, %{config: config, tool: tool, input: input, opts: policy_opts})
       end,
       budget_check_fn: fn config, call ->
         budget_mod.check(scope(config), call, budget_opts)
@@ -78,8 +79,8 @@ defmodule Normandy.Behaviours.Config do
       budget_record_fn: fn config, call, result ->
         budget_mod.record(scope(config), call, result, budget_opts)
       end,
-      execute_fn: fn config, tool, _name, call ->
-        Executor.execute_tool(tool, context: Context.build(config, call))
+      execute_fn: fn config, invocation, _name, call ->
+        Executor.execute_tool(invocation.tool, Dispatch.executor_opts(config, invocation, call))
       end
     }
   end

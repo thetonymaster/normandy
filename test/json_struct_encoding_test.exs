@@ -42,7 +42,8 @@ defmodule Normandy.JSONStructEncodingTest do
   defp execute(output) do
     pipeline = %{Dispatch.default_pipeline() | execute_fn: fn _, _, _, _ -> output end}
     call = %ToolCall{id: "t1", name: "weather", input: %{}}
-    Dispatch.execute(%{name: "agent"}, %FakeTool{}, call, pipeline)
+    invocation = %Dispatch.Invocation{tool: %FakeTool{}, input: %{}, timeout: 30_000}
+    Dispatch.execute(%{name: "agent"}, invocation, call, pipeline)
   end
 
   defp model_content(%ToolResult{} = result) do

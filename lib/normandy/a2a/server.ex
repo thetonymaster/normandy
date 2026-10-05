@@ -31,7 +31,7 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
@@ -234,9 +234,9 @@ defmodule Normandy.A2A.Server do
   defp add_tool_skills(card, %Toolset{} = registry, expose) do
     registry
     |> Toolset.list()
-    |> Enum.filter(&(expose == :all or BaseTool.tool_name(&1) in expose))
+    |> Enum.filter(&(expose == :all or Tool.name(&1) in expose))
     |> Enum.reduce(card, fn tool, acc ->
-      AgentCard.add_skill(acc, BaseTool.tool_name(tool), BaseTool.tool_description(tool))
+      AgentCard.add_skill(acc, Tool.name(tool), Tool.description(tool))
     end)
   end
 

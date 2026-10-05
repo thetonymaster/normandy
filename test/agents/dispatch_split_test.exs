@@ -2,106 +2,55 @@ defmodule Normandy.Agents.DispatchSplitTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.Dispatch.Invocation
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
-  alias Normandy.Tools.Toolset
+  alias Normandy.Tools.{Context, Executor, Toolset}
 
-  # Schema-based tool (has a generated validate/1) with required + enum constraints.
-  # execute/1's return value ("did <op>") is the only way to produce a non-error
-  # ToolResult, so observing it proves the tool ran; a validation deny produces a
-  # structurally different (denied) result, proving it did NOT run. (We assert on
-  # the returned ToolResult rather than a sent message because the Executor runs
-  # execute/1 in a separate Task process — a send(self(), ...) would never reach
-  # the test process.)
+  # A tool with a declared input schema (required + enum). run/2's return value
+  # ("did <op>") is the only way to get a non-error ToolResult, so seeing it proves the
+  # tool ran; a validation denial is a different (denied) result, proving it did not.
   defmodule SchemaTool do
-    use Normandy.Tools.SchemaBaseTool
+    @moduledoc false
+    defmodule Params do
+      @moduledoc false
+      use Normandy.Schema
 
-    tool_schema "schema_tool", "enum + required constrained tool" do
-      field(:operation, :string, required: true, enum: ["add", "subtract"])
+      io_schema "enum + required constrained input" do
+        field(:operation, :string, required: true, enum: ["add", "subtract"])
+      end
     end
 
-    def execute(%__MODULE__{operation: op}) do
-      {:ok, "did #{op}"}
-    end
+    use Normandy.Tool,
+      name: "schema_tool",
+      description: "enum + required constrained tool",
+      input: Params
+
+    defstruct []
+
+    @impl Normandy.Tool
+    def run(_tool, %Context{input: %Params{operation: op}}), do: {:ok, "did #{op}"}
   end
 
-  # Exports validate/1 but NOT validate!/1, so it is not shaped like a
-  # SchemaBaseTool tool (the macro emits both). The hardened classify-time guard
-  # requires both, so this must be OUT of scope and bypass validation. Its
-  # validate/1 always errors, so if it were (wrongly) in scope, classify would
-  # deny — observing :execute proves the bypass.
-  defmodule ValidateOnlyTool do
-    use Normandy.Schema
-
-    schema do
-      field(:n, :integer)
-    end
-
-    def validate(_params),
-      do: {:error, [%{path: [:n], message: "always rejects", constraint: :custom}]}
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchSplitTest.ValidateOnlyTool do
-    def tool_name(_), do: "validate_only"
-    def tool_description(_), do: "exports validate/1 but not validate!/1"
-    def input_schema(_), do: %{}
-    def run(_tool), do: {:ok, "ran validate_only"}
-  end
-
-  # Exports BOTH validate/1 and validate!/1 (passes the scope guard), but its
-  # validate/1 returns a value outside the {:ok, _} / {:error, list} contract.
-  # The chokepoint must turn that into a fail-closed deny, not a CaseClauseError
-  # crash (validate_input/2 runs outside apply_policy's rescue/catch).
-  defmodule GarbageValidatorTool do
-    use Normandy.Schema
-
-    schema do
-      field(:n, :integer)
-    end
-
-    def validate(_params), do: :totally_unexpected
-    def validate!(_params), do: :unused
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchSplitTest.GarbageValidatorTool do
-    def tool_name(_), do: "garbage_validator"
-    def tool_description(_), do: "validate/1 returns a non-contract value"
-    def input_schema(_), do: %{}
-    def run(_tool), do: {:ok, "ran garbage"}
-  end
-
-  # A SchemaBaseTool tool (has validate/1 AND validate!/1) that ALSO defines a
-  # custom prepare_input/2. Because the prepare_input/2 branch wins in the cond,
-  # the tool owns its own validation and classify must skip the enum/required
-  # schema pre-validation it would otherwise apply.
-  defmodule PrepareInputTool do
-    use Normandy.Tools.SchemaBaseTool
-
-    tool_schema "prepare_input_tool", "owns its validation via prepare_input/2" do
-      field(:operation, :string, required: true, enum: ["add"])
-    end
-
-    def prepare_input(tool, input) do
-      op = Map.get(input, "operation") || Map.get(input, :operation)
-      struct(tool, %{operation: op})
-    end
-
-    def execute(%__MODULE__{operation: op}) do
-      {:ok, "did #{op}"}
-    end
-  end
-
-  defp config_with_tools(tools) do
-    %{name: "test-agent", toolset: Toolset.new(tools)}
-  end
+  defp config_with_tools(tools), do: %{name: "test-agent", toolset: Toolset.new(tools)}
 
   describe "classify/3" do
-    test "allow → {:execute, prepared_tool, normalized_call}" do
-      config = config_with_tools([%FakeTool{}])
+    test "allow → {:execute, %Invocation{}, call}: the tool as registered, the validated input, the registration timeout" do
+      tool = %FakeTool{}
+      config = config_with_tools([{tool, timeout: 1_234}])
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
 
-      assert {:execute, %FakeTool{city: "NYC"}, %ToolCall{id: "c1"}} =
+      assert {:execute, %Invocation{tool: ^tool, input: %{"city" => "NYC"}, timeout: 1_234},
+              %ToolCall{id: "c1"}} = Dispatch.classify(config, call, Dispatch.default_pipeline())
+    end
+
+    test "a tool registered without :timeout gets the executor's default" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c1", name: "weather", input: %{}}
+      default = Executor.default_timeout()
+
+      assert {:execute, %Invocation{timeout: ^default}, _call} =
                Dispatch.classify(config, call, Dispatch.default_pipeline())
     end
 
@@ -122,25 +71,43 @@ defmodule Normandy.Agents.DispatchSplitTest do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c2", name: "weather", input: %{"city" => "NYC"}}
 
-      deny = fn _c, _call, _tool -> {:deny, %{reason: "blocked", rule_id: "R-1"}} end
+      deny = fn _c, _call, _invocation -> {:deny, %{reason: "blocked", rule_id: "R-1"}} end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: deny}
 
       assert {:deny, %ToolResult{tool_call_id: "c2", is_error: true, output: %{denied: true}}} =
                Dispatch.classify(config, call, pipeline)
     end
 
-    test "needs_approval → {:needs_approval, prepared, call, info}" do
+    test "needs_approval → {:needs_approval, %Invocation{}, call, info}" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c3", name: "weather", input: %{"city" => "NYC"}}
 
-      approve = fn _c, _call, _tool -> {:needs_approval, %{rationale: "high-cost"}} end
+      approve = fn _c, _call, _invocation -> {:needs_approval, %{rationale: "high-cost"}} end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: approve}
 
-      assert {:needs_approval, %FakeTool{}, %ToolCall{id: "c3"}, %{rationale: "high-cost"}} =
-               Dispatch.classify(config, call, pipeline)
+      assert {:needs_approval, %Invocation{tool: %FakeTool{}}, %ToolCall{id: "c3"},
+              %{rationale: "high-cost"}} = Dispatch.classify(config, call, pipeline)
     end
 
-    test "registry miss → {:deny, not-found ToolResult}" do
+    test "policy_fn gets the invocation: the registered tool and the validated input" do
+      parent = self()
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c13", name: "weather", input: %{"city" => "NYC"}}
+
+      policy = fn _c, _call, invocation ->
+        send(parent, {:policy_saw, invocation})
+        {:allow, %{}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: policy}
+
+      assert {:execute, _invocation, _call} = Dispatch.classify(config, call, pipeline)
+
+      assert_received {:policy_saw,
+                       %Invocation{tool: %FakeTool{name: "weather"}, input: %{"city" => "NYC"}}}
+    end
+
+    test "toolset miss → {:deny, not-found ToolResult}" do
       config = config_with_tools([])
       call = %ToolCall{id: "c4", name: "nope", input: %{}}
 
@@ -166,7 +133,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c11", name: "weather", input: %{"city" => "NYC"}}
 
-      boom = fn _c, _call, _tool -> raise "policy engine down" end
+      boom = fn _c, _call, _invocation -> raise "policy engine down" end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: boom}
 
       assert {:deny, %ToolResult{tool_call_id: "c11", is_error: true, output: %{denied: true}}} =
@@ -177,7 +144,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c12", name: "weather", input: %{"city" => "NYC"}}
 
-      timeout = fn _c, _call, _tool -> exit(:timeout) end
+      timeout = fn _c, _call, _invocation -> exit(:timeout) end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: timeout}
 
       assert {:deny, %ToolResult{tool_call_id: "c12", is_error: true, output: %{denied: true}}} =
@@ -188,13 +155,13 @@ defmodule Normandy.Agents.DispatchSplitTest do
       config = config_with_tools([%FakeTool{}])
       raw = %{"id" => "c6", "name" => "weather", "input" => %{"city" => "LA"}}
 
-      assert {:execute, %FakeTool{city: "LA"}, %ToolCall{id: "c6"}} =
+      assert {:execute, %Invocation{input: %{"city" => "LA"}}, %ToolCall{id: "c6"}} =
                Dispatch.classify(config, raw, Dispatch.default_pipeline())
     end
   end
 
-  describe "classify/3 input validation (schema-based tools)" do
-    test "malformed input (enum violation) → {:deny, validation error}, never classified to :execute" do
+  describe "classify/3 input validation" do
+    test "an enum violation → {:deny, validation error}, never classified to :execute" do
       config = config_with_tools([%SchemaTool{}])
       call = %ToolCall{id: "v1", name: "schema_tool", input: %{"operation" => "power"}}
 
@@ -203,9 +170,13 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       assert result.output.denied == true
       assert [%{constraint: :enum, path: [:operation]}] = result.output.validation_errors
+
+      assert result.output.error ==
+               ~s(invalid input for schema_tool: operation must be one of ["add", "subtract"]; ) <>
+                 "the tool was not run"
     end
 
-    test "missing required field → {:deny, validation error}" do
+    test "a missing required field → {:deny, validation error}" do
       config = config_with_tools([%SchemaTool{}])
       call = %ToolCall{id: "v2", name: "schema_tool", input: %{}}
 
@@ -215,26 +186,63 @@ defmodule Normandy.Agents.DispatchSplitTest do
       assert [%{constraint: :required, path: [:operation]}] = result.output.validation_errors
     end
 
-    test "valid input still classifies to {:execute, prepared, call}" do
+    test "valid input becomes the declared schema's struct" do
       config = config_with_tools([%SchemaTool{}])
       call = %ToolCall{id: "v3", name: "schema_tool", input: %{"operation" => "add"}}
 
-      assert {:execute, %SchemaTool{operation: "add"}, %ToolCall{id: "v3"}} =
-               Dispatch.classify(config, call, Dispatch.default_pipeline())
+      assert {:execute,
+              %Invocation{tool: %SchemaTool{}, input: %SchemaTool.Params{operation: "add"}},
+              %ToolCall{id: "v3"}} = Dispatch.classify(config, call, Dispatch.default_pipeline())
     end
 
-    test "dispatch_one: malformed call never reaches execute/1 (result is the deny, not execute output)" do
+    test "unknown keys on a hand-written schema are named in the result" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "v6", name: "weather", input: %{"city" => "x", "bogus" => 1}}
+
+      assert {:deny, %ToolResult{is_error: true, output: output}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      assert output.error ==
+               ~s(invalid input for weather: unknown key "bogus"; expected only "city"; ) <>
+                 "the tool was not run"
+    end
+
+    test "a value of the wrong basic type on a hand-written schema" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "v7", name: "weather", input: %{"city" => 123}}
+
+      assert {:deny, %ToolResult{output: %{validation_errors: [error]}}} =
+               Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      assert error == %{
+               path: ["city"],
+               message: "expected type string, got integer",
+               constraint: :type
+             }
+    end
+
+    test "the input a before-hook produced is what gets validated" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "v8", name: "weather", input: %{"city" => "x"}}
+      hook = fn _c, call -> {:cont, %{call | input: Map.put(call.input, "bogus", 1)}} end
+      pipeline = %{Dispatch.default_pipeline() | before_hooks: [hook]}
+
+      assert {:deny, %ToolResult{output: %{validation_errors: [%{constraint: :unknown_keys}]}}} =
+               Dispatch.classify(config, call, pipeline)
+    end
+
+    test "dispatch_one: a malformed call never reaches run/2" do
       config = config_with_tools([%SchemaTool{}])
       call = %ToolCall{id: "v4", name: "schema_tool", input: %{"operation" => "power"}}
 
       result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
 
       assert %ToolResult{tool_call_id: "v4", is_error: true, output: %{denied: true}} = result
-      # execute/1 would have produced the string "did power"; a map proves it never ran.
+      # run/2 would have produced the string "did power"; a map proves it never ran.
       refute result.output == "did power"
     end
 
-    test "dispatch_one: valid call runs execute/1 (its return value is the result)" do
+    test "dispatch_one: a valid call runs run/2 (its return value is the result)" do
       config = config_with_tools([%SchemaTool{}])
       call = %ToolCall{id: "v5", name: "schema_tool", input: %{"operation" => "add"}}
 
@@ -243,74 +251,80 @@ defmodule Normandy.Agents.DispatchSplitTest do
     end
   end
 
-  describe "classify/3 validator-contract hardening" do
-    test "tool exporting validate/1 without validate!/1 is out of scope → bypasses validation" do
-      config = config_with_tools([%ValidateOnlyTool{}])
-      call = %ToolCall{id: "h1", name: "validate_only", input: %{"n" => "not-an-int"}}
-
-      assert {:execute, %ValidateOnlyTool{}, %ToolCall{id: "h1"}} =
-               Dispatch.classify(config, call, Dispatch.default_pipeline())
-    end
-
-    test "validator returning a non-contract value → fail-closed deny, not a crash" do
-      config = config_with_tools([%GarbageValidatorTool{}])
-      call = %ToolCall{id: "h2", name: "garbage_validator", input: %{"n" => 1}}
-
-      assert {:deny, %ToolResult{tool_call_id: "h2", is_error: true} = result} =
-               Dispatch.classify(config, call, Dispatch.default_pipeline())
-
-      assert result.output.denied == true
-      assert [%{constraint: :internal}] = result.output.validation_errors
-    end
-  end
-
-  # Locks the stated scope contract: classify-time validation applies ONLY to
-  # SchemaBaseTool-shaped tools. Non-schema tools and tools that own validation
-  # via prepare_input/2 must keep their pre-existing behavior (no deny on
-  # validation grounds), so the seam can't silently widen later.
-  describe "classify/3 validation scope (non-schema & prepare_input tools)" do
-    test "non-schema tool (no generated validate/1) bypasses validation entirely" do
-      config = config_with_tools([%FakeTool{}])
-      # city: 123 would fail strict string validation IF FakeTool were validated;
-      # it is a plain Normandy.Schema tool (no validate/1), so it must pass through.
-      call = %ToolCall{id: "b1", name: "weather", input: %{"city" => 123, "bogus" => "x"}}
-
-      assert {:execute, %FakeTool{}, %ToolCall{id: "b1"}} =
-               Dispatch.classify(config, call, Dispatch.default_pipeline())
-    end
-
-    test "tool with custom prepare_input/2 owns validation → classify skips schema pre-validation" do
-      config = config_with_tools([%PrepareInputTool{}])
-      # "power" violates the enum; a plain schema tool WOULD deny, but this tool's
-      # prepare_input/2 owns validation, so classify must route it to :execute.
-      call = %ToolCall{id: "b2", name: "prepare_input_tool", input: %{"operation" => "power"}}
-
-      assert {:execute, %PrepareInputTool{operation: "power"}, %ToolCall{id: "b2"}} =
-               Dispatch.classify(config, call, Dispatch.default_pipeline())
-    end
-  end
-
   describe "execute/4" do
     test "runs the tool and returns a success ToolResult" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c7", name: "weather", input: %{"city" => "NYC"}}
-      {:execute, prepared, call} = Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      {:execute, invocation, call} =
+        Dispatch.classify(config, call, Dispatch.default_pipeline())
 
       assert %ToolResult{tool_call_id: "c7", output: "weather in NYC", is_error: false} =
-               Dispatch.execute(config, prepared, call, Dispatch.default_pipeline())
+               Dispatch.execute(config, invocation, call, Dispatch.default_pipeline())
     end
 
     test "budget {:error, reason} → budget-denial result, tool not run" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c8", name: "weather", input: %{"city" => "NYC"}}
-      {:execute, prepared, call} = Dispatch.classify(config, call, Dispatch.default_pipeline())
+
+      {:execute, invocation, call} =
+        Dispatch.classify(config, call, Dispatch.default_pipeline())
 
       over = fn _c, _call -> {:error, :cap} end
       pipeline = %{Dispatch.default_pipeline() | budget_check_fn: over}
 
-      result = Dispatch.execute(config, prepared, call, pipeline)
+      result = Dispatch.execute(config, invocation, call, pipeline)
       assert %ToolResult{tool_call_id: "c8", is_error: true, output: %{denied: true}} = result
       assert result.output.error =~ "budget check failed"
+    end
+
+    test "the registration timeout bounds the run" do
+      config = config_with_tools([{%FakeTool{sleep_ms: 1_000}, timeout: 20}])
+      call = %ToolCall{id: "c14", name: "weather", input: %{}}
+
+      assert %ToolResult{is_error: true, output: %{error: "Tool execution timeout after 20ms"}} =
+               Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+    end
+  end
+
+  describe "execute_approved/3" do
+    test "re-validates the parked call's input and runs it without consulting policy" do
+      parent = self()
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "a1", name: "weather", input: %{"city" => "Oslo"}}
+
+      policy = fn _c, _call, _invocation ->
+        send(parent, :policy_ran)
+        {:deny, %{reason: "no"}}
+      end
+
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: policy}
+
+      assert %ToolResult{tool_call_id: "a1", output: "weather in Oslo", is_error: false} =
+               Dispatch.execute_approved(config, call, pipeline)
+
+      refute_received :policy_ran
+    end
+
+    test "a tool no longer registered is a not-found result, not a crash" do
+      config = config_with_tools([])
+      call = %ToolCall{id: "a2", name: "weather", input: %{}}
+
+      assert %ToolResult{tool_call_id: "a2", is_error: true, output: %{error: error}} =
+               Dispatch.execute_approved(config, call, Dispatch.default_pipeline())
+
+      assert error =~ "weather"
+    end
+
+    test "input that no longer validates is answered with the validation result" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "a3", name: "weather", input: %{"bogus" => 1}}
+
+      assert %ToolResult{
+               tool_call_id: "a3",
+               is_error: true,
+               output: %{denied: true, validation_errors: [%{constraint: :unknown_keys}]}
+             } = Dispatch.execute_approved(config, call, Dispatch.default_pipeline())
     end
   end
 
@@ -320,16 +334,16 @@ defmodule Normandy.Agents.DispatchSplitTest do
       call = %ToolCall{id: "c9", name: "weather", input: %{"city" => "NYC"}}
       p = Dispatch.default_pipeline()
 
-      {:execute, prepared, call2} = Dispatch.classify(config, call, p)
+      {:execute, invocation, call2} = Dispatch.classify(config, call, p)
 
       assert Dispatch.dispatch_one(config, call, p) ==
-               Dispatch.execute(config, prepared, call2, p)
+               Dispatch.execute(config, invocation, call2, p)
     end
 
     test "needs_approval still collapses to the interim denial (pending_approval: true)" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c10", name: "weather", input: %{"city" => "NYC"}}
-      approve = fn _c, _call, _tool -> {:needs_approval, %{rationale: "r"}} end
+      approve = fn _c, _call, _invocation -> {:needs_approval, %{rationale: "r"}} end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: approve}
 
       assert %ToolResult{is_error: true, output: %{pending_approval: true, denied: true}} =

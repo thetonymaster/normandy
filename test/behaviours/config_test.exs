@@ -77,7 +77,8 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert %Pipeline{} = p
       assert p.before_hooks == d.before_hooks
       assert p.after_hooks == d.after_hooks
-      assert p.policy_fn.(%{}, %ToolCall{name: "x"}, %{}) == {:allow, %{}}
+      invocation = %Dispatch.Invocation{tool: %FakeTool{}, input: %{}, timeout: 30_000}
+      assert p.policy_fn.(%{}, %ToolCall{name: "x"}, invocation) == {:allow, %{}}
       assert p.budget_check_fn.(%{}, %ToolCall{name: "x"}) == :ok
       assert p.budget_record_fn.(%{}, %ToolCall{name: "x"}, %{}) == :ok
     end

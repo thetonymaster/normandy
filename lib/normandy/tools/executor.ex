@@ -1,17 +1,15 @@
 defmodule Normandy.Tools.Executor do
   @moduledoc """
-  Executes tools safely with timeout and error handling.
+  Runs one tool call safely: `c:Normandy.Tool.run/2` in a separate task, with a timeout and
+  error handling.
 
-  The Executor provides a controlled environment for running tools with:
-  - Timeout protection (`:timeout` option, else the tool struct's own `:timeout`
-    field, else 30 s)
-  - Error catching: a raise, exit, throw or timeout becomes `{:error, message}`
-  - Result checking: a tool result that is not `{:ok, value}` or
-    `{:error, reason}` becomes an error
-
-  `:max_retries` re-runs a tool after any `{:error, _}`, including one it
-  returned itself. A tool with side effects (sending mail, payments) then runs
-  again, so leave it at 0 (the default) unless the tool is idempotent.
+  - The tool gets the `%Normandy.Tools.Context{}` passed as `:context`; its `input` is the
+    call's validated input.
+  - Timeout: `:timeout` milliseconds, default `default_timeout/0`. The dispatch pipeline
+    passes the tool's registration timeout (`Normandy.Tools.Toolset.register/3`); a
+    `:timeout` field on the tool struct is never read.
+  - A raise, exit, throw or timeout becomes `{:error, message}`.
+  - A result that is not `{:ok, value}` or `{:error, reason}` becomes an error.
 
   Error messages reach the model as tool results, so an exit or throw is named
   by its tag only (its terms can carry call arguments), and an exception
@@ -20,10 +18,8 @@ defmodule Normandy.Tools.Executor do
 
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.OtelCtx
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
   alias Normandy.Tools.Context
-  alias Normandy.Tools.ContextualTool
-  alias Normandy.Tools.Toolset
 
   @type execution_result :: {:ok, term()} | {:error, String.t()}
   @typedoc """
@@ -32,60 +28,38 @@ defmodule Normandy.Tools.Executor do
   itself (`:tool_error`), or returned something else (`:invalid_result`).
   """
   @type error_type :: :exception | :exit | :timeout | :tool_error | :invalid_result
-  @type execution_options :: [
-          timeout: pos_integer(),
-          max_retries: non_neg_integer(),
-          context: Context.t()
-        ]
+  @type execution_options :: [context: Context.t(), timeout: pos_integer()]
 
   @default_timeout 30_000
-  @default_max_retries 0
+
+  @opts_schema NimbleOptions.new!(
+                 context: [
+                   type: :any,
+                   required: true,
+                   doc: "The call's `%Normandy.Tools.Context{}`, carrying the validated input."
+                 ],
+                 timeout: [
+                   type: :pos_integer,
+                   default: @default_timeout,
+                   doc: "Milliseconds the tool may run before the call fails with a timeout."
+                 ]
+               )
+
+  @doc "The timeout of a tool registered without `:timeout`, in milliseconds."
+  @spec default_timeout() :: pos_integer()
+  def default_timeout, do: @default_timeout
 
   @doc """
-  Executes a tool by name from the registry.
+  Runs `tool` with the given context.
 
   ## Options
 
-    * `:timeout` - Maximum execution time in milliseconds (default: 30000)
-    * `:max_retries` - Number of retry attempts on failure (default: 0)
-    * `:context` - a `%Normandy.Tools.Context{}`; a `Normandy.Tools.ContextualTool` runs with it
-
-  ## Examples
-
-      iex> registry = Normandy.Tools.Toolset.new([%CalculatorTool{operation: :add, a: 5, b: 3}])
-      iex> Normandy.Tools.Executor.execute(registry, "calculator")
-      {:ok, 8}
-
-      iex> Normandy.Tools.Executor.execute(registry, "nonexistent")
-      {:error, "Tool 'nonexistent' not found in registry"}
-
-  """
-  @spec execute(Toolset.t(), String.t(), execution_options()) :: execution_result()
-  def execute(registry, tool_name, opts \\ []) do
-    max_retries = max_retries!(opts)
-
-    case Toolset.fetch(registry, tool_name) do
-      {:ok, tool} ->
-        execute_with_retries(tool, max_retries, timeout!(opts, tool), opts[:context])
-
-      :error ->
-        {:error, "Tool '#{tool_name}' not found in registry"}
-    end
-  end
-
-  @doc """
-  Executes a tool instance directly.
-
-  ## Examples
-
-      iex> tool = %CalculatorTool{operation: :add, a: 2, b: 3}
-      iex> Normandy.Tools.Executor.execute_tool(tool)
-      {:ok, 5}
-
+  #{Normandy.Options.docs(@opts_schema)}
   """
   @spec execute_tool(struct(), execution_options()) :: execution_result()
   def execute_tool(tool, opts \\ []) do
-    {result, _error_type} = execute_tool_classified(tool, opts)
+    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_tool, 2})
+    {result, _error_type} = run_classified(tool, opts, "execute_tool/2")
     result
   end
 
@@ -97,121 +71,23 @@ defmodule Normandy.Tools.Executor do
   @spec execute_tool_classified(struct(), execution_options()) ::
           {{:ok, term()}, nil} | {{:error, String.t()}, error_type()}
   def execute_tool_classified(tool, opts \\ []) do
-    execute_with_timeout(tool, timeout!(opts, tool), opts[:context])
+    opts =
+      Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_tool_classified, 2})
+
+    run_classified(tool, opts, "execute_tool_classified/2")
   end
 
-  @doc """
-  Executes multiple tools in parallel.
-
-  Returns a list of results in the same order as the input tools. Each spec is
-  `{label, tool}`: the given tool instance is run (the label is only for the
-  caller), so two instances of the same tool can run with different params. The
-  registry argument is not consulted.
-
-  ## Examples
-
-      iex> tools = [
-      ...>   {"calc1", %CalculatorTool{operation: :add, a: 1, b: 2}},
-      ...>   {"calc2", %CalculatorTool{operation: :multiply, a: 3, b: 4}}
-      ...> ]
-      iex> Normandy.Tools.Executor.execute_parallel(registry, tools)
-      [
-        {:ok, 3},
-        {:ok, 12}
-      ]
-
-  """
-  @spec execute_parallel(Toolset.t(), [{String.t(), struct()}], execution_options()) :: [
-          execution_result()
-        ]
-  def execute_parallel(_registry, tool_specs, opts \\ []) do
-    parent_ctx = OtelCtx.capture()
-    max_retries = max_retries!(opts)
-
-    tool_specs
-    |> Enum.map(fn {_label, tool} ->
-      timeout = timeout!(opts, tool)
-
-      Task.async(fn ->
-        OtelCtx.restore(parent_ctx)
-        execute_with_retries(tool, max_retries, timeout, opts[:context])
-      end)
-    end)
-    |> Enum.map(&Task.await(&1, :infinity))
+  defp run_classified(tool, opts, function) do
+    context = context!(Keyword.fetch!(opts, :context), function)
+    execute_with_timeout(tool, Keyword.fetch!(opts, :timeout), context)
   end
 
-  @doc """
-  Executes multiple tools sequentially.
+  defp context!(%Context{} = context, _function), do: context
 
-  Stops execution if any tool returns an error (fail-fast behavior).
-
-  ## Examples
-
-      iex> tools = ["tool1", "tool2", "tool3"]
-      iex> Normandy.Tools.Executor.execute_sequential(registry, tools)
-      {:ok, [result1, result2, result3]}
-
-  """
-  @spec execute_sequential(Toolset.t(), [String.t()], execution_options()) ::
-          {:ok, [term()]} | {:error, String.t()}
-  def execute_sequential(registry, tool_names, opts \\ []) do
-    tool_names
-    |> Enum.reduce_while({:ok, []}, fn tool_name, {:ok, results} ->
-      case execute(registry, tool_name, opts) do
-        {:ok, result} ->
-          {:cont, {:ok, results ++ [result]}}
-
-        {:error, _reason} = error ->
-          {:halt, error}
-      end
-    end)
-  end
-
-  # Private functions
-
-  # Precedence, for every entry point: the :timeout option, then the tool
-  # struct's own :timeout field (a slow tool, such as a delegation to another
-  # agent, can opt into a longer budget), then the default.
-  defp timeout!(opts, tool) do
-    timeout =
-      case Keyword.fetch(opts, :timeout) do
-        {:ok, value} -> value
-        :error -> Map.get(tool, :timeout) || @default_timeout
-      end
-
-    unless is_integer(timeout) and timeout > 0 do
-      raise ArgumentError,
-            "Normandy.Tools.Executor: :timeout must be a positive integer, got: #{inspect(timeout)}"
-    end
-
-    timeout
-  end
-
-  defp max_retries!(opts) do
-    retries = Keyword.get(opts, :max_retries, @default_max_retries)
-
-    unless is_integer(retries) and retries >= 0 do
-      raise ArgumentError,
-            "Normandy.Tools.Executor: :max_retries must be a non-negative integer, got: " <>
-              inspect(retries)
-    end
-
-    retries
-  end
-
-  defp execute_with_retries(tool, retries_left, timeout, context) do
-    {result, _error_type} = execute_with_timeout(tool, timeout, context)
-
-    case result do
-      {:ok, result} ->
-        {:ok, result}
-
-      {:error, _reason} when retries_left > 0 ->
-        execute_with_retries(tool, retries_left - 1, timeout, context)
-
-      {:error, _reason} = error ->
-        error
-    end
+  defp context!(other, function) do
+    raise ArgumentError,
+          "Normandy.Tools.Executor.#{function}: :context must be a %Normandy.Tools.Context{}, " <>
+            "got: #{Describe.type_of(other)}"
   end
 
   defp execute_with_timeout(tool, timeout, context) do
@@ -222,7 +98,7 @@ defmodule Normandy.Tools.Executor do
         OtelCtx.restore(parent_ctx)
 
         try do
-          tool |> run_tool(context) |> check_result()
+          tool |> Tool.run(context) |> check_result()
         rescue
           error ->
             {{:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"},
@@ -244,16 +120,6 @@ defmodule Normandy.Tools.Executor do
         {{:error, "Tool execution timeout after #{timeout}ms"}, :timeout}
     end
   end
-
-  # A contextual tool runs with the context when there is one; without it, its own
-  # BaseTool.run/1 reports that it needs one.
-  defp run_tool(tool, %Context{} = context) do
-    if ContextualTool.impl_for(tool),
-      do: ContextualTool.run(tool, context),
-      else: BaseTool.run(tool)
-  end
-
-  defp run_tool(tool, nil), do: BaseTool.run(tool)
 
   defp check_result({:ok, _value} = ok), do: {ok, nil}
   defp check_result({:error, _reason} = error), do: {error, :tool_error}

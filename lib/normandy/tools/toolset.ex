@@ -7,13 +7,23 @@ defmodule Normandy.Tools.Toolset do
   `to_tool_schemas/1` produces the tool definitions sent to the model.
   """
 
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Schema.Introspection
+  alias Normandy.Tool
 
-  @type t :: %__MODULE__{tools: %{String.t() => struct()}}
+  @type t :: %__MODULE__{
+          tools: %{String.t() => struct()},
+          timeouts: %{String.t() => pos_integer()}
+        }
 
-  defstruct tools: %{}
+  defstruct tools: %{}, timeouts: %{}
 
   @register_schema NimbleOptions.new!(
+                     timeout: [
+                       type: :pos_integer,
+                       doc:
+                         "Milliseconds a call to this tool may run before it fails with a timeout. " <>
+                           "Without it, `Normandy.Tools.Executor.default_timeout/0` (30_000)."
+                     ],
                      replace: [
                        type: :boolean,
                        default: false,
@@ -53,9 +63,9 @@ defmodule Normandy.Tools.Toolset do
   #{Normandy.Options.docs(@register_schema)}
   """
   @spec register(t(), struct(), keyword()) :: t()
-  def register(%__MODULE__{tools: tools} = toolset, tool, opts \\ []) do
+  def register(%__MODULE__{tools: tools, timeouts: timeouts} = toolset, tool, opts \\ []) do
     opts = Normandy.Options.validate!(opts, @register_schema, {__MODULE__, :register, 3})
-    tool_name = BaseTool.tool_name(tool)
+    tool_name = Tool.name(tool)
 
     unless valid_name?(tool_name) do
       raise ArgumentError,
@@ -69,8 +79,21 @@ defmodule Normandy.Tools.Toolset do
               "registered; pass replace: true to replace it"
     end
 
-    %{toolset | tools: Map.put(tools, tool_name, tool)}
+    timeouts =
+      case Keyword.fetch(opts, :timeout) do
+        {:ok, timeout} -> Map.put(timeouts, tool_name, timeout)
+        :error -> Map.delete(timeouts, tool_name)
+      end
+
+    %{toolset | tools: Map.put(tools, tool_name, tool), timeouts: timeouts}
   end
+
+  @doc """
+  The `:timeout` `tool_name` was registered with, or `nil` when it was registered without
+  one (or is not registered).
+  """
+  @spec timeout(t(), String.t()) :: pos_integer() | nil
+  def timeout(%__MODULE__{timeouts: timeouts}, tool_name), do: Map.get(timeouts, tool_name)
 
   @doc "The tool registered as `tool_name`: `{:ok, tool}`, or `:error`."
   @spec fetch(t(), String.t()) :: {:ok, struct()} | :error
@@ -104,8 +127,8 @@ defmodule Normandy.Tools.Toolset do
 
   """
   @spec unregister(t(), String.t()) :: t()
-  def unregister(%__MODULE__{tools: tools} = toolset, tool_name) do
-    %{toolset | tools: Map.delete(tools, tool_name)}
+  def unregister(%__MODULE__{tools: tools, timeouts: timeouts} = toolset, tool_name) do
+    %{toolset | tools: Map.delete(tools, tool_name), timeouts: Map.delete(timeouts, tool_name)}
   end
 
   @doc """
@@ -195,9 +218,9 @@ defmodule Normandy.Tools.Toolset do
     |> Map.values()
     |> Enum.map(fn tool ->
       %{
-        name: BaseTool.tool_name(tool),
-        description: BaseTool.tool_description(tool),
-        input_schema: BaseTool.input_schema(tool)
+        name: Tool.name(tool),
+        description: Tool.description(tool),
+        input_schema: Tool.input_schema(tool)
       }
     end)
   end
@@ -271,7 +294,11 @@ defmodule Normandy.Tools.Toolset do
       end)
       |> Map.new()
 
-    %{toolset | tools: filtered_tools}
+    %{
+      toolset
+      | tools: filtered_tools,
+        timeouts: Map.take(toolset.timeouts, Map.keys(filtered_tools))
+    }
   end
 
   @doc """
@@ -295,7 +322,11 @@ defmodule Normandy.Tools.Toolset do
       end)
       |> Map.new()
 
-    %{toolset | tools: filtered_tools}
+    %{
+      toolset
+      | tools: filtered_tools,
+        timeouts: Map.take(toolset.timeouts, Map.keys(filtered_tools))
+    }
   end
 
   @doc """
@@ -350,9 +381,9 @@ defmodule Normandy.Tools.Toolset do
 
   defp build_tool_metadata(tool) do
     base_metadata = %{
-      name: BaseTool.tool_name(tool),
-      description: BaseTool.tool_description(tool),
-      input_schema: BaseTool.input_schema(tool)
+      name: Tool.name(tool),
+      description: Tool.description(tool),
+      input_schema: Tool.input_schema(tool)
     }
 
     # Add schema introspection if available
@@ -365,34 +396,26 @@ defmodule Normandy.Tools.Toolset do
     end
   end
 
-  defp get_schema_introspection(tool) do
-    tool_module = tool.__struct__
+  # Field introspection for a tool that declared `input: Schema`; nil for a tool with a
+  # hand-written input_schema/1 map.
+  defp get_schema_introspection(%module{}) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :__tool_input__, 0) do
+      input = module.__tool_input__()
+      required_fields = Introspection.get_required_fields(input)
 
-    # Check if this is a schema-based tool with introspection support
-    if Code.ensure_loaded?(tool_module) and function_exported?(tool_module, :__schema__, 1) do
-      alias Normandy.Schema.Introspection
-
-      fields = Introspection.list_fields(tool_module)
-      required_fields = Introspection.get_required_fields(tool_module)
-
-      Enum.map(fields, fn field_name ->
-        field_type = Introspection.get_field_type(tool_module, field_name)
-        field_meta = Introspection.get_field_metadata(tool_module, field_name)
-
+      Enum.map(Introspection.list_fields(input), fn field_name ->
         %{
           name: field_name,
-          type: field_type,
+          type: Introspection.get_field_type(input, field_name),
           required: field_name in required_fields,
-          metadata: field_meta
+          metadata: Introspection.get_field_metadata(input, field_name)
         }
       end)
-    else
-      nil
     end
   end
 
   defp has_required_params?(tool) do
-    schema = BaseTool.input_schema(tool)
+    schema = Tool.input_schema(tool)
 
     case schema do
       %{required: required} when is_list(required) ->
@@ -404,7 +427,7 @@ defmodule Normandy.Tools.Toolset do
   end
 
   defp has_param_type?(tool, param_type) do
-    schema = BaseTool.input_schema(tool)
+    schema = Tool.input_schema(tool)
 
     case schema do
       %{properties: properties} when is_map(properties) ->
@@ -419,7 +442,7 @@ defmodule Normandy.Tools.Toolset do
   end
 
   defp has_constraint?(tool, constraint_type) do
-    schema = BaseTool.input_schema(tool)
+    schema = Tool.input_schema(tool)
 
     case schema do
       %{properties: properties} when is_map(properties) ->

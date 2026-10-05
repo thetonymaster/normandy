@@ -20,11 +20,13 @@ defmodule Normandy.Tools.Input do
       accepted (an MCP server's loose `{"type": "object"}` keeps working). Nested schemas,
       enums and formats are the tool's to check. A `type` name outside the seven above (a
       typo such as `"intger"`) is not checked: any value passes it. An `input_schema/1` that
-      returns something other than a map is an error (`constraint: :schema`).
+      returns something other than a map, or a map whose `properties` is not a map or whose
+      `required` is not a list of key names, is an error (`constraint: :schema`).
 
   An unknown key is an error for a declared input schema and for a map that declares
   `properties`, and keys are matched against declared names, so model input never creates an
-  atom. Errors are `%{path: [key], message: String.t(),
+  atom. A key that is neither a string nor an atom is always an unknown key, named by its type
+  (`"a tuple key"`). Errors are `%{path: [key], message: String.t(),
   constraint: atom()}`; `message/1` joins them into one line for the model.
   """
 
@@ -36,9 +38,12 @@ defmodule Normandy.Tools.Input do
   @doc "Validates `input` against `tool`'s input schema; see the moduledoc."
   @spec validate(struct(), term()) :: {:ok, struct() | map()} | {:error, [error()]}
   def validate(%module{} = tool, input) when is_map(input) and not is_struct(input) do
+    # The callback's spec says map(), but input_schema/1 is the tool's code (an MCP tool
+    # returns its server's schema, nil when the server sent none), so its result is
+    # checked here, not trusted: hence the module call rather than Normandy.Tool's.
     if Code.ensure_loaded?(module) and function_exported?(module, :__tool_input__, 0),
       do: validate_schema(module.__tool_input__(), input),
-      else: validate_map(Normandy.Tool.input_schema(tool), input)
+      else: validate_map(module.input_schema(tool), input)
   end
 
   def validate(_tool, input) do
@@ -73,7 +78,7 @@ defmodule Normandy.Tools.Input do
     {known, unknown, repeated} = split_keys(input, by_name)
 
     errors =
-      unknown_keys(unknown, Enum.map(fields, &Atom.to_string/1)) ++
+      unknown_keys(Enum.uniq(unknown), Enum.map(fields, &Atom.to_string/1)) ++
         repeated_keys(repeated) ++ sort_by_path(schema_errors(Validator.validate(schema, known)))
 
     case errors do
@@ -87,7 +92,7 @@ defmodule Normandy.Tools.Input do
     Enum.reduce(input, {%{}, [], []}, fn {key, value}, {known, unknown, repeated} ->
       name = key_name(key)
 
-      case Map.fetch(by_name, name) do
+      case field(key, name, by_name) do
         {:ok, field} when is_map_key(known, field) -> {known, unknown, [name | repeated]}
         {:ok, field} -> {Map.put(known, field, value), unknown, repeated}
         :error -> {known, [name | unknown], repeated}
@@ -95,25 +100,44 @@ defmodule Normandy.Tools.Input do
     end)
   end
 
+  # A key that is neither a string nor an atom names no field (its name is a type label).
+  defp field(key, name, by_name) when is_binary(key) or is_atom(key), do: Map.fetch(by_name, name)
+  defp field(_key, _name, _by_name), do: :error
+
   defp schema_errors({:ok, _data}), do: []
   defp schema_errors({:error, errors}), do: errors
 
   defp validate_map(schema, input) when is_map(schema) do
-    properties = schema |> get(:properties, %{}) |> Map.new(fn {k, v} -> {to_string(k), v} end)
-    required = schema |> get(:required, []) |> Enum.map(&to_string/1)
+    with {:ok, properties} <- schema_properties(schema),
+         {:ok, required} <- schema_required(schema) do
+      validate_map(schema, properties, required, input)
+    end
+  end
+
+  # No silent default: a tool whose input_schema/1 is not a map (an MCP tool whose server
+  # sent none) gets an error result naming what it returned.
+  defp validate_map(schema, _input) do
+    schema_error(
+      "the tool's input_schema/1 returned #{Describe.type_of(schema)}, not a JSON Schema map"
+    )
+  end
+
+  defp validate_map(schema, properties, required, input) do
     # No `properties` key: the schema names no keys, so it limits none (decision 18). With
     # `properties`, an absent `additionalProperties` closes it.
     open? =
       not has?(schema, :properties) or
         get(schema, :additionalProperties, false) not in [false, nil]
 
-    {given, repeated} = string_keys(input)
+    {given, repeated, unnamed} = string_keys(input)
 
-    unknown = if open?, do: [], else: Map.keys(given) -- Map.keys(properties)
+    # A key that is neither a string nor an atom names nothing a schema can declare, so it
+    # is refused even by an open schema.
+    unknown = if open?, do: unnamed, else: unnamed ++ (Map.keys(given) -- Map.keys(properties))
     missing = Enum.sort(required -- Map.keys(given))
 
     errors =
-      unknown_keys(unknown, properties |> Map.keys() |> Enum.sort()) ++
+      unknown_keys(Enum.uniq(unknown), properties |> Map.keys() |> Enum.sort()) ++
         repeated_keys(repeated) ++
         Enum.map(missing, &%{path: [&1], message: "is required", constraint: :required}) ++
         sort_by_path(type_errors(given, properties))
@@ -124,27 +148,42 @@ defmodule Normandy.Tools.Input do
     end
   end
 
-  # No silent default: a tool whose input_schema/1 is not a map (an MCP tool whose server
-  # sent none) gets an error result naming what it returned.
-  defp validate_map(schema, _input) do
-    {:error,
-     [
-       %{
-         path: [],
-         message:
-           "the tool's input_schema/1 returned #{Describe.type_of(schema)}, not a JSON Schema map",
-         constraint: :schema
-       }
-     ]}
+  defp schema_properties(schema) do
+    case get(schema, :properties, %{}) do
+      %{} = properties ->
+        {:ok, Map.new(properties, fn {k, v} -> {to_string(k), v} end)}
+
+      other ->
+        schema_error(
+          ~s(the tool's input_schema/1 "properties" is #{Describe.type_of(other)}, not a map)
+        )
+    end
   end
 
+  defp schema_required(schema) do
+    required = get(schema, :required, [])
+
+    if is_list(required) and Enum.all?(required, &(is_binary(&1) or is_atom(&1))) do
+      {:ok, Enum.map(required, &to_string/1)}
+    else
+      schema_error(
+        ~s(the tool's input_schema/1 "required" is #{Describe.type_of(required)}, ) <>
+          "not a list of key names"
+      )
+    end
+  end
+
+  defp schema_error(message), do: {:error, [%{path: [], message: message, constraint: :schema}]}
+
   defp string_keys(input) do
-    Enum.reduce(input, {%{}, []}, fn {key, value}, {given, repeated} ->
+    Enum.reduce(input, {%{}, [], []}, fn {key, value}, {given, repeated, unnamed} ->
       name = key_name(key)
 
-      if Map.has_key?(given, name),
-        do: {given, [name | repeated]},
-        else: {Map.put(given, name, value), repeated}
+      cond do
+        not (is_binary(key) or is_atom(key)) -> {given, repeated, [name | unnamed]}
+        Map.has_key?(given, name) -> {given, [name | repeated], unnamed}
+        true -> {Map.put(given, name, value), repeated, unnamed}
+      end
     end)
   end
 
@@ -198,7 +237,8 @@ defmodule Normandy.Tools.Input do
 
   defp key_name(key) when is_binary(key), do: key
   defp key_name(key) when is_atom(key), do: Atom.to_string(key)
-  defp key_name(key), do: inspect(key)
+  # Described by its type: the key's terms are the model's or a hook's, not for the message.
+  defp key_name(key), do: Describe.type_of(key) <> " key"
 
   # A schema map may use atom or string keys (built-in tools use both).
   defp get(map, key, default) do

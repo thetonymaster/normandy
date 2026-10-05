@@ -2,7 +2,8 @@ defmodule Normandy.DSL.AgentMemoryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.MemoryStore.InMemory
-  alias Normandy.Tools.{BaseTool, Memory, Toolset}
+  alias Normandy.Tool
+  alias Normandy.Tools.{Memory, Toolset}
 
   defmodule MemAgent do
     use Normandy.DSL.Agent
@@ -123,7 +124,7 @@ defmodule Normandy.DSL.AgentMemoryTest do
 
     agent = MemAgent.new(client: client(), memory_store: {InMemory, InMemory.new()})
     assert {:ok, tool} = Toolset.fetch(agent.toolset, "memory")
-    assert BaseTool.tool_name(tool) == "memory"
+    assert Tool.name(tool) == "memory"
     assert "memory" in Toolset.list_names(agent.toolset)
   end
 end

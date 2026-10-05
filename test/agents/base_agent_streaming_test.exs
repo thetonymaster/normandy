@@ -8,24 +8,15 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
 
   # Test calculator tool for streaming tests
   defmodule TestCalculator do
+    use Normandy.Tool, name: "calculator", description: "Performs calculations"
+
     defstruct []
 
-    defimpl Normandy.Tools.BaseTool do
-      def tool_name(_), do: "calculator"
-      def tool_description(_), do: "Performs calculations"
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{type: "object", properties: %{}, required: []}
 
-      def input_schema(_) do
-        %{
-          type: "object",
-          properties: %{},
-          required: []
-        }
-      end
-
-      def run(_) do
-        {:ok, 42}
-      end
-    end
+    @impl Normandy.Tool
+    def run(_tool, _context), do: {:ok, 42}
   end
 
   # Mock streaming client for testing

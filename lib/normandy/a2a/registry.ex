@@ -19,7 +19,7 @@ defmodule Normandy.A2A.Registry do
 
   alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
   alias Normandy.Tools.Toolset
 
   @doc """
@@ -32,7 +32,8 @@ defmodule Normandy.A2A.Registry do
 
     - `:auth_token` - Bearer token for authentication
     - `:transport_opts` - Options passed to the A2A transport (also used for discovery)
-    - `:timeout` - Task completion timeout (default: 60s)
+    - `:timeout` - each tool's registration timeout, in ms (`Normandy.Tools.Toolset.register/3`;
+      default 60_000, as in 1.x)
 
   """
   @spec discover_and_register(Toolset.t(), String.t(), keyword()) ::
@@ -45,7 +46,7 @@ defmodule Normandy.A2A.Registry do
         endpoint = derive_endpoint(base_url, agent_card)
         tools = from_agent_card(agent_card, endpoint, opts)
 
-        register_all(tools, registry)
+        register_all(tools, registry, timeout: Keyword.get(opts, :timeout, 60_000))
 
       {:error, _reason} = error ->
         error
@@ -59,7 +60,7 @@ defmodule Normandy.A2A.Registry do
   """
   @spec from_agent_card(Claudio.A2A.AgentCard.t(), String.t(), keyword()) :: [AgentTool.t()]
   def from_agent_card(agent_card, endpoint, opts \\ []) do
-    tool_opts = Keyword.take(opts, [:auth_token, :transport_opts, :timeout])
+    tool_opts = Keyword.take(opts, [:auth_token, :transport_opts])
 
     case agent_card.skills do
       [] ->
@@ -85,14 +86,14 @@ defmodule Normandy.A2A.Registry do
 
   # A discovered name that is taken, or that the API would refuse, would otherwise
   # raise in Toolset.register/3; report it as this function's error instead.
-  defp register_all(tools, registry) do
+  defp register_all(tools, registry, register_opts) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
-      name = BaseTool.tool_name(tool)
+      name = Tool.name(tool)
 
       cond do
         not Toolset.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
         Toolset.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
-        true -> {:cont, {:ok, Toolset.register(reg, tool)}}
+        true -> {:cont, {:ok, Toolset.register(reg, tool, register_opts)}}
       end
     end)
   end

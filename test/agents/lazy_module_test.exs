@@ -2,10 +2,11 @@ defmodule Normandy.Agents.LazyModuleTest do
   # async: false — unloading a module is VM-global.
   use ExUnit.Case, async: false
 
-  alias Normandy.Agents.{BaseAgentConfig, Dispatch, ValidationMiddleware}
+  alias Normandy.Agents.{BaseAgentConfig, ValidationMiddleware}
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Test.{LazyInput, LazyTool, LazyViaRegistry}
+  alias Normandy.Tools.Input
 
   # A struct can reach a node before its module is loaded there (e.g. a schema
   # struct in a Tier-2 template). Unload the module and build the struct as a
@@ -18,10 +19,11 @@ defmodule Normandy.Agents.LazyModuleTest do
     Map.put(fields, :__struct__, mod)
   end
 
-  test "Dispatch.validate_input validates a tool whose module is not loaded yet" do
-    tool = unloaded_struct(LazyTool, %{operation: nil})
+  test "Input.validate validates a tool whose module is not loaded yet" do
+    tool = unloaded_struct(LazyTool, %{})
 
-    assert {:error, [_ | _]} = Dispatch.validate_input(tool, %{"operation" => "bogus"})
+    assert {:error, [%{constraint: :enum}]} =
+             Input.validate(tool, %{"operation" => "bogus"})
   end
 
   test "Turn.Supervisor and Turn.Server load a registry module before checking child_name/2" do

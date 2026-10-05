@@ -19,7 +19,7 @@ defmodule Normandy.MCP.Registry do
   """
 
   alias Normandy.MCP.ToolWrapper
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
   alias Normandy.Tools.Toolset
 
   @doc """
@@ -64,7 +64,7 @@ defmodule Normandy.MCP.Registry do
   # raise in Toolset.register/3; report it as this function's error instead.
   defp register_all(tools, registry) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
-      name = BaseTool.tool_name(tool)
+      name = Tool.name(tool)
 
       cond do
         not Toolset.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}

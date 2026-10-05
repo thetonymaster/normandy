@@ -11,15 +11,26 @@ defmodule MyApp.Tools.Weather do
   Supported cities are the keys of `@city_coords`.
   """
 
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    @moduledoc false
+    use Normandy.Schema
 
-  tool_schema "weather",
-              "Fetches current weather information for a given city using real-time data" do
-    field(:city, :string,
-      required: true,
-      description: "The city name to get weather for (e.g., 'San Francisco', 'London', 'Tokyo')"
-    )
+    io_schema "Fetches current weather information for a given city using real-time data" do
+      field(:city, :string,
+        required: true,
+        description: "The city name to get weather for (e.g., 'San Francisco', 'London', 'Tokyo')"
+      )
+    end
   end
+
+  use Normandy.Tool,
+    name: "weather",
+    description: "Fetches current weather information for a given city using real-time data",
+    input: Input
+
+  alias Normandy.Tools.Context
+
+  defstruct []
 
   # City coordinates mapping (major cities)
   @city_coords %{
@@ -36,9 +47,10 @@ defmodule MyApp.Tools.Weather do
   }
 
   @doc """
-  Executes the weather tool by fetching current weather from Open-Meteo API.
+  Fetches the current weather of the input's city from the Open-Meteo API.
   """
-  def execute(%__MODULE__{city: city}) do
+  @impl Normandy.Tool
+  def run(_tool, %Context{input: %Input{city: city}}) do
     city_lower = String.downcase(city)
 
     case Map.get(@city_coords, city_lower) do

@@ -29,9 +29,12 @@ defmodule Normandy.Tools.Context do
           values: map()
         }
 
-  @doc "Builds the context for `call` from `config` (a `%BaseAgentConfig{}` or a partial map)."
-  @spec build(map(), ToolCall.t()) :: t()
-  def build(config, %ToolCall{} = call) do
+  @doc """
+  Builds the context for `call` from `config` (a `%BaseAgentConfig{}` or a partial map) and
+  the call's validated `input`.
+  """
+  @spec build(map(), ToolCall.t(), struct() | map()) :: t()
+  def build(config, %ToolCall{} = call, input) do
     memory = Map.get(config, :memory)
 
     %__MODULE__{
@@ -39,6 +42,7 @@ defmodule Normandy.Tools.Context do
       agent_name: Map.get(config, :name),
       turn_id: memory && Map.get(memory, :current_turn_id),
       tool_call_id: call.id,
+      input: input,
       values: Map.get(config, :tool_context) || %{}
     }
   end

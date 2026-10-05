@@ -23,7 +23,7 @@ defmodule Normandy.Telemetry.Metadata do
   alias Normandy.Components.ToolCall
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Telemetry.Provider
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
 
   @doc """
   Run span metadata. Options: `:turn_id` - the turn id, when already known.
@@ -50,19 +50,19 @@ defmodule Normandy.Telemetry.Metadata do
   end
 
   @doc """
-  `[:normandy, :tool, :execute]` span metadata for `call`, run as the built tool
-  `prepared`. `:tool_name` and `:agent_name` are always present (as before);
+  `[:normandy, :tool, :execute]` span metadata for `call`, run by `tool` (the tool as
+  registered). `:tool_name` and `:agent_name` are always present (as before);
   `:tool_call_id` and `:tool_description` only when known.
   """
   @spec tool(map(), ToolCall.t(), struct()) :: map()
-  def tool(config, %ToolCall{} = call, prepared) do
+  def tool(config, %ToolCall{} = call, tool) do
     optional =
-      %{tool_call_id: call.id, tool_description: tool_description(prepared)}
+      %{tool_call_id: call.id, tool_description: tool_description(tool)}
       |> Map.merge(ids(config))
       |> reject_nil()
 
     Map.merge(
-      %{tool_name: call.name, agent_name: Map.get(config, :name), tool_type: tool_type(prepared)},
+      %{tool_name: call.name, agent_name: Map.get(config, :name), tool_type: tool_type(tool)},
       optional
     )
   end
@@ -89,14 +89,9 @@ defmodule Normandy.Telemetry.Metadata do
   defp tool_type(_tool), do: :function
 
   # Runs before the tool, outside the Executor's protection, so it must never
-  # fail the call: a missing or raising tool_description/1 just leaves the key out.
+  # fail the call: a raising description/1 just leaves the key out.
   defp tool_description(tool) do
-    with impl when impl != nil <- BaseTool.impl_for(tool),
-         true <- function_exported?(impl, :tool_description, 1) do
-      BaseTool.tool_description(tool)
-    else
-      _ -> nil
-    end
+    Tool.description(tool)
   rescue
     _ -> nil
   catch

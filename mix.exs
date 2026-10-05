@@ -99,8 +99,10 @@ defmodule Normandy.MixProject do
             Normandy.Components.ToolResult
           ],
           Tools: [
-            Normandy.Tools.BaseTool,
+            Normandy.Tool,
             Normandy.Tools.Toolset,
+            Normandy.Tools.Context,
+            Normandy.Tools.Input,
             Normandy.Tools.Executor
           ],
           "Context Management": [

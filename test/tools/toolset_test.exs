@@ -16,8 +16,8 @@ defmodule NormandyTest.Tools.ToolsetTest do
   describe "Toolset.new/1" do
     test "creates registry with tools" do
       tools = [
-        %Calculator{operation: "add", a: 0, b: 0},
-        %StringManipulator{operation: "uppercase", text: ""}
+        %Calculator{},
+        %StringManipulator{}
       ]
 
       registry = Toolset.new(tools)
@@ -30,7 +30,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
   describe "Toolset.register/2" do
     test "registers a tool" do
       registry = Toolset.new()
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
 
       registry = Toolset.register(registry, tool)
 
@@ -39,16 +39,16 @@ defmodule NormandyTest.Tools.ToolsetTest do
     end
 
     test "a second tool with the same name raises" do
-      registry = Toolset.new([%Calculator{operation: "add", a: 1, b: 2}])
+      registry = Toolset.new([%Calculator{}])
 
       assert_raise ArgumentError, ~r/"calculator" is already registered/, fn ->
-        Toolset.register(registry, %Calculator{operation: "multiply", a: 3, b: 4})
+        Toolset.register(registry, %Calculator{})
       end
     end
 
     test "replace: true replaces the tool with the same name" do
-      tool1 = %Calculator{operation: "add", a: 1, b: 2}
-      tool2 = %Calculator{operation: "multiply", a: 3, b: 4}
+      tool1 = %Calculator{}
+      tool2 = %Normandy.Test.FakeTool{name: "calculator"}
 
       registry =
         Toolset.new()
@@ -57,6 +57,14 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
       assert Toolset.count(registry) == 1
       assert {:ok, ^tool2} = Toolset.fetch(registry, "calculator")
+    end
+
+    test "a filter drops the timeouts of the tools it drops" do
+      toolset = Toolset.register(Toolset.new(), %Calculator{}, timeout: 1_000)
+      filtered = Toolset.filter_by_param_type(toolset, "no-such-type")
+
+      assert Toolset.timeout(toolset, "calculator") == 1_000
+      assert Toolset.timeout(filtered, "calculator") == nil
     end
 
     test "a name the API would reject raises at registration" do
@@ -156,7 +164,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
   describe "Toolset.unregister/2" do
     test "removes tool from registry" do
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       registry = Toolset.new([tool])
 
       assert Toolset.count(registry) == 1
@@ -176,8 +184,8 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
   describe "Toolset.list/1" do
     test "returns all registered tools" do
-      tool1 = %Calculator{operation: "add", a: 1, b: 2}
-      tool2 = %StringManipulator{operation: "uppercase", text: "hello"}
+      tool1 = %Calculator{}
+      tool2 = %StringManipulator{}
 
       registry = Toolset.new([tool1, tool2])
       tools = Toolset.list(registry)
@@ -196,9 +204,9 @@ defmodule NormandyTest.Tools.ToolsetTest do
   describe "Toolset.list_names/1" do
     test "returns all tool names" do
       tools = [
-        %Calculator{operation: "add", a: 0, b: 0},
-        %StringManipulator{operation: "uppercase", text: ""},
-        %ListProcessor{operation: "sum", numbers: []}
+        %Calculator{},
+        %StringManipulator{},
+        %ListProcessor{}
       ]
 
       registry = Toolset.new(tools)
@@ -213,7 +221,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
   describe "Toolset.has_tool?/2" do
     test "returns true for registered tool" do
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       registry = Toolset.new([tool])
 
       assert Toolset.has_tool?(registry, "calculator") == true
@@ -227,7 +235,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
   describe "Toolset.to_tool_schemas/1" do
     test "generates tool schemas for LLM" do
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       registry = Toolset.new([tool])
 
       schemas = Toolset.to_tool_schemas(registry)
@@ -246,8 +254,8 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
     test "generates multiple tool schemas" do
       tools = [
-        %Calculator{operation: "add", a: 0, b: 0},
-        %StringManipulator{operation: "uppercase", text: ""}
+        %Calculator{},
+        %StringManipulator{}
       ]
 
       registry = Toolset.new(tools)

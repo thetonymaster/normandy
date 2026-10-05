@@ -22,18 +22,6 @@ defmodule Normandy.Agents.DispatchTest do
   alias Normandy.Test.FakeTool
   alias Normandy.Tools.Toolset
 
-  defmodule FakeToolWithPrepare do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-
-    def prepare_input(tool, input) do
-      %{tool | city: String.upcase(input["city"] || "")}
-    end
-  end
-
   describe "to_tool_call/1" do
     test "passes a %ToolCall{} with map input through unchanged" do
       call = %ToolCall{id: "c1", name: "weather", input: %{city: "NYC"}}
@@ -72,18 +60,6 @@ defmodule Normandy.Agents.DispatchTest do
     end
   end
 
-  describe "prepare_tool/2" do
-    test "maps known string keys onto struct fields and drops unknown keys" do
-      prepared = Dispatch.prepare_tool(%FakeTool{}, %{"city" => "NYC", "bogus" => 1})
-      assert prepared == %FakeTool{city: "NYC"}
-    end
-
-    test "delegates to the tool's prepare_input/2 when exported" do
-      prepared = Dispatch.prepare_tool(%FakeToolWithPrepare{}, %{"city" => "nyc"})
-      assert prepared == %FakeToolWithPrepare{city: "NYC"}
-    end
-  end
-
   defp config_with_tools(tools) do
     %{name: "test-agent", toolset: Toolset.new(tools)}
   end
@@ -111,7 +87,7 @@ defmodule Normandy.Agents.DispatchTest do
       assert %ToolResult{tool_call_id: "c9", output: "weather in LA", is_error: false} = result
     end
 
-    test "a %ToolCall{} with nil input is normalized, not crashed, before prepare_tool" do
+    test "a %ToolCall{} with nil input is normalized, not crashed, before validation" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c10", name: "weather", input: nil}
 

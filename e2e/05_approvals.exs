@@ -7,13 +7,23 @@ alias Normandy.Behaviours.SessionRegistry.Native
 alias Normandy.Behaviours.SessionStore.InMemory
 
 defmodule E2E.S05.DeleteRecord do
-  use Normandy.Tools.SchemaBaseTool
+  defmodule Input do
+    use Normandy.Schema
 
-  tool_schema "delete_record", "Permanently delete a customer record by id." do
-    field(:record_id, :string, required: true, description: "the record id")
+    io_schema "Permanently delete a customer record by id." do
+      field(:record_id, :string, required: true, description: "the record id")
+    end
   end
 
-  def execute(%__MODULE__{record_id: id}) do
+  use Normandy.Tool,
+    name: "delete_record",
+    description: "Permanently delete a customer record by id.",
+    input: Input
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def run(_tool, %Normandy.Tools.Context{input: %Input{record_id: id}}) do
     Agent.update(E2E.S05.Deleted, &[id | &1])
     {:ok, "deleted #{id}"}
   end

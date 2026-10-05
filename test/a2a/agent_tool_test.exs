@@ -4,7 +4,7 @@ defmodule Normandy.A2A.AgentToolTest do
   alias Claudio.A2A.AgentCard
   alias Claudio.A2A.Part
   alias Normandy.A2A.AgentTool
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
   alias Normandy.Tools.Toolset
 
   setup do
@@ -26,28 +26,30 @@ defmodule Normandy.A2A.AgentToolTest do
       assert tool.agent_card.name == "Research Agent"
       assert tool.skill_id == nil
       assert tool.auth_token == nil
-      assert tool.timeout == 60_000
-      assert tool.input == %{}
+      refute Map.has_key?(tool, :timeout)
+      refute Map.has_key?(tool, :input)
     end
 
     test "creates tool with options", %{card: card} do
       tool =
         AgentTool.new("https://agent.example.com/a2a", card,
           skill_id: "web_search",
-          auth_token: "my-token",
-          timeout: 30_000
+          auth_token: "my-token"
         )
 
       assert tool.skill_id == "web_search"
       assert tool.auth_token == "my-token"
-      assert tool.timeout == 30_000
     end
-  end
 
-  describe "prepare_input/2" do
-    test "stores raw input", %{tool: tool} do
-      updated = AgentTool.prepare_input(tool, %{"message" => "Find elixir docs"})
-      assert updated.input == %{"message" => "Find elixir docs"}
+    test ":timeout is a registration option now", %{card: card} do
+      error =
+        assert_raise ArgumentError, fn ->
+          AgentTool.new("https://agent.example.com/a2a", card, timeout: 30_000)
+        end
+
+      assert error.message ==
+               "Normandy.A2A.AgentTool.new/3: :timeout is a registration option in 2.0; pass it " <>
+                 "to BaseAgent.register_tool/3 or Normandy.Tools.Toolset.register/3"
     end
   end
 
@@ -59,35 +61,35 @@ defmodule Normandy.A2A.AgentToolTest do
     end
   end
 
-  describe "BaseTool protocol" do
+  describe "Normandy.Tool callbacks" do
     test "tool_name without skill", %{tool: tool} do
-      assert BaseTool.tool_name(tool) == "a2a__research_agent"
+      assert Tool.name(tool) == "a2a__research_agent"
     end
 
     test "tool_name with skill", %{card: card} do
       tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
-      assert BaseTool.tool_name(tool) == "a2a__research_agent__web_search"
+      assert Tool.name(tool) == "a2a__research_agent__web_search"
     end
 
     test "tool_description without skill", %{tool: tool} do
-      desc = BaseTool.tool_description(tool)
+      desc = Tool.description(tool)
       assert desc == "Remote A2A agent: Helps find information"
     end
 
     test "tool_description with matching skill", %{card_with_skills: card} do
       tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
-      desc = BaseTool.tool_description(tool)
+      desc = Tool.description(tool)
       assert desc == "Research Agent - Search the web"
     end
 
     test "tool_description with non-matching skill", %{card: card} do
       tool = AgentTool.new("https://example.com/a2a", card, skill_id: "unknown")
-      desc = BaseTool.tool_description(tool)
+      desc = Tool.description(tool)
       assert desc =~ "skill: unknown"
     end
 
     test "input_schema has message field", %{tool: tool} do
-      schema = BaseTool.input_schema(tool)
+      schema = Tool.input_schema(tool)
       assert schema["type"] == "object"
       assert schema["properties"]["message"]["type"] == "string"
       assert schema["required"] == ["message"]

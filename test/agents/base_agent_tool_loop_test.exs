@@ -92,7 +92,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
   describe "BaseAgent.run!/2 with tools" do
     setup do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       config = %{
@@ -129,7 +129,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{}]),
         max_tool_iterations: 1
       }
 
@@ -146,7 +146,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
       config = Map.put(base, :max_tool_iterations, 0)
@@ -163,7 +163,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
       assert_raise ArgumentError,
@@ -178,7 +178,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
       assert_raise ArgumentError,
@@ -193,7 +193,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
       assert_raise ArgumentError,
@@ -205,7 +205,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
     test "works without user_input (continuing conversation)" do
       # First run with user input
-      calc = %Calculator{operation: "multiply", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       config = %{
@@ -231,24 +231,19 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
   describe "Tool execution error handling" do
     defmodule BrokenCalculator do
-      defstruct [:operation, :a, :b]
+      use Normandy.Tool, name: "broken_calculator", description: "A calculator that always fails"
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "broken_calculator"
-        def tool_description(_), do: "A calculator that always fails"
+      defstruct []
 
-        def input_schema(_) do
-          %{type: "object"}
-        end
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object"}
 
-        def run(_) do
-          {:error, "Calculator is broken"}
-        end
-      end
+      @impl Normandy.Tool
+      def run(_tool, _context), do: {:error, "Calculator is broken"}
     end
 
     test "handles tool execution errors gracefully" do
-      broken_calc = %BrokenCalculator{operation: "add", a: 1, b: 2}
+      broken_calc = %BrokenCalculator{}
       registry = Toolset.new([broken_calc])
 
       config = %{
@@ -313,9 +308,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
   describe "Tool input atom-table hardening" do
     # Mock client that emits a tool_use whose `input` map mixes valid binary
-    # keys with a canary key (one that does NOT correspond to any field on
-    # the tool). This exercises the binary-key path of the per-call helper
-    # `normalize_tool_field_key/2` — the path that previously called
+    # keys with a canary key (one that does NOT correspond to any field of
+    # the tool's input schema). This exercises the binary-key path of
+    # Normandy.Tools.Input.validate/2; a 1.x helper on that path called
     # `String.to_atom/1` and could be coerced into exhausting the BEAM atom
     # table by attacker-controlled LLM input.
     defmodule MockHostileToolClient do
@@ -359,7 +354,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
     end
 
-    test "drops unknown input keys without registering them as atoms" do
+    test "refuses unknown input keys without registering them as atoms" do
       # Build a canary string at runtime so its bytes are unique per test
       # run. If any atom equal to this string exists in the BEAM atom table
       # before the test runs, the assertion below would falsely pass — the
@@ -368,7 +363,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
 
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       config = %{
@@ -387,8 +382,8 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       # If the legacy `String.to_atom/1` reducer had still been in place,
       # the canary key would now be a registered atom and this call would
-      # succeed. With `normalize_tool_field_key/2` the unknown key is
-      # silently dropped before any atom-table interaction.
+      # succeed. Normandy.Tools.Input matches keys against the declared field
+      # names, so the unknown key is refused without touching the atom table.
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
     end
   end
@@ -398,35 +393,28 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     # a deterministic stand-in for I/O-bound tools (HTTP, DB, search) so the
     # parallelism speedup shows up as a wall-clock difference.
     defmodule SleepyTool do
-      use Normandy.Schema
+      use Normandy.Tool, name: "sleepy", description: "Sleeps then returns its label."
 
+      alias Normandy.Tools.Context
       alias NormandyTest.Agents.SleepyProbe
 
-      schema do
-        field(:sleep_ms, :integer, default: 200)
-        field(:label, :string, default: "")
+      defstruct []
+
+      @impl Normandy.Tool
+      def input_schema(_tool) do
+        %{
+          type: "object",
+          properties: %{sleep_ms: %{type: "integer"}, label: %{type: "string"}},
+          required: ["sleep_ms", "label"]
+        }
       end
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "sleepy"
-        def tool_description(_), do: "Sleeps then returns its label."
-
-        def input_schema(_) do
-          %{
-            type: "object",
-            properties: %{
-              sleep_ms: %{type: "integer"},
-              label: %{type: "string"}
-            }
-          }
-        end
-
-        def run(%{sleep_ms: ms, label: label}) do
-          SleepyProbe.enter()
-          :timer.sleep(ms)
-          SleepyProbe.leave()
-          {:ok, label}
-        end
+      @impl Normandy.Tool
+      def run(_tool, %Context{input: %{"sleep_ms" => ms, "label" => label}}) do
+        SleepyProbe.enter()
+        :timer.sleep(ms)
+        SleepyProbe.leave()
+        {:ok, label}
       end
     end
 

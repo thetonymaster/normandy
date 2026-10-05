@@ -2,7 +2,8 @@ defmodule Normandy.Tools.MemoryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.MemoryStore.InMemory
-  alias Normandy.Tools.{BaseTool, Context, Memory}
+  alias Normandy.Tool
+  alias Normandy.Tools.{Context, Input, Memory}
 
   defp tool(opts \\ []), do: Memory.new(Keyword.merge([store: {InMemory, InMemory.new()}], opts))
 
@@ -51,76 +52,60 @@ defmodule Normandy.Tools.MemoryTest do
     end
   end
 
-  test "BaseTool: name, schema, description, and run/1 without context is an error" do
+  test "Normandy.Tool: name, input schema and description" do
     t = tool(mounts: %{"/memories/org" => {"acme/kb", :read_only}})
-    assert BaseTool.tool_name(t) == "memory"
+    assert Tool.name(t) == "memory"
 
-    assert %{required: ["command"], properties: %{command: %{enum: enum}}} =
-             BaseTool.input_schema(t)
+    assert %{required: ["command"], properties: %{command: %{enum: enum}}} = Tool.input_schema(t)
 
     assert enum == ~w(view create str_replace insert delete rename)
 
-    assert BaseTool.tool_description(t) =~
+    assert Tool.description(t) =~
              "ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE"
 
-    assert BaseTool.tool_description(t) =~ "/memories/org (read-only)"
-    assert {:error, "memory requires tool context" <> _} = BaseTool.run(t)
+    assert Tool.description(t) =~ "/memories/org (read-only)"
   end
 
-  test "prepare_input/2 fills only :command; model input cannot set store, mounts or limits (Review Focus #5)" do
-    t = tool()
+  test "model input naming the store, mounts or limits is refused before the tool runs (Review Focus #5)" do
+    input = %{
+      "command" => "view",
+      "path" => "/memories",
+      "store" => "evil",
+      "mounts" => %{"/memories/x" => "other"},
+      "max_document_bytes" => 1,
+      "namespace_key" => "other"
+    }
 
-    prepared =
-      Memory.prepare_input(t, %{
-        "command" => "view",
-        "path" => "/memories",
-        "store" => {Evil, :x},
-        "mounts" => %{"/memories/x" => {"other", :read_write}},
-        "max_document_bytes" => 1,
-        :namespace_key => :other
-      })
+    assert {:error, [%{constraint: :unknown_keys, message: message}]} =
+             Input.validate(tool(), input)
 
-    assert prepared.store == t.store
-    assert prepared.mounts == %{}
-    assert prepared.max_document_bytes == 100_000
-    assert prepared.namespace_key == :memory_namespace
-    assert prepared.command.command == "view"
-    assert prepared.command.path == "/memories"
-    assert prepared.command.file_text == nil
+    assert message ==
+             ~s(unknown keys "max_document_bytes", "mounts", "namespace_key", "store"; ) <>
+               ~s(expected only "command", "file_text", "insert_line", "insert_text", ) <>
+               ~s("new_path", "new_str", "old_path", "old_str", "path", "view_range")
   end
 
-  test "prepare_input/2: atom-keyed options are ignored, only known command fields are kept, string beats atom" do
-    t = tool()
+  test "command/1 takes only the command fields, string keys first" do
+    cmd = Memory.command(%{"command" => "view", :command => "delete", "extra" => 1})
 
-    prepared =
-      Memory.prepare_input(t, %{
-        "command" => "view",
-        :command => "delete",
-        :path => "/memories/atom",
-        :store => {Evil, :x},
-        :mounts => %{"/memories/x" => {"other", :read_write}},
-        :max_document_bytes => 1,
-        :max_namespace_bytes => 1,
-        "extra" => 1,
-        :bogus => 2
-      })
-
-    assert %{prepared | command: nil} == t
-    assert prepared.command.command == "view"
-    # no string "path": the atom form is the fallback
-    assert prepared.command.path == "/memories/atom"
-
-    assert Map.keys(prepared.command) |> Enum.sort() ==
+    assert Map.keys(cmd) |> Enum.sort() ==
              Enum.sort(
                ~w(command path view_range file_text old_str new_str insert_line insert_text old_path new_path)a
              )
+
+    assert cmd.command == "view"
+    assert cmd.file_text == nil
   end
 
   test "a missing namespace raises, naming the key and the keys present" do
-    t = Memory.prepare_input(tool(), %{"command" => "view", "path" => "/memories"})
+    ctx = %Context{
+      tool_call_id: "c",
+      values: %{tenant: "acme"},
+      input: %{"command" => "view", "path" => "/memories"}
+    }
 
     assert_raise ArgumentError, ~r/tool_context\[:memory_namespace\].*\[:tenant\]/, fn ->
-      Memory.run(t, %Context{tool_call_id: "c", values: %{tenant: "acme"}})
+      Memory.run(tool(), ctx)
     end
   end
 
@@ -146,8 +131,11 @@ defmodule Normandy.Tools.MemoryTest do
     end
 
     defp run_with(input) do
-      t = Memory.prepare_input(tool(), input)
-      Memory.run(t, %Context{tool_call_id: "c", values: %{memory_namespace: "acme/u"}})
+      Memory.run(tool(), %Context{
+        tool_call_id: "c",
+        values: %{memory_namespace: "acme/u"},
+        input: input
+      })
     end
 
     test "a command outside the six names is reported as nil, never the model's value" do
@@ -177,10 +165,11 @@ defmodule Normandy.Tools.MemoryTest do
 
     defp call(tool, input, ns \\ "acme/u-1"),
       do:
-        Memory.run(
-          Memory.prepare_input(tool, input),
-          %Context{tool_call_id: "c", values: %{memory_namespace: ns}}
-        )
+        Memory.run(tool, %Context{
+          tool_call_id: "c",
+          values: %{memory_namespace: ns},
+          input: input
+        })
 
     test "view of an empty root is a listing, not an error", %{t: t} do
       assert {:ok, "Here're the files and directories up to 2 levels deep in /memories" <> _} =
@@ -391,7 +380,7 @@ defmodule Normandy.Tools.MemoryTest do
     end
 
     defp typed(tool, input, ns \\ "acme/u-1"),
-      do: Commands.run(Memory.prepare_input(tool, input), ns)
+      do: Commands.run(tool, Memory.command(input), ns)
 
     test "rename: a directory into its own subtree is refused and nothing moves", %{
       store: store,
@@ -728,10 +717,11 @@ defmodule Normandy.Tools.MemoryTest do
               "new_str" => "b"
             }
           ] do
-        t = Memory.prepare_input(Memory.new(store: store), input)
         text = "Error: memory store unavailable: " <> why
 
-        assert {:error, :backend, ^text} = Commands.run(t, "acme/u-1")
+        assert {:error, :backend, ^text} =
+                 Commands.run(Memory.new(store: store), Memory.command(input), "acme/u-1")
+
         assert {:error, ^text} = call(Memory.new(store: store), input)
       end
     end

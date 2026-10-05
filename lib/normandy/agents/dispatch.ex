@@ -3,17 +3,27 @@ defmodule Normandy.Agents.Dispatch do
   The single chokepoint every agent tool call flows through.
 
   `dispatch_one/3` runs one tool call through a fixed pipeline:
-  registry resolution → before-hooks → policy check → budget pre-check →
+  toolset lookup → before-hooks → input validation → policy check → budget pre-check →
   execute → budget record → after-hooks. The behaviours are carried on a
   `Pipeline` struct so they can be injected in tests and replaced by real
   implementations in later phases. The default pipeline is allow-all / no-op /
   identity, preserving current behavior.
 
-  The pipeline is also exposed as two composable halves: `classify/3` (registry →
-  before-hooks → policy, producing a verdict with no side effects) and `execute/4`
-  (budget → execute → record → after, running an already-classified call).
+  The pipeline is also exposed as two composable halves: `classify/3` (toolset lookup →
+  before-hooks → input validation → policy, producing a verdict with no side effects) and
+  `execute/4` (budget → execute → record → after, running an already-classified call).
   `dispatch_one/3` is exactly `classify ➞ execute`; a durable shell consults
-  `classify/3` to park a `:needs_approval` call before any side effect runs.
+  `classify/3` to park a `:needs_approval` call before any side effect runs, and runs an
+  approved one with `execute_approved/3`.
+
+  ## Input
+
+  The model's input is validated against the tool's input schema
+  (`Normandy.Tools.Input.validate/2`) after the before-hooks, so a hook's rewrite is what is
+  checked. The validated input travels in an `Invocation` beside the registered tool, and
+  reaches the tool as `context.input`; the tool struct is never changed. Invalid input (an
+  unknown key, a missing required key, a wrong type) answers the call with an `is_error`
+  result naming the keys, and the turn goes on.
 
   ## Telemetry
 
@@ -37,10 +47,13 @@ defmodule Normandy.Agents.Dispatch do
   hook modules. For a denial it receives the call as the model sent it (input
   normalized); for an executed result, the call the before-hooks produced.
 
-  ## `execute_fn`
+  ## `policy_fn` and `execute_fn`
 
-  `execute_fn` is called as `(config, prepared, tool_name)` when it has arity 3,
-  or `(config, prepared, tool_name, tool_call)` when it has arity 4.
+  `policy_fn` is called as `(config, tool_call, invocation)`. `execute_fn` is called as
+  `(config, invocation, tool_name)` when it has arity 3, or
+  `(config, invocation, tool_name, tool_call)` when it has arity 4; `executor_opts/3` builds
+  the `Normandy.Tools.Executor` options (context with the input, registration timeout) from
+  them.
   """
 
   alias Normandy.Components.ContentBlock.Describe
@@ -49,6 +62,7 @@ defmodule Normandy.Agents.Dispatch do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
+  alias Normandy.Tools.Input
   alias Normandy.Tools.Toolset
 
   defmodule DenialEnvelope do
@@ -67,6 +81,18 @@ defmodule Normandy.Agents.Dispatch do
               pending_approval: false
   end
 
+  defmodule Invocation do
+    @moduledoc """
+    A tool call ready to run: the tool as registered (never changed by the call), the
+    model's input validated against the tool's input schema, and the call's timeout (the
+    tool's registration `:timeout`, else `Normandy.Tools.Executor.default_timeout/0`).
+    """
+    @enforce_keys [:tool, :input, :timeout]
+    defstruct [:tool, :input, :timeout]
+
+    @type t :: %__MODULE__{tool: struct(), input: struct() | map(), timeout: pos_integer()}
+  end
+
   defmodule Pipeline do
     @moduledoc "Carries the behaviour functions the chokepoint consults."
     @type t :: %__MODULE__{
@@ -75,8 +101,10 @@ defmodule Normandy.Agents.Dispatch do
             budget_check_fn: function(),
             budget_record_fn: function(),
             execute_fn:
-              (map(), struct(), String.t() -> Executor.execution_result())
-              | (map(), struct(), String.t(), ToolCall.t() -> Executor.execution_result()),
+              (map(), Normandy.Agents.Dispatch.Invocation.t(), String.t() ->
+                 Executor.execution_result())
+              | (map(), Normandy.Agents.Dispatch.Invocation.t(), String.t(), ToolCall.t() ->
+                   Executor.execution_result()),
             after_hooks: [function()],
             after_tool: (map(), ToolCall.t(), ToolResult.t() -> ToolResult.t()) | nil
           }
@@ -91,7 +119,7 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc """
   The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing
-  the call's `%Normandy.Tools.Context{}`.
+  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout.
   Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
   to add telemetry, and later phases override the behaviour functions.
   """
@@ -102,8 +130,8 @@ defmodule Normandy.Agents.Dispatch do
       policy_fn: fn _config, _call, _tool -> {:allow, %{}} end,
       budget_check_fn: fn _config, _call -> :ok end,
       budget_record_fn: fn _config, _call, _result -> :ok end,
-      execute_fn: fn config, tool, _name, call ->
-        Executor.execute_tool(tool, context: Context.build(config, call))
+      execute_fn: fn config, invocation, _name, call ->
+        Executor.execute_tool(invocation.tool, executor_opts(config, invocation, call))
       end,
       after_hooks: []
     }
@@ -122,102 +150,32 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
-  Builds the tool struct from LLM-supplied input. Uses the tool's
-  `prepare_input/2` if exported; otherwise maps known keys onto struct fields.
+  The `Normandy.Tools.Executor` options for `invocation`: the call's
+  `%Normandy.Tools.Context{}` carrying the validated input, and the invocation's timeout.
   """
-  @spec prepare_tool(struct(), map()) :: struct()
-  def prepare_tool(tool, input) when is_map(input) do
-    if exports?(tool.__struct__, :prepare_input, 2) do
-      tool.__struct__.prepare_input(tool, input)
-    else
-      struct(tool, atomize_known_keys(tool, input))
-    end
-  end
+  @spec executor_opts(map(), Invocation.t(), ToolCall.t()) :: keyword()
+  def executor_opts(config, %Invocation{} = invocation, %ToolCall{} = call),
+    do: [context: Context.build(config, call, invocation.input), timeout: invocation.timeout]
 
   @doc """
-  Validates LLM-supplied input against a schema-based tool's schema BEFORE any
-  side effect, so a malformed call is rejected at classify-time rather than
-  blowing up inside (or three steps after) the tool's `execute/1`.
-
-  Returns `:ok` when the input passes, or when the tool has no generated
-  `validate/1` (plain-schema or hand-rolled tools — current behavior preserved);
-  `{:error, errors}` with path-based validation errors otherwise.
-
-  The LLM payload is string-keyed, but the schema validator looks up atom field
-  names, so input is first mapped onto known field atoms using the same
-  DoS-safe normalization `prepare_tool/2` uses (never `String.to_atom/1` on
-  untrusted input). A tool that defines its own `prepare_input/2` owns its
-  validation and is skipped here.
-  """
-  @spec validate_input(struct(), map()) :: :ok | {:error, list()}
-  def validate_input(tool, input) when is_map(input) do
-    mod = tool.__struct__
-
-    cond do
-      exports?(mod, :prepare_input, 2) ->
-        :ok
-
-      # Scope: only SchemaBaseTool-shaped tools, which the macro gives BOTH
-      # validate/1 and validate!/1. Requiring both keeps a hand-rolled validate/1
-      # with a different contract out of the chokepoint. validate_input/2 runs
-      # before apply_policy's rescue/catch, so a validator returning anything
-      # outside the {:ok, _} / {:error, list} contract must fail closed here
-      # rather than crash classify/3.
-      exports?(mod, :validate, 1) and exports?(mod, :validate!, 1) ->
-        case mod.validate(atomize_known_keys(tool, input)) do
-          {:ok, _validated} ->
-            :ok
-
-          {:error, errors} when is_list(errors) ->
-            {:error, errors}
-
-          _other ->
-            {:error,
-             [
-               %{
-                 path: [],
-                 message: "validator returned an unexpected value",
-                 constraint: :internal
-               }
-             ]}
-        end
-
-      true ->
-        :ok
-    end
-  end
-
-  # Map LLM-supplied input (string- or atom-keyed) onto the tool's struct-field
-  # atoms, dropping any key that isn't a real field. Shared by prepare_tool/2
-  # (to build the struct) and validate_input/2 (to feed the atom-key-expecting
-  # schema validator).
-  defp atomize_known_keys(tool, input) do
-    Enum.reduce(input, %{}, fn {key, value}, acc ->
-      case normalize_tool_field_key(tool, key) do
-        {:ok, atom_key} -> Map.put(acc, atom_key, value)
-        :error -> acc
-      end
-    end)
-  end
-
-  @doc """
-  Classifies one tool call: registry resolution → before-hooks → policy. Returns
+  Classifies one tool call: toolset lookup → before-hooks → input validation → policy. Returns
   the routing decision WITHOUT executing the tool, so a durable shell can act on a
   `:needs_approval` verdict (park) before any side effect runs. Its only side
   effects are the `[:normandy, :tool, :denied]` event for a policy deny or hook halt and,
   for a `:deny` result, the pipeline's `after_tool` slot (every result the model sees
   passes it once; an `:execute` or `:needs_approval` verdict has no result yet).
 
-    * `{:execute, prepared, call}` — allowed; `prepared` is the built tool struct,
-      `call` the post-before-hook `%ToolCall{}` (hooks may have rewritten it).
-    * `{:deny, %ToolResult{}}` — registry miss, a before-hook `:halt`, or a policy
-      `:deny`, already shaped into the error/denial result.
-    * `{:needs_approval, prepared, call, info}` — policy wants human approval.
+    * `{:execute, %Invocation{}, call}` — allowed; `call` is the post-before-hook
+      `%ToolCall{}` (hooks may have rewritten it).
+    * `{:deny, %ToolResult{}}` — a toolset miss, input that is not an object or fails
+      validation, a before-hook `:halt`, or a policy `:deny`, already shaped into the
+      error/denial result.
+    * `{:needs_approval, %Invocation{}, call, info}` — policy wants human approval.
   """
   @spec classify(map(), ToolCall.t() | map(), Pipeline.t()) ::
-          {:execute, struct(), ToolCall.t()}
+          {:execute, Invocation.t(), ToolCall.t()}
           | {:deny, ToolResult.t()}
-          | {:needs_approval, struct(), ToolCall.t(), map()}
+          | {:needs_approval, Invocation.t(), ToolCall.t(), map()}
   def classify(config, tool_call, pipeline \\ default_pipeline())
 
   def classify(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
@@ -233,9 +191,8 @@ defmodule Normandy.Agents.Dispatch do
     classify(config, to_tool_call(raw_call), pipeline)
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp route(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
-    case Toolset.fetch(config.toolset, call.name) do
+    case fetch_tool(config, call.name) do
       {:ok, _tool} when not is_map(call.input) ->
         {:deny, invalid_input_result(call)}
 
@@ -248,26 +205,45 @@ defmodule Normandy.Agents.Dispatch do
             {:deny, %{result | tool_call_id: call.id}}
 
           {:cont, hooked} ->
-            call = %{hooked | id: call.id}
-
-            prepared = prepare_tool(tool, call.input)
-
-            case validate_input(tool, call.input) do
-              {:error, errors} ->
-                {:deny, validation_error_result(call, errors)}
-
-              :ok ->
-                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-                case apply_policy(pipeline, config, call, prepared) do
-                  {:allow, _meta} -> {:execute, prepared, call}
-                  {:deny, info} -> {:deny, policy_denial(config, call, info, false)}
-                  {:needs_approval, info} -> {:needs_approval, prepared, call, info}
-                end
-            end
+            validate_and_decide(pipeline, config, tool, %{hooked | id: call.id})
         end
 
       :error ->
         {:deny, not_found_result(call)}
+    end
+  end
+
+  defp validate_and_decide(pipeline, config, tool, call) do
+    with {:ok, invocation} <- invocation(config, tool, call),
+         do: decide(pipeline, config, call, invocation)
+  end
+
+  defp decide(pipeline, config, call, invocation) do
+    case apply_policy(pipeline, config, call, invocation) do
+      {:allow, _meta} -> {:execute, invocation, call}
+      {:deny, info} -> {:deny, policy_denial(config, call, info, false)}
+      {:needs_approval, info} -> {:needs_approval, invocation, call, info}
+    end
+  end
+
+  defp fetch_tool(%{toolset: %Toolset{} = toolset}, name), do: Toolset.fetch(toolset, name)
+  defp fetch_tool(_config, _name), do: :error
+
+  # The validated input and the registration timeout, beside the tool as registered.
+  defp invocation(config, tool, %ToolCall{} = call) do
+    case Input.validate(tool, call.input) do
+      {:ok, input} ->
+        {:ok, %Invocation{tool: tool, input: input, timeout: timeout(config, call.name)}}
+
+      {:error, errors} ->
+        {:deny, validation_error_result(call, errors)}
+    end
+  end
+
+  defp timeout(%{toolset: toolset}, name) do
+    case Toolset.timeout(toolset, name) do
+      nil -> Executor.default_timeout()
+      timeout -> timeout
     end
   end
 
@@ -297,17 +273,17 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
-  Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
+  Executes a classified (`{:execute, invocation, call}`) tool call: budget pre-check →
   execute → budget record → `after_tool` slot → after-hooks. A budget denial passes
   `after_tool` too. Returns a `%ToolResult{}`. Skips
   re-classification — the verdict was already decided by `classify/3` (and, for an
   approved call, by a human), so re-running policy here would re-deny/re-park.
   """
-  @spec execute(map(), struct(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
-  def execute(config, prepared, %ToolCall{} = call, %Pipeline{} = pipeline) do
+  @spec execute(map(), Invocation.t(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
+  def execute(config, %Invocation{} = invocation, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case pipeline.budget_check_fn.(config, call) do
       :ok ->
-        result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
+        result = execute_and_wrap(config, call, invocation, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
         result = answer(config, call, result, pipeline)
 
@@ -319,6 +295,24 @@ defmodule Normandy.Agents.Dispatch do
       {:error, reason} ->
         emit_denied(config, call, :budget)
         answer(config, call, budget_denial_result(call, reason), pipeline)
+    end
+  end
+
+  @doc """
+  Executes a call a human approved (a `:needs_approval` verdict a durable shell parked):
+  looks the tool up again and validates the parked call's input again (both are
+  deterministic), then runs `execute/4`. Policy is not consulted again: it would park the
+  call again. A tool no longer registered, or input that no longer validates, answers the
+  call with the same result `classify/3` would give, through the `after_tool` slot.
+  """
+  @spec execute_approved(map(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
+  def execute_approved(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    with {:ok, tool} <- fetch_tool(config, call.name),
+         {:ok, invocation} <- invocation(config, tool, call) do
+      execute(config, invocation, call, pipeline)
+    else
+      :error -> answer(config, call, not_found_result(call), pipeline)
+      {:deny, %ToolResult{} = result} -> answer(config, call, result, pipeline)
     end
   end
 
@@ -350,13 +344,13 @@ defmodule Normandy.Agents.Dispatch do
 
   def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case classify(config, call, pipeline) do
-      {:execute, prepared, call} ->
-        execute(config, prepared, call, pipeline)
+      {:execute, invocation, call} ->
+        execute(config, invocation, call, pipeline)
 
       {:deny, %ToolResult{} = result} ->
         result
 
-      {:needs_approval, _prepared, call, info} ->
+      {:needs_approval, _invocation, call, info} ->
         answer(config, call, policy_denial(config, call, info, true), pipeline)
     end
   end
@@ -365,8 +359,8 @@ defmodule Normandy.Agents.Dispatch do
     dispatch_one(config, to_tool_call(raw_call), pipeline)
   end
 
-  defp execute_and_wrap(config, call, prepared, execute_fn) do
-    case call_execute_fn(execute_fn, config, prepared, call) do
+  defp execute_and_wrap(config, call, invocation, execute_fn) do
+    case call_execute_fn(execute_fn, config, invocation, call) do
       {:ok, result} -> wrap_output(call, result)
       {:error, error} -> wrap_error(call, error)
     end
@@ -415,11 +409,11 @@ defmodule Normandy.Agents.Dispatch do
 
   defp unencodable(exception), do: Exception.message(exception)
 
-  defp call_execute_fn(execute_fn, config, prepared, call) when is_function(execute_fn, 4),
-    do: execute_fn.(config, prepared, call.name, call)
+  defp call_execute_fn(execute_fn, config, invocation, call) when is_function(execute_fn, 4),
+    do: execute_fn.(config, invocation, call.name, call)
 
-  defp call_execute_fn(execute_fn, config, prepared, call),
-    do: execute_fn.(config, prepared, call.name)
+  defp call_execute_fn(execute_fn, config, invocation, call),
+    do: execute_fn.(config, invocation, call.name)
 
   defp policy_denial(config, call, info, pending?) do
     emit_denied(config, call, :policy, Map.get(info, :rule_id))
@@ -445,8 +439,8 @@ defmodule Normandy.Agents.Dispatch do
   #
   # The rationale goes to the model, and a policy engine's exception or exit can
   # carry its ctx (config and client), so it names the failure's shape only.
-  defp apply_policy(pipeline, config, call, prepared) do
-    pipeline.policy_fn.(config, call, prepared)
+  defp apply_policy(pipeline, config, call, invocation) do
+    pipeline.policy_fn.(config, call, invocation)
   rescue
     e -> {:deny, %{reason: "policy check raised", rationale: inspect(e.__struct__)}}
   catch
@@ -484,7 +478,7 @@ defmodule Normandy.Agents.Dispatch do
     %ToolResult{
       tool_call_id: call.id,
       output: %{
-        error: "tool input failed schema validation",
+        error: "invalid input for #{call.name}: #{Input.message(errors)}; the tool was not run",
         validation_errors: errors,
         denied: true
       },
@@ -534,27 +528,4 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   def normalize_tool_input(input), do: input
-
-  # Map an LLM-supplied input key (atom or binary) to a struct field atom on the
-  # tool, returning :error for keys that don't correspond to any field. NEVER
-  # calls String.to_atom/1 on untrusted input (atom-table exhaustion / DoS).
-  @doc false
-  def normalize_tool_field_key(tool, key) when is_atom(key) do
-    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
-  end
-
-  def normalize_tool_field_key(tool, key) when is_binary(key) do
-    Enum.find_value(Map.keys(tool), :error, fn field ->
-      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
-        {:ok, field}
-      end
-    end)
-  end
-
-  def normalize_tool_field_key(_tool, _key), do: :error
-
-  # function_exported?/3 is false for a module that is not loaded yet (a fresh
-  # node in interactive mode), which would skip validation or prepare_input.
-  defp exports?(mod, fun, arity),
-    do: Code.ensure_loaded?(mod) and function_exported?(mod, fun, arity)
 end

@@ -2,7 +2,8 @@ defmodule Normandy.MCP.ToolWrapperTest do
   use ExUnit.Case, async: true
 
   alias Normandy.MCP.ToolWrapper
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
+  alias Normandy.Tools.Context
   alias Normandy.Tools.Toolset
 
   defmodule MockAdapter do
@@ -55,7 +56,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
       assert wrapper.client == :mock_client
       assert wrapper.tool.name == "search"
       assert wrapper.prefix == nil
-      assert wrapper.input == %{}
+      refute Map.has_key?(wrapper, :input)
     end
 
     test "creates wrapper with prefix" do
@@ -65,42 +66,35 @@ defmodule Normandy.MCP.ToolWrapperTest do
     end
   end
 
-  describe "prepare_input/2" do
-    test "stores raw input map", %{wrapper: wrapper} do
-      updated = ToolWrapper.prepare_input(wrapper, %{"query" => "elixir"})
-      assert updated.input == %{"query" => "elixir"}
-    end
-  end
-
-  describe "BaseTool protocol" do
+  describe "Normandy.Tool callbacks" do
     test "tool_name without prefix", %{wrapper: wrapper} do
-      assert BaseTool.tool_name(wrapper) == "search"
+      assert Tool.name(wrapper) == "search"
     end
 
     test "tool_name with prefix" do
       tool = %Claudio.MCP.Client.Tool{name: "search", description: "Search", input_schema: %{}}
       wrapper = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server1")
-      assert BaseTool.tool_name(wrapper) == "server1__search"
+      assert Tool.name(wrapper) == "server1__search"
     end
 
     test "tool_description", %{wrapper: wrapper} do
-      assert BaseTool.tool_description(wrapper) == "Search the web for information"
+      assert Tool.description(wrapper) == "Search the web for information"
     end
 
     test "tool_description falls back for nil", %{tool: tool} do
       wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | description: nil})
-      assert BaseTool.tool_description(wrapper) == "MCP tool: search"
+      assert Tool.description(wrapper) == "MCP tool: search"
     end
 
     test "input_schema passes through", %{wrapper: wrapper} do
-      schema = BaseTool.input_schema(wrapper)
+      schema = Tool.input_schema(wrapper)
       assert schema["type"] == "object"
       assert schema["properties"]["query"]["type"] == "string"
     end
 
     test "run succeeds with valid input", %{wrapper: wrapper} do
-      prepared = ToolWrapper.prepare_input(wrapper, %{"query" => "elixir"})
-      assert {:ok, "Results for: elixir"} = BaseTool.run(prepared)
+      context = %Context{tool_call_id: "t", input: %{"query" => "elixir"}}
+      assert {:ok, "Results for: elixir"} = Tool.run(wrapper, context)
     end
 
     test "run returns error on failure" do
@@ -110,12 +104,39 @@ defmodule Normandy.MCP.ToolWrapperTest do
         input_schema: %{}
       }
 
-      wrapper =
-        ToolWrapper.new(MockAdapter, :client, tool)
-        |> ToolWrapper.prepare_input(%{})
+      wrapper = ToolWrapper.new(MockAdapter, :client, tool)
 
-      assert {:error, msg} = BaseTool.run(wrapper)
+      assert {:error, msg} = Tool.run(wrapper, %Context{tool_call_id: "t", input: %{}})
       assert msg =~ "MCP tool 'failing_tool' failed"
+    end
+  end
+
+  describe "dispatch" do
+    alias Normandy.Agents.Dispatch
+    alias Normandy.Components.{ToolCall, ToolResult}
+
+    test "the server's schema is checked before the call reaches the server", %{wrapper: wrapper} do
+      config = %{name: "a", toolset: Toolset.new([wrapper])}
+      call = %ToolCall{id: "m1", name: "search", input: %{"query" => "x", "bogus" => 1}}
+
+      assert %ToolResult{is_error: true, output: %{validation_errors: [error]}} =
+               Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert error.constraint == :unknown_keys
+    end
+
+    # A Claudio %MCP.Client.Tool{} the server sent no schema for has input_schema nil.
+    test "a tool with no input schema answers the call with an error result", %{tool: tool} do
+      wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | input_schema: nil})
+      config = %{name: "a", toolset: Toolset.new([wrapper])}
+      call = %ToolCall{id: "m2", name: "search", input: %{"query" => "x"}}
+
+      assert %ToolResult{is_error: true, output: %{error: error, denied: true}} =
+               Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert error ==
+               "invalid input for search: the tool's input_schema/1 returned nil, " <>
+                 "not a JSON Schema map; the tool was not run"
     end
   end
 

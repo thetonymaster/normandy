@@ -10,6 +10,10 @@ defmodule Normandy.A2A.RegistryTest do
       do: {:ok, AgentCard.new(String.duplicate("very long agent name ", 4), "An agent")}
   end
 
+  defmodule OkTransport do
+    def discover(_url, _opts), do: {:ok, AgentCard.new("Agent", "An agent")}
+  end
+
   describe "discover_and_register/3" do
     test "an agent whose tool name the API would refuse is an error, not a raise" do
       assert {:error, {:invalid_tool_name, name}} =
@@ -18,6 +22,24 @@ defmodule Normandy.A2A.RegistryTest do
                )
 
       assert String.length(name) > 64
+    end
+
+    test ":timeout is each tool's registration timeout; 60 s when not given" do
+      opts = [transport_opts: [transport: OkTransport]]
+
+      assert {:ok, toolset} =
+               A2ARegistry.discover_and_register(
+                 Toolset.new(),
+                 "http://agent.test",
+                 [timeout: 5_000] ++ opts
+               )
+
+      assert Toolset.timeout(toolset, "a2a__agent") == 5_000
+
+      assert {:ok, toolset} =
+               A2ARegistry.discover_and_register(Toolset.new(), "http://agent.test", opts)
+
+      assert Toolset.timeout(toolset, "a2a__agent") == 60_000
     end
   end
 
@@ -49,15 +71,10 @@ defmodule Normandy.A2A.RegistryTest do
     test "passes options through" do
       card = AgentCard.new("Agent", "An agent")
 
-      tools =
-        A2ARegistry.from_agent_card(card, "https://example.com/a2a",
-          auth_token: "tok",
-          timeout: 5_000
-        )
+      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a", auth_token: "tok")
 
       [tool] = tools
       assert tool.auth_token == "tok"
-      assert tool.timeout == 5_000
     end
   end
 

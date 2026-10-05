@@ -13,7 +13,8 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
   alias Normandy.A2A.{AgentTool, Server}
   alias Normandy.Agents.BaseAgent
   alias Normandy.Test.OtelSpanBridge
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
+  alias Normandy.Tools.Context
 
   @trace_id 0x0AF7651916CD43DD8448EB211C80319C
   @parent_span_id 0xB7AD6B7169203331
@@ -61,10 +62,14 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
   end
 
   defp agent_tool(bypass, opts \\ []) do
-    "http://localhost:#{bypass.port}/a2a"
-    |> AgentTool.new(AgentCard.new("remote", "a remote agent"), opts)
-    |> AgentTool.prepare_input(%{"message" => "hi"})
+    AgentTool.new(
+      "http://localhost:#{bypass.port}/a2a",
+      AgentCard.new("remote", "a remote agent"),
+      opts
+    )
   end
+
+  defp run(tool), do: Tool.run(tool, %Context{tool_call_id: "t", input: %{"message" => "hi"}})
 
   defp with_caller_span(fun) do
     tracer = :opentelemetry.get_application_tracer(__MODULE__)
@@ -83,7 +88,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
     test "the remote agent's spans join the caller's trace", %{bypass: bypass} do
       serve_a2a(bypass, self())
 
-      assert {:ok, _text} = with_caller_span(fn -> BaseTool.run(agent_tool(bypass)) end)
+      assert {:ok, _text} = with_caller_span(fn -> run(agent_tool(bypass)) end)
 
       spans =
         OtelSpanBridge.await_spans([
@@ -106,7 +111,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       serve_a2a(bypass, self())
       tool = agent_tool(bypass, transport_opts: [headers: [{"x-tenant", "t1"}]])
 
-      assert {:ok, _text} = with_caller_span(fn -> BaseTool.run(tool) end)
+      assert {:ok, _text} = with_caller_span(fn -> run(tool) end)
 
       assert_received {:request_headers, headers}
       assert {"x-tenant", "t1"} in headers
@@ -117,7 +122,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       serve_a2a(bypass, self())
       tool = agent_tool(bypass, transport_opts: [headers: %{"x-tenant" => "t1"}])
 
-      assert {:ok, _text} = with_caller_span(fn -> BaseTool.run(tool) end)
+      assert {:ok, _text} = with_caller_span(fn -> run(tool) end)
 
       assert_received {:request_headers, headers}
       assert {"x-tenant", "t1"} in headers
@@ -127,7 +132,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
     test "sends no traceparent without an active span", %{bypass: bypass} do
       serve_a2a(bypass, self())
 
-      assert {:ok, _text} = BaseTool.run(agent_tool(bypass))
+      assert {:ok, _text} = run(agent_tool(bypass))
 
       assert_received {:request_headers, headers}
       refute List.keymember?(headers, "traceparent", 0)

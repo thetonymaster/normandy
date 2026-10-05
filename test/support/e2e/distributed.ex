@@ -22,15 +22,27 @@ defmodule NormandyTest.E2E.Distributed do
 
   defmodule RefundTool do
     @moduledoc false
-    use Normandy.Tools.SchemaBaseTool
+    defmodule Input do
+      @moduledoc false
+      use Normandy.Schema
 
-    alias NormandyTest.E2E.Distributed
-
-    tool_schema "issue_refund", "Issue a refund for an order. Needs human approval." do
-      field(:order_id, :string, required: true, description: "the order id")
+      io_schema "Issue a refund for an order. Needs human approval." do
+        field(:order_id, :string, required: true, description: "the order id")
+      end
     end
 
-    def execute(%__MODULE__{order_id: id}) do
+    use Normandy.Tool,
+      name: "issue_refund",
+      description: "Issue a refund for an order. Needs human approval.",
+      input: Input
+
+    alias Normandy.Tools.Context
+    alias NormandyTest.E2E.Distributed
+
+    defstruct []
+
+    @impl Normandy.Tool
+    def run(_tool, %Context{input: %Input{order_id: id}}) do
       Distributed.sink({:tool_ran, node(), id})
       {:ok, "refund issued for #{id}"}
     end

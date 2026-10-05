@@ -8,7 +8,7 @@
   # --- Verified-dead defensive clauses (intentional guards Dialyzer proves unreachable
   # --- given current success typings; kept on purpose, so suppressed rather than deleted).
 
-  # tools/executor.ex check_result/1: BaseTool.run/1's spec allows only {:ok, _} and
+  # tools/executor.ex check_result/1: `Normandy.Tool.run/2`'s spec allows only {:ok, _} and
   # {:error, _}, but a third-party tool can return anything; the catch-all turns that into
   # an error result instead of crashing the turn (audit SCHEMA-6).
   {"lib/normandy/tools/executor.ex", :pattern_match_cov},

@@ -18,7 +18,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
   describe "BaseAgent tool registration" do
     test "registers a tool", %{agent: agent} do
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       agent = BaseAgent.register_tool(agent, tool)
 
       assert BaseAgent.has_tools?(agent)
@@ -26,8 +26,8 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
     end
 
     test "registers multiple tools", %{agent: agent} do
-      calc = %Calculator{operation: "add", a: 1, b: 2}
-      string = %StringManipulator{operation: "uppercase", text: "hello"}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       agent =
         agent
@@ -44,7 +44,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
       assert agent.toolset == nil
       refute BaseAgent.has_tools?(agent)
 
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       agent = BaseAgent.register_tool(agent, tool)
 
       assert agent.toolset != nil
@@ -54,7 +54,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
   describe "BaseAgent.get_tool/2" do
     test "retrieves registered tool", %{agent: agent} do
-      tool = %Calculator{operation: "multiply", a: 3, b: 4}
+      tool = %Calculator{}
       agent = BaseAgent.register_tool(agent, tool)
 
       assert {:ok, ^tool} = BaseAgent.get_tool(agent, "calculator")
@@ -72,8 +72,8 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
   describe "BaseAgent.list_tools/1" do
     test "lists all registered tools", %{agent: agent} do
-      calc = %Calculator{operation: "add", a: 1, b: 2}
-      string = %StringManipulator{operation: "uppercase", text: "test"}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       agent =
         agent
@@ -95,7 +95,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
     end
 
     test "returns true when tools are registered", %{agent: agent} do
-      tool = %Calculator{operation: "add", a: 1, b: 2}
+      tool = %Calculator{}
       agent = BaseAgent.register_tool(agent, tool)
 
       assert BaseAgent.has_tools?(agent)
@@ -104,8 +104,8 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
   describe "BaseAgent initialization with tool registry" do
     test "can initialize agent with pre-configured tools" do
-      calc = %Calculator{operation: "add", a: 1, b: 2}
-      string = %StringManipulator{operation: "uppercase", text: "test"}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       registry = Toolset.new([calc, string])
 

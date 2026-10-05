@@ -6,7 +6,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "get_metadata/2" do
     test "returns metadata for a registered tool" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       {:ok, metadata} = Toolset.fetch_metadata(registry, "calculator")
@@ -23,7 +23,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "includes field introspection for schema-based tools" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       {:ok, metadata} = Toolset.fetch_metadata(registry, "calculator")
@@ -56,8 +56,8 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "list_metadata/1" do
     test "returns metadata for all registered tools" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      string = %StringManipulator{operation: "uppercase", text: ""}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       registry = Toolset.new([calc, string])
       metadata_list = Toolset.list_metadata(registry)
@@ -76,7 +76,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "includes field introspection for schema-based tools" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       enhanced = %EnhancedCalculator{}
 
       registry = Toolset.new([calc, enhanced])
@@ -97,7 +97,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "filter_by_required_params/2" do
     test "filters tools with required parameters" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       filtered = Toolset.filter_by_required_params(registry, true)
@@ -108,7 +108,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
     test "filters tools without required parameters" do
       # Create a tool without required params (if we had one)
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       filtered = Toolset.filter_by_required_params(registry, false)
@@ -117,7 +117,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "returns empty registry when no tools match" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       filtered = Toolset.filter_by_required_params(registry, false)
@@ -128,8 +128,8 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "filter_by_param_type/2" do
     test "filters tools with number parameters" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      string = %StringManipulator{operation: "uppercase", text: ""}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       registry = Toolset.new([calc, string])
 
@@ -143,8 +143,8 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "filters tools with string parameters" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      string = %StringManipulator{operation: "uppercase", text: ""}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       registry = Toolset.new([calc, string])
       filtered = Toolset.filter_by_param_type(registry, "string")
@@ -154,7 +154,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "returns empty registry when no tools have the parameter type" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       filtered = Toolset.filter_by_param_type(registry, "boolean")
@@ -165,8 +165,8 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "tools_with_constraint/2" do
     test "finds tools with enum constraints" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      string = %StringManipulator{operation: "uppercase", text: ""}
+      calc = %Calculator{}
+      string = %StringManipulator{}
 
       registry = Toolset.new([calc, string])
       tools = Toolset.tools_with_constraint(registry, :enum)
@@ -188,7 +188,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "returns empty list when no tools have the constraint" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       tools = Toolset.tools_with_constraint(registry, :pattern)
@@ -199,7 +199,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
   describe "introspect_schema/2" do
     test "returns schema introspection for schema-based tools" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       {:ok, fields} = Toolset.introspect_schema(registry, "calculator")
@@ -265,7 +265,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
 
     test "handles mixed registry of schema-based tools" do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       enhanced = %EnhancedCalculator{}
 
       registry = Toolset.new([calc, enhanced])
@@ -297,7 +297,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
 
     test "handles tools with no properties in schema" do
       # This tests backward compatibility
-      calc = %Calculator{operation: "add", a: 0, b: 0}
+      calc = %Calculator{}
       registry = Toolset.new([calc])
 
       # Should not crash

@@ -81,7 +81,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   end
 
   defp with_tools_agent do
-    calc = %Calculator{operation: "add", a: 0, b: 0}
+    calc = %Calculator{}
     registry = Toolset.new([calc])
 
     BaseAgent.init(%{

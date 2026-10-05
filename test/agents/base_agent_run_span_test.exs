@@ -143,7 +143,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         client: %FinalOnlyToolClient{},
         model: "test-model",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{}]),
         max_tool_iterations: 5
       })
 
@@ -170,7 +170,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         client: %StreamingClient{},
         model: "claude-3",
         temperature: 0.7,
-        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       })
 
     assert_exactly_one_run_span(agent, fn agent ->

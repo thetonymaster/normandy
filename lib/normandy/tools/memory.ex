@@ -31,6 +31,8 @@ defmodule Normandy.Tools.Memory do
   reaches the agent. Never store secrets in memory.
   """
 
+  use Normandy.Tool, name: "memory"
+
   alias Normandy.Telemetry.Span
   alias Normandy.Tools.Context
   alias Normandy.Tools.Memory.{Commands, Paths}
@@ -43,8 +45,7 @@ defmodule Normandy.Tools.Memory do
             max_namespace_bytes: 1_000_000,
             max_view_chars: 16_000,
             max_cas_retries: 3,
-            telemetry_include_paths: false,
-            command: nil
+            telemetry_include_paths: false
 
   @type t :: %__MODULE__{
           store: {module(), term()},
@@ -54,8 +55,7 @@ defmodule Normandy.Tools.Memory do
           max_namespace_bytes: pos_integer() | nil,
           max_view_chars: pos_integer(),
           max_cas_retries: non_neg_integer(),
-          telemetry_include_paths: boolean(),
-          command: map() | nil
+          telemetry_include_paths: boolean()
         }
 
   @options [
@@ -119,27 +119,25 @@ defmodule Normandy.Tools.Memory do
   end
 
   @doc false
-  # Called by dispatch instead of struct/2: model input fills :command and nothing else.
-  @spec prepare_input(t(), map()) :: t()
-  def prepare_input(%__MODULE__{} = tool, input) when is_map(input) do
-    %{
-      tool
-      | command: Map.new(@fields, &{&1, Map.get(input, Atom.to_string(&1), Map.get(input, &1))})
-    }
-  end
+  # The command fields of a call's input, atom-keyed for Commands. Dispatch hands run/2 the
+  # input Normandy.Tools.Input validated (string keys); a string key beats an atom one.
+  @spec command(map()) :: map()
+  def command(input) when is_map(input),
+    do: Map.new(@fields, &{&1, Map.get(input, Atom.to_string(&1), Map.get(input, &1))})
 
-  @doc false
+  @impl Normandy.Tool
   @spec run(t(), Context.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def run(%__MODULE__{} = tool, %Context{} = ctx) do
+  def run(%__MODULE__{} = tool, %Context{input: input} = ctx) do
     namespace = namespace!(tool, ctx)
-    meta = telemetry_metadata(tool, namespace)
+    cmd = command(input)
+    meta = telemetry_metadata(tool, cmd, namespace)
 
     Span.span([:normandy, :memory, :command], meta, fn ->
       # :start can only name the session namespace; by :stop the path has been resolved,
       # so a mounted path reports the mount's namespace.
-      stop_meta = stop_namespace(meta, tool, namespace)
+      stop_meta = stop_namespace(meta, tool, cmd, namespace)
 
-      case Commands.run(tool, namespace) do
+      case Commands.run(tool, cmd, namespace) do
         {:ok, text, stats} ->
           {{:ok, text}, measurements(stats), Map.put(stop_meta, :status, :ok)}
 
@@ -150,8 +148,8 @@ defmodule Normandy.Tools.Memory do
     end)
   end
 
-  @doc false
-  def input_schema do
+  @impl Normandy.Tool
+  def input_schema(_tool) do
     %{
       type: "object",
       properties: %{
@@ -189,7 +187,7 @@ defmodule Normandy.Tools.Memory do
     }
   end
 
-  @doc false
+  @impl Normandy.Tool
   def description(%__MODULE__{mounts: mounts}) do
     base = """
     Persistent memory that survives across conversations, stored as files under /memories.
@@ -228,19 +226,19 @@ defmodule Normandy.Tools.Memory do
     end
   end
 
-  defp telemetry_metadata(%__MODULE__{store: {mod, _}, command: cmd} = tool, namespace) do
+  defp telemetry_metadata(%__MODULE__{store: {mod, _}} = tool, cmd, namespace) do
     # only a known name reaches telemetry: the model's raw value would be unbounded
-    base = %{command: if(cmd && cmd.command in @commands, do: cmd.command), store: mod}
+    base = %{command: if(cmd.command in @commands, do: cmd.command), store: mod}
 
     if tool.telemetry_include_paths,
-      do: Map.merge(base, %{namespace: namespace, path: cmd && (cmd.path || cmd.old_path)}),
+      do: Map.merge(base, %{namespace: namespace, path: cmd.path || cmd.old_path}),
       else: base
   end
 
-  defp stop_namespace(%{namespace: _} = meta, tool, session_ns),
-    do: %{meta | namespace: Commands.namespace(tool, session_ns)}
+  defp stop_namespace(%{namespace: _} = meta, tool, cmd, session_ns),
+    do: %{meta | namespace: Commands.namespace(tool, cmd, session_ns)}
 
-  defp stop_namespace(meta, _tool, _session_ns), do: meta
+  defp stop_namespace(meta, _tool, _cmd, _session_ns), do: meta
 
   defp measurements(stats),
     do: Map.merge(%{bytes_read: 0, bytes_written: 0, cas_retries: 0}, stats)
@@ -302,21 +300,4 @@ defmodule Normandy.Tools.Memory do
         ArgumentError,
         "Normandy.Tools.Memory.new/1: #{inspect(key)} must be #{want}, got: #{inspect(value)}"
       )
-
-  defimpl Normandy.Tools.BaseTool do
-    alias Normandy.Tools.Memory
-
-    def tool_name(_tool), do: "memory"
-    def tool_description(tool), do: Memory.description(tool)
-    def input_schema(_tool), do: Memory.input_schema()
-
-    def run(_tool),
-      do: {:error, "memory requires tool context; it was called outside the dispatch pipeline"}
-  end
-
-  defimpl Normandy.Tools.ContextualTool do
-    alias Normandy.Tools.Memory
-
-    def run(tool, ctx), do: Memory.run(tool, ctx)
-  end
 end

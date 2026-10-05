@@ -1,26 +1,24 @@
 defmodule Normandy.Test.ContextProbe do
   @moduledoc """
-  A contextual tool for tests. With context it sends `{:probe_ctx, ctx}` to
-  `:notify` (when set) and returns `{:ok, "ns=<inspect of :memory_namespace>"}`;
-  run without context (`BaseTool.run/1`) it returns the "requires tool context" error.
+  A tool for tests that reports its context: it sends `{:probe_ctx, ctx}` to `:notify`
+  (when set) and returns `{:ok, "ns=<inspect of :memory_namespace>"}`. Its input schema is
+  open (`additionalProperties: true`), so a hook may rewrite its input freely.
   """
+  use Normandy.Tool, description: "context probe"
+
+  alias Normandy.Tools.Context
+
   defstruct name: "probe", notify: nil
 
-  defimpl Normandy.Tools.BaseTool do
-    def tool_name(tool), do: tool.name
-    def tool_description(_tool), do: "context probe"
-    def input_schema(_tool), do: %{type: "object", properties: %{}}
+  @impl Normandy.Tool
+  def name(%__MODULE__{name: name}), do: name
 
-    def run(tool),
-      do:
-        {:error,
-         "#{tool.name} requires tool context; it was called outside the dispatch pipeline"}
-  end
+  @impl Normandy.Tool
+  def input_schema(_tool), do: %{type: "object", properties: %{}, additionalProperties: true}
 
-  defimpl Normandy.Tools.ContextualTool do
-    def run(tool, ctx) do
-      if tool.notify, do: send(tool.notify, {:probe_ctx, ctx})
-      {:ok, "ns=" <> inspect(Map.get(ctx.values, :memory_namespace))}
-    end
+  @impl Normandy.Tool
+  def run(%__MODULE__{} = tool, %Context{} = ctx) do
+    if tool.notify, do: send(tool.notify, {:probe_ctx, ctx})
+    {:ok, "ns=" <> inspect(Map.get(ctx.values, :memory_namespace))}
   end
 end

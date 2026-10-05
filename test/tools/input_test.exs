@@ -179,6 +179,45 @@ defmodule Normandy.Tools.InputTest do
 
       assert message == "the tool's input_schema/1 returned nil, not a JSON Schema map"
     end
+
+    # 3.4b-M1: a malformed hand-written schema (an MCP server's) is an error result, not a
+    # Protocol.UndefinedError in the turn.
+    test "properties that is not a map is a schema error, not a crash" do
+      tool = %SchemaTool{schema: %{"type" => "object", "properties" => nil}}
+
+      assert {:error, [%{path: [], constraint: :schema, message: message}]} =
+               Input.validate(tool, %{"q" => 1})
+
+      assert message == ~s(the tool's input_schema/1 "properties" is nil, not a map)
+    end
+
+    test "required that is not a list of key names is a schema error, not a crash" do
+      for {required, got} <- [{"q", "a string (1 bytes)"}, {[%{}], "a list"}] do
+        tool = %SchemaTool{schema: %{"type" => "object", "required" => required}}
+
+        assert {:error, [%{path: [], constraint: :schema, message: message}]} =
+                 Input.validate(tool, %{"q" => 1})
+
+        assert message ==
+                 ~s(the tool's input_schema/1 "required" is #{got}, not a list of key names)
+      end
+    end
+
+    test "a key that is neither a string nor an atom is named by its type and refused" do
+      for schema <- [%{"type" => "object"}, %{"type" => "object", "properties" => %{"q" => %{}}}] do
+        assert {:error, [error]} = Input.validate(%SchemaTool{schema: schema}, %{{:a, 1} => 1})
+        assert error.constraint == :unknown_keys
+        assert error.message =~ ~s(unknown key "a tuple key")
+        refute error.message =~ ":a"
+      end
+    end
+  end
+
+  test "a key that is neither a string nor an atom is an unknown key for a declared schema" do
+    assert {:error, [%{constraint: :unknown_keys, message: message}]} =
+             Input.validate(%EndpointTool{}, %{"query" => "x", 7 => 1})
+
+    assert message == ~s(unknown key "an integer key"; expected only "query", "limit")
   end
 
   test "input that is not an object is a type error" do

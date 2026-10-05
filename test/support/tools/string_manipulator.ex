@@ -1,95 +1,55 @@
 defmodule Normandy.Tools.Examples.StringManipulator do
   @moduledoc """
-  A tool for performing string manipulation operations.
-
-  ## Examples
-
-      iex> tool = %Normandy.Tools.Examples.StringManipulator{operation: "uppercase", text: "hello"}
-      iex> Normandy.Tools.BaseTool.run(tool)
-      {:ok, "HELLO"}
-
-      iex> tool = %Normandy.Tools.Examples.StringManipulator{operation: "reverse", text: "hello"}
-      iex> Normandy.Tools.BaseTool.run(tool)
-      {:ok, "olleh"}
-
+  A test tool with a hand-written input schema: uppercase, lowercase, reverse, split,
+  truncate or measure a string. `run/2` gets the validated input as a string-keyed map.
   """
-
-  defstruct [:operation, :text, :delimiter, :count]
-
-  @type t :: %__MODULE__{
-          operation: String.t(),
-          text: String.t(),
-          delimiter: String.t() | nil,
-          count: integer() | nil
-        }
-
-  defimpl Normandy.Tools.BaseTool do
-    def tool_name(_), do: "string_manipulator"
-
-    def tool_description(_) do
+  use Normandy.Tool,
+    name: "string_manipulator",
+    description:
       "Performs various string manipulation operations like uppercase, lowercase, reverse, split, truncate, etc."
-    end
 
-    def input_schema(_) do
-      %{
-        type: "object",
-        properties: %{
-          operation: %{
-            type: "string",
-            enum: ["uppercase", "lowercase", "reverse", "split", "truncate", "length"],
-            description: "The string operation to perform"
-          },
-          text: %{
-            type: "string",
-            description: "The input text to manipulate"
-          },
-          delimiter: %{
-            type: "string",
-            description: "Delimiter for split operation (optional)"
-          },
-          count: %{
-            type: "integer",
-            description: "Number of characters for truncate operation (optional)"
-          }
+  alias Normandy.Tools.Context
+
+  defstruct []
+
+  @impl Normandy.Tool
+  def input_schema(_tool) do
+    %{
+      type: "object",
+      properties: %{
+        operation: %{
+          type: "string",
+          enum: ["uppercase", "lowercase", "reverse", "split", "truncate", "length"],
+          description: "The string operation to perform"
         },
-        required: ["operation", "text"]
-      }
-    end
-
-    def run(%{operation: "uppercase", text: text}) do
-      {:ok, String.upcase(text)}
-    end
-
-    def run(%{operation: "lowercase", text: text}) do
-      {:ok, String.downcase(text)}
-    end
-
-    def run(%{operation: "reverse", text: text}) do
-      {:ok, String.reverse(text)}
-    end
-
-    def run(%{operation: "split", text: text, delimiter: delimiter}) when not is_nil(delimiter) do
-      {:ok, String.split(text, delimiter)}
-    end
-
-    def run(%{operation: "split", text: text}) do
-      {:ok, String.split(text)}
-    end
-
-    def run(%{operation: "truncate", text: text, count: count}) when not is_nil(count) do
-      {:ok, String.slice(text, 0, count)}
-    end
-
-    def run(%{operation: "truncate", text: _text}) do
-      {:error, "truncate operation requires 'count' parameter"}
-    end
-
-    def run(%{operation: "length", text: text}) do
-      {:ok, String.length(text)}
-    end
-
-    def run(%{operation: operation}) do
-      {:error, "Unknown operation: #{operation}"}
-    end
+        text: %{type: "string", description: "The input text to manipulate"},
+        delimiter: %{type: "string", description: "Delimiter for split operation (optional)"},
+        count: %{
+          type: "integer",
+          description: "Number of characters for truncate operation (optional)"
+        }
+      },
+      required: ["operation", "text"]
+    }
   end
+
+  @impl Normandy.Tool
+  def run(_tool, %Context{input: %{"operation" => operation, "text" => text} = input}),
+    do: process(operation, text, input)
+
+  defp process("uppercase", text, _input), do: {:ok, String.upcase(text)}
+  defp process("lowercase", text, _input), do: {:ok, String.downcase(text)}
+  defp process("reverse", text, _input), do: {:ok, String.reverse(text)}
+
+  defp process("split", text, %{"delimiter" => delimiter}),
+    do: {:ok, String.split(text, delimiter)}
+
+  defp process("split", text, _input), do: {:ok, String.split(text)}
+  defp process("truncate", text, %{"count" => count}), do: {:ok, String.slice(text, 0, count)}
+
+  defp process("truncate", _text, _input),
+    do: {:error, "truncate operation requires 'count' parameter"}
+
+  defp process("length", text, _input), do: {:ok, String.length(text)}
+  defp process(operation, _text, _input), do: {:error, "Unknown operation: #{operation}"}
 end

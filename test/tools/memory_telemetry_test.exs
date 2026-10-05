@@ -26,7 +26,7 @@ defmodule Normandy.Tools.MemoryTelemetryTest do
 
   defp call(tool, input) do
     ctx = %Context{tool_call_id: "c", values: %{memory_namespace: "acme/u-1"}}
-    Memory.run(Memory.prepare_input(tool, input), ctx)
+    Memory.run(tool, %{ctx | input: input})
   end
 
   test "stop carries bytes, retries and status; no namespace or path by default" do

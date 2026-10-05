@@ -3,7 +3,10 @@ defmodule Normandy.Behaviours.PolicyEngine do
   Contract for per-tool-call policy decisions, consulted at the dispatch
   chokepoint via `Normandy.Behaviours.Config.to_pipeline/1`.
 
-  `check/2` returns one of:
+  `check/2` gets the `%ToolCall{}` and a ctx map: `config` (the agent config), `tool` (the
+  tool struct as registered; the model's input is never merged into it), `input` (the
+  model's input after `Normandy.Tools.Input.validate/2`: the tool's input-schema struct, or
+  a string-keyed map) and `opts` (the policy ref's opts). It returns one of:
 
     * `{:allow, meta}` — proceed; `meta` is opaque allow-context.
     * `{:deny, info}` — block; `info` may carry `:reason`, `:rule_id`,

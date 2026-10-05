@@ -227,20 +227,13 @@ defmodule NormandyTest.Support.IntegrationHelper do
   Creates a simple calculator tool for testing.
   """
   def create_calculator_tool do
-    %Normandy.Tools.Examples.Calculator{
-      operation: "add",
-      a: 0,
-      b: 0
-    }
+    %Normandy.Tools.Examples.Calculator{}
   end
 
   @doc """
   Creates a string manipulator tool for testing.
   """
   def create_string_tool do
-    %Normandy.Tools.Examples.StringManipulator{
-      operation: "uppercase",
-      text: ""
-    }
+    %Normandy.Tools.Examples.StringManipulator{}
   end
 end

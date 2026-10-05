@@ -17,13 +17,11 @@ defmodule Normandy.Tools.Memory.Commands do
   @list_limit MemoryStore.list_limit()
 
   @doc false
-  # The namespace `run/2` uses for the current command: the mount's for a path inside a
+  # The namespace `run/3` uses for the command: the mount's for a path inside a
   # mount, else the session's. A path that fails validation resolves nowhere, so the
   # session's namespace.
-  @spec namespace(Memory.t(), String.t()) :: String.t()
-  def namespace(%Memory{command: nil}, ns), do: ns
-
-  def namespace(%Memory{command: cmd} = tool, ns) do
+  @spec namespace(Memory.t(), map(), String.t()) :: String.t()
+  def namespace(%Memory{} = tool, cmd, ns) do
     with path when is_binary(path) <- Map.get(cmd, :path) || Map.get(cmd, :old_path),
          {:ok, path} <- Paths.validate(path) do
       Paths.resolve(path, ns, tool.mounts).namespace
@@ -32,10 +30,10 @@ defmodule Normandy.Tools.Memory.Commands do
     end
   end
 
-  def run(%Memory{command: nil}, _ns),
+  def run(%Memory{}, %{command: nil}, _ns),
     do: {:error, :invalid_input, "Error: no memory command was given"}
 
-  def run(%Memory{command: cmd} = tool, ns) do
+  def run(%Memory{} = tool, cmd, ns) do
     case cmd.command do
       "view" ->
         view(tool, ns, cmd)

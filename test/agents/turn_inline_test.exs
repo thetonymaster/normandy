@@ -10,18 +10,16 @@ defmodule Normandy.Agents.Turn.InlineTest do
   alias Normandy.Tools.Toolset
 
   defmodule WeatherTool do
-    use Normandy.Schema
+    use Normandy.Tool, name: "weather", description: "fake weather"
 
-    schema do
-      field(:city, :string)
-    end
-  end
+    defstruct []
 
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.Turn.InlineTest.WeatherTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake weather"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{type: "object", properties: %{city: %{type: "string"}}}
+
+    @impl Normandy.Tool
+    def run(_tool, %Normandy.Tools.Context{input: input}),
+      do: {:ok, "weather in #{input["city"]}"}
   end
 
   describe "run/2 with no tool calls" do

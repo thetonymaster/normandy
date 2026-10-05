@@ -5,7 +5,7 @@ defmodule Normandy.Agents.ToolContextTest do
   alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.{ToolCall, ToolResult}
   alias Normandy.Test.{ContextProbe, ScriptedToolClient, StreamingProbeClient}
-  alias Normandy.Tools.{Context, Executor, Toolset}
+  alias Normandy.Tools.{Context, Toolset}
 
   defp probe_call, do: %ToolCall{id: "call_1", name: "probe", input: %{}}
 
@@ -98,17 +98,21 @@ defmodule Normandy.Agents.ToolContextTest do
              Dispatch.dispatch_one(config, probe_call(), Dispatch.default_pipeline())
   end
 
-  test "a user arity-3 execute_fn has no call, so a contextual tool returns its error" do
+  test "a user arity-3 execute_fn gets the invocation, without the call" do
+    parent = self()
     config = %{name: "a", toolset: Toolset.new([%ContextProbe{}])}
 
-    pipeline = %{
-      Dispatch.default_pipeline()
-      | execute_fn: fn _config, tool, _name -> Executor.execute_tool(tool) end
-    }
+    execute_fn = fn _config, invocation, name ->
+      send(parent, {:invocation, invocation, name})
+      {:ok, "ran"}
+    end
 
-    assert %ToolResult{is_error: true, output: %{error: msg}} =
+    pipeline = %{Dispatch.default_pipeline() | execute_fn: execute_fn}
+
+    assert %ToolResult{is_error: false, output: "ran"} =
              Dispatch.dispatch_one(config, probe_call(), pipeline)
 
-    assert msg =~ "requires tool context"
+    assert_received {:invocation, %Dispatch.Invocation{tool: %ContextProbe{}, input: %{}},
+                     "probe"}
   end
 end

@@ -82,7 +82,7 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
       :logger.remove_handler(@handler_id)
     end)
 
-    registry = Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
+    registry = Toolset.new([%Calculator{}])
 
     agent =
       BaseAgent.init(%{

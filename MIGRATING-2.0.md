@@ -628,3 +628,52 @@ fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
 
 - `Toolset.register/3` raises `ArgumentError` on an unknown or mistyped option (1.x ignored
   them).
+
+### Writing a tool
+
+`Normandy.Tools.BaseTool`, `Normandy.Tools.SchemaBaseTool` and `Normandy.Tools.ContextualTool`
+are gone. A tool is a struct whose module implements `Normandy.Tool`: `name/1`,
+`description/1`, `input_schema/1` and `run(tool, context)`. The struct holds configuration
+only. The model's input is validated against the input schema and passed as
+`context.input`; it is never merged into the struct (1.x copied any input key that matched
+a struct field into the struct, including fields such as `:endpoint` or `:timeout`).
+
+| 1.x | 2.0 |
+|---|---|
+| `use Normandy.Tools.SchemaBaseTool` + `tool_schema "n", "d" do fields end` | an input module (`use Normandy.Schema` + `io_schema "d" do fields end`) and `use Normandy.Tool, name: "n", description: "d", input: Input` |
+| `def execute(%__MODULE__{a: a})` | `def run(_tool, %Normandy.Tools.Context{input: %Input{a: a}})` |
+| `defimpl Normandy.Tools.BaseTool` with `tool_name/1`, `tool_description/1`, `input_schema/1`, `run/1` | `use Normandy.Tool` and the callbacks `name/1`, `description/1`, `input_schema/1`, `run/2` in the module |
+| `run(%{field: value})` reading input from the struct | `run(tool, %Context{input: %{"field" => value}})`: with a hand-written schema the input is a string-keyed map |
+| `defimpl Normandy.Tools.ContextualTool`, `run(tool, ctx)` | every tool gets the context: `run(tool, ctx)`; `ctx.values` is still `tool_context` |
+| `prepare_input/2` on the tool | gone; validation is the dispatcher's |
+| `Tool.validate/1`, `validate!/1` (generated) | `Normandy.Tools.Input.validate(tool, input)` |
+| `BaseTool.tool_name(t)` / `tool_description(t)` / `input_schema(t)` / `run(t)` | `Normandy.Tool.name(t)` / `description(t)` / `input_schema(t)` / `run(t, context)` |
+| a `:timeout` field on the tool struct | `register_tool(agent, tool, timeout: ms)` / `Toolset.register(t, tool, timeout: ms)`; a struct field is not read |
+
+- Input is checked before the tool runs. An unknown key, a missing required key or a wrong
+  type answers the call with an `is_error: true` tool result naming the keys
+  (`"invalid input for lookup: unknown keys \"endpoint\", \"timeout\"; expected only \"query\"; the tool was not run"`);
+  the turn goes on. With `input: Schema` every schema constraint applies and nothing is
+  coerced; with a hand-written map, required keys and basic JSON types are checked, and
+  unknown keys are rejected when the map declares `properties` (unless
+  `additionalProperties` is `true`; an absent `additionalProperties` counts as `false`). A
+  map with no `properties` key accepts any keys. 1.x validated `SchemaBaseTool` tools only
+  and dropped unknown keys silently.
+- `Normandy.A2A.AgentTool` and `Normandy.MCP.ToolWrapper` lose their `:input` field;
+  `AgentTool` loses `:timeout` and `AgentTool.new/3` raises on it: pass `timeout:` when
+  registering (default 30 s; `A2A.Registry.discover_and_register/3` registers with its
+  `:timeout`, default 60 s as before). An MCP tool's server schema is checked the same way:
+  one with no `properties` key accepts any input keys; one that lists `properties` rejects
+  other keys unless the server sets `additionalProperties: true`.
+- `Normandy.Tools.Memory`'s `:command` field and `prepare_input/2` are gone.
+- `Normandy.Tools.Executor`: `execute_tool/2` and `execute_tool_classified/2` take
+  `context:` (required, carrying the input) and `timeout:`; any other option raises.
+  `execute/3`, `execute_parallel/3`, `execute_sequential/3` and `:max_retries` are removed:
+  they ran tools whose input lived in the struct. Run a tool through an agent, or call
+  `Executor.execute_tool(tool, context: %Normandy.Tools.Context{tool_call_id: id, input: input})`.
+- Custom pipelines: `Dispatch.classify/3` verdicts carry a `%Dispatch.Invocation{tool, input, timeout}`
+  where they carried the input-merged struct; `execute/4`, `policy_fn` and `execute_fn`
+  receive it. `Dispatch.prepare_tool/2` and `validate_input/2` are gone;
+  `Dispatch.execute_approved/3` runs an approved call. A `PolicyEngine` sees the registered
+  tool as `ctx.tool` and the validated input as `ctx.input`.
+- `Context.build/2` is `Context.build(config, call, input)`.

@@ -16,14 +16,15 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   }
 
   defmodule NoopTool do
+    use Normandy.Tool, name: "noop", description: "no-op tool used to force the tool-loop path"
+
     defstruct []
 
-    defimpl Normandy.Tools.BaseTool do
-      def tool_name(_), do: "noop"
-      def tool_description(_), do: "no-op tool used to force the tool-loop path"
-      def input_schema(_), do: %{type: "object", properties: %{}, required: []}
-      def run(_), do: {:ok, :noop}
-    end
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{type: "object", properties: %{}, required: []}
+
+    @impl Normandy.Tool
+    def run(_tool, _context), do: {:ok, :noop}
   end
 
   defmodule Query do

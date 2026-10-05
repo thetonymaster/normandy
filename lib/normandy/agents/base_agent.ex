@@ -48,7 +48,6 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.Request
   alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
-  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
@@ -1741,12 +1740,15 @@ defmodule Normandy.Agents.BaseAgent do
 
   # The stop metadata adds :status and, for a failed execution, :error_type (why
   # it failed, see Executor.error_type/0). The model sees the same {:error, msg}.
-  defp span_execute(config, prepared_tool, tool_name, %ToolCall{} = call) do
-    tool_meta = Metadata.tool(config, call, prepared_tool)
+  defp span_execute(config, %Dispatch.Invocation{} = invocation, tool_name, %ToolCall{} = call) do
+    tool_meta = Metadata.tool(config, call, invocation.tool)
 
     with_tool_execute_span(config, tool_name, tool_meta, fn ->
       {r, error_type} =
-        Executor.execute_tool_classified(prepared_tool, context: Context.build(config, call))
+        Executor.execute_tool_classified(
+          invocation.tool,
+          Dispatch.executor_opts(config, invocation, call)
+        )
 
       stop_meta =
         case error_type do

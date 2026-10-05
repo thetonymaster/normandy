@@ -225,7 +225,7 @@ defmodule Normandy.MemoryStoreContract do
               "insert_text" => "line-#{i}"
             }
 
-            Memory.run(Memory.prepare_input(tool, input), ctx)
+            Memory.run(tool, %{ctx | input: input})
           end)
         end)
         |> Enum.map(&Task.await(&1, 15_000))
@@ -252,7 +252,7 @@ defmodule Normandy.MemoryStoreContract do
               "new_str" => "slot-#{i}:done"
             }
 
-            Memory.run(Memory.prepare_input(tool, input), ctx)
+            Memory.run(tool, %{ctx | input: input})
           end)
         end)
         |> Enum.map(&Task.await(&1, 15_000))

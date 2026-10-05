@@ -60,7 +60,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
           name: name,
           client: %ToolClient{},
           model: "test-model",
-          toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
+          toolset: Toolset.new([%Calculator{}]),
           max_tool_iterations: 5
         },
         extra

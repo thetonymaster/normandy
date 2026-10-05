@@ -71,7 +71,7 @@ harbour = Normandy.A2A.AgentTool.new(base <> "/a2a", card, transport_opts: [rece
 
 agent =
   BaseAgent.init(%{client: S.client(), model: S.model(), max_tokens: 300, name: "s12", toolset: registry, max_tool_iterations: 4})
-  |> BaseAgent.register_tool(harbour)
+  |> BaseAgent.register_tool(harbour, timeout: 60_000)
 
 turns = [
   "What is the population of Zubrowka? Use the city lookup tool.",

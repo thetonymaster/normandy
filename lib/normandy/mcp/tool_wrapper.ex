@@ -1,6 +1,6 @@
 defmodule Normandy.MCP.ToolWrapper do
   @moduledoc """
-  Wraps an MCP tool as a Normandy `BaseTool` implementation.
+  Wraps an MCP tool as a `Normandy.Tool`.
 
   This allows MCP tools discovered via any `Claudio.MCP.Client` adapter
   to be registered in a Normandy tool registry and used in the agent's
@@ -39,15 +39,18 @@ defmodule Normandy.MCP.ToolWrapper do
 
   """
 
+  use Normandy.Tool
+
+  alias Normandy.Tools.Context
+
   @type t :: %__MODULE__{
           adapter: module(),
           client: term(),
           tool: Claudio.MCP.Client.Tool.t(),
-          prefix: String.t() | nil,
-          input: map()
+          prefix: String.t() | nil
         }
 
-  defstruct [:adapter, :client, :tool, :prefix, input: %{}]
+  defstruct [:adapter, :client, :tool, :prefix]
 
   @doc """
   Creates a new ToolWrapper for an MCP tool.
@@ -70,40 +73,25 @@ defmodule Normandy.MCP.ToolWrapper do
     }
   end
 
-  @doc """
-  Prepares the tool with LLM-provided input parameters.
+  @impl Normandy.Tool
+  def name(%__MODULE__{tool: tool, prefix: nil}), do: tool.name
+  def name(%__MODULE__{tool: tool, prefix: prefix}), do: "#{prefix}__#{tool.name}"
 
-  Called by the BaseAgent tool loop instead of `struct/2` for tools
-  with dynamic input schemas.
-  """
-  @spec prepare_input(t(), map()) :: t()
-  def prepare_input(%__MODULE__{} = wrapper, input) when is_map(input) do
-    %{wrapper | input: input}
-  end
+  @impl Normandy.Tool
+  def description(%__MODULE__{tool: %{description: nil} = tool}), do: "MCP tool: #{tool.name}"
+  def description(%__MODULE__{tool: tool}), do: tool.description
 
-  defimpl Normandy.Tools.BaseTool do
-    def tool_name(%{tool: tool, prefix: nil}), do: tool.name
+  # The server's JSON Schema. Normandy.Tools.Input checks required keys, unknown keys and
+  # basic types against it before run/2; a schema without `properties` accepts any keys
+  # (decision 18), one with `properties` only those unless it sets `additionalProperties`.
+  @impl Normandy.Tool
+  def input_schema(%__MODULE__{tool: tool}), do: tool.input_schema
 
-    def tool_name(%{tool: tool, prefix: prefix}) do
-      "#{prefix}__#{tool.name}"
-    end
-
-    def tool_description(%{tool: tool}) do
-      tool.description || "MCP tool: #{tool.name}"
-    end
-
-    def input_schema(%{tool: tool}) do
-      tool.input_schema
-    end
-
-    def run(%{adapter: adapter, client: client, tool: tool, input: input}) do
-      case adapter.call_tool(client, tool.name, input, []) do
-        {:ok, result} ->
-          {:ok, result}
-
-        {:error, reason} ->
-          {:error, "MCP tool '#{tool.name}' failed: #{inspect(reason)}"}
-      end
+  @impl Normandy.Tool
+  def run(%__MODULE__{adapter: adapter, client: client, tool: tool}, %Context{input: input}) do
+    case adapter.call_tool(client, tool.name, input, []) do
+      {:ok, result} -> {:ok, result}
+      {:error, reason} -> {:error, "MCP tool '#{tool.name}' failed: #{inspect(reason)}"}
     end
   end
 end

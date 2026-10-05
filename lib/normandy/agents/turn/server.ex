@@ -178,7 +178,6 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
-  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   require Logger
@@ -1510,15 +1509,15 @@ defmodule Normandy.Agents.Turn.Server do
     parked =
       for {call, {:needs_approval, _p, ncall, _info}} <- classified, do: %{ncall | id: call.id}
 
-    runnable = for {_call, {:execute, prepared, ncall}} <- classified, do: {prepared, ncall}
+    runnable = for {_call, {:execute, invocation, ncall}} <- classified, do: {invocation, ncall}
     denied = for {_call, {:deny, %_{} = result}} <- classified, do: result
 
     executed =
       runnable
       |> Task.async_stream(
-        fn {prepared, ncall} ->
+        fn {invocation, ncall} ->
           OtelCtx.restore(parent_ctx)
-          Dispatch.execute(config, prepared, ncall, pipeline)
+          Dispatch.execute(config, invocation, ncall, pipeline)
         end,
         ordered: true,
         max_concurrency: max_conc,
@@ -1538,9 +1537,9 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # Run already-approved calls: re-derive `prepared` (registry + prepare_tool,
-  # deterministic, no policy) and run Dispatch.execute/4. NOT re-classify —
-  # re-running policy would re-park. Concurrency mirrors dispatch/2.
+  # Run already-approved calls through Dispatch.execute_approved/3 (toolset lookup and
+  # input validation again, deterministic, no policy). NOT re-classify — re-running
+  # policy would re-park. Concurrency mirrors dispatch/2.
   defp execute_approved(%Data{config: config}, calls) do
     pipeline = BaseAgent.base_agent_pipeline(config)
     max_conc = max(config.max_tool_concurrency || 1, 1)
@@ -1550,9 +1549,7 @@ defmodule Normandy.Agents.Turn.Server do
     |> Task.async_stream(
       fn %ToolCall{} = call ->
         OtelCtx.restore(parent_ctx)
-        {:ok, tool} = Toolset.fetch(config.toolset, call.name)
-        prepared = Dispatch.prepare_tool(tool, call.input)
-        Dispatch.execute(config, prepared, call, pipeline)
+        Dispatch.execute_approved(config, call, pipeline)
       end,
       ordered: true,
       max_concurrency: max_conc,
