@@ -124,6 +124,26 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
     refute_received {:llm_call_event, [:normandy, :agent, :llm_call, :stop]}
   end
 
+  test "a failed stream's llm_call :exception carries kind :error and the LLMError, like run/2" do
+    id = {__MODULE__, self(), make_ref()}
+    test_pid = self()
+
+    :telemetry.attach(
+      id,
+      [:normandy, :agent, :llm_call, :exception],
+      &__MODULE__.handle_exception/4,
+      test_pid
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    returned = error_of(agent([start(), block(), delta("Hel"), error_event()]))
+
+    assert_received {:exception_metadata, %{kind: :error, reason: %LLMError{} = reason} = meta}
+    assert reason == returned
+    assert meta.stacktrace == []
+  end
+
   test "a failed stream's exception telemetry and log line do not carry the config" do
     id = {__MODULE__, self(), make_ref()}
     test_pid = self()

@@ -83,7 +83,7 @@ defmodule Normandy.Telemetry do
     * `:exception`: `reason` is the `%Normandy.LLMError{}`. A failed call still bills
       tokens, so read them from `metadata.reason.usage` (raw) and
       `metadata.reason.usage_counts` (normalized), `nil` when nothing was billed.
-      On streaming calls the failure is thrown as `{:stream_turn_error, error}`.
+      `kind` is `:error` and `stacktrace` is `[]`, for streaming calls too.
 
   ### `[:normandy, :llm, :request, :start | :stop | :exception]`
 

@@ -1063,8 +1063,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Streaming analog of run_turn/2: the same admission, then the FSM driven with the
   # streaming handler set. Returns {config, output}, the output converted to the output
-  # schema (streaming_handlers/2). A thrown stream error is raised as a
-  # Normandy.LLMError.
+  # schema (streaming_handlers/2). A failed stream raises its Normandy.LLMError from
+  # inside the llm_call span (stream_llm_attempt/4); stream/3 returns it.
   defp run_stream_turn(config, user_input, callback) when is_function(callback, 1) do
     config = admit_turn_input(config, user_input)
 
@@ -1075,15 +1075,10 @@ defmodule Normandy.Agents.BaseAgent do
         output_schema: config.output_schema
       )
 
-    try do
-      {config, final_state} =
-        Driver.drive(state, HookHandlers.wrap(streaming_handlers(callback), config), config)
+    {config, final_state} =
+      Driver.drive(state, HookHandlers.wrap(streaming_handlers(callback), config), config)
 
-      {config, final_state.final_response}
-    catch
-      {:stream_turn_error, error} ->
-        raise LLMError.wrap(error)
-    end
+    {config, final_state.final_response}
   end
 
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
@@ -1135,9 +1130,9 @@ defmodule Normandy.Agents.BaseAgent do
   # Streams one LLM call to a final message, augmenting it with a :tool_calls key
   # so the pure FSM (which branches on .tool_calls) can dispatch. Tool calls are
   # stripped for no-tools agents (parity: a no-tools stream never executes tools),
-  # mirroring call_turn_llm's no-tools strip. A stream failure is thrown past the
-  # driver (from inside the llm_call span, so the span emits :exception) and
-  # caught in run_stream_turn/3, which raises the wrapped LLMError.
+  # mirroring call_turn_llm's no-tools strip. A stream failure raises its LLMError
+  # from inside the llm_call span, so the span emits :exception with `kind: :error`
+  # and the LLMError, as run/2's call does; stream/3 rescues and returns it.
   defp call_stream_llm(config, state, callback) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
 
@@ -1161,7 +1156,7 @@ defmodule Normandy.Agents.BaseAgent do
     Map.put(final_message, :tool_calls, tool_calls)
   end
 
-  # Runs inside the llm_call span: a failed stream throws here so the span emits
+  # Runs inside the llm_call span: a failed stream raises here so the span emits
   # :exception rather than :stop.
   defp stream_llm_attempt(config, state, callback, llm_metadata) do
     {request, prefix_key} = build_stream_request(config)
@@ -1190,9 +1185,9 @@ defmodule Normandy.Agents.BaseAgent do
          |> put_usage(Map.get(final_message, :usage))}
 
       {:error, error} ->
-        # Only the error: the span's exception log and telemetry inspect the thrown
-        # term, and the config holds the client.
-        throw({:stream_turn_error, error})
+        # Only the error: the span's telemetry carries the raised term, and the
+        # config holds the client.
+        raise LLMError.wrap(error)
     end
   end
 
