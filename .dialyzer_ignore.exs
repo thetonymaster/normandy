@@ -13,12 +13,6 @@
   # an error result instead of crashing the turn (audit SCHEMA-6).
   {"lib/normandy/tools/executor.ex", :pattern_match_cov},
 
-  # llm/call.ex converse/3 and stream/3: Dialyzer trusts the Model protocol's spec, so the
-  # catch-all for any other return is "unreachable". A third-party implementation can return
-  # anything (a 1.x bare struct, nil); the catch-all raises ArgumentError naming it instead of
-  # a MatchError far from the cause.
-  {"lib/normandy/llm/call.ex", :pattern_match_cov},
-
   # --- Tooling false positives ---
 
   # behaviours/session_store/postgres/migration.ex up/0 + down/0 (lines 15, 24, 36): idiomatic

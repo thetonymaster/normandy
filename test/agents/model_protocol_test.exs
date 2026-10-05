@@ -46,6 +46,29 @@ defmodule Normandy.Agents.ModelProtocolTest do
     assert Exception.message(message) =~ "Normandy.Agents.BaseAgentOutputSchema"
   end
 
+  test "Call.converse/3 rejects a %Response{} without a meta map or with unusable content" do
+    for {response, named} <- [
+          {%Response{content: %BaseAgentOutputSchema{}, meta: nil}, "meta: nil"},
+          {%Response{content: 42}, "content: an integer"},
+          {%Response{content: nil}, "content: nil"}
+        ] do
+      client = %Normandy.Test.StubClient{reply: fn _ -> {:ok, response} end}
+      error = assert_raise ArgumentError, fn -> Call.converse(client, request(), []) end
+      assert Exception.message(error) =~ "{:ok, %Normandy.LLM.Response{}}"
+      assert Exception.message(error) =~ named
+    end
+  end
+
+  test "a %Response{meta: nil} fails run!/2 with the ArgumentError, not a BadMapError" do
+    client = %Normandy.Test.StubClient{
+      reply: fn model -> {:ok, %Response{content: model, meta: nil}} end
+    }
+
+    assert_raise ArgumentError, ~r/meta: nil/, fn ->
+      BaseAgent.run!(BaseAgent.init(%{client: client, model: "m"}), %{chat_message: "hi"})
+    end
+  end
+
   test "a 1.x-style client fails run!/2 with the ArgumentError, not a MatchError" do
     agent = BaseAgent.init(%{client: %OneXClient{}, model: "m"})
 

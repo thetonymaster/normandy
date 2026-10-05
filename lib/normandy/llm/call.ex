@@ -13,7 +13,10 @@ defmodule Normandy.LLM.Call do
           {:ok, Response.t()} | {:error, LLMError.t()}
   def converse(client, %Request{} = request, opts) do
     case Model.converse(client, request, opts) do
-      {:ok, %Response{}} = ok ->
+      # The fields BaseAgent reads: a meta map, and content that is the filled response
+      # model or the answer text. Anything else is a wrong return, named here.
+      {:ok, %Response{content: content, meta: meta}} = ok
+      when is_map(meta) and (is_binary(content) or is_struct(content)) ->
         ok
 
       {:error, %LLMError{}} = error ->
@@ -48,6 +51,10 @@ defmodule Normandy.LLM.Call do
   end
 
   defp describe({tag, value}) when is_atom(tag), do: "{#{inspect(tag)}, #{describe(value)}}"
+
+  defp describe(%Response{content: content, meta: meta}),
+    do: "%Normandy.LLM.Response{content: #{describe(content)}, meta: #{describe(meta)}}"
+
   defp describe(%module{}), do: "%#{inspect(module)}{}"
   defp describe(other), do: Describe.type_of(other)
 end
