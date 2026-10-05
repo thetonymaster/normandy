@@ -128,7 +128,7 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
   end
 
   test "uses DSL agent name in lifecycle log metadata" do
-    {:ok, agent} = NamedDSLAgent.new(client: %LoggingToolCallClient{})
+    agent = NamedDSLAgent.new(client: %LoggingToolCallClient{})
 
     {_agent, _response} =
       BaseAgent.run!(agent, %BaseAgentInputSchema{chat_message: "Hello from planner"})

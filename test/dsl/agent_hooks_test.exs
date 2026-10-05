@@ -24,20 +24,20 @@ defmodule Normandy.DSL.AgentHooksTest do
   defp client, do: %NormandyTest.Support.ModelMockup{}
 
   test "declared hooks reach the agent's behaviours and config/0" do
-    {:ok, agent} = HookedAgent.new(client: client())
+    agent = HookedAgent.new(client: client())
     assert agent.behaviours.hooks == [{Probe, tag: :dsl, on_error: :open}]
     assert HookedAgent.config().hooks == [{Probe, tag: :dsl, on_error: :open}]
   end
 
   test "declared hooks run before hooks given at runtime" do
-    {:ok, agent} =
+    agent =
       HookedAgent.new(client: client(), behaviours: %Config{hooks: [{TurnEndOnly, []}]})
 
     assert agent.behaviours.hooks == [{Probe, tag: :dsl, on_error: :open}, {TurnEndOnly, []}]
   end
 
   test "an agent without hooks keeps behaviours nil, as before" do
-    {:ok, agent} = PlainAgent.new(client: client())
+    agent = PlainAgent.new(client: client())
     assert agent.behaviours == nil
     assert PlainAgent.config().hooks == []
   end

@@ -28,14 +28,14 @@ defmodule Normandy.DSL.AgentStreamingGuardrailsTest do
 
   describe "streaming_mode / streaming_chunk_size macros" do
     test "wire incremental mode and chunk size into the agent config" do
-      {:ok, agent} = IncrementalAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = IncrementalAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
       assert agent.output_guardrails_streaming_mode == :incremental
       assert agent.output_guardrails_chunk_size == 128
     end
 
     test "defaults apply when macros are omitted" do
-      {:ok, agent} = DefaultStreamingAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = DefaultStreamingAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
       assert agent.output_guardrails_streaming_mode == :accumulate
       assert agent.output_guardrails_chunk_size == 200

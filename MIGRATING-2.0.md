@@ -506,6 +506,13 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   message.
 - `run/3` and `run!/3` name themselves in their option error, and options that are not a
   keyword list raise `ArgumentError` instead of `FunctionClauseError`.
+- A DSL agent's `new/1` returns the agent (`agent = MyAgent.new(client: c)`); it returned
+  `{:ok, agent}` and never `{:error, _}`. It takes the same options as `BaseAgent.init/1`
+  (top level or under `:override`) plus `:memory_store` and `:max_messages`, checks them the
+  same way, and its errors name `MyAgent.new/1`. A missing `:client` raises `ArgumentError`
+  (1.x: `KeyError`); an agent that declares no model and is given none in `new/1` raises `ArgumentError`
+  `"MyAgent.new/1: requires :model (a string), got none"` (1.x: `RuntimeError`
+  `"model is required in agent definition"`).
 
 ## New, non-breaking
 

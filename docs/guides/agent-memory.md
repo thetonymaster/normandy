@@ -96,7 +96,7 @@ defmodule MyAgent do
   end
 end
 
-{:ok, agent} =
+agent =
   MyAgent.new(
     client: client,
     memory_store: {MemoryStore.Redis, conn},

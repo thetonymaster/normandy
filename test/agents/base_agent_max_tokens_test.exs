@@ -79,7 +79,7 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
   end
 
   test "a DSL agent without max_tokens uses the same default" do
-    {:ok, agent} = DefaultDSLAgent.new(client: %CapturingClient{pid: self()})
+    agent = DefaultDSLAgent.new(client: %CapturingClient{pid: self()})
     assert agent.max_tokens == 16_000
   end
 end

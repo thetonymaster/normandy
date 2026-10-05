@@ -145,7 +145,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.DSL.Agent`** - `agent do ... end` macro for defining agents declaratively
   - Configure background, steps, output_instructions, model, tools, etc.
-  - Generates `new/1` and `run/1-3` functions automatically
+  - Generates `new/1` (returns the `BaseAgentConfig`; takes `BaseAgent.init/1`'s options without defaults, checked under `MyAgent.new/1`) and `run/1-3`
 
 - **`Normandy.DSL.Workflow`** - `workflow do ... end` macro for multi-agent workflows
   - Sequential (`step`), parallel (`parallel`), and race (`race`) execution patterns

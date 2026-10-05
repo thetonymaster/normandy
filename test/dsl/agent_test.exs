@@ -39,6 +39,15 @@ defmodule Normandy.DSL.AgentTest do
     end
   end
 
+  # Declares no model: new/1 raises before it builds anything.
+  defmodule NoModelAgent do
+    use Normandy.DSL.Agent
+
+    agent do
+      name("No Model Agent")
+    end
+  end
+
   describe "agent definition" do
     test "config/0 returns agent configuration" do
       config = TestAgent.config()
@@ -54,7 +63,7 @@ defmodule Normandy.DSL.AgentTest do
     test "an agent without temperature(...) sends none" do
       assert StructuredAgent.config().temperature == nil
 
-      {:ok, agent} = StructuredAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = StructuredAgent.new(client: %NormandyTest.Support.ModelMockup{})
       assert agent.temperature == nil
     end
 
@@ -79,7 +88,7 @@ defmodule Normandy.DSL.AgentTest do
     test "creates agent with required client" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       assert agent.client == client
       assert agent.model == "claude-haiku-4-5-20251001"
@@ -90,7 +99,7 @@ defmodule Normandy.DSL.AgentTest do
     test "applies system prompt" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       assert agent.prompt_specification != nil
       assert agent.prompt_specification.background == ["You are a test agent."]
@@ -99,7 +108,7 @@ defmodule Normandy.DSL.AgentTest do
     test "applies structured prompt" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = StructuredAgent.new(client: client)
+      agent = StructuredAgent.new(client: client)
 
       assert agent.prompt_specification.background == ["Background context"]
       assert agent.prompt_specification.steps == ["1. Think\n2. Respond"]
@@ -109,7 +118,7 @@ defmodule Normandy.DSL.AgentTest do
     test "supports override options" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} =
+      agent =
         TestAgent.new(
           client: client,
           override: [temperature: 0.5, max_tokens: 1024]
@@ -122,7 +131,7 @@ defmodule Normandy.DSL.AgentTest do
     test "accepts top-level name override" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = StructuredAgent.new(client: client, name: "foo")
+      agent = StructuredAgent.new(client: client, name: "foo")
 
       assert agent.name == "foo"
     end
@@ -130,7 +139,7 @@ defmodule Normandy.DSL.AgentTest do
     test "explicit override wins over top-level option on conflict" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} =
+      agent =
         StructuredAgent.new(
           client: client,
           name: "implicit",
@@ -143,7 +152,7 @@ defmodule Normandy.DSL.AgentTest do
     test "uses declared DSL name when no runtime name override is provided" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       assert agent.name == "Test Agent"
     end
@@ -151,20 +160,20 @@ defmodule Normandy.DSL.AgentTest do
     test "keeps name nil when no DSL name is declared and no runtime override is provided" do
       client = %NormandyTest.Support.ModelMockup{}
 
-      {:ok, agent} = StructuredAgent.new(client: client)
+      agent = StructuredAgent.new(client: client)
 
       assert agent.name == nil
     end
 
     test "max_messages caps the built agent's memory" do
-      {:ok, agent} = LimitedMemoryAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = LimitedMemoryAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
       assert agent.memory.max_messages == 10
       assert agent.initial_memory.max_messages == 10
     end
 
     test "a max_messages override caps the memory too" do
-      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_messages: 4)
+      agent = TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_messages: 4)
 
       assert agent.memory.max_messages == 4
     end
@@ -180,24 +189,120 @@ defmodule Normandy.DSL.AgentTest do
     end
 
     test "run/3 with stream: true raises with a stream/3 hint instead of running non-streaming" do
-      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
       assert_raise ArgumentError, ~r/BaseAgent.stream\/3/, fn ->
         TestAgent.run(agent, "hi", stream: true)
       end
     end
 
-    test "raises when client is missing" do
-      assert_raise KeyError, fn ->
-        TestAgent.new([])
-      end
+    test "an agent that declares no model raises, naming new/1" do
+      assert_raise ArgumentError,
+                   "Normandy.DSL.AgentTest.NoModelAgent.new/1: requires :model (a string), " <>
+                     "got none",
+                   fn -> NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}) end
+    end
+
+    test "a model given to new/1 serves an agent that declares none" do
+      agent = NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}, model: "m")
+
+      assert agent.model == "m"
+    end
+
+    test "a misspelled :model is named, not reported missing" do
+      assert_raise ArgumentError,
+                   ~r/^Normandy.DSL.AgentTest.NoModelAgent.new\/1: unknown option :modle; supported: /,
+                   fn ->
+                     NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}, modle: "m")
+                   end
+    end
+
+    test "a missing client raises ArgumentError naming new/1" do
+      assert_raise ArgumentError,
+                   "Normandy.DSL.AgentTest.TestAgent.new/1: required :client option not found, " <>
+                     "received options: []",
+                   fn -> TestAgent.new([]) end
+    end
+
+    test "new/1 returns the agent config itself" do
+      assert %Normandy.Agents.BaseAgentConfig{} =
+               TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
+    end
+
+    test "an unknown option names new/1, the option and the supported ones" do
+      error =
+        assert_raise ArgumentError, fn ->
+          TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, temprature: 0.2)
+        end
+
+      assert error.message =~
+               ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: unknown option :temprature; supported: :client, :model, /
+
+      assert error.message =~ ":override, :memory_store"
+    end
+
+    test "an unknown option under :override names new/1 too" do
+      assert_raise ArgumentError,
+                   ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: unknown option :maxtokens; supported: /,
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       override: [maxtokens: 1]
+                     )
+                   end
+    end
+
+    test ":override must be a keyword list" do
+      assert_raise ArgumentError,
+                   "Normandy.DSL.AgentTest.TestAgent.new/1: invalid value for :override option: " <>
+                     "expected keyword list, got: :fast",
+                   fn ->
+                     TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, override: :fast)
+                   end
+    end
+
+    test ":system_prompt gets the same hint as BaseAgent.init/1" do
+      assert_raise ArgumentError,
+                   ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: unknown option :system_prompt; the system prompt goes in :prompt_specification/,
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       system_prompt: "Be brief."
+                     )
+                   end
+    end
+
+    test "a secret under a misspelled key is never shown" do
+      error =
+        assert_raise ArgumentError, fn ->
+          TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, api_kye: "sk-ant-canary")
+        end
+
+      assert error.message =~ "unknown option :api_kye"
+      refute error.message =~ "sk-"
+    end
+
+    test "an option left out keeps the declared value" do
+      agent = TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, name: "renamed")
+
+      assert agent.name == "renamed"
+      assert agent.model == TestAgent.config().model
+      assert agent.max_tokens == TestAgent.config().max_tokens
+    end
+
+    test "new/1's option docs come from its schema" do
+      docs = Normandy.Options.docs(Normandy.DSL.Agent.new_schema())
+
+      assert docs =~ "* `:client` (a struct implementing `Normandy.Agents.Model`) - Required."
+      assert docs =~ "* `:override`"
+      assert docs =~ "* `:memory_store`"
     end
   end
 
   describe "run/2" do
     test "runs agent with string input" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       {_updated_agent, response} = TestAgent.run!(agent, "test input")
 
@@ -206,7 +311,7 @@ defmodule Normandy.DSL.AgentTest do
 
     test "runs agent with map input" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       {_updated_agent, response} = TestAgent.run!(agent, %{chat_message: "test"})
 
@@ -215,7 +320,7 @@ defmodule Normandy.DSL.AgentTest do
 
     test "list-shaped input reaches memory verbatim (multimodal passthrough)" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       blocks = [
         %{"type" => "text", "text" => "what is in this image?"},
@@ -237,7 +342,7 @@ defmodule Normandy.DSL.AgentTest do
 
     test "binary input wraps to chat_message (regression)" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       {updated_agent, _response} = TestAgent.run!(agent, "plain text")
 
@@ -252,7 +357,7 @@ defmodule Normandy.DSL.AgentTest do
 
     test "map input is cast into BaseAgentInputSchema (regression)" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       {updated_agent, _response} = TestAgent.run!(agent, %{chat_message: "test"})
 
@@ -268,7 +373,7 @@ defmodule Normandy.DSL.AgentTest do
   describe "reset_memory/1" do
     test "resets agent memory" do
       client = %NormandyTest.Support.ModelMockup{}
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
 
       # Run to add to memory
       {agent, _} = TestAgent.run!(agent, "first message")
@@ -285,7 +390,7 @@ defmodule Normandy.DSL.AgentTest do
       client = %NormandyTest.Support.ModelMockup{}
 
       # Create agent
-      {:ok, agent} = TestAgent.new(client: client)
+      agent = TestAgent.new(client: client)
       assert agent != nil
 
       # Run once
@@ -323,24 +428,24 @@ defmodule Normandy.DSL.AgentTest do
     end
 
     test "default flows through to a built agent" do
-      {:ok, agent} = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = TestAgent.new(client: %NormandyTest.Support.ModelMockup{})
       assert agent.max_tool_concurrency == 1
     end
 
     test "DSL value flows through to a built agent" do
-      {:ok, agent} = ConcurrentAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = ConcurrentAgent.new(client: %NormandyTest.Support.ModelMockup{})
       assert agent.max_tool_concurrency == 5
     end
 
     test "top-level override on new/1 wins over DSL default" do
-      {:ok, agent} =
+      agent =
         TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 7)
 
       assert agent.max_tool_concurrency == 7
     end
 
     test ":override keyword wins over both DSL and top-level" do
-      {:ok, agent} =
+      agent =
         ConcurrentAgent.new(
           client: %NormandyTest.Support.ModelMockup{},
           max_tool_concurrency: 3,
@@ -351,7 +456,7 @@ defmodule Normandy.DSL.AgentTest do
     end
 
     test "integer < 1 clamps to 1 (matches runtime tool-loop floor)" do
-      {:ok, agent} =
+      agent =
         TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, max_tool_concurrency: 0)
 
       assert agent.max_tool_concurrency == 1

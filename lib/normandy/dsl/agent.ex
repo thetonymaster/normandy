@@ -29,7 +29,7 @@ defmodule Normandy.DSL.Agent do
       end
 
       # Create an instance
-      {:ok, agent} = MyResearchAgent.new(client: my_client)
+      agent = MyResearchAgent.new(client: my_client)
 
       # Run the agent
       {:ok, updated_agent, response} = MyResearchAgent.run(agent, "Research quantum computing")
@@ -78,9 +78,11 @@ defmodule Normandy.DSL.Agent do
   """
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Options
   alias Normandy.Tools.Memory
 
   defmacro __using__(_opts) do
@@ -387,48 +389,81 @@ defmodule Normandy.DSL.Agent do
     end
   end
 
-  # The BaseAgent.init/1 options a DSL agent can override in new/1, plus
-  # :max_messages. :client is passed on its own.
-  @override_keys [
-    :model,
-    :temperature,
-    :max_tokens,
-    :name,
-    :input_schema,
-    :output_schema,
-    :memory,
-    :tool_context,
-    :max_messages,
-    :prompt_specification,
-    :tool_registry,
-    :max_tool_iterations,
-    :max_tool_concurrency,
-    :retry_options,
-    :enable_circuit_breaker,
-    :circuit_breaker_options,
-    :enable_json_retry,
-    :json_retry_max_attempts,
-    :mcp_servers,
-    :behaviours,
-    :input_guardrails,
-    :output_guardrails,
-    :output_guardrails_streaming_mode,
-    :output_guardrails_chunk_size,
-    :output_guardrails_on_violation
+  # new/1 takes BaseAgent.init/1's options without their defaults (an option left out
+  # keeps the agent's declared value; :client is required), plus three of its own.
+  @own_options [
+    override: [
+      type: :keyword_list,
+      default: [],
+      doc: "`BaseAgent.init/1` options (and `:max_messages`) that win over the top-level ones."
+    ],
+    memory_store: [
+      type: {:tuple, [:atom, :any]},
+      doc:
+        "`{module, handle}`: the store for a declared `memory`; required when the agent " <>
+          "declares memory, rejected when it does not."
+    ],
+    max_messages: [
+      type: {:or, [:pos_integer, nil]},
+      doc: "Caps the memory at this many messages; ignored when `:memory` is given."
+    ]
   ]
 
-  @doc false
-  def validate_overrides!(agent_module, overrides) do
-    case Keyword.keys(overrides) -- @override_keys do
-      [] ->
-        :ok
+  @override_definition InitOptions.without_defaults(InitOptions.definition()) ++
+                         Keyword.take(@own_options, [:max_messages])
 
-      [key | _] ->
-        raise ArgumentError,
-              "#{inspect(agent_module)}.new/1: unknown option #{inspect(key)}; " <>
-                "allowed: :client, :override and #{Enum.map_join(@override_keys, ", ", &inspect/1)}"
+  @new_definition Keyword.update!(
+                    @override_definition,
+                    :client,
+                    &Keyword.put(&1, :required, true)
+                  ) ++ Keyword.take(@own_options, [:override, :memory_store])
+
+  @new_schema NimbleOptions.new!(@new_definition)
+  @override_schema NimbleOptions.new!(@override_definition)
+
+  @doc false
+  # The schema of a DSL agent's new/1, for its generated docs.
+  @spec new_schema() :: NimbleOptions.t()
+  def new_schema, do: @new_schema
+
+  @doc false
+  # new/1's options -> {the BaseAgent.init/1 config, the memory store}. Every option is
+  # checked here, under new/1's name, before anything is built.
+  @spec init_config!(module(), keyword() | map(), map(), map()) :: {map(), term()}
+  def init_config!(agent_module, opts, base_config, compile_config) do
+    mfa = {agent_module, :new, 1}
+    :ok = InitOptions.check_misnamed!(opts, @new_schema, mfa)
+    opts = Options.validate!(opts, @new_schema, mfa)
+    {explicit, opts} = Keyword.pop!(opts, :override)
+    :ok = InitOptions.check_misnamed!(explicit, @override_schema, mfa)
+    explicit = Options.validate!(explicit, @override_schema, mfa)
+    {memory_store, implicit} = Keyword.pop(opts, :memory_store)
+
+    {max_messages, overrides} =
+      implicit
+      |> Keyword.merge(explicit)
+      |> Keyword.pop(:max_messages, compile_config.max_messages)
+
+    # After every option check (a misspelled :model is named first) and after the merge (a
+    # :model given to new/1 serves an agent that declares none).
+    if Keyword.get(overrides, :model, base_config.model) == nil do
+      raise ArgumentError,
+            "#{inspect(agent_module)}.new/1: requires :model (a string), got none"
     end
+
+    config =
+      base_config
+      |> Map.merge(Map.new(overrides))
+      |> put_declared_hooks(compile_config.hooks)
+      |> put_memory_cap(max_messages)
+
+    {config, memory_store}
   end
+
+  # BaseAgent.init/1 takes the cap through the memory; a given :memory wins.
+  defp put_memory_cap(config, nil), do: config
+  defp put_memory_cap(%{memory: _} = config, _cap), do: config
+  defp put_memory_cap(config, cap), do: Map.put(config, :memory, AgentMemory.new_memory(cap))
 
   @doc false
   # Builds the memory tool from the agent's declared options and the runtime store.
@@ -503,69 +538,36 @@ defmodule Normandy.DSL.Agent do
       @agent_description Module.get_attribute(__MODULE__, :agent_description)
 
       @doc """
-      Creates a new agent instance.
+      Builds the agent: a `%Normandy.Agents.BaseAgentConfig{}` with the declared
+      prompt, tools and memory.
+
+      Takes `BaseAgent.init/1`'s options, which override what the agent declares,
+      either at the top level or under `:override` (which wins when both give one).
+      Every option is checked first: an unknown option or a bad value raises
+      `ArgumentError` naming `#{inspect(__MODULE__)}.new/1` and the option.
+
+          agent = #{inspect(__MODULE__)}.new(client: my_client)
+          agent = #{inspect(__MODULE__)}.new(client: my_client, override: [max_tokens: 2048])
 
       ## Options
 
-      - `:client` - LLM client (required)
-      - `:override` - Keyword list to override agent defaults
-      - Top-level override-like keys (for example `name:`, `temperature:`) are also
-        accepted and treated as overrides.
-
-      The implementation gathers explicit overrides from `:override` and implicit
-      override-like keys from top-level options, then merges them:
-
-          explicit = Keyword.get(opts, :override, [])
-          implicit = Keyword.drop(opts, [:client, :override])
-          overrides = Keyword.merge(implicit, explicit)
-
-      This allows callers to pass overrides either under `:override` or directly
-      at the top level. When both are present for the same key, `:override` wins.
-
-      `:memory_store` (`{module, handle}`) supplies the store for a declared
-      `memory`; it is required when the agent declares memory and rejected when
-      it does not. `:tool_context` (a map) is passed to `BaseAgent.init/1`.
-
-      An option that is not a `BaseAgent.init/1` option (or `:max_messages`)
-      raises `ArgumentError`, so a typo such as `temprature:` does not pass
-      silently.
-
-      ## Examples
-
-          {:ok, agent} = MyAgent.new(client: my_client)
-
-          # With overrides
-          {:ok, agent} = MyAgent.new(
-            client: my_client,
-            override: [max_tokens: 2048]
-          )
-
-          # Top-level overrides are also supported
-          {:ok, agent} = MyAgent.new(client: my_client, name: "planner")
+      #{Normandy.Options.docs(Normandy.DSL.Agent.new_schema())}
       """
       def new(opts) do
-        client = Keyword.fetch!(opts, :client)
-        {memory_store, opts} = Keyword.pop(opts, :memory_store)
+        {config, memory_store} =
+          Normandy.DSL.Agent.init_config!(__MODULE__, opts, base_config(), @agent_compile_config)
+
         # Built before init/1 so a missing store raises before any process starts.
         memory_tool =
           Normandy.DSL.Agent.memory_tool!(__MODULE__, @agent_compile_config.memory, memory_store)
 
-        explicit = Keyword.get(opts, :override, [])
-        implicit = Keyword.drop(opts, [:client, :override])
-        overrides = Keyword.merge(implicit, explicit)
+        agent =
+          config
+          |> BaseAgent.init()
+          |> apply_system_prompt()
+          |> register_tools()
 
-        config = build_config(client, overrides)
-        agent = BaseAgent.init(config)
-
-        # Apply system prompt if defined
-        agent = apply_system_prompt(agent)
-
-        # Register tools if any
-        agent = register_tools(agent)
-
-        agent = if memory_tool, do: BaseAgent.register_tool(agent, memory_tool), else: agent
-
-        {:ok, agent}
+        if memory_tool, do: BaseAgent.register_tool(agent, memory_tool), else: agent
       end
 
       @doc """
@@ -627,13 +629,8 @@ defmodule Normandy.DSL.Agent do
 
       # Private functions
 
-      defp build_config(client, overrides) do
-        unless @agent_compile_config.model do
-          raise "model is required in agent definition"
-        end
-
-        base_config = %{
-          client: client,
+      defp base_config do
+        %{
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
           max_tokens: @agent_compile_config.max_tokens,
@@ -646,25 +643,6 @@ defmodule Normandy.DSL.Agent do
           output_guardrails_chunk_size: @agent_compile_config.output_guardrails_chunk_size,
           output_guardrails_on_violation: @agent_compile_config.output_guardrails_on_violation
         }
-
-        Normandy.DSL.Agent.validate_overrides!(__MODULE__, overrides)
-
-        config = Map.merge(base_config, Map.new(overrides))
-        config = Normandy.DSL.Agent.put_declared_hooks(config, @agent_compile_config.hooks)
-        max_messages = Map.get(config, :max_messages, @agent_compile_config.max_messages)
-
-        # BaseAgent.init/1 takes the cap through the memory, not a :max_messages key.
-        case {max_messages, Map.has_key?(config, :memory)} do
-          {nil, _} ->
-            config
-
-          {_, true} ->
-            config
-
-          {cap, false} ->
-            Map.put(config, :memory, AgentMemory.new_memory(cap))
-        end
-        |> Map.delete(:max_messages)
       end
 
       defp apply_system_prompt(agent) do

@@ -116,9 +116,9 @@ defmodule Normandy.DSL.WorkflowTest do
     setup do
       client = text_client()
 
-      {:ok, simple_agent} = SimpleAgent.new(client: client)
-      {:ok, process_agent} = ProcessAgent.new(client: client)
-      {:ok, validate_agent} = ValidateAgent.new(client: client)
+      simple_agent = SimpleAgent.new(client: client)
+      process_agent = ProcessAgent.new(client: client)
+      validate_agent = ValidateAgent.new(client: client)
 
       agents_map = %{
         SimpleAgent => simple_agent,
@@ -233,8 +233,8 @@ defmodule Normandy.DSL.WorkflowTest do
   describe "telemetry" do
     test "execute/1 emits one [:normandy, :workflow, :run] span with identity and size only" do
       client = text_client()
-      {:ok, simple_agent} = SimpleAgent.new(client: client)
-      {:ok, process_agent} = ProcessAgent.new(client: client)
+      simple_agent = SimpleAgent.new(client: client)
+      process_agent = ProcessAgent.new(client: client)
 
       handler_id = "workflow-span-#{System.unique_integer([:positive])}"
       parent = self()

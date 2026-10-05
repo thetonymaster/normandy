@@ -49,7 +49,7 @@ S.start("09_dsl", cap: 10)
 
 agents =
   Map.new([E2E.S09.Gather, E2E.S09.Sentiment, E2E.S09.Topic, E2E.S09.Fast], fn mod ->
-    {:ok, a} = mod.new(client: S.client())
+    a = mod.new(client: S.client())
     {mod, a}
   end)
 

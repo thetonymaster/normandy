@@ -205,16 +205,16 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
     client = NormandyIntegrationHelper.create_real_client()
 
     # Create all agent instances
-    {:ok, research_agent} = ResearchAgent.new(client: client)
-    {:ok, analyzer_agent} = AnalyzerAgent.new(client: client)
-    {:ok, summarizer_agent} = SummarizerAgent.new(client: client)
-    {:ok, sentiment_agent} = SentimentAgent.new(client: client)
-    {:ok, topic_agent} = TopicAgent.new(client: client)
-    {:ok, quality_agent} = QualityAgent.new(client: client)
-    {:ok, fast_agent} = FastAgent.new(client: client)
-    {:ok, validation_agent} = ValidationAgent.new(client: client)
-    {:ok, processor_agent} = ProcessorAgent.new(client: client)
-    {:ok, structured_agent} = StructuredAgent.new(client: client)
+    research_agent = ResearchAgent.new(client: client)
+    analyzer_agent = AnalyzerAgent.new(client: client)
+    summarizer_agent = SummarizerAgent.new(client: client)
+    sentiment_agent = SentimentAgent.new(client: client)
+    topic_agent = TopicAgent.new(client: client)
+    quality_agent = QualityAgent.new(client: client)
+    fast_agent = FastAgent.new(client: client)
+    validation_agent = ValidationAgent.new(client: client)
+    processor_agent = ProcessorAgent.new(client: client)
+    structured_agent = StructuredAgent.new(client: client)
 
     agents_map = %{
       ResearchAgent => research_agent,
@@ -399,7 +399,7 @@ defmodule NormandyIntegration.DSLComprehensiveTest do
   @tag :normandy_integration
   @tag timeout: 120_000
   test "Test 5: Agent with Structured Output", %{client: client} do
-    {:ok, agent} = StructuredAgent.new(client: client)
+    agent = StructuredAgent.new(client: client)
 
     # Run the agent
     {updated_agent, response} = StructuredAgent.run!(agent, "List 3 benefits of Elixir")
