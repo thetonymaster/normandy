@@ -46,6 +46,27 @@ defmodule Normandy.Context.SummarizerTest do
   end
 
   describe "summarize_messages/4" do
+    # Call (6280534) rejects content: nil; text or a struct without :chat_message still
+    # reaches the summarizer, which reports it.
+    test "an answer that is not the summary schema is an :unexpected_response error", %{
+      agent: agent
+    } do
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      for content <- ["plain text", %Normandy.Agents.ToolCallResponse{}] do
+        client = %StubClient{reply: fn _ -> content end}
+
+        assert {:error, {:unexpected_response, ^content}} =
+                 Summarizer.summarize_messages(client, agent, messages)
+      end
+
+      nil_client = %StubClient{reply: fn _ -> {:ok, %Normandy.LLM.Response{content: nil}} end}
+
+      assert_raise ArgumentError, ~r/content: nil/, fn ->
+        Summarizer.summarize_messages(nil_client, agent, messages)
+      end
+    end
+
     test "the default prompt keeps stated facts word for word, across summaries", %{agent: agent} do
       messages = [
         %{role: "user", content: "Previous conversation summary: The vault code is TANGERINE-7."},

@@ -206,6 +206,28 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert AgentMemory.history(returned_acc.memory) == original_history
     end
 
+    # Since Normandy.LLM.Call checks the response shape (6280534), a client answering
+    # %Response{content: nil} is a wrong return: compaction raises Call's named
+    # ArgumentError instead of returning {:error, {:unexpected_response, nil}}.
+    test ":summarize raises Call's ArgumentError when the client answers content: nil" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+
+      acc = %{
+        memory: mem_with(msgs),
+        client: %StubClient{reply: fn _ -> {:ok, %Normandy.LLM.Response{content: nil}} end},
+        model: "m"
+      }
+
+      assert_raise ArgumentError,
+                   ~r/must return \{:ok, %Normandy.LLM.Response\{\}\}.*content: nil/,
+                   fn ->
+                     WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+                       strategy: :summarize,
+                       reserved_tokens: 64
+                     )
+                   end
+    end
+
     test ":summarize keeps history when the summarization call fails" do
       msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
 
