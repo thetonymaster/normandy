@@ -133,7 +133,17 @@ defmodule Normandy.MixProject do
             Normandy.A2A.Server
           ],
           "LLM Adapters": [
+            Normandy.LLM.Request,
+            Normandy.LLM.Response,
             Normandy.LLM.ClaudioAdapter
+          ],
+          Errors: [
+            Normandy.LLMError,
+            Normandy.TurnError
+          ],
+          Telemetry: [
+            Normandy.Telemetry,
+            Normandy.Telemetry.Span
           ]
         ],
         # Old entries name functions since removed (e.g. Normandy.Type.load/1); cocogitto
