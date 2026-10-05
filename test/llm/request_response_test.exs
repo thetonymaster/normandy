@@ -33,4 +33,9 @@ defmodule Normandy.LLM.RequestResponseTest do
 
     assert_raise ArgumentError, fn -> struct!(Response, []) end
   end
+
+  test "a response accepts unrecognized provider stop reasons as strings" do
+    assert %Response{content: "x", stop_reason: "some_new_reason"} =
+             %Response{content: "x", stop_reason: "some_new_reason"}
+  end
 end

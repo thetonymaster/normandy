@@ -6,7 +6,8 @@ defmodule Normandy.LLM.Response do
     request's `response_model` was `nil`
   - `:stop_reason` - why the model stopped (`:end_turn`, `:tool_use`, `:max_tokens`,
     `:stop_sequence`, `:pause_turn`, `:refusal`, `:model_context_window_exceeded`,
-    `:compaction`), or `nil` when the client doesn't report one
+    `:compaction`); an unrecognized provider reason is passed through as a string; `nil`
+    when the client doesn't report one
   - `:usage` - the provider's token usage map, or `nil`
   - `:meta` - per-call facts that are not usage: `:served_by`, `:fallback_model`,
     `:input_transformations`, `:response_id`, `:finish_reason` (the stop reason as a
@@ -26,6 +27,7 @@ defmodule Normandy.LLM.Response do
           | :model_context_window_exceeded
           | :compaction
           | atom()
+          | String.t()
 
   @type t :: %__MODULE__{
           content: struct() | String.t(),
