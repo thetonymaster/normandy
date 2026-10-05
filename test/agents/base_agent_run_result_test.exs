@@ -57,6 +57,30 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
     end
   end
 
+  # A non-config used to loop forever in run!/3 (its opts clause re-entered itself).
+  @tag timeout: 5_000
+  test "run!/2 and run/2 raise FunctionClauseError for a non-config" do
+    assert_raise FunctionClauseError, fn -> BaseAgent.run!(%{}, nil) end
+    assert_raise FunctionClauseError, fn -> BaseAgent.run!(%{}, nil, stream: false) end
+    assert_raise FunctionClauseError, fn -> BaseAgent.run(%{}, nil) end
+    assert_raise FunctionClauseError, fn -> BaseAgent.run({:ok, %{}}, %{chat_message: "x"}) end
+  end
+
+  test "run/2 returns an output guardrail violation as {:error, %ViolationError{}}" do
+    agent =
+      BaseAgent.init(%{
+        client: %StubClient{reply: fn rm -> %{rm | chat_message: "my ssn is 123-45-6789"} end},
+        model: "m",
+        output_guardrails: [
+          {Normandy.Guardrails.Builtins.RegexGuard,
+           patterns: [~r/\d{3}-\d{2}-\d{4}/], mode: :deny, field: :chat_message}
+        ]
+      })
+
+    assert {:error, %Normandy.Guardrails.ViolationError{}} =
+             BaseAgent.run(agent, %{chat_message: "hello"})
+  end
+
   # Decision 6: a stacktrace is logged only, never emitted in telemetry.
   test "the run and llm_call :exception events fire for a returned error, with no stacktrace" do
     ref =

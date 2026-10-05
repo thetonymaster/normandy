@@ -491,7 +491,9 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  def run!(config, user_input, opts) when is_list(opts) do
+  # Matches the config too: with no stream this clause calls run!/3 with [], and a
+  # non-config must fail with FunctionClauseError here, not re-enter it forever.
+  def run!(%BaseAgentConfig{} = config, user_input, opts) when is_list(opts) do
     stream = Keyword.get(opts, :stream, false)
     on_chunk = Keyword.get(opts, :on_chunk)
 
