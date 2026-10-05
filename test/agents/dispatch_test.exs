@@ -20,7 +20,7 @@ defmodule Normandy.Agents.DispatchTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule FakeToolWithPrepare do
     use Normandy.Schema
@@ -85,7 +85,7 @@ defmodule Normandy.Agents.DispatchTest do
   end
 
   defp config_with_tools(tools) do
-    %{name: "test-agent", tool_registry: Registry.new(tools)}
+    %{name: "test-agent", toolset: Toolset.new(tools)}
   end
 
   describe "dispatch_one/3 happy path" do

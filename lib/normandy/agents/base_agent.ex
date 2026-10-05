@@ -50,7 +50,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   @doc """
@@ -94,7 +94,7 @@ defmodule Normandy.Agents.BaseAgent do
       current_user_input: nil,
       temperature: Keyword.fetch!(opts, :temperature),
       max_tokens: Keyword.fetch!(opts, :max_tokens),
-      tool_registry: Keyword.fetch!(opts, :tool_registry),
+      toolset: Keyword.fetch!(opts, :toolset),
       max_tool_iterations: Keyword.fetch!(opts, :max_tool_iterations),
       max_tool_concurrency: Keyword.fetch!(opts, :max_tool_concurrency),
       retry: Keyword.fetch!(opts, :retry),
@@ -235,7 +235,7 @@ defmodule Normandy.Agents.BaseAgent do
       with_output_schema(system_prompt, prompt_output_schema(response_model, config))
 
     tool_schemas =
-      if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
+      if has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
 
     # Thinking is valid only under the system prompt, tools and model that produced
     # it (a context provider, a tool change, the forced final call's schema or a
@@ -1325,7 +1325,7 @@ defmodule Normandy.Agents.BaseAgent do
       |> with_output_schema(prompt_output_schema(%ToolCallResponse{}, config))
 
     tool_schemas =
-      if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
+      if has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
 
     # Streaming calls cannot use :fallbacks, so the requested model produces it.
     prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas, config.model)
@@ -1945,26 +1945,17 @@ defmodule Normandy.Agents.BaseAgent do
   # Tool management functions
 
   @doc """
-  Registers a tool in the agent's tool registry.
-
-  Creates a new registry if one doesn't exist.
-
-  ## Examples
-
-      iex> agent = BaseAgent.init(config)
-      iex> agent = BaseAgent.register_tool(agent, %MyApp.Tools.Search{})
-
+  Registers `tool` in the agent's toolset, creating the toolset on first use. `opts` are
+  `Normandy.Tools.Toolset.register/3`'s options.
   """
-  @spec register_tool(BaseAgentConfig.t(), struct()) :: BaseAgentConfig.t()
-  def register_tool(%BaseAgentConfig{tool_registry: nil} = config, tool) do
-    registry = Registry.new([tool])
-    %{config | tool_registry: registry}
-  end
+  @spec register_tool(BaseAgentConfig.t(), struct(), keyword()) :: BaseAgentConfig.t()
+  def register_tool(config, tool, opts \\ [])
 
-  def register_tool(%BaseAgentConfig{tool_registry: registry} = config, tool) do
-    updated_registry = Registry.register(registry, tool)
-    %{config | tool_registry: updated_registry}
-  end
+  def register_tool(%BaseAgentConfig{toolset: nil} = config, tool, opts),
+    do: register_tool(%{config | toolset: Toolset.new()}, tool, opts)
+
+  def register_tool(%BaseAgentConfig{toolset: %Toolset{} = toolset} = config, tool, opts),
+    do: %{config | toolset: Toolset.register(toolset, tool, opts)}
 
   @doc """
   Gets a tool from the agent's tool registry by name.
@@ -1977,10 +1968,10 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec get_tool(BaseAgentConfig.t(), String.t()) :: {:ok, struct()} | :error
-  def get_tool(%BaseAgentConfig{tool_registry: nil}, _tool_name), do: :error
+  def get_tool(%BaseAgentConfig{toolset: nil}, _tool_name), do: :error
 
-  def get_tool(%BaseAgentConfig{tool_registry: registry}, tool_name) do
-    Registry.get(registry, tool_name)
+  def get_tool(%BaseAgentConfig{toolset: registry}, tool_name) do
+    Toolset.fetch(registry, tool_name)
   end
 
   @doc """
@@ -1993,10 +1984,10 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec list_tools(BaseAgentConfig.t()) :: [struct()]
-  def list_tools(%BaseAgentConfig{tool_registry: nil}), do: []
+  def list_tools(%BaseAgentConfig{toolset: nil}), do: []
 
-  def list_tools(%BaseAgentConfig{tool_registry: registry}) do
-    Registry.list(registry)
+  def list_tools(%BaseAgentConfig{toolset: registry}) do
+    Toolset.list(registry)
   end
 
   @doc """
@@ -2009,8 +2000,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   """
   @spec has_tools?(BaseAgentConfig.t()) :: boolean()
-  def has_tools?(%BaseAgentConfig{tool_registry: nil}), do: false
-  def has_tools?(%BaseAgentConfig{tool_registry: registry}), do: Registry.count(registry) > 0
+  def has_tools?(%BaseAgentConfig{toolset: nil}), do: false
+  def has_tools?(%BaseAgentConfig{toolset: registry}), do: Toolset.count(registry) > 0
 
   ## MCP Server Management
 
@@ -2055,11 +2046,11 @@ defmodule Normandy.Agents.BaseAgent do
   @spec register_mcp_tools(BaseAgentConfig.t(), module(), term(), keyword()) ::
           {:ok, BaseAgentConfig.t()} | {:error, term()}
   def register_mcp_tools(%BaseAgentConfig{} = config, adapter, client, opts \\ []) do
-    registry = config.tool_registry || Registry.new()
+    registry = config.toolset || Toolset.new()
 
     case Normandy.MCP.Registry.discover_and_register(registry, adapter, client, opts) do
       {:ok, updated_registry} ->
-        {:ok, %{config | tool_registry: updated_registry}}
+        {:ok, %{config | toolset: updated_registry}}
 
       {:error, _reason} = error ->
         error

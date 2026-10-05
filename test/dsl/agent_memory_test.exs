@@ -2,7 +2,7 @@ defmodule Normandy.DSL.AgentMemoryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.MemoryStore.InMemory
-  alias Normandy.Tools.{BaseTool, Memory, Registry}
+  alias Normandy.Tools.{BaseTool, Memory, Toolset}
 
   defmodule MemAgent do
     use Normandy.DSL.Agent
@@ -52,7 +52,7 @@ defmodule Normandy.DSL.AgentMemoryTest do
       )
 
     assert {:ok, %Memory{store: ^store, mounts: %{"/memories/org" => {"acme/kb", :read_only}}}} =
-             Registry.get(agent.tool_registry, "memory")
+             Toolset.fetch(agent.toolset, "memory")
 
     assert agent.tool_context == %{memory_namespace: "acme/u-1"}
   end
@@ -119,11 +119,11 @@ defmodule Normandy.DSL.AgentMemoryTest do
   test "a plain agent has no memory tool; a memory agent's tool is named \"memory\"" do
     plain = PlainAgent.new(client: client())
     # no tool was registered, so the registry is never built
-    assert plain.tool_registry == nil
+    assert plain.toolset == nil
 
     agent = MemAgent.new(client: client(), memory_store: {InMemory, InMemory.new()})
-    assert {:ok, tool} = Registry.get(agent.tool_registry, "memory")
+    assert {:ok, tool} = Toolset.fetch(agent.toolset, "memory")
     assert BaseTool.tool_name(tool) == "memory"
-    assert "memory" in Registry.list_names(agent.tool_registry)
+    assert "memory" in Toolset.list_names(agent.toolset)
   end
 end

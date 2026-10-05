@@ -1,7 +1,7 @@
 defmodule Normandy.Behaviours.AgentTemplate do
   @moduledoc """
   Resolves the **node-local, non-serializable** half of an agent's config from a
-  stable `template_id`: the tool registry, before/after hooks, and a
+  stable `template_id`: the toolset, before/after hooks, and a
   `client_builder` that turns a credential token into an LLM client struct.
   Optionally `:circuit_breaker_pid` (a node-local breaker) and `:mcp_servers` (which may
   carry authorization tokens); `ConfigTemplate.rebuild/3` requires each one the
@@ -15,7 +15,7 @@ defmodule Normandy.Behaviours.AgentTemplate do
   """
 
   @type supplement :: %{
-          required(:tool_registry) => term(),
+          required(:toolset) => term(),
           required(:before_hooks) => [term()],
           required(:after_hooks) => [term()],
           required(:client_builder) => (String.t() -> struct()),

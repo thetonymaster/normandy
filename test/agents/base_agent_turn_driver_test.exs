@@ -4,7 +4,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, BaseAgentOutputSchema, ToolCallResponse}
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   # Re-uses the project-wide ModelMockup: converse/3 returns the
   # response_model as-is, giving deterministic LLM responses without network.
@@ -82,13 +82,13 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
 
   defp with_tools_agent do
     calc = %Calculator{operation: "add", a: 0, b: 0}
-    registry = Registry.new([calc])
+    registry = Toolset.new([calc])
 
     BaseAgent.init(%{
       client: %MockWithToolsClient{},
       model: "test-model",
       temperature: 0.7,
-      tool_registry: registry,
+      toolset: registry,
       max_tool_iterations: 5
     })
   end
@@ -159,7 +159,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
           client: %MisbehavingNoToolsClient{},
           model: "test-model",
           temperature: 0.7
-          # no :tool_registry -> has_tools?/1 is false
+          # no :toolset -> has_tools?/1 is false
         })
 
       input = %BaseAgentInputSchema{chat_message: "hi"}

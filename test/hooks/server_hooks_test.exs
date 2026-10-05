@@ -107,7 +107,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
         memory: AgentMemory.new_memory(),
         initial_memory: AgentMemory.new_memory(),
         prompt_specification: %PromptSpecification{},
-        tool_registry: nil,
+        toolset: nil,
         behaviours: %Config{hooks: hooks}
       },
       extra
@@ -263,7 +263,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       :ok =
         Catalog.put(catalog, "hooks-kind", %{
-          tool_registry: nil,
+          toolset: nil,
           before_hooks: [],
           after_hooks: [],
           client_builder: fn _token -> nil end

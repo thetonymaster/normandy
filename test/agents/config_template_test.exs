@@ -16,7 +16,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       input_schema: SomeInput,
       output_schema: SomeOutput,
       client: %{api_key: "SECRET", base_url: "https://api"},
-      tool_registry: %Normandy.Tools.Registry{tools: %{"t" => %{}}},
+      toolset: %Normandy.Tools.Toolset{tools: %{"t" => %{}}},
       behaviours: %Config{before_hooks: [fn _, _ -> :x end]}
     }
 
@@ -25,7 +25,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     assert tmpl.template_id == "support-agent"
     assert tmpl.model == "claude-x"
     refute Map.has_key?(tmpl, :client)
-    refute Map.has_key?(tmpl, :tool_registry)
+    refute Map.has_key?(tmpl, :toolset)
     # max_messages nil when memory has no cap configured
     assert tmpl.max_messages == nil
     # term_to_binary must succeed: no closures, no pids.
@@ -45,7 +45,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       output_schema: SomeOutput,
       memory: AgentMemory.new_memory(42),
       client: %{api_key: "SECRET", base_url: "https://api"},
-      tool_registry: %Normandy.Tools.Registry{tools: %{"t" => %{}}},
+      toolset: %Normandy.Tools.Toolset{tools: %{"t" => %{}}},
       behaviours: %Config{}
     }
 
@@ -79,7 +79,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     }
 
     supp = %{
-      tool_registry: %Normandy.Tools.Registry{tools: %{}},
+      toolset: %Normandy.Tools.Toolset{tools: %{}},
       before_hooks: [],
       after_hooks: [],
       client_builder: fn token -> %{api_key: token} end
@@ -113,10 +113,10 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       }
     }
 
-    tr = %Normandy.Tools.Registry{tools: %{"t" => %{}}}
+    tr = %Normandy.Tools.Toolset{tools: %{"t" => %{}}}
 
     supp = %{
-      tool_registry: tr,
+      toolset: tr,
       before_hooks: [:bh],
       after_hooks: [:ah],
       client_builder: fn token -> %{api_key: token, base_url: "https://api"} end
@@ -125,7 +125,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     config = ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
 
     assert config.model == "claude-x"
-    assert config.tool_registry == tr
+    assert config.toolset == tr
     assert config.client.api_key == "TOKEN"
     assert config.behaviours.before_hooks == [:bh]
     assert config.behaviours.policy == {Normandy.Behaviours.PolicyEngine.AllowAll, []}
@@ -135,7 +135,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     defp round_trip_supplement(extra \\ %{}) do
       Map.merge(
         %{
-          tool_registry: %Normandy.Tools.Registry{tools: %{}},
+          toolset: %Normandy.Tools.Toolset{tools: %{}},
           before_hooks: [:bh],
           after_hooks: [:ah],
           client_builder: fn token -> %{api_key: token} end
@@ -172,7 +172,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         ],
         tool_context: %{memory_namespace: "acme/u-1"},
         client: supp.client_builder.("TOKEN"),
-        tool_registry: supp.tool_registry,
+        toolset: supp.toolset,
         behaviours: %Config{before_hooks: supp.before_hooks, after_hooks: supp.after_hooks}
       }
     end
@@ -373,7 +373,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     }
 
     supp = %{
-      tool_registry: nil,
+      toolset: nil,
       before_hooks: [],
       after_hooks: [],
       client_builder: fn token -> %{api_key: token} end
@@ -417,7 +417,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
 
     build = fn options ->
       %{
-        tool_registry: nil,
+        toolset: nil,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn token ->

@@ -5,7 +5,7 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, ToolCallResponse}
   alias Normandy.Components.ToolCall
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   require Logger
 
@@ -82,14 +82,14 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
       :logger.remove_handler(@handler_id)
     end)
 
-    registry = Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+    registry = Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
 
     agent =
       BaseAgent.init(%{
         client: %LoggingToolCallClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5,
         name: "logging_agent"
       })

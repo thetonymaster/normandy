@@ -2,18 +2,18 @@ defmodule NormandyTest.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
-  alias Normandy.Tools.{Executor, Registry}
+  alias Normandy.Tools.{Executor, Toolset}
 
   describe "Executor.execute/3" do
     test "executes tool successfully" do
       tool = %Calculator{operation: "add", a: 5, b: 3}
-      registry = Registry.new([tool])
+      registry = Toolset.new([tool])
 
       assert {:ok, 8.0} = Executor.execute(registry, "calculator")
     end
 
     test "returns error for nonexistent tool" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
       assert {:error, "Tool 'nonexistent' not found in registry"} =
                Executor.execute(registry, "nonexistent")
@@ -21,7 +21,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
 
     test "handles tool execution errors" do
       tool = %Calculator{operation: "divide", a: 10, b: 0}
-      registry = Registry.new([tool])
+      registry = Toolset.new([tool])
 
       assert {:error, "Cannot divide by zero"} = Executor.execute(registry, "calculator")
     end
@@ -85,7 +85,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
       calc2 = %Calculator{operation: "multiply", a: 3, b: 4}
 
       # The registry holds a third, different instance; it must not be the one run.
-      registry = Registry.new([%Calculator{operation: "subtract", a: 9, b: 9}])
+      registry = Toolset.new([%Calculator{operation: "subtract", a: 9, b: 9}])
 
       assert Executor.execute_parallel(registry, [{"calc1", calc1}, {"calc2", calc2}]) ==
                [{:ok, 3.0}, {:ok, 12.0}]
@@ -97,7 +97,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
       calc = %Calculator{operation: "add", a: 1, b: 2}
       string = %StringManipulator{operation: "uppercase", text: "hello"}
 
-      registry = Registry.new([calc, string])
+      registry = Toolset.new([calc, string])
 
       assert {:ok, results} =
                Executor.execute_sequential(registry, ["calculator", "string_manipulator"])
@@ -111,9 +111,9 @@ defmodule NormandyTest.Tools.ExecutorTest do
       good_calc = %Calculator{operation: "add", a: 1, b: 2}
       bad_calc = %Calculator{operation: "divide", a: 10, b: 0}
 
-      registry = Registry.new([good_calc])
+      registry = Toolset.new([good_calc])
       # Replace it with bad_calc (looked up by name "calculator")
-      registry = Registry.register(registry, bad_calc, replace: true)
+      registry = Toolset.register(registry, bad_calc, replace: true)
 
       # The bad calculator will fail, stopping execution
       assert {:error, "Cannot divide by zero"} =
@@ -176,7 +176,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
     end
 
     test "execute/3 honours the tool's own :timeout, like execute_tool/2" do
-      registry = Registry.new([%ReturnTool{value: {:sleep, 100}, timeout: 20}])
+      registry = Toolset.new([%ReturnTool{value: {:sleep, 100}, timeout: 20}])
 
       assert {:error, message} = Executor.execute(registry, "return_tool")
       assert message =~ "timeout after 20ms"
@@ -188,7 +188,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
       end
 
       assert_raise ArgumentError, ~r/:max_retries must be a non-negative integer, got: -1/, fn ->
-        Executor.execute(Registry.new([%ReturnTool{value: {:ok, 1}}]), "return_tool",
+        Executor.execute(Toolset.new([%ReturnTool{value: {:ok, 1}}]), "return_tool",
           max_retries: -1
         )
       end
@@ -265,7 +265,7 @@ defmodule NormandyTest.Tools.ExecutorTest do
       OpenTelemetry.Ctx.set_value(:normandy_test_marker, marker)
 
       tool = %CtxCapturingTool{reply_to: self()}
-      registry = Registry.new([tool])
+      registry = Toolset.new([tool])
 
       results =
         Executor.execute_parallel(registry, [

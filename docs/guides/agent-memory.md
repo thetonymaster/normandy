@@ -37,7 +37,7 @@ alias Normandy.Agents.Turn
 alias Normandy.Agents.Turn.Session
 alias Normandy.Behaviours.AgentTemplate.Catalog
 alias Normandy.Behaviours.SessionRegistry.Native
-alias Normandy.Tools.Registry
+alias Normandy.Tools.Toolset
 
 # Once at boot, on every node (distributed_sessions.md has the full Tier-2 setup).
 {:ok, _} = Catalog.start_link(name: MyApp.AgentTemplates)
@@ -46,7 +46,7 @@ alias Normandy.Tools.Registry
 
 :ok =
   Catalog.put(MyApp.AgentTemplates, "support-bot", %{
-    tool_registry: Registry.new([Memory.new(store: {MemoryStore.Redis, {redis_conn, "myapp"}})]),
+    toolset: Toolset.new([Memory.new(store: {MemoryStore.Redis, {redis_conn, "myapp"}})]),
     before_hooks: [],
     after_hooks: [],
     client_builder: fn token -> build_client(token) end

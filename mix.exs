@@ -100,7 +100,7 @@ defmodule Normandy.MixProject do
           ],
           Tools: [
             Normandy.Tools.BaseTool,
-            Normandy.Tools.Registry,
+            Normandy.Tools.Toolset,
             Normandy.Tools.Executor
           ],
           "Context Management": [
@@ -141,7 +141,8 @@ defmodule Normandy.MixProject do
           ],
           Errors: [
             Normandy.LLMError,
-            Normandy.TurnError
+            Normandy.TurnError,
+            Normandy.ToolNotFoundError
           ],
           Telemetry: [
             Normandy.Telemetry,

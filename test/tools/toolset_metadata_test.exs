@@ -1,15 +1,15 @@
-defmodule NormandyTest.Tools.RegistryMetadataTest do
+defmodule NormandyTest.Tools.ToolsetMetadataTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Tools.Examples.{Calculator, EnhancedCalculator, StringManipulator}
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   describe "get_metadata/2" do
     test "returns metadata for a registered tool" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      {:ok, metadata} = Registry.get_metadata(registry, "calculator")
+      {:ok, metadata} = Toolset.fetch_metadata(registry, "calculator")
 
       assert metadata.name == "calculator"
       assert metadata.description =~ "arithmetic"
@@ -17,16 +17,16 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
     end
 
     test "returns :error for non-existent tool" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
-      assert Registry.get_metadata(registry, "nonexistent") == :error
+      assert Toolset.fetch_metadata(registry, "nonexistent") == :error
     end
 
     test "includes field introspection for schema-based tools" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      {:ok, metadata} = Registry.get_metadata(registry, "calculator")
+      {:ok, metadata} = Toolset.fetch_metadata(registry, "calculator")
 
       assert Map.has_key?(metadata, :fields)
       assert is_list(metadata.fields)
@@ -41,9 +41,9 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
     test "includes enhanced field metadata" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
-      {:ok, metadata} = Registry.get_metadata(registry, "enhanced_calculator")
+      {:ok, metadata} = Toolset.fetch_metadata(registry, "enhanced_calculator")
 
       assert Map.has_key?(metadata, :fields)
 
@@ -59,8 +59,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       string = %StringManipulator{operation: "uppercase", text: ""}
 
-      registry = Registry.new([calc, string])
-      metadata_list = Registry.list_metadata(registry)
+      registry = Toolset.new([calc, string])
+      metadata_list = Toolset.list_metadata(registry)
 
       assert length(metadata_list) == 2
       assert Enum.all?(metadata_list, fn m -> Map.has_key?(m, :name) end)
@@ -69,8 +69,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
     end
 
     test "returns empty list for empty registry" do
-      registry = Registry.new()
-      metadata_list = Registry.list_metadata(registry)
+      registry = Toolset.new()
+      metadata_list = Toolset.list_metadata(registry)
 
       assert metadata_list == []
     end
@@ -79,8 +79,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       enhanced = %EnhancedCalculator{}
 
-      registry = Registry.new([calc, enhanced])
-      metadata_list = Registry.list_metadata(registry)
+      registry = Toolset.new([calc, enhanced])
+      metadata_list = Toolset.list_metadata(registry)
 
       # Both should have fields since both are schema-based
       enhanced_meta = Enum.find(metadata_list, fn m -> m.name == "enhanced_calculator" end)
@@ -98,31 +98,31 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
   describe "filter_by_required_params/2" do
     test "filters tools with required parameters" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      filtered = Registry.filter_by_required_params(registry, true)
+      filtered = Toolset.filter_by_required_params(registry, true)
 
-      assert Registry.count(filtered) == 1
-      assert Registry.has_tool?(filtered, "calculator")
+      assert Toolset.count(filtered) == 1
+      assert Toolset.has_tool?(filtered, "calculator")
     end
 
     test "filters tools without required parameters" do
       # Create a tool without required params (if we had one)
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      filtered = Registry.filter_by_required_params(registry, false)
+      filtered = Toolset.filter_by_required_params(registry, false)
 
-      assert Registry.count(filtered) == 0
+      assert Toolset.count(filtered) == 0
     end
 
     test "returns empty registry when no tools match" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      filtered = Registry.filter_by_required_params(registry, false)
+      filtered = Toolset.filter_by_required_params(registry, false)
 
-      assert Registry.count(filtered) == 0
+      assert Toolset.count(filtered) == 0
     end
   end
 
@@ -131,35 +131,35 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       string = %StringManipulator{operation: "uppercase", text: ""}
 
-      registry = Registry.new([calc, string])
+      registry = Toolset.new([calc, string])
 
       # Calculator has :number type in JSON schema (mapped from :float)
       # StringManipulator only has string fields
       # But we need to check the JSON Schema type which may differ
-      filtered = Registry.filter_by_param_type(registry, "number")
+      filtered = Toolset.filter_by_param_type(registry, "number")
 
       # Calculator's schema types are atoms (:number); the filter takes a string.
-      assert Registry.list_names(filtered) == ["calculator"]
+      assert Toolset.list_names(filtered) == ["calculator"]
     end
 
     test "filters tools with string parameters" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       string = %StringManipulator{operation: "uppercase", text: ""}
 
-      registry = Registry.new([calc, string])
-      filtered = Registry.filter_by_param_type(registry, "string")
+      registry = Toolset.new([calc, string])
+      filtered = Toolset.filter_by_param_type(registry, "string")
 
       # Both have string params (operation field)
-      assert Registry.count(filtered) == 2
+      assert Toolset.count(filtered) == 2
     end
 
     test "returns empty registry when no tools have the parameter type" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      filtered = Registry.filter_by_param_type(registry, "boolean")
+      filtered = Toolset.filter_by_param_type(registry, "boolean")
 
-      assert Registry.count(filtered) == 0
+      assert Toolset.count(filtered) == 0
     end
   end
 
@@ -168,8 +168,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       string = %StringManipulator{operation: "uppercase", text: ""}
 
-      registry = Registry.new([calc, string])
-      tools = Registry.tools_with_constraint(registry, :enum)
+      registry = Toolset.new([calc, string])
+      tools = Toolset.tools_with_constraint(registry, :enum)
 
       # Both have enum on operation field
       assert length(tools) == 2
@@ -179,9 +179,9 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
     test "finds tools with minimum constraints" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
-      tools = Registry.tools_with_constraint(registry, :minimum)
+      tools = Toolset.tools_with_constraint(registry, :minimum)
 
       assert length(tools) == 1
       assert "enhanced_calculator" in tools
@@ -189,9 +189,9 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
     test "returns empty list when no tools have the constraint" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      tools = Registry.tools_with_constraint(registry, :pattern)
+      tools = Toolset.tools_with_constraint(registry, :pattern)
 
       assert tools == []
     end
@@ -200,9 +200,9 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
   describe "introspect_schema/2" do
     test "returns schema introspection for schema-based tools" do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
-      {:ok, fields} = Registry.introspect_schema(registry, "calculator")
+      {:ok, fields} = Toolset.introspect_schema(registry, "calculator")
 
       assert is_list(fields)
       assert fields != []
@@ -216,9 +216,9 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
     test "returns schema introspection for enhanced tools" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
-      {:ok, fields} = Registry.introspect_schema(registry, "enhanced_calculator")
+      {:ok, fields} = Toolset.introspect_schema(registry, "enhanced_calculator")
 
       assert is_list(fields)
       # EnhancedCalculator has operation, a, b, precision
@@ -226,16 +226,16 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
     end
 
     test "returns :error for non-existent tool" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
-      assert Registry.introspect_schema(registry, "nonexistent") == :error
+      assert Toolset.introspect_schema(registry, "nonexistent") == :error
     end
 
     test "includes field metadata with constraints" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
-      {:ok, fields} = Registry.introspect_schema(registry, "enhanced_calculator")
+      {:ok, fields} = Toolset.introspect_schema(registry, "enhanced_calculator")
 
       precision_field = Enum.find(fields, fn f -> f.name == :precision end)
       assert precision_field.type == :integer
@@ -249,18 +249,18 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
   describe "integration with enhanced tools" do
     test "metadata methods work seamlessly with schema-based tools" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
       # Get metadata
-      {:ok, metadata} = Registry.get_metadata(registry, "enhanced_calculator")
+      {:ok, metadata} = Toolset.fetch_metadata(registry, "enhanced_calculator")
       assert Map.has_key?(metadata, :fields)
 
       # Introspect schema
-      {:ok, fields} = Registry.introspect_schema(registry, "enhanced_calculator")
+      {:ok, fields} = Toolset.introspect_schema(registry, "enhanced_calculator")
       assert length(fields) == length(metadata.fields)
 
       # Find constraints
-      enum_tools = Registry.tools_with_constraint(registry, :enum)
+      enum_tools = Toolset.tools_with_constraint(registry, :enum)
       assert "enhanced_calculator" in enum_tools
     end
 
@@ -268,8 +268,8 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
       calc = %Calculator{operation: "add", a: 0, b: 0}
       enhanced = %EnhancedCalculator{}
 
-      registry = Registry.new([calc, enhanced])
-      metadata_list = Registry.list_metadata(registry)
+      registry = Toolset.new([calc, enhanced])
+      metadata_list = Toolset.list_metadata(registry)
 
       assert length(metadata_list) == 2
 
@@ -287,29 +287,29 @@ defmodule NormandyTest.Tools.RegistryMetadataTest do
 
   describe "edge cases" do
     test "handles empty registry gracefully" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
-      assert Registry.list_metadata(registry) == []
-      assert Registry.filter_by_required_params(registry, true) == registry
-      assert Registry.filter_by_param_type(registry, "string") == registry
-      assert Registry.tools_with_constraint(registry, :enum) == []
+      assert Toolset.list_metadata(registry) == []
+      assert Toolset.filter_by_required_params(registry, true) == registry
+      assert Toolset.filter_by_param_type(registry, "string") == registry
+      assert Toolset.tools_with_constraint(registry, :enum) == []
     end
 
     test "handles tools with no properties in schema" do
       # This tests backward compatibility
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
       # Should not crash
-      filtered = Registry.filter_by_param_type(registry, "string")
-      assert is_struct(filtered, Registry)
+      filtered = Toolset.filter_by_param_type(registry, "string")
+      assert is_struct(filtered, Toolset)
     end
 
     test "metadata includes all expected fields" do
       enhanced = %EnhancedCalculator{}
-      registry = Registry.new([enhanced])
+      registry = Toolset.new([enhanced])
 
-      {:ok, metadata} = Registry.get_metadata(registry, "enhanced_calculator")
+      {:ok, metadata} = Toolset.fetch_metadata(registry, "enhanced_calculator")
 
       # Basic metadata
       assert is_binary(metadata.name)

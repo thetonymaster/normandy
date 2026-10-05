@@ -489,12 +489,12 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 
 - An unknown option raises `ArgumentError` naming it and listing the supported ones:
   `temprature:`, `system_prompt:` (use `prompt_specification:`), `tools:` (use
-  `tool_registry:` or `register_tool/2`) and `max_messages:` (use
+  `toolset:` or `register_tool/3`) and `max_messages:` (use
   `memory: AgentMemory.new_memory(n)`) used to be dropped silently.
 - A missing `:model` raises `"Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"` (1.x:
   `KeyError`); a missing `:client` raises `ArgumentError` (1.x: `KeyError`).
 - Values are checked: `:client` must be a struct, `:input_schema`/`:output_schema` a struct or
-  `nil`, `:memory` an `AgentMemory` or `nil`, `:prompt_specification`, `:tool_registry` and
+  `nil`, `:memory` an `AgentMemory` or `nil`, `:prompt_specification`, `:toolset` and
   `:behaviours` their structs or `nil`, `:tool_context` a map, `:name`/`:session_id` strings or
   `nil`, `:json_retry_max_attempts` a positive integer, guard lists `module | {module, opts}`.
 - `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
@@ -611,3 +611,20 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
 1.x source into your application. The weather tool is in the repository at
 `examples/tools/weather.ex` (as `MyApp.Tools.Weather`).
+
+## 25. Tools: one `Normandy.Tool` behaviour
+
+### The toolset
+
+| 1.x | 2.0 |
+|---|---|
+| `Normandy.Tools.Registry` | `Normandy.Tools.Toolset` (same functions unless listed here) |
+| `Registry.get(registry, name)` | `Toolset.fetch(toolset, name)` → `{:ok, tool}` / `:error` |
+| `Registry.get!(registry, name)` (raised `RuntimeError`) | `Toolset.fetch!(toolset, name)` (raises `Normandy.ToolNotFoundError`, which names the registered tools) |
+| `Registry.get_metadata(registry, name)` | `Toolset.fetch_metadata(toolset, name)` |
+| `BaseAgentConfig.tool_registry`, `init(%{tool_registry: ...})`, DSL `new(override: [tool_registry: ...])` | `toolset` |
+| `AgentTemplate` supplement key `:tool_registry` | `:toolset` |
+| `BaseAgent.register_tool(agent, tool)` | unchanged; `register_tool(agent, tool, opts)` passes `opts` to `Toolset.register/3` |
+
+- `Toolset.register/3` raises `ArgumentError` on an unknown or mistyped option (1.x ignored
+  them).

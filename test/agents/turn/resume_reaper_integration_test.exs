@@ -26,6 +26,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Behaviours.SessionStore.Postgres, as: PG
   alias Normandy.Test.TurnConfig
+  alias Normandy.Tools.Toolset
 
   setup do
     :ok = Sandbox.checkout(Normandy.TestRepo)
@@ -49,7 +50,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     # Node-local supplement (non-serializable half of config) for template_id "k".
     :ok =
       Catalog.put(cat, "k", %{
-        tool_registry: Normandy.Tools.Registry.new(),
+        toolset: Toolset.new(),
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _token -> %{api_key: "k"} end

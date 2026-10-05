@@ -5,7 +5,7 @@ defmodule Normandy.Agents.ToolContextTest do
   alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.{ToolCall, ToolResult}
   alias Normandy.Test.{ContextProbe, ScriptedToolClient, StreamingProbeClient}
-  alias Normandy.Tools.{Context, Executor, Registry}
+  alias Normandy.Tools.{Context, Executor, Toolset}
 
   defp probe_call, do: %ToolCall{id: "call_1", name: "probe", input: %{}}
 
@@ -90,7 +90,7 @@ defmodule Normandy.Agents.ToolContextTest do
   test "default_pipeline/0 passes the context" do
     config = %{
       name: "a",
-      tool_registry: Registry.new([%ContextProbe{}]),
+      toolset: Toolset.new([%ContextProbe{}]),
       tool_context: %{memory_namespace: "n"}
     }
 
@@ -99,7 +99,7 @@ defmodule Normandy.Agents.ToolContextTest do
   end
 
   test "a user arity-3 execute_fn has no call, so a contextual tool returns its error" do
-    config = %{name: "a", tool_registry: Registry.new([%ContextProbe{}])}
+    config = %{name: "a", toolset: Toolset.new([%ContextProbe{}])}
 
     pipeline = %{
       Dispatch.default_pipeline()

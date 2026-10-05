@@ -5,6 +5,7 @@ defmodule Normandy.A2A.AgentToolTest do
   alias Claudio.A2A.Part
   alias Normandy.A2A.AgentTool
   alias Normandy.Tools.BaseTool
+  alias Normandy.Tools.Toolset
 
   setup do
     card = AgentCard.new("Research Agent", "Helps find information")
@@ -95,8 +96,8 @@ defmodule Normandy.A2A.AgentToolTest do
 
   describe "tool registry integration" do
     test "can be registered", %{tool: tool} do
-      registry = Normandy.Tools.Registry.new([tool])
-      assert {:ok, ^tool} = Normandy.Tools.Registry.get(registry, "a2a__research_agent")
+      registry = Toolset.new([tool])
+      assert {:ok, ^tool} = Toolset.fetch(registry, "a2a__research_agent")
     end
   end
 

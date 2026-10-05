@@ -42,7 +42,7 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
   test ":tools points at the tool registry" do
     assert_raise ArgumentError,
                  "Normandy.Agents.BaseAgent.init/1: unknown option :tools; tools go in " <>
-                   ":tool_registry (Normandy.Tools.Registry.new([tool, ...])) or are added " <>
+                   ":toolset (Normandy.Tools.Toolset.new([tool, ...])) or are added " <>
                    "after init with BaseAgent.register_tool/2; supported: " <> @supported,
                  fn -> BaseAgent.init(model: "m", client: client(), tools: []) end
   end

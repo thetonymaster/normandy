@@ -23,7 +23,7 @@ defmodule Normandy.Agents.Dispatch do
   `dispatch_one/3`), `:hook_halt` (a before-hook halted it) or `:budget` (the
   budget pre-check refused it). Approval outcomes (`:approval_rejected`,
   `:approval_expired`) are emitted by `Turn.Server`, the only shell that parks.
-  Registry misses and invalid or schema-failing input are errors, not denials,
+  Toolset misses and invalid or schema-failing input are errors, not denials,
   and emit nothing.
 
   ## `after_tool`
@@ -49,7 +49,7 @@ defmodule Normandy.Agents.Dispatch do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule DenialEnvelope do
     @moduledoc "Structured record of a denied (or approval-pending) tool call."
@@ -235,7 +235,7 @@ defmodule Normandy.Agents.Dispatch do
 
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp route(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
-    case Registry.get(config.tool_registry, call.name) do
+    case Toolset.fetch(config.toolset, call.name) do
       {:ok, _tool} when not is_map(call.input) ->
         {:deny, invalid_input_result(call)}
 

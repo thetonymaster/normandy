@@ -14,6 +14,7 @@ defmodule Normandy.Test.TurnConfig do
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Tools.Toolset
 
   defmodule Resp do
     @moduledoc false
@@ -31,7 +32,7 @@ defmodule Normandy.Test.TurnConfig do
       memory: AgentMemory.new_memory(),
       initial_memory: AgentMemory.new_memory(),
       prompt_specification: %PromptSpecification{},
-      tool_registry: Normandy.Tools.Registry.new(),
+      toolset: Toolset.new(),
       behaviours: %Normandy.Behaviours.Config{
         credential: {Normandy.Test.StubCreds, []}
       }

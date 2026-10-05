@@ -8,6 +8,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
 
   defmodule Resp do
     defstruct content: "", tool_calls: nil
@@ -25,7 +26,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       initial_memory: AgentMemory.new_memory(),
-      tool_registry: Normandy.Tools.Registry.new(tools),
+      toolset: Toolset.new(tools),
       behaviours: %Normandy.Behaviours.Config{
         policy:
           {Normandy.Behaviours.PolicyEngine.Ruleset,

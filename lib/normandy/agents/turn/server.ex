@@ -178,6 +178,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   require Logger
@@ -1549,7 +1550,7 @@ defmodule Normandy.Agents.Turn.Server do
     |> Task.async_stream(
       fn %ToolCall{} = call ->
         OtelCtx.restore(parent_ctx)
-        {:ok, tool} = Normandy.Tools.Registry.get(config.tool_registry, call.name)
+        {:ok, tool} = Toolset.fetch(config.toolset, call.name)
         prepared = Dispatch.prepare_tool(tool, call.input)
         Dispatch.execute(config, prepared, call, pipeline)
       end,

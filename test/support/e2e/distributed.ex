@@ -11,6 +11,7 @@ defmodule NormandyTest.E2E.Distributed do
   alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
   alias Normandy.Behaviours.SessionStore.Postgres, as: PG
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Tools.Toolset
 
   @registry :e2e_registry
   @supervisor :e2e_turn_sup
@@ -177,7 +178,7 @@ defmodule NormandyTest.E2E.Distributed do
 
   defp supplement do
     %{
-      tool_registry: Normandy.Tools.Registry.new([%RefundTool{}]),
+      toolset: Toolset.new([%RefundTool{}]),
       before_hooks: [],
       after_hooks: [],
       client_builder: &__MODULE__.build_client/1

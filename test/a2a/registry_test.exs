@@ -3,7 +3,7 @@ defmodule Normandy.A2A.RegistryTest do
 
   alias Claudio.A2A.AgentCard
   alias Normandy.A2A.Registry, as: A2ARegistry
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule LongNameTransport do
     def discover(_url, _opts),
@@ -13,7 +13,7 @@ defmodule Normandy.A2A.RegistryTest do
   describe "discover_and_register/3" do
     test "an agent whose tool name the API would refuse is an error, not a raise" do
       assert {:error, {:invalid_tool_name, name}} =
-               A2ARegistry.discover_and_register(Registry.new(), "http://agent.test",
+               A2ARegistry.discover_and_register(Toolset.new(), "http://agent.test",
                  transport_opts: [transport: LongNameTransport]
                )
 
@@ -68,10 +68,10 @@ defmodule Normandy.A2A.RegistryTest do
         |> AgentCard.add_skill("search", "Search")
 
       tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
-      registry = Registry.new(tools)
+      registry = Toolset.new(tools)
 
-      assert Registry.count(registry) == 1
-      assert Registry.has_tool?(registry, "a2a__my_agent__search")
+      assert Toolset.count(registry) == 1
+      assert Toolset.has_tool?(registry, "a2a__my_agent__search")
     end
   end
 end

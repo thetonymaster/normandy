@@ -80,7 +80,7 @@ Register a supplement per agent kind at boot (same on every node):
 
 ```elixir
 Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-agent", %{
-  tool_registry: MyApp.Tools.support_registry(),
+  toolset: MyApp.Tools.support_registry(),
   before_hooks: [],
   after_hooks: [],
   client_builder: fn token -> %Claudio.ClaudioAdapter{api_key: token, ...} end
@@ -107,7 +107,7 @@ Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-age
 ## Credentials: never moved between nodes
 
 Credentials are **never persisted and never replicated**. Only a non-secret config
-template (model, behaviour refs, prompt spec, tool-registry name, `resume_policy`)
+template (model, behaviour refs, prompt spec, `resume_policy`)
 is stored. On any node, a session reconstructs its full config from that template +
 the node-local `AgentTemplate` supplement + a **node-local `CredentialProvider`**.
 

@@ -5,9 +5,9 @@ defmodule Normandy.A2A.Registry do
   ## Example
 
       alias Normandy.A2A.Registry, as: A2ARegistry
-      alias Normandy.Tools.Registry
+      alias Normandy.Tools.Toolset
 
-      registry = Registry.new()
+      registry = Toolset.new()
 
       {:ok, registry} = A2ARegistry.discover_and_register(
         registry,
@@ -20,7 +20,7 @@ defmodule Normandy.A2A.Registry do
   alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
   alias Normandy.Tools.BaseTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   @doc """
   Discovers a remote A2A agent and registers it as tool(s) in the registry.
@@ -35,9 +35,9 @@ defmodule Normandy.A2A.Registry do
     - `:timeout` - Task completion timeout (default: 60s)
 
   """
-  @spec discover_and_register(Registry.t(), String.t(), keyword()) ::
-          {:ok, Registry.t()} | {:error, term()}
-  def discover_and_register(%Registry{} = registry, base_url, opts \\ []) do
+  @spec discover_and_register(Toolset.t(), String.t(), keyword()) ::
+          {:ok, Toolset.t()} | {:error, term()}
+  def discover_and_register(%Toolset{} = registry, base_url, opts \\ []) do
     transport_opts = Keyword.get(opts, :transport_opts, [])
 
     case Client.discover(base_url, transport_opts) do
@@ -84,15 +84,15 @@ defmodule Normandy.A2A.Registry do
   end
 
   # A discovered name that is taken, or that the API would refuse, would otherwise
-  # raise in Registry.register/3; report it as this function's error instead.
+  # raise in Toolset.register/3; report it as this function's error instead.
   defp register_all(tools, registry) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
       name = BaseTool.tool_name(tool)
 
       cond do
-        not Registry.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
-        Registry.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
-        true -> {:cont, {:ok, Registry.register(reg, tool)}}
+        not Toolset.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
+        Toolset.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
+        true -> {:cont, {:ok, Toolset.register(reg, tool)}}
       end
     end)
   end

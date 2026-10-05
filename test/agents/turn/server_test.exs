@@ -19,6 +19,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
   alias Normandy.Test.TelemetryCapture
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
@@ -94,7 +95,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       initial_memory: AgentMemory.new_memory(),
-      tool_registry: nil
+      toolset: nil
     }
   end
 
@@ -105,7 +106,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       %FakeTool{name: "billing"}
     ]
 
-    %{base_config() | tool_registry: Normandy.Tools.Registry.new(tools)}
+    %{base_config() | toolset: Toolset.new(tools)}
   end
 
   # Config with notify-instrumented tools so tests can assert whether billing ran.
@@ -116,7 +117,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       %FakeTool{name: "billing", notify: pid}
     ]
 
-    %{base_config() | tool_registry: Normandy.Tools.Registry.new(tools)}
+    %{base_config() | toolset: Toolset.new(tools)}
   end
 
   test "a no-tools turn runs to :finalize and replies the final response" do
@@ -1211,7 +1212,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     }
 
     # Config with weather tool so the Server's internal dispatch can run it
-    # (tool_registry needed: the FSM strips tool_calls when the config has no tools).
+    # (toolset needed: the FSM strips tool_calls when the config has no tools).
     config = %{base_config_with_tools() | max_tool_iterations: 3}
 
     {:ok, srv} =
@@ -1257,7 +1258,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     :ok =
       Catalog.put(cat, "kind-a", %{
-        tool_registry: base.tool_registry,
+        toolset: base.toolset,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _token -> base.client end
@@ -1295,7 +1296,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       if supplement? do
         :ok =
           Catalog.put(cat, "kind-a", %{
-            tool_registry: base.tool_registry,
+            toolset: base.toolset,
             before_hooks: [],
             after_hooks: [],
             client_builder: fn _token -> base.client end
@@ -1351,7 +1352,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       :ok =
         Catalog.put(cat, "kind-a", %{
-          tool_registry: base.tool_registry,
+          toolset: base.toolset,
           before_hooks: [],
           after_hooks: [],
           client_builder: fn _token -> base.client end
@@ -1884,8 +1885,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       config = %{
         base_config()
-        | tool_registry:
-            Normandy.Tools.Registry.new([
+        | toolset:
+            Toolset.new([
               %FakeTool{name: "weather", notify: test_pid},
               %FakeTool{name: "billing", notify: test_pid, sleep_ms: 1500}
             ]),

@@ -27,7 +27,7 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
 
     :ok =
       Catalog.put(cat, "k", %{
-        tool_registry: base.tool_registry,
+        toolset: base.toolset,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _ -> base.client end

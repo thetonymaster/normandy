@@ -59,7 +59,7 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
     config = init(%{max_tokens: 100})
 
     supp = %{
-      tool_registry: %Normandy.Tools.Registry{tools: %{}},
+      toolset: %Normandy.Tools.Toolset{tools: %{}},
       before_hooks: [],
       after_hooks: [],
       client_builder: fn _token -> %CapturingClient{pid: self()} end

@@ -9,10 +9,10 @@ defmodule Normandy.Behaviours.ConfigTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defp config_with_tools(tools) do
-    %{name: "test-agent", model: "claude-3-5-sonnet-20241022", tool_registry: Registry.new(tools)}
+    %{name: "test-agent", model: "claude-3-5-sonnet-20241022", toolset: Toolset.new(tools)}
   end
 
   describe "default bundle" do

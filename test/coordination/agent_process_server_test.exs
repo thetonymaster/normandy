@@ -11,6 +11,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
@@ -28,7 +29,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       initial_memory: AgentMemory.new_memory(),
-      tool_registry: nil
+      toolset: nil
     }
 
     Map.merge(base, extra)
@@ -84,7 +85,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
   defp approval_config do
     server_config(%{
-      tool_registry: Normandy.Tools.Registry.new([%FakeTool{name: "billing"}]),
+      toolset: Toolset.new([%FakeTool{name: "billing"}]),
       behaviours: %Normandy.Behaviours.Config{
         policy:
           {Normandy.Behaviours.PolicyEngine.Ruleset,

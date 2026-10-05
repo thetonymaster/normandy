@@ -56,10 +56,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       type_doc: "a `Normandy.Components.PromptSpecification` or `nil`",
       doc: "The system prompt's sections; `nil` is an empty specification."
     ],
-    tool_registry: [
-      type: {:or, [{:struct, Normandy.Tools.Registry}, nil]},
+    toolset: [
+      type: {:or, [{:struct, Normandy.Tools.Toolset}, nil]},
       default: nil,
-      type_doc: "a `Normandy.Tools.Registry` or `nil`",
+      type_doc: "a `Normandy.Tools.Toolset` or `nil`",
       doc: "The agent's tools."
     ],
     max_tool_iterations: [type: :pos_integer, default: 5, doc: "Tool rounds per turn."],
@@ -149,7 +149,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     system_prompt:
       "the system prompt goes in :prompt_specification (a %Normandy.Components.PromptSpecification{})",
     tools:
-      "tools go in :tool_registry (Normandy.Tools.Registry.new([tool, ...])) or are added " <>
+      "tools go in :toolset (Normandy.Tools.Toolset.new([tool, ...])) or are added " <>
         "after init with BaseAgent.register_tool/2",
     max_messages:
       "cap the memory with memory: Normandy.Components.AgentMemory.new_memory(max_messages)"

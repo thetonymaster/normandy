@@ -8,6 +8,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   # A local response struct for stubbing call_llm in Session tests.
@@ -55,7 +56,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       initial_memory: AgentMemory.new_memory(),
-      tool_registry: nil
+      toolset: nil
     }
   end
 
@@ -465,7 +466,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     :ok =
       Catalog.put(cat, "tier2-k", %{
-        tool_registry: config.tool_registry,
+        toolset: config.toolset,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _token -> config.client end
@@ -516,7 +517,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       :ok =
         Catalog.put(cat, "kind", %{
-          tool_registry: config.tool_registry,
+          toolset: config.toolset,
           before_hooks: [],
           after_hooks: [],
           client_builder: fn _token -> config.client end
@@ -608,7 +609,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       :ok =
         Catalog.put(cat, "mem-kind", %{
-          tool_registry: Normandy.Tools.Registry.new([%ContextProbe{notify: self()}]),
+          toolset: Toolset.new([%ContextProbe{notify: self()}]),
           before_hooks: [],
           after_hooks: [],
           client_builder: fn _token -> %{api_key: "k"} end

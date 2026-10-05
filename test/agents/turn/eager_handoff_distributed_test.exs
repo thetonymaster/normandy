@@ -119,10 +119,10 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
     base = TurnConfig.build()
 
-    # Register the supplement (tool_registry + client_builder + hooks).
+    # Register the supplement (toolset + client_builder + hooks).
     :ok =
       Catalog.put(cat, "k", %{
-        tool_registry: base.tool_registry,
+        toolset: base.toolset,
         before_hooks: [],
         after_hooks: [],
         # A capture of a test/support function: the peer can call it.

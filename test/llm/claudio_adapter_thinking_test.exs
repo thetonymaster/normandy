@@ -14,7 +14,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
   alias Normandy.Components.StreamEvent
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Test.FakeTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   # A context provider whose text changes on every call, so each request's
   # system prompt differs from the last.
@@ -126,7 +126,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.Loop),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       BaseAgent.run!(agent, "weather?")
@@ -149,7 +149,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.Forced),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}]),
+          toolset: Toolset.new([%FakeTool{}]),
           max_tool_iterations: 1
         })
 
@@ -174,7 +174,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.ModelChange),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       {agent, _} = BaseAgent.run!(agent, "weather?")
@@ -219,7 +219,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.FallbackModel),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       BaseAgent.run!(agent, "weather?")
@@ -314,7 +314,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         %{
           client: client(__MODULE__.StreamChanged),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         }
         |> BaseAgent.init()
         |> BaseAgent.register_context_provider("call", %CountingProvider{
@@ -340,7 +340,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.StreamThinkingDelta),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       assert {:ok, _, %BaseAgentOutputSchema{chat_message: "Sunny."}} =
@@ -359,7 +359,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
         BaseAgent.init(%{
           client: client(__MODULE__.Stream),
           model: "claude-opus-5-5",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       assert {:ok, _, %BaseAgentOutputSchema{chat_message: "Sunny."}} =

@@ -3,7 +3,7 @@ defmodule Normandy.MCP.RegistryTest do
 
   alias Normandy.MCP.Registry, as: MCPRegistry
   alias Normandy.MCP.ToolWrapper
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule MockAdapter do
     @behaviour Claudio.MCP.Client
@@ -60,37 +60,37 @@ defmodule Normandy.MCP.RegistryTest do
 
   describe "discover_and_register/4" do
     test "discovers and registers all tools" do
-      registry = Registry.new()
+      registry = Toolset.new()
       assert {:ok, updated} = MCPRegistry.discover_and_register(registry, MockAdapter, :client)
 
-      assert Registry.count(updated) == 2
-      assert Registry.has_tool?(updated, "search")
-      assert Registry.has_tool?(updated, "fetch")
+      assert Toolset.count(updated) == 2
+      assert Toolset.has_tool?(updated, "search")
+      assert Toolset.has_tool?(updated, "fetch")
     end
 
     test "applies prefix to tool names" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
       assert {:ok, updated} =
                MCPRegistry.discover_and_register(registry, MockAdapter, :client, prefix: "srv")
 
-      assert Registry.has_tool?(updated, "srv__search")
-      assert Registry.has_tool?(updated, "srv__fetch")
+      assert Toolset.has_tool?(updated, "srv__search")
+      assert Toolset.has_tool?(updated, "srv__fetch")
     end
 
     test "preserves existing tools in registry" do
       tool = %Claudio.MCP.Client.Tool{name: "existing", description: "Pre", input_schema: %{}}
 
       existing_wrapper = ToolWrapper.new(MockAdapter, :client, tool)
-      registry = Registry.new([existing_wrapper])
+      registry = Toolset.new([existing_wrapper])
 
       assert {:ok, updated} = MCPRegistry.discover_and_register(registry, MockAdapter, :client)
-      assert Registry.count(updated) == 3
-      assert Registry.has_tool?(updated, "existing")
+      assert Toolset.count(updated) == 3
+      assert Toolset.has_tool?(updated, "existing")
     end
 
     test "returns error when discovery fails" do
-      registry = Registry.new()
+      registry = Toolset.new()
 
       assert {:error, :connection_refused} =
                MCPRegistry.discover_and_register(registry, FailingAdapter, :client)
@@ -126,12 +126,12 @@ defmodule Normandy.MCP.RegistryTest do
       wrapper_b = ToolWrapper.new(MockAdapter, :client, tool_b)
 
       assert_raise ArgumentError, ~r/"search" is already registered/, fn ->
-        Registry.new([wrapper_a, wrapper_b])
+        Toolset.new([wrapper_a, wrapper_b])
       end
     end
 
     test "discovering a server whose tool names are taken returns an error" do
-      {:ok, registry} = MCPRegistry.discover_and_register(Registry.new(), MockAdapter, :client)
+      {:ok, registry} = MCPRegistry.discover_and_register(Toolset.new(), MockAdapter, :client)
 
       assert {:error, {:tool_name_taken, "search"}} =
                MCPRegistry.discover_and_register(registry, MockAdapter, :client)
@@ -144,7 +144,7 @@ defmodule Normandy.MCP.RegistryTest do
       end
 
       assert {:error, {:invalid_tool_name, "files.read"}} =
-               MCPRegistry.discover_and_register(Registry.new(), DottedAdapter, :client)
+               MCPRegistry.discover_and_register(Toolset.new(), DottedAdapter, :client)
     end
 
     test "prefix avoids name collisions" do
@@ -152,10 +152,10 @@ defmodule Normandy.MCP.RegistryTest do
       wrapper_a = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server1")
       wrapper_b = ToolWrapper.new(MockAdapter, :client, tool, prefix: "server2")
 
-      registry = Registry.new([wrapper_a, wrapper_b])
-      assert Registry.count(registry) == 2
-      assert Registry.has_tool?(registry, "server1__search")
-      assert Registry.has_tool?(registry, "server2__search")
+      registry = Toolset.new([wrapper_a, wrapper_b])
+      assert Toolset.count(registry) == 2
+      assert Toolset.has_tool?(registry, "server1__search")
+      assert Toolset.has_tool?(registry, "server2__search")
     end
   end
 end

@@ -34,7 +34,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
       memory: AgentMemory.new_memory(),
       initial_memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      tool_registry: nil
+      toolset: nil
     }
   end
 

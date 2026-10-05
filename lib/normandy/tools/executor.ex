@@ -23,7 +23,7 @@ defmodule Normandy.Tools.Executor do
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Context
   alias Normandy.Tools.ContextualTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   @type execution_result :: {:ok, term()} | {:error, String.t()}
   @typedoc """
@@ -52,7 +52,7 @@ defmodule Normandy.Tools.Executor do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{operation: :add, a: 5, b: 3}])
+      iex> registry = Normandy.Tools.Toolset.new([%CalculatorTool{operation: :add, a: 5, b: 3}])
       iex> Normandy.Tools.Executor.execute(registry, "calculator")
       {:ok, 8}
 
@@ -60,11 +60,11 @@ defmodule Normandy.Tools.Executor do
       {:error, "Tool 'nonexistent' not found in registry"}
 
   """
-  @spec execute(Registry.t(), String.t(), execution_options()) :: execution_result()
+  @spec execute(Toolset.t(), String.t(), execution_options()) :: execution_result()
   def execute(registry, tool_name, opts \\ []) do
     max_retries = max_retries!(opts)
 
-    case Registry.get(registry, tool_name) do
+    case Toolset.fetch(registry, tool_name) do
       {:ok, tool} ->
         execute_with_retries(tool, max_retries, timeout!(opts, tool), opts[:context])
 
@@ -121,7 +121,7 @@ defmodule Normandy.Tools.Executor do
       ]
 
   """
-  @spec execute_parallel(Registry.t(), [{String.t(), struct()}], execution_options()) :: [
+  @spec execute_parallel(Toolset.t(), [{String.t(), struct()}], execution_options()) :: [
           execution_result()
         ]
   def execute_parallel(_registry, tool_specs, opts \\ []) do
@@ -152,7 +152,7 @@ defmodule Normandy.Tools.Executor do
       {:ok, [result1, result2, result3]}
 
   """
-  @spec execute_sequential(Registry.t(), [String.t()], execution_options()) ::
+  @spec execute_sequential(Toolset.t(), [String.t()], execution_options()) ::
           {:ok, [term()]} | {:error, String.t()}
   def execute_sequential(registry, tool_names, opts \\ []) do
     tool_names

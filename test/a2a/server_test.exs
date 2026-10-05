@@ -8,6 +8,7 @@ defmodule Normandy.A2A.ServerTest do
   end
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Tools.Toolset
 
   defmodule Verdict do
     use Normandy.Schema
@@ -86,8 +87,8 @@ defmodule Normandy.A2A.ServerTest do
       }
 
       wrapper = ToolWrapper.new(MockMCPAdapter, :client, tool)
-      registry = Normandy.Tools.Registry.new([wrapper])
-      config = %{build_minimal_config() | tool_registry: registry}
+      registry = Toolset.new([wrapper])
+      config = %{build_minimal_config() | toolset: registry}
 
       card =
         Server.build_agent_card(config,
@@ -103,7 +104,7 @@ defmodule Normandy.A2A.ServerTest do
     end
 
     test "lists no tools unless :expose_tools names them" do
-      config = %{build_minimal_config() | tool_registry: two_tool_registry()}
+      config = %{build_minimal_config() | toolset: two_tool_registry()}
 
       assert Server.build_agent_card(config, name: "A", description: "D").skills == []
 
@@ -229,7 +230,7 @@ defmodule Normandy.A2A.ServerTest do
         })
       end
 
-    Normandy.Tools.Registry.new(tools)
+    Toolset.new(tools)
   end
 
   defmodule MockMCPAdapter do
@@ -263,7 +264,7 @@ defmodule Normandy.A2A.ServerTest do
       initial_memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
       temperature: 0.7,
-      tool_registry: nil
+      toolset: nil
     }
   end
 end

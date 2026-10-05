@@ -8,6 +8,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   alias Normandy.Components.ToolCall
   alias Normandy.LLMError
   alias Normandy.Test.TurnConfig
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   # A store whose history read fails: the server starts :unavailable.
@@ -61,7 +62,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
       BaseAgent.init(%{
         client: tool_then_429_client(),
         model: "m",
-        tool_registry: Normandy.Tools.Registry.new([%Normandy.Test.FakeTool{notify: self()}])
+        toolset: Toolset.new([%Normandy.Test.FakeTool{notify: self()}])
       })
 
     ref = :telemetry_test.attach_event_handlers(self(), [[:normandy, :agent, :run, :exception]])

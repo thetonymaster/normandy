@@ -7,7 +7,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
   alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule WeatherTool do
     use Normandy.Schema
@@ -56,7 +56,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
   describe "run/2 with a tool call dispatched through the chokepoint" do
     test "first response calls a tool, second response finalizes; tool actually runs" do
       test_pid = self()
-      config = %{name: "t", tool_registry: Registry.new([%WeatherTool{}])}
+      config = %{name: "t", toolset: Toolset.new([%WeatherTool{}])}
 
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
       first = %ToolCallResponse{content: nil, tool_calls: [call]}
@@ -100,7 +100,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
   describe "run/2 hitting the iteration cap" do
     test "always-tool model stops at the cap with one forced final call" do
       test_pid = self()
-      config = %{name: "t", tool_registry: Registry.new([%WeatherTool{}])}
+      config = %{name: "t", toolset: Toolset.new([%WeatherTool{}])}
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
       always = %ToolCallResponse{content: nil, tool_calls: [call]}
 

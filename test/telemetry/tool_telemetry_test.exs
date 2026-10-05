@@ -6,7 +6,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Test.FakeTool
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule RaisingDescriptionTool do
     defstruct []
@@ -61,7 +61,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
       client: %NoCallClient{},
       model: "test-model",
       session_id: "sess-tool",
-      tool_registry: Registry.new(tools)
+      toolset: Toolset.new(tools)
     })
   end
 

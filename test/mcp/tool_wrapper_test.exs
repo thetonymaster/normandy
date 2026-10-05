@@ -3,6 +3,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
 
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Tools.BaseTool
+  alias Normandy.Tools.Toolset
 
   defmodule MockAdapter do
     @behaviour Claudio.MCP.Client
@@ -120,16 +121,16 @@ defmodule Normandy.MCP.ToolWrapperTest do
 
   describe "tool registry integration" do
     test "can be registered and retrieved", %{wrapper: wrapper} do
-      registry = Normandy.Tools.Registry.new([wrapper])
-      assert {:ok, ^wrapper} = Normandy.Tools.Registry.get(registry, "search")
+      registry = Toolset.new([wrapper])
+      assert {:ok, ^wrapper} = Toolset.fetch(registry, "search")
     end
 
     test "prefixed tools use prefixed name" do
       tool = %Claudio.MCP.Client.Tool{name: "search", description: "Search", input_schema: %{}}
       wrapper = ToolWrapper.new(MockAdapter, :client, tool, prefix: "s1")
 
-      registry = Normandy.Tools.Registry.new([wrapper])
-      assert {:ok, ^wrapper} = Normandy.Tools.Registry.get(registry, "s1__search")
+      registry = Toolset.new([wrapper])
+      assert {:ok, ^wrapper} = Toolset.fetch(registry, "s1__search")
     end
 
     test "generates tool schemas" do
@@ -140,8 +141,8 @@ defmodule Normandy.MCP.ToolWrapperTest do
       }
 
       wrapper = ToolWrapper.new(MockAdapter, :client, tool)
-      registry = Normandy.Tools.Registry.new([wrapper])
-      schemas = Normandy.Tools.Registry.to_tool_schemas(registry)
+      registry = Toolset.new([wrapper])
+      schemas = Toolset.to_tool_schemas(registry)
 
       assert [%{name: "search", description: "Search", input_schema: %{"type" => "object"}}] =
                schemas

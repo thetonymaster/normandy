@@ -3,7 +3,7 @@ defmodule Normandy.Tools.ContextTest do
 
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Test.{ContextProbe, FakeTool}
-  alias Normandy.Tools.{Context, Executor, Registry}
+  alias Normandy.Tools.{Context, Executor, Toolset}
 
   defp ctx(values \\ %{memory_namespace: "acme/u-1"}),
     do: %Context{tool_call_id: "c1", values: values}
@@ -54,7 +54,7 @@ defmodule Normandy.Tools.ContextTest do
     end
 
     test "execute/3 and execute_parallel/3 forward the context" do
-      registry = Registry.new([%ContextProbe{notify: self()}])
+      registry = Toolset.new([%ContextProbe{notify: self()}])
       assert {:ok, _} = Executor.execute(registry, "probe", context: ctx())
       assert_receive {:probe_ctx, _}
 

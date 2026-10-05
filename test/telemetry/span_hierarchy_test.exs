@@ -21,7 +21,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
   }
 
   alias Normandy.Test.{FakeTool, OtelSpanBridge, StubClient}
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   setup do
     OtelSpanBridge.attach()
@@ -54,7 +54,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
         BaseAgent.init(%{
           client: tool_then_final_client(),
           model: "test-model",
-          tool_registry: Registry.new([%FakeTool{}])
+          toolset: Toolset.new([%FakeTool{}])
         })
 
       tracer = :opentelemetry.get_application_tracer(__MODULE__)
@@ -176,7 +176,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       BaseAgent.init(%{
         client: client,
         model: "test-model",
-        tool_registry: Registry.new([%FakeTool{}])
+        toolset: Toolset.new([%FakeTool{}])
       })
 
     {:ok, srv} =
@@ -279,7 +279,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       BaseAgent.init(%{
         client: client,
         model: "test-model",
-        tool_registry: Registry.new([%FakeTool{}])
+        toolset: Toolset.new([%FakeTool{}])
       })
 
     policy = %Normandy.Behaviours.Config{

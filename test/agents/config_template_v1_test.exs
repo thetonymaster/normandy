@@ -18,7 +18,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
 
   defp supplement do
     %{
-      tool_registry: nil,
+      toolset: nil,
       before_hooks: [],
       after_hooks: [],
       client_builder: fn _token ->

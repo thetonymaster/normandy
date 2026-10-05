@@ -29,7 +29,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
   alias NormandyTest.Agents.SleepyProbe
 
   defmodule MockToolCallClient do
@@ -93,13 +93,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   describe "BaseAgent.run!/2 with tools" do
     setup do
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockToolCallClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
@@ -129,7 +129,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
         max_tool_iterations: 1
       }
 
@@ -146,7 +146,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
       config = Map.put(base, :max_tool_iterations, 0)
@@ -163,7 +163,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
       assert_raise ArgumentError,
@@ -178,7 +178,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
       assert_raise ArgumentError,
@@ -193,7 +193,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
       }
 
       assert_raise ArgumentError,
@@ -206,13 +206,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     test "works without user_input (continuing conversation)" do
       # First run with user input
       calc = %Calculator{operation: "multiply", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockToolCallClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
@@ -249,13 +249,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
     test "handles tool execution errors gracefully" do
       broken_calc = %BrokenCalculator{operation: "add", a: 1, b: 2}
-      registry = Registry.new([broken_calc])
+      registry = Toolset.new([broken_calc])
 
       config = %{
         client: %MockToolCallClient{final_response: "Handled error"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
@@ -369,13 +369,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
 
       calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockHostileToolClient{canary_key: canary},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
@@ -484,13 +484,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       # their own peak concurrency in isolation.
       SleepyProbe.reset()
 
-      registry = Registry.new([%SleepyTool{}])
+      registry = Toolset.new([%SleepyTool{}])
 
       config = %{
         client: %MockSleepyClient{n: n, sleep_ms: sleep_ms},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5,
         max_tool_concurrency: concurrency
       }
@@ -538,13 +538,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     test "tool results stay in LLM-supplied call order under parallelism" do
-      registry = Registry.new([%SleepyTool{}])
+      registry = Toolset.new([%SleepyTool{}])
 
       config = %{
         client: %MockSleepyClient{n: 3, sleep_ms: 50},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5,
         max_tool_concurrency: 3
       }

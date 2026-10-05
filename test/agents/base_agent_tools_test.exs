@@ -3,6 +3,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Tools.Examples.{Calculator, StringManipulator}
+  alias Normandy.Tools.Toolset
 
   setup do
     config = %{
@@ -40,13 +41,13 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
     end
 
     test "creates registry on first tool registration", %{agent: agent} do
-      assert agent.tool_registry == nil
+      assert agent.toolset == nil
       refute BaseAgent.has_tools?(agent)
 
       tool = %Calculator{operation: "add", a: 1, b: 2}
       agent = BaseAgent.register_tool(agent, tool)
 
-      assert agent.tool_registry != nil
+      assert agent.toolset != nil
       assert BaseAgent.has_tools?(agent)
     end
   end
@@ -64,7 +65,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
     end
 
     test "returns error when no registry exists", %{agent: agent} do
-      assert agent.tool_registry == nil
+      assert agent.toolset == nil
       assert :error = BaseAgent.get_tool(agent, "calculator")
     end
   end
@@ -106,13 +107,13 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
       calc = %Calculator{operation: "add", a: 1, b: 2}
       string = %StringManipulator{operation: "uppercase", text: "test"}
 
-      registry = Normandy.Tools.Registry.new([calc, string])
+      registry = Toolset.new([calc, string])
 
       config = %{
         client: %NormandyTest.Support.ModelMockup{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry
+        toolset: registry
       }
 
       agent = BaseAgent.init(config)
@@ -142,6 +143,27 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
 
       agent = BaseAgent.init(config)
       assert agent.max_tool_iterations == 5
+    end
+  end
+
+  describe "register_tool/3" do
+    test "forwards options to Toolset.register/3", %{agent: agent} do
+      agent =
+        agent
+        |> BaseAgent.register_tool(%Calculator{})
+        |> BaseAgent.register_tool(%Calculator{}, replace: true)
+
+      assert Toolset.count(agent.toolset) == 1
+    end
+
+    test "an unknown option raises from Toolset.register/3", %{agent: agent} do
+      error =
+        assert_raise ArgumentError, fn ->
+          BaseAgent.register_tool(agent, %Calculator{}, timout: 5)
+        end
+
+      assert String.starts_with?(error.message, "Normandy.Tools.Toolset.register/3: ")
+      assert error.message =~ ":timout"
     end
   end
 end

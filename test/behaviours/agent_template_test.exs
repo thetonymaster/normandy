@@ -6,7 +6,7 @@ defmodule Normandy.Behaviours.AgentTemplateTest do
     {:ok, cat} = Catalog.start_link([])
 
     supp = %{
-      tool_registry: :tr,
+      toolset: :tr,
       before_hooks: [],
       after_hooks: [],
       client_builder: fn t -> {:client, t} end

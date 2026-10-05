@@ -1,136 +1,111 @@
-defmodule Normandy.Tools.Registry do
+defmodule Normandy.Tools.Toolset do
   @moduledoc """
-  Manages a collection of tools available to an agent.
+  The tools an agent can call, by name.
 
-  The Registry provides a structured way to register, retrieve, and list
-  tools that an agent can use during execution.
+  Each tool is a struct holding the tool's own configuration. `register/3` indexes it by its
+  name and takes options that belong to the registration (see `register/3`).
+  `to_tool_schemas/1` produces the tool definitions sent to the model.
   """
 
   alias Normandy.Tools.BaseTool
 
-  @type t :: %__MODULE__{
-          tools: %{String.t() => struct()}
-        }
+  @type t :: %__MODULE__{tools: %{String.t() => struct()}}
 
   defstruct tools: %{}
 
-  @doc """
-  Creates a new empty tool registry.
+  @register_schema NimbleOptions.new!(
+                     replace: [
+                       type: :boolean,
+                       default: false,
+                       doc:
+                         "Replace a tool already registered under the same name instead of raising."
+                     ]
+                   )
 
-  ## Examples
-
-      iex> Normandy.Tools.Registry.new()
-      %Normandy.Tools.Registry{tools: %{}}
-
-  """
+  @doc "An empty toolset."
   @spec new() :: t()
-  def new do
-    %__MODULE__{tools: %{}}
-  end
+  def new, do: %__MODULE__{}
 
   @doc """
-  Creates a new tool registry with the given tools.
+  A toolset holding `tools`, registered in order. An entry is a tool, or `{tool, opts}` to
+  pass `opts` to `register/3`.
 
-  ## Examples
-
-      iex> tools = [%MyTool{}, %OtherTool{}]
-      iex> Normandy.Tools.Registry.new(tools)
-      %Normandy.Tools.Registry{tools: %{"my_tool" => %MyTool{}, ...}}
-
+      Normandy.Tools.Toolset.new([%Search{}, {%Search{index: "b"}, replace: true}])
   """
-  @spec new([struct()]) :: t()
+  @spec new([struct() | {struct(), keyword()}]) :: t()
   def new(tools) when is_list(tools) do
-    registry = new()
-    Enum.reduce(tools, registry, fn tool, acc -> register(acc, tool) end)
+    Enum.reduce(tools, new(), fn
+      {tool, opts}, acc when is_list(opts) -> register(acc, tool, opts)
+      tool, acc -> register(acc, tool, [])
+    end)
   end
 
   @doc """
-  Registers a tool in the registry.
+  Registers `tool` under its name.
 
-  The tool is indexed by its `tool_name`, which must be 1 to 64 letters, digits,
-  underscores or dashes (what the API accepts); anything else raises `ArgumentError`
-  here rather than as a 400 on the first request. Registering a second tool with the same
-  name raises `ArgumentError` (the model could only ever reach one of them); pass
-  `replace: true` to replace the existing one.
+  The name must be 1 to 64 letters, digits, underscores or dashes (what the API accepts);
+  anything else raises `ArgumentError` here rather than as a 400 on the first request.
+  Registering a second tool with the same name raises `ArgumentError` unless `replace: true`.
+  An unknown or mistyped option raises `ArgumentError` naming it.
 
-  ## Examples
+  ## Options
 
-      iex> registry = Normandy.Tools.Registry.new()
-      iex> tool = %CalculatorTool{}
-      iex> Normandy.Tools.Registry.register(registry, tool)
-      %Normandy.Tools.Registry{tools: %{"calculator" => %CalculatorTool{}}}
-
+  #{Normandy.Options.docs(@register_schema)}
   """
   @spec register(t(), struct(), keyword()) :: t()
-  def register(%__MODULE__{tools: tools} = registry, tool, opts \\ []) do
+  def register(%__MODULE__{tools: tools} = toolset, tool, opts \\ []) do
+    opts = Normandy.Options.validate!(opts, @register_schema, {__MODULE__, :register, 3})
     tool_name = BaseTool.tool_name(tool)
 
     unless valid_name?(tool_name) do
       raise ArgumentError,
-            "Normandy.Tools.Registry.register/3: #{inspect(tool_name)} is not a valid tool name; " <>
+            "Normandy.Tools.Toolset.register/3: #{inspect(tool_name)} is not a valid tool name; " <>
               "the API accepts 1 to 64 letters, digits, underscores and dashes"
     end
 
-    if Map.has_key?(tools, tool_name) and not Keyword.get(opts, :replace, false) do
+    if Map.has_key?(tools, tool_name) and not Keyword.fetch!(opts, :replace) do
       raise ArgumentError,
-            "Normandy.Tools.Registry.register/3: a tool named #{inspect(tool_name)} is already " <>
+            "Normandy.Tools.Toolset.register/3: a tool named #{inspect(tool_name)} is already " <>
               "registered; pass replace: true to replace it"
     end
 
-    %{registry | tools: Map.put(tools, tool_name, tool)}
+    %{toolset | tools: Map.put(tools, tool_name, tool)}
   end
 
-  @doc """
-  Retrieves a tool by name from the registry.
-
-  Returns `{:ok, tool}` if found, `:error` otherwise.
-
-  ## Examples
-
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.get(registry, "calculator")
-      {:ok, %CalculatorTool{}}
-
-      iex> Normandy.Tools.Registry.get(registry, "nonexistent")
-      :error
-
-  """
-  @spec get(t(), String.t()) :: {:ok, struct()} | :error
-  def get(%__MODULE__{tools: tools}, tool_name) do
-    Map.fetch(tools, tool_name)
-  end
+  @doc "The tool registered as `tool_name`: `{:ok, tool}`, or `:error`."
+  @spec fetch(t(), String.t()) :: {:ok, struct()} | :error
+  def fetch(%__MODULE__{tools: tools}, tool_name), do: Map.fetch(tools, tool_name)
 
   @doc """
-  Retrieves a tool by name, raising if not found.
-
-  ## Examples
-
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.get!(registry, "calculator")
-      %CalculatorTool{}
-
+  The tool registered as `tool_name`. Raises `Normandy.ToolNotFoundError` (naming the
+  registered tools) when there is none.
   """
-  @spec get!(t(), String.t()) :: struct()
-  def get!(%__MODULE__{} = registry, tool_name) do
-    case get(registry, tool_name) do
-      {:ok, tool} -> tool
-      :error -> raise "Tool '#{tool_name}' not found in registry"
+  @spec fetch!(t(), String.t()) :: struct()
+  def fetch!(%__MODULE__{tools: tools} = toolset, tool_name) do
+    case fetch(toolset, tool_name) do
+      {:ok, tool} ->
+        tool
+
+      :error ->
+        raise Normandy.ToolNotFoundError,
+          name: tool_name,
+          registered: tools |> Map.keys() |> Enum.sort()
     end
   end
 
   @doc """
-  Removes a tool from the registry by name.
+  Removes a tool from the toolset by name.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.unregister(registry, "calculator")
-      %Normandy.Tools.Registry{tools: %{}}
+      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
+      iex> Normandy.Tools.Toolset.unregister(toolset, "calculator")
+      %Normandy.Tools.Toolset{tools: %{}}
 
   """
   @spec unregister(t(), String.t()) :: t()
-  def unregister(%__MODULE__{tools: tools} = registry, tool_name) do
-    %{registry | tools: Map.delete(tools, tool_name)}
+  def unregister(%__MODULE__{tools: tools} = toolset, tool_name) do
+    %{toolset | tools: Map.delete(tools, tool_name)}
   end
 
   @doc """
@@ -138,8 +113,8 @@ defmodule Normandy.Tools.Registry do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Registry.list(registry)
+      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
+      iex> Normandy.Tools.Toolset.list(toolset)
       [%Tool1{}, %Tool2{}]
 
   """
@@ -149,12 +124,12 @@ defmodule Normandy.Tools.Registry do
   end
 
   @doc """
-  Returns a list of all tool names in the registry.
+  Returns a list of all tool names in the toolset.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.list_names(registry)
+      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
+      iex> Normandy.Tools.Toolset.list_names(toolset)
       ["calculator"]
 
   """
@@ -164,12 +139,12 @@ defmodule Normandy.Tools.Registry do
   end
 
   @doc """
-  Returns the number of tools in the registry.
+  Returns the number of tools in the toolset.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Registry.count(registry)
+      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
+      iex> Normandy.Tools.Toolset.count(toolset)
       2
 
   """
@@ -179,15 +154,15 @@ defmodule Normandy.Tools.Registry do
   end
 
   @doc """
-  Checks if a tool with the given name exists in the registry.
+  Checks if a tool with the given name exists in the toolset.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.has_tool?(registry, "calculator")
+      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
+      iex> Normandy.Tools.Toolset.has_tool?(toolset, "calculator")
       true
 
-      iex> Normandy.Tools.Registry.has_tool?(registry, "nonexistent")
+      iex> Normandy.Tools.Toolset.has_tool?(toolset, "nonexistent")
       false
 
   """
@@ -203,8 +178,8 @@ defmodule Normandy.Tools.Registry do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.to_tool_schemas(registry)
+      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
+      iex> Normandy.Tools.Toolset.to_tool_schemas(toolset)
       [
         %{
           name: "calculator",
@@ -234,8 +209,8 @@ defmodule Normandy.Tools.Registry do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Registry.get_metadata(registry, "calculator")
+      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
+      iex> Normandy.Tools.Toolset.fetch_metadata(toolset, "calculator")
       {:ok, %{
         name: "calculator",
         description: "Performs arithmetic operations",
@@ -244,9 +219,9 @@ defmodule Normandy.Tools.Registry do
       }}
 
   """
-  @spec get_metadata(t(), String.t()) :: {:ok, map()} | :error
-  def get_metadata(%__MODULE__{} = registry, tool_name) do
-    case get(registry, tool_name) do
+  @spec fetch_metadata(t(), String.t()) :: {:ok, map()} | :error
+  def fetch_metadata(%__MODULE__{} = toolset, tool_name) do
+    case fetch(toolset, tool_name) do
       {:ok, tool} ->
         metadata = build_tool_metadata(tool)
         {:ok, metadata}
@@ -257,14 +232,14 @@ defmodule Normandy.Tools.Registry do
   end
 
   @doc """
-  Gets metadata for all tools in the registry.
+  Gets metadata for all tools in the toolset.
 
   Returns a list of metadata maps for each registered tool.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Registry.list_metadata(registry)
+      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
+      iex> Normandy.Tools.Toolset.list_metadata(toolset)
       [%{name: "tool1", ...}, %{name: "tool2", ...}]
 
   """
@@ -278,17 +253,17 @@ defmodule Normandy.Tools.Registry do
   @doc """
   Filters tools by whether they have required parameters.
 
-  Returns a new registry containing only tools that match the criteria.
+  Returns a new toolset containing only tools that match the criteria.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Registry.filter_by_required_params(registry, true)
-      %Normandy.Tools.Registry{tools: %{"tool1" => %Tool1{}}}
+      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
+      iex> Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
+      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}}
 
   """
   @spec filter_by_required_params(t(), boolean()) :: t()
-  def filter_by_required_params(%__MODULE__{tools: tools} = registry, has_required?) do
+  def filter_by_required_params(%__MODULE__{tools: tools} = toolset, has_required?) do
     filtered_tools =
       tools
       |> Enum.filter(fn {_name, tool} ->
@@ -296,23 +271,23 @@ defmodule Normandy.Tools.Registry do
       end)
       |> Map.new()
 
-    %{registry | tools: filtered_tools}
+    %{toolset | tools: filtered_tools}
   end
 
   @doc """
   Filters tools by parameter type.
 
-  Returns a new registry containing only tools that have a parameter of the given type.
+  Returns a new toolset containing only tools that have a parameter of the given type.
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Calculator{}, %StringTool{}])
-      iex> Normandy.Tools.Registry.filter_by_param_type(registry, "number")
-      %Normandy.Tools.Registry{tools: %{"calculator" => %Calculator{}}}
+      iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
+      iex> Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
+      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}}
 
   """
   @spec filter_by_param_type(t(), String.t()) :: t()
-  def filter_by_param_type(%__MODULE__{tools: tools} = registry, param_type) do
+  def filter_by_param_type(%__MODULE__{tools: tools} = toolset, param_type) do
     filtered_tools =
       tools
       |> Enum.filter(fn {_name, tool} ->
@@ -320,7 +295,7 @@ defmodule Normandy.Tools.Registry do
       end)
       |> Map.new()
 
-    %{registry | tools: filtered_tools}
+    %{toolset | tools: filtered_tools}
   end
 
   @doc """
@@ -330,8 +305,8 @@ defmodule Normandy.Tools.Registry do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%Calculator{}, %StringTool{}])
-      iex> Normandy.Tools.Registry.tools_with_constraint(registry, :enum)
+      iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
+      iex> Normandy.Tools.Toolset.tools_with_constraint(toolset, :enum)
       ["calculator", "string_tool"]
 
   """
@@ -351,8 +326,8 @@ defmodule Normandy.Tools.Registry do
 
   ## Examples
 
-      iex> registry = Normandy.Tools.Registry.new([%EnhancedCalculator{}])
-      iex> Normandy.Tools.Registry.introspect_schema(registry, "enhanced_calculator")
+      iex> toolset = Normandy.Tools.Toolset.new([%EnhancedCalculator{}])
+      iex> Normandy.Tools.Toolset.introspect_schema(toolset, "enhanced_calculator")
       {:ok, [
         %{name: :operation, type: :string, required: true, ...},
         ...
@@ -360,8 +335,8 @@ defmodule Normandy.Tools.Registry do
 
   """
   @spec introspect_schema(t(), String.t()) :: {:ok, [map()]} | {:ok, nil} | :error
-  def introspect_schema(%__MODULE__{} = registry, tool_name) do
-    case get(registry, tool_name) do
+  def introspect_schema(%__MODULE__{} = toolset, tool_name) do
+    case fetch(toolset, tool_name) do
       {:ok, tool} ->
         schema_info = get_schema_introspection(tool)
         {:ok, schema_info}

@@ -48,7 +48,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
 
   defp register_supplement(cat, base) do
     Catalog.put(cat, "k", %{
-      tool_registry: base.tool_registry,
+      toolset: base.toolset,
       before_hooks: [],
       after_hooks: [],
       client_builder: fn _ -> base.client end

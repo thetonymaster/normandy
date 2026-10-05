@@ -17,7 +17,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   # Minimal tools-capable client: returns a final response with no tool calls
   # (the idiomatic "I'm done" shape for a tools turn), so a tool registry forces
@@ -143,7 +143,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         client: %FinalOnlyToolClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
         max_tool_iterations: 5
       })
 
@@ -170,7 +170,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         client: %StreamingClient{},
         model: "claude-3",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}])
       })
 
     assert_exactly_one_run_span(agent, fn agent ->

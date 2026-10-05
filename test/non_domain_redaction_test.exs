@@ -122,7 +122,7 @@ defmodule Normandy.NonDomainRedactionTest do
         memory: AgentMemory.new_memory(),
         prompt_specification: %Normandy.Components.PromptSpecification{},
         initial_memory: AgentMemory.new_memory(),
-        tool_registry: nil
+        toolset: nil
       }
     end
 

@@ -32,7 +32,7 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
   alias Normandy.Tools.BaseTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
   @doc """
@@ -84,7 +84,7 @@ defmodule Normandy.A2A.Server do
           AgentCard.add_interface(card, url, "jsonrpc+http", "0.3")
       end
 
-    add_tool_skills(card, config.tool_registry, Keyword.get(opts, :expose_tools, []))
+    add_tool_skills(card, config.toolset, Keyword.get(opts, :expose_tools, []))
   end
 
   @doc """
@@ -231,9 +231,9 @@ defmodule Normandy.A2A.Server do
 
   defp add_tool_skills(card, nil, _expose), do: card
 
-  defp add_tool_skills(card, %Registry{} = registry, expose) do
+  defp add_tool_skills(card, %Toolset{} = registry, expose) do
     registry
-    |> Registry.list()
+    |> Toolset.list()
     |> Enum.filter(&(expose == :all or BaseTool.tool_name(&1) in expose))
     |> Enum.reduce(card, fn tool, acc ->
       AgentCard.add_skill(acc, BaseTool.tool_name(tool), BaseTool.tool_description(tool))

@@ -8,7 +8,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Test.TelemetryCapture
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule BlockAll do
     @behaviour Normandy.Guardrails.Guard
@@ -60,7 +60,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
           name: name,
           client: %ToolClient{},
           model: "test-model",
-          tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
+          toolset: Toolset.new([%Calculator{operation: "add", a: 0, b: 0}]),
           max_tool_iterations: 5
         },
         extra
@@ -146,7 +146,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     alias Normandy.Agents.Turn
 
     defp server_config(extra) do
-      {_, agent} = tool_agent(%{tool_registry: nil})
+      {_, agent} = tool_agent(%{toolset: nil})
       Map.merge(agent, extra)
     end
 
@@ -220,7 +220,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                          stacktrace: []
                        }}
 
-      {name, agent} = tool_agent(%{guardrails: [input: [{BlockAll, []}]], tool_registry: nil})
+      {name, agent} = tool_agent(%{guardrails: [input: [{BlockAll, []}]], toolset: nil})
 
       TelemetryCapture.attach_span(
         [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],

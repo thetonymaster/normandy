@@ -5,7 +5,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   # Schema-based tool (has a generated validate/1) with required + enum constraints.
   # execute/1's return value ("did <op>") is the only way to produce a non-error
@@ -93,7 +93,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
   end
 
   defp config_with_tools(tools) do
-    %{name: "test-agent", tool_registry: Registry.new(tools)}
+    %{name: "test-agent", toolset: Toolset.new(tools)}
   end
 
   describe "classify/3" do

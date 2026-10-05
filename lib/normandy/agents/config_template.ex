@@ -5,7 +5,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   config on any node from `template + node-local supplement + credential token`.
 
   Excluded from the template (resolved node-locally instead): `client` (built from
-  the token), `tool_registry` and `before/after_hooks` (from the supplement), and
+  the token), `toolset` and `before/after_hooks` (from the supplement), and
   `circuit_breaker_pid` and `mcp_servers` (from the supplement; the template records
   only that they were set, and `rebuild/3` raises if the supplement lacks one).
   `current_user_input` and `resolved_context_window` are transient and not kept.
@@ -198,7 +198,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       prompt_specification: tmpl.prompt_specification,
       input_schema: tmpl.input_schema,
       output_schema: tmpl.output_schema,
-      tool_registry: supplement.tool_registry,
+      toolset: supplement.toolset,
       client: supplement.client_builder.(token),
       behaviours: behaviours,
       memory: AgentMemory.new_memory(Map.get(tmpl, :max_messages))

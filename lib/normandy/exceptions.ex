@@ -161,3 +161,21 @@ defmodule Normandy.HookHaltError do
   def outcome(%__MODULE__{event: :on_prompt} = e), do: {:rejected, e}
   def outcome(%__MODULE__{} = e), do: {:error, e}
 end
+
+defmodule Normandy.ToolNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Tools.Toolset.fetch!/2` when no tool is registered under a name.
+
+  `:name` is the name asked for; `:registered` lists the names the toolset holds, sorted.
+  """
+  defexception [:name, registered: []]
+
+  @impl true
+  def message(%__MODULE__{name: name, registered: []}),
+    do: "no tool named #{inspect(name)} in the toolset; it has no tools"
+
+  def message(%__MODULE__{name: name, registered: registered}),
+    do:
+      "no tool named #{inspect(name)} in the toolset; registered: " <>
+        Enum.map_join(registered, ", ", &inspect/1)
+end
