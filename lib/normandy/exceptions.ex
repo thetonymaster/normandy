@@ -139,10 +139,10 @@ end
 
 defmodule Normandy.HookHaltError do
   @moduledoc """
-  Raised by `Normandy.Agents.BaseAgent` when an `on_prompt` or `before_llm` hook halts the
-  turn. `outcome/1` is how both shells report it: `{:rejected, e}` for `on_prompt` and
-  `{:error, {:hook_halted, e}}` for `before_llm`. `Turn.Server` replies `{:error, {:rejected, e}}`
-  or `{:error, {:hook_halted, e}}` respectively, and `on_turn_end` hooks receive the outcome.
+  An `on_prompt` or `before_llm` hook halted the turn. `BaseAgent.run/2,3` returns
+  `{:error, e}` (`run!/2,3` and the streaming paths raise it), and `Turn.Server` replies
+  `{:error, e}` for both. `outcome/1` is what `on_turn_end` hooks receive in both shells:
+  `{:rejected, e}` for `on_prompt` and `{:error, e}` for `before_llm`.
   """
   defexception [:event, :hook, :reason]
 
@@ -155,9 +155,9 @@ defmodule Normandy.HookHaltError do
 
   @doc """
   An `on_prompt` halt is a rejection (the input never became a turn, nothing is stored):
-  `{:rejected, e}`. A `before_llm` halt fails a started turn: `{:error, {:hook_halted, e}}`.
+  `{:rejected, e}`. A `before_llm` halt fails a started turn: `{:error, e}`.
   """
-  @spec outcome(t()) :: {:rejected, t()} | {:error, {:hook_halted, t()}}
+  @spec outcome(t()) :: {:rejected, t()} | {:error, t()}
   def outcome(%__MODULE__{event: :on_prompt} = e), do: {:rejected, e}
-  def outcome(%__MODULE__{} = e), do: {:error, {:hook_halted, e}}
+  def outcome(%__MODULE__{} = e), do: {:error, e}
 end

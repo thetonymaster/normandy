@@ -11,6 +11,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Test.FakeTool
+  alias Normandy.TurnError
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
   defmodule Resp do
@@ -289,7 +290,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   end
 
   describe ":server approval expiry" do
-    test "forwards :on_approval_timeout; :fail surfaces {:approval_timeout, ids}" do
+    test "forwards :on_approval_timeout; :fail surfaces an :approval_timeout TurnError" do
       infra = supplied_infra()
 
       {:ok, pid} =
@@ -304,7 +305,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           ] ++ infra
         )
 
-      assert {:error, {:approval_timeout, ["pk1"]}} = AgentProcess.run(pid, "please charge")
+      assert {:error, %TurnError{type: :approval_timeout, reason: ["pk1"]}} =
+               AgentProcess.run(pid, "please charge")
     end
   end
 
@@ -358,14 +360,14 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   end
 
   describe ":server worker-crash contract" do
-    test ":server run/3 returns {:error, {:task_down, _}} when the turn worker crashes" do
+    test ":server run/3 returns a :task_down TurnError when the turn worker crashes" do
       infra = supplied_infra()
 
       crash_handlers = %{
         BaseAgent.non_streaming_handlers()
         | # exit/1 (not raise) so the abnormal worker exit doesn't spew an
           # exception crash-report into CI output; still yields a non-normal
-          # :DOWN reason and thus {:task_down, _}.
+          # :DOWN reason and thus a :task_down TurnError.
           call_llm: fn _c, _s, _r -> exit(:boom) end
       }
 
@@ -374,8 +376,25 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           [agent: server_config(), turn_engine: :server, handlers: crash_handlers] ++ infra
         )
 
-      assert {:error, {:task_down, _reason}} = AgentProcess.run(pid, "go")
+      assert {:error, %TurnError{type: :task_down, reason: :boom}} = AgentProcess.run(pid, "go")
       # GenServer survived the worker crash:
+      assert %{agent_id: _} = AgentProcess.get_stats(pid)
+    end
+
+    defmodule ThrowingRegistry do
+      def whereis(_handle, _sid), do: throw(:registry_gone)
+    end
+
+    test "a run worker that dies replies a :task_down TurnError without its stacktrace" do
+      infra = Keyword.put(supplied_infra(), :registry, {ThrowingRegistry, nil})
+
+      {:ok, pid} =
+        AgentProcess.start_link([agent: server_config(), turn_engine: :server] ++ infra)
+
+      # The worker's exit reason is {{:nocatch, :registry_gone}, stacktrace}.
+      assert {:error, %TurnError{type: :task_down, reason: {:nocatch, :registry_gone}}} =
+               AgentProcess.run(pid, "go")
+
       assert %{agent_id: _} = AgentProcess.get_stats(pid)
     end
   end

@@ -204,7 +204,7 @@ defmodule NormandyTest.Telemetry.MetadataTest do
       config = server_config(%{input_guardrails: [{BlockAll, []}]})
       srv = start_server("s-rejected", config)
 
-      assert {:error, {:rejected, %Normandy.Guardrails.ViolationError{}}} =
+      assert {:error, %Normandy.Guardrails.ViolationError{}} =
                Turn.Server.run(srv, %{chat_message: "far too long"})
 
       assert_received {:span, [:normandy, :agent, :run, :start],
@@ -216,7 +216,8 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                        %{
                          session_id: "s-rejected",
                          kind: :error,
-                         reason: {:rejected, %Normandy.Guardrails.ViolationError{}}
+                         reason: %Normandy.Guardrails.ViolationError{},
+                         stacktrace: []
                        }}
 
       {name, agent} = tool_agent(%{input_guardrails: [{BlockAll, []}], tool_registry: nil})

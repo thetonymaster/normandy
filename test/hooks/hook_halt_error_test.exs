@@ -13,6 +13,6 @@ defmodule Normandy.HookHaltErrorTest do
     llm = %HookHaltError{event: :before_llm, hook: MyApp.Budget, reason: "r"}
 
     assert HookHaltError.outcome(prompt) == {:rejected, prompt}
-    assert HookHaltError.outcome(llm) == {:error, {:hook_halted, llm}}
+    assert HookHaltError.outcome(llm) == {:error, llm}
   end
 end

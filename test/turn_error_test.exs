@@ -32,6 +32,101 @@ defmodule Normandy.TurnErrorTest do
     assert %TurnError{type: :task_down, reason: :killed} = TurnError.task_down(:killed)
   end
 
+  @stacktrace [{M, :f, 1, [file: ~c"m.ex", line: 1]}, {M, :g, [:arg], []}]
+
+  test "task_down drops the stacktrace of a throw, an erlang error and a nested exit" do
+    # A worker that throws exits with {{:nocatch, value}, stacktrace}.
+    assert %TurnError{type: :task_down, reason: {:nocatch, :boom}} =
+             TurnError.task_down({{:nocatch, :boom}, @stacktrace})
+
+    assert %TurnError{type: :task_down, reason: :badarith} =
+             TurnError.task_down({:badarith, @stacktrace})
+
+    e = %RuntimeError{message: "x"}
+
+    # A GenServer.call to a process that raised exits with {{e, stacktrace}, {mod, fun, args}}.
+    assert %TurnError{type: :task_down, reason: {^e, {GenServer, :call, [:pid, :msg, 5000]}}} =
+             TurnError.task_down({{e, @stacktrace}, {GenServer, :call, [:pid, :msg, 5000]}})
+
+    # BaseAgent's caught exit or throw: {kind, reason}.
+    assert %TurnError{type: :task_down, reason: {:throw, {:nocatch, :boom}}} =
+             TurnError.task_down({:throw, {{:nocatch, :boom}, @stacktrace}})
+
+    # Not a stacktrace: kept as is.
+    assert %TurnError{type: :task_down, reason: {:shutdown, [1, 2]}} =
+             TurnError.task_down({:shutdown, [1, 2]})
+  end
+
+  describe "from_reason/1" do
+    test "rejections and halts return the exception bare" do
+      v = %Normandy.Schema.ValidationError{message: "m", errors: []}
+      g = %Normandy.Guardrails.ViolationError{message: "m", violations: []}
+      p = %Normandy.HookHaltError{event: :on_prompt, hook: M, reason: "r"}
+      h = %Normandy.HookHaltError{event: :before_llm, hook: M, reason: "r"}
+
+      assert TurnError.from_reason({:rejected, v}) == v
+      assert TurnError.from_reason({:rejected, g}) == g
+      assert TurnError.from_reason({:rejected, p}) == p
+      assert TurnError.from_reason({:hook_halted, h}) == h
+    end
+
+    test "a task_down carrying a domain exception returns it bare, its stacktrace dropped" do
+      e = Normandy.LLMError.new(type: :rate_limit, retryable?: true)
+      assert TurnError.from_reason({:task_down, {e, @stacktrace}}) == e
+    end
+
+    test "a task_down carrying any other exception or an exit reason is a :task_down TurnError" do
+      e = %RuntimeError{message: "x"}
+
+      assert %TurnError{type: :task_down, reason: ^e} =
+               TurnError.from_reason({:task_down, {e, @stacktrace}})
+
+      assert %TurnError{type: :task_down, reason: :killed} =
+               TurnError.from_reason({:task_down, :killed})
+
+      assert %TurnError{type: :task_down, reason: {:nocatch, :boom}} =
+               TurnError.from_reason({:task_down, {{:nocatch, :boom}, @stacktrace}})
+    end
+
+    test "shell failures are TurnErrors of their type" do
+      e = %RuntimeError{message: "x"}
+
+      assert %TurnError{type: :handler_crashed, handler: :append, reason: ^e} =
+               TurnError.from_reason({:handler_crashed, :append, e})
+
+      assert %TurnError{type: :persist_failed, reason: :disk_full} =
+               TurnError.from_reason({:persist_failed, :disk_full})
+
+      assert %TurnError{type: :approval_timeout, reason: ["c1"]} =
+               TurnError.from_reason({:approval_timeout, ["c1"]})
+
+      unexpected = {:unexpected_event, :idle, :start}
+
+      assert %TurnError{type: :unexpected_event, reason: ^unexpected} =
+               TurnError.from_reason(unexpected)
+
+      assert %TurnError{type: :unresumable_state, reason: :running} =
+               TurnError.from_reason({:unresumable_state, :running})
+    end
+
+    test "an exception is returned bare when it is Normandy's, else wrapped as :task_down" do
+      e = Normandy.LLMError.new(type: :overloaded, retryable?: true)
+      assert TurnError.from_reason(e) == e
+
+      t = %TurnError{type: :task_down, reason: :killed}
+      assert TurnError.from_reason(t) == t
+
+      bug = %RuntimeError{message: "x"}
+      assert %TurnError{type: :task_down, reason: ^bug} = TurnError.from_reason(bug)
+    end
+
+    test "an unknown reason raises naming it" do
+      assert_raise ArgumentError, ~r/no exception for turn failure :what/, fn ->
+        TurnError.from_reason(:what)
+      end
+    end
+  end
+
   test "messages name the failure, never a config or argument value" do
     secret = %{api_key: "sk-secret"}
 

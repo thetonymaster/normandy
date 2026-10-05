@@ -12,10 +12,13 @@ defmodule Normandy.Hooks.ServerGlue do
   alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.Hooks.Runner
 
-  @doc "The `on_turn_end` outcome of a failed turn: an output-guardrail block stays a rejection."
+  @doc """
+  The `on_turn_end` outcome of a failed turn: an output-guardrail block stays a rejection;
+  any other reason is `{:error, exception}`, the exception `run/2` replies.
+  """
   @spec fail_outcome(term()) :: Normandy.Behaviours.Hooks.outcome()
   def fail_outcome({:rejected, exception}), do: {:rejected, exception}
-  def fail_outcome(reason), do: {:error, reason}
+  def fail_outcome(reason), do: {:error, Normandy.TurnError.from_reason(reason)}
 
   @doc """
   Whether a loaded session is new (its store held no entries and no turn state) and has

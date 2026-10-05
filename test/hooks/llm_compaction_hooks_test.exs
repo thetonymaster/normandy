@@ -69,7 +69,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
                error
 
       refute_received {:converse, _, _}
-      assert_received {:hook, :p, :on_turn_end, [{:error, {:hook_halted, ^error}}, _ctx]}
+      assert_received {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
     end
 
     test "runs on the streaming path, once per LLM call" do
@@ -111,7 +111,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
     assert %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget spent"} =
              error
 
-    assert_received {:hook, :p, :on_turn_end, [{:error, {:hook_halted, ^error}}, _ctx]}
+    assert_received {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
     refute_received {:hook, :p, :on_turn_end, _}
   end
 

@@ -117,7 +117,7 @@ await_park.(fsid)
 fids = parked_ids.(fsid)
 result = await_result.(fsid)
 S.narrate("Result: #{inspect(result)}")
-S.assert!(":fail mode returns approval_timeout with the parked ids", result == {:error, {:approval_timeout, fids}}, inspect(result))
+S.assert!(":fail mode returns approval_timeout with the parked ids", match?({:error, %Normandy.TurnError{type: :approval_timeout, reason: ^fids}}, result), inspect(result))
 S.assert!("still only R-100 deleted", Agent.get(E2E.S05.Deleted, & &1) == ["R-100"], "")
 
 S.finish()

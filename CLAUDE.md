@@ -65,7 +65,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
 - **`Normandy.Agents.Turn.Server`** - Durable `:gen_statem` turn shell
-  - `run/2` replies `{:error, {:rejected, e}}` for rejected input and `{:error, {:handler_crashed, name, e}}` for a crashing handler instead of crashing
+  - `run/2` replies `{:error, exception}` instead of crashing: Normandy's own exceptions bare (`LLMError`, `ValidationError`, `ViolationError`, `HookHaltError`, `ModelCatalogError`), anything else a `Normandy.TurnError` (`:handler_crashed`, `:task_down`, `:persist_failed`, `:approval_timeout`, `:session_unavailable`, ...); never a tagged tuple or a stacktrace. `TurnError.from_reason/1` is the one mapping
   - `on_approval_timeout: :continue | :fail` (default `:continue`) decides what an approval expiry does; expired calls get `expired: true` results
 
 ### Memory & Messages

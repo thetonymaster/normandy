@@ -85,14 +85,21 @@ stops before then asks for the decision again, and the rejected calls' results p
 
 ## Outcomes and halts
 
-| Halt | `BaseAgent` | `Turn.Server.run/2` | `on_turn_end` sees |
+| Halt | `BaseAgent.run/2,3` | `Turn.Server.run/2` | `on_turn_end` sees |
 |---|---|---|---|
-| `on_prompt` | raises `Normandy.HookHaltError` | `{:error, {:rejected, %HookHaltError{}}}` | `{:rejected, %HookHaltError{}}` |
-| `before_llm` | raises `Normandy.HookHaltError` | `{:error, {:hook_halted, %HookHaltError{}}}` | `{:error, {:hook_halted, %HookHaltError{}}}` |
+| `on_prompt` | `{:error, %HookHaltError{}}` (`run!` raises it) | `{:error, %HookHaltError{}}` | `{:rejected, %HookHaltError{}}` |
+| `before_llm` | `{:error, %HookHaltError{}}` (`run!` raises it) | `{:error, %HookHaltError{}}` | `{:error, %HookHaltError{}}` |
 
 `on_turn_end` sees `{:ok, response}` for a completed turn; `{:rejected, exception}` for a
-schema, input-guardrail or output-guardrail rejection; `{:error, reason}` otherwise. A
+schema, input-guardrail or output-guardrail rejection; `{:error, exception}` otherwise. A
 `before_tool` halt is not a turn halt: its result answers the call.
+
+The exception in `{:error, exception}` is the same in both shells except for a failure
+that is not Normandy's own. Under `BaseAgent` a raised exception (a crashing client's
+`RuntimeError`) arrives bare, and an exit or throw as
+`%Normandy.TurnError{type: :task_down}`. Under `Turn.Server` each arrives as the
+`Normandy.TurnError` that `run/2` replies (`:task_down`, or `:handler_crashed` for a
+hook or handler the server runs).
 
 ## Errors (`:on_error`)
 
@@ -107,19 +114,21 @@ A return value the library consumes (the `Returns` column above, except "ignored
 outside its contract raises `ArgumentError`, whatever `:on_error` says.
 
 In `Turn.Server` no hook outcome stops the session. A crash that propagates (under
-`:reraise`, or a contract violation) is reported this way:
+`:reraise`, or a contract violation) is reported this way (`TurnError` is
+`Normandy.TurnError`):
 
 | Crash in | `Turn.Server.run/2` replies | `on_turn_end` sees |
 |---|---|---|
-| `on_prompt` | `{:error, {:handler_crashed, :admit, e}}` | `{:error, {:handler_crashed, :admit, e}}` |
-| `before_llm`, `after_compact` | `{:error, {:handler_crashed, :before_llm \| :after_compact, e}}` | the same `{:error, ...}` |
-| `after_tool` on a result the server builds (approval rejected or expired, interrupted) | `{:error, {:handler_crashed, :after_tool, e}}` | the same `{:error, ...}` |
-| `before_tool`, or `after_tool` inside tool dispatch | `{:error, {:task_down, {e, stacktrace}}}` | the same `{:error, ...}` |
-| `on_session_start` | no turn runs: the session waits `:unavailable`, retries, and replies `{:error, {:handler_crashed, :on_session_start, e}}` meanwhile | nothing |
+| `on_prompt` | `{:error, %TurnError{type: :handler_crashed, handler: :admit, reason: e}}` | the same `{:error, ...}` |
+| `before_llm`, `after_compact` | `{:error, %TurnError{type: :handler_crashed, handler: :before_llm \| :after_compact, reason: e}}` | the same `{:error, ...}` |
+| `after_tool` on a result the server builds (approval rejected or expired, interrupted) | `{:error, %TurnError{type: :handler_crashed, handler: :after_tool, reason: e}}` | the same `{:error, ...}` |
+| `before_tool`, or `after_tool` inside tool dispatch | `{:error, %TurnError{type: :task_down, reason: e}}` | the same `{:error, ...}` |
+| `on_session_start` | no turn runs: the session waits `:unavailable`, retries, and replies `{:error, %TurnError{type: :session_unavailable, reason: %TurnError{type: :handler_crashed, handler: :on_session_start, reason: e}}}` meanwhile | nothing |
 
 Except on `on_session_start`, the turn fails; the server stays alive. A `before_tool` or
-`after_tool` crash inside tool dispatch kills the worker task that runs the tools, hence
-`:task_down`; so does a crash in the LLM client or the compactor itself.
+`after_tool` crash inside tool dispatch fails the worker that runs the tools, hence
+`:task_down`; so does a crash in the LLM client or the compactor itself. No reply carries
+a stacktrace; the server logs it (arities only).
 
 ## Injection
 

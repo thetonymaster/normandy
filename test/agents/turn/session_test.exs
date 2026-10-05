@@ -8,6 +8,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.TurnError
 
   # A local response struct for stubbing call_llm in Session tests.
   defmodule Resp do
@@ -219,7 +220,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     # A store fault must surface as run/2's error tuple, not a caller crash.
-    assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
+             Turn.Session.run(opts, "hello")
   end
 
   defmodule DownRegistry do
@@ -240,7 +242,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       supervisor_mod: NoStartSupervisor
     ]
 
-    assert {:error, :registry_down} = Turn.Session.run(opts, "hello")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :registry_down}} =
+             Turn.Session.run(opts, "hello")
+
     assert {:error, :registry_down} = Turn.Session.approve(opts, %{})
   end
 
@@ -256,7 +260,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     # A fault is not "no saved turn": starting fresh would drop an in-flight turn.
-    assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
+             Turn.Session.run(opts, "hello")
   end
 
   test "run/2 forwards :on_approval_timeout to the server" do
@@ -272,7 +277,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       on_approval_timeout: :fail
     ]
 
-    assert {:error, :captured} = Turn.Session.run(opts, "hi")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
+             Turn.Session.run(opts, "hi")
+
     assert_received {:server_opts, server_opts}
     assert Keyword.fetch!(server_opts, :on_approval_timeout) == :fail
   end
@@ -294,7 +301,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       idle_timeout_ms: 5_000
     ]
 
-    assert {:error, :captured} = Turn.Session.run(opts, "hi")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
+             Turn.Session.run(opts, "hi")
+
     assert {:ok, tmpl} = InMemory.load_config_template(store, "s-server-opts")
 
     assert tmpl.server_options == %{
@@ -317,7 +326,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       template_provider: {Catalog, cat}
     ]
 
-    assert {:error, :disk_full} = Turn.Session.run(opts, "hi")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :disk_full}} =
+             Turn.Session.run(opts, "hi")
+
     refute_received {:server_opts, _}
   end
 
@@ -337,7 +348,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
         resume_policy: :eager
       ]
 
-      assert {:error, :captured} = Turn.Session.run(opts, "hi")
+      assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
+               Turn.Session.run(opts, "hi")
+
       assert {:ok, %{resume_policy: :eager}} = InMemory.load_config_template(store, "s-eager")
       assert {:ok, ["s-eager"]} = InMemory.list_resumable(store)
     end
@@ -371,7 +384,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
         resume_policy: :eager
       ]
 
-      assert {:error, :captured} = Turn.Session.run(opts, "hi")
+      assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
+               Turn.Session.run(opts, "hi")
+
       assert_received {:server_opts, server_opts}
       assert server_opts[:resume_policy] == :eager
     end
@@ -536,14 +551,15 @@ defmodule Normandy.Agents.Turn.SessionTest do
       sid = "tmpl-fault-#{System.unique_integer([:positive])}"
       opts = Keyword.put(template_opts(InMemory.new(), sid), :store, {TemplateFaultStore, nil})
 
-      assert {:error, :store_unavailable} = Turn.Session.run(opts, "hello")
+      assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
+               Turn.Session.run(opts, "hello")
     end
 
     test "with no saved template it returns an error" do
       store = InMemory.new()
       sid = "no-tmpl-#{System.unique_integer([:positive])}"
 
-      assert {:error, {:no_config_template, ^sid}} =
+      assert {:error, %TurnError{type: :session_unavailable, reason: {:no_config_template, ^sid}}} =
                Turn.Session.run(template_opts(store, sid), "hello")
     end
   end

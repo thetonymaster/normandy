@@ -15,6 +15,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
   alias Normandy.Test.KeepLastCompactor
+  alias Normandy.TurnError
 
   # The FSM finalizes on a response with no tool_calls. Normandy.Test.TurnConfig.Resp has
   # no BaseIOSchema impl; this one does, so AgentMemory.history/1 can render memory.
@@ -148,14 +149,18 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert {:unavailable, _} = :sys.get_state(srv)
 
       assert Turn.Server.run(srv, "hello") ==
-               {:error, {:invalid_hooks, "hook module Gone.Hook is not available"}}
+               {:error,
+                %TurnError{
+                  type: :session_unavailable,
+                  reason: {:invalid_hooks, "hook module Gone.Hook is not available"}
+                }}
 
       assert Process.alive?(srv)
     end
   end
 
   describe "on_prompt" do
-    test "a halt replies {:rejected, %HookHaltError{}}, stores nothing and keeps the server" do
+    test "a halt replies the HookHaltError, stores nothing and keeps the server" do
       store = InMemory.new()
       session = sid()
 
@@ -165,8 +170,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
         )
 
       assert {:error,
-              {:rejected,
-               %Normandy.HookHaltError{event: :on_prompt, hook: Probe, reason: "off-topic"}}} =
+              %Normandy.HookHaltError{event: :on_prompt, hook: Probe, reason: "off-topic"}} =
                Turn.Server.run(srv, "hello")
 
       assert {:ok, []} = InMemory.history(store, session)
@@ -190,7 +194,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
                InMemory.history(store, session)
     end
 
-    test "a hook crashing under :reraise replies {:handler_crashed, :admit, e}; the server lives" do
+    test "a hook crashing under :reraise replies a :handler_crashed TurnError; the server lives" do
       store = InMemory.new()
       session = sid()
 
@@ -201,25 +205,33 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       {_state, before} = :sys.get_state(srv)
 
-      assert {:error, {:handler_crashed, :admit, %RuntimeError{message: "redactor down"}}} =
-               Turn.Server.run(srv, "hello")
+      assert {:error,
+              %TurnError{
+                type: :handler_crashed,
+                handler: :admit,
+                reason: %RuntimeError{message: "redactor down"}
+              }} = Turn.Server.run(srv, "hello")
 
       assert Process.alive?(srv)
-      assert {:error, {:handler_crashed, :admit, _}} = Turn.Server.run(srv, "again")
+
+      assert {:error, %TurnError{type: :handler_crashed, handler: :admit}} =
+               Turn.Server.run(srv, "again")
 
       {_state, data} = :sys.get_state(srv)
       assert data.config.memory == before.config.memory
       assert {:ok, []} = InMemory.history(store, session)
     end
 
-    test "a throwing hook replies {:handler_crashed, :admit, thrown}" do
+    test "a throwing hook replies a :handler_crashed TurnError carrying the thrown term" do
       {:ok, srv} = start(sid(), [probe(returns: [on_prompt: {:throw, :redactor_gone}])])
 
-      assert {:error, {:handler_crashed, :admit, :redactor_gone}} = Turn.Server.run(srv, "hello")
+      assert {:error, %TurnError{type: :handler_crashed, handler: :admit, reason: :redactor_gone}} =
+               Turn.Server.run(srv, "hello")
+
       assert Process.alive?(srv)
     end
 
-    test "a plain-map rewrite the input schema rejects replies {:rejected, %ValidationError{}}" do
+    test "a plain-map rewrite the input schema rejects replies the ValidationError" do
       store = InMemory.new()
       session = sid()
       hooks = [probe(returns: [on_prompt: {:cont, %{"query" => nil}}])]
@@ -227,7 +239,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
       {:ok, srv} =
         start(session, hooks, store: {InMemory, store}, config: %{input_schema: %QueryInput{}})
 
-      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
+      assert {:error, %Normandy.Schema.ValidationError{}} =
                Turn.Server.run(srv, %{"query" => "my ssn is 1"})
 
       assert {:ok, []} = InMemory.history(store, session)
@@ -236,7 +248,8 @@ defmodule Normandy.Hooks.ServerHooksTest do
     test "a contract violation is replied the same way" do
       {:ok, srv} = start(sid(), [probe(returns: [on_prompt: :yes])])
 
-      assert {:error, {:handler_crashed, :admit, %ArgumentError{}}} =
+      assert {:error,
+              %TurnError{type: :handler_crashed, handler: :admit, reason: %ArgumentError{}}} =
                Turn.Server.run(srv, "hello")
 
       assert Process.alive?(srv)
@@ -288,12 +301,12 @@ defmodule Normandy.Hooks.ServerHooksTest do
       refute_receive {:hook, :p, :on_turn_end, _}, 50
     end
 
-    test "a turn that fails reports {:error, reason} exactly once" do
+    test "a turn that fails reports {:error, exception} exactly once" do
       boom = fn _config, _state, _request -> raise "client down" end
       {:ok, srv} = start(sid(), [probe()], handlers: %{call_llm: boom})
 
-      assert {:error, {:task_down, _} = reason} = Turn.Server.run(srv, "hello")
-      assert_receive {:hook, :p, :on_turn_end, [{:error, ^reason}, _ctx]}
+      assert {:error, %TurnError{type: :task_down} = error} = Turn.Server.run(srv, "hello")
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
       refute_receive {:hook, :p, :on_turn_end, _}, 50
     end
 
@@ -320,8 +333,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
     test "a rejected input reports {:rejected, e} with no turn id" do
       {:ok, srv} = start(sid(), [probe()], config: %{input_schema: %QueryInput{}})
 
-      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
-               Turn.Server.run(srv, %{})
+      assert {:error, %Normandy.Schema.ValidationError{}} = Turn.Server.run(srv, %{})
 
       assert_receive {:hook, :p, :on_turn_end,
                       [
@@ -330,21 +342,24 @@ defmodule Normandy.Hooks.ServerHooksTest do
                       ]}
     end
 
-    test "an admission crash reports {:error, {:handler_crashed, :admit, e}}" do
+    test "an admission crash reports {:error, %TurnError{type: :handler_crashed}}" do
       {:ok, srv} = start(sid(), [probe(returns: [on_prompt: {:raise, "x"}])])
 
-      assert {:error, {:handler_crashed, :admit, _}} = Turn.Server.run(srv, "hello")
+      assert {:error, %TurnError{type: :handler_crashed, handler: :admit} = error} =
+               Turn.Server.run(srv, "hello")
 
-      assert_receive {:hook, :p, :on_turn_end,
-                      [{:error, {:handler_crashed, :admit, %RuntimeError{}}}, _ctx]}
+      assert %RuntimeError{} = error.reason
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
     end
 
-    test "a failed write of the turn's first message reports {:error, {:persist_failed, reason}}" do
+    test "a failed write of the turn's first message reports a :persist_failed TurnError" do
       {:ok, srv} =
         start(sid(), [probe()], store: {UserAppendFailStore, UserAppendFailStore.new()})
 
-      assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hello")
-      assert_receive {:hook, :p, :on_turn_end, [{:error, {:persist_failed, :disk_full}}, _ctx]}
+      assert {:error, %TurnError{type: :persist_failed, reason: :disk_full} = error} =
+               Turn.Server.run(srv, "hello")
+
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
     end
 
     test "ServerGlue.fail_outcome/1: an output-guardrail block is a rejection, the rest errors" do
@@ -352,7 +367,10 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert ServerGlue.fail_outcome({:rejected, e}) == {:rejected, e}
 
       assert ServerGlue.fail_outcome({:approval_timeout, ["t"]}) ==
-               {:error, {:approval_timeout, ["t"]}}
+               {:error, %TurnError{type: :approval_timeout, reason: ["t"]}}
+
+      h = %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget"}
+      assert ServerGlue.fail_outcome({:hook_halted, h}) == {:error, h}
     end
   end
 
@@ -367,26 +385,28 @@ defmodule Normandy.Hooks.ServerHooksTest do
       refute_received {:hook, :p, :before_llm, _}
     end
 
-    test "a before_llm halt replies {:hook_halted, e} and on_turn_end sees the same" do
+    test "a before_llm halt replies the HookHaltError and on_turn_end sees the same" do
       {:ok, srv} = start(sid(), [probe(returns: [before_llm: {:halt, "budget"}])])
 
       assert {:error,
-              {:hook_halted,
-               %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget"} = e}} =
+              %Normandy.HookHaltError{event: :before_llm, hook: Probe, reason: "budget"} = e} =
                Turn.Server.run(srv, "hello")
 
-      assert_receive {:hook, :p, :on_turn_end, [{:error, {:hook_halted, ^e}}, _ctx]}
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^e}, _ctx]}
       assert Process.alive?(srv)
     end
 
-    test "a before_llm crash under :reraise replies {:handler_crashed, :before_llm, e}" do
+    test "a before_llm crash under :reraise replies a :handler_crashed TurnError" do
       {:ok, srv} = start(sid(), [probe(returns: [before_llm: {:raise, "budget down"}])])
 
-      assert {:error, {:handler_crashed, :before_llm, %RuntimeError{message: "budget down"}}} =
-               Turn.Server.run(srv, "hello")
+      assert {:error,
+              %TurnError{
+                type: :handler_crashed,
+                handler: :before_llm,
+                reason: %RuntimeError{message: "budget down"}
+              } = error} = Turn.Server.run(srv, "hello")
 
-      assert_receive {:hook, :p, :on_turn_end,
-                      [{:error, {:handler_crashed, :before_llm, %RuntimeError{}}}, _ctx]}
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
 
       assert Process.alive?(srv)
     end
@@ -394,24 +414,25 @@ defmodule Normandy.Hooks.ServerHooksTest do
     test "a before_llm contract violation is replied the same way" do
       {:ok, srv} = start(sid(), [probe(returns: [before_llm: :yes])])
 
-      assert {:error, {:handler_crashed, :before_llm, %ArgumentError{}}} =
+      assert {:error,
+              %TurnError{type: :handler_crashed, handler: :before_llm, reason: %ArgumentError{}}} =
                Turn.Server.run(srv, "hello")
 
       assert Process.alive?(srv)
     end
 
-    test "an LLM client crash stays {:task_down, _}, not a hook crash" do
+    test "an LLM client crash is a :task_down TurnError, not a hook crash" do
       boom = fn _config, _state, _request -> raise "client down" end
       {:ok, srv} = start(sid(), [probe()], handlers: %{call_llm: boom})
 
-      assert {:error, {:task_down, {%RuntimeError{message: "client down"}, _stack}}} =
+      assert {:error, %TurnError{type: :task_down, reason: %RuntimeError{message: "client down"}}} =
                Turn.Server.run(srv, "hello")
 
       assert_received {:hook, :p, :before_llm, _}
       assert Process.alive?(srv)
     end
 
-    test "an after_compact crash under :reraise replies {:handler_crashed, :after_compact, e}" do
+    test "an after_compact crash under :reraise replies a :handler_crashed TurnError" do
       hooks = [probe(returns: [after_compact: {:raise, "archive down"}])]
 
       behaviours = %Config{
@@ -423,11 +444,14 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       assert {:ok, _} = Turn.Server.run(srv, "one")
 
-      assert {:error, {:handler_crashed, :after_compact, %RuntimeError{message: "archive down"}}} =
-               Turn.Server.run(srv, "two")
+      assert {:error,
+              %TurnError{
+                type: :handler_crashed,
+                handler: :after_compact,
+                reason: %RuntimeError{message: "archive down"}
+              } = error} = Turn.Server.run(srv, "two")
 
-      assert_receive {:hook, :p, :on_turn_end,
-                      [{:error, {:handler_crashed, :after_compact, %RuntimeError{}}}, _ctx]}
+      assert_receive {:hook, :p, :on_turn_end, [{:error, ^error}, _ctx]}
 
       assert Process.alive?(srv)
     end
@@ -459,7 +483,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert Enum.take(Enum.map(dropped_again, & &1.id), length(ids)) == ids
     end
 
-    test "a compactor crash stays {:task_down, _}, not a hook crash" do
+    test "a compactor crash is a :task_down TurnError, not a hook crash" do
       hooks = [probe()]
       boom = fn _config, _state, _info -> raise "compactor down" end
 
@@ -471,7 +495,8 @@ defmodule Normandy.Hooks.ServerHooksTest do
       {:ok, srv} =
         start(sid(), hooks, handlers: %{compact: boom}, config: %{behaviours: behaviours})
 
-      assert {:error, {:task_down, {%RuntimeError{message: "compactor down"}, _stack}}} =
+      assert {:error,
+              %TurnError{type: :task_down, reason: %RuntimeError{message: "compactor down"}}} =
                Turn.Server.run(srv, "one")
 
       assert Process.alive?(srv)
@@ -627,8 +652,15 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       assert {:unavailable, _} = :sys.get_state(srv)
 
-      assert {:error, {:handler_crashed, :on_session_start, %RuntimeError{message: "crm down"}}} =
-               Turn.Server.run(srv, "hello")
+      assert {:error,
+              %TurnError{
+                type: :session_unavailable,
+                reason: %TurnError{
+                  type: :handler_crashed,
+                  handler: :on_session_start,
+                  reason: %RuntimeError{message: "crm down"}
+                }
+              }} = Turn.Server.run(srv, "hello")
 
       assert Process.alive?(srv)
     end
@@ -650,7 +682,12 @@ defmodule Normandy.Hooks.ServerHooksTest do
       {:ok, srv} = start(sid(), hooks, store: {UserAppendFailStore, UserAppendFailStore.new()})
 
       assert {:unavailable, _} = :sys.get_state(srv)
-      assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hello")
+
+      assert {:error,
+              %TurnError{
+                type: :session_unavailable,
+                reason: %TurnError{type: :persist_failed, reason: :disk_full}
+              }} = Turn.Server.run(srv, "hello")
     end
   end
 

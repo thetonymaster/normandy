@@ -44,7 +44,8 @@ defmodule Normandy.Telemetry do
     * Stop metadata: the start keys, plus `turn_id` from the finished run.
     * Turn.Server only: stop and exception measurements add `approval_wait` (see
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
-    * `:exception` from `Turn.Server` for rejected input has `reason: {:rejected, exception}`.
+    * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
+      replies (rejected input included), and `stacktrace: []`.
 
   A run `:exception` may be synthetic: see "Killed runs".
 
@@ -326,7 +327,7 @@ defmodule Normandy.Telemetry do
   | `gen_ai.tool.type` | tool `tool_type` (`:function` is `"function"`, `:extension` is `"extension"`) |
   | `gen_ai.agent.name` | `agent_name` |
   | `gen_ai.conversation.id` | `conversation_id` |
-  | `error.type` | `:exception` `reason`: an `LLMError`'s `type`, else the exception module or the term's tag; tool `error_type` |
+  | `error.type` | `:exception` `reason`: an `LLMError`'s or `TurnError`'s `type`, else the exception module; tool `error_type` |
   | `gen_ai.response.time_to_first_chunk` | llm_call stop `time_to_first_chunk`; the attribute is a double in **seconds**, so the bridge converts from native units with `System.convert_time_unit/3` (or `/ System.convert_time_unit(1, :second, :native)`) |
   | `server.address` | llm_call start `server_address` |
 

@@ -508,9 +508,10 @@ defmodule Normandy.Coordination.AgentProcess do
     _ =
       Task.start(fn ->
         OtelCtx.restore(otel_ctx)
-        # Guarantee reply_to always hears back: a raised/exited turn must not be
-        # lost silently. Mirrors the inline path's handle_async_run/3 error shape,
-        # plus a catch for exits/throws (Turn.Session.run can crash the turn).
+        # Guarantee reply_to always hears back with {:error, exception}: a raise is
+        # replied as the exception (handle_async_run/3 does the same inline), an exit or
+        # throw (Turn.Session.run/2 exits when the server dies mid-call) as a :task_down
+        # TurnError. Stacktraces are logged (arities only), never replied.
         result =
           try do
             case Turn.Session.run(opts, user_input) do
@@ -518,13 +519,14 @@ defmodule Normandy.Coordination.AgentProcess do
               {:error, _} = err -> err
             end
           rescue
-            e ->
-              Logger.error("Async agent #{agent_id} failed: #{Exception.message(e)}")
-              {:error, {:exception, e, __STACKTRACE__}}
+            e -> TurnError.log_raised("Async agent #{agent_id}", e, __STACKTRACE__)
           catch
             kind, reason ->
-              Logger.error("Async agent #{agent_id} #{kind}: #{inspect(reason)}")
-              {:error, {kind, reason}}
+              Logger.error(
+                "Async agent #{agent_id} #{kind}\n" <> TurnError.format_stacktrace(__STACKTRACE__)
+              )
+
+              {:error, TurnError.task_down({kind, reason})}
           end
 
         if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
@@ -614,7 +616,7 @@ defmodule Normandy.Coordination.AgentProcess do
         {:noreply, state}
 
       {{from, _start}, rest} ->
-        GenServer.reply(from, {:error, {:task_down, reason}})
+        GenServer.reply(from, {:error, TurnError.task_down(reason)})
         {:noreply, %{state | pending_runs: rest}}
     end
   end

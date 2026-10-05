@@ -102,13 +102,55 @@ defmodule Normandy.TurnError do
   def domain?(%module{}), do: module in @domain
 
   @doc false
-  # A worker's exit reason as a TurnError; an {exception, stacktrace} reason keeps the
-  # exception and drops the stacktrace.
+  # A worker's exit reason as a TurnError, with every stacktrace dropped from it: a
+  # raise's {exception, stacktrace} keeps the exception, a throw's
+  # {{:nocatch, value}, stacktrace} keeps {:nocatch, value}, an Erlang error's
+  # {reason, stacktrace} keeps the reason, and tuples nested in the reason (a
+  # GenServer.call exit, a caught {kind, reason}) are stripped the same way.
   @spec task_down(term()) :: t()
-  def task_down({exception, stacktrace}) when is_exception(exception) and is_list(stacktrace),
-    do: %__MODULE__{type: :task_down, reason: exception}
+  def task_down(reason), do: %__MODULE__{type: :task_down, reason: drop_stacktraces(reason)}
 
-  def task_down(reason), do: %__MODULE__{type: :task_down, reason: reason}
+  @doc false
+  # The exception a failed turn returns, from a failure reason of the Turn core or
+  # Turn.Server (decision 15b): Normandy's own exceptions bare, anything else a
+  # TurnError. Never a tagged tuple, never a stacktrace.
+  @spec from_reason(term()) :: Exception.t()
+  def from_reason({:rejected, exception}) when is_exception(exception), do: exception
+  def from_reason({:hook_halted, exception}) when is_exception(exception), do: exception
+
+  def from_reason({:handler_crashed, name, reason}),
+    do: %__MODULE__{type: :handler_crashed, handler: name, reason: drop_stacktraces(reason)}
+
+  def from_reason({:persist_failed, reason}),
+    do: %__MODULE__{type: :persist_failed, reason: reason}
+
+  def from_reason({:approval_timeout, ids}), do: %__MODULE__{type: :approval_timeout, reason: ids}
+
+  # A domain exception the worker died with is replied bare, like one it returned.
+  def from_reason({:task_down, reason}) do
+    case task_down(reason) do
+      %__MODULE__{reason: exception} = error when is_exception(exception) ->
+        if domain?(exception), do: exception, else: error
+
+      error ->
+        error
+    end
+  end
+
+  def from_reason({:unexpected_event, _state, _event} = reason),
+    do: %__MODULE__{type: :unexpected_event, reason: reason}
+
+  def from_reason({:unresumable_state, status}),
+    do: %__MODULE__{type: :unresumable_state, reason: status}
+
+  def from_reason(exception) when is_exception(exception),
+    do: if(domain?(exception), do: exception, else: task_down(exception))
+
+  def from_reason(other) do
+    raise ArgumentError,
+          "Normandy.TurnError.from_reason/1: no exception for turn failure #{inspect(other)}; " <>
+            "a new failure reason needs a clause here"
+  end
 
   @doc false
   # A stacktrace for a log line: frames keep the arity, never the arguments (a
@@ -136,6 +178,39 @@ defmodule Normandy.TurnError do
 
     {:error, exception}
   end
+
+  @doc false
+  # `term` with every stacktrace in it dropped: a {reason, stacktrace} tuple becomes
+  # reason, at any depth of nested tuples. Exceptions and other non-tuple terms are kept
+  # whole (an exception's own fields are its author's); only tuples are walked. For a
+  # failure reason that is persisted or replied before from_reason/1 sees it.
+  @spec drop_stacktraces(term()) :: term()
+  def drop_stacktraces({reason, stacktrace} = tuple) do
+    if stacktrace?(stacktrace),
+      do: drop_stacktraces(reason),
+      else: {drop_stacktraces(reason), drop_stacktraces(elem(tuple, 1))}
+  end
+
+  def drop_stacktraces(tuple) when is_tuple(tuple),
+    do: tuple |> Tuple.to_list() |> Enum.map(&drop_stacktraces/1) |> List.to_tuple()
+
+  def drop_stacktraces(term), do: term
+
+  # A non-empty list of {module, function, arity_or_args, location} or
+  # {fun, arity_or_args, location} frames.
+  defp stacktrace?([_ | _] = frames), do: Enum.all?(frames, &frame?/1)
+  defp stacktrace?(_term), do: false
+
+  defp frame?({mod, fun, args, location})
+       when is_atom(mod) and is_atom(fun) and (is_integer(args) or is_list(args)) and
+              is_list(location),
+       do: true
+
+  defp frame?({fun, args, location})
+       when is_function(fun) and (is_integer(args) or is_list(args)) and is_list(location),
+       do: true
+
+  defp frame?(_term), do: false
 
   # The module of an exception, the tag of a tagged tuple, an atom as is; never a value.
   defp describe(%module{}), do: inspect(module)

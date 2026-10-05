@@ -72,7 +72,7 @@ defmodule Normandy.Guardrails do
 
   - `:block` (default) — `run` returns
     `{:error, %Normandy.Guardrails.ViolationError{}}` (`run!` raises it;
-    `Turn.Server.run/2` replies `{:error, {:rejected, exception}}`) and the
+    `Turn.Server.run/2` replies the same `{:error, exception}`) and the
     answer is not saved.
   - `:warn` — the violation is logged and the answer is returned and saved.
 

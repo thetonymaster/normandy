@@ -173,6 +173,19 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
                        ]}
     end
 
+    test "a throwing run reports a :task_down TurnError and rethrows the original" do
+      agent = agent([probe()], %{client: %StubClient{reply: fn _ -> throw(:transport_gone) end}})
+
+      assert :transport_gone = catch_throw(BaseAgent.run!(agent, input("hi")))
+
+      assert_received {:hook, :p, :on_turn_end,
+                       [
+                         {:error,
+                          %Normandy.TurnError{type: :task_down, reason: {:throw, :transport_gone}}},
+                         %Context{turn_id: nil}
+                       ]}
+    end
+
     @tag :capture_log
     test "a crashing on_turn_end changes neither a result nor a raised error" do
       crashing = [probe(returns: [on_turn_end: {:raise, "audit down"}])]

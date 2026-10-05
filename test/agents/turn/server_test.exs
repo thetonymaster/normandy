@@ -19,6 +19,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
   alias Normandy.Test.TelemetryCapture
+  alias Normandy.TurnError
 
   # A response model the FSM finalizes on: no tool_calls → :completed.
   defmodule Resp do
@@ -268,13 +269,14 @@ defmodule Normandy.Agents.Turn.ServerTest do
         handlers: handlers
       )
 
-    assert {:error, {:persist_failed, _}} = Turn.Server.run(srv, "do stuff")
+    assert {:error, %TurnError{type: :persist_failed, reason: _}} =
+             Turn.Server.run(srv, "do stuff")
 
     assert {:ok, %Turn.State{status: :failed}} =
              AssistantAppendFailStore.load_turn_state(store, "s-bypass")
   end
 
-  test "an output guardrail block replies {:rejected, e} and keeps the answer out of memory and store" do
+  test "an output guardrail block replies the ViolationError and keeps the answer out of memory and store" do
     store = InMemory.new()
     reg = Native.new()
 
@@ -301,7 +303,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, {:rejected, %Normandy.Guardrails.ViolationError{}}} =
+        assert {:error, %Normandy.Guardrails.ViolationError{}} =
                  Turn.Server.run(srv, "what is my ssn?")
       end)
 
@@ -330,7 +332,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
                template_provider: {Catalog, cat}
              )
 
-    assert {:error, :store_unavailable} = Turn.Server.run(srv, "hello")
+    assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
+             Turn.Server.run(srv, "hello")
   end
 
   test "a Tier-2 thin start without :config or :template_provider fails fast (clear error)" do
@@ -557,7 +560,15 @@ defmodule Normandy.Agents.Turn.ServerTest do
                        %{session_id: "s-span-fail"}}
 
       assert_received {:run_event, [:normandy, :agent, :run, :exception], %{duration: _},
-                       %{session_id: "s-span-fail", kind: :error, reason: {:task_down, _}}}
+                       %{
+                         session_id: "s-span-fail",
+                         kind: :error,
+                         reason: %TurnError{
+                           type: :task_down,
+                           reason: %RuntimeError{message: "llm down"}
+                         },
+                         stacktrace: []
+                       }}
     end
   end
 
@@ -883,7 +894,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert {:ok, _} = Turn.Server.run(srv, "again")
   end
 
-  test "append_entry failure during user message persist returns {:error, {:persist_failed, _}}" do
+  test "append_entry failure during user message persist returns a :persist_failed TurnError" do
     # Tiny inline store where append_entry always fails.
     defmodule FailingAppendStore do
       @behaviour Normandy.Behaviours.SessionStore
@@ -922,7 +933,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
         handlers: handlers
       )
 
-    assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "hi")
+    assert {:error, %TurnError{type: :persist_failed, reason: :disk_full}} =
+             Turn.Server.run(srv, "hi")
   end
 
   test "approval timeout rejects all parked calls (fail-closed) and resumes" do
@@ -1270,13 +1282,20 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     test "a template this node has no supplement for is run/2's error, not a crash" do
       assert {:ok, srv} = thin_start(Normandy.Test.StubCreds, false)
-      assert {:error, {:no_template_supplement, "kind-a"}} = Turn.Server.run(srv, "hello")
+
+      assert {:error,
+              %TurnError{type: :session_unavailable, reason: {:no_template_supplement, "kind-a"}}} =
+               Turn.Server.run(srv, "hello")
     end
 
     test "a credential provider that fails is run/2's error, not a crash" do
       assert {:ok, srv} = thin_start(FailingCreds, true)
 
-      assert {:error, {:credential_unavailable, FailingCreds, :vault_sealed}} =
+      assert {:error,
+              %TurnError{
+                type: :session_unavailable,
+                reason: {:credential_unavailable, FailingCreds, :vault_sealed}
+              }} =
                Turn.Server.run(srv, "hello")
     end
   end
@@ -1376,8 +1395,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       send(self(), {:result, Turn.Server.run(srv, "go")})
     end)
 
-    assert_received {:result,
-                     {:error, {:task_down, {%Normandy.ModelCatalogError{model: "test"}, _stack}}}}
+    assert_received {:result, {:error, %Normandy.ModelCatalogError{model: "test"}}}
   end
 
   describe "context window memoisation across a real turn" do
@@ -1515,11 +1533,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
       ref
     end
 
-    test "schema-invalid input replies {:rejected, ValidationError}; nothing persisted" do
+    test "schema-invalid input replies the ValidationError; nothing persisted" do
       config = %{base_config() | input_schema: %RequiredQueryInput{}}
       {srv, store} = start_server("s-rej-schema", config)
 
-      assert {:error, {:rejected, %Normandy.Schema.ValidationError{}}} =
+      assert {:error, %Normandy.Schema.ValidationError{}} =
                Turn.Server.run(srv, %{})
 
       assert Process.alive?(srv)
@@ -1527,7 +1545,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert {:ok, %Resp{content: "ok"}} = Turn.Server.run(srv, %{query: "weather"})
     end
 
-    test "an input guardrail block replies {:rejected, ViolationError}" do
+    test "an input guardrail block replies the ViolationError" do
       config = %{
         base_config()
         | input_guardrails: [{Normandy.Guardrails.Builtins.MaxLength, limit: 5}]
@@ -1535,7 +1553,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       {srv, _store} = start_server("s-rej-guard", config)
 
-      assert {:error, {:rejected, %Normandy.Guardrails.ViolationError{}}} =
+      assert {:error, %Normandy.Guardrails.ViolationError{}} =
                Turn.Server.run(srv, "too long input")
 
       assert {:ok, %Resp{}} = Turn.Server.run(srv, "hi")
@@ -1554,7 +1572,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
           handlers: final_handlers()
         )
 
-      for _ <- 1..5, do: assert({:error, {:rejected, _}} = Turn.Server.run(srv, %{}))
+      for _ <- 1..5,
+          do: assert({:error, %Normandy.Schema.ValidationError{}} = Turn.Server.run(srv, %{}))
 
       assert Process.alive?(srv)
       assert Process.alive?(sup)
@@ -1576,7 +1595,12 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       log =
         capture_log(fn ->
-          assert {:error, {:handler_crashed, :validate, %RuntimeError{message: "validate boom"}}} =
+          assert {:error,
+                  %TurnError{
+                    type: :handler_crashed,
+                    handler: :validate,
+                    reason: %RuntimeError{message: "validate boom"}
+                  }} =
                    Turn.Server.run(srv, "hi")
         end)
 
@@ -1597,7 +1621,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
         start_server("s-crash-append", base_config(), handlers: final_handlers(%{append: append}))
 
       capture_log(fn ->
-        assert {:error, {:handler_crashed, :append, :store_timeout}} = Turn.Server.run(srv, "hi")
+        assert {:error,
+                %TurnError{type: :handler_crashed, handler: :append, reason: :store_timeout}} =
+                 Turn.Server.run(srv, "hi")
       end)
 
       assert Process.alive?(srv)
@@ -1671,7 +1697,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       log =
         capture_log(fn ->
-          assert {:error, {:handler_crashed, :validate, %MatchError{}}} =
+          assert {:error,
+                  %TurnError{type: :handler_crashed, handler: :validate, reason: %MatchError{}}} =
                    Turn.Server.run(srv, "hi")
         end)
 
@@ -1689,7 +1716,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       log =
         capture_log(fn ->
-          assert {:error, {:handler_crashed, :append, {:timeout, _}}} = Turn.Server.run(srv, "hi")
+          assert {:error,
+                  %TurnError{type: :handler_crashed, handler: :append, reason: {:timeout, _}}} =
+                   Turn.Server.run(srv, "hi")
         end)
 
       assert log =~ "{:timeout, ...}"
@@ -1789,12 +1818,15 @@ defmodule Normandy.Agents.Turn.ServerTest do
       refute_received {:tool_ran, "billing"}
     end
 
-    test ":fail ends the turn with {:approval_timeout, ids}; a late approval is dropped" do
+    test ":fail ends the turn with an :approval_timeout TurnError; a late approval is dropped" do
       {srv, store} = start_approval_server("s-exp-fail", on_approval_timeout: :fail)
 
       run_async(srv, "go")
 
-      assert_receive {:run_result, {:error, {:approval_timeout, ["pk1"]}}}, 2_000
+      assert_receive {:run_result,
+                      {:error, %TurnError{type: :approval_timeout, reason: ["pk1"]}}},
+                     2_000
+
       assert_received {:event, :approval_expired, %{expired: 1, mode: :fail}}
       refute_received {:llm_call, 1, _}
 
@@ -2198,7 +2230,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, store} =
         start_dangling_server("s-dangling-reject", %{input_schema: %RequiredQueryInput{}})
 
-      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      assert {:error, %Normandy.Schema.ValidationError{}} = Turn.Server.run(srv, %{})
       {:ok, entries} = InMemory.history(store, "s-dangling-reject")
       assert Enum.map(entries, & &1.role) == ["user", "assistant"]
     end
@@ -2207,7 +2239,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, store} =
         start_dangling_server("s-dangling-reject-then-run", %{input_schema: %RequiredQueryInput{}})
 
-      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      assert {:error, %Normandy.Schema.ValidationError{}} = Turn.Server.run(srv, %{})
       refute_received {:llm_messages, _}
 
       capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, %{"query" => "q"}) end)
@@ -2217,14 +2249,19 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert Enum.map(entries, & &1.role) == ["user", "assistant", "tool", "user", "assistant"]
     end
 
-    test "an append crash during repair replies {:handler_crashed, :append, _}; nothing persisted" do
+    test "an append crash during repair replies a :handler_crashed TurnError (:append); nothing persisted" do
       {srv, store} =
         start_dangling_server("s-dangling-crash", %{}, %{
           append: fn _config, _role, _content -> raise "append boom" end
         })
 
       capture_log(fn ->
-        assert {:error, {:handler_crashed, :append, %RuntimeError{message: "append boom"}}} =
+        assert {:error,
+                %TurnError{
+                  type: :handler_crashed,
+                  handler: :append,
+                  reason: %RuntimeError{message: "append boom"}
+                }} =
                  Turn.Server.run(srv, "next")
       end)
 
@@ -2238,7 +2275,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, store} = start_dangling_server("s-dangling-ufail", %{}, %{}, fail_append_at: 2)
 
       capture_log(fn ->
-        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "next")
+        assert {:error, %TurnError{type: :persist_failed, reason: :disk_full}} =
+                 Turn.Server.run(srv, "next")
+
         assert {:ok, _} = Turn.Server.run(srv, "again")
       end)
 
@@ -2256,7 +2295,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
         )
 
       capture_log(fn ->
-        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "next")
+        assert {:error, %TurnError{type: :persist_failed, reason: :disk_full}} =
+                 Turn.Server.run(srv, "next")
+
         assert {:ok, _} = Turn.Server.run(srv, "again")
       end)
 
@@ -2302,7 +2343,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
         )
 
       capture_log(fn ->
-        assert {:error, {:persist_failed, :disk_full}} = Turn.Server.run(srv, "go")
+        assert {:error, %TurnError{type: :persist_failed, reason: :disk_full}} =
+                 Turn.Server.run(srv, "go")
+
         assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "again")
       end)
 
@@ -2429,7 +2472,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end)
 
       assert {:unavailable, _} = :sys.get_state(srv)
-      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
+
+      assert {:error, %TurnError{type: :session_unavailable, reason: :store_down}} =
+               Turn.Server.run(srv, "hello")
     end
 
     test "the start succeeds and run/2 replies the store's reason" do
@@ -2437,7 +2482,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
       FlakyStore.down(store)
 
       assert {:ok, srv} = flaky_server(store, "s-unavail")
-      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
+
+      assert {:error, %TurnError{type: :session_unavailable, reason: :store_down}} =
+               Turn.Server.run(srv, "hello")
+
       assert Process.alive?(srv)
     end
 
@@ -2445,7 +2493,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       store = FlakyStore.new()
       FlakyStore.down(store)
       {:ok, srv} = flaky_server(store, "s-recover-call")
-      assert {:error, :store_down} = Turn.Server.run(srv, "hello")
+
+      assert {:error, %TurnError{type: :session_unavailable, reason: :store_down}} =
+               Turn.Server.run(srv, "hello")
 
       FlakyStore.up(store)
 
@@ -2681,7 +2731,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
           on_approval_timeout: :fail
         )
 
-      assert {:error, {:approval_timeout, ["pk1"]}} = Turn.Server.run(srv, "go")
+      assert {:error, %TurnError{type: :approval_timeout, reason: ["pk1"]}} =
+               Turn.Server.run(srv, "go")
 
       assert_receive {:hook, :audit, :after_tool,
                       [
@@ -2710,7 +2761,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       assert_receive {:run_result,
                       {:error,
-                       {:handler_crashed, :after_tool, %RuntimeError{message: "audit down"}}}},
+                       %TurnError{
+                         type: :handler_crashed,
+                         handler: :after_tool,
+                         reason: %RuntimeError{message: "audit down"}
+                       }}},
                      2_000
 
       assert Process.alive?(srv)
@@ -2810,7 +2865,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       {srv, _store} = start_dangling_server("s-hook-dangling-reject", overrides)
 
-      assert {:error, {:rejected, _}} = Turn.Server.run(srv, %{})
+      assert {:error, %Normandy.Schema.ValidationError{}} = Turn.Server.run(srv, %{})
       refute_received {:after_tool, _}
 
       capture_log(fn -> assert {:ok, _} = Turn.Server.run(srv, %{"query" => "q"}) end)

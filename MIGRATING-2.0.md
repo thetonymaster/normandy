@@ -114,7 +114,7 @@ error); in 1.x it was `type: :unknown`.
   Coordinators that discard the config `BaseAgent.run/2` returns (batch, orchestrators, agent
   processes) repeat it on every run.
 - **A failed lookup fails the turn** with `Normandy.ModelCatalogError`. Under `Turn.Server` it
-  arrives as `{:error, {:task_down, {%Normandy.ModelCatalogError{}, stack}}}`.
+  arrives the same way, as `{:error, %Normandy.ModelCatalogError{}}` (see §12).
 - **Non-Claude clients:** a non-`NoOp` compactor with a client that isn't a `ClaudioAdapter`
   must pin the window, or `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` raise
   `ArgumentError`:
@@ -200,14 +200,39 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 
 ## 12. `Turn.Server` failure replies and approval expiry
 
-`Turn.Server.run/2` (and `Turn.Session.run/2`, `AgentProcess.run/2` with
-`turn_engine: :server`) now replies where it used to crash the session:
+`Turn.Server.run/2` (and `Turn.Session.run/2`, `AgentProcess.run/3` with
+`turn_engine: :server`) replies `{:error, exception}` where it used to crash the session,
+and never a tagged tuple or a stacktrace. Normandy's own exceptions (`LLMError`,
+`Schema.ValidationError`, `Guardrails.ViolationError`, `HookHaltError`,
+`ModelCatalogError`) are replied bare; any other failure is a `Normandy.TurnError` whose
+`:type` says what failed. In 1.x a rejected input or a crashing handler crashed the server
+(the caller got an exit); the Wave 1 builds replied the tagged tuples on the left:
 
-| Reply | Before |
+| 1.x / Wave 1 reply | 2.0 reply |
 |---|---|
-| `{:error, {:rejected, exception}}` — input failed its schema or an input guardrail | the server crashed; the caller got an exit |
-| `{:error, {:handler_crashed, name, exception_or_term}}` — a handler raised, exited or threw | the server crashed |
-| `{:error, {:approval_timeout, ids}}` — only with `on_approval_timeout: :fail` | n/a |
+| `{:error, {:rejected, e}}` | `{:error, e}` (`ValidationError`, `ViolationError` or `HookHaltError{event: :on_prompt}`) |
+| `{:error, {:hook_halted, e}}` | `{:error, e}` (`HookHaltError{event: :before_llm}`) |
+| `{:error, {:task_down, {%LLMError{} = e, stacktrace}}}` | `{:error, e}` |
+| `{:error, {:task_down, {other_exception, stacktrace}}}` | `{:error, %TurnError{type: :task_down, reason: other_exception}}` |
+| `{:error, {:task_down, exit_reason}}` | `{:error, %TurnError{type: :task_down, reason: exit_reason}}` |
+| `{:error, {:handler_crashed, name, e}}` | `{:error, %TurnError{type: :handler_crashed, handler: name, reason: e}}` |
+| `{:error, {:persist_failed, r}}` | `{:error, %TurnError{type: :persist_failed, reason: r}}` |
+| `{:error, {:approval_timeout, ids}}` (only with `on_approval_timeout: :fail`) | `{:error, %TurnError{type: :approval_timeout, reason: ids}}` |
+| `{:error, {:unexpected_event, ...} = r}` | `{:error, %TurnError{type: :unexpected_event, reason: r}}` |
+| `{:error, {:unresumable_state, status}}` | `{:error, %TurnError{type: :unresumable_state, reason: status}}` |
+| `{:error, store_or_template_reason}` (session couldn't start) | `{:error, %TurnError{type: :session_unavailable, reason: store_or_template_reason}}` |
+
+Any domain exception the turn's worker raises is replied bare like the `LLMError` row (a
+`ModelCatalogError` from compaction, for example). The worker's exit reason loses its
+stacktrace, whatever its shape (a throw's `{{:nocatch, value}, stacktrace}` becomes
+`{:nocatch, value}`). A session that cannot start because an `on_session_start` hook
+crashed or its injection could not be stored replies a `:session_unavailable` `TurnError`
+whose `:reason` is the `:handler_crashed` or `:persist_failed` `TurnError`. The run
+`:exception` telemetry event carries the same exception as `reason`, with `stacktrace: []`
+(rejected input included, which was `reason: {:rejected, e}`).
+
+`on_turn_end` hooks receive `{:error, exception}` too; a `before_llm` halt is
+`{:error, %HookHaltError{}}`, not `{:error, {:hook_halted, e}}`.
 
 A `:subscriber` that raises, exits or throws no longer crashes the session: it is logged and reported as
 `[:normandy, :turn, :subscriber, :exception]`, and the turn continues.
@@ -296,19 +321,20 @@ Normandy logs it and never emits it.
 - New: `Normandy.Behaviours.Hooks` modules on `Behaviours.Config.hooks` (see
   `docs/guides/hooks.md`). Nothing changes for an agent that sets none. Config templates
   gain `behaviours_refs.hooks`; templates saved earlier rebuild with `[]`.
-- New replies from `Turn.Server.run/2`: `{:error, {:rejected, %Normandy.HookHaltError{}}}`
-  (an `on_prompt` hook halted the input), `{:error, {:hook_halted,
-  %Normandy.HookHaltError{}}}` (a `before_llm` hook halted the turn),
-  `{:error, {:handler_crashed, :admit | :after_tool | :before_llm | :after_compact |
-  :on_session_start, e}}` and `{:error, {:invalid_hooks, message}}` (a hook module missing
-  on this node). `BaseAgent` raises `Normandy.HookHaltError` for both halts.
-  (`:on_session_start` is no `run/2` reply: it leaves the server `:unavailable`.) A
+- New replies from `Turn.Server.run/2` (shapes in §12): `{:error, %Normandy.HookHaltError{}}`
+  (an `on_prompt` hook halted the input, or a `before_llm` hook halted the turn;
+  `:event` tells which), `{:error, %Normandy.TurnError{type: :handler_crashed, handler:
+  :admit | :after_tool | :before_llm | :after_compact}}`, and a `:session_unavailable`
+  `TurnError` whose `:reason` is `{:invalid_hooks, message}` (a hook module missing on
+  this node) or, while an `on_session_start` crash leaves the server `:unavailable`, the
+  `:handler_crashed` `TurnError` (handler `:on_session_start`). `BaseAgent.run/2,3`
+  returns `{:error, %Normandy.HookHaltError{}}` for both halts (`run!/2,3` raises it). A
   `before_tool` or `after_tool` hook crashing under `on_error: :reraise` inside the tool
-  dispatch replies `{:error, {:task_down, {e, stacktrace}}}`; the server stays alive and
-  the turn fails.
+  dispatch replies `{:error, %TurnError{type: :task_down, reason: e}}`; the server stays
+  alive and the turn fails.
 - **Behaviour change:** in `Turn.Server`, an admission that raises something other than a
-  rejection (an input guardrail crashing, for example) now replies `{:error,
-  {:handler_crashed, :admit, e}}` instead of crashing the session.
+  rejection (an input guardrail crashing, for example) now replies a `:handler_crashed`
+  `TurnError` (handler `:admit`) instead of crashing the session.
 - **Behaviour change:** `Turn.Server` now admits a turn's input before it repairs an
   interrupted tool batch; a rejected input repairs nothing (it stored nothing before too).
 - **Behaviour change:** compaction keeps each kept message's entry id, and `Turn.Server`

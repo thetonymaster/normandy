@@ -24,6 +24,14 @@ defmodule Normandy.Behaviours.Hooks do
   | `after_compact/4`, `on_session_start/2` | any value | `{:inject, [String.t()]}` | — |
   | `on_turn_end/3`, `on_passivate/2` | any value (ignored) | — | — |
 
+  `on_turn_end/3` receives `{:ok, response}`, `{:rejected, exception}` (a schema,
+  input-guardrail or output-guardrail rejection, or an `on_prompt` halt) or
+  `{:error, exception}`. The shells differ only for a failure that is not Normandy's own:
+  under `BaseAgent` a raised exception (a crashing client's `RuntimeError`) arrives bare
+  and an exit or throw as a `:task_down` `Normandy.TurnError`; under `Turn.Server` each
+  arrives as the `Normandy.TurnError` that `run/2` replies (`:task_down` or
+  `:handler_crashed`).
+
   `opts` must be plain data (no function, pid, reference or port) and hold no secrets: the
   list is saved in the session's plaintext config template. `:on_error` (`:reraise`
   default, `:open`, `:closed`) is reserved and removed before a callback sees `opts`. See
@@ -51,7 +59,7 @@ defmodule Normandy.Behaviours.Hooks do
   @type opts :: keyword()
   @type entry :: {module(), opts()}
   @type outcome ::
-          {:ok, response :: term()} | {:error, reason :: term()} | {:rejected, Exception.t()}
+          {:ok, response :: term()} | {:error, Exception.t()} | {:rejected, Exception.t()}
 
   @callback on_session_start(Context.t(), opts()) :: {:inject, [String.t()]} | term()
   @callback on_passivate(Context.t(), opts()) :: term()

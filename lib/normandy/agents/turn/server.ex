@@ -20,7 +20,8 @@ defmodule Normandy.Agents.Turn.Server do
       (default 300_000).
     * `:on_approval_timeout` — `:continue` (default) or `:fail`. On expiry every
       parked call gets an `expired: true` tool result. `:continue` hands it to the
-      model; `:fail` ends the turn with `{:error, {:approval_timeout, ids}}`.
+      model; `:fail` ends the turn with `{:error, %Normandy.TurnError{type:
+      :approval_timeout, reason: ids}}`.
       Expiry emits `[:normandy, :turn, :approval, :expired]` for the batch and a
       `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a
       rejected call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
@@ -49,23 +50,24 @@ defmodule Normandy.Agents.Turn.Server do
   Every start, supervisor restarts included, loads the session from the store. If
   the store fails that load, the start still succeeds: the server waits in
   `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s) and
-  on every `run/2`, and replies `{:error, reason}` with the store's reason until a
-  load succeeds. It then carries on as a normal start would, eager resume included.
+  on every `run/2`, and replies `{:error, %Normandy.TurnError{type: :session_unavailable,
+  reason: reason}}` with the store's reason until a load succeeds. It then carries on as a normal start would, eager resume included.
   An approval that arrives while the load fails is dropped with a warning. With no
   call for `:idle_timeout_ms`, the server stops normally.
 
   A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
   on this node, or invalid hook opts) is handled the same way: the server waits
-  `:unavailable`, retries, and replies that reason.
+  `:unavailable`, retries, and replies that reason in a `:session_unavailable` `TurnError`.
 
   ## Session start
 
   A session whose store holds no entries and no turn state is new. Its
   `on_session_start` hooks (`Normandy.Behaviours.Hooks`) run as the first event after
   `init/1` returns, so the supervisor starting the server is not blocked by them. What
-  they inject is stored as one user message. A hook crash (`{:handler_crashed,
-  :on_session_start, e}`) or a store fault writing that message (`{:persist_failed,
-  reason}`) sends the server `:unavailable`, which retries both like a load. A session
+  they inject is stored as one user message. A hook crash or a store fault writing that
+  message sends the server `:unavailable`, which retries both like a load; meanwhile
+  `run/2` replies a `:session_unavailable` `TurnError` whose `:reason` is the
+  `:handler_crashed` (handler `:on_session_start`) or `:persist_failed` `TurnError`. A session
   whose hooks injected nothing is still new on its next start, and runs them again.
 
   ## Events (`:subscriber`)
@@ -80,8 +82,9 @@ defmodule Normandy.Agents.Turn.Server do
   ## Telemetry
 
   Each turn started by `run/2` emits `[:normandy, :agent, :run, :start]`, then
-  `:stop` or `:exception` (`kind: :error`, `reason`), with `model`, `agent_name`
-  and `session_id` metadata, like `BaseAgent.run/2`.
+  `:stop` or `:exception` (`kind: :error`, `reason`: the exception `run/2` replies,
+  `stacktrace: []`), with `model`, `agent_name` and `session_id` metadata, like
+  `BaseAgent.run/2`. A rejected input emits a `:start` and an `:exception` too.
 
   A turn that a restarted server resumes (eager resume) emits a run `:start` of its
   own with `resumed: true` in the metadata, and later `:stop` or `:exception`; its
@@ -107,29 +110,42 @@ defmodule Normandy.Agents.Turn.Server do
 
   ## Errors from `run/2`
 
-    * `{:rejected, exception}` — the input failed its schema
-      (`Normandy.Schema.ValidationError`) or an input guardrail
-      (`Normandy.Guardrails.ViolationError`), or an `on_prompt` hook halted it
-      (`Normandy.HookHaltError`), and nothing was persisted; or an output guardrail
-      blocked the answer (`Normandy.Guardrails.ViolationError`), and the answer was not
-      saved (the user message was).
-    * `{:handler_crashed, name, exception_or_term}` — a synchronous handler
-      (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw; or
-      admission did (`:admit`: an `on_prompt` hook or an input guardrail crashing under
-      `on_error: :reraise`, or a hook's return-contract violation); or an `after_tool`
-      hook crashed on a result the server built itself (`:after_tool`: an approval
-      rejected, expired or interrupted result); or a `before_llm` or `after_compact` hook
-      crashed or broke its return contract (`:before_llm`, `:after_compact`; the turn
-      fails and `on_turn_end` receives the same reason). An `on_session_start` crash
-      (`:on_session_start`) is no `run/2` reply: it sends the server `:unavailable`.
-    * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
-    * `{:hook_halted, %Normandy.HookHaltError{}}` — a `before_llm` hook halted the turn.
-    * `{:persist_failed, reason}` — the session store rejected a write.
-    * `{:task_down, {exception, stacktrace}}` — the worker task died: the LLM call, the
-      compactor or the tool dispatch crashed, including a `before_tool` or `after_tool`
-      hook crashing inside the dispatch under `on_error: :reraise`. The server stays
-      alive, the turn fails, and `on_turn_end` receives `{:error, {:task_down, ...}}`.
-    * Other core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
+  `run/2` returns `{:error, exception}`, never a tagged tuple or a stacktrace.
+  Normandy's own exceptions are replied bare:
+
+    * `Normandy.LLMError` - the LLM call failed (a 429 after the tools ran included).
+    * `Normandy.Schema.ValidationError` - the input failed its schema.
+    * `Normandy.Guardrails.ViolationError` - an input guardrail blocked the input, or an
+      output guardrail blocked the answer.
+    * `Normandy.HookHaltError` - an `on_prompt` hook (`event: :on_prompt`) or a
+      `before_llm` hook (`event: :before_llm`) halted the turn.
+    * `Normandy.ModelCatalogError` - compaction could not look up the model's context
+      window.
+
+  Anything else is a `Normandy.TurnError`, whose `:type` says what failed:
+
+    * `:handler_crashed` - a handler or hook raised, exited or threw; `:handler` names it:
+      a synchronous handler (`:append`, `:convert`, `:validate`, `:guard`, `:emit`),
+      admission (`:admit`: an `on_prompt` hook or an input guardrail crashing under
+      `on_error: :reraise`, or a hook's return-contract violation), an `after_tool` hook
+      on a result the server built itself (an approval rejected, expired or interrupted
+      result), or a `before_llm` or `after_compact` hook.
+    * `:persist_failed` - the session store rejected a write; `:reason` is its reason.
+    * `:approval_timeout` - nobody approved in time and `on_approval_timeout: :fail`;
+      `:reason` is the list of tool call ids.
+    * `:task_down` - the LLM call, the compactor or the tool dispatch raised an
+      exception that is not one of the above (a `before_tool` or `after_tool` hook
+      crashing inside the dispatch under `on_error: :reraise` included), or its worker
+      exited or threw; `:reason` is the exception or the exit reason.
+    * `:session_unavailable` - the session could not be loaded or started (see "Store
+      unavailable" and "Session start"); `:reason` is that failure.
+    * `:unexpected_event`, `:unresumable_state` - a persisted turn that can't continue,
+      or a Normandy bug.
+
+  A rejected input or a blocked answer persists nothing of the answer (the user message
+  is kept for a blocked answer); the server stays alive in every case. `on_turn_end`
+  hooks receive `{:rejected, exception}` for a rejection and `{:error, exception}`,
+  the replied exception, for every other failure.
 
   ## Interrupted tool calls
 
@@ -160,6 +176,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.TurnError
 
   require Logger
 
@@ -210,12 +227,13 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   @doc """
-  Run a turn synchronously; replies once the turn finalizes or fails.
+  Run a turn synchronously; replies once the turn finalizes or fails, with
+  `{:ok, response}` or `{:error, exception}` (see "Errors from `run/2`").
 
   The caller's OpenTelemetry context travels with the request, so the turn's run
   span nests under the caller's active span (a no-op without OTel).
   """
-  @spec run(:gen_statem.server_ref(), term()) :: {:ok, term()} | {:error, term()}
+  @spec run(:gen_statem.server_ref(), term()) :: {:ok, term()} | {:error, Exception.t()}
   def run(server, user_input),
     do: :gen_statem.call(server, {:turn, user_input, OtelCtx.capture()}, :infinity)
 
@@ -295,6 +313,17 @@ defmodule Normandy.Agents.Turn.Server do
     do: "handler #{inspect(name)} crashed"
 
   defp describe_reason(reason), do: inspect(reason)
+
+  # run/2's error while the session cannot be loaded or started. A hook crash or a store
+  # write fault while starting a new session is a turn-failure reason; it is nested as
+  # the exception it maps to, so the reply carries no tagged tuple.
+  defp session_unavailable({:handler_crashed, _name, _e} = reason),
+    do: %TurnError{type: :session_unavailable, reason: TurnError.from_reason(reason)}
+
+  defp session_unavailable({:persist_failed, _r} = reason),
+    do: %TurnError{type: :session_unavailable, reason: TurnError.from_reason(reason)}
+
+  defp session_unavailable(reason), do: %TurnError{type: :session_unavailable, reason: reason}
 
   # Loads the session again. On success the transition is the one init/1 would have
   # made, except that a new session's on_session_start hooks run here, inline: a caller
@@ -520,7 +549,8 @@ defmodule Normandy.Agents.Turn.Server do
         {:next_state, state, new_data, actions ++ [:postpone]}
 
       {:error, reason} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}, idle_timeout(data)]}
+        {:keep_state_and_data,
+         [{:reply, from, {:error, session_unavailable(reason)}}, idle_timeout(data)]}
     end
   end
 
@@ -568,13 +598,14 @@ defmodule Normandy.Agents.Turn.Server do
     else
       {:rejected, exception} ->
         emit_rejected_run(data, caller_ctx, exception)
-        :gen_statem.reply(from, {:error, {:rejected, exception}})
+        :gen_statem.reply(from, {:error, exception})
         turn_end(data, data.config, {:rejected, exception}, turn_id: nil)
         {:keep_state, data}
 
       {:crashed, reason} ->
-        :gen_statem.reply(from, {:error, reason})
-        turn_end(data, data.config, {:error, reason}, turn_id: nil)
+        exception = TurnError.from_reason(reason)
+        :gen_statem.reply(from, {:error, exception})
+        turn_end(data, data.config, {:error, exception}, turn_id: nil)
         {:keep_state, data}
     end
   end
@@ -630,18 +661,16 @@ defmodule Normandy.Agents.Turn.Server do
     interpret(effects, %{data | turn_state: state, task_ref: nil})
   end
 
-  # A monitored Task crashed: feed the matching *_error event into the core.
+  # A monitored Task died (an exit or a throw; a raise is the worker's own error event,
+  # worker_event/3): feed the matching *_error event into the core, as a :task_down
+  # TurnError with no stacktrace in it.
   def handle_event(
         :info,
         {:DOWN, ref, :process, _pid, reason},
         :running,
         %Data{task_ref: ref} = data
       ) do
-    event =
-      case data.task_kind do
-        :tools -> {:tool_error, {:task_down, reason}}
-        _llm_or_compact -> {:llm_error, {:task_down, reason}}
-      end
+    event = {error_event(data.task_kind), TurnError.task_down(reason)}
 
     {state, effects} = Turn.step(data.turn_state, event)
     interpret(effects, %{data | turn_state: state, task_ref: nil, task_kind: nil})
@@ -763,8 +792,9 @@ defmodule Normandy.Agents.Turn.Server do
   # Schema, input-guardrail and on_prompt-hook rejections are expected outcomes: reply
   # them as data without touching state. Anything else admission raises, exits or throws
   # (a hook or input guardrail crashing under on_error: :reraise, a hook's contract
-  # violation) is replied as {:handler_crashed, :admit, e} instead of crashing the
-  # session (and, through restart intensity, Turn.Supervisor).
+  # violation) is {:crashed, {:handler_crashed, :admit, e}}, replied as a :handler_crashed
+  # TurnError, instead of crashing the session (and, through restart intensity,
+  # Turn.Supervisor).
   defp admit(data, user_input) do
     {:ok, BaseAgent.admit_input!(data.config, user_input)}
   rescue
@@ -815,7 +845,7 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  defp persist_failed(reason), do: {:error, {:persist_failed, reason}}
+  defp persist_failed(reason), do: {:error, %TurnError{type: :persist_failed, reason: reason}}
 
   # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
   # several gen_statem events, so :start and :stop/:exception are emitted by
@@ -845,14 +875,14 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Rejected input never starts a turn, but BaseAgent.run/2 reports it as a run span
-  # that ends in :exception; do the same here (the reply is unchanged). The turn id
-  # is left out: admission raised before a turn was initialised.
+  # that ends in :exception with the exception as its reason; do the same here. The
+  # turn id is left out: admission raised before a turn was initialised.
   defp emit_rejected_run(data, caller_ctx, exception) do
     span = start_run_span(data, data.config, caller_ctx, nil)
 
     stop_run_span(%{data | run_span: span, approval_wait: 0}, :exception, %{
       kind: :error,
-      reason: {:rejected, exception},
+      reason: exception,
       stacktrace: []
     })
   end
@@ -1156,8 +1186,9 @@ defmodule Normandy.Agents.Turn.Server do
       {:fail, reason} ->
         # Persist the terminal (:failed) turn state (best-effort) for the same reason.
         _ = persist_turn_state(data, data.turn_state)
-        stop_run_span(data, :exception, %{kind: :error, reason: reason, stacktrace: []})
-        reply(data, {:error, reason})
+        exception = TurnError.from_reason(reason)
+        stop_run_span(data, :exception, %{kind: :error, reason: exception, stacktrace: []})
+        reply(data, {:error, exception})
         turn_end(data, data.config, ServerGlue.fail_outcome(reason))
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
     end
@@ -1172,7 +1203,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   # The worker's event for a :call_llm effect. before_llm runs first, apart from the
   # call: a halt fails the turn with {:hook_halted, e}, a crash with {:handler_crashed,
-  # :before_llm, e}. A crash in the call itself stays {:task_down, _}.
+  # :before_llm, e}. A raise in the call itself fails it with that exception
+  # (worker_event/3), an exit or throw with a :task_down TurnError.
   defp call_llm_event(handlers, data, request) do
     with {:ok, :ok} <-
            worker_hook(data, :before_llm, fn ->
@@ -1183,8 +1215,8 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # The worker's event for a :maybe_compact effect, carrying the updated config. A
-  # compactor crash stays {:task_down, _}; an after_compact crash after it fails the turn
-  # with {:handler_crashed, :after_compact, e}.
+  # compactor crash fails the turn as a crash in the LLM call does (call_llm_event/3); an
+  # after_compact crash after it fails the turn with {:handler_crashed, :after_compact, e}.
   defp compact_event(handlers, data, info) do
     compacted = handlers.compact.(data.config, data.turn_state, info)
 
@@ -1232,7 +1264,7 @@ defmodule Normandy.Agents.Turn.Server do
 
         run_while_server_alive(server, ref, fn ->
           OtelCtx.restore(otel_ctx)
-          fun.(handlers, current)
+          worker_event(kind, fun, handlers, current)
         end)
       end)
 
@@ -1240,6 +1272,28 @@ defmodule Normandy.Agents.Turn.Server do
     send(pid, {:monitor_ref, ref})
     {:next_state, :running, %{data | task_ref: ref, task_kind: kind}}
   end
+
+  # A raise in the LLM call, the compactor or the tool dispatch fails the turn with
+  # that exception instead of killing the worker. Normandy's own exceptions (a 429's
+  # LLMError) are expected outcomes and are not logged; anything else is a bug and is
+  # logged here with its stacktrace (arities only), the one place the stacktrace goes.
+  defp worker_event(kind, fun, handlers, data) do
+    fun.(handlers, data)
+  rescue
+    e ->
+      unless TurnError.domain?(e) do
+        Logger.error(
+          "Turn.Server #{kind} worker raised (session #{inspect(data.session_id)}): " <>
+            describe_crash(:error, e, __STACKTRACE__) <>
+            "\n" <> TurnError.format_stacktrace(__STACKTRACE__)
+        )
+      end
+
+      {error_event(kind), e}
+  end
+
+  defp error_event(:tools), do: :tool_error
+  defp error_event(_llm_or_compact), do: :llm_error
 
   # The work runs in a linked worker while this process watches the server: if
   # the server dies, the worker is killed, so an LLM call or tool does not run
@@ -1323,10 +1377,13 @@ defmodule Normandy.Agents.Turn.Server do
     Logger.error(
       "Turn.Server handler #{inspect(name)} crashed (session #{inspect(data.session_id)}): " <>
         describe_crash(kind, reason, stacktrace) <>
-        "\n" <> Exception.format_stacktrace(arity_only(stacktrace))
+        "\n" <> TurnError.format_stacktrace(stacktrace)
     )
 
-    {:crashed, {:handler_crashed, name, Exception.normalize(kind, reason, stacktrace)}}
+    # The reason is persisted with the failed turn state: no stacktrace in it (an exit
+    # can carry one, like a GenServer.call to a process that raised).
+    normalized = kind |> Exception.normalize(reason, stacktrace) |> TurnError.drop_stacktraces()
+    {:crashed, {:handler_crashed, name, normalized}}
   end
 
   defp guard_output(data, value) do
@@ -1373,15 +1430,6 @@ defmodule Normandy.Agents.Turn.Server do
   defp describe_term(term) when is_list(term), do: "a list"
   defp describe_term(term) when is_binary(term), do: "a binary"
   defp describe_term(_term), do: "a term"
-
-  # Stack frames can carry call arguments (a FunctionClauseError's top frame does),
-  # and an argument may be the config, which can hold credentials. Log arities only.
-  defp arity_only(stacktrace) do
-    Enum.map(stacktrace, fn
-      {mod, fun, args, location} when is_list(args) -> {mod, fun, length(args), location}
-      frame -> frame
-    end)
-  end
 
   defp reply(%Data{pending_reply: nil}, _msg), do: :ok
   defp reply(%Data{pending_reply: from}, msg), do: :gen_statem.reply(from, msg)

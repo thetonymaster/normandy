@@ -20,7 +20,8 @@ defmodule Normandy.Agents.Turn.Session do
   A caller may also pass only `:template_provider` (no `:config`), for example on
   a surviving node after the session's node died: the server starts from the
   template already saved in the store. With no saved template, `run/2` returns
-  `{:error, {:no_config_template, session_id}}`.
+  `{:error, %Normandy.TurnError{type: :session_unavailable, reason:
+  {:no_config_template, session_id}}}`.
 
   ## Resume policy (`:resume_policy`, `:lazy` or `:eager`)
 
@@ -45,15 +46,25 @@ defmodule Normandy.Agents.Turn.Session do
   """
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.{Server, Supervisor}
+  alias Normandy.TurnError
 
   # Plain-data server options saved with a Tier-2 template, so a server started
   # without them (e.g. by ResumeReaper) restores them. Functions (:subscriber,
   # :handlers) cannot be stored; the starter must pass those.
   @stored_server_options [:approval_timeout_ms, :on_approval_timeout, :idle_timeout_ms]
 
-  @spec run(keyword(), term()) :: {:ok, term()} | {:error, term()}
+  @doc """
+  Routes a turn to the session's server, starting it if needed, and returns what
+  `Turn.Server.run/2` returns. A session that cannot be started (a registry or store
+  fault, no saved template) returns `{:error, %Normandy.TurnError{type:
+  :session_unavailable, reason: reason}}`.
+  """
+  @spec run(keyword(), term()) :: {:ok, term()} | {:error, Exception.t()}
   def run(opts, user_input) do
-    with {:ok, pid} <- ensure_server(opts), do: Server.run(pid, user_input)
+    case ensure_server(opts) do
+      {:ok, pid} -> Server.run(pid, user_input)
+      {:error, reason} -> {:error, %TurnError{type: :session_unavailable, reason: reason}}
+    end
   end
 
   @spec approve(keyword(), map()) :: :ok | {:error, :no_session} | {:error, term()}

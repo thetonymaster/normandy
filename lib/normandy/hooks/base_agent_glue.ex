@@ -55,5 +55,5 @@ defmodule Normandy.Hooks.BaseAgentGlue do
   defp raised_outcome(:error, %ValidationError{} = e), do: {:rejected, e}
   defp raised_outcome(:error, %ViolationError{} = e), do: {:rejected, e}
   defp raised_outcome(:error, exception), do: {:error, exception}
-  defp raised_outcome(kind, reason), do: {:error, {kind, reason}}
+  defp raised_outcome(kind, reason), do: {:error, Normandy.TurnError.task_down({kind, reason})}
 end
