@@ -338,9 +338,14 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
          {:ok, validated} <- NimbleOptions.validate(opts, @breaker_schema) do
       {:ok, validated}
     else
-      {:error, %NimbleOptions.ValidationError{} = error} -> {:error, Exception.message(error)}
-      [key] -> {:error, "unknown option #{inspect(key)}; supported: #{supported}"}
-      keys -> {:error, "unknown options #{inspect(keys)}; supported: #{supported}"}
+      {:error, %NimbleOptions.ValidationError{value: value} = error} ->
+        {:error, Options.redact_container(Exception.message(error), value)}
+
+      [key] ->
+        {:error, "unknown option #{inspect(key)}; supported: #{supported}"}
+
+      keys ->
+        {:error, "unknown options #{inspect(keys)}; supported: #{supported}"}
     end
   end
 end

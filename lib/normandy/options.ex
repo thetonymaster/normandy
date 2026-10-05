@@ -138,11 +138,13 @@ defmodule Normandy.Options do
 
   # A map, list or tuple can hold a secret under any key, so its inspected form is replaced by
   # its type. Scalars keep NimbleOptions' own message.
-  defp redact_container(message, value)
-       when is_map(value) or is_list(value) or is_tuple(value),
-       do: String.replace(message, inspect(value), Describe.type_of(value))
+  @doc false
+  @spec redact_container(String.t(), term()) :: String.t()
+  def redact_container(message, value)
+      when is_map(value) or is_list(value) or is_tuple(value),
+      do: String.replace(message, inspect(value), Describe.type_of(value))
 
-  defp redact_container(message, _value), do: message
+  def redact_container(message, _value), do: message
 
   defp definition_at(definition, []), do: definition
 

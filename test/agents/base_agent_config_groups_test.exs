@@ -70,6 +70,21 @@ defmodule Normandy.Agents.BaseAgentConfigGroupsTest do
       GenServer.stop(config.circuit_breaker_pid)
     end
 
+    test "a bad nested value names the option and the expected type" do
+      assert_raise ArgumentError,
+                   ~r/invalid value for :circuit_breaker option: invalid value for :timeout option: expected positive integer, got: 0/,
+                   fn -> init(circuit_breaker: [timeout: 0]) end
+    end
+
+    test "a nested map or list value is never echoed" do
+      for bad <- [%{secret: "s3cr3t"}, [secret: "s3cr3t"]] do
+        error = assert_raise ArgumentError, fn -> init(circuit_breaker: [timeout: bad]) end
+
+        assert error.message =~ ":timeout"
+        refute error.message =~ "s3cr3t"
+      end
+    end
+
     test "true is not a breaker option list" do
       assert_raise ArgumentError,
                    "Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker " <>
