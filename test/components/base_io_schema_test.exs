@@ -62,9 +62,7 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
 
   describe "Map impl regression" do
     test "to_json/1 JSON-encodes the map" do
-      adapter = Application.get_env(:normandy, :adapter, Poison)
-      expected = adapter.encode!(%{a: 1})
-      assert BaseIOSchema.to_json(%{a: 1}) == expected
+      assert BaseIOSchema.to_json(%{a: 1}) == ~s({"a":1})
     end
   end
 end

@@ -532,7 +532,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       old_dump =
         tool_turn(false)
         |> AgentMemory.dump()
-        |> Poison.decode!()
+        |> Jason.decode!()
         |> Map.update!("entries", fn entries ->
           Enum.map(entries, fn entry ->
             update_in(entry, ["content", "data"], fn
@@ -541,7 +541,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
             end)
           end)
         end)
-        |> Poison.encode!()
+        |> Jason.encode!()
 
       refute old_dump =~ "thinking"
 
@@ -561,7 +561,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     test "a dump written before nested structs were tagged still loads" do
       legacy =
-        Poison.encode!(%{
+        Jason.encode!(%{
           version: 1,
           max_messages: nil,
           current_turn_id: "turn",
@@ -622,7 +622,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     end
 
     defp dump_naming(type) do
-      Poison.encode!(%{
+      Jason.encode!(%{
         version: 1,
         max_messages: nil,
         current_turn_id: "t",
@@ -646,7 +646,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     end
 
     test "load refuses a dump version it does not know" do
-      dump = Poison.encode!(%{version: 99, entries: []})
+      dump = Jason.encode!(%{version: 99, entries: []})
 
       assert_raise ArgumentError, ~r/unsupported dump version 99/, fn ->
         AgentMemory.load(dump)

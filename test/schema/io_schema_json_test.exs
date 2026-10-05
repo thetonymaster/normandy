@@ -13,7 +13,7 @@ defmodule Normandy.Schema.IoSchemaJsonTest do
 
   defmodule Derived do
     use Normandy.Schema
-    @derive {Poison.Encoder, only: [:shown]}
+    @derive {Jason.Encoder, only: [:shown]}
 
     io_schema "derived encoder" do
       field(:shown, :string, description: "s")
@@ -24,12 +24,12 @@ defmodule Normandy.Schema.IoSchemaJsonTest do
   test "to_json leaves out the internal __meta__ field" do
     json = BaseIOSchema.to_json(%Plain{verdict: "approve"})
 
-    assert Poison.decode!(json) == %{"verdict" => "approve"}
+    assert Jason.decode!(json) == %{"verdict" => "approve"}
   end
 
   test "a derived encoder still decides the fields" do
     json = BaseIOSchema.to_json(%Derived{shown: "a", hidden: "b"})
 
-    assert Poison.decode!(json) == %{"shown" => "a"}
+    assert Jason.decode!(json) == %{"shown" => "a"}
   end
 end

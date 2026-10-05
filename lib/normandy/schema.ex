@@ -274,15 +274,25 @@ defmodule Normandy.Schema do
   @doc false
   # What an io_schema's to_json encodes: __meta__ (internal bookkeeping) and every
   # redact: true field removed, at every depth, so a nested schema hides its
-  # secrets too. Schema structs stay structs (missing those keys), so a @derive'd
-  # encoder still handles the remaining fields; other structs are left alone.
+  # secrets too. The struct rule is Normandy.JSON's: a struct with its own
+  # Jason.Encoder impl stays a struct and the impl picks the fields, so a schema
+  # one keeps every key (a derived impl matches on all the fields it encodes)
+  # with __meta__ and the redacted fields set to nil; any other struct becomes a
+  # plain map without them.
   @spec __serializable__(term()) :: term()
   def __serializable__(%mod{} = struct) do
-    if Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1) do
-      kept = Map.drop(struct, [:__meta__ | mod.__schema__(:redact_fields)])
-      :maps.map(fn _key, value -> __serializable__(value) end, kept)
-    else
-      struct
+    schema? = Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)
+    hidden = if schema?, do: [:__meta__ | mod.__schema__(:redact_fields)], else: [:__meta__]
+
+    cond do
+      not Normandy.JSON.own_encoder?(struct) ->
+        struct |> Map.from_struct() |> Map.drop(hidden) |> __serializable__()
+
+      schema? ->
+        :maps.map(&serializable_field(&1, &2, hidden), struct)
+
+      true ->
+        struct
     end
   end
 
@@ -292,6 +302,11 @@ defmodule Normandy.Schema do
     do: :maps.map(fn _key, value -> __serializable__(value) end, map)
 
   def __serializable__(other), do: other
+
+  defp serializable_field(:__struct__, module, _hidden), do: module
+
+  defp serializable_field(key, value, hidden),
+    do: if(key in hidden, do: nil, else: __serializable__(value))
 
   @doc """
   Fills every `compute:` field of a schema struct, in declaration order. Each
@@ -407,14 +422,9 @@ defmodule Normandy.Schema do
 
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
-            def __str__(str), do: adapter().encode!(serializable(str))
-            def __rich__(str), do: adapter().encode!(serializable(str), pretty: true)
-            def to_json(str), do: adapter().encode!(serializable(str))
-
-            # Read when encoding, like every other JSON call in Normandy: a value
-            # captured at compile time would ignore runtime config, and a release
-            # would refuse to boot when the two differ.
-            defp adapter, do: Application.get_env(:normandy, :adapter, Poison)
+            def __str__(str), do: Normandy.JSON.encode!(serializable(str))
+            def __rich__(str), do: Normandy.JSON.encode!(serializable(str), pretty: true)
+            def to_json(str), do: Normandy.JSON.encode!(serializable(str))
 
             # Neither __meta__ nor a redact: true field goes to the model or out,
             # in this struct or any schema nested in it.

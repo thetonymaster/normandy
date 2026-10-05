@@ -16,6 +16,12 @@ defmodule Normandy.Components.ToolResultTest do
     assert content(%{"ok" => true}) == ~s({"ok":true})
   end
 
+  test "an atom, a boolean and nil are sent as JSON, not inspect/1 text" do
+    assert content(:ok) == ~s("ok")
+    assert content(true) == "true"
+    assert content(nil) == "null"
+  end
+
   test "text and numbers are sent as text" do
     assert content("done") == "done"
     assert content(3) == "3"

@@ -16,8 +16,8 @@ defmodule Normandy.MixProject do
       dialyzer: dialyzer(),
       # cowlib is test-only (Bypass -> plug_cowboy -> cowboy). 43966 and 43969 have no fix in
       # any release; 43971 is fixed in 2.20.0, which is pinned out (see deps/0: OTP 26).
-      # decimal arrives only with the optional ecto/postgrex deps; its fix (3.0.0) is blocked
-      # by poison 6.0.0, the latest release, which declares an optional `decimal ~> 2.1`.
+      # decimal arrives only with the optional ecto/postgrex deps and the test-only ex_mcp; its
+      # fix (3.0.0) is blocked by ex_json_schema 0.11.3 (via ex_mcp), which requires `decimal ~> 2.0`.
       # Hex warns once an entry no longer matches the lock.
       hex: [
         ignore_advisories: [
@@ -59,7 +59,8 @@ defmodule Normandy.MixProject do
             Normandy.Schema,
             Normandy.Type,
             Normandy.Validate,
-            Normandy.ParameterizedType
+            Normandy.ParameterizedType,
+            Normandy.JSON
           ],
           Agents: [
             Normandy.Agents.BaseAgent,
@@ -171,7 +172,6 @@ defmodule Normandy.MixProject do
   defp deps do
     [
       {:elixir_uuid, "~> 1.2"},
-      {:poison, "~> 6.0"},
       {:telemetry, "~> 1.3"},
       {:claudio, "~> 0.7.0"},
       {:req, "~> 0.6 and >= 0.6.1"},

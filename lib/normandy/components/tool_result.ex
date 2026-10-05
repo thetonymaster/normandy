@@ -45,20 +45,10 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
   defp format_tool_output(output) when is_binary(output), do: output
   defp format_tool_output(output) when is_number(output), do: to_string(output)
 
-  # Maps and lists (a search tool's results) go to the model as JSON, through
-  # the configured adapter. A term JSON cannot express (a tuple, a pid) is
-  # shown with inspect/1, which still gives the model the whole value.
-  defp format_tool_output(output) when is_map(output) or is_list(output) do
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-
-    try do
-      adapter.encode!(output)
-    rescue
-      _ -> inspect(output)
-    end
-  end
-
-  defp format_tool_output(output), do: inspect(output)
+  # Anything else (a map, a list, an atom, a boolean, nil) goes to the model as
+  # JSON. Dispatch has already turned an output JSON cannot express into an
+  # error result, so this raises only for a ToolResult built by hand.
+  defp format_tool_output(output), do: Normandy.JSON.encode!(output)
 
   def get_schema(_), do: %{}
   def __str__(_), do: "ToolResult"

@@ -49,12 +49,8 @@ def deps do
 end
 ```
 
-2. Configure the JSON adapter in `config/config.exs`:
-
-```elixir
-config :normandy,
-  adapter: Poison  # or Jason
-```
+2. No JSON configuration is needed: Normandy uses Jason. To use another library, set
+   `config :normandy, adapter: MyJSON` (a module with `encode!/2` and `decode/1`).
 
 ### Create a Chatbot LiveView
 
@@ -178,7 +174,7 @@ When adding new examples:
 
 1. Create a full Mix project (not Mix.install scripts)
 2. Include comprehensive README with setup instructions
-3. Add config files for JSON adapter
+3. Add config files (Normandy needs no JSON adapter setting)
 4. Provide both CLI and programmatic usage examples
 5. Include error handling and logging
 6. Document architecture and key design decisions

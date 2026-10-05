@@ -345,13 +345,51 @@ defmodule Normandy.Agents.Dispatch do
 
   defp execute_and_wrap(config, call, prepared, execute_fn) do
     case call_execute_fn(execute_fn, config, prepared, call) do
-      {:ok, result} ->
-        %ToolResult{tool_call_id: call.id, output: result, is_error: false}
-
-      {:error, error} ->
-        %ToolResult{tool_call_id: call.id, output: %{error: error}, is_error: true}
+      {:ok, result} -> wrap_output(call, result)
+      {:error, error} -> wrap_error(call, error)
     end
   end
+
+  # The model reads a tool result as JSON (ToolResult's BaseIOSchema impl), and
+  # memory keeps the result for every later request. So an output JSON cannot
+  # express (a tuple, a pid) is replaced here by an error result that says so,
+  # before it reaches memory.
+  defp wrap_output(call, output) when is_binary(output) or is_number(output),
+    do: %ToolResult{tool_call_id: call.id, output: output, is_error: false}
+
+  defp wrap_output(call, output) do
+    case Normandy.JSON.encode(output) do
+      {:ok, _json} ->
+        %ToolResult{tool_call_id: call.id, output: output, is_error: false}
+
+      {:error, exception} ->
+        %ToolResult{
+          tool_call_id: call.id,
+          output: %{
+            error:
+              "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
+          },
+          is_error: true
+        }
+    end
+  end
+
+  # An error reason is a message for the model: one JSON cannot express (a tuple
+  # such as {:http, 500}) is sent as its inspect/1 text, the only form it has.
+  defp wrap_error(call, error) do
+    output =
+      case Normandy.JSON.encode(%{error: error}) do
+        {:ok, _json} -> %{error: error}
+        {:error, _exception} -> %{error: inspect(error)}
+      end
+
+    %ToolResult{tool_call_id: call.id, output: output, is_error: true}
+  end
+
+  defp unencodable(%Protocol.UndefinedError{value: value}),
+    do: "it contains #{Describe.type_of(value)}"
+
+  defp unencodable(exception), do: Exception.message(exception)
 
   defp call_execute_fn(execute_fn, config, prepared, call) when is_function(execute_fn, 4),
     do: execute_fn.(config, prepared, call.name, call)
@@ -465,7 +503,7 @@ defmodule Normandy.Agents.Dispatch do
   def normalize_tool_input(input) when is_map(input), do: input
 
   def normalize_tool_input(input) when is_binary(input) do
-    case Application.get_env(:normandy, :adapter, Poison).decode(input) do
+    case Normandy.JSON.decode(input) do
       {:ok, parsed} when is_map(parsed) -> parsed
       _ -> input
     end

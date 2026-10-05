@@ -36,11 +36,7 @@ defimpl Normandy.Components.BaseIOSchema, for: Map do
   def __str__(map), do: inspect(map)
   def __rich__(map), do: inspect(map)
 
-  def to_json(map) do
-    # Convert map to JSON string using the configured JSON adapter
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-    adapter.encode!(map)
-  end
+  def to_json(map), do: Normandy.JSON.encode!(map)
 
   def get_schema(_map), do: %{}
 end

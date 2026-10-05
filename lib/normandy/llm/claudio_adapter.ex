@@ -334,9 +334,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # Private streaming helpers
 
-    # Claudio's parse_events emits `%{event: "...", data: %{...}}` where
-    # `data` was decoded with `Poison.decode(..., keys: :atoms)` — so its
-    # keys are atoms. Normandy's StreamProcessor pattern-matches
+    # Claudio's parse_events emits `%{event: "...", data: %{...}}`; `data` is
+    # decoded with string keys (Claudio < 0.7 used atom keys), and data_get/2
+    # reads either form. Normandy's StreamProcessor pattern-matches
     # `%{type: "...", <shaped-fields>}` directly (atom :type, atom field
     # keys, but the nested content block / delta maps stay string-keyed
     # because StreamProcessor's inner patterns use `%{"type" => ...}`).
@@ -1429,10 +1429,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
         )
 
       _ ->
-        adapter = JsonDeserializer.get_json_adapter()
-
         with {:ok, parsed} when is_map(parsed) <-
-               Decoder.decode(content, adapter, []),
+               Decoder.decode(content, Normandy.JSON, []),
              {:ok, bound} <- SchemaBinder.bind(parsed, response_model, content) do
           bound
         else

@@ -60,7 +60,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed to each
     retry's `converse/3` (with `request_kind: :json_retry`) so the retry's request
     span is numbered within the enclosing llm_call
-  - `:adapter` - JSON adapter module (default: from `:normandy` app config)
+  - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
     string truncation (default: `false`). See `parse_and_validate/3`.
   - `:max_input_bytes` - Maximum byte size of the raw content accepted before
@@ -124,7 +124,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
     - `opts` - Options:
-      - `:adapter` - JSON adapter module (default: from `:normandy` app config)
+      - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
       - `:recover_truncated_strings` - When `true`, on adapter decode failure
         attempt one recovery pass for the failure mode "unclosed top-level
         string at depth 1" (e.g. Nemotron-VL `page_text` payloads that
@@ -158,7 +158,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @spec parse_and_validate(String.t(), struct(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def parse_and_validate(content, schema, opts \\ []) do
-    adapter = Keyword.get(opts, :adapter, get_json_adapter())
+    adapter = Keyword.get(opts, :adapter, Normandy.JSON)
     parse_and_populate(content, schema, adapter, opts)
   end
 
@@ -190,7 +190,7 @@ defmodule Normandy.LLM.JsonDeserializer do
           {:ok, struct()} | {:error, term()}
   def deserialize_with_retry(content, schema, client, %Request{} = request, opts \\ []) do
     max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
-    adapter = Keyword.get(opts, :adapter, get_json_adapter())
+    adapter = Keyword.get(opts, :adapter, Normandy.JSON)
 
     deserialize_loop(content, schema, client, request, opts, adapter, 0, max_retries)
   end
@@ -390,10 +390,4 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   defp extract_content_from_response(%{content: content}) when is_binary(content), do: content
   defp extract_content_from_response(_), do: ""
-
-  # Get JSON adapter from application config
-  @doc false
-  def get_json_adapter do
-    Application.get_env(:normandy, :adapter, Poison)
-  end
 end

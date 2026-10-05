@@ -269,8 +269,6 @@ defmodule Normandy.Components.AgentMemory do
 
   @spec dump(t()) :: String.t()
   def dump(%__MODULE__{} = memory) do
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-
     encoded_entries =
       for {_id, %Entry{} = e} <- memory.entries do
         %{
@@ -282,7 +280,7 @@ defmodule Normandy.Components.AgentMemory do
         }
       end
 
-    adapter.encode!(%{
+    Normandy.JSON.encode!(%{
       version: 1,
       max_messages: memory.max_messages,
       current_turn_id: memory.current_turn_id,
@@ -293,12 +291,11 @@ defmodule Normandy.Components.AgentMemory do
 
   @spec load(String.t()) :: t()
   def load(dump) do
-    adapter = Application.get_env(:normandy, :adapter, Poison)
     # Decode with string keys only. A dump can carry untrusted/raw content, and a
     # blanket `keys: :atoms` would intern every nested content key — an atom-table
     # exhaustion vector. We read the fixed envelope by string key and atomize
     # nothing outside known struct field names (see decode_content/1).
-    loaded = adapter.decode!(dump)
+    loaded = Normandy.JSON.decode!(dump)
 
     case loaded["version"] do
       1 ->

@@ -173,10 +173,9 @@ defmodule Normandy.Context.WindowManager do
   end
 
   def estimate_message_content_tokens(content) when is_map(content) do
-    # For structured content, estimate based on JSON representation. Poison, not
-    # the configured adapter: it encodes any struct, and this is only a size.
+    # For structured content, estimate based on its JSON (structs as their maps).
     content
-    |> Poison.encode!()
+    |> Normandy.JSON.encode!()
     |> estimate_tokens()
   end
 
@@ -199,9 +198,9 @@ defmodule Normandy.Context.WindowManager do
   defp estimate_block_tokens(%{"type" => "document"}), do: @document_token_estimate
 
   # Unknown / caller-provided shape — estimate from JSON size so we
-  # never silently count zero (Poison: it encodes any struct).
+  # never silently count zero.
   defp estimate_block_tokens(block) when is_map(block) do
-    block |> Poison.encode!() |> estimate_tokens()
+    block |> Normandy.JSON.encode!() |> estimate_tokens()
   end
 
   defp estimate_block_tokens(_), do: 0

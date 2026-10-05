@@ -70,7 +70,7 @@ defmodule Normandy.Schema.JsonSchemaTypesTest do
   end
 
   test "the specification encodes to JSON" do
-    assert {:ok, _json} = Poison.encode(Kinds.__schema__(:specification))
+    assert {:ok, _json} = Jason.encode(Kinds.__schema__(:specification))
   end
 
   test "the Validator accepts Elixir values for the string-with-format types" do

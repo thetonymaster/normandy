@@ -182,10 +182,9 @@ defmodule Normandy.Context.Summarizer do
   defp extract_content(content) when is_binary(content), do: content
 
   defp extract_content(content) when is_map(content) do
-    # Try to extract chat_message or convert to JSON. Poison, not the configured
-    # adapter: this is text for the summary prompt, and Poison encodes any struct.
+    # Try to extract chat_message or convert to JSON (structs as their maps).
     case Map.get(content, :chat_message) do
-      nil -> Poison.encode!(content)
+      nil -> Normandy.JSON.encode!(content)
       message -> message
     end
   end

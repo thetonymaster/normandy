@@ -579,3 +579,27 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `retry_options` or `input_guardrails`, are not translated: recreate those sessions), a missing
   required field, an unknown `behaviours_refs` slot, or a `max_tokens` that is neither `nil` nor
   a positive integer (a stored `0` or `false` used to pass through).
+
+## 23. JSON goes through `Normandy.JSON`; Jason is the default and Poison is gone
+
+- Normandy no longer depends on Poison. `config :normandy, :adapter` is optional and
+  defaults to `Jason`. Remove `adapter: Poison` from your config, or keep it and add
+  `{:poison, "~> 6.0"}` to your own deps.
+- An adapter is any module with `encode!(term, opts)` (opts is `[]` or `[pretty: true]`)
+  and `decode(json)` returning `{:ok, term}` or `{:error, exception}`. Normandy calls
+  nothing else. A `decode/1` that returns `{:error, reason}` with a reason that is not an
+  exception raises `ArgumentError`.
+- Structs: a struct with its own `Jason.Encoder` implementation is encoded by it; any
+  other struct is encoded as its map without `:__struct__` and `:__meta__`, at any depth.
+  Normandy no longer looks at `Poison.Encoder`: replace `@derive {Poison.Encoder, ...}`
+  with `@derive {Jason.Encoder, ...}`. On an `io_schema`, a derived encoder that lists a
+  `redact: true` field encodes it as `null`, and a bare `@derive Jason.Encoder` encodes
+  `"__meta__": null`; derive with `only:` (or `except: [:__meta__]`).
+- Tool results: an atom, a boolean or `nil` output reaches the model as JSON (`"ok"`,
+  `true`, `null`), not as `inspect/1` text (`:ok`, `nil`). An output JSON cannot express
+  (a tuple, a pid) is now an `is_error: true` result, "the tool ran, but its output
+  cannot be sent as JSON: it contains a tuple", instead of its `inspect/1` text. An
+  error reason JSON cannot express (`{:error, {:http, 503}}`) is still sent as its
+  `inspect/1` text.
+- `Normandy.LLM.JsonDeserializer.get_json_adapter/0` is removed. The `:adapter` option
+  of `parse_and_validate/3` and `deserialize_with_retry/5` defaults to `Normandy.JSON`.

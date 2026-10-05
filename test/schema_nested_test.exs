@@ -572,7 +572,7 @@ defmodule Normandy.SchemaNestedTest do
 
     test "schema can be encoded to JSON" do
       schema = Venue.get_json_schema()
-      json = Poison.encode!(schema)
+      json = Jason.encode!(schema)
 
       assert is_binary(json)
       assert String.contains?(json, "\"type\"")

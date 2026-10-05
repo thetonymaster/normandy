@@ -32,6 +32,26 @@ defmodule Normandy.Schema.RedactTest do
     end
   end
 
+  defmodule DerivedLogin do
+    use Normandy.Schema
+    @derive {Jason.Encoder, only: [:name, :password]}
+
+    io_schema "login with a derived encoder" do
+      field(:name, :string, description: "user name")
+      field(:password, :string, description: "password", redact: true)
+    end
+  end
+
+  defmodule DerivedAll do
+    use Normandy.Schema
+    @derive Jason.Encoder
+
+    io_schema "every field derived" do
+      field(:name, :string, description: "user name")
+      field(:home, Address, description: "home")
+    end
+  end
+
   @secret "hunter2-secret"
 
   test "nested schemas lose their redacted fields and __meta__ too" do
@@ -46,7 +66,7 @@ defmodule Normandy.Schema.RedactTest do
     refute json =~ @secret
     refute json =~ "__meta__"
 
-    assert Poison.decode!(json) == %{
+    assert Jason.decode!(json) == %{
              "name" => "ana",
              "home" => %{"street" => "Main"},
              "others" => [%{"street" => "Side"}]
@@ -57,7 +77,27 @@ defmodule Normandy.Schema.RedactTest do
     test "to_json, which is what the model sees" do
       json = BaseIOSchema.to_json(%Login{name: "ana", password: @secret})
 
-      assert Poison.decode!(json) == %{"name" => "ana"}
+      assert Jason.decode!(json) == %{"name" => "ana"}
+    end
+
+    test "a derived encoder that names a redacted field gets null, never the value" do
+      json = BaseIOSchema.to_json(%DerivedLogin{name: "ana", password: @secret})
+
+      assert Jason.decode!(json) == %{"name" => "ana", "password" => nil}
+    end
+
+    test "a bare @derive encodes __meta__ as null and still hides nested redacted fields" do
+      json =
+        BaseIOSchema.to_json(%DerivedAll{
+          name: "ana",
+          home: %Address{street: "Main", pin: @secret}
+        })
+
+      assert Jason.decode!(json) == %{
+               "name" => "ana",
+               "home" => %{"street" => "Main"},
+               "__meta__" => nil
+             }
     end
 
     test "__str__ and __rich__" do

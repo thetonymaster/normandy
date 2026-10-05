@@ -6,12 +6,12 @@ defmodule Normandy.LLM.Json.ScannerTest do
   test "recovers an unclosed top-level string truncated at a \\n runaway" do
     truncated = ~s({"page_text": "hello world\\n\\n\\n)
     assert {:ok, recovered} = Scanner.recover_truncated_string(truncated)
-    assert {:ok, %{"page_text" => "hello world"}} = Poison.decode(recovered)
+    assert {:ok, %{"page_text" => "hello world"}} = Jason.decode(recovered)
   end
 
   test "recovers an immediately-truncated empty top-level string" do
     assert {:ok, recovered} = Scanner.recover_truncated_string(~s({"page_text": "))
-    assert {:ok, %{"page_text" => ""}} = Poison.decode(recovered)
+    assert {:ok, %{"page_text" => ""}} = Jason.decode(recovered)
   end
 
   test "declines recovery for truncation inside a nested object" do

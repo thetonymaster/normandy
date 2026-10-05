@@ -129,7 +129,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Components.BaseIOSchema`** - Protocol for agent I/O serialization
   - Auto-implemented for `io_schema` definitions
   - Methods: `to_json/1`, `get_schema/1`, `__str__/1`, `__rich__/1`
-  - Uses adapter from `:normandy` app config (`:adapter` key, typically Poison)
+  - Encodes through `Normandy.JSON` (adapter from `config :normandy, :adapter`, default Jason)
 
 ### Resilience & Error Handling
 
@@ -198,7 +198,7 @@ end
 
 - `config/config.exs` - Imports environment-specific config
 - `config/dev.exs` and `config/test.exs` - Environment configs
-- Application config requires `:adapter` (JSON encoder/decoder, e.g., Poison)
+- `:adapter` (optional, default `Jason`) - the JSON library `Normandy.JSON` calls; any module with `encode!/2` and `decode/1` (see the `Normandy.JSON` moduledoc)
 - `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, refusal/max_tokens, and a 400 that names the output format or schema (other 400s are returned without a second request)
 - `client.options` request settings (`:thinking`, `:effort`, `:speed`, `:inference_geo`, `:fallbacks`, `:task_budget`, `:thinking_budget`, `:thinking_block_binding`, `:enable_caching`, `:req_options`) are documented on `Normandy.LLM.ClaudioAdapter`; nothing is sent unless set
 - `consolidate_protocols: false` in test environment for faster compilation
@@ -206,7 +206,7 @@ end
 ## Dependencies
 
 - **Claudio** - LLM client library (Hex package `~> 0.7.0`)
-- **Poison** - JSON encoding/decoding
+- **Jason** - JSON encoding/decoding (the default `:adapter`)
 - **elixir_uuid** - UUID generation for conversation turns
 
 ## Notes

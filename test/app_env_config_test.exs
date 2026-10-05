@@ -8,7 +8,7 @@ defmodule Normandy.AppEnvConfigTest do
 
   alias Normandy.Agents.{BaseAgent, Dispatch}
   alias Normandy.Behaviours.SessionStore.Redis
-  alias Normandy.Components.{BaseIOSchema, StreamProcessor}
+  alias Normandy.Components.{AgentMemory, BaseIOSchema, StreamProcessor}
   alias Normandy.LLM.{ClaudioAdapter, StructuredOutputs}
   alias Normandy.LLM.Json.TestFixtures.MultiField
   alias Normandy.Test.StubClient
@@ -50,10 +50,11 @@ defmodule Normandy.AppEnvConfigTest do
   end
 
   describe ":adapter" do
+    # Normandy.JSON calls an adapter's encode!/2 and decode/1, nothing else.
     defmodule TaggingJson do
       @moduledoc false
-      def encode!(_value), do: "tagged"
-      def encode!(_value, _opts), do: "tagged-pretty"
+      def encode!(_value, []), do: "tagged"
+      def encode!(_value, pretty: true), do: "tagged-pretty"
     end
 
     test "is read when an io_schema struct is encoded, not when it was compiled" do
@@ -109,6 +110,40 @@ defmodule Normandy.AppEnvConfigTest do
       BaseAgent.run!(agent, "hello")
       assert_received {:converse, %Normandy.LLM.Request{system: system}, _opts}
       assert system =~ "schema-by-adapter"
+    end
+
+    test "decode!/1 and AgentMemory.load/1 need only the adapter's decode/1" do
+      put_env(:adapter, TaggingDecoder)
+
+      assert %{"decoded_by" => "adapter"} = Normandy.JSON.decode!("{}")
+
+      assert_raise ArgumentError, ~r/unsupported dump version nil/, fn ->
+        AgentMemory.load("{}")
+      end
+    end
+
+    defmodule BareReasonDecoder do
+      @moduledoc false
+      def decode(_json), do: {:error, :invalid}
+      def encode!(_value, _opts), do: "{}"
+    end
+
+    test "a decode/1 that returns a bare reason is an ArgumentError naming the adapter" do
+      put_env(:adapter, BareReasonDecoder)
+
+      assert_raise ArgumentError,
+                   "Normandy.AppEnvConfigTest.BareReasonDecoder.decode/1 must return " <>
+                     "{:ok, term} or {:error, exception}, got: {:error, a reason that is not an exception}",
+                   fn -> Normandy.JSON.decode("{}") end
+    end
+
+    test "an adapter that is not a module is an ArgumentError" do
+      put_env(:adapter, "Jason")
+
+      assert_raise ArgumentError,
+                   "config :normandy, :adapter must be a module with encode!/2 and decode/1, " <>
+                     "got: a string (5 bytes)",
+                   fn -> Normandy.JSON.encode!(%{}) end
     end
   end
 

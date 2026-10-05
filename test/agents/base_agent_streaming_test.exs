@@ -304,7 +304,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     # Regression: `execute_streaming_tool_loop/3` used to store the raw
     # StreamProcessor map as the assistant message. `AgentMemory.history/1`
     # then routed it through `BaseIOSchema.Map.to_json`, which
-    # `Poison.encode!`s the whole thing into a JSON string — destroying
+    # encodes the whole thing into a JSON string — destroying
     # the tool_use block structure. On the next iteration, Anthropic
     # received the assistant turn as plain text and rejected the trailing
     # tool_result block with `unexpected tool_use_id`. The fix wraps the
