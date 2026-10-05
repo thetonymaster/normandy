@@ -9,7 +9,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   `WindowManager.ensure_within_limit/2` — a no-op when already under budget.
 
   `opts` flow straight to `WindowManager.new/1` (`:strategy`, `:reserved_tokens`,
-  `:max_tokens`). The `:summarize` strategy needs `acc.client`; if summarization
+  `:max_tokens`). `:reserved_tokens` defaults to the agent's `max_tokens`; a reserve
+  at or above the context window raises `ArgumentError`. The `:summarize` strategy needs `acc.client`; if summarization
   fails it returns the original `acc` with `%{compacted: false, error: reason}`
   rather than crashing the turn. Its meta carries `:dropped`, the removed entries
   (see `Normandy.Behaviours.Compactor`).
@@ -22,7 +23,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
 
   @impl true
   def maybe_compact(acc, %{window: window}, opts) do
-    case build_manager(window, opts) do
+    case build_manager(window, opts, acc) do
       nil ->
         {acc, %{compacted: false, reason: :no_window}}
 
@@ -32,13 +33,30 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   end
 
   # Honour an explicit opts :max_tokens; otherwise use the model window; if
-  # neither is known, skip (no trigger basis).
-  defp build_manager(window, opts) do
+  # neither is known, skip (no trigger basis). The answer's room is the agent's
+  # max_tokens unless opts pins :reserved_tokens; it is read only when a manager
+  # is actually built.
+  defp build_manager(window, opts, acc) do
     cond do
-      Keyword.has_key?(opts, :max_tokens) -> WM.new(opts)
-      is_integer(window) -> WM.new(Keyword.put(opts, :max_tokens, window))
+      Keyword.has_key?(opts, :max_tokens) -> checked_manager(opts, acc)
+      is_integer(window) -> checked_manager(Keyword.put(opts, :max_tokens, window), acc)
       true -> nil
     end
+  end
+
+  defp checked_manager(opts, acc) do
+    opts = Keyword.put_new_lazy(opts, :reserved_tokens, fn -> Map.fetch!(acc, :max_tokens) end)
+    reserved = Keyword.fetch!(opts, :reserved_tokens)
+    window = Keyword.fetch!(opts, :max_tokens)
+
+    if reserved >= window do
+      raise ArgumentError,
+            "Compactor.WindowManager: reserved_tokens (#{reserved}) must be smaller than " <>
+              "the context window (#{window}); lower the agent's max_tokens or pass " <>
+              ":reserved_tokens in the compactor opts"
+    end
+
+    WM.new(opts)
   end
 
   defp run(acc, manager) do

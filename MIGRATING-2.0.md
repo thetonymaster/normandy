@@ -295,6 +295,31 @@ event named in old changelog entries never existed (the LLM call span is
 - `Dispatch.Pipeline` gains `after_tool` (default `nil`). The function `after_hooks` are
   unchanged: they still see only results of tools that ran.
 
+## 17. `max_tokens` defaults to 16_000
+
+`BaseAgent.init/1`, the DSL and `ConfigTemplate.rebuild/3` now always send `max_tokens`
+(the Messages API requires it): 16_000 unless you set it. In 1.x `init/1` left it unset and
+the DSL defaulted to 4096.
+
+- An explicit `max_tokens: nil` (for example `max_tokens: opts[:max_tokens]`) now raises
+  `ArgumentError`. Leave the key out to get the default.
+- `Compactor.WindowManager` now reserves the agent's `max_tokens` for the answer (it was a
+  fixed 4096), so it keeps less history. Pass `:reserved_tokens` in the compactor opts to
+  choose; a reserve as large as the context window raises.
+
+## 18. The default input schema rejects what it used to drop
+
+With the default `BaseAgentInputSchema`, input must be `%{chat_message: string}`. An unknown
+key (`%{chat_mesage: "hi"}`), a missing or `nil` `chat_message`, or a non-string one now
+fails validation (`Normandy.Schema.ValidationError`) instead of sending an empty user turn.
+
+This also reaches input you don't build by hand:
+- `SequentialOrchestrator`, `ParallelOrchestrator`, `AgentProcess` and `Reactive` pass an
+  agent's output to the next agent. An agent with a custom output struct feeding a
+  default-schema agent now fails; add a transform that produces `%{chat_message: text}`.
+- An `on_prompt` hook that rewrites the input to another map is validated the same way.
+- A previous agent's reply whose `chat_message` is `nil` no longer becomes an empty turn.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

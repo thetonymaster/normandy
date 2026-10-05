@@ -100,7 +100,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
   # The default schema has one field. struct/2 would drop a typo such as
   # :chat_mesage and send a nil user turn, so check the keys and the type here.
   defp validate_base_input(input_map) do
-    case Map.keys(input_map) -- [:chat_message, :__meta__] do
+    case Map.keys(input_map) -- [:chat_message, :__meta__, "__meta__"] do
       [] ->
         case Map.get(input_map, :chat_message) do
           message when is_binary(message) ->

@@ -78,7 +78,7 @@ defmodule Normandy.Behaviours.CompactorTest do
     end
 
     test "nothing removed: meta.dropped is []" do
-      acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}])}
+      acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}]), max_tokens: 1_000}
       {_result, meta} = WMCompactor.maybe_compact(acc, %{model: "m", window: 200_000}, [])
       assert meta.dropped == []
     end
@@ -106,6 +106,37 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert Enum.map(kept, & &1.id) == before |> Enum.take(-length(kept)) |> Enum.map(& &1.id)
     end
 
+    defp history_acc(max_tokens) do
+      msgs =
+        for i <- 1..40,
+            do:
+              {if(rem(i, 2) == 1, do: "user", else: "assistant"),
+               String.duplicate("x", 600) <> "#{i}"}
+
+      %{memory: mem_with(msgs), max_tokens: max_tokens}
+    end
+
+    test "reserves the agent's max_tokens for the answer by default" do
+      {_acc, meta} = WMCompactor.maybe_compact(history_acc(16_000), %{window: 20_000}, [])
+
+      # 20_000 window - 16_000 reserved = 4_000 tokens of history at most
+      assert meta.compacted
+      assert meta.tokens_after <= 4_000
+    end
+
+    test "an explicit :reserved_tokens wins" do
+      {_acc, meta} =
+        WMCompactor.maybe_compact(history_acc(16_000), %{window: 20_000}, reserved_tokens: 1_000)
+
+      assert meta.tokens_after > 4_000
+    end
+
+    test "a reserve that leaves no room for history raises naming both numbers" do
+      assert_raise ArgumentError, ~r/reserved_tokens \(16000\).*context window \(8000\)/, fn ->
+        WMCompactor.maybe_compact(history_acc(16_000), %{window: 8_000}, [])
+      end
+    end
+
     test "no window in ctx and no explicit max_tokens → skips, reason :no_window" do
       acc = %{memory: mem_with([{"user", "hi"}])}
 
@@ -114,7 +145,7 @@ defmodule Normandy.Behaviours.CompactorTest do
     end
 
     test "conversation under the window is left untouched" do
-      acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}])}
+      acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}]), max_tokens: 1_000}
 
       assert {result, meta} =
                WMCompactor.maybe_compact(acc, %{model: "m", window: 200_000}, [])

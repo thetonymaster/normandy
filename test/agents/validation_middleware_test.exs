@@ -113,6 +113,16 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
     end
   end
 
+  describe "default schema __meta__" do
+    test "the default schema ignores a string-keyed __meta__ like the atom one" do
+      assert {:ok, %BaseAgentInputSchema{chat_message: "x"}} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 %{"chat_message" => "x", "__meta__" => %{}}
+               )
+    end
+  end
+
   describe "validate_output/2" do
     test "a valid map becomes the schema struct" do
       assert {:ok, %Query{query: "a"}} =
