@@ -1,6 +1,12 @@
 defmodule Normandy.A2A.ServerTest do
   use ExUnit.Case, async: true
 
+  # A function clause that fails on any argument but :ok.
+  defmodule Picky do
+    @moduledoc false
+    def only_ok(:ok), do: :ok
+  end
+
   alias Normandy.Agents.BaseAgent
 
   defmodule Verdict do
@@ -171,6 +177,27 @@ defmodule Normandy.A2A.ServerTest do
       assert log =~ "agent failed"
     end
 
+    test "the failure log keeps stacktrace arities, never the arguments" do
+      message = Message.new(:user, [Part.text("hello")])
+
+      failing =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{
+            reply: fn _ -> picky().only_ok("SECRET-ARG") end
+          },
+          model: "test-model"
+        })
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :agent_failed} = Server.handle_message(failing, message)
+        end)
+
+      assert log =~ "agent failed"
+      assert log =~ "only_ok/1"
+      refute log =~ "SECRET-ARG"
+    end
+
     test "an agent that throws gets the same generic error, not a crash" do
       message = Message.new(:user, [Part.text("hello")])
 
@@ -188,6 +215,9 @@ defmodule Normandy.A2A.ServerTest do
       assert log =~ "agent failed"
     end
   end
+
+  # The module at runtime, so the compiler doesn't flag the clause that can't match.
+  defp picky, do: Picky
 
   defp two_tool_registry do
     tools =

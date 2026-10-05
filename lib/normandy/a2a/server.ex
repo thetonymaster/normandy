@@ -33,6 +33,7 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Telemetry.Span
   alias Normandy.Tools.BaseTool
   alias Normandy.Tools.Registry
+  alias Normandy.TurnError
 
   @doc """
   Builds a `Claudio.A2A.AgentCard` from a Normandy agent configuration.
@@ -208,19 +209,24 @@ defmodule Normandy.A2A.Server do
 
       {:ok, task}
     rescue
-      error ->
-        agent_failed(Exception.format(:error, error, __STACKTRACE__))
+      error -> agent_failed(:error, error, __STACKTRACE__)
     catch
-      kind, reason when kind in [:exit, :throw] ->
-        agent_failed(Exception.format(kind, reason, __STACKTRACE__))
+      kind, reason when kind in [:exit, :throw] -> agent_failed(kind, reason, __STACKTRACE__)
     end
   end
 
   # The remote caller is outside this system: it gets a generic error, and the
-  # detail (which can name internals) stays in the log.
-  defp agent_failed(detail) do
+  # detail (which can name internals) stays in the log. The stacktrace keeps arities,
+  # never arguments (TurnError.format_stacktrace/1).
+  defp agent_failed(kind, reason, stacktrace) do
     require Logger
-    Logger.error("A2A Server handle_message: the agent failed\n" <> detail)
+
+    Logger.error(
+      "A2A Server handle_message: the agent failed\n" <>
+        Exception.format_banner(kind, reason, stacktrace) <>
+        "\n" <> TurnError.format_stacktrace(stacktrace)
+    )
+
     {:error, :agent_failed}
   end
 
