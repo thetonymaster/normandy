@@ -7,19 +7,19 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
   alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
   alias Normandy.LLMError
 
-  # stream_converse/7 returns {:ok, events} (a list is Enumerable) or {:error, reason}.
+  # stream/3 returns {:ok, events} (a list is Enumerable) or {:error, %LLMError{}}.
   defmodule EventsClient do
     defstruct events: [], connect_error: nil, api_key: nil
   end
 
   defimpl Normandy.Agents.Model, for: Normandy.Agents.BaseAgentStreamErrorsTest.EventsClient do
-    def completitions(_c, _m, _t, _mt, _msgs, response_model), do: response_model
-    def converse(_c, _m, _t, _mt, _msgs, response_model, _opts), do: response_model
+    def converse(_c, request, _opts),
+      do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-    def stream_converse(%{connect_error: nil} = client, _m, _t, _mt, _msgs, _rm, _opts),
+    def stream(%{connect_error: nil} = client, _request, _opts),
       do: {:ok, client.events}
 
-    def stream_converse(client, _m, _t, _mt, _msgs, _rm, _opts),
+    def stream(client, _request, _opts),
       do: {:error, client.connect_error}
   end
 

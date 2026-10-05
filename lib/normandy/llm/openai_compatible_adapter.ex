@@ -4,13 +4,24 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   Chat Completions endpoint (OpenAI, DigitalOcean Inference, etc.).
 
   Text-completion only (v1): tool/function calling is not supported and a
-  non-empty `opts[:tools]` raises. Structured output + prose fallback reuse the
+  non-empty `request.tools` raises. Structured output + prose fallback reuse the
   same `Normandy.LLM.JsonDeserializer` path as `Normandy.LLM.ClaudioAdapter`.
 
       client = %Normandy.LLM.OpenAICompatibleAdapter{
         api_key: System.get_env("OPENAI_API_KEY"),
         base_url: "https://api.openai.com/v1"
       }
+
+  ## Options
+
+  The adapter reads these keys from `options` (a map):
+
+  - `:timeout` - how long to wait for the response, in milliseconds (default: 120_000)
+  - `:req_options` - Req options merged into the request (see "Transport injection")
+  - `:max_tokens_param` - which body key carries the request's `max_tokens`:
+    `:max_tokens` (the default), `:max_completion_tokens` (OpenAI reasoning models), or
+    `:omit` (send neither; the server's own limit applies). Any other value raises
+    `ArgumentError` when the agent is built (`BaseAgent.init/1`)
 
   ## Transport injection (testing)
 
@@ -29,8 +40,9 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   ## Errors
 
-  `converse/7` returns `{:error, %Normandy.LLMError{}}` on non-2xx responses
-  or transport failures, classified as follows:
+  `converse/3` returns `{:ok, %Normandy.LLM.Response{}}`, or
+  `{:error, %Normandy.LLMError{}}` on non-2xx responses or transport failures,
+  classified as follows:
 
   - 429 → `:rate_limit`, retryable
   - 408, 5xx → `:server`, retryable
@@ -41,6 +53,9 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   - Other status → `:unknown`, not retryable
   - `Req.TransportError`, `Mint.TransportError`, `Mint.HTTPError` → `:transport`, retryable
   - Anything else → wrapped via `LLMError.wrap/1`
+
+  `stream/3` returns `{:error, %Normandy.LLMError{type: :unsupported}}`: this adapter
+  does not stream.
   """
 
   use Normandy.Schema
@@ -48,8 +63,9 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLM.ParseFailure
+  alias Normandy.LLM.Request
   alias Normandy.LLMError
-  alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.Request, as: TelemetryRequest
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -90,12 +106,53 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
 
   def extract_text(_), do: ""
 
+  @max_tokens_params [:max_tokens, :max_completion_tokens, :omit]
+
+  @doc """
+  Checks `client.options` once, up front; `BaseAgent.init/1` calls it. Raises
+  `ArgumentError` for an unknown `:max_tokens_param`.
+  """
+  @spec validate_options!(t()) :: t()
+  def validate_options!(%__MODULE__{options: options} = client) do
+    case Map.get(options, :max_tokens_param, :max_tokens) do
+      param when param in @max_tokens_params ->
+        client
+
+      other ->
+        raise ArgumentError,
+              "OpenAICompatibleAdapter: :max_tokens_param must be :max_tokens, " <>
+                ":max_completion_tokens or :omit, got: #{inspect(other)}"
+    end
+  end
+
   @doc false
-  def build_body(model, temperature, max_tokens, messages) do
+  def build_body(model, temperature, max_tokens, messages, max_tokens_param \\ :max_tokens) do
     %{"model" => model, "messages" => convert_messages(messages)}
     |> put_unless_nil("temperature", temperature)
-    |> put_unless_nil("max_tokens", max_tokens)
+    |> put_max_tokens(max_tokens_param, max_tokens)
   end
+
+  defp put_max_tokens(body, :omit, _max_tokens), do: body
+
+  defp put_max_tokens(body, param, max_tokens),
+    do: put_unless_nil(body, Atom.to_string(param), max_tokens)
+
+  @doc false
+  # The first choice's finish_reason mapped onto Anthropic's stop reasons. A closed
+  # mapping: a provider string never becomes an atom. response_meta/1 keeps the raw
+  # string as :finish_reason.
+  @spec stop_reason(term()) :: Normandy.LLM.Response.stop_reason() | nil
+  def stop_reason(%{"choices" => [%{"finish_reason" => reason} | _]}) do
+    case reason do
+      "stop" -> :end_turn
+      "length" -> :max_tokens
+      "tool_calls" -> :tool_use
+      "content_filter" -> :refusal
+      _ -> nil
+    end
+  end
+
+  def stop_reason(_body), do: nil
 
   defp put_unless_nil(map, _key, nil), do: map
   defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
@@ -151,7 +208,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
     usage = if is_map(body), do: Map.get(body, "usage")
 
     {:ok,
-     Request.stop_metadata(
+     TelemetryRequest.stop_metadata(
        Map.get(meta, :response_id),
        Map.get(meta, :finish_reason),
        usage
@@ -180,17 +237,23 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   defimpl Normandy.Agents.Model do
     alias Normandy.LLM.OpenAICompatibleAdapter, as: A
 
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
-
-    def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
-      if Keyword.get(opts, :tools, []) != [] do
+    def converse(client, %Request{} = request, opts) do
+      if request.tools != [] do
         raise ArgumentError,
-              "OpenAICompatibleAdapter does not support tools (text-only v1)"
+              "OpenAICompatibleAdapter does not support tools (text-only v1), got " <>
+                "#{length(request.tools)} tool schema(s)"
       end
 
       url = String.trim_trailing(client.base_url, "/") <> "/chat/completions"
-      body = A.build_body(model, temperature, max_tokens, messages)
+
+      body =
+        A.build_body(
+          request.model,
+          request.temperature,
+          request.max_tokens,
+          Request.messages_with_system(request),
+          Map.get(client.options, :max_tokens_param, :max_tokens)
+        )
 
       req_options =
         [
@@ -200,10 +263,10 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
         ] ++ Map.get(client.options, :req_options, [])
 
       result =
-        Request.span(
+        TelemetryRequest.span(
           Keyword.get(opts, :request_tracker),
           Keyword.get(opts, :request_kind),
-          %{model: model, provider: :openai_compatible, stream: false},
+          %{model: request.model, provider: :openai_compatible, stream: false},
           fn -> Req.post(url, req_options) end,
           &A.__request_outcome__/1
         )
@@ -212,12 +275,18 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
         {:ok, %Req.Response{status: status, body: resp_body}} when status in 200..299 ->
           content = A.extract_text(resp_body)
 
-          case populate(content, response_model, client, model, temperature, max_tokens, messages) do
+          case populate(content, client, request) do
             {:error, %Normandy.LLMError{} = error} ->
               {:error, Normandy.LLMError.with_usage(error, Map.get(resp_body, "usage"))}
 
             populated ->
-              {populated, Map.get(resp_body, "usage"), A.response_meta(resp_body)}
+              {:ok,
+               %Normandy.LLM.Response{
+                 content: populated,
+                 stop_reason: A.stop_reason(resp_body),
+                 usage: Map.get(resp_body, "usage"),
+                 meta: A.response_meta(resp_body)
+               }}
           end
 
         {:ok, %Req.Response{status: status, body: resp_body}} ->
@@ -228,27 +297,21 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
       end
     end
 
+    def stream(_client, _request, _opts) do
+      {:error,
+       Normandy.LLMError.new(
+         type: :unsupported,
+         retryable?: false,
+         detail: "OpenAICompatibleAdapter does not stream"
+       )}
+    end
+
     # Mirror ClaudioAdapter.convert_response_to_normandy/populate_standard_schema.
     # max_retries: 0 → one-shot parse: if content is valid JSON it populates
     # the schema; if not, :on_parse_failure decides (Normandy.LLM.ParseFailure).
     # No extra LLM round-trips are wasted for prose responses.
-    defp populate(
-           content,
-           %{__struct__: _} = schema,
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages
-         ) do
-      case JsonDeserializer.deserialize_with_retry(
-             content,
-             schema,
-             client,
-             model,
-             temperature,
-             max_tokens,
-             messages,
+    defp populate(content, client, %Request{response_model: %{__struct__: _} = schema} = request) do
+      case JsonDeserializer.deserialize_with_retry(content, schema, client, request,
              max_retries: 0
            ) do
         {:ok, validated} -> validated
@@ -256,6 +319,6 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
       end
     end
 
-    defp populate(content, _non_struct, _c, _m, _t, _mt, _msgs), do: content
+    defp populate(content, _client, _request), do: content
   end
 end

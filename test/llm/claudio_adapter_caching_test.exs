@@ -43,10 +43,7 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
         }
       }
 
-      messages = [
-        %Message{role: "system", content: "You are terse."},
-        %Message{role: "user", content: [TextBlock.new("hi")]}
-      ]
+      messages = [%Message{role: "user", content: [TextBlock.new("hi")]}]
 
       tool = fn name ->
         %{name: name, description: "d", input_schema: %{"type" => "object", "properties" => %{}}}
@@ -54,12 +51,15 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
 
       Model.converse(
         client,
-        "claude-opus-5-5",
-        nil,
-        1024,
-        messages,
-        %Normandy.Agents.BaseAgentOutputSchema{},
-        tools: [tool.("lookup"), tool.("search")]
+        %Normandy.LLM.Request{
+          model: "claude-opus-5-5",
+          system: "You are terse.",
+          max_tokens: 1024,
+          messages: messages,
+          response_model: %Normandy.Agents.BaseAgentOutputSchema{},
+          tools: [tool.("lookup"), tool.("search")]
+        },
+        []
       )
 
       assert_received {:body, body}

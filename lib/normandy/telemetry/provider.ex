@@ -113,7 +113,7 @@ defmodule Normandy.Telemetry.Provider do
       ClaudioAdapter.__structured_schema_for__(
         config.client,
         Keyword.get(opts, :response_model),
-        tools: if(Keyword.get(opts, :tools?, false), do: [:tools], else: [])
+        if(Keyword.get(opts, :tools?, false), do: [:tools], else: [])
       ) != :skip
   end
 end

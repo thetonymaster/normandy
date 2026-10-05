@@ -30,21 +30,18 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, _request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: %Normandy.Agents.ToolCallResponse{
+             content: config.final_response,
+             tool_calls: []
+           }
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        %Normandy.Agents.ToolCallResponse{content: config.final_response, tool_calls: []}
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
@@ -59,17 +56,10 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      def stream_converse(_client, _model, _temperature, _max_tokens, _messages, _rm, opts \\ []) do
-        callback = Keyword.get(opts, :callback)
-
+      def stream(_client, _request, _opts) do
         events = [
           %{
             type: "message_start",
@@ -92,22 +82,6 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
           },
           %{type: "message_stop"}
         ]
-
-        if callback do
-          Enum.each(events, fn
-            %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-              callback.(:text_delta, text)
-
-            %{type: "message_start", message: message} ->
-              callback.(:message_start, message)
-
-            %{type: "message_stop"} ->
-              callback.(:message_stop, %{})
-
-            _ ->
-              :ok
-          end)
-        end
 
         {:ok, Stream.map(events, & &1)}
       end

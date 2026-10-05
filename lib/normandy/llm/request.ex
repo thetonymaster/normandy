@@ -39,4 +39,14 @@ defmodule Normandy.LLM.Request do
           mcp_servers: [struct() | map()] | nil,
           task_budget_remaining: non_neg_integer() | nil
         }
+
+  @doc false
+  # For providers whose wire format takes the system prompt as the first message
+  # (the Claudio request builder, Chat Completions): `:system` as a leading "system"
+  # message, then `:messages`.
+  @spec messages_with_system(t()) :: [Message.t()]
+  def messages_with_system(%__MODULE__{system: nil, messages: messages}), do: messages
+
+  def messages_with_system(%__MODULE__{system: system, messages: messages}),
+    do: [%Message{role: "system", content: system} | messages]
 end

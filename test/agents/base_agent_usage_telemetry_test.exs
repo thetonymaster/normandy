@@ -36,7 +36,13 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
 
   defp stub_client(usage) do
     %StubClient{
-      reply: fn response_model -> {Map.put(response_model, :chat_message, "hi"), usage} end
+      reply: fn response_model ->
+        {:ok,
+         %Normandy.LLM.Response{
+           content: Map.put(response_model, :chat_message, "hi"),
+           usage: usage
+         }}
+      end
     }
   end
 

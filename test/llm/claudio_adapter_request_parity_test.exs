@@ -6,7 +6,7 @@ defmodule Normandy.LLM.ClaudioAdapterRequestParityTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
-  alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Agents.Model
   alias Normandy.Components.Message
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.MCP.ServerConfig
@@ -34,15 +34,15 @@ defmodule Normandy.LLM.ClaudioAdapterRequestParityTest do
     servers = [ServerConfig.new("docs", "https://mcp.example.com/sse")]
 
     _ =
-      Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter.stream_converse(
+      Model.stream(
         client(__MODULE__.Stream),
-        "claude-opus-5-5",
-        nil,
-        1024,
-        @messages,
-        %BaseAgentOutputSchema{},
-        mcp_servers: servers,
-        callback: fn _, _ -> :ok end
+        %Normandy.LLM.Request{
+          model: "claude-opus-5-5",
+          max_tokens: 1024,
+          messages: @messages,
+          mcp_servers: servers
+        },
+        []
       )
 
     assert_received {:body, body}

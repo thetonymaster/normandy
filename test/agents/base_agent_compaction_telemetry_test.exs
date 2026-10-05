@@ -15,12 +15,10 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     defstruct [:notify]
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, rm), do: rm
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, rm, _opts \\ []),
-        do: rm
-
-      def stream_converse(client, _model, _temperature, _max_tokens, _messages, _rm, _opts) do
+      def stream(client, _request, _opts) do
         send(client.notify, :llm_called)
 
         {:ok,

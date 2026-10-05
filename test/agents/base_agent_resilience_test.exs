@@ -19,11 +19,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
-
-      def converse(client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
+      def converse(client, request, _opts) do
         # Simulate failures on first attempts
         current_count = Agent.get_and_update(client.attempts, fn count -> {count, count + 1} end)
 
@@ -32,9 +28,18 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           raise "Temporary network error"
         else
           # Success after retries
-          %{response_model | chat_message: "Success after #{current_count + 1} attempts"}
+          {:ok,
+           %Normandy.LLM.Response{
+             content: %{
+               request.response_model
+               | chat_message: "Success after #{current_count + 1} attempts"
+             }
+           }}
         end
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
@@ -47,17 +52,17 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
-
-      def converse(client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
+      def converse(client, request, _opts) do
         if client.should_fail do
           raise "Service unavailable"
         else
-          %{response_model | chat_message: "Success"}
+          {:ok,
+           %Normandy.LLM.Response{content: %{request.response_model | chat_message: "Success"}}}
         end
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

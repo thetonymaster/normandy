@@ -4,6 +4,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
   alias Normandy.Agents.Model
   alias Normandy.Components.Message
   alias Normandy.LLM.OpenAICompatibleAdapter, as: Adapter
+  alias Normandy.LLM.{Request, Response}
 
   # Routes the client's HTTP calls to `plug` through Req.Test, under a name only
   # this test uses.
@@ -59,7 +60,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
   end
 
-  describe "converse/7 (stubbed transport)" do
+  describe "converse/3 (stubbed transport)" do
     test "returns response_model with prose in :chat_message" do
       req_options =
         stub(fn conn ->
@@ -82,16 +83,166 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       schema = %Normandy.Agents.BaseAgentOutputSchema{}
       msgs = [%Message{role: "user", content: "What is the answer?"}]
 
-      {resp, usage, meta} =
-        Model.converse(client, "gpt-4o", 0.7, 1024, msgs, schema, [])
+      request = %Request{
+        model: "gpt-4o",
+        temperature: 0.7,
+        max_tokens: 1024,
+        messages: msgs,
+        response_model: schema
+      }
+
+      {:ok, %Response{content: resp, usage: usage, meta: meta, stop_reason: stop_reason}} =
+        Model.converse(client, request, [])
 
       assert resp.chat_message == "The answer is 42."
       assert usage == %{"total_tokens" => 10}
       assert meta == %{response_id: "chatcmpl-42", finish_reason: "stop"}
+      assert stop_reason == :end_turn
+    end
+
+    test "finish_reason length is stop_reason :max_tokens" do
+      req_options =
+        stub(fn conn ->
+          Req.Test.json(conn, %{
+            "choices" => [%{"message" => %{"content" => "cut"}, "finish_reason" => "length"}]
+          })
+        end)
+
+      client = %Adapter{api_key: "k", options: %{req_options: req_options}}
+
+      assert {:ok, %Response{stop_reason: :max_tokens, content: "cut"}} =
+               Model.converse(client, %Request{model: "m", max_tokens: 8, messages: []}, [])
+    end
+
+    test "an unknown finish_reason is a nil stop_reason; the string stays in meta" do
+      req_options =
+        stub(fn conn ->
+          Req.Test.json(conn, %{
+            "choices" => [%{"message" => %{"content" => "x"}, "finish_reason" => "vendor_thing"}]
+          })
+        end)
+
+      client = %Adapter{api_key: "k", options: %{req_options: req_options}}
+
+      assert {:ok, %Response{stop_reason: nil, meta: %{finish_reason: "vendor_thing"}}} =
+               Model.converse(client, %Request{model: "m", max_tokens: 8, messages: []}, [])
+    end
+
+    test "the system prompt is sent as the first message" do
+      test_pid = self()
+
+      req_options =
+        stub(fn conn ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:openai_body, Jason.decode!(body)})
+          Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "ok"}}]})
+        end)
+
+      client = %Adapter{api_key: "k", options: %{req_options: req_options}}
+
+      request = %Request{
+        model: "m",
+        system: "Be brief.",
+        max_tokens: 8,
+        messages: [%Message{role: "user", content: "hi"}]
+      }
+
+      Model.converse(client, request, [])
+
+      assert_received {:openai_body, body}
+
+      assert body["messages"] == [
+               %{"role" => "system", "content" => "Be brief."},
+               %{"role" => "user", "content" => "hi"}
+             ]
+    end
+
+    test "tools raise (text-only v1)" do
+      client = %Adapter{api_key: "k"}
+
+      request = %Request{
+        model: "m",
+        max_tokens: 8,
+        messages: [],
+        tools: [%{name: "t", description: "d", input_schema: %{}}]
+      }
+
+      assert_raise ArgumentError, ~r/does not support tools.*1 tool schema/, fn ->
+        Model.converse(client, request, [])
+      end
     end
   end
 
-  describe "converse/7 when the output does not parse" do
+  describe "stream/3" do
+    test "is :unsupported" do
+      assert {:error, %Normandy.LLMError{type: :unsupported, retryable?: false}} =
+               Model.stream(
+                 %Adapter{api_key: "k"},
+                 %Request{model: "m", max_tokens: 8, messages: []},
+                 []
+               )
+    end
+  end
+
+  describe ":max_tokens_param" do
+    # The decoded JSON body of one converse/3 call with `max_tokens` against a client
+    # whose options are `options` plus a body-capturing stub.
+    defp capture_request_body(options, max_tokens: max_tokens) do
+      test_pid = self()
+
+      req_options =
+        stub(fn conn ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:openai_body, Jason.decode!(body)})
+          Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "ok"}}]})
+        end)
+
+      client = %Adapter{api_key: "k", options: Map.put(options, :req_options, req_options)}
+
+      request = %Request{
+        model: "m",
+        max_tokens: max_tokens,
+        messages: [%Message{role: "user", content: "hi"}],
+        response_model: nil
+      }
+
+      {:ok, %Response{}} = Model.converse(client, request, [])
+      assert_received {:openai_body, body}
+      body
+    end
+
+    for {param, key} <- [max_tokens: "max_tokens", max_completion_tokens: "max_completion_tokens"] do
+      test "#{param} sends max_tokens as #{key}" do
+        body = capture_request_body(%{max_tokens_param: unquote(param)}, max_tokens: 2048)
+        assert body[unquote(key)] == 2048
+        other = if unquote(key) == "max_tokens", do: "max_completion_tokens", else: "max_tokens"
+        refute Map.has_key?(body, other)
+      end
+    end
+
+    test "the default is max_tokens" do
+      assert capture_request_body(%{}, max_tokens: 2048)["max_tokens"] == 2048
+    end
+
+    test ":omit sends neither key" do
+      body = capture_request_body(%{max_tokens_param: :omit}, max_tokens: 2048)
+      refute Map.has_key?(body, "max_tokens")
+      refute Map.has_key?(body, "max_completion_tokens")
+    end
+
+    test "an unknown value raises at init naming the allowed ones" do
+      client = %Adapter{
+        api_key: "k",
+        options: %{max_tokens_param: "max_tokens"}
+      }
+
+      assert_raise ArgumentError,
+                   ~r/:max_tokens_param must be :max_tokens, :max_completion_tokens or :omit, got: "max_tokens"/,
+                   fn -> BaseAgent.init(%{client: client, model: "m"}) end
+    end
+  end
+
+  describe "converse/3 when the output does not parse" do
     defmodule Answer do
       use Normandy.Schema
 
@@ -114,7 +265,11 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
 
     defp converse_prose(options, schema) do
-      Model.converse(prose_client(options), "gpt-4o", nil, 1024, [], schema, [])
+      Model.converse(
+        prose_client(options),
+        %Request{model: "gpt-4o", max_tokens: 1024, messages: [], response_model: schema},
+        []
+      )
     end
 
     test "on_parse_failure: :error returns an :invalid_output error" do
@@ -143,11 +298,12 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
       assert {:error, %Normandy.LLMError{type: :invalid_output} = error} =
                Model.converse(
                  client,
-                 "gpt-4o",
-                 nil,
-                 1024,
-                 [],
-                 %Normandy.Agents.BaseAgentOutputSchema{},
+                 %Normandy.LLM.Request{
+                   model: "gpt-4o",
+                   max_tokens: 1024,
+                   messages: [],
+                   response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+                 },
                  []
                )
 
@@ -207,7 +363,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     end
   end
 
-  describe "converse/7 failures" do
+  describe "converse/3 failures" do
     @key "sk-openai-test-canary"
 
     defp failing_client(plug) do
@@ -221,11 +377,12 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
     defp call(client) do
       Model.converse(
         client,
-        "gpt-4o",
-        nil,
-        1024,
-        [%Message{role: "user", content: "hi"}],
-        %Normandy.Agents.BaseAgentOutputSchema{},
+        %Normandy.LLM.Request{
+          model: "gpt-4o",
+          max_tokens: 1024,
+          messages: [%Message{role: "user", content: "hi"}],
+          response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+        },
         []
       )
     end

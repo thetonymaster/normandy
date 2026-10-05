@@ -18,17 +18,17 @@ end
 defimpl Normandy.Agents.Model, for: E2E.FaultClient do
   alias Normandy.Agents.Model
 
-  def completitions(c, model, temperature, max_tokens, messages, response_model),
-    do: Model.completitions(c.inner, model, temperature, max_tokens, messages, response_model)
-
-  def converse(c, model, temperature, max_tokens, messages, response_model, opts) do
+  def converse(c, request, opts) do
     index = Agent.get_and_update(c.counter, &{&1 + 1, &1 + 1})
 
     if MapSet.member?(c.faults, index) do
       IO.puts("  [fault] converse call #{index}: injected 529 overloaded")
       {:error, Normandy.LLMError.new(type: :overloaded, status: 529, retryable?: true, detail: "injected by E2E.FaultClient")}
     else
-      Model.converse(c.inner, model, temperature, max_tokens, messages, response_model, opts)
+      Model.converse(c.inner, request, opts)
     end
   end
+
+  # Streams are passed through uncounted: scenario 06 injects faults into converse only.
+  def stream(c, request, opts), do: Model.stream(c.inner, request, opts)
 end

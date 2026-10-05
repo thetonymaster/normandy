@@ -24,11 +24,12 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
   defp converse(client) do
     Model.converse(
       client,
-      "claude-opus-5-5",
-      nil,
-      1024,
-      [%Message{role: "user", content: "hi"}],
-      %Normandy.Agents.BaseAgentOutputSchema{},
+      %Normandy.LLM.Request{
+        model: "claude-opus-5-5",
+        max_tokens: 1024,
+        messages: [%Message{role: "user", content: "hi"}],
+        response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+      },
       []
     )
   end
@@ -111,11 +112,12 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
       assert {:error, %LLMError{type: :overloaded, status: 529}} =
                Model.converse(
                  client(__MODULE__.ParseRetry, %{structured_outputs: false}),
-                 "claude-opus-5-5",
-                 nil,
-                 1024,
-                 [%Message{role: "user", content: "hi"}],
-                 %Normandy.LLM.Json.TestFixtures.MultiField{},
+                 %Normandy.LLM.Request{
+                   model: "claude-opus-5-5",
+                   max_tokens: 1024,
+                   messages: [%Message{role: "user", content: "hi"}],
+                   response_model: %Normandy.LLM.Json.TestFixtures.MultiField{}
+                 },
                  []
                )
 
@@ -166,7 +168,7 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
     end
   end
 
-  describe "stream_converse/7" do
+  describe "stream/3" do
     test "a connection-time HTTP error is classified (streaming errors arrive as :api_error)" do
       Req.Test.stub(__MODULE__.Stream, fn conn ->
         conn |> Plug.Conn.put_status(429) |> Plug.Conn.send_resp(429, "")
@@ -175,13 +177,13 @@ defmodule Normandy.LLM.ClaudioAdapterErrorsTest do
       stream_client = client(__MODULE__.Stream)
 
       assert {:error, %LLMError{type: :rate_limit, status: 429, retryable?: true}} =
-               Model.impl_for(stream_client).stream_converse(
+               Model.stream(
                  stream_client,
-                 "claude-opus-5-5",
-                 nil,
-                 1024,
-                 [%Message{role: "user", content: "hi"}],
-                 %Normandy.Agents.BaseAgentOutputSchema{},
+                 %Normandy.LLM.Request{
+                   model: "claude-opus-5-5",
+                   max_tokens: 1024,
+                   messages: [%Message{role: "user", content: "hi"}]
+                 },
                  []
                )
     end

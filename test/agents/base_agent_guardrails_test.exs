@@ -297,32 +297,28 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     defstruct []
 
     defimpl Normandy.Agents.Model do
-      def completitions(_, _, _, _, _, response_model), do: response_model
+      def converse(_config, request, _opts) do
+        tool_message_count = Enum.count(request.messages, fn msg -> msg.role == "tool" end)
 
-      def converse(
-            _config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            response_model,
-            _opts \\ []
-          ) do
-        tool_message_count = Enum.count(messages, fn msg -> msg.role == "tool" end)
+        content =
+          if tool_message_count == 0 do
+            %ToolCallResponse{
+              content: nil,
+              tool_calls: [
+                %ToolCall{id: "cap_call_1", name: "noop", input: %{}}
+              ]
+            }
+          else
+            # Forced-final call: return the output_schema (chat_message: nil)
+            # so RequiredFields fires.
+            request.response_model
+          end
 
-        if tool_message_count == 0 do
-          %ToolCallResponse{
-            content: nil,
-            tool_calls: [
-              %ToolCall{id: "cap_call_1", name: "noop", input: %{}}
-            ]
-          }
-        else
-          # Forced-final call: return the output_schema (chat_message: nil)
-          # so RequiredFields fires.
-          response_model
-        end
+        {:ok, %Normandy.LLM.Response{content: content}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

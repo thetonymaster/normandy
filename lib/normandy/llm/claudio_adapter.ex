@@ -9,7 +9,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   - Full Messages API support
   - Tool/function calling integration
-  - Streaming responses (via callbacks)
+  - Streaming responses (`stream/3` returns the events)
   - Prompt caching support
   - Vision/multimodal inputs
   - Thinking mode configuration
@@ -77,7 +77,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   ## Errors
 
-  `converse/7` and `stream_converse/7` return `{:error, %Normandy.LLMError{}}` on failure,
+  `converse/3` and `stream/3` return `{:error, %Normandy.LLMError{}}` on failure,
   classified from the Claudio error type (or the HTTP status, for Claudio's generic
   `:api_error`, which it uses for every streaming HTTP error):
 
@@ -128,9 +128,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.SchemaBinder
   alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLM.Request
   alias Normandy.LLM.StructuredOutputs
   alias Normandy.LLMError
-  alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.Request, as: TelemetryRequest
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -162,107 +163,62 @@ defmodule Normandy.LLM.ClaudioAdapter do
     alias Normandy.LLMError
 
     @doc """
-    Legacy completion function (not used with Claudio).
-    """
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-      # Claudio uses Messages API, not Completions
-      # Return empty response_model
-      response_model
-    end
+    Converse with Claude via the Claudio library.
 
-    @doc """
-    Converse with Claude via Claudio library.
-
-    Converts Normandy messages to Claudio format, sends request,
-    and converts response back to Normandy schema.
+    Converts the `Normandy.LLM.Request` to a Claudio request, sends it, and returns
+    `{:ok, %Normandy.LLM.Response{}}` with `request.response_model` filled in (or the
+    answer text when it is `nil`).
     """
-    def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
-      if Keyword.get(opts, :raw, false) do
-        converse_raw(client, model, temperature, max_tokens, messages, opts)
-      else
-        do_converse(client, model, temperature, max_tokens, messages, response_model, opts)
+    def converse(client, %Request{response_model: nil} = request, opts),
+      do: converse_raw(client, request, opts)
+
+    def converse(client, %Request{} = request, opts) do
+      case ClaudioAdapter.__structured_schema_for__(
+             client,
+             request.response_model,
+             request.tools
+           ) do
+        {:ok, json_schema} -> converse_structured(client, request, opts, json_schema)
+        :skip -> converse_legacy(client, request, opts, nil)
       end
     end
 
-    defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
-      case ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
-        {:ok, json_schema} ->
-          converse_structured(
-            client,
-            model,
-            temperature,
-            max_tokens,
-            messages,
-            response_model,
-            opts,
-            json_schema
-          )
-
-        :skip ->
-          do_converse_legacy(
-            client,
-            model,
-            temperature,
-            max_tokens,
-            messages,
-            response_model,
-            opts,
-            nil
-          )
-      end
-    end
-
-    defp do_converse_legacy(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages,
-           response_model,
-           opts,
-           request_kind
-         ) do
-      tools = Keyword.get(opts, :tools, [])
+    defp converse_legacy(client, request, opts, request_kind) do
       claudio_client = build_claudio_client(client)
-      request = build_request(client, model, temperature, max_tokens, messages, opts)
 
-      # Execute request
-      case create(claudio_client, request, model, opts, request_kind) do
+      case create(
+             claudio_client,
+             build_request(client, request),
+             request.model,
+             opts,
+             request_kind
+           ) do
         {:ok, response} ->
           # Pass context for JSON retry
           context = %{
             client: client,
-            model: model,
-            temperature: temperature,
-            max_tokens: max_tokens,
-            messages: messages,
-            tools: tools,
-            task_budget_remaining: Keyword.get(opts, :task_budget_remaining),
+            request: request,
             json_retries: Keyword.get(opts, :json_retries, 2),
             retry_usage_ref: make_ref(),
             request_tracker: Keyword.get(opts, :request_tracker)
           }
 
-          case convert_response_to_normandy(response, response_model, context) do
-            {:error, %LLMError{} = error} ->
-              # The first response and any JSON retries were billed even though
-              # the call failed; the usage rides on the error.
-              usage =
-                ClaudioAdapter.collect_retry_usage(
-                  context.retry_usage_ref,
-                  ClaudioAdapter.extract_usage(response)
-                )
+          converted = convert_response_to_normandy(response, request.response_model, context)
 
+          # The first response and any JSON retries were billed, even when the call
+          # failed; on failure the usage rides on the error.
+          usage =
+            ClaudioAdapter.collect_retry_usage(
+              context.retry_usage_ref,
+              ClaudioAdapter.extract_usage(response)
+            )
+
+          case converted do
+            {:error, %LLMError{} = error} ->
               {:error, LLMError.with_usage(error, usage)}
 
             normalized_response ->
-              usage =
-                ClaudioAdapter.collect_retry_usage(
-                  context.retry_usage_ref,
-                  ClaudioAdapter.extract_usage(response)
-                )
-
-              {normalized_response, usage, ClaudioAdapter.response_meta(response)}
+              {:ok, ClaudioAdapter.__response__(normalized_response, response, usage)}
           end
 
         {:error, error} ->
@@ -270,81 +226,72 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    defp converse_structured(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages,
-           response_model,
-           opts,
-           json_schema
-         ) do
+    defp converse_structured(client, request, opts, json_schema) do
       claudio_client = build_claudio_client(client)
-      tools = Keyword.get(opts, :tools, [])
 
-      request =
+      claudio_request =
         client
-        |> build_request(model, temperature, max_tokens, messages, opts)
+        |> build_request(request)
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
-      case create(claudio_client, request, model, opts, nil) do
+      case create(claudio_client, claudio_request, request.model, opts, nil) do
         {:ok, response} ->
-          context = %{
-            client: client,
-            model: model,
-            temperature: temperature,
-            max_tokens: max_tokens,
-            messages: messages,
-            tools: tools,
-            task_budget_remaining: Keyword.get(opts, :task_budget_remaining)
-          }
+          context = %{client: client, request: request}
 
-          case ClaudioAdapter.__handle_structured_response__(response, response_model, context) do
+          case ClaudioAdapter.__handle_structured_response__(
+                 response,
+                 request.response_model,
+                 context
+               ) do
             {:error, %LLMError{} = error} ->
               {:error, LLMError.with_usage(error, ClaudioAdapter.extract_usage(response))}
 
             handled ->
-              {handled, ClaudioAdapter.extract_usage(response),
-               ClaudioAdapter.response_meta(response)}
+              {:ok,
+               ClaudioAdapter.__response__(
+                 handled,
+                 response,
+                 ClaudioAdapter.extract_usage(response)
+               )}
           end
 
         {:error, error} ->
           case ClaudioAdapter.__structured_error_action__(error) do
-            :fallback ->
-              do_converse_legacy(
-                client,
-                model,
-                temperature,
-                max_tokens,
-                messages,
-                response_model,
-                opts,
-                :structured_fallback
-              )
-
-            :propagate ->
-              handle_error(error)
+            :fallback -> converse_legacy(client, request, opts, :structured_fallback)
+            :propagate -> handle_error(error)
           end
       end
     end
 
-    # Raw completion: one Claudio call returning {raw_text, usage}, with no
-    # schema deserialization. Used by JsonDeserializer's retry loop so it owns
-    # parsing+retry without ClaudioAdapter re-entering deserialize_with_retry.
-    defp converse_raw(client, model, temperature, max_tokens, messages, opts) do
+    # The answer as text, with no schema deserialization: response_model nil. Used by
+    # JsonDeserializer's retry loop so it owns parsing and retrying.
+    defp converse_raw(client, request, opts) do
       claudio_client = build_claudio_client(client)
-      request = build_request(client, model, temperature, max_tokens, messages, opts)
 
-      claudio_client
-      |> create(request, model, opts, Keyword.get(opts, :request_kind))
-      |> ClaudioAdapter.__raw_completion__()
+      case create(
+             claudio_client,
+             build_request(client, request),
+             request.model,
+             opts,
+             Keyword.get(opts, :request_kind)
+           ) do
+        {:ok, response} ->
+          {:ok,
+           ClaudioAdapter.__response__(
+             ClaudioAdapter.extract_content(response),
+             response,
+             ClaudioAdapter.extract_usage(response)
+           )}
+
+        {:error, error} ->
+          handle_error(error)
+      end
     end
 
     # One non-streaming Messages API request, in a [:normandy, :llm, :request] span
     # (Normandy.Telemetry.Request). `kind` is nil for the call's first request.
     defp create(claudio_client, request, model, opts, kind) do
-      Request.span(
+      TelemetryRequest.span(
         Keyword.get(opts, :request_tracker),
         kind,
         %{model: model, provider: :anthropic, stream: false},
@@ -354,86 +301,31 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     @doc """
-    Stream responses from Claude via Claudio library.
+    Stream a response from Claude via the Claudio library.
 
-    Enables streaming mode and returns a raw stream of SSE events
-    that can be processed with StreamProcessor.
-
-    ## Options
-
-    - `:tools` - List of tool schemas
-    - `:callback` - Function called for each event: `(event_type, data) -> :ok`
-
-    ## Returns
-
-    `{:ok, stream}` - Enumerable stream of events
-    `{:error, reason}` - Error occurred
-
-    ## Example
-
-        {:ok, stream} = Model.stream_converse(client, model, temp, max_tokens, messages, schema, callback: fn
-          :text_delta, text -> IO.write(text)
-          _, _ -> :ok
-        end)
-
-        # Process stream
-        Enum.each(stream, fn event -> process_event(event) end)
+    Returns `{:ok, stream}`: the SSE events converted to the stream events described in
+    `Normandy.Agents.Model` ("Stream events"), ready for
+    `Normandy.Components.StreamProcessor`. A transport failure after the stream started
+    is an `{:error, reason}` item. Normandy, not this adapter, delivers the events to
+    the caller's callback.
     """
-    @spec stream_converse(
-            struct(),
-            String.t(),
-            float() | nil,
-            integer() | nil,
-            list(),
-            struct(),
-            keyword()
-          ) :: {:ok, Enumerable.t()} | {:error, term()}
-    def stream_converse(
-          client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
-          _response_model,
-          opts \\ []
-        ) do
-      callback = Keyword.get(opts, :callback)
+    def stream(client, %Request{} = request, _opts) do
       claudio_client = build_claudio_client(client)
 
-      request =
+      claudio_request =
         client
-        |> build_request(model, temperature, max_tokens, messages, opts, stream: true)
+        |> build_request(request, stream: true)
         |> Claudio.Messages.Request.enable_streaming()
 
-      # Execute streaming request - Req returns Req.Response with streaming body
-      case Claudio.Messages.create(claudio_client, request) do
+      case Claudio.Messages.create(claudio_client, claudio_request) do
         {:ok, %Req.Response{body: stream}} ->
-          # Parse events and optionally invoke callback
-          event_stream =
-            stream
-            |> Claudio.Messages.Stream.parse_events()
-
-          final_stream =
-            if callback do
-              Stream.map(event_stream, fn event ->
-                # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-                case event do
-                  {:ok, parsed_event} ->
-                    invoke_stream_callback(parsed_event, callback)
-                    to_stream_processor_event(parsed_event)
-
-                  {:error, _} = error ->
-                    error
-                end
-              end)
-            else
-              Stream.map(event_stream, fn
-                {:ok, event} -> to_stream_processor_event(event)
-                error -> error
-              end)
-            end
-
-          {:ok, final_stream}
+          {:ok,
+           stream
+           |> Claudio.Messages.Stream.parse_events()
+           |> Stream.map(fn
+             {:ok, event} -> to_stream_processor_event(event)
+             {:error, _} = error -> error
+           end)}
 
         {:error, error} ->
           {:error, ClaudioAdapter.__to_llm_error__(error)}
@@ -441,49 +333,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     # Private streaming helpers
-
-    defp invoke_stream_callback(
-           %{
-             event: "content_block_delta",
-             data: %{"delta" => %{"type" => "text_delta", "text" => text}}
-           },
-           callback
-         ) do
-      callback.(:text_delta, text)
-    end
-
-    defp invoke_stream_callback(
-           %{
-             event: "content_block_delta",
-             data: %{"delta" => %{"type" => "thinking_delta", "thinking" => text}}
-           },
-           callback
-         ) do
-      callback.(:thinking_delta, text)
-    end
-
-    defp invoke_stream_callback(
-           %{
-             event: "content_block_start",
-             data: %{"content_block" => %{"type" => "tool_use"} = tool}
-           },
-           callback
-         ) do
-      callback.(:tool_use_start, tool)
-    end
-
-    defp invoke_stream_callback(
-           %{event: "message_start", data: %{"message" => message}},
-           callback
-         ) do
-      callback.(:message_start, message)
-    end
-
-    defp invoke_stream_callback(%{event: "message_stop"}, callback) do
-      callback.(:message_stop, %{})
-    end
-
-    defp invoke_stream_callback(_, _callback), do: :ok
 
     # Claudio's parse_events emits `%{event: "...", data: %{...}}` where
     # `data` was decoded with `Poison.decode(..., keys: :atoms)` — so its
@@ -570,14 +419,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp add_temperature(request, temp),
       do: Claudio.Messages.Request.set_temperature(request, temp)
 
-    defp add_max_tokens(request, nil), do: request
-
-    defp add_max_tokens(request, max_tokens),
-      do: Claudio.Messages.Request.set_max_tokens(request, max_tokens)
-
     @doc false
     # Public (not `defp`) so tests can exercise the full message pipeline
-    # directly without round-tripping through `converse/7` and a live Claudio
+    # directly without round-tripping through `converse/3` and a live Claudio
     # HTTP client. Not part of the adapter's supported surface.
     #
     # Conversation caching: with `enable_caching`, set Claudio's top-level
@@ -600,9 +444,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     @doc false
     # Public (not `defp`) so tests can exercise the dispatch branches
-    # directly without round-tripping through `converse/7` and a live
+    # directly without round-tripping through `converse/3` and a live
     # Claudio HTTP client. Not part of the adapter's supported surface —
-    # callers should go through `Normandy.Agents.Model.converse/7`.
+    # callers should go through `Normandy.Agents.Model.converse/3`.
     # List-form system prompts: convert ContentBlock structs to Anthropic
     # wire shape. When caching is enabled, annotate the last block with
     # `cache_control: {"type": "ephemeral"}` (unless the caller already
@@ -863,28 +707,33 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # The one request builder for every call path (legacy, structured, raw
     # retry, streaming), so a setting cannot reach one path and miss another.
-    defp build_request(client, model, temperature, max_tokens, messages, opts, call_opts \\ []) do
+    #
+    # `max_tokens` is required by the Request struct; a nil fails here instead of being
+    # dropped. add_messages/3 takes the system prompt as a leading "system" message, and
+    # keeps ensure_single_leading_system!/1: a "system" message in `request.messages`
+    # next to `:system` raises.
+    defp build_request(client, %Request{} = request, call_opts \\ []) do
       enable_caching = Map.get(client.options, :enable_caching, false)
 
-      Claudio.Messages.Request.new(model)
-      |> add_temperature(temperature)
-      |> add_max_tokens(max_tokens)
-      |> add_messages(messages, enable_caching)
-      |> add_tools(Keyword.get(opts, :tools, []), enable_caching)
-      |> add_mcp_servers(Keyword.get(opts, :mcp_servers))
-      |> add_client_options(
-        client.options,
-        call_opts ++ Keyword.take(opts, [:task_budget_remaining])
-      )
+      Claudio.Messages.Request.new(request.model)
+      |> add_temperature(request.temperature)
+      |> Claudio.Messages.Request.set_max_tokens(request.max_tokens)
+      |> add_messages(Request.messages_with_system(request), enable_caching)
+      |> add_tools(request.tools, enable_caching)
+      |> add_mcp_servers(request.mcp_servers)
+      |> add_client_options(client.options, call_opts ++ task_budget_opts(request))
     end
+
+    defp task_budget_opts(%Request{task_budget_remaining: nil}), do: []
+    defp task_budget_opts(%Request{task_budget_remaining: n}), do: [task_budget_remaining: n]
 
     defp add_tools(request, [], _enable_caching), do: request
 
     defp add_tools(request, tools, enable_caching) when is_list(tools) do
       # Add tools with caching if enabled
       # Cache all tools except the last one, then cache the last one
-      # This provides optimal caching for tool definitions
-      if enable_caching and tools != [] do
+      # This provides optimal caching for tool definitions (the clause above took [])
+      if enable_caching do
         # Add all tools except last without cache
         {last_tool, other_tools} = List.pop_at(tools, -1)
 
@@ -976,16 +825,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp populate_standard_schema(schema, content, context) do
-      # Use JsonDeserializer with retry for robust parsing and validation
-      # Extract context parameters
-      %{
-        client: client,
-        model: model,
-        temperature: temperature,
-        max_tokens: max_tokens,
-        messages: messages,
-        tools: tools
-      } = context
+      # Use JsonDeserializer with retry for robust parsing and validation. The request
+      # carries the tools and the task budget the retries resend.
+      %{client: client, request: request} = context
 
       # Each JSON retry is a paid call; its usage is sent back to this process
       # and added to the response's usage.
@@ -998,24 +840,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         request_tracker: Map.get(context, :request_tracker)
       ]
 
-      opts = if tools != [], do: [{:tools, tools} | opts], else: opts
-
-      opts =
-        case Map.get(context, :task_budget_remaining) do
-          nil -> opts
-          remaining -> Keyword.put(opts, :task_budget_remaining, remaining)
-        end
-
-      case JsonDeserializer.deserialize_with_retry(
-             content,
-             schema,
-             client,
-             model,
-             temperature,
-             max_tokens,
-             messages,
-             opts
-           ) do
+      case JsonDeserializer.deserialize_with_retry(content, schema, client, request, opts) do
         {:ok, validated_schema} ->
           validated_schema
 
@@ -1078,8 +903,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp fallback_block?(_block), do: false
 
   @doc false
-  # Per-call facts that are not token usage, returned as the third element of
-  # `converse/7` (see `Normandy.Agents.ConverseResult`).
+  # Per-call facts that are not token usage, carried as `Response.meta`.
   @spec response_meta(term()) :: map()
   def response_meta(%Claudio.Messages.Response{} = response) do
     served_by =
@@ -1110,6 +934,20 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   def response_meta(_response), do: %{}
+
+  @doc false
+  # The %Normandy.LLM.Response{} for a Claudio response; usage is passed in because
+  # JSON retries add theirs to the first response's.
+  @spec __response__(struct() | String.t(), Claudio.Messages.Response.t(), map() | nil) ::
+          Normandy.LLM.Response.t()
+  def __response__(content, %Claudio.Messages.Response{} = response, usage) do
+    %Normandy.LLM.Response{
+      content: content,
+      stop_reason: response.stop_reason,
+      usage: usage,
+      meta: response_meta(response)
+    }
+  end
 
   defp stop_reason_string(reason) when is_atom(reason) and reason != nil,
     do: Atom.to_string(reason)
@@ -1560,8 +1398,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
   # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
   # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
   # mid-turn tool call the legacy path handles, not a structured-output result.
-  def __structured_schema_for__(client, response_model, opts) do
-    case Keyword.get(opts, :tools, []) do
+  def __structured_schema_for__(client, response_model, tools) when is_list(tools) do
+    case tools do
       [] -> StructuredOutputs.schema_for(client, response_model)
       _ -> :skip
     end
@@ -1610,23 +1448,13 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   @doc false
-  # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
-  # by the deserializer retry loop. Reuses extract_content/1 + extract_usage/1
-  # (the same logic the normal path uses). Lives in the outer module so it is
-  # unit-testable without a live Claudio call.
-  def __raw_completion__({:ok, response}),
-    do: {extract_content(response), extract_usage(response)}
-
-  def __raw_completion__({:error, error}), do: {:error, __to_llm_error__(error)}
-
-  @doc false
   # The request span's outcome for a `Claudio.Messages.create/2` result.
   @spec __request_outcome__(term()) :: {:ok, map()} | {:error, LLMError.t()}
   def __request_outcome__({:ok, response}) do
     meta = response_meta(response)
 
     {:ok,
-     Request.stop_metadata(
+     TelemetryRequest.stop_metadata(
        Map.get(meta, :response_id),
        Map.get(meta, :finish_reason),
        extract_usage(response)

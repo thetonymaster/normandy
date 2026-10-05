@@ -5,14 +5,14 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Test.StubClient
 
-  # Answers "hi" with usage, plus `meta` as the third element when it is set.
+  # Answers "hi" with usage, plus `meta` when it is set.
   defp meta_client(meta) do
     usage = %{input_tokens: 1, output_tokens: 1}
 
     %StubClient{
       reply: fn response_model ->
         response = Map.put(response_model, :chat_message, "hi")
-        if meta, do: {response, usage, meta}, else: {response, usage}
+        {:ok, %Normandy.LLM.Response{content: response, usage: usage, meta: meta || %{}}}
       end
     }
   end

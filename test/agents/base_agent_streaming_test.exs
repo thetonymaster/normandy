@@ -35,27 +35,11 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      # Implement streaming support
-      def stream_converse(
-            _client,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            opts \\ []
-          ) do
-        # Simulate streaming events
-        callback = Keyword.get(opts, :callback)
-
+      # Implement streaming support: the events only; Normandy calls the callback.
+      def stream(_client, _request, _opts) do
         events = [
           %{
             type: "message_start",
@@ -84,26 +68,6 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
           %{type: "message_stop"}
         ]
 
-        # Invoke callback if provided
-        if callback do
-          Enum.each(events, fn event ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case event do
-              %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-                callback.(:text_delta, text)
-
-              %{type: "message_start", message: message} ->
-                callback.(:message_start, message)
-
-              %{type: "message_stop"} ->
-                callback.(:message_stop, %{})
-
-              _ ->
-                :ok
-            end
-          end)
-        end
-
         {:ok, Stream.map(events, & &1)}
       end
     end
@@ -118,29 +82,13 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-      def stream_converse(
-            _client,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            _response_model,
-            opts \\ []
-          ) do
-        callback = Keyword.get(opts, :callback)
-
+      def stream(_client, request, _opts) do
         # Check if this is the first call (has user message) or follow-up (has tool results)
         has_tool_result =
-          Enum.any?(messages, fn msg ->
+          Enum.any?(request.messages, fn msg ->
             case msg do
               %{role: "tool"} -> true
               _ -> false
@@ -187,29 +135,6 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
               %{type: "message_stop"}
             ]
           end
-
-        # Invoke callback if provided
-        if callback do
-          Enum.each(events, fn event ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case event do
-              %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-                callback.(:text_delta, text)
-
-              %{type: "content_block_start", content_block: %{"type" => "tool_use"} = tool} ->
-                callback.(:tool_use_start, tool)
-
-              %{type: "message_start", message: message} ->
-                callback.(:message_start, message)
-
-              %{type: "message_stop"} ->
-                callback.(:message_stop, %{})
-
-              _ ->
-                :ok
-            end
-          end)
-        end
 
         {:ok, Stream.map(events, & &1)}
       end
@@ -518,29 +443,17 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-          response_model
-        end
+        def converse(_client, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-        def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-          response_model
-        end
-
-        def stream_converse(
-              _client,
-              _model,
-              _temperature,
-              _max_tokens,
-              _messages,
-              _response_model,
-              _opts
-            ) do
-          {:error, "Stream failed"}
-        end
+        def stream(_client, _request, _opts),
+          do:
+            {:error,
+             Normandy.LLMError.new(type: :unknown, retryable?: false, reason: "Stream failed")}
       end
     end
 
-    test "a failed stream_converse raises LLMError" do
+    test "a failed stream/3 raises LLMError" do
       client = %FailingStreamClient{}
 
       config =

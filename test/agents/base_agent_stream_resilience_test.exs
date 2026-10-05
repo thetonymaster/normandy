@@ -6,40 +6,56 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
 
   @moduletag :capture_log
 
-  # Fails its first `fail_times` streams with a retryable error, optionally after
-  # sending one event to the callback (as an adapter does mid-stream), then
-  # streams a short text answer. `attempts` is an Agent counting calls.
+  # Fails its first `fail_times` streams with a retryable error, then streams a short
+  # text answer. With `deliver_before_fail`, a failing stream first yields a text delta
+  # (which Normandy delivers to the callback) and then raises the retryable error
+  # mid-stream. `attempts` is an Agent counting calls.
   defmodule FlakyStreamClient do
     defstruct [:attempts, fail_times: 0, deliver_before_fail: false]
   end
 
   defimpl Normandy.Agents.Model,
     for: Normandy.Agents.BaseAgentStreamResilienceTest.FlakyStreamClient do
-    def completitions(_c, _m, _t, _mt, _msgs, response_model), do: response_model
-    def converse(_c, _m, _t, _mt, _msgs, response_model, _opts), do: response_model
+    def converse(_c, request, _opts),
+      do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-    def stream_converse(client, _m, _t, _mt, _msgs, _rm, opts) do
+    def stream(client, _request, _opts) do
       n = Agent.get_and_update(client.attempts, &{&1 + 1, &1 + 1})
+      overloaded = LLMError.new(type: :overloaded, retryable?: true, status: 529)
 
-      if n <= client.fail_times do
-        if client.deliver_before_fail, do: opts[:callback].(:text_delta, "part")
-        {:error, LLMError.new(type: :overloaded, retryable?: true, status: 529)}
-      else
-        {:ok,
-         [
-           %{type: "message_start", message: %{"id" => "m", "role" => "assistant"}},
-           %{
-             type: "content_block_start",
-             content_block: %{"type" => "text", "text" => ""},
-             index: 0
-           },
-           %{
-             type: "content_block_delta",
-             delta: %{"type" => "text_delta", "text" => "ok"},
-             index: 0
-           },
-           %{type: "message_stop"}
-         ]}
+      cond do
+        n <= client.fail_times and client.deliver_before_fail ->
+          {:ok,
+           Stream.concat(
+             [
+               %{
+                 type: "content_block_delta",
+                 delta: %{"type" => "text_delta", "text" => "part"},
+                 index: 0
+               }
+             ],
+             Stream.map([:fail], fn :fail -> raise overloaded end)
+           )}
+
+        n <= client.fail_times ->
+          {:error, overloaded}
+
+        true ->
+          {:ok,
+           [
+             %{type: "message_start", message: %{"id" => "m", "role" => "assistant"}},
+             %{
+               type: "content_block_start",
+               content_block: %{"type" => "text", "text" => ""},
+               index: 0
+             },
+             %{
+               type: "content_block_delta",
+               delta: %{"type" => "text_delta", "text" => "ok"},
+               index: 0
+             },
+             %{type: "message_stop"}
+           ]}
       end
     end
   end

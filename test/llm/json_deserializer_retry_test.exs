@@ -4,9 +4,16 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
   alias Normandy.Components.Message
   alias Normandy.LLM.Json.TestFixtures.MultiField
   alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLM.{Request, Response}
   alias Normandy.Test.StubClient
 
-  @msgs [%Message{turn_id: "t", role: "system", content: "sys"}]
+  @request %Request{
+    model: "mock-model",
+    temperature: 0.0,
+    max_tokens: 100,
+    messages: [%Message{turn_id: "t", role: "user", content: "hi"}],
+    response_model: %MultiField{}
+  }
 
   defmodule TupleRecoveryResponse do
     @moduledoc false
@@ -22,10 +29,7 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
                "not json",
                %MultiField{},
                client,
-               "mock-model",
-               0.0,
-               100,
-               @msgs,
+               @request,
                max_retries: 2
              )
 
@@ -33,11 +37,13 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
     refute_received {:converse, _, _}
   end
 
-  test "retry recovers via a raw-text completion (proves raw: true is threaded)" do
-    # Valid JSON comes back as raw text only when the retry asks for raw output.
+  test "a retry asks for text with response_model: nil" do
+    # Valid JSON comes back as text only when the retry asks for text.
     client = %StubClient{
-      reply: fn _, opts ->
-        if Keyword.get(opts, :raw, false), do: ~s({"chat_message": "recovered"}), else: "not json"
+      notify: self(),
+      reply: fn
+        nil -> ~s({"chat_message": "recovered"})
+        _response_model -> "not json"
       end
     }
 
@@ -46,19 +52,26 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
                "not json",
                %MultiField{},
                client,
-               "mock-model",
-               0.0,
-               100,
-               @msgs,
+               @request,
                max_retries: 1
              )
+
+    assert_received {:converse, %Request{response_model: nil, messages: messages}, opts}
+    assert opts[:request_kind] == :json_retry
+
+    # The retry resends the original conversation plus the error feedback.
+    assert [%Message{content: "hi"}, %Message{role: "user"}] = messages
   end
 
-  test "retry recovers when the client returns a {struct, usage} tuple" do
+  test "retry recovers when the client returns a struct with usage" do
     # The struct carries valid JSON as its chat_message, which the retry must re-parse.
     client = %StubClient{
       reply: fn _ ->
-        {%TupleRecoveryResponse{chat_message: ~s({"chat_message": "recovered"})}, %{tokens: 1}}
+        {:ok,
+         %Response{
+           content: %TupleRecoveryResponse{chat_message: ~s({"chat_message": "recovered"})},
+           usage: %{tokens: 1}
+         }}
       end
     }
 
@@ -67,10 +80,7 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
                "not json",
                %MultiField{},
                client,
-               "mock-model",
-               0.0,
-               100,
-               @msgs,
+               @request,
                max_retries: 1
              )
   end

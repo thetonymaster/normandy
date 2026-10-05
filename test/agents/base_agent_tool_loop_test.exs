@@ -44,19 +44,17 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: respond(config, request.messages, request.response_model)
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            response_model,
-            _opts \\ []
-          ) do
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+      defp respond(config, messages, response_model) do
         # Count tool messages in history to determine if we should make tool calls
         tool_message_count =
           Enum.count(messages, fn msg ->
@@ -320,17 +318,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_, _, _, _, _, response_model), do: response_model
+        def converse(config, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: respond(config, request.messages)}}
 
-        def converse(
-              config,
-              _model,
-              _temperature,
-              _max_tokens,
-              messages,
-              _response_model,
-              _opts \\ []
-            ) do
+        def stream(_client, _request, _opts),
+          do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+        defp respond(config, messages) do
           tool_message_count =
             Enum.count(messages, fn msg -> msg.role == "tool" end)
 
@@ -439,17 +433,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_, _, _, _, _, response_model), do: response_model
+        def converse(config, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: respond(config, request.messages)}}
 
-        def converse(
-              config,
-              _model,
-              _temperature,
-              _max_tokens,
-              messages,
-              _response_model,
-              _opts \\ []
-            ) do
+        def stream(_client, _request, _opts),
+          do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+        defp respond(config, messages) do
           tool_messages = Enum.count(messages, &(&1.role == "tool"))
 
           if tool_messages == 0 do

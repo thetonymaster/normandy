@@ -6,7 +6,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Registry
 
-  # Re-uses the project-wide ModelMockup: converse/completitions return
+  # Re-uses the project-wide ModelMockup: converse/3 returns the
   # response_model as-is, giving deterministic LLM responses without network.
 
   # Fake client for the with-tools characterization tests: a SIMPLIFIED
@@ -23,32 +23,30 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, request, _opts) do
+        tool_message_count = Enum.count(request.messages, fn msg -> msg.role == "tool" end)
+
+        content =
+          if tool_message_count == 0 do
+            %ToolCallResponse{
+              content: nil,
+              tool_calls: [
+                %ToolCall{
+                  id: "call_1",
+                  name: "calculator",
+                  input: %{operation: "add", a: 5, b: 3}
+                }
+              ]
+            }
+          else
+            %ToolCallResponse{content: config.final_response, tool_calls: []}
+          end
+
+        {:ok, %Normandy.LLM.Response{content: content}}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        tool_message_count = Enum.count(messages, fn msg -> msg.role == "tool" end)
-
-        if tool_message_count == 0 do
-          %ToolCallResponse{
-            content: nil,
-            tool_calls: [
-              %ToolCall{id: "call_1", name: "calculator", input: %{operation: "add", a: 5, b: 3}}
-            ]
-          }
-        else
-          %ToolCallResponse{content: config.final_response, tool_calls: []}
-        end
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
@@ -67,24 +65,18 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, _request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: %ToolCallResponse{
+             content: config.content,
+             tool_calls: [%ToolCall{id: "spurious_1", name: "ghost_tool", input: %{}}]
+           }
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        %ToolCallResponse{
-          content: config.content,
-          tool_calls: [%ToolCall{id: "spurious_1", name: "ghost_tool", input: %{}}]
-        }
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

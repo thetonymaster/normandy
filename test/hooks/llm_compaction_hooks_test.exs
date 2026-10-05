@@ -142,7 +142,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
                "remember: prefers metric" | _assistant
              ] = contents
 
-      assert_received {:converse, messages, _opts}
+      assert_received {:converse, %Normandy.LLM.Request{messages: messages}, _opts}
       assert Enum.any?(messages, &(&1.content == "remember: prefers metric"))
     end
 

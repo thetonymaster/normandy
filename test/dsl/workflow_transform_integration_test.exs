@@ -20,13 +20,15 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-        do: response_model
+      def converse(client, request, _opts) do
+        send(client.test_pid, {:agent_input, client.name, List.last(request.messages).content})
 
-      def converse(client, _model, _temperature, _max_tokens, messages, response_model, _opts) do
-        send(client.test_pid, {:agent_input, client.name, List.last(messages).content})
-        %{response_model | chat_message: client.reply}
+        {:ok,
+         %Normandy.LLM.Response{content: %{request.response_model | chat_message: client.reply}}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

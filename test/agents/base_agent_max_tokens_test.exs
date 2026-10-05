@@ -7,16 +7,20 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
     defstruct [:pid]
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-        do: response_model
+      def converse(client, request, _opts) do
+        send(client.pid, {:max_tokens, request.max_tokens})
+        response_model = request.response_model
 
-      def converse(client, _model, _temperature, max_tokens, _messages, response_model, _opts) do
-        send(client.pid, {:max_tokens, max_tokens})
+        content =
+          if Map.has_key?(response_model, :chat_message),
+            do: %{response_model | chat_message: "ok"},
+            else: response_model
 
-        if Map.has_key?(response_model, :chat_message),
-          do: %{response_model | chat_message: "ok"},
-          else: response_model
+        {:ok, %Normandy.LLM.Response{content: content}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

@@ -14,11 +14,12 @@ defmodule Normandy.Context.Summarizer do
       {:ok, updated_agent} = Summarizer.compress_conversation(client, agent, keep_recent: 5)
   """
 
-  alias Normandy.Agents.ConverseResult
-  alias Normandy.Agents.Model
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
+  alias Normandy.LLM.Call
+  alias Normandy.LLM.Request, as: LLMRequest
+  alias Normandy.LLM.Response
   alias Normandy.LLMError
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.Provider
@@ -236,24 +237,27 @@ defmodule Normandy.Context.Summarizer do
       |> Map.take([:agent_name, :turn_id, :session_id, :conversation_id])
       |> Request.new()
 
+    request = %LLMRequest{
+      model: model,
+      messages: messages,
+      response_model: response_model,
+      temperature: temperature,
+      max_tokens: max_tokens
+    }
+
     llm_call_span(metadata, tracker, fn ->
       Request.note_call(tracker)
-
-      client
-      |> Model.converse(model, temperature, max_tokens, messages, response_model,
-        request_tracker: tracker
-      )
-      |> ConverseResult.normalize()
+      Call.converse(client, request, request_tracker: tracker)
     end)
     |> case do
-      {:ok, {%{chat_message: summary}, _usage, _meta}}
+      {:ok, %Response{content: %{chat_message: summary}}}
       when is_binary(summary) and summary != "" ->
         {:ok, summary}
 
-      {:ok, {%{chat_message: _empty_or_not_text}, _usage, _meta}} ->
+      {:ok, %Response{content: %{chat_message: _empty_or_not_text}}} ->
         {:error, :empty_summary}
 
-      {:ok, {other, _usage, _meta}} ->
+      {:ok, %Response{content: other}} ->
         {:error, {:unexpected_response, other}}
 
       {:error, %LLMError{}} = error ->
@@ -286,7 +290,7 @@ defmodule Normandy.Context.Summarizer do
       end
 
     case result do
-      {:ok, {_response, usage, meta}} ->
+      {:ok, %Response{usage: usage, meta: meta}} ->
         stop_time = System.monotonic_time()
 
         stop_metadata =

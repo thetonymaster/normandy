@@ -3,12 +3,12 @@ defmodule Normandy.Test.StreamingProbeClient do
   defstruct options: %{}
 
   defimpl Normandy.Agents.Model do
-    def completitions(_c, _m, _t, _mt, _msgs, response_model), do: response_model
-    def converse(_c, _m, _t, _mt, _msgs, response_model, _opts), do: response_model
+    def converse(_c, request, _opts),
+      do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-    def stream_converse(_c, _m, _t, _mt, messages, _response_model, _opts) do
+    def stream(_c, request, _opts) do
       events =
-        if Enum.any?(messages, &(Map.get(&1, :role) == "tool")) do
+        if Enum.any?(request.messages, &(&1.role == "tool")) do
           [
             %{type: "message_start", message: %{"id" => "m2", "role" => "assistant"}},
             %{

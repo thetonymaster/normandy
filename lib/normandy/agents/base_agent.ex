@@ -11,7 +11,6 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.Agents.Model
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.ValidationMiddleware
   alias Normandy.Batch.Processor
@@ -25,12 +24,13 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.ToolCall
   alias Normandy.Hooks.BaseAgentGlue
   alias Normandy.Hooks.Handlers, as: HookHandlers
+  alias Normandy.LLM.Call
   alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.OpenAICompatibleAdapter
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
 
-  alias Normandy.Agents.ConverseResult
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
@@ -323,43 +323,33 @@ defmodule Normandy.Agents.BaseAgent do
       |> AgentMemory.drop_stale_thinking(prefix_key.(config.model))
       |> AgentMemory.history()
 
-    # Convert history plain maps to Message structs
-    history_messages =
-      Enum.map(history, fn %{role: role, content: content} ->
-        %Message{role: role, content: content}
-      end)
-
-    messages =
-      [
-        %Message{
-          role: "system",
-          content: system_prompt_with_schema
-        }
-      ] ++ history_messages
-
-    # Prepare tool schemas if tools are available
-    opts = if has_tools?(config), do: [tools: tool_schemas], else: []
-
-    # Pass MCP server configs through to the LLM adapter
-    opts =
-      if config.mcp_servers do
-        Keyword.put(opts, :mcp_servers, config.mcp_servers)
-      else
-        opts
-      end
+    request = %Normandy.LLM.Request{
+      model: config.model,
+      system: system_prompt_with_schema,
+      messages:
+        Enum.map(history, fn %{role: role, content: content} ->
+          %Message{role: role, content: content}
+        end),
+      response_model: response_model,
+      temperature: config.temperature,
+      max_tokens: config.max_tokens,
+      tools: tool_schemas,
+      mcp_servers: config.mcp_servers,
+      task_budget_remaining: Keyword.get(extra_opts, :task_budget_remaining)
+    }
 
     # How many times the adapter re-asks after a response that does not parse.
     json_retries = if config.enable_json_retry, do: config.json_retry_max_attempts, else: 0
 
     # Numbers the provider requests of this call (get_response/2 has no llm_call
     # span to create one).
-    extra_opts =
-      Keyword.put_new_lazy(extra_opts, :request_tracker, fn -> request_tracker(config) end)
+    tracker = Keyword.get_lazy(extra_opts, :request_tracker, fn -> request_tracker(config) end)
 
-    opts = [{:json_retries, json_retries} | opts] ++ extra_opts
-
-    # Wrap LLM call with resilience patterns
-    {response, usage, meta} = call_llm_with_resilience(config, messages, response_model, opts)
+    {response, usage, meta} =
+      call_llm_with_resilience(config, request,
+        json_retries: json_retries,
+        request_tracker: tracker
+      )
 
     # After a server-side fallback the thinking kept is the fallback model's.
     produced_by = Map.get(meta, :fallback_model) || config.model
@@ -372,32 +362,22 @@ defmodule Normandy.Agents.BaseAgent do
   defp stamp_prefix(response, _prefix_key), do: response
 
   # Private helper to call LLM with retry and circuit breaker protection.
-  # The call returns {:ok, triple} | {:error, %LLMError{}} (ConverseResult.normalize/1),
+  # The call returns {:ok, %Response{}} | {:error, %LLMError{}} (Normandy.LLM.Call),
   # which is Retry's and CircuitBreaker's contract, so returned API errors are retried
   # (when the adapter marked them retryable?) and counted, exactly like raises.
-  @spec call_llm_with_resilience(BaseAgentConfig.t(), list(), struct(), keyword()) ::
-          {struct(), map() | nil, map()}
-  defp call_llm_with_resilience(config, messages, response_model, opts) do
+  @spec call_llm_with_resilience(BaseAgentConfig.t(), Normandy.LLM.Request.t(), keyword()) ::
+          {struct() | String.t(), map() | nil, map()}
+  defp call_llm_with_resilience(config, request, opts) do
     tracker = Keyword.get(opts, :request_tracker)
 
     llm_call = fn ->
       Request.note_call(tracker)
-
-      config.client
-      |> Model.converse(
-        config.model,
-        config.temperature,
-        config.max_tokens,
-        messages,
-        response_model,
-        opts
-      )
-      |> ConverseResult.normalize()
+      Call.converse(config.client, request, opts)
     end
 
     case with_resilience(config, llm_call) do
-      {:ok, triple} ->
-        triple
+      {:ok, %Normandy.LLM.Response{content: content, usage: usage, meta: meta}} ->
+        {content, usage, meta}
 
       # Retry gave up: {last_error, attempts, errors}. The integer guard keeps
       # {:exception, error, stacktrace} (also a 3-tuple) out of this clause.
@@ -885,11 +865,14 @@ defmodule Normandy.Agents.BaseAgent do
   defp compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
 
   @doc false
-  # Fail at configuration time on an invalid ClaudioAdapter `client.options`, instead of
+  # Fail at configuration time on an invalid adapter `client.options`, instead of
   # on every call (where the retry policy would wait through its backoff first).
   @spec validate_client_options!(term()) :: term()
   def validate_client_options!(%Normandy.LLM.ClaudioAdapter{} = client),
     do: ClaudioAdapter.validate_options!(client)
+
+  def validate_client_options!(%OpenAICompatibleAdapter{} = client),
+    do: OpenAICompatibleAdapter.validate_options!(client)
 
   def validate_client_options!(client), do: client
 
@@ -1094,17 +1077,18 @@ defmodule Normandy.Agents.BaseAgent do
   # Runs inside the llm_call span: a failed stream throws here so the span emits
   # :exception rather than :stop.
   defp stream_llm_attempt(config, state, callback, llm_metadata) do
-    {messages, prefix_key} = build_stream_messages(config)
+    {request, prefix_key} = build_stream_request(config)
+
+    request = %{
+      request
+      | task_budget_remaining:
+          Keyword.get(task_budget_call_opts(config, state), :task_budget_remaining)
+    }
+
     {callback, first_chunk} = track_first_chunk(callback)
     tracker = request_tracker(config)
 
-    case stream_response_from_llm(
-           config,
-           messages,
-           stream_opts(config, callback) ++ task_budget_call_opts(config, state),
-           first_chunk,
-           tracker
-         ) do
+    case stream_response_from_llm(config, request, callback, first_chunk, tracker) do
       {:ok, final_message} ->
         # The prefix this response was produced under, stamped when it is appended.
         final_message = Map.put(final_message, :prefix_key, prefix_key)
@@ -1410,13 +1394,10 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Build the [system | history] message list for a streaming LLM call.
-  # History plain maps are converted to %Message{} structs so the adapter's
-  # add_single_message picks them up (otherwise the catch-all drops them).
-  # The request messages, with thinking left out where the system prompt or tools
-  # changed since it was produced (see get_response_with_usage/3), and the prefix
-  # key this request runs under.
-  defp build_stream_messages(config) do
+  # The request for a streaming LLM call, with thinking left out where the system
+  # prompt or tools changed since it was produced (see get_response_with_usage/3),
+  # and the prefix key this request runs under.
+  defp build_stream_request(config) do
     system_prompt = SystemPromptGenerator.generate_prompt(config.prompt_specification)
 
     tool_schemas =
@@ -1425,7 +1406,7 @@ defmodule Normandy.Agents.BaseAgent do
     # Streaming calls cannot use :fallbacks, so the requested model produces it.
     prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas, config.model)
 
-    history_messages =
+    messages =
       config.memory
       |> AgentMemory.drop_stale_thinking(prefix_key)
       |> AgentMemory.history()
@@ -1433,34 +1414,27 @@ defmodule Normandy.Agents.BaseAgent do
         %Message{role: role, content: content}
       end)
 
-    {[%Message{role: "system", content: system_prompt}] ++ history_messages, prefix_key}
-  end
+    request = %Normandy.LLM.Request{
+      model: config.model,
+      system: system_prompt,
+      messages: messages,
+      temperature: config.temperature,
+      max_tokens: config.max_tokens,
+      tools: tool_schemas,
+      mcp_servers: config.mcp_servers
+    }
 
-  defp stream_opts(config, callback) do
-    opts =
-      if has_tools?(config) do
-        [tools: Registry.to_tool_schemas(config.tool_registry), callback: callback]
-      else
-        [callback: callback]
-      end
-
-    # Pass MCP server configs through to the LLM adapter, mirroring the
-    # non-streaming path in get_response/2.
-    if config.mcp_servers do
-      Keyword.put(opts, :mcp_servers, config.mcp_servers)
-    else
-      opts
-    end
+    {request, prefix_key}
   end
 
   # Retry and the circuit breaker cover a stream like a non-streaming call, but
   # a stream is retried only until its first event reaches the callback: after
   # that the caller has seen output, and a retry would show it twice.
   # Each attempt is one [:normandy, :llm, :request] span, emitted here because the
-  # stream is consumed here (adapters emit none for stream_converse/7).
-  defp stream_response_from_llm(config, messages, opts, first_chunk, tracker) do
+  # stream is consumed here (adapters emit none for stream/3).
+  defp stream_response_from_llm(config, request, callback, first_chunk, tracker) do
     delivered = :atomics.new(1, [])
-    opts = Keyword.update(opts, :callback, nil, &track_delivery(&1, delivered))
+    callback = track_delivery(callback, delivered)
 
     request_metadata = %{
       model: config.model,
@@ -1476,7 +1450,7 @@ defmodule Normandy.Agents.BaseAgent do
         tracker,
         nil,
         request_metadata,
-        fn -> stream_attempt(config, messages, opts) end,
+        fn -> stream_attempt(config, request, callback) end,
         &stream_request_outcome/1
       )
     end
@@ -1519,64 +1493,63 @@ defmodule Normandy.Agents.BaseAgent do
   defp stream_error(%LLMError{} = error), do: {:error, error}
   defp stream_error(reason), do: raise_llm_call_error(reason)
 
-  # One stream from the LLM.
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defp stream_attempt(config, messages, opts) do
-    # Check if client protocol implements stream_converse
-    impl = Model.impl_for(config.client)
+  # One stream from the LLM. A client that can't stream answers
+  # {:error, %LLMError{type: :unsupported}} (Normandy.LLM.Call).
+  defp stream_attempt(config, request, callback) do
+    case Call.stream(config.client, request, []) do
+      {:ok, stream} ->
+        # Normandy, not the adapter, delivers events to the caller's callback, in
+        # stream order, as the stream is consumed.
+        stream = Stream.each(stream, &deliver_stream_event(&1, callback))
 
-    # `function_exported?/3` returns false until the module is loaded. With
-    # protocol consolidation (prod/dev), the impl module is not auto-loaded,
-    # so a cold-start stream call would fail with "Client does not support
-    # streaming" even when the adapter does implement stream_converse/7.
-    # Ensure the module is loaded before probing.
-    _ = if impl, do: Code.ensure_loaded(impl)
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+        case config do
+          %BaseAgentConfig{
+            output_guardrails: [_ | _],
+            output_guardrails_streaming_mode: :incremental
+          } ->
+            consume_stream_with_incremental_guards(stream, config, callback)
 
-    if impl && function_exported?(impl, :stream_converse, 7) do
-      case impl.stream_converse(
-             config.client,
-             config.model,
-             config.temperature,
-             config.max_tokens,
-             messages,
-             config.output_schema,
-             opts
-           ) do
-        {:ok, stream} ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case config do
-            %BaseAgentConfig{
-              output_guardrails: [_ | _],
-              output_guardrails_streaming_mode: :incremental
-            } ->
-              consume_stream_with_incremental_guards(
-                stream,
-                config,
-                Keyword.get(opts, :callback)
-              )
+          _ ->
+            events = Enum.to_list(stream)
 
-            _ ->
-              events = Enum.to_list(stream)
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+            case StreamProcessor.stream_error(events) do
+              nil -> {:ok, StreamProcessor.build_final_message(events)}
+              %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
+            end
+        end
 
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              case StreamProcessor.stream_error(events) do
-                nil -> {:ok, StreamProcessor.build_final_message(events)}
-                %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
-              end
-          end
-
-        {:error, reason} ->
-          {:error, LLMError.wrap(reason)}
-      end
-    else
-      {:error,
-       LLMError.new(
-         type: :unknown,
-         retryable?: false,
-         detail: "client does not implement stream_converse/7"
-       )}
+      {:error, %LLMError{}} = error ->
+        error
     end
   end
+
+  # The events the stream callback receives, from the adapter-neutral stream events
+  # (Normandy.Agents.Model, "Stream events"). Everything else is not delivered.
+  defp deliver_stream_event(
+         %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}},
+         callback
+       ),
+       do: callback.(:text_delta, text)
+
+  defp deliver_stream_event(
+         %{type: "content_block_delta", delta: %{"type" => "thinking_delta", "thinking" => text}},
+         callback
+       ),
+       do: callback.(:thinking_delta, text)
+
+  defp deliver_stream_event(
+         %{type: "content_block_start", content_block: %{"type" => "tool_use"} = tool},
+         callback
+       ),
+       do: callback.(:tool_use_start, tool)
+
+  defp deliver_stream_event(%{type: "message_start", message: message}, callback),
+    do: callback.(:message_start, message)
+
+  defp deliver_stream_event(%{type: "message_stop"}, callback), do: callback.(:message_stop, %{})
+  defp deliver_stream_event(_event, _callback), do: :ok
 
   # Consumes a stream event-by-event, running output guards every
   # `output_guardrails_chunk_size` bytes of accumulated text. On violation,

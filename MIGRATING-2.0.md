@@ -60,15 +60,29 @@ matches names literally, so a glob never enabled anything. The struct field
 ServerConfig.allow_tools(server, ["search_events", "fetch_data"])
 ```
 
-## 4. `Model.converse/7` may return `{response, usage, meta}`
+## 4. The `Model` protocol is `converse/3` + `stream/3`
 
-`ClaudioAdapter` now returns a 3-tuple (`meta` carries `:served_by` after a server-side
-fallback), and `Normandy.Agents.ConverseResult.normalize/1` always returns one.
+`Normandy.Agents.Model` has two functions, both taking a `%Normandy.LLM.Request{}`:
 
-- Implementations returning a bare response or `{response, usage}` keep working.
-- Code that calls `ClaudioAdapter` directly, or wraps it (a decorator, logger or test double)
-  and matches `{response, usage} = ...`, must accept the 3-tuple.
-- A 3-tuple whose third element isn't a map raises `ArgumentError`.
+| 1.x | 2.0 |
+|---|---|
+| `completitions/6` | removed: delete your implementation |
+| `converse(client, model, temperature, max_tokens, messages, response_model, opts)` | `converse(client, %Request{model:, system:, messages:, response_model:, temperature:, max_tokens:, tools:, mcp_servers:, task_budget_remaining:}, opts)` |
+| returns `response`, `{response, usage}` or `{response, usage, meta}` | returns `{:ok, %Normandy.LLM.Response{content:, stop_reason:, usage:, meta:}}` |
+| `{:error, %LLMError{}}` | unchanged |
+| `stream_converse/7` (optional, found by `function_exported?`) | `stream(client, %Request{}, opts)`, required; return `{:error, %LLMError{type: :unsupported}}` if you can't stream |
+| `opts[:raw]` | `request.response_model == nil`: return the answer text |
+| `opts[:tools]`, `opts[:mcp_servers]`, `opts[:task_budget_remaining]` | `request.tools`, `request.mcp_servers`, `request.task_budget_remaining` |
+| the system prompt as the first `"system"` message | `request.system`; `request.messages` holds no system message |
+| your `stream_converse/7` called `opts[:callback]` | `stream/3` returns events only; Normandy calls the callback |
+
+`Normandy.Agents.ConverseResult` is gone. Any other return from `converse/3` raises
+`ArgumentError` naming your implementation. `JsonDeserializer.deserialize_with_retry/5`
+takes `(content, schema, client, %Request{}, opts)` instead of eight arguments.
+
+Streaming (`BaseAgent.stream_response/3`, `stream_with_tools/3`) with a client that
+can't stream fails with `Normandy.LLMError` `type: :unsupported` (the client's own
+error); in 1.x it was `type: :unknown`.
 
 ## 5. Model catalog and compaction
 
@@ -152,13 +166,12 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 
 ## 11. LLM failures raise `Normandy.LLMError`
 
-- `Model.converse/7` may now return `{:error, %Normandy.LLMError{}}`. Code that calls
-  `converse/7` directly must handle it; `ConverseResult.normalize/1` now returns
-  `{:ok, {response, usage, meta}}` or `{:error, %Normandy.LLMError{}}`.
+- `Model.converse/3` returns `{:error, %Normandy.LLMError{}}` on failure (see §4). Code
+  that calls `converse/3` directly must handle it.
 - `BaseAgent.run/2` and the DSL's `run/1-3` raise `Normandy.LLMError` when a returned
-  failure (`{:error, _}` from `converse/7`) is final, and when the circuit is open
+  failure (`{:error, _}` from `converse/3`) is final, and when the circuit is open
   (`type: :circuit_open`). Rescue `Normandy.LLMError` for these.
-- An exception raised by `converse/7` is re-raised with its original type. With a circuit
+- An exception raised by `converse/3` is re-raised with its original type. With a circuit
   breaker enabled it used to arrive wrapped as `RuntimeError "LLM call failed: <msg>"`; that
   wrapper is gone, so rescue the original exception type (it is not an `LLMError`).
 - With a circuit breaker enabled, every returned LLM failure counts as a breaker failure,
@@ -306,6 +319,9 @@ the DSL defaulted to 4096.
 - `Compactor.WindowManager` now reserves the agent's `max_tokens` for the answer (it was a
   fixed 4096), so it keeps less history. Pass `:reserved_tokens` in the compactor opts to
   choose; a reserve as large as the context window raises.
+- `OpenAICompatibleAdapter` sends `max_tokens` on every request too. For OpenAI reasoning
+  models set `options: %{max_tokens_param: :max_completion_tokens}`; `:omit` sends neither
+  key and leaves the limit to the server.
 
 ## 18. The default input schema rejects what it used to drop
 

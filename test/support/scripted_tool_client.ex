@@ -9,13 +9,16 @@ defmodule Normandy.Test.ScriptedToolClient do
   defimpl Normandy.Agents.Model do
     alias Normandy.Agents.ToolCallResponse
 
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-      do: response_model
+    def converse(client, request, _opts) do
+      content =
+        if Enum.any?(request.messages, &(&1.role == "tool")),
+          do: request.response_model,
+          else: %ToolCallResponse{content: nil, tool_calls: client.calls}
 
-    def converse(client, _model, _temperature, _max_tokens, messages, response_model, _opts) do
-      if Enum.any?(messages, &(Map.get(&1, :role) == "tool")),
-        do: response_model,
-        else: %ToolCallResponse{content: nil, tool_calls: client.calls}
+      {:ok, %Normandy.LLM.Response{content: content}}
     end
+
+    def stream(_client, _request, _opts),
+      do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
   end
 end

@@ -30,24 +30,13 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(config, request, _opts) do
+        tool_message_count = Enum.count(request.messages, &(&1.role == "tool"))
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            response_model,
-            _opts \\ []
-          ) do
-        tool_message_count = Enum.count(messages, &(&1.role == "tool"))
-
-        cond do
-          tool_message_count == 0 ->
-            {%ToolCallResponse{
+        if tool_message_count == 0 do
+          {:ok,
+           %Normandy.LLM.Response{
+             content: %ToolCallResponse{
                content: nil,
                tool_calls: [
                  %ToolCall{
@@ -56,18 +45,20 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
                    input: %{operation: "add", a: 5, b: 3}
                  }
                ]
-             }, %{"input_tokens" => 11, "output_tokens" => 0}}
-
-          tool_message_count > 0 ->
-            {%ToolCallResponse{
-               content: config.final_response,
-               tool_calls: []
-             }, %{"input_tokens" => 0, "output_tokens" => 5}}
-
-          true ->
-            response_model
+             },
+             usage: %{"input_tokens" => 11, "output_tokens" => 0}
+           }}
+        else
+          {:ok,
+           %Normandy.LLM.Response{
+             content: %ToolCallResponse{content: config.final_response, tool_calls: []},
+             usage: %{"input_tokens" => 0, "output_tokens" => 5}
+           }}
         end
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

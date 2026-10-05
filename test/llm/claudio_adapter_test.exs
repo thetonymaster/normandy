@@ -2,7 +2,6 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.Model
   alias Normandy.LLM.ClaudioAdapter
 
@@ -26,30 +25,6 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
       assert adapter.base_url == "https://custom.api.com"
     end
-  end
-
-  describe "Model protocol implementation" do
-    test "implements completitions/6 (legacy compatibility)" do
-      adapter = %ClaudioAdapter{api_key: "test-key"}
-      response_model = %BaseAgentOutputSchema{}
-
-      result =
-        Model.completitions(
-          adapter,
-          "claude-3",
-          0.7,
-          1024,
-          "test",
-          response_model
-        )
-
-      # Should return the response_model unchanged for legacy API
-      assert result == response_model
-    end
-
-    # Note: Testing actual converse/7 would require mocking Claudio.Client
-    # and Claudio.Messages.create, which is beyond this basic test.
-    # In integration tests, you would mock these dependencies.
   end
 
   describe "ClaudioAdapter integration" do
@@ -104,26 +79,6 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                ClaudioAdapter.__on_parse_failure_policy__(%{
                  on_parse_failure: :error
                })
-    end
-  end
-
-  describe "raw completion mapping" do
-    test "__raw_completion__ maps a successful Claudio response to {content, usage}" do
-      response = %{content: [%{type: :text, text: "hello"}], usage: %{input_tokens: 5}}
-      assert {"hello", %{input_tokens: 5}} = ClaudioAdapter.__raw_completion__({:ok, response})
-    end
-
-    test "__raw_completion__ joins multiple text blocks and ignores non-text blocks" do
-      response = %{
-        content: [%{type: :text, text: "a"}, %{type: :tool_use}, %{type: :text, text: "b"}]
-      }
-
-      assert {"a\nb", nil} = ClaudioAdapter.__raw_completion__({:ok, response})
-    end
-
-    test "__raw_completion__ classifies a Claudio API error as an LLMError" do
-      assert {:error, %Normandy.LLMError{type: :unknown, reason: :boom}} =
-               ClaudioAdapter.__raw_completion__({:error, :boom})
     end
   end
 
@@ -255,7 +210,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                ClaudioAdapter.__structured_schema_for__(
                  routing_client(),
                  %MultiField{},
-                 tools: [%{name: "lookup"}]
+                 [%{name: "lookup"}]
                )
     end
   end
@@ -569,14 +524,15 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
       messages = [%Normandy.Components.Message{role: "user", content: "hi"}]
 
-      assert {response, _usage, %{served_by: "claude-opus-5"}} =
+      assert {:ok, %Normandy.LLM.Response{content: response, meta: %{served_by: "claude-opus-5"}}} =
                Model.converse(
                  client,
-                 "claude-opus-5-5",
-                 nil,
-                 1024,
-                 messages,
-                 %Normandy.Agents.BaseAgentOutputSchema{},
+                 %Normandy.LLM.Request{
+                   model: "claude-opus-5-5",
+                   max_tokens: 1024,
+                   messages: messages,
+                   response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+                 },
                  []
                )
 
@@ -610,16 +566,114 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
 
       Model.converse(
         client,
-        "claude-opus-5-5",
-        nil,
-        1024,
-        [%Normandy.Components.Message{role: "user", content: "hi"}],
-        %Normandy.Agents.BaseAgentOutputSchema{},
+        %Normandy.LLM.Request{
+          model: "claude-opus-5-5",
+          max_tokens: 1024,
+          messages: [%Normandy.Components.Message{role: "user", content: "hi"}],
+          response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+        },
         []
       )
 
       assert_received {:request_body, body}
       refute Map.has_key?(body, "temperature")
+    end
+  end
+
+  describe "raw path (response_model: nil) on the wire" do
+    for reason <- ~w(end_turn tool_use max_tokens refusal pause_turn) do
+      test "stop_reason #{reason} is carried on the response" do
+        name = Module.concat(__MODULE__, "Stop#{unquote(reason)}")
+
+        Req.Test.stub(name, fn conn ->
+          Req.Test.json(conn, %{
+            "id" => "msg_1",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-opus-5-5",
+            "content" => [%{"type" => "text", "text" => "hi"}],
+            "stop_reason" => unquote(reason),
+            "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+          })
+        end)
+
+        client = %ClaudioAdapter{
+          api_key: "k",
+          options: %{req_options: [plug: {Req.Test, name}, retry: false]}
+        }
+
+        request = %Normandy.LLM.Request{
+          model: "claude-opus-5-5",
+          messages: [%Normandy.Components.Message{role: "user", content: "hi"}],
+          max_tokens: 64
+        }
+
+        assert {:ok, %Normandy.LLM.Response{stop_reason: stop_reason}} =
+                 Model.converse(client, request, [])
+
+        assert stop_reason == String.to_existing_atom(unquote(reason))
+      end
+    end
+
+    test "the answer is the text blocks joined, other blocks ignored, with usage and meta" do
+      Req.Test.stub(__MODULE__.RawText, fn conn ->
+        Req.Test.json(conn, %{
+          "id" => "msg_raw",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-opus-5-5",
+          "content" => [
+            %{"type" => "text", "text" => "a"},
+            %{"type" => "tool_use", "id" => "t1", "name" => "x", "input" => %{}},
+            %{"type" => "text", "text" => "b"}
+          ],
+          "stop_reason" => "end_turn",
+          "usage" => %{"input_tokens" => 5, "output_tokens" => 1}
+        })
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.RawText}, retry: false]}
+      }
+
+      request = %Normandy.LLM.Request{
+        model: "claude-opus-5-5",
+        messages: [%Normandy.Components.Message{role: "user", content: "hi"}],
+        max_tokens: 64
+      }
+
+      assert {:ok, %Normandy.LLM.Response{content: "a\nb", usage: usage, meta: meta}} =
+               Model.converse(client, request, [])
+
+      assert usage.input_tokens == 5
+      assert meta.response_id == "msg_raw"
+      assert meta.finish_reason == "end_turn"
+    end
+
+    test "an HTTP failure is an LLMError" do
+      Req.Test.stub(__MODULE__.RawFail, fn conn ->
+        conn
+        |> Plug.Conn.put_status(529)
+        |> Req.Test.json(%{
+          "type" => "error",
+          "error" => %{"type" => "overloaded_error", "message" => "busy"}
+        })
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.RawFail}, retry: false]}
+      }
+
+      request = %Normandy.LLM.Request{
+        model: "claude-opus-5-5",
+        messages: [%Normandy.Components.Message{role: "user", content: "hi"}],
+        max_tokens: 64
+      }
+
+      assert {:error, %Normandy.LLMError{type: :overloaded, retryable?: true}} =
+               Model.converse(client, request, [])
     end
   end
 end

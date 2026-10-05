@@ -8,8 +8,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
   alias Normandy.Guardrails.Builtins.ForbiddenSubstrings
 
   # Streaming mock that yields events lazily so Enum.reduce_while can halt
-  # mid-stream. Matches the real Claudio adapter's Stream.map behaviour where
-  # the caller-supplied callback fires as events flow, not eagerly up-front.
+  # mid-stream. Matches the real Claudio adapter's Stream.map behaviour: Normandy
+  # delivers each event to the callback as it flows, not eagerly up-front.
   defmodule LazyStreamClient do
     use Normandy.Schema
 
@@ -18,11 +18,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
-      def converse(_c, _m, _t, _mt, _msgs, rm, _opts), do: rm
+      def converse(_c, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def stream_converse(client, _model, _temp, _max_tokens, _messages, _rm, opts) do
-        callback = Keyword.get(opts, :callback)
+      def stream(client, _request, _opts) do
         chunks = client.text_chunks.chunks
 
         events =
@@ -53,30 +52,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
               %{type: "message_stop"}
             ]
 
-        lazy_stream =
-          Stream.map(events, fn event ->
-            if callback do
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              case event do
-                %{
-                  type: "content_block_delta",
-                  delta: %{"type" => "text_delta", "text" => text}
-                } ->
-                  callback.(:text_delta, text)
-
-                %{type: "message_start", message: msg} ->
-                  callback.(:message_start, msg)
-
-                %{type: "message_stop"} ->
-                  callback.(:message_stop, %{})
-
-                _ ->
-                  :ok
-              end
-            end
-
-            event
-          end)
+        # Lazy, so incremental guards can halt mid-stream.
+        lazy_stream = Stream.map(events, & &1)
 
         {:ok, lazy_stream}
       end
@@ -94,11 +71,10 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
-      def converse(_c, _m, _t, _mt, _msgs, rm, _opts), do: rm
+      def converse(_c, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def stream_converse(client, _model, _temp, _max_tokens, _messages, _rm, opts) do
-        callback = Keyword.get(opts, :callback)
+      def stream(client, _request, _opts) do
         chunks = client.text_chunks.chunks
 
         events =
@@ -139,24 +115,8 @@ defmodule Normandy.Agents.BaseAgentStreamingGuardrailsTest do
               %{type: "message_stop"}
             ]
 
-        lazy_stream =
-          Stream.map(events, fn event ->
-            if callback do
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              case event do
-                %{
-                  type: "content_block_delta",
-                  delta: %{"type" => "text_delta", "text" => text}
-                } ->
-                  callback.(:text_delta, text)
-
-                _ ->
-                  :ok
-              end
-            end
-
-            event
-          end)
+        # Lazy, so incremental guards can halt mid-stream.
+        lazy_stream = Stream.map(events, & &1)
 
         {:ok, lazy_stream}
       end

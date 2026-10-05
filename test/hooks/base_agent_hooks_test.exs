@@ -17,7 +17,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     end
   end
 
-  # StubClient sends {:converse, messages, opts} to :notify on every LLM call and answers
+  # StubClient sends {:converse, %Normandy.LLM.Request{}, opts} to :notify on every LLM call and answers
   # with the response model (test/support/stub_client.ex). retry_options defaults to nil
   # (base_agent.ex:156), so an LLM raise reaches the caller unwrapped.
   defp agent(hooks, extra \\ %{}) do

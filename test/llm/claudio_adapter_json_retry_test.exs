@@ -4,6 +4,7 @@ defmodule Normandy.LLM.ClaudioAdapterJsonRetryTest do
   alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, Model}
   alias Normandy.Components.Message
   alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.Response
 
   @moduletag :capture_log
 
@@ -42,11 +43,12 @@ defmodule Normandy.LLM.ClaudioAdapterJsonRetryTest do
   defp converse(client, opts) do
     Model.converse(
       client,
-      "claude-opus-5-5",
-      nil,
-      1024,
-      [%Message{role: "user", content: "hi"}],
-      %BaseAgentOutputSchema{},
+      %Normandy.LLM.Request{
+        model: "claude-opus-5-5",
+        max_tokens: 1024,
+        messages: [%Message{role: "user", content: "hi"}],
+        response_model: %BaseAgentOutputSchema{}
+      },
       opts
     )
   end
@@ -78,7 +80,7 @@ defmodule Normandy.LLM.ClaudioAdapterJsonRetryTest do
   test "the retries' token usage is added to the reported usage" do
     stub_replies(__MODULE__.Usage, ["not json", ~s({"chat_message": "ok"})])
 
-    assert {%BaseAgentOutputSchema{chat_message: "ok"}, usage, _meta} =
+    assert {:ok, %Response{content: %BaseAgentOutputSchema{chat_message: "ok"}, usage: usage}} =
              converse(client(__MODULE__.Usage), [])
 
     assert (usage[:input_tokens] || usage["input_tokens"]) == 6

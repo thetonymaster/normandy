@@ -2,7 +2,7 @@ defmodule Normandy.LLMError do
   @moduledoc """
   A failed LLM call.
 
-  Adapters return `{:error, %Normandy.LLMError{}}` from `Normandy.Agents.Model.converse/7`;
+  Adapters return `{:error, %Normandy.LLMError{}}` from `Normandy.Agents.Model.converse/3`;
   `Normandy.Agents.BaseAgent` raises it once retries (if configured) are exhausted.
 
   `type: :unsupported` means the client can't do what was asked (a client without

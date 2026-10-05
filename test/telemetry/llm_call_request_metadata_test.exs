@@ -41,8 +41,12 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
     %StubClient{
       options: options,
       reply: fn model ->
-        {Map.put(model, :chat_message, "hi"), %{input_tokens: 1, output_tokens: 1},
-         %{response_id: "msg_stub", finish_reason: :end_turn}}
+        {:ok,
+         %Normandy.LLM.Response{
+           content: Map.put(model, :chat_message, "hi"),
+           usage: %{input_tokens: 1, output_tokens: 1},
+           meta: %{response_id: "msg_stub", finish_reason: :end_turn}
+         }}
       end
     }
   end
@@ -126,7 +130,13 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
 
     test "has neither when the adapter reports none" do
       client = %StubClient{
-        reply: fn model -> {Map.put(model, :chat_message, "hi"), %{input_tokens: 1}} end
+        reply: fn model ->
+          {:ok,
+           %Normandy.LLM.Response{
+             content: Map.put(model, :chat_message, "hi"),
+             usage: %{input_tokens: 1}
+           }}
+        end
       }
 
       {_start, stop} = capture(client, &run_it/1)
@@ -333,16 +343,16 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
     end
   end
 
-  # First stream_converse call fails retryably; the retry streams one text delta.
+  # First stream/3 call fails retryably; the retry streams one text delta.
   defmodule RetryClient do
     defstruct counter: nil, options: %{}
   end
 
   defimpl Normandy.Agents.Model, for: Normandy.Telemetry.LlmCallRequestMetadataTest.RetryClient do
-    def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
-    def converse(_c, _m, _t, _mt, _msgs, rm, _opts), do: rm
+    def converse(_c, request, _opts),
+      do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-    def stream_converse(_client, _m, _t, _mt, _msgs, _rm, opts) do
+    def stream(_client, _request, _opts) do
       key = {__MODULE__, self()}
       n = Process.get(key, 0)
       Process.put(key, n + 1)
@@ -350,8 +360,6 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
       if n == 0 do
         {:error, Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)}
       else
-        callback = Keyword.fetch!(opts, :callback)
-
         events = [
           %{type: "message_start", message: %{"id" => "m", "role" => "assistant"}},
           %{
@@ -369,11 +377,7 @@ defmodule Normandy.Telemetry.LlmCallRequestMetadataTest do
           %{type: "message_stop"}
         ]
 
-        {:ok,
-         Stream.map(events, fn event ->
-           if event.type == "content_block_delta", do: callback.(:text_delta, "hi")
-           event
-         end)}
+        {:ok, Stream.map(events, & &1)}
       end
     end
   end

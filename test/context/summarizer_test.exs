@@ -16,12 +16,15 @@ defmodule Normandy.Context.SummarizerTest do
     defstruct [:notify]
 
     defimpl Normandy.Agents.Model do
-      def completitions(_c, _m, _t, _mt, _msgs, rm), do: rm
+      def converse(client, request, _opts) do
+        send(client.notify, {:summarize_request, request.messages})
 
-      def converse(client, _model, _temperature, _max_tokens, messages, rm, _opts) do
-        send(client.notify, {:summarize_request, messages})
-        %{rm | chat_message: "summary"}
+        {:ok,
+         %Normandy.LLM.Response{content: %{request.response_model | chat_message: "summary"}}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
@@ -98,11 +101,15 @@ defmodule Normandy.Context.SummarizerTest do
       assert is_binary(summary)
     end
 
-    test "succeeds when the client returns a {struct, usage} tuple (ClaudioAdapter shape)" do
-      # Mirrors ClaudioAdapter: returns a {struct, usage} tuple on success.
+    test "succeeds when the client's response carries usage (ClaudioAdapter shape)" do
+      # Mirrors ClaudioAdapter: a %Response{} with content and usage.
       client = %StubClient{
         reply: fn response_model ->
-          {%{response_model | chat_message: "tuple-summary"}, %{tokens: 1}}
+          {:ok,
+           %Normandy.LLM.Response{
+             content: %{response_model | chat_message: "tuple-summary"},
+             usage: %{tokens: 1}
+           }}
         end
       }
 
@@ -178,7 +185,11 @@ defmodule Normandy.Context.SummarizerTest do
     test "a summary call is an llm_call span with the agent's ids and its tokens", %{name: name} do
       agent =
         named_agent(name, fn rm ->
-          {%{rm | chat_message: "summary"}, %{"input_tokens" => 40, "output_tokens" => 9}}
+          {:ok,
+           %Normandy.LLM.Response{
+             content: %{rm | chat_message: "summary"},
+             usage: %{"input_tokens" => 40, "output_tokens" => 9}
+           }}
         end)
 
       turn_id = AgentMemory.get_current_turn_id(agent.memory)

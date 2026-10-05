@@ -18,11 +18,7 @@ defmodule Normandy.Test.MockSummarizerClient do
     Mock implementation of the Model protocol for summarization testing.
     """
 
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-      response_model
-    end
-
-    def converse(client, _model, _temperature, _max_tokens, messages, response_model, _opts) do
+    def converse(client, request, _opts) do
       # Simulate processing delay if configured
       if client.delay > 0, do: Process.sleep(client.delay)
 
@@ -32,15 +28,18 @@ defmodule Normandy.Test.MockSummarizerClient do
       end
 
       # Extract the conversation content from the last message
-      last_message = List.last(messages)
+      last_message = List.last(request.messages)
       conversation_text = extract_conversation(last_message)
 
       # Generate a mock summary
       summary = generate_mock_summary(client.summary_response, conversation_text)
 
       # Return response with summary
-      %{response_model | chat_message: summary}
+      {:ok, %Normandy.LLM.Response{content: %{request.response_model | chat_message: summary}}}
     end
+
+    def stream(_client, _request, _opts),
+      do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
 
     defp extract_conversation(%{content: content}) when is_binary(content) do
       content

@@ -84,7 +84,7 @@ defmodule Normandy.Telemetry do
 
   ### `[:normandy, :llm, :request, :start | :stop | :exception]`
 
-  One provider request inside an llm_call. A `converse/7` can make several (the
+  One provider request inside an llm_call. A `converse/3` can make several (the
   structured-outputs 400 fallback, JSON parse retries); BaseAgent's own retries are
   separate requests too. This is a different event from the llm_call span, and it is
   new (there has never been an `[:normandy, :llm, :call]` event).
@@ -93,7 +93,7 @@ defmodule Normandy.Telemetry do
       non-streaming calls and by `BaseAgent` for each stream attempt. A third-party
       `Normandy.Agents.Model` emits none unless it calls `Normandy.Telemetry.Request.span/5`
       with the `:request_tracker` option it receives; llm_call's `attempts` then falls
-      back to the number of `converse/7` calls.
+      back to the number of `converse/3` calls.
     * Start metadata: `model`, `provider`, `stream`, `attempt` (1-based across the whole
       llm_call), `request_kind` (`:initial | :retry | :json_retry | :structured_fallback`;
       the key is not `kind`, which the exception event uses for the error class), the ids

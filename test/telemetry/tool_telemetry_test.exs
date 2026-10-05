@@ -47,11 +47,11 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
     defstruct []
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model),
-        do: response_model
-
-      def converse(_config, _model, _temperature, _max_tokens, _messages, _response_model, _opts),
+      def converse(_config, _request, _opts),
         do: raise("these tests dispatch tools directly; no LLM call is made")
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

@@ -17,14 +17,14 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model),
-        do: response_model
-
-      def converse(client, _model, _temperature, _max_tokens, messages, response_model, _opts) do
-        send(client.test_pid, {:llm_call, client.name, messages})
+      def converse(client, request, _opts) do
+        send(client.test_pid, {:llm_call, client.name, request.messages})
         if client.fail, do: raise("worker down")
-        struct(response_model, client.reply)
+        {:ok, %Normandy.LLM.Response{content: struct(request.response_model, client.reply)}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

@@ -61,7 +61,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window
 
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
-  - Requires: `converse/7` and `completitions/6` implementations; `converse/7` may return a bare response, `{response, usage}`, `{response, usage, meta}`, or `{:error, %Normandy.LLMError{}}`
+  - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}`; `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
 - **`Normandy.Agents.Turn.Server`** - Durable `:gen_statem` turn shell

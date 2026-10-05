@@ -56,12 +56,14 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
   defp converse(name) do
     Model.converse(
       client(name),
-      "claude-opus-5-5",
-      nil,
-      1024,
-      [%Message{role: "user", content: "weather?"}],
-      %ToolCallResponse{},
-      tools: [%{name: "weather", description: "w", input_schema: %{type: "object"}}]
+      %Normandy.LLM.Request{
+        model: "claude-opus-5-5",
+        max_tokens: 1024,
+        messages: [%Message{role: "user", content: "weather?"}],
+        response_model: %ToolCallResponse{},
+        tools: [%{name: "weather", description: "w", input_schema: %{type: "object"}}]
+      },
+      []
     )
   end
 
@@ -69,7 +71,9 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
     test "a tool-call response keeps its thinking blocks in order" do
       reply_with(__MODULE__.Keep, [@thinking, @redacted, @tool_use])
 
-      assert {%ToolCallResponse{} = response, _usage, _meta} = converse(__MODULE__.Keep)
+      assert {:ok, %Normandy.LLM.Response{content: %ToolCallResponse{} = response}} =
+               converse(__MODULE__.Keep)
+
       assert response.thinking == [@thinking, @redacted]
       assert [%{id: "t1"}] = response.tool_calls
     end
@@ -79,7 +83,7 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
       served = %{@thinking | "signature" => "sig2"}
       reply_with(__MODULE__.Fallback, [@thinking, fallback, served, @tool_use])
 
-      assert {response, _usage, _meta} = converse(__MODULE__.Fallback)
+      assert {:ok, %Normandy.LLM.Response{content: response}} = converse(__MODULE__.Fallback)
       assert response.thinking == [served]
     end
   end

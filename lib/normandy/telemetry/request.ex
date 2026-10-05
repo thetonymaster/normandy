@@ -8,20 +8,20 @@ defmodule Normandy.Telemetry.Request do
 
     * Non-streaming: the bundled adapters (`Normandy.LLM.ClaudioAdapter`,
       `Normandy.LLM.OpenAICompatibleAdapter`), around each HTTP request they make
-      (a `converse/7` can make several: the structured-outputs 400 fallback and the
+      (a `converse/3` can make several: the structured-outputs 400 fallback and the
       JSON parse retries happen inside the adapter).
     * Streaming: `Normandy.Agents.BaseAgent`, around each stream attempt (the
       request and the consumption of its events), since the stream is consumed there.
 
   A third-party `Normandy.Agents.Model` emits no request spans unless it calls
-  `span/5` itself with the `:request_tracker` it receives in `converse/7`'s opts.
+  `span/5` itself with the `:request_tracker` it receives in `converse/3`'s opts.
   The llm_call stop's `attempts` then falls back to the number of times BaseAgent
-  called `converse/7`.
+  called `converse/3`.
 
   ## Counting across layers
 
   BaseAgent creates a tracker (`new/1`) per llm_call and passes it to
-  `Model.converse/7` as the `:request_tracker` option; the adapter hands it to
+  `Model.converse/3` as the `:request_tracker` option; the adapter hands it to
   the JSON retry loop, which passes it back with `request_kind: :json_retry`.
   The tracker is an explicit value (a `:counters` array), never process state, so
   BaseAgent's retries (outside the adapter) and the adapter's own extra requests
@@ -70,7 +70,7 @@ defmodule Normandy.Telemetry.Request do
     do: %__MODULE__{counters: :counters.new(4, []), metadata: reject_nil(metadata)}
 
   @doc """
-  Notes that the caller is about to call `converse/7` (or start a stream attempt)
+  Notes that the caller is about to call `converse/3` (or start a stream attempt)
   once more. The first request of any call after the first is a `:retry`.
   """
   @spec note_call(t() | nil) :: :ok

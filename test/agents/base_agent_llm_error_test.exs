@@ -120,12 +120,12 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
     assert calls() == 1
   end
 
-  test "a third-party {:error, term} raises an :unknown LLMError keeping the term out of the message" do
+  test "a third-party {:error, term} raises ArgumentError keeping the term out of the message" do
     agent = agent(error_client("sk-ant-canary detail"))
 
-    raised = assert_raise LLMError, fn -> BaseAgent.run(agent, input()) end
-    assert raised.type == :unknown
-    assert raised.reason == "sk-ant-canary detail"
+    raised = assert_raise ArgumentError, fn -> BaseAgent.run(agent, input()) end
+    assert raised.message =~ "{:error, %Normandy.LLMError{}}"
+    assert raised.message =~ "got: {:error, a string"
     refute raised.message =~ "sk-ant-canary"
   end
 

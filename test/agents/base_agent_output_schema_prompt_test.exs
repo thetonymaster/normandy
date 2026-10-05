@@ -24,7 +24,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
       })
 
     BaseAgent.run(agent, "hi")
-    assert_receive {:converse, [%{content: prompt} | _], _}
+    assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
     prompt
   end
 
@@ -51,7 +51,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
 
     {_agent, response} = BaseAgent.run(agent, "hi")
 
-    assert_receive {:converse, [%{content: prompt} | _], _}
+    assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
     refute prompt =~ "tool_calls"
     refute prompt =~ "prefix_key"
     assert response.chat_message == "plain answer"

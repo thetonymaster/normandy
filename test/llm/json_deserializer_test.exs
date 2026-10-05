@@ -7,7 +7,10 @@ defmodule Normandy.LLM.JsonDeserializerTest do
   alias Normandy.LLM.Json.TestFixtures.RequiredField
   alias Normandy.LLM.JsonDeserializer
 
-  describe "deserialize_with_retry/8" do
+  # max_retries: 0 never reaches the client, so the request is only carried.
+  @request %Normandy.LLM.Request{model: "m", messages: [], max_tokens: 1024}
+
+  describe "deserialize_with_retry/5" do
     test "parses valid JSON and populates schema" do
       content = ~s({"chat_message": "Hello world"})
       schema = %BaseAgentOutputSchema{}
@@ -17,10 +20,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -41,10 +41,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -60,10 +57,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -79,10 +73,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -98,10 +89,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -117,10 +105,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -136,10 +121,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -155,10 +137,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -179,10 +158,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -198,10 +174,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -217,10 +190,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -241,10 +211,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -260,10 +227,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -279,10 +243,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 
@@ -298,10 +259,7 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           content,
           schema,
           nil,
-          nil,
-          nil,
-          nil,
-          [],
+          @request,
           max_retries: 0
         )
 

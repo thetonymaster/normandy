@@ -26,21 +26,28 @@ defmodule NormandyTest.Telemetry.MetadataTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model),
-        do: response_model
+      def converse(config, request, _opts) do
+        content =
+          if Enum.any?(request.messages, &(&1.role == "tool")) do
+            %ToolCallResponse{content: config.final_response, tool_calls: []}
+          else
+            %ToolCallResponse{
+              content: nil,
+              tool_calls: [
+                %ToolCall{
+                  id: "call_1",
+                  name: "calculator",
+                  input: %{operation: "add", a: 1, b: 2}
+                }
+              ]
+            }
+          end
 
-      def converse(config, _model, _temperature, _max_tokens, messages, _response_model, _opts) do
-        if Enum.any?(messages, &(&1.role == "tool")) do
-          %ToolCallResponse{content: config.final_response, tool_calls: []}
-        else
-          %ToolCallResponse{
-            content: nil,
-            tool_calls: [
-              %ToolCall{id: "call_1", name: "calculator", input: %{operation: "add", a: 1, b: 2}}
-            ]
-          }
-        end
+        {:ok, %Normandy.LLM.Response{content: content}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 

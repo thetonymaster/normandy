@@ -253,11 +253,12 @@ defmodule Normandy.Telemetry.LlmRequestSpanTest do
 
       Model.converse(
         client,
-        "claude-opus-5-5",
-        nil,
-        64,
-        [%Message{role: "user", content: "hi"}],
-        %Normandy.Agents.BaseAgentOutputSchema{},
+        %Normandy.LLM.Request{
+          model: "claude-opus-5-5",
+          max_tokens: 64,
+          messages: [%Message{role: "user", content: "hi"}],
+          response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+        },
         []
       )
 

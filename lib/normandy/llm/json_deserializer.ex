@@ -33,28 +33,16 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   ## Manual Usage
 
+      request = %Normandy.LLM.Request{model: model, messages: messages, max_tokens: 1024}
+
       # With default retries (2)
-      {:ok, schema} = JsonDeserializer.deserialize_with_retry(
-        raw_content,
-        schema,
-        client,
-        model,
-        temperature,
-        max_tokens,
-        messages
-      )
+      {:ok, schema} = JsonDeserializer.deserialize_with_retry(raw_content, schema, client, request)
 
       # With custom retries
-      {:ok, schema} = JsonDeserializer.deserialize_with_retry(
-        raw_content,
-        schema,
-        client,
-        model,
-        temperature,
-        max_tokens,
-        messages,
-        max_retries: 3
-      )
+      {:ok, schema} =
+        JsonDeserializer.deserialize_with_retry(raw_content, schema, client, request,
+          max_retries: 3
+        )
 
   ## How It Works
 
@@ -69,9 +57,8 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   - `:max_retries` - Maximum retry attempts (default: 2)
   - `:on_retry_usage` - `(usage -> any)`, called with each retry call's token usage
-  - `:tools` - Tool schemas to include in retry
   - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed to each
-    retry's `converse/7` (with `request_kind: :json_retry`) so the retry's request
+    retry's `converse/3` (with `request_kind: :json_retry`) so the retry's request
     span is numbered within the enclosing llm_call
   - `:adapter` - JSON adapter module (default: from `:normandy` app config)
   - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
@@ -104,26 +91,23 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `:error` — Returns `{:error, %Normandy.LLMError{type: :invalid_output, reason: reason}}`
       to the caller; no fallback text is produced.
 
-  ## Retry raw-completion contract
+  ## Retries
 
-  On a parse-failure retry, the loop calls `Normandy.Agents.Model.converse/7`
-  with `raw: true` in its options to request raw model text rather than a
-  deserialized struct. Clients that do not recognise the `raw` option may
-  ignore it and return their normal shape; the return value is always
-  normalised via `Normandy.Agents.ConverseResult.normalize/1` before the
-  loop inspects it. A `ClaudioAdapter` that honours `raw: true` returns the
-  model's text directly, bypassing its own JSON deserialization path, so the
-  content flows back into `deserialize_loop/11` without double-decoding. This
-  makes `JsonDeserializer` the single parse-and-retry authority: every JSON
-  attempt — initial or corrective — passes through `parse_and_populate/4`.
+  On a parse failure the loop calls `Normandy.Agents.Model.converse/3` again with the
+  error feedback appended to `request.messages` and `response_model: nil`, which asks
+  the client for the answer as text. Every attempt, initial or corrective, is parsed
+  here (`parse_and_populate/4`), so this module is the single parse-and-retry
+  authority. A client that ignores `response_model: nil` and returns a struct still
+  works: its text is extracted and parsed.
   """
 
-  alias Normandy.Agents.ConverseResult
-  alias Normandy.Agents.Model
+  alias Normandy.LLM.Call
   alias Normandy.LLM.Json.ContentCleaner
   alias Normandy.LLM.Json.Decoder
   alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.LLM.Json.SchemaBinder
+  alias Normandy.LLM.Request
+  alias Normandy.LLM.Response
   alias Normandy.LLMError
 
   @default_max_retries 2
@@ -131,7 +115,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @doc """
   Parse and validate JSON content without retry.
 
-  This is a simpler version of `deserialize_with_retry/8` that performs
+  This is a simpler version of `deserialize_with_retry/5` that performs
   one-shot parsing and validation without LLM retry. Useful for parsing
   final LLM responses where retry is not needed.
 
@@ -192,11 +176,9 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
     - `client` - LLM client
-    - `model` - Model name
-    - `temperature` - Temperature setting
-    - `max_tokens` - Max tokens
-    - `messages` - Original message history
-    - `opts` - Options (`:max_retries`, `:tools`, `:adapter`,
+    - `request` - the `Normandy.LLM.Request` that produced `content`; a retry resends
+      it with the error feedback appended to its messages
+    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:adapter`,
       `:recover_truncated_strings` — see `parse_and_validate/3` for details)
 
   ## Returns
@@ -204,59 +186,17 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `{:ok, populated_schema}` - Success
     - `{:error, reason}` - Failed after all retries
   """
-  @spec deserialize_with_retry(
-          String.t(),
-          struct(),
-          struct(),
-          String.t(),
-          float() | nil,
-          integer() | nil,
-          list(),
-          keyword()
-        ) :: {:ok, struct()} | {:error, term()}
-  def deserialize_with_retry(
-        content,
-        schema,
-        client,
-        model,
-        temperature,
-        max_tokens,
-        messages,
-        opts \\ []
-      ) do
+  @spec deserialize_with_retry(String.t(), struct(), struct(), Request.t(), keyword()) ::
+          {:ok, struct()} | {:error, term()}
+  def deserialize_with_retry(content, schema, client, %Request{} = request, opts \\ []) do
     max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
     adapter = Keyword.get(opts, :adapter, get_json_adapter())
 
-    deserialize_loop(
-      content,
-      schema,
-      client,
-      model,
-      temperature,
-      max_tokens,
-      messages,
-      opts,
-      adapter,
-      0,
-      max_retries
-    )
+    deserialize_loop(content, schema, client, request, opts, adapter, 0, max_retries)
   end
 
   # Main retry loop
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  defp deserialize_loop(
-         content,
-         schema,
-         _client,
-         _model,
-         _temperature,
-         _max_tokens,
-         _messages,
-         opts,
-         adapter,
-         attempt,
-         max_retries
-       )
+  defp deserialize_loop(content, schema, _client, _request, opts, adapter, attempt, max_retries)
        when attempt >= max_retries do
     # Max retries reached, attempt final parse and return result
     case parse_and_populate(content, schema, adapter, opts) do
@@ -268,20 +208,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  defp deserialize_loop(
-         content,
-         schema,
-         client,
-         model,
-         temperature,
-         max_tokens,
-         messages,
-         opts,
-         adapter,
-         attempt,
-         max_retries
-       ) do
+  defp deserialize_loop(content, schema, client, request, opts, adapter, attempt, max_retries) do
     case parse_and_populate(content, schema, adapter, opts) do
       {:ok, populated_schema} ->
         {:ok, populated_schema}
@@ -293,10 +220,7 @@ defmodule Normandy.LLM.JsonDeserializer do
           content,
           schema,
           client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
+          request,
           opts,
           adapter,
           attempt + 1,
@@ -312,62 +236,44 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # Retry by calling LLM again with error feedback
+  # Retry by calling the LLM again with error feedback. Each retry augments the
+  # original request's messages, not the previous retry's, and asks for text
+  # (response_model: nil).
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp retry_with_feedback(
          error,
          failed_content,
          schema,
          client,
-         model,
-         temperature,
-         max_tokens,
-         messages,
+         request,
          opts,
          adapter,
          attempt,
          max_retries
        ) do
-    # Build error feedback message
     error_message = RetryFeedback.build(error, failed_content, schema, adapter)
 
-    # Add the error feedback as a user message
-    augmented_messages = RetryFeedback.augment_messages(messages, error_message)
+    retry_request = %{
+      request
+      | messages: RetryFeedback.augment_messages(request.messages, error_message),
+        response_model: nil
+    }
 
-    # Call LLM again
-    tools = Keyword.get(opts, :tools, [])
+    llm_opts = [request_kind: :json_retry] ++ Keyword.take(opts, [:request_tracker])
 
-    llm_opts =
-      [raw: true, request_kind: :json_retry] ++
-        if(tools != [], do: [tools: tools], else: []) ++
-        Keyword.take(opts, [:task_budget_remaining, :request_tracker])
-
-    case ConverseResult.normalize(
-           Model.converse(
-             client,
-             model,
-             temperature,
-             max_tokens,
-             augmented_messages,
-             schema,
-             llm_opts
-           )
-         ) do
+    case Call.converse(client, retry_request, llm_opts) do
       # An LLM failure is not a parse failure: stop and hand it back.
       {:error, %LLMError{}} = error ->
         error
 
-      {:ok, {response, usage, _meta}} ->
+      {:ok, %Response{content: response, usage: usage}} ->
         report_retry_usage(opts, usage)
 
         continue_after_retry(
           response,
           schema,
           client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
+          request,
           opts,
           adapter,
           attempt,
@@ -376,15 +282,11 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp continue_after_retry(
          response,
          schema,
          client,
-         model,
-         temperature,
-         max_tokens,
-         messages,
+         request,
          opts,
          adapter,
          attempt,
@@ -392,29 +294,14 @@ defmodule Normandy.LLM.JsonDeserializer do
        ) do
     cond do
       is_binary(response) ->
-        deserialize_loop(
-          response,
-          schema,
-          client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
-          opts,
-          adapter,
-          attempt,
-          max_retries
-        )
+        deserialize_loop(response, schema, client, request, opts, adapter, attempt, max_retries)
 
       is_struct(response) ->
         deserialize_loop(
           extract_content_from_response(response),
           schema,
           client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
+          request,
           opts,
           adapter,
           attempt,

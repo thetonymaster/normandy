@@ -2,6 +2,7 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
   use ExUnit.Case, async: true
 
   alias Claudio.Messages.Request
+  alias Normandy.Agents.Model
   alias Normandy.LLM.ClaudioAdapter
 
   defp apply_opts(options, call_opts \\ []),
@@ -191,8 +192,8 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
     end
   end
 
-  describe "stream_converse/7 wiring" do
-    test "fallbacks with stream_converse raises before any HTTP call" do
+  describe "stream/3 wiring" do
+    test "fallbacks with stream/3 raises before any HTTP call" do
       # A closed port: if the guard were missing, the call fails fast locally
       # instead of reaching api.anthropic.com.
       bypass = Bypass.open()
@@ -205,13 +206,9 @@ defmodule Normandy.LLM.ClaudioAdapterOptionsTest do
       }
 
       assert_raise ArgumentError, ~r/does not support :fallbacks on streaming calls/, fn ->
-        Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter.stream_converse(
+        Model.stream(
           client,
-          "m",
-          nil,
-          100,
-          [],
-          nil,
+          %Normandy.LLM.Request{model: "m", max_tokens: 100, messages: []},
           []
         )
       end

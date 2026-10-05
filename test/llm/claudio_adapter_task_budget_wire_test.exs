@@ -44,21 +44,21 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
     }
   end
 
-  defp converse(client, opts) do
-    Model.converse(
-      client,
-      "claude-opus-5-5",
-      nil,
-      1024,
-      @messages,
-      %BaseAgentOutputSchema{},
-      opts
-    )
+  defp request(remaining) do
+    %Normandy.LLM.Request{
+      model: "claude-opus-5-5",
+      max_tokens: 1024,
+      messages: @messages,
+      response_model: %BaseAgentOutputSchema{},
+      task_budget_remaining: remaining
+    }
   end
+
+  defp converse(client, remaining), do: Model.converse(client, request(remaining), [])
 
   test "structured path: remaining reaches output_config.task_budget" do
     stub_replies(__MODULE__.Structured, [~s({"chat_message": "ok"})])
-    converse(client(__MODULE__.Structured, %{}), task_budget_remaining: 40_000)
+    converse(client(__MODULE__.Structured, %{}), 40_000)
 
     assert_received {:body, body}
 
@@ -73,9 +73,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
   test "legacy path: remaining reaches the request, and the JSON retry call too" do
     stub_replies(__MODULE__.Legacy, ["not json", ~s({"chat_message": "ok"})])
 
-    converse(client(__MODULE__.Legacy, %{structured_outputs: false}),
-      task_budget_remaining: 40_000
-    )
+    converse(client(__MODULE__.Legacy, %{structured_outputs: false}), 40_000)
 
     assert_received {:body, first}
     assert_received {:body, retry}
@@ -84,15 +82,15 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
     assert retry["output_config"]["task_budget"]["remaining"] == 40_000
   end
 
-  test "no remaining in opts: only the total goes out" do
+  test "no remaining on the request: only the total goes out" do
     stub_replies(__MODULE__.TotalOnly, [~s({"chat_message": "ok"})])
-    converse(client(__MODULE__.TotalOnly, %{}), [])
+    converse(client(__MODULE__.TotalOnly, %{}), nil)
 
     assert_received {:body, body}
     assert body["output_config"]["task_budget"] == %{"type" => "tokens", "total" => 64_000}
   end
 
-  test "stream_converse: remaining reaches the request body" do
+  test "stream/3: remaining reaches the request body" do
     bypass = Bypass.open()
     test_pid = self()
 
@@ -114,16 +112,7 @@ defmodule Normandy.LLM.ClaudioAdapterTaskBudgetWireTest do
       options: %{task_budget: 64_000}
     }
 
-    # stream_converse/7 is an impl function, not a protocol callback.
-    Model.impl_for(client).stream_converse(
-      client,
-      "claude-opus-5-5",
-      nil,
-      1024,
-      @messages,
-      %BaseAgentOutputSchema{},
-      task_budget_remaining: 40_000
-    )
+    Model.stream(client, %{request(40_000) | response_model: nil}, [])
 
     assert_received {:body, body}
     assert body["output_config"]["task_budget"]["remaining"] == 40_000
