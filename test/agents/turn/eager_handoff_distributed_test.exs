@@ -229,7 +229,11 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
         assert wait_until(fn -> HReg.whereis(reg_name, sid) == :none end, 300),
                "Horde did not drop the session registration after peer stopped"
 
-        result = Normandy.Agents.Turn.Session.run(session_opts, "continue")
+        result =
+          Normandy.Agents.Turn.Session.run(
+            Normandy.Agents.Turn.Session.new(session_opts),
+            "continue"
+          )
 
         assert match?({:ok, _}, result),
                "expected lazy rehydration to succeed after peer death, got: #{inspect(result)}"

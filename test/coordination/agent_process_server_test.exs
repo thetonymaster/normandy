@@ -104,8 +104,14 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           handlers: final_handlers()
         )
 
-      %{store: {_sm, store_h}, registry: {_rm, reg_name}, supervisor: sup, owned: owned} =
-        :sys.get_state(pid)
+      %{
+        session: %Normandy.Agents.Turn.Session{
+          store: {_sm, store_h},
+          registry: {_rm, reg_name},
+          supervisor: sup
+        },
+        owned: owned
+      } = :sys.get_state(pid)
 
       assert is_pid(store_h)
       assert is_atom(reg_name)
@@ -246,7 +252,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert {:error, :inline_mode} = AgentProcess.approve(pid, %{"pk1" => :approve})
     end
 
-    test "unknown session returns {:error, :no_session}" do
+    test "unknown session returns a :session_unavailable TurnError" do
       infra = supplied_infra()
 
       {:ok, pid} =
@@ -254,7 +260,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           [agent: server_config(), turn_engine: :server, handlers: final_handlers()] ++ infra
         )
 
-      assert {:error, :no_session} = AgentProcess.approve(pid, %{"pk1" => :approve})
+      assert {:error, %Normandy.TurnError{type: :session_unavailable, reason: :no_session}} =
+               AgentProcess.approve(pid, %{"pk1" => :approve})
     end
 
     test "park → stays responsive → approve → resume → original caller gets final result" do
@@ -452,7 +459,11 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           %{a | temperature: 0.42, memory: tampered}
         end)
 
-      %{agent: agent} = :sys.get_state(pid)
+      %{agent: agent, session: %Normandy.Agents.Turn.Session{config: session_config}} =
+        :sys.get_state(pid)
+
+      # The held session starts the next server with the updated config.
+      assert session_config == agent
       # Non-memory change applied:
       assert agent.temperature == 0.42
       # Memory mutation discarded (still the empty template, not the injected one):

@@ -42,8 +42,8 @@ end
 > under Tier 1, but including them now means a later Tier-2 upgrade needs no extra
 > migration. A strictly Tier-1 deployment may run only `Migration.up()` / `.down()`.
 
-Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to the
-session opts. The store holds the conversation graph, suspended turn state, and a
+Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to
+`Turn.Session.new/1`. The store holds the conversation graph, suspended turn state, and a
 non-secret config template — all as opaque Erlang terms.
 
 ## Tier 2 — distributed, cluster-aware

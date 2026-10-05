@@ -60,6 +60,123 @@ defmodule Normandy.Agents.Turn.SessionTest do
     }
   end
 
+  # A complete option list for new/1 that starts nothing.
+  defp new_opts(extra \\ []) do
+    Keyword.merge(
+      [
+        session_id: "s-new",
+        config: session_config(),
+        store: {InMemory, :store},
+        registry: {Native, :reg},
+        supervisor: :sup
+      ],
+      extra
+    )
+  end
+
+  describe "new/1" do
+    test "returns a %Turn.Session{} with the defaults filled in" do
+      assert %Turn.Session{
+               session_id: "s-new",
+               store: {InMemory, :store},
+               registry: {Native, :reg},
+               supervisor: :sup,
+               supervisor_mod: Turn.Supervisor,
+               resume_policy: :lazy,
+               template_provider: nil,
+               template_id: nil,
+               subscriber: nil,
+               handlers: nil,
+               server_options: []
+             } = Turn.Session.new(new_opts())
+    end
+
+    test "keeps only the server options it was given" do
+      assert %Turn.Session{server_options: [on_approval_timeout: :fail]} =
+               Turn.Session.new(new_opts(on_approval_timeout: :fail))
+    end
+
+    test "requires :config or :template_provider" do
+      assert_raise ArgumentError,
+                   "Normandy.Agents.Turn.Session.new/1: requires :config " <>
+                     "(a %Normandy.Agents.BaseAgentConfig{}) or :template_provider " <>
+                     "({module, handle}), got neither",
+                   fn -> Turn.Session.new(Keyword.delete(new_opts(), :config)) end
+    end
+
+    test "a missing required key names the function and the key" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(Keyword.delete(new_opts(), :store))
+        end
+
+      assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+      assert error.message =~ ":store"
+    end
+
+    test "a misspelled key names the function and the key" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(new_opts(approval_timout_ms: 1))
+        end
+
+      assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+      assert error.message =~ ":approval_timout_ms"
+    end
+
+    test "a :config that is not a BaseAgentConfig is rejected without echoing it" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(new_opts(config: %{client: %{api_key: "sk-secret"}}))
+        end
+
+      assert error.message =~ ":config"
+      refute error.message =~ "sk-secret"
+    end
+
+    test ":resume_policy must be :lazy or :eager" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(new_opts(resume_policy: :sometimes))
+        end
+
+      assert error.message =~ ":resume_policy"
+      assert error.message =~ ":sometimes"
+    end
+
+    test "something other than a keyword list is rejected" do
+      assert_raise ArgumentError,
+                   "Normandy.Agents.Turn.Session.new/1: expected a keyword list, got: a map",
+                   fn -> Turn.Session.new(%{session_id: "s"}) end
+    end
+  end
+
+  describe "run/2, approve/2 and put_config/2" do
+    test "run/2 and approve/2 reject an option list with a pointer to new/1" do
+      assert_raise ArgumentError,
+                   "Normandy.Agents.Turn.Session.run/2: expected a %Normandy.Agents.Turn.Session{} " <>
+                     "(build one with Normandy.Agents.Turn.Session.new/1), got: a list",
+                   fn -> Turn.Session.run(new_opts(), "hi") end
+
+      assert_raise ArgumentError,
+                   "Normandy.Agents.Turn.Session.approve/2: expected a %Normandy.Agents.Turn.Session{} " <>
+                     "(build one with Normandy.Agents.Turn.Session.new/1), got: a list",
+                   fn -> Turn.Session.approve(new_opts(), %{}) end
+    end
+
+    test "put_config/2 replaces the config a later start uses" do
+      session = Turn.Session.new(new_opts())
+      config = %{session_config() | temperature: 0.42}
+
+      assert %Turn.Session{config: ^config} = Turn.Session.put_config(session, config)
+
+      assert_raise ArgumentError,
+                   "Normandy.Agents.Turn.Session.put_config/2: expected a " <>
+                     "%Normandy.Agents.BaseAgentConfig{}, got: a map",
+                   fn -> Turn.Session.put_config(session, %{}) end
+    end
+  end
+
   test "supervisor starts a Turn.Server child as transient" do
     {:ok, sup} = Turn.Supervisor.start_link([])
 
@@ -103,9 +220,9 @@ defmodule Normandy.Agents.Turn.SessionTest do
       }
     ]
 
-    assert {:ok, %{content: "ok"}} = Turn.Session.run(opts, "now")
+    assert {:ok, %{content: "ok"}} = Turn.Session.run(Turn.Session.new(opts), "now")
     # Second call routes to the SAME live pid (no new child).
-    assert {:ok, _} = Turn.Session.run(opts, "again")
+    assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "again")
     assert length(DynamicSupervisor.which_children(sup)) == 1
   end
 
@@ -137,7 +254,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       # A turn state that exists before the first start, so a restart that reuses
       # the first start's arguments would bring this one back.
       :ok = InMemory.save_turn_state(store, sid, %Turn.State{})
-      assert {:ok, _} = Turn.Session.run(opts, "first message")
+      assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "first message")
       assert_receive {:llm_memory, _}
       {:ok, pid} = Native.whereis(reg, sid)
 
@@ -153,7 +270,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       {_state, data} = :sys.get_state(restarted)
       assert data.turn_state == stored_state
 
-      assert {:ok, _} = Turn.Session.run(opts, "second message")
+      assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "second message")
       assert_receive {:llm_memory, memory}
       contents = memory |> AgentMemory.messages() |> Enum.map(& &1.content)
 
@@ -162,13 +279,22 @@ defmodule Normandy.Agents.Turn.SessionTest do
     end
   end
 
-  test "approve/2 returns {:error, :no_session} for an unknown session" do
-    alias Normandy.Behaviours.SessionRegistry.Native
-
-    opts = [session_id: "ghost", registry: {Native, Native.new()}]
+  test "approve/2 returns a :session_unavailable TurnError for an unknown session" do
+    session =
+      Turn.Session.new(
+        session_id: "ghost",
+        config: session_config(),
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: self(),
+        supervisor_mod: CapturingSupervisor
+      )
 
     # No live session exists, so approval cannot succeed and must not boot one.
-    assert {:error, :no_session} = Turn.Session.approve(opts, %{})
+    assert {:error, %TurnError{type: :session_unavailable, reason: :no_session}} =
+             Turn.Session.approve(session, %{})
+
+    refute_received {:server_opts, _}
   end
 
   test "rehydration preserves the configured memory cap (max_messages)" do
@@ -200,7 +326,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       }
     ]
 
-    assert {:ok, _} = Turn.Session.run(opts, "now")
+    assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "now")
 
     {:ok, pid} = Native.whereis(reg, "capped")
     {_state, data} = :sys.get_state(pid)
@@ -222,7 +348,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # A store fault must surface as run/2's error tuple, not a caller crash.
     assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
-             Turn.Session.run(opts, "hello")
+             Turn.Session.run(Turn.Session.new(opts), "hello")
   end
 
   defmodule DownRegistry do
@@ -244,9 +370,10 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     assert {:error, %TurnError{type: :session_unavailable, reason: :registry_down}} =
-             Turn.Session.run(opts, "hello")
+             Turn.Session.run(Turn.Session.new(opts), "hello")
 
-    assert {:error, :registry_down} = Turn.Session.approve(opts, %{})
+    assert {:error, %TurnError{type: :session_unavailable, reason: :registry_down}} =
+             Turn.Session.approve(Turn.Session.new(opts), %{})
   end
 
   test "run/2 returns {:error, reason} when the turn-state load faults during rehydration" do
@@ -262,7 +389,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # A fault is not "no saved turn": starting fresh would drop an in-flight turn.
     assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
-             Turn.Session.run(opts, "hello")
+             Turn.Session.run(Turn.Session.new(opts), "hello")
   end
 
   test "run/2 forwards :on_approval_timeout to the server" do
@@ -279,7 +406,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
-             Turn.Session.run(opts, "hi")
+             Turn.Session.run(Turn.Session.new(opts), "hi")
 
     assert_received {:server_opts, server_opts}
     assert Keyword.fetch!(server_opts, :on_approval_timeout) == :fail
@@ -303,7 +430,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
-             Turn.Session.run(opts, "hi")
+             Turn.Session.run(Turn.Session.new(opts), "hi")
 
     assert {:ok, tmpl} = InMemory.load_config_template(store, "s-server-opts")
 
@@ -328,7 +455,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     ]
 
     assert {:error, %TurnError{type: :session_unavailable, reason: :disk_full}} =
-             Turn.Session.run(opts, "hi")
+             Turn.Session.run(Turn.Session.new(opts), "hi")
 
     refute_received {:server_opts, _}
   end
@@ -350,28 +477,10 @@ defmodule Normandy.Agents.Turn.SessionTest do
       ]
 
       assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
-               Turn.Session.run(opts, "hi")
+               Turn.Session.run(Turn.Session.new(opts), "hi")
 
       assert {:ok, %{resume_policy: :eager}} = InMemory.load_config_template(store, "s-eager")
       assert {:ok, ["s-eager"]} = InMemory.list_resumable(store)
-    end
-
-    test "any other value is rejected" do
-      opts = [
-        session_id: "s-bad-policy",
-        config: session_config(),
-        store: {InMemory, InMemory.new()},
-        registry: {Native, Native.new()},
-        supervisor: self(),
-        supervisor_mod: CapturingSupervisor,
-        resume_policy: :sometimes
-      ]
-
-      assert_raise ArgumentError,
-                   ~r/:resume_policy must be :lazy or :eager, got: :sometimes/,
-                   fn ->
-                     Turn.Session.run(opts, "hi")
-                   end
     end
 
     test "a Tier 0/1 start passes it to the server" do
@@ -386,7 +495,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       ]
 
       assert {:error, %TurnError{type: :session_unavailable, reason: :captured}} =
-               Turn.Session.run(opts, "hi")
+               Turn.Session.run(Turn.Session.new(opts), "hi")
 
       assert_received {:server_opts, server_opts}
       assert server_opts[:resume_policy] == :eager
@@ -416,7 +525,11 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     results =
       1..10
-      |> Enum.map(fn _ -> Task.async(fn -> Normandy.Agents.Turn.Session.run(opts, nil) end) end)
+      |> Enum.map(fn _ ->
+        Task.async(fn ->
+          Normandy.Agents.Turn.Session.run(Normandy.Agents.Turn.Session.new(opts), nil)
+        end)
+      end)
       |> Enum.map(&Task.await(&1, 5000))
 
     # All callers succeed and route to the one registered server (Horde registration
@@ -494,7 +607,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # The Tier-2 path: Session saves a template (no :config to the server),
     # server reconstructs from template + store history.
-    assert {:ok, _} = Normandy.Agents.Turn.Session.run(opts, "hello")
+    assert {:ok, _} =
+             Normandy.Agents.Turn.Session.run(Normandy.Agents.Turn.Session.new(opts), "hello")
 
     # Assert: the LLM call saw the pre-seeded history (not empty memory).
     assert_receive {:captured_memory, memory}, 2000
@@ -543,7 +657,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       :ok = InMemory.save_config_template(store, sid, tmpl)
 
       assert {:ok, %{content: "from template"}} =
-               Turn.Session.run(template_opts(store, sid), "hello")
+               Turn.Session.run(Turn.Session.new(template_opts(store, sid)), "hello")
 
       assert {:ok, ^tmpl} = InMemory.load_config_template(store, sid)
     end
@@ -553,7 +667,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       opts = Keyword.put(template_opts(InMemory.new(), sid), :store, {TemplateFaultStore, nil})
 
       assert {:error, %TurnError{type: :session_unavailable, reason: :store_unavailable}} =
-               Turn.Session.run(opts, "hello")
+               Turn.Session.run(Turn.Session.new(opts), "hello")
     end
 
     test "with no saved template it returns an error" do
@@ -561,7 +675,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       sid = "no-tmpl-#{System.unique_integer([:positive])}"
 
       assert {:error, %TurnError{type: :session_unavailable, reason: {:no_config_template, ^sid}}} =
-               Turn.Session.run(template_opts(store, sid), "hello")
+               Turn.Session.run(Turn.Session.new(template_opts(store, sid)), "hello")
     end
   end
 
@@ -631,13 +745,13 @@ defmodule Normandy.Agents.Turn.SessionTest do
       sid_a = "ctx-a-#{System.unique_integer([:positive])}"
       sid_b = "ctx-b-#{System.unique_integer([:positive])}"
 
-      assert {:ok, _} = Turn.Session.run(base.(sid_a, "acme/a"), "hi")
+      assert {:ok, _} = Turn.Session.run(Turn.Session.new(base.(sid_a, "acme/a")), "hi")
 
       assert_receive {:probe_ctx,
                       %Context{session_id: ^sid_a, values: %{memory_namespace: "acme/a"}}},
                      2000
 
-      assert {:ok, _} = Turn.Session.run(base.(sid_b, "acme/b"), "hi")
+      assert {:ok, _} = Turn.Session.run(Turn.Session.new(base.(sid_b, "acme/b")), "hi")
 
       assert_receive {:probe_ctx,
                       %Context{session_id: ^sid_b, values: %{memory_namespace: "acme/b"}}},
@@ -645,13 +759,21 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       # A fresh supervisor and registry: no live server, so each session is rebuilt from
       # its stored template + the shared supplement, as on another node.
-      assert {:ok, _} = Turn.Session.run(fresh_node_opts(base.(sid_a, "ignored")), "again")
+      assert {:ok, _} =
+               Turn.Session.run(
+                 Turn.Session.new(fresh_node_opts(base.(sid_a, "ignored"))),
+                 "again"
+               )
 
       assert_receive {:probe_ctx,
                       %Context{session_id: ^sid_a, values: %{memory_namespace: "acme/a"}}},
                      2000
 
-      assert {:ok, _} = Turn.Session.run(fresh_node_opts(base.(sid_b, "ignored")), "again")
+      assert {:ok, _} =
+               Turn.Session.run(
+                 Turn.Session.new(fresh_node_opts(base.(sid_b, "ignored"))),
+                 "again"
+               )
 
       assert_receive {:probe_ctx,
                       %Context{session_id: ^sid_b, values: %{memory_namespace: "acme/b"}}},

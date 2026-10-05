@@ -62,8 +62,8 @@ session_config =
     tool_context: %{memory_namespace: "acme/user-42"}
   })
 
-Session.run(
-  [
+session =
+  Session.new(
     session_id: sid,
     registry: {Native, MyApp.SessionRegistry},
     supervisor: MyApp.TurnSupervisor,
@@ -71,15 +71,14 @@ Session.run(
     template_provider: {Catalog, MyApp.AgentTemplates},
     template_id: "support-bot",
     config: session_config
-  ],
-  input
-)
+  )
+
+Session.run(session, input)
 ```
 
 On first start the template is saved with `tool_context`. On every later start or
 rehydration the template is rebuilt, `tool_context` comes back with it, and the tool
-registry comes from the supplement. See `distributed_sessions.md` for the rest of the
-session options.
+registry comes from the supplement. `Turn.Session.new/1` lists every session option.
 
 The DSL: a store handle such as a Redis connection is not known at compile time, so the
 `memory` declaration is static and the store arrives at runtime. `memory/1` rejects

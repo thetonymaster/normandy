@@ -94,10 +94,13 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     ]
 
     # Phase 1: park → approve → finalize
-    spawn(fn -> send(parent, {:result, Turn.Session.run(opts, "please charge")}) end)
+    spawn(fn ->
+      send(parent, {:result, Turn.Session.run(Turn.Session.new(opts), "please charge")})
+    end)
+
     assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
 
-    :ok = Turn.Session.approve(opts, %{"pk1" => :approve})
+    :ok = Turn.Session.approve(Turn.Session.new(opts), %{"pk1" => :approve})
     assert_receive {:result, {:ok, %Resp{content: "done"}}}, 2_000
 
     # Phase 2: let server passivate after idle timeout
@@ -116,6 +119,6 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     assert :none = Native.whereis(reg, "round-trip")
 
     # Phase 3: rehydrate from the store and continue the same conversation.
-    assert {:ok, _} = Turn.Session.run(opts, "follow up")
+    assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "follow up")
   end
 end

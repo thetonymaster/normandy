@@ -28,7 +28,8 @@ defmodule Normandy.TurnError do
       that is not one of the above, or its worker stopped; `:reason` is the exception or
       the exit reason
     * `:session_unavailable` - the session could not be loaded or started (store,
-      registry, template or credential failure); `:reason` is that failure
+      registry, template or credential failure); `:reason` is that failure.
+      `Turn.Session.approve/2` returns it with `reason: :no_session` when no server is live
     * `:unexpected_event`, `:unresumable_state` - a persisted turn that can't continue, or
       a Normandy bug; `:reason` describes it
 

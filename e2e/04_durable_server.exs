@@ -12,7 +12,7 @@ reg = Native.new()
 {:ok, sup} = Turn.Supervisor.start_link([])
 sid = "e2e-durable-#{System.unique_integer([:positive])}"
 
-opts = [
+opts = Turn.Session.new([
   session_id: sid,
   config: BaseAgent.init(%{
     client: S.client(),
@@ -23,7 +23,7 @@ opts = [
   store: {InMemory, store},
   registry: {Native, reg},
   supervisor: sup
-]
+])
 
 say = fn n, text ->
   {:ok, r} = Turn.Session.run(opts, %{chat_message: text})

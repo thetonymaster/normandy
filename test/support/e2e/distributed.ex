@@ -160,13 +160,18 @@ defmodule NormandyTest.E2E.Distributed do
   # scenario's trace. `[]` (no OTel) leaves the context alone.
   def run_turn(sid, text, carrier \\ []) do
     OtelCtx.restore(OtelCtx.extract(carrier))
-    {:ok, r} = Turn.Session.run([config: config()] ++ session_opts(sid), %{chat_message: text})
+
+    {:ok, r} =
+      Turn.Session.run(Turn.Session.new([config: config()] ++ session_opts(sid)), %{
+        chat_message: text
+      })
+
     r.chat_message
   end
 
   def approve(sid, decisions, carrier \\ []) do
     OtelCtx.restore(OtelCtx.extract(carrier))
-    Turn.Session.approve(session_opts(sid), decisions)
+    Turn.Session.approve(Turn.Session.new(session_opts(sid)), decisions)
   end
 
   def owner(sid), do: HReg.whereis(@registry, sid)

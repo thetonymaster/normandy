@@ -58,7 +58,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     ]
 
     # Turn 1: runs and persists to Postgres.
-    assert {:ok, %Resp{content: "first"}} = Turn.Session.run(opts, "hello")
+    assert {:ok, %Resp{content: "first"}} = Turn.Session.run(Turn.Session.new(opts), "hello")
 
     # DURABILITY INVARIANT: the user input is in Postgres after the turn.
     assert {:ok, entries} = Postgres.history(Postgres.new(), sid)
@@ -72,7 +72,10 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
            "server did not passivate (registry still holds the pid) within 1s"
 
     assert {:ok, %Resp{content: "second"}} =
-             Turn.Session.run(Keyword.put(opts, :handlers, final_handlers("second")), "again")
+             Turn.Session.run(
+               Turn.Session.new(Keyword.put(opts, :handlers, final_handlers("second"))),
+               "again"
+             )
 
     # NO-LOSS INVARIANT: history grew across passivation; turn-1 entries survived.
     assert {:ok, entries2} = Postgres.history(Postgres.new(), sid)

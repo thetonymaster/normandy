@@ -52,7 +52,7 @@ config =
   |> BaseAgent.register_tool(struct!(E2E.S05.DeleteRecord))
 
 session = fn sid, mode ->
-  [
+  Turn.Session.new([
     session_id: sid,
     config: config,
     store: {InMemory, store},
@@ -61,13 +61,13 @@ session = fn sid, mode ->
     approval_timeout_ms: 1_500,
     on_approval_timeout: mode,
     subscriber: fn name, meta -> send(parent, {:event, sid, name, meta}) end
-  ]
+  ])
 end
 
 # A raw spawn does not carry the caller's OTel context; pass it like an instrumented app would.
 run_async = fn opts, text ->
   ctx = Normandy.Telemetry.OtelCtx.capture()
-  spawn(fn -> Normandy.Telemetry.OtelCtx.restore(ctx); send(parent, {:result, opts[:session_id], Turn.Session.run(opts, %{chat_message: text})}) end)
+  spawn(fn -> Normandy.Telemetry.OtelCtx.restore(ctx); send(parent, {:result, opts.session_id, Turn.Session.run(opts, %{chat_message: text})}) end)
 end
 
 await_park = fn sid ->

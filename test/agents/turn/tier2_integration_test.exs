@@ -39,7 +39,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
       }
     ]
 
-    assert {:ok, _result} = Session.run(opts, "hello")
+    assert {:ok, _result} = Session.run(Session.new(opts), "hello")
     assert wait_until(fn -> match?({:ok, _}, HReg.whereis(reg, sid)) end)
     # The template was persisted (reconstruction would work on another node).
     assert {:ok, _tmpl} =

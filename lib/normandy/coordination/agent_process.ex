@@ -44,8 +44,11 @@ defmodule Normandy.Coordination.AgentProcess do
     (model/temperature/behaviours/tools) — memory mutations are ignored.
   - Session infra (`:store`, `:registry`, `:supervisor`) may be supplied via
     `start_link`; if omitted, the process starts and owns in-memory defaults
-    that terminate with it. `:subscriber`, `:handlers`, `:approval_timeout_ms`,
-    `:on_approval_timeout`, and `:idle_timeout_ms` are forwarded to `Turn.Session` when supplied.
+    that terminate with it. `start_link` builds one `Turn.Session` from them and from
+    `:supervisor_mod`, `:template_provider`, `:template_id`, `:resume_policy`,
+    `:subscriber`, `:handlers`, `:approval_timeout_ms`, `:on_approval_timeout` and
+    `:idle_timeout_ms` (see `Turn.Session.new/1`; an invalid one stops the process);
+    `update_agent/2` gives it the new config for the next server start.
   """
 
   use GenServer
@@ -56,6 +59,19 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Behaviours.SessionRegistry.Native
 
   @agent_id_key :"$normandy_agent_id"
+
+  # start_link options that go to Turn.Session.new/1 in :server mode, besides the infra.
+  @session_options [
+    :supervisor_mod,
+    :template_provider,
+    :template_id,
+    :resume_policy,
+    :subscriber,
+    :handlers,
+    :approval_timeout_ms,
+    :on_approval_timeout,
+    :idle_timeout_ms
+  ]
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Telemetry.OtelCtx
@@ -150,11 +166,12 @@ defmodule Normandy.Coordination.AgentProcess do
   (`:server` mode only). `decisions` maps `tool_call_id` to `:approve | :reject`;
   any parked id absent or `:reject` is treated as rejected (fail-closed).
 
-  Returns `:ok`, `{:error, :no_session}` if no live parked session exists, or
+  Returns `:ok`; with no live parked session, `{:error, %Normandy.TurnError{type:
+  :session_unavailable, reason: :no_session}}` (see `Normandy.Agents.Turn.Session.approve/2`);
   `{:error, :inline_mode}` when the process runs in `:inline` mode.
   """
   @spec approve(GenServer.server(), %{optional(String.t()) => :approve | :reject}) ::
-          :ok | {:error, :no_session} | {:error, :inline_mode}
+          :ok | {:error, TurnError.t()} | {:error, :inline_mode}
   def approve(server, decisions) do
     GenServer.call(server, {:approve, decisions})
   end
@@ -263,14 +280,9 @@ defmodule Normandy.Coordination.AgentProcess do
       agent_id: agent_id,
       context_pid: context_pid,
       turn_engine: turn_engine,
-      store: nil,
-      registry: nil,
-      supervisor: nil,
-      supervisor_mod: Keyword.get(opts, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
-      template_provider: Keyword.get(opts, :template_provider),
-      resume_policy: Keyword.get(opts, :resume_policy, :lazy),
-      template_id: Keyword.get(opts, :template_id),
-      extra_session_opts: [],
+      # :server mode's Turn.Session handle, built once below. update_agent/2 is the only
+      # writer of :agent in :server mode, and it refreshes the session's config.
+      session: nil,
       owned: [],
       pending_runs: %{},
       run_count: 0,
@@ -286,22 +298,18 @@ defmodule Normandy.Coordination.AgentProcess do
       :server ->
         case server_infra(opts) do
           {:ok, store, registry, supervisor, owned} ->
-            {:ok,
-             %{
-               base
-               | store: store,
-                 registry: registry,
-                 supervisor: supervisor,
-                 owned: owned,
-                 extra_session_opts:
-                   Keyword.take(opts, [
-                     :subscriber,
-                     :handlers,
-                     :approval_timeout_ms,
-                     :on_approval_timeout,
-                     :idle_timeout_ms
-                   ])
-             }}
+            session =
+              Turn.Session.new(
+                [
+                  session_id: agent_id,
+                  config: agent,
+                  store: store,
+                  registry: registry,
+                  supervisor: supervisor
+                ] ++ Keyword.take(opts, @session_options)
+              )
+
+            {:ok, %{base | session: session, owned: owned}}
 
           {:error, reason} ->
             {:stop, {:server_init_failed, reason}}
@@ -366,22 +374,6 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   def terminate(_reason, _state), do: :ok
-
-  # The keyword list Turn.Session.run/2 and Turn.Session.approve/2 expect.
-  # Used by Turn.Server routing (Task 2+).
-  defp session_opts(state) do
-    [
-      session_id: state.agent_id,
-      config: state.agent,
-      store: state.store,
-      registry: state.registry,
-      supervisor: state.supervisor,
-      supervisor_mod: Map.get(state, :supervisor_mod, Normandy.Agents.Turn.Supervisor),
-      template_provider: Map.get(state, :template_provider),
-      resume_policy: Map.get(state, :resume_policy, :lazy),
-      template_id: Map.get(state, :template_id)
-    ] ++ state.extra_session_opts
-  end
 
   @impl true
   def handle_call({:run, input}, from, state), do: handle_call({:run, input, nil}, from, state)
@@ -477,7 +469,8 @@ defmodule Normandy.Coordination.AgentProcess do
         updated
       end
 
-    {:reply, :ok, %{state | agent: new_agent}}
+    {:reply, :ok,
+     %{state | agent: new_agent, session: Turn.Session.put_config(state.session, new_agent)}}
   end
 
   @impl true
@@ -488,7 +481,7 @@ defmodule Normandy.Coordination.AgentProcess do
 
   @impl true
   def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
-    {:reply, Turn.Session.approve(session_opts(state), decisions), state}
+    {:reply, Turn.Session.approve(state.session, decisions), state}
   end
 
   @impl true
@@ -501,7 +494,7 @@ defmodule Normandy.Coordination.AgentProcess do
     do: handle_cast({:run_async, input, reply_to, nil}, state)
 
   def handle_cast({:run_async, input, reply_to, otel_ctx}, %{turn_engine: :server} = state) do
-    opts = session_opts(state)
+    session = state.session
     agent_id = state.agent_id
     user_input = prepare_input(input)
 
@@ -514,7 +507,7 @@ defmodule Normandy.Coordination.AgentProcess do
         # Stacktraces are logged (arities only), never replied.
         result =
           try do
-            case Turn.Session.run(opts, user_input) do
+            case Turn.Session.run(session, user_input) do
               {:ok, value} -> {:ok, extract_result(value)}
               {:error, _} = err -> err
             end
@@ -561,7 +554,7 @@ defmodule Normandy.Coordination.AgentProcess do
   # with the monitor ref (so {:run_result, ref, …} and {:DOWN, ref, …} correlate).
   defp spawn_run(state, user_input, otel_ctx) do
     server = self()
-    opts = session_opts(state)
+    session = state.session
 
     worker =
       spawn(fn ->
@@ -573,7 +566,7 @@ defmodule Normandy.Coordination.AgentProcess do
           end
 
         result =
-          case Turn.Session.run(opts, user_input) do
+          case Turn.Session.run(session, user_input) do
             {:ok, value} -> {:ok, extract_result(value)}
             {:error, _} = err -> err
           end
@@ -661,7 +654,11 @@ defmodule Normandy.Coordination.AgentProcess do
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers
   # see durable truth. On a store fault, log and return the template unchanged.
-  defp reconstruct_agent(%{store: {mod, handle}, agent: agent, agent_id: sid}) do
+  defp reconstruct_agent(%{
+         session: %Turn.Session{store: {mod, handle}},
+         agent: agent,
+         agent_id: sid
+       }) do
     case mod.history(handle, sid) do
       {:ok, entries} ->
         rebuilt = %{

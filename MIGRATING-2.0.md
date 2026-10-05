@@ -693,3 +693,34 @@ a struct field into the struct, including fields such as `:endpoint` or `:timeou
 - DSL: `tool MyTool, timeout: 60_000` passes registration options. `tool MyTool` builds
   `%MyTool{}` with `struct!/1`: a tool with enforced keys raises at `new/1`; register it with
   `BaseAgent.register_tool/3` after `new/1` instead.
+
+## 26. `Turn.Session` is a handle built once
+
+`Turn.Session.run/2` and `Turn.Session.approve/2` take a `%Turn.Session{}` from
+`Turn.Session.new/1` instead of the option list. `new/1` checks the options once: an
+unknown or misspelled key, a missing `:session_id`, `:registry`, `:supervisor` or `:store`,
+a value of the wrong type, or neither `:config` nor `:template_provider` raises
+`ArgumentError` naming the key. `:session_id` must be a string.
+
+```elixir
+# 1.x
+Turn.Session.run([session_id: sid, config: config, store: store, registry: reg, supervisor: sup], input)
+:ok = Turn.Session.approve([session_id: sid, registry: reg], decisions)
+
+# 2.0
+session = Turn.Session.new(session_id: sid, config: config, store: store, registry: reg, supervisor: sup)
+{:ok, output} = Turn.Session.run(session, input)
+:ok = Turn.Session.approve(session, decisions)
+```
+
+- `approve/2` takes the same handle as `run/2` (1.x read only `:session_id` and `:registry`).
+- With no live server, `approve/2` returns `{:error, %Normandy.TurnError{type:
+  :session_unavailable, reason: :no_session}}` (was `{:error, :no_session}`); a registry that
+  cannot answer gives the same `TurnError` with the registry's reason (was the bare reason).
+  `AgentProcess.approve/2` returns what `Turn.Session.approve/2` returns.
+- `Turn.Session.put_config/2` sets the config a later server start uses. A live server keeps
+  the config it started with, as before.
+- A `:resume_policy` other than `:lazy` or `:eager` raises in `new/1`, not in `run/2`.
+- `AgentProcess` in `:server` mode builds its session in `start_link/1`: an invalid
+  `:template_provider`, `:resume_policy`, `:approval_timeout_ms` ... stops the process at
+  start instead of failing the first turn.
