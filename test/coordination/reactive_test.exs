@@ -371,8 +371,8 @@ defmodule Normandy.Coordination.ReactiveTest do
       # Map with chat_message
       assert {:ok, _} = Reactive.race(agents, %{chat_message: "map input"})
 
-      # Plain map
-      assert {:ok, _} = Reactive.race(agents, %{custom: "data"})
+      # A map without chat_message is rejected by the default input schema
+      assert {:error, :all_failed} = Reactive.race(agents, %{custom: "data"})
     end
 
     test "all handles different input types" do
@@ -388,7 +388,7 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert {:ok, _} = Reactive.some(agents, "string", count: 1)
       assert {:ok, _} = Reactive.some(agents, %{chat_message: "msg"}, count: 1)
-      assert {:ok, _} = Reactive.some(agents, %{data: 42}, count: 1)
+      assert {:error, _} = Reactive.some(agents, %{data: 42}, count: 1)
     end
   end
 end

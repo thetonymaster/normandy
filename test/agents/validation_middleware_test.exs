@@ -64,11 +64,39 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
                {:ok, input}
     end
 
-    test "the base input schema is filled without validation" do
+    test "the base input schema is filled from a valid map" do
       assert {:ok, %BaseAgentInputSchema{chat_message: "hi"}} =
                ValidationMiddleware.validate_input(
                  config(input_schema: %BaseAgentInputSchema{}),
                  %{chat_message: "hi"}
+               )
+    end
+
+    test "the default schema rejects an unknown key instead of sending a nil message" do
+      assert {:error, [%{constraint: :unknown_keys, path: [:chat_mesage], message: message}]} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 %{chat_mesage: "hi"}
+               )
+
+      assert message =~ "expected only :chat_message"
+    end
+
+    test "the default schema rejects a missing or non-string chat_message" do
+      for input <- [%{}, %{chat_message: nil}, %{chat_message: 42}] do
+        assert {:error, [%{constraint: :type, path: [:chat_message]}]} =
+                 ValidationMiddleware.validate_input(
+                   config(input_schema: %BaseAgentInputSchema{}),
+                   input
+                 )
+      end
+    end
+
+    test "the default schema still accepts an empty string" do
+      assert {:ok, %BaseAgentInputSchema{chat_message: ""}} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 %{chat_message: ""}
                )
     end
 

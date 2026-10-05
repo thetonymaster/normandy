@@ -77,10 +77,9 @@ defmodule Normandy.Agents.ValidationMiddleware do
     schema_module = input_schema.__struct__
     input_map = atomize_field_keys(input_schema, input_map)
 
-    # Skip validation for base schemas (backward compatibility)
     cond do
       schema_module == Normandy.Agents.BaseAgentInputSchema ->
-        {:ok, struct(schema_module, input_map)}
+        validate_base_input(input_map)
 
       # Check if schema module has validation support
       Code.ensure_loaded?(schema_module) and function_exported?(schema_module, :__schema__, 1) ->
@@ -95,6 +94,40 @@ defmodule Normandy.Agents.ValidationMiddleware do
       # Schema doesn't support validation: keep the caller's input as-is
       true ->
         {:ok, input_map}
+    end
+  end
+
+  # The default schema has one field. struct/2 would drop a typo such as
+  # :chat_mesage and send a nil user turn, so check the keys and the type here.
+  defp validate_base_input(input_map) do
+    case Map.keys(input_map) -- [:chat_message, :__meta__] do
+      [] ->
+        case Map.get(input_map, :chat_message) do
+          message when is_binary(message) ->
+            {:ok, %Normandy.Agents.BaseAgentInputSchema{chat_message: message}}
+
+          other ->
+            {:error,
+             format_validation_errors("Input", [
+               %{
+                 path: [:chat_message],
+                 message: "must be a string, got: #{inspect(other)}",
+                 constraint: :type
+               }
+             ])}
+        end
+
+      unknown ->
+        {:error,
+         format_validation_errors("Input", [
+           %{
+             path: unknown,
+             message:
+               "unknown keys #{inspect(unknown)} for the default input schema; " <>
+                 "expected only :chat_message",
+             constraint: :unknown_keys
+           }
+         ])}
     end
   end
 

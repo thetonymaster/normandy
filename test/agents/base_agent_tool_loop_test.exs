@@ -110,7 +110,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     test "executes tool and returns final response", %{agent: agent} do
-      user_input = %{text: "What is 5 + 3?"}
+      user_input = %{chat_message: "What is 5 + 3?"}
       {updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
 
       # Should return the final output schema (BaseAgentOutputSchema)
@@ -136,7 +136,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "Calculate something"}
+      user_input = %{chat_message: "Calculate something"}
 
       {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
 
@@ -211,7 +211,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "First message"}
+      user_input = %{chat_message: "First message"}
 
       {agent, _response} = BaseAgent.run_with_tools(agent, user_input)
 
@@ -254,7 +254,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "Test error"}
+      user_input = %{chat_message: "Test error"}
 
       # Should not crash, should handle error
       {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
@@ -378,7 +378,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "trigger hostile tool call"}
+      user_input = %{chat_message: "trigger hostile tool call"}
 
       {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
       assert response != nil
@@ -500,7 +500,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
 
       {elapsed_us, {_agent, response}} =
-        :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
+        :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{chat_message: "fan out"}) end)
 
       {elapsed_us, response, SleepyProbe.max_observed()}
     end
@@ -552,7 +552,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       }
 
       agent = BaseAgent.init(config)
-      {agent, _response} = BaseAgent.run_with_tools(agent, %{text: "fan out"})
+      {agent, _response} = BaseAgent.run_with_tools(agent, %{chat_message: "fan out"})
 
       # AgentMemory.messages/1 returns the conversation chronological.
       tool_msgs =

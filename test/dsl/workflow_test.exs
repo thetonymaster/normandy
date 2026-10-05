@@ -106,9 +106,15 @@ defmodule Normandy.DSL.WorkflowTest do
     end
   end
 
+  # A client whose reply carries text: a chained step feeds the previous reply to
+  # the next agent, and the default input schema rejects a nil chat_message.
+  defp text_client do
+    %Normandy.Test.StubClient{reply: fn model -> Map.put(model, :chat_message, "ok") end}
+  end
+
   describe "execute/1" do
     setup do
-      client = %NormandyTest.Support.ModelMockup{}
+      client = text_client()
 
       {:ok, simple_agent} = SimpleAgent.new(client: client)
       {:ok, process_agent} = ProcessAgent.new(client: client)
@@ -226,7 +232,7 @@ defmodule Normandy.DSL.WorkflowTest do
 
   describe "telemetry" do
     test "execute/1 emits one [:normandy, :workflow, :run] span with identity and size only" do
-      client = %NormandyTest.Support.ModelMockup{}
+      client = text_client()
       {:ok, simple_agent} = SimpleAgent.new(client: client)
       {:ok, process_agent} = ProcessAgent.new(client: client)
 

@@ -173,7 +173,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         max_tool_iterations: 5
       })
 
-    assert_exactly_one_run_span(agent, &BaseAgent.run(&1, %{text: "hi"}))
+    assert_exactly_one_run_span(agent, &BaseAgent.run(&1, %{chat_message: "hi"}))
   end
 
   test "run/3 streaming emits exactly one agent.run span" do

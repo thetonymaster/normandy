@@ -461,6 +461,15 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
     spans
   end
 
+  # Replies with text: a chained step feeds the reply to the next agent, and the
+  # default input schema rejects a nil chat_message.
+  defp text_agent do
+    BaseAgent.init(%{
+      client: %StubClient{reply: fn model -> Map.put(model, :chat_message, "ok") end},
+      model: "test-model"
+    })
+  end
+
   defp final_agent do
     BaseAgent.init(%{client: counted_client(false), model: "test-model"})
   end
@@ -540,7 +549,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       )
 
       caller = start_caller_span()
-      specs = [%{id: "a", agent: final_agent()}, %{id: "b", agent: final_agent()}]
+      specs = [%{id: "a", agent: text_agent()}, %{id: "b", agent: text_agent()}]
       assert {:ok, _} = SequentialOrchestrator.execute(specs, "hi", [])
       :otel_span.end_span(caller)
 
