@@ -336,8 +336,8 @@ A span per entry call: `[:normandy, :hook, :start | :stop | :exception]`.
   add `tool_call_id` and `tool`.
 - `:stop` adds `result`: `:cont | :rewrite | :halt | :inject | :ok | :rescued` (`:rescued` is
   an `:open`/`:closed` or logged-only crash).
-- `:exception` fires when a crash propagates (`:reraise`) or a return value breaks its
-  contract.
+- `:exception` fires when a crash propagates (`:reraise`, or `:closed` on `after_compact`/
+  `on_session_start`) or a return value breaks its contract.
 - Documented in the `Normandy.Telemetry` moduledoc; `test/telemetry/catalogue_test.exs`
   enforces it.
 

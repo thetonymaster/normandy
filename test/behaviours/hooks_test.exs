@@ -87,7 +87,7 @@ defmodule Normandy.Behaviours.HooksTest do
   end
 
   test "rejects opts holding a pid, function or reference, at any depth and without loading" do
-    for bad <- [self(), fn -> :ok end, make_ref()] do
+    for bad <- [self(), fn -> :ok end, make_ref(), hd(Port.list()), {:wrapped, fn -> :ok end}] do
       assert_raise ArgumentError, ~r/hook opts for .*OnlyTurnEnd must be plain data/, fn ->
         Hooks.validate_entries!([{OnlyTurnEnd, notify: bad}])
       end
@@ -129,6 +129,15 @@ defmodule Normandy.Behaviours.HooksTest do
 
     assert_raise ArgumentError, ~r/invalid :on_error/, fn ->
       Hooks.validate_entries!([{Does.Not.Exist, on_error: :x}], load: false)
+    end
+  end
+
+  test "load: false skips validate_opts!/1 for an existing module whose validation fails" do
+    assert {:module, ChecksOpts} = Code.ensure_loaded(ChecksOpts)
+    assert :ok = Hooks.validate_entries!([{ChecksOpts, []}], load: false)
+
+    assert_raise ArgumentError, ~r/label must be a string/, fn ->
+      Hooks.validate_entries!([{ChecksOpts, []}])
     end
   end
 

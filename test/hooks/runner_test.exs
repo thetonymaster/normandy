@@ -56,6 +56,17 @@ defmodule Normandy.Hooks.RunnerTest do
       assert Runner.handles?(config([{TurnEndOnly, []}]), :on_turn_end)
       refute Runner.handles?(config([{TurnEndOnly, []}]), :on_prompt)
     end
+
+    test "handles?/2 treats a module that is not loaded as not handling: no raise, no log" do
+      log =
+        capture_log(fn ->
+          refute Runner.handles?(config([{Does.Not.Exist, []}]), :before_llm)
+          refute Runner.handles?(config([{Does.Not.Exist, []}]), :on_turn_end)
+          assert Runner.handles?(config([{Does.Not.Exist, []}, {Probe, []}]), :before_llm)
+        end)
+
+      refute log =~ "Does.Not.Exist"
+    end
   end
 
   describe "chains" do
@@ -255,6 +266,50 @@ defmodule Normandy.Hooks.RunnerTest do
       assert msg == "hook Normandy.Test.Hooks.Probe crashed: RuntimeError"
     end
 
+    test ":open on before_tool and after_tool logs and passes the value on" do
+      tool =
+        config([probe(:a, on_error: :open, returns: [before_tool: {:raise, "boom"}]), probe(:b)])
+
+      log = capture_log(fn -> assert Runner.before_tool(tool, call()) == {:cont, call()} end)
+      assert log =~ "before_tool crashed: RuntimeError: boom"
+      assert_received {:hook, :b, :before_tool, [_call, _ctx]}
+
+      after_tool =
+        config([probe(:a, on_error: :open, returns: [after_tool: {:raise, "boom"}]), probe(:b)])
+
+      log =
+        capture_log(fn ->
+          assert Runner.after_tool(after_tool, call(), result()) == result()
+        end)
+
+      assert log =~ "after_tool crashed: RuntimeError: boom"
+      assert_received {:hook, :b, :after_tool, [_call, _result, _ctx]}
+    end
+
+    @tag :capture_log
+    test ":closed on before_llm halts with a reason naming the hook" do
+      llm =
+        config([probe(:a, on_error: :closed, returns: [before_llm: {:raise, "boom"}]), probe(:b)])
+
+      assert Runner.before_llm(llm, info()) ==
+               {:halt, Probe, "hook Normandy.Test.Hooks.Probe crashed: RuntimeError"}
+
+      refute_received {:hook, :b, :before_llm, _}
+    end
+
+    @tag :capture_log
+    test ":closed after_tool crash answers the call and skips the later after_tool entries" do
+      config =
+        config([
+          probe(:a, on_error: :closed, returns: [after_tool: {:raise, "down"}]),
+          probe(:b)
+        ])
+
+      assert %ToolResult{is_error: true} = Runner.after_tool(config, call(), result())
+      assert_received {:hook, :a, :after_tool, _}
+      refute_received {:hook, :b, :after_tool, _}
+    end
+
     test ":closed on after_compact and on_session_start re-raises" do
       assert_raise RuntimeError, "boom", fn ->
         Runner.after_compact(
@@ -392,6 +447,25 @@ defmodule Normandy.Hooks.RunnerTest do
       )
 
       assert_received {:span, [:normandy, :hook, :exception], %{event: :on_prompt}}
+    end
+
+    test "a return-contract violation emits :exception and no :stop" do
+      name = "runner-contract-#{System.unique_integer([:positive])}"
+
+      TelemetryCapture.attach_span(
+        [[:normandy, :hook, :stop], [:normandy, :hook, :exception]],
+        agent_name: name
+      )
+
+      assert_raise ArgumentError, fn ->
+        Runner.prompt(
+          config([probe(:a, on_error: :open, returns: [on_prompt: :yes])], name),
+          "hi"
+        )
+      end
+
+      assert_received {:span, [:normandy, :hook, :exception], %{event: :on_prompt}}
+      refute_received {:span, [:normandy, :hook, :stop], _}
     end
 
     test "the Normandy.Telemetry moduledoc names every hook event" do

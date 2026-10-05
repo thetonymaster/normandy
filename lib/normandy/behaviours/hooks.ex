@@ -156,6 +156,8 @@ defmodule Normandy.Behaviours.Hooks do
   def check_entries(entries) do
     validate_entries!(entries)
   rescue
+    # Every validation failure is an ArgumentError, including a failing `validate_opts!/1`
+    # (re-raised as one); anything else is a bug and must crash.
     e in ArgumentError -> {:error, {:invalid_hooks, Exception.message(e)}}
   end
 

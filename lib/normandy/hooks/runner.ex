@@ -18,7 +18,7 @@ defmodule Normandy.Hooks.Runner do
       | Event | `:reraise` (default) | `:open` | `:closed` |
       |---|---|---|---|
       | `on_prompt`, `before_llm`, `before_tool` | propagates | logged; the value passes on | halts, reason naming the hook |
-      | `after_tool` | propagates | logged; the result passes on | the result becomes an error result naming the hook |
+      | `after_tool` | propagates | logged; the result passes on | the result becomes an error result naming the hook; later `after_tool` entries do not run |
       | `after_compact`, `on_session_start` | propagates | logged; injects nothing | propagates |
       | `on_turn_end`, `on_passivate` | logged | logged | logged |
 
@@ -27,13 +27,15 @@ defmodule Normandy.Hooks.Runner do
       their return value, and so do `after_compact`/`on_session_start` for anything but
       `{:inject, texts}`.
     * A module that is not loaded raises `ArgumentError` (logged and skipped on
-      `on_turn_end`/`on_passivate`).
+      `on_turn_end`/`on_passivate`). `handles?/2` is a plain predicate: such a module is
+      simply not handling.
     * Each entry call is a `[:normandy, :hook, :start | :stop | :exception]` span.
   """
 
   require Logger
 
   alias Normandy.Behaviours.Hooks
+  alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Hooks.Context
@@ -63,9 +65,18 @@ defmodule Normandy.Hooks.Runner do
   @spec hooks?(map() | nil) :: boolean()
   def hooks?(config), do: entries(config) != []
 
-  @doc "Whether any entry's module exports `event`'s callback."
+  @doc """
+  Whether any entry's module exports `event`'s callback. A module that is not loaded does
+  not handle anything: no log, no raise (the call-time functions deal with it).
+  """
   @spec handles?(map() | nil, atom()) :: boolean()
-  def handles?(config, event), do: callable(config, event) != []
+  def handles?(config, event) do
+    arity = Map.fetch!(@arity, event)
+
+    Enum.any?(entries(config), fn {mod, _opts} ->
+      Code.ensure_loaded?(mod) and function_exported?(mod, event, arity)
+    end)
+  end
 
   @doc false
   @spec contract(atom()) :: String.t()
@@ -128,7 +139,7 @@ defmodule Normandy.Hooks.Runner do
   end
 
   @doc "Runs `after_compact` with the compactor's dropped entries; returns the texts to inject."
-  @spec after_compact(map(), list(), map()) :: [String.t()]
+  @spec after_compact(map(), [Entry.t()], map()) :: [String.t()]
   def after_compact(config, dropped, meta) do
     case callable(config, :after_compact) do
       [] ->

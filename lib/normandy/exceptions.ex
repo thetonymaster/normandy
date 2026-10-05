@@ -140,8 +140,9 @@ end
 defmodule Normandy.HookHaltError do
   @moduledoc """
   Raised by `Normandy.Agents.BaseAgent` when an `on_prompt` or `before_llm` hook halts the
-  turn. `outcome/1` is how both shells report it: `Turn.Server` replies
-  `{:error, outcome_reason}` and `on_turn_end` hooks receive the outcome.
+  turn. `outcome/1` is how both shells report it: `{:rejected, e}` for `on_prompt` and
+  `{:error, {:hook_halted, e}}` for `before_llm`. `Turn.Server` replies `{:error, {:rejected, e}}`
+  or `{:error, {:hook_halted, e}}` respectively, and `on_turn_end` hooks receive the outcome.
   """
   defexception [:event, :hook, :reason]
 

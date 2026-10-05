@@ -145,7 +145,8 @@ defmodule Normandy.Telemetry do
     * Stop metadata adds `result`: `:cont` (passed the value on unchanged), `:rewrite`,
       `:halt`, `:inject`, `:ok`, or `:rescued` (a crash rescued under `on_error: :open` or
       `:closed`, or on a logged-only event).
-    * `:exception` fires when a crash propagates (`on_error: :reraise`) or a return value
+    * `:exception` fires when a crash propagates (`on_error: :reraise`, or `:closed` on
+      `after_compact`/`on_session_start`, where it still propagates) or a return value
       breaks the callback's contract.
 
   ### `[:normandy, :workflow, :run, :start | :stop | :exception]`
