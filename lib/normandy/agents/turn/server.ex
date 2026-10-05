@@ -116,11 +116,18 @@ defmodule Normandy.Agents.Turn.Server do
     * `{:handler_crashed, name, exception_or_term}` — a synchronous handler
       (`:append`, `:convert`, `:validate`, `:guard`, `:emit`) raised, exited or threw; or
       admission did (`:admit`: an `on_prompt` hook or an input guardrail crashing under
-      `on_error: :reraise`, or a hook's return-contract violation).
+      `on_error: :reraise`, or a hook's return-contract violation); or an `after_tool`
+      hook crashed on a result the server built itself (`:after_tool`: an approval
+      rejected, expired or interrupted result). An `on_session_start` crash
+      (`:on_session_start`) is no `run/2` reply: it sends the server `:unavailable`.
     * `{:approval_timeout, [tool_call_id]}` — `on_approval_timeout: :fail`.
     * `{:hook_halted, %Normandy.HookHaltError{}}` — a `before_llm` hook halted the turn.
     * `{:persist_failed, reason}` — the session store rejected a write.
-    * Core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
+    * `{:task_down, {exception, stacktrace}}` — a hook that runs in the worker task
+      (`before_llm`, `after_compact`, and `before_tool`/`after_tool` inside the tool
+      dispatch) crashed under `on_error: :reraise`. The worker dies, the server stays
+      alive, the turn fails, and `on_turn_end` receives `{:error, {:task_down, ...}}`.
+    * Other core failures such as `{:task_down, reason}` or `{:unexpected_event, ...}`.
 
   ## Interrupted tool calls
 
@@ -528,7 +535,7 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} ->
         Logger.warning(
           "Turn.Server dropped an approval for session #{inspect(data.session_id)}: " <>
-            "the store is unavailable (#{inspect(reason)})"
+            "the session could not be started (#{describe_reason(reason)})"
         )
 
         :keep_state_and_data

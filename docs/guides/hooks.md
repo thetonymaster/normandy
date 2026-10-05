@@ -103,7 +103,10 @@ outside its contract raises `ArgumentError`, whatever `:on_error` says. In `Turn
 hook outcome stops the session: a crash in `on_prompt` replies `{:error,
 {:handler_crashed, :admit, e}}`; in `after_tool` on a result the server builds, it fails the
 turn with `{:handler_crashed, :after_tool, e}`; in `on_session_start`, the session waits
-`:unavailable` and retries.
+`:unavailable` and retries. A crash under `on_error: :reraise` in a hook that runs in the
+worker task (`before_llm`, `after_compact`, `before_tool`, and `after_tool` inside tool
+dispatch) replies `{:error, {:task_down, {exception, stacktrace}}}`: the server stays
+alive, the turn fails, and `on_turn_end` receives `{:error, {:task_down, ...}}`.
 
 ## Injection
 

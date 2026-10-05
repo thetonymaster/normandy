@@ -274,7 +274,10 @@ event named in old changelog entries never existed (the LLM call span is
   %Normandy.HookHaltError{}}}` (a `before_llm` hook halted the turn),
   `{:error, {:handler_crashed, :admit | :after_tool | :on_session_start, e}}` and
   `{:error, {:invalid_hooks, message}}` (a hook module missing on this node). `BaseAgent`
-  raises `Normandy.HookHaltError` for both halts.
+  raises `Normandy.HookHaltError` for both halts. (`:on_session_start` is no `run/2` reply:
+  it leaves the server `:unavailable`.) A `before_llm`, `after_compact`, `before_tool` or
+  `after_tool` hook crashing under `on_error: :reraise` in the worker task replies
+  `{:error, {:task_down, {e, stacktrace}}}`; the server stays alive and the turn fails.
 - **Behaviour change:** in `Turn.Server`, an admission that raises something other than a
   rejection (an input guardrail crashing, for example) now replies `{:error,
   {:handler_crashed, :admit, e}}` instead of crashing the session.
