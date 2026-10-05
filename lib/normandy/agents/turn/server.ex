@@ -815,6 +815,8 @@ defmodule Normandy.Agents.Turn.Server do
   # Memory must end up holding exactly what reached the store: a failed write keeps
   # the config as of the last stored result, so the next turn repairs only the rest.
   defp start_turn(from, {user_input, caller_ctx}, config, repairs, data) do
+    config = BaseAgent.with_default_output_schema(config)
+
     with {:ok, repaired} <- persist_interrupted(data, repairs),
          :ok <- persist_user_message(data, config, user_input, repaired) do
       state =

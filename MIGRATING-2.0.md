@@ -442,6 +442,11 @@ parse the answer into, so it is `:invalid_output` too: define it with `io_schema
 response that is already a struct of the output schema's own module (a client that fills
 the response model itself) is returned as is, then validated.
 
+An `output_schema` set to `nil` after `init/1` (or saved as `nil` in a hand-built config
+template) is the default chat schema, as `init/1` makes it: `run/2`, `stream/3` and
+`Turn.Server.run/2` return `%BaseAgentOutputSchema{}`. Before, `run/2` and `Turn.Server.run/2`
+raised on a non-empty answer, and `stream/3` returned the raw streamed message map.
+
 A tool-using agent whose custom output schema has a `:chat_message` field gets only that
 field filled from the final text; its other fields stay unset, so any of them marked
 `required: true` now fails validation (`{:error, %Normandy.Schema.ValidationError{}}`).

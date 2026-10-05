@@ -143,6 +143,34 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert %Resp{content: "hi"} = final
   end
 
+  test "a config with a nil output schema answers in the default chat schema" do
+    # A hand-built config template can carry output_schema: nil (init/1 sets the default).
+    config = %{
+      BaseAgent.init(%{
+        client: %Normandy.Test.StubClient{
+          reply: fn
+            %{chat_message: _} = schema -> %{schema | chat_message: "plain"}
+            nil -> "plain"
+          end
+        },
+        model: "m"
+      })
+      | output_schema: nil
+    }
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-nil-schema-#{System.unique_integer([:positive])}",
+        config: config,
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        subscriber: nil
+      )
+
+    assert {:ok, %Normandy.Agents.BaseAgentOutputSchema{chat_message: "plain"}} =
+             Turn.Server.run(srv, "hello")
+  end
+
   test "a turn compacts memory before its first LLM call" do
     test_pid = self()
 

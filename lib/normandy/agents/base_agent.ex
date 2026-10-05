@@ -572,7 +572,7 @@ defmodule Normandy.Agents.BaseAgent do
   @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil) ::
           {BaseAgentConfig.t(), struct()}
   defp run_turn(config, user_input) do
-    config = admit_turn_input(config, user_input)
+    config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
     state =
       Turn.new(
@@ -584,6 +584,16 @@ defmodule Normandy.Agents.BaseAgent do
     {config, final_state} = drive_turn(config, state)
     {config, final_state.final_response}
   end
+
+  @doc false
+  # The config a turn runs with. An output schema left nil (set after init/1, or from a
+  # hand-built config template) is the default chat schema, as init/1 makes it: every
+  # turn shell (run_turn/2, run_stream_turn/3, Turn.Server) applies it before Turn.new/1.
+  @spec with_default_output_schema(BaseAgentConfig.t()) :: BaseAgentConfig.t()
+  def with_default_output_schema(%BaseAgentConfig{output_schema: nil} = config),
+    do: %{config | output_schema: %BaseAgentOutputSchema{}}
+
+  def with_default_output_schema(%BaseAgentConfig{} = config), do: config
 
   @doc false
   def turn_response_model(config) do
@@ -780,12 +790,8 @@ defmodule Normandy.Agents.BaseAgent do
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes
   # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
   # as the third arg; we use it directly rather than reaching back into config.
-  # The final response goes through convert_final_output/4, as stream/3's does. With
-  # no output schema (only when a caller set it to nil after init/1), an empty answer
-  # is nil, as before.
-  defp convert_turn_output(_config, %{content: content}, nil) when content in [nil, ""],
-    do: nil
-
+  # The final response goes through convert_final_output/4, as stream/3's does. The
+  # output schema is never nil here (with_default_output_schema/1).
   defp convert_turn_output(config, raw, output_schema),
     do: convert_final_output(config, raw, &turn_text(&1, output_schema), output_schema)
 
@@ -1066,7 +1072,7 @@ defmodule Normandy.Agents.BaseAgent do
   # schema (streaming_handlers/2). A failed stream raises its Normandy.LLMError from
   # inside the llm_call span (stream_llm_attempt/4); stream/3 returns it.
   defp run_stream_turn(config, user_input, callback) when is_function(callback, 1) do
-    config = admit_turn_input(config, user_input)
+    config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
     state =
       Turn.new(
@@ -1118,12 +1124,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   # The streamed message as the output schema: it goes through
   # convert_final_output/4, the conversion run/2's tool loop uses (the system prompt
-  # carried a non-chat schema, see build_stream_request/1). With no output schema, the
-  # message comes back without the keys the FSM and memory needed (:tool_calls,
-  # :prefix_key).
-  defp convert_stream_output(_config, message, nil),
-    do: Map.drop(message, [:tool_calls, :prefix_key])
-
+  # carried a non-chat schema, see build_stream_request/1). The output schema is never
+  # nil here (with_default_output_schema/1).
   defp convert_stream_output(config, message, %{__struct__: _} = schema),
     do: convert_final_output(config, message, &extract_streaming_text/1, schema)
 

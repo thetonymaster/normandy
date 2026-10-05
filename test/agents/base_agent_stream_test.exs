@@ -274,4 +274,37 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
       BaseAgent.run(agent(%ScriptedTextClient{text: "x"}), "hi", stream: true, on_chunk: & &1)
     end
   end
+
+  describe "a nil output schema is the default chat schema" do
+    # init/1 sets the default; nil is reached by setting it afterwards or from a
+    # hand-built config template.
+    defp nil_schema(config), do: %{config | output_schema: nil}
+
+    test "run/2 and stream/3 without tools" do
+      a = nil_schema(agent(%ScriptedTextClient{text: "plain"}))
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "plain"}} = BaseAgent.run(a, "q")
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "plain"}} =
+               BaseAgent.stream(a, "q", collect())
+    end
+
+    test "run/2 and stream/3 after a tool loop" do
+      a = nil_schema(tool_agent(%ToolThenText{text: "plain"}))
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "plain"}} = BaseAgent.run(a, "q")
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: "plain"}} =
+               BaseAgent.stream(a, "q", collect())
+    end
+
+    test "an empty answer after a tool loop is \"\", as with the default schema" do
+      a = nil_schema(tool_agent(%ToolThenText{text: ""}))
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} = BaseAgent.run(a, "q")
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} =
+               BaseAgent.stream(a, "q", collect())
+    end
+  end
 end
