@@ -173,7 +173,7 @@ defmodule Normandy.MixProject do
       {:elixir_uuid, "~> 1.2"},
       {:poison, "~> 6.0"},
       {:telemetry, "~> 1.3"},
-      {:claudio, path: "../Claudio"},
+      {:claudio, "~> 0.7.0"},
       {:req, "~> 0.6 and >= 0.6.1"},
       {:jason, "~> 1.4"},
       # Option schemas for every public entry point (Normandy.Options).

@@ -203,7 +203,7 @@ end
 
 ## Dependencies
 
-- **Claudio** - LLM client library (Hex package `~> 0.7.0`; a `path: "../Claudio"` dependency until 0.7.0 is published)
+- **Claudio** - LLM client library (Hex package `~> 0.7.0`)
 - **Poison** - JSON encoding/decoding
 - **elixir_uuid** - UUID generation for conversation turns
 
