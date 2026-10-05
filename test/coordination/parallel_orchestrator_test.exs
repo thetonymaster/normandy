@@ -1,132 +1,16 @@
 defmodule Normandy.Coordination.ParallelOrchestratorTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
-  alias Normandy.Test.StubClient
-  alias Normandy.Test.TaggingClient
+  alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema}
+  alias Normandy.Coordination.ParallelOrchestrator
+  alias Normandy.OrchestrationError
+  alias Normandy.Test.{StubClient, TaggingClient}
+  alias Normandy.TurnError
 
   @moduletag :capture_log
 
-  defp agent do
-    BaseAgent.init(%{client: %NormandyTest.Support.ModelMockup{}, model: "test-model"})
-  end
-
   defp tagging(name, opts \\ []) do
     BaseAgent.init(%{client: struct(TaggingClient, [name: name] ++ opts), model: "test-model"})
-  end
-
-  describe "execute_same_input/3" do
-    test "runs agents that have no :transform" do
-      agents = [%{id: "a", agent: agent()}, %{id: "b", agent: agent()}]
-
-      assert {:ok, %{success: true, results: results}} =
-               ParallelOrchestrator.execute_same_input(agents, "hello")
-
-      assert results |> Map.keys() |> Enum.sort() == ["a", "b"]
-    end
-
-    test "applies a :transform when one is given" do
-      agents = [%{id: "a", agent: agent(), transform: fn _ -> :transformed end}]
-
-      assert {:ok, %{results: %{"a" => :transformed}}} =
-               ParallelOrchestrator.execute_same_input(agents, "hello")
-    end
-  end
-
-  describe "execute/2 with agent specs" do
-    test "each agent runs on its own input; results and context are keyed by id" do
-      specs = [
-        %{id: "a", agent: tagging("a"), input: "one"},
-        %{id: "b", agent: tagging("b"), input: "two"}
-      ]
-
-      assert {:ok, %{success: true, results: results, errors: errors, context: ctx}} =
-               ParallelOrchestrator.execute(specs, [])
-
-      assert errors == %{}
-      assert results["a"].chat_message =~ ~r/^a\(.*one/
-      assert results["b"].chat_message =~ ~r/^b\(.*two/
-      assert {:ok, %{chat_message: "b(" <> _}} = SharedContext.get(ctx, {"results", "b"})
-    end
-
-    test "a failing agent is reported under its id and the others still succeed" do
-      specs = [
-        %{id: "ok", agent: tagging("ok"), input: "x"},
-        %{id: "bad", agent: tagging("bad", fail_on: "x"), input: "x"}
-      ]
-
-      assert {:ok, %{success: false, results: results, errors: errors}} =
-               ParallelOrchestrator.execute(specs, [])
-
-      assert Map.keys(results) == ["ok"]
-      assert %{"bad" => {:exception, %RuntimeError{message: "bad failed"}, _}} = errors
-    end
-
-    test ":aggregate receives the successful {id, result} pairs" do
-      specs = [
-        %{id: "a", agent: tagging("a"), input: "x"},
-        %{id: "b", agent: tagging("b"), input: "x"}
-      ]
-
-      assert {:ok, %{aggregated: ["a", "b"]}} =
-               ParallelOrchestrator.execute(specs,
-                 aggregate: fn pairs -> pairs |> Enum.map(&elem(&1, 0)) |> Enum.sort() end
-               )
-    end
-
-    test ":on_agent_complete is called once per successful agent" do
-      parent = self()
-
-      specs = [
-        %{id: "a", agent: tagging("a"), input: "x"},
-        %{id: "b", agent: tagging("b"), input: "x"}
-      ]
-
-      {:ok, _} =
-        ParallelOrchestrator.execute(specs,
-          on_agent_complete: fn id, _ -> send(parent, {:done, id}) end
-        )
-
-      assert_received {:done, "a"}
-      assert_received {:done, "b"}
-    end
-
-    test "an agent past :timeout fails under its id; the others still finish" do
-      specs = [
-        %{id: "fast", agent: tagging("fast"), input: "x"},
-        %{id: "slow", agent: tagging("slow", sleep_ms: 500), input: "x"}
-      ]
-
-      assert {:ok,
-              %{success: false, results: %{"fast" => _}, errors: %{"slow" => {:exit, :timeout}}}} =
-               ParallelOrchestrator.execute(specs, timeout: 100)
-    end
-
-    test "agents run concurrently" do
-      specs = for n <- 1..4, do: %{id: "#{n}", agent: tagging("#{n}", sleep_ms: 200), input: "x"}
-      start = System.monotonic_time(:millisecond)
-
-      {:ok, %{success: true}} = ParallelOrchestrator.execute(specs, max_concurrency: 4)
-
-      # Four 200 ms agents in sequence would take 800 ms.
-      assert System.monotonic_time(:millisecond) - start < 600
-    end
-  end
-
-  describe "execute/2 with plain agents" do
-    test "returns one result per agent, in agent order" do
-      assert {:ok, [{:ok, first}, {:ok, second}]} =
-               ParallelOrchestrator.execute([tagging("a"), tagging("b")], "go")
-
-      assert first.chat_message =~ "a("
-      assert second.chat_message =~ "b("
-    end
-
-    test "a failed agent keeps its place as {:error, reason}" do
-      assert {:ok, [{:error, {:exception, %RuntimeError{}, _}}, {:ok, _}]} =
-               ParallelOrchestrator.execute([tagging("bad", fail_on: "go"), tagging("b")], "go")
-    end
   end
 
   # An agent whose model call exits (as a timed-out GenServer.call does) instead of raising.
@@ -134,57 +18,140 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
     do:
       BaseAgent.init(%{client: %StubClient{reply: fn _ -> exit(:boom) end}, model: "test-model"})
 
+  describe "execute/3 input" do
+    test "a struct input reaches every agent" do
+      assert {:ok, %{"agent_0" => a, "agent_1" => b}} =
+               ParallelOrchestrator.execute(
+                 [tagging("a"), tagging("b")],
+                 %BaseAgentInputSchema{chat_message: "x"}
+               )
+
+      assert a.chat_message == "a(x)"
+      assert b.chat_message == "b(x)"
+    end
+
+    test "a string or a chat_message map reaches every agent" do
+      specs = [%{id: "a", agent: tagging("a")}, %{id: "b", agent: tagging("b")}]
+
+      for input <- ["x", %{chat_message: "x"}] do
+        assert {:ok, %{"a" => %{chat_message: "a(x)"}, "b" => %{chat_message: "b(x)"}}} =
+                 ParallelOrchestrator.execute(specs, input)
+      end
+    end
+
+    test "the 1.x execute(specs, opts) form raises instead of ignoring the options" do
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.ParallelOrchestrator.execute/3: the second argument " <>
+                     "is the input, got a keyword list of options [:timeout, :ordered]; options " <>
+                     "go third, execute(agents, input, opts) (see MIGRATING-2.0.md §27)",
+                   fn ->
+                     ParallelOrchestrator.execute([tagging("a")], timeout: 100, ordered: true)
+                   end
+    end
+
+    test "a spec's :input replaces the shared input for that agent" do
+      specs = [%{id: "a", agent: tagging("a"), input: "one"}, %{id: "b", agent: tagging("b")}]
+
+      assert {:ok, %{"a" => %{chat_message: "a(one)"}, "b" => %{chat_message: "b(two)"}}} =
+               ParallelOrchestrator.execute(specs, "two")
+    end
+
+    test "a :transform shapes the agent's output" do
+      specs = [
+        %{id: "a", agent: tagging("a"), transform: &String.upcase(&1.chat_message)}
+      ]
+
+      assert {:ok, %{"a" => "A(X)"}} = ParallelOrchestrator.execute(specs, "x")
+    end
+  end
+
+  describe "execute/3 options" do
+    test ":on_agent_complete is called once per successful agent with its output" do
+      parent = self()
+      specs = [%{id: "a", agent: tagging("a")}, %{id: "b", agent: tagging("b")}]
+
+      {:ok, _} =
+        ParallelOrchestrator.execute(specs, "x",
+          on_agent_complete: fn id, output -> send(parent, {:done, id, output.chat_message}) end
+        )
+
+      assert_received {:done, "a", "a(x)"}
+      assert_received {:done, "b", "b(x)"}
+    end
+
+    test "an agent past :timeout fails with a :task_down TurnError; the others still finish" do
+      specs = [
+        %{id: "fast", agent: tagging("fast")},
+        %{id: "slow", agent: tagging("slow", sleep_ms: 500)}
+      ]
+
+      assert {:error,
+              %OrchestrationError{
+                results: %{"fast" => _},
+                errors: %{"slow" => %TurnError{type: :task_down, reason: :timeout}}
+              }} = ParallelOrchestrator.execute(specs, "x", timeout: 100)
+    end
+
+    test "agents run concurrently" do
+      specs = for n <- 1..4, do: %{id: "#{n}", agent: tagging("#{n}", sleep_ms: 200)}
+      start = System.monotonic_time(:millisecond)
+
+      {:ok, _} = ParallelOrchestrator.execute(specs, "x", max_concurrency: 4)
+
+      # Four 200 ms agents in sequence would take 800 ms.
+      assert System.monotonic_time(:millisecond) - start < 600
+    end
+
+    test "the 1.x options are rejected by name" do
+      for {key, value} <- [shared_context: %{}, aggregate: &Function.identity/1, ordered: true] do
+        error =
+          assert_raise ArgumentError, fn ->
+            ParallelOrchestrator.execute([tagging("a")], "x", [{key, value}])
+          end
+
+        assert error.message =~ "Normandy.Coordination.ParallelOrchestrator.execute/3: "
+        assert error.message =~ inspect(key)
+      end
+    end
+  end
+
   describe "callbacks that raise" do
     test "a raising :transform is the agent's error, not a crash of the caller" do
       specs = [
-        %{id: "ok", agent: tagging("ok"), input: "x"},
-        %{
-          id: "t",
-          agent: tagging("t"),
-          input: "x",
-          transform: fn _ -> raise "transform failed" end
-        }
+        %{id: "ok", agent: tagging("ok")},
+        %{id: "t", agent: tagging("t"), transform: fn _ -> raise "transform failed" end}
       ]
 
-      assert {:ok, %{results: %{"ok" => _}, errors: %{"t" => {:exception, %RuntimeError{}, _}}}} =
-               ParallelOrchestrator.execute(specs)
+      assert {:error,
+              %OrchestrationError{
+                results: %{"ok" => _},
+                errors: %{"t" => %RuntimeError{message: "transform failed"}}
+              }} = ParallelOrchestrator.execute(specs, "x")
     end
 
     test "a raising :on_agent_complete is the agent's error, not a crash of the caller" do
-      specs = [%{id: "a", agent: tagging("a"), input: "x"}]
-
-      assert {:ok, %{errors: %{"a" => {:exception, %RuntimeError{}, _}}}} =
-               ParallelOrchestrator.execute(specs, on_agent_complete: fn _, _ -> raise "boom" end)
+      assert {:error, %OrchestrationError{errors: %{"a" => %RuntimeError{message: "boom"}}}} =
+               ParallelOrchestrator.execute([%{id: "a", agent: tagging("a")}], "x",
+                 on_agent_complete: fn _, _ -> raise "boom" end
+               )
     end
 
     test "execute_stream/2: a raising :transform is the agent's error" do
       specs = [%{id: "t", agent: tagging("t"), input: "x", transform: fn _ -> raise "no" end}]
 
-      assert [{:ok, {:error, {"t", {:exception, %RuntimeError{}, _}}}}] =
-               specs |> ParallelOrchestrator.execute_stream() |> Enum.to_list()
-    end
-  end
-
-  describe "agents that exit" do
-    test "execute/2 reports the exit under the agent's id instead of exiting the caller" do
-      specs = [
-        %{id: "ok", agent: tagging("ok"), input: "x"},
-        %{id: "exits", agent: exiting_agent(), input: "x"}
-      ]
-
-      assert {:ok, %{results: %{"ok" => _}, errors: %{"exits" => {:exit, :boom}}}} =
-               ParallelOrchestrator.execute(specs)
-    end
-
-    test "execute_stream/2 yields the exit as the agent's error" do
-      specs = [%{id: "exits", agent: exiting_agent(), input: "x"}]
-
-      assert [{:ok, {:error, {"exits", {:exit, :boom}}}}] =
+      assert [{:ok, {:error, {"t", %RuntimeError{message: "no"}}}}] =
                specs |> ParallelOrchestrator.execute_stream() |> Enum.to_list()
     end
   end
 
   describe "execute_stream/2" do
+    test "yields an exit as a :task_down TurnError" do
+      specs = [%{id: "exits", agent: exiting_agent(), input: "x"}]
+
+      assert [{:ok, {:error, {"exits", %TurnError{type: :task_down, reason: :boom}}}}] =
+               specs |> ParallelOrchestrator.execute_stream() |> Enum.to_list()
+    end
+
     test "an agent past :timeout is reported by id; the stream goes on" do
       specs = [
         %{id: "fast", agent: tagging("fast"), input: "x"},
@@ -208,7 +175,7 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
 
       assert {:ok, {"a", %{chat_message: "a(" <> _}}} = Enum.find(outcomes, &match?({:ok, _}, &1))
 
-      assert {:error, {"bad", {:exception, %RuntimeError{}, _}}} =
+      assert {:error, {"bad", %RuntimeError{message: "bad failed"}}} =
                Enum.find(outcomes, &match?({:error, _}, &1))
     end
   end

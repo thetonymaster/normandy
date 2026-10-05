@@ -23,6 +23,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
+  alias Normandy.OrchestrationError
   alias Normandy.Telemetry.WorkflowSpan
 
   @type delegation_strategy :: :round_robin | :broadcast | :conditional
@@ -110,9 +111,11 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         # Step 2: Delegate to workers based on strategy
         worker_specs = create_worker_specs(coordinator, delegation_plan, input)
 
-        # Step 3: Execute workers
-        {:ok, worker_results} =
-          ParallelOrchestrator.execute_specs(worker_specs, max_concurrency: max_concurrency)
+        # Step 3: Execute workers; failed workers are reported to the manager.
+        worker_results =
+          worker_specs
+          |> ParallelOrchestrator.execute_specs(max_concurrency: max_concurrency)
+          |> worker_outcome()
 
         # Step 4: Manager aggregates results
         aggregate_with_manager(coordinator.manager, worker_results, context)
@@ -161,8 +164,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       |> unique_ids()
 
     # Execute workers
-    {:ok, worker_results} =
-      ParallelOrchestrator.execute_specs(worker_specs, max_concurrency: max_concurrency)
+    worker_results =
+      worker_specs
+      |> ParallelOrchestrator.execute_specs(max_concurrency: max_concurrency)
+      |> worker_outcome()
 
     # Aggregate with manager
     aggregate_with_manager(coordinator.manager, worker_results, context)
@@ -381,6 +386,12 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     Enum.join(["Aggregate these worker results:" | succeeded ++ failed], "\n\n")
   end
 
+  # The workers' outputs and failures, whichever way execute_specs/2 returned.
+  defp worker_outcome({:ok, results}), do: %{results: results, errors: %{}}
+
+  defp worker_outcome({:error, %OrchestrationError{results: results, errors: errors}}),
+    do: %{results: results, errors: errors}
+
   defp result_text(result) when is_binary(result), do: result
 
   # BaseIOSchema's Any fallback renders "" and lists pass through unencoded, so
@@ -391,6 +402,5 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       else: BaseIOSchema.to_json(result)
   end
 
-  defp failure_text({:exception, exception, _stacktrace}), do: Exception.message(exception)
-  defp failure_text(reason), do: inspect(reason)
+  defp failure_text(exception), do: Exception.message(exception)
 end

@@ -581,7 +581,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
         %{id: "b", agent: final_agent(), input: %{chat_message: "hi"}}
       ]
 
-      assert {:ok, _} = ParallelOrchestrator.execute(specs, [])
+      assert {:ok, _} = ParallelOrchestrator.execute(specs, nil)
       :otel_span.end_span(caller)
 
       spans =
@@ -662,7 +662,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
         %{id: "b", agent: final_agent(), input: %{chat_message: "hi"}}
       ]
 
-      assert {:ok, %{success: true}} = ParallelOrchestrator.execute(specs, [])
+      assert {:ok, _} = ParallelOrchestrator.execute(specs, nil)
 
       assert_runs_under_caller(caller, 2)
     end

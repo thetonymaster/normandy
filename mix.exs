@@ -144,7 +144,8 @@ defmodule Normandy.MixProject do
           Errors: [
             Normandy.LLMError,
             Normandy.TurnError,
-            Normandy.ToolNotFoundError
+            Normandy.ToolNotFoundError,
+            Normandy.OrchestrationError
           ],
           Telemetry: [
             Normandy.Telemetry,

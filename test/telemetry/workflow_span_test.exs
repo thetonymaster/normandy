@@ -85,23 +85,21 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
     assert_one_span(spans, :sequential, 2)
   end
 
-  test "ParallelOrchestrator.execute/2" do
+  test "ParallelOrchestrator.execute/3 with spec inputs" do
     input = %{chat_message: "x"}
     ps = Enum.map(specs(), &Map.put(&1, :input, input))
-    spans = workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute(ps, []) end)
+    spans = workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute(ps, nil) end)
     assert_one_span(spans, :parallel, 2)
   end
 
-  test "ParallelOrchestrator.execute/2 simple API" do
+  test "ParallelOrchestrator.execute/3 with a shared input" do
+    spans = workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute(specs(), "x") end)
+    assert_one_span(spans, :parallel, 2)
+  end
+
+  test "ParallelOrchestrator.execute/3 with bare agents" do
     spans = workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute([agent("a")], "x") end)
     assert_one_span(spans, :parallel, 1)
-  end
-
-  test "ParallelOrchestrator.execute_same_input/3" do
-    spans =
-      workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute_same_input(specs(), "x") end)
-
-    assert_one_span(spans, :parallel, 2)
   end
 
   describe "HierarchicalCoordinator" do

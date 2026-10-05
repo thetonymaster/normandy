@@ -164,7 +164,7 @@ defmodule Normandy.Telemetry do
 
   A multi-agent run: `Workflow.execute/1`, and the entry points of
   `SequentialOrchestrator` (`execute/3`, `execute_with_messages/3`),
-  `ParallelOrchestrator` (`execute/2`, `execute_same_input/3`) and
+  `ParallelOrchestrator` (`execute/3`) and
   `HierarchicalCoordinator` (`execute/3`, `execute_with_tasks/3`). Agent runs started
   inside nest under it, because the coordinators carry the OTel context into the tasks
   they spawn.

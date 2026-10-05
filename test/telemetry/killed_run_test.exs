@@ -14,8 +14,10 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
   alias Normandy.Coordination.{AgentProcess, ParallelOrchestrator, Reactive}
+  alias Normandy.OrchestrationError
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Test.StubClient
+  alias Normandy.TurnError
 
   @exception [:normandy, :agent, :run, :exception]
 
@@ -239,8 +241,11 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
       specs = [%{id: "done", agent: fast_agent(name), input: "hi"}]
 
       refute_killed_after_run(fn after_run ->
-        assert {:ok, %{errors: %{"done" => {:exit, :timeout}}}} =
-                 ParallelOrchestrator.execute(specs,
+        assert {:error,
+                %OrchestrationError{
+                  errors: %{"done" => %TurnError{type: :task_down, reason: :timeout}}
+                }} =
+                 ParallelOrchestrator.execute(specs, nil,
                    timeout: 100,
                    on_agent_complete: fn _, _ -> after_run.() end
                  )
@@ -280,8 +285,10 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     test "execute emits one killed exception for an agent past the timeout", %{name: name} do
       specs = [%{id: "stuck", agent: stuck_agent(name), input: "hi"}]
 
-      assert {:ok, %{errors: %{"stuck" => {:exit, :timeout}}}} =
-               ParallelOrchestrator.execute(specs, timeout: 100)
+      assert {:error,
+              %OrchestrationError{
+                errors: %{"stuck" => %TurnError{type: :task_down, reason: :timeout}}
+              }} = ParallelOrchestrator.execute(specs, nil, timeout: 100)
 
       assert_one_killed(name, "stuck-model")
     end

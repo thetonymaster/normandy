@@ -74,9 +74,8 @@ defmodule Normandy.Integration.MultiAgentTest do
 
       {:ok, results} = ParallelOrchestrator.execute(agents, input)
 
-      assert is_list(results)
-      assert length(results) == 2
-      assert Enum.all?(results, &match?({:ok, %{chat_message: _}}, &1))
+      assert map_size(results) == 2
+      assert Enum.all?(Map.values(results), &match?(%{chat_message: _}, &1))
     end
   end
 end

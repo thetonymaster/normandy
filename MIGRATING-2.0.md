@@ -724,3 +724,37 @@ session = Turn.Session.new(session_id: sid, config: config, store: store, regist
 - `AgentProcess` in `:server` mode builds its session in `start_link/1`: an invalid
   `:template_provider`, `:resume_policy`, `:approval_timeout_ms` ... stops the process at
   start instead of failing the first turn.
+
+## 27. Orchestrators: `execute(agents, input, opts)` and one result shape
+
+`ParallelOrchestrator.execute/3` (and `SequentialOrchestrator.execute/3`, see below) take the
+agents, one input and options, and return:
+
+- `{:ok, %{agent_id => output}}` when every agent succeeded; `output` is the agent's response
+  after its spec's `:transform`;
+- `{:error, %Normandy.OrchestrationError{results: %{agent_id => output}, errors: %{agent_id
+  => exception}}}` when any agent failed.
+
+| 1.x | 2.0 |
+|---|---|
+| `ParallelOrchestrator.execute(specs, opts)` | `ParallelOrchestrator.execute(specs, nil, opts)` (each spec keeps its `:input`); the 1.x call raises `ArgumentError` when every key of `opts` is an option name (wrap a real keyword-list input whose keys are all option names, e.g. `%{input: kw}`) |
+| `ParallelOrchestrator.execute(agents, input)` → `{:ok, [{:ok, r} \| {:error, e}]}` | `{:ok, %{"agent_0" => r, ...}}` or `{:error, %OrchestrationError{}}` |
+| `ParallelOrchestrator.execute_same_input(specs, input, opts)` | `ParallelOrchestrator.execute(specs, input, opts)` |
+| `{:ok, %{success: true, results: results, errors: %{}, context: ctx, aggregated: a}}` | `{:ok, results}` |
+| `{:ok, %{success: false, results: r, errors: e}}` | `{:error, %OrchestrationError{results: r, errors: e}}` |
+| an agent's error `{:exception, e, stacktrace}` | `e` (logged with its stacktrace where it was raised) |
+| an agent's error `{:exit, reason}` (an exit, or `:timeout`) | `%Normandy.TurnError{type: :task_down, reason: reason}` |
+| `:shared_context`, `:aggregate`, `:ordered` | removed (rejected by name): aggregate `results` yourself |
+
+- `agents` holds `%BaseAgentConfig{}` structs, keyed `"agent_0"`, `"agent_1"`, ..., or specs
+  `%{id: string, agent: %BaseAgentConfig{}}` with optional `:transform` and, for
+  `ParallelOrchestrator`, `:input`, which replaces `input` for that agent. Any other spec key,
+  a repeated id, or anything else in `agents` raises `ArgumentError`. An unknown option raises
+  `ArgumentError`.
+- A struct input (`%BaseAgentInputSchema{}`) reaches every agent; 1.x dropped it, and with bare
+  agents raised a `KeyError` in a linked task.
+- `ParallelOrchestrator.execute/3`'s `:timeout` also takes `:infinity`.
+- `ParallelOrchestrator.execute_stream/2` yields `{:ok, {:error, {id, exception}}}` for a failed
+  agent (was `{id, {:exception, e, stacktrace}}` or `{id, {:exit, reason}}`).
+- `HierarchicalCoordinator` keeps its shapes; its aggregation prompt names a failed worker
+  with the exception's message.

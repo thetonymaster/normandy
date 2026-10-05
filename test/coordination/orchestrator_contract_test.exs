@@ -1,0 +1,128 @@
+defmodule Normandy.Coordination.OrchestratorContractTest do
+  @moduledoc """
+  Every orchestrator's execute/3 returns {:ok, %{agent_id => output}} when each agent
+  succeeded and {:error, %Normandy.OrchestrationError{}} otherwise. A new orchestrator
+  joins @orchestrators.
+  """
+  use ExUnit.Case, async: true
+
+  alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema}
+  alias Normandy.Coordination.ParallelOrchestrator
+  alias Normandy.OrchestrationError
+  alias Normandy.Test.{StubClient, TaggingClient}
+  alias Normandy.TurnError
+
+  @moduletag :capture_log
+
+  @orchestrators [ParallelOrchestrator]
+
+  defp agent(name, opts \\ []),
+    do:
+      BaseAgent.init(%{client: struct(TaggingClient, [name: name] ++ opts), model: "test-model"})
+
+  for orchestrator <- @orchestrators do
+    describe "#{inspect(orchestrator)}.execute/3" do
+      @orchestrator orchestrator
+
+      test "every agent succeeds: {:ok, outputs keyed by spec id}" do
+        assert {:ok, results} =
+                 @orchestrator.execute(
+                   [%{id: "a", agent: agent("a")}, %{id: "b", agent: agent("b")}],
+                   "go"
+                 )
+
+        assert results |> Map.keys() |> Enum.sort() == ["a", "b"]
+        assert results["a"].chat_message =~ "a("
+        assert results["b"].chat_message =~ "b("
+      end
+
+      test "bare agents are keyed agent_0, agent_1, ... in list order" do
+        assert {:ok, results} = @orchestrator.execute([agent("a"), agent("b")], "go")
+        assert results |> Map.keys() |> Enum.sort() == ["agent_0", "agent_1"]
+        assert results["agent_0"].chat_message =~ "a("
+        assert results["agent_1"].chat_message =~ "b("
+      end
+
+      test "a struct input reaches the first agent" do
+        assert {:ok, %{"agent_0" => %{chat_message: "a(x)"}}} =
+                 @orchestrator.execute(
+                   [agent("a"), agent("b")],
+                   %BaseAgentInputSchema{chat_message: "x"}
+                 )
+      end
+
+      test "no agents: {:ok, %{}}" do
+        assert {:ok, %{}} = @orchestrator.execute([], "go")
+      end
+
+      test "a failing agent: {:error, %OrchestrationError{}} keeping the other outputs" do
+        assert {:error, %OrchestrationError{results: results, errors: errors} = error} =
+                 @orchestrator.execute(
+                   [%{id: "a", agent: agent("a")}, %{id: "b", agent: agent("b", fail_on: "go")}],
+                   "go"
+                 )
+
+        assert Map.keys(results) == ["a"]
+        assert %{"b" => %RuntimeError{message: "b failed"}} = errors
+        assert Exception.message(error) == ~s|1 agent(s) failed: "b" (RuntimeError)|
+      end
+
+      test "an agent that exits fails with a :task_down TurnError, not an exit of the caller" do
+        exiting =
+          BaseAgent.init(%{
+            client: %StubClient{reply: fn _ -> exit(:boom) end},
+            model: "test-model"
+          })
+
+        assert {:error,
+                %OrchestrationError{errors: %{"e" => %TurnError{type: :task_down, reason: :boom}}}} =
+                 @orchestrator.execute([%{id: "e", agent: exiting}], "x")
+      end
+
+      test "a repeated id raises before any agent runs" do
+        assert_raise ArgumentError,
+                     "#{inspect(@orchestrator)}.execute/3: agent ids must be unique, " <>
+                       ~s(got ["a"] more than once),
+                     fn ->
+                       @orchestrator.execute(
+                         [%{id: "a", agent: agent("a")}, %{id: "a", agent: agent("b")}],
+                         "x"
+                       )
+                     end
+      end
+
+      test "something that is not an agent raises naming its position" do
+        error =
+          assert_raise ArgumentError, fn ->
+            @orchestrator.execute([agent("a"), %{agent: agent("b")}], "x")
+          end
+
+        assert error.message =~
+                 "#{inspect(@orchestrator)}.execute/3: agent 1 must be a " <>
+                   "%Normandy.Agents.BaseAgentConfig{} or a spec"
+
+        assert error.message =~ "got: a map"
+      end
+
+      test "an unknown spec key raises naming it" do
+        error =
+          assert_raise ArgumentError, fn ->
+            @orchestrator.execute([%{id: "a", agent: agent("a"), retries: 3}], "x")
+          end
+
+        assert error.message =~
+                 "#{inspect(@orchestrator)}.execute/3: unknown agent spec keys [:retries]"
+      end
+
+      test "an unknown option names the function and the key" do
+        error =
+          assert_raise ArgumentError, fn ->
+            @orchestrator.execute([agent("a")], "x", shared_context: :ctx)
+          end
+
+        assert error.message =~ "#{inspect(@orchestrator)}.execute/3: "
+        assert error.message =~ ":shared_context"
+      end
+    end
+  end
+end

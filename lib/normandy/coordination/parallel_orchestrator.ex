@@ -1,31 +1,67 @@
 defmodule Normandy.Coordination.ParallelOrchestrator do
+  alias Normandy.Coordination.Orchestration
+  alias Normandy.Telemetry.KilledRun
+  alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.WorkflowSpan
+  alias Normandy.TurnError
+
+  @opts_schema NimbleOptions.new!(
+                 max_concurrency: [
+                   type: :pos_integer,
+                   default: 10,
+                   doc: "How many agents run at once."
+                 ],
+                 timeout: [
+                   type: :timeout,
+                   default: 300_000,
+                   doc:
+                     "Each agent's limit in ms, or `:infinity`. An agent past it is stopped " <>
+                       "and fails with `%Normandy.TurnError{type: :task_down, reason: :timeout}`."
+                 ],
+                 on_agent_complete: [
+                   type: {:fun, 2},
+                   doc:
+                     "`fn agent_id, output -> any end`, called in the agent's task after it " <>
+                       "succeeds (after `:transform`). A raise in it is that agent's error."
+                 ]
+               )
+
+  @spec_keys [:id, :agent, :input, :transform]
+
   @moduledoc """
-  Orchestrates parallel execution of multiple agents.
+  Runs agents concurrently on one input.
 
-  The Parallel Orchestrator runs multiple agents concurrently, each working
-  on the same or different inputs. Results are collected and can be
-  aggregated using a custom function.
+      {:ok, results} =
+        ParallelOrchestrator.execute(
+          [%{id: "pros", agent: pros_agent}, %{id: "cons", agent: cons_agent}],
+          %{chat_message: "Should we adopt Elixir?"},
+          max_concurrency: 2
+        )
 
-  ## Example
+      results["pros"].chat_message
 
-      # Define agents
-      agents = [
-        %{id: "researcher_1", agent: research_agent_1, input: query1},
-        %{id: "researcher_2", agent: research_agent_2, input: query2},
-        %{id: "researcher_3", agent: research_agent_3, input: query3}
-      ]
+  `agents` holds `%Normandy.Agents.BaseAgentConfig{}` structs (keyed `"agent_0"`,
+  `"agent_1"`, ... in list order) or specs `%{id: id, agent: config}` with an optional
+  `:transform` (`fn output -> term end`, applied to the agent's output) and an optional
+  `:input`, which replaces `input` for that agent:
 
-      # Execute in parallel
-      {:ok, results} = ParallelOrchestrator.execute(
-        agents,
-        max_concurrency: 3,
-        aggregate: &combine_research_results/1
+      ParallelOrchestrator.execute(
+        [%{id: "a", agent: agent, input: query_a}, %{id: "b", agent: agent, input: query_b}],
+        nil
       )
+
+  ## Results
+
+  `{:ok, %{id => output}}` when every agent succeeded; otherwise
+  `{:error, %Normandy.OrchestrationError{results: %{id => output}, errors: %{id =>
+  exception}}}`, with every agent in one of the two maps. A failure never stops the other
+  agents or exits the caller. See `Normandy.OrchestrationError` for what the exceptions
+  are.
 
   ## Telemetry
 
   An agent that runs past `:timeout` is killed mid-run, so its
-  `[:normandy, :agent, :run]` span never closes on its own. `execute/2` and
+  `[:normandy, :agent, :run]` span never closes on its own. `execute/3` and
   `execute_stream/2` emit a synthetic `[:normandy, :agent, :run, :exception]`
   with `reason: :killed` for it (`execute_stream/2` when the timed-out element
   is consumed) unless its run had already returned and the timeout hit its
@@ -33,231 +69,101 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   the `llm_call`/`tool` spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
   """
 
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.SharedContext
-  alias Normandy.Telemetry.KilledRun
-  alias Normandy.Telemetry.OtelCtx
-  alias Normandy.Telemetry.WorkflowSpan
-
-  @type agent_spec :: %{
-          required(:id) => String.t(),
-          required(:agent) => struct(),
-          required(:input) => term(),
-          optional(:transform) => (term() -> term())
-        }
-
-  @type execution_result :: %{
-          success: boolean(),
-          results: %{String.t() => term()},
-          errors: %{String.t() => term()},
-          context: SharedContext.t(),
-          aggregated: term() | nil
-        }
-
   @doc """
-  Executes agents in parallel.
-
-  Can be called in two ways:
-  1. With agent_specs and options: `execute(agent_specs, opts)`
-  2. With agents list and input: `execute(agents, input)` - returns
-     `{:ok, [{:ok, result} | {:error, reason}]}`, one entry per agent in order
+  Runs `agents` concurrently, each on `input` or its spec's `:input`; see "Results".
 
   ## Options
 
-  - `:shared_context` - SharedContext to use (default: new context)
-  - `:max_concurrency` - Maximum concurrent agents (default: 10)
-  - `:timeout` - Timeout per agent in ms (default: 300_000). An agent that runs
-    past it is stopped and reported in `errors` as `{:exit, :timeout}`.
-    An agent that raises is reported as `{:exception, e, stacktrace}`, and
-    one that exits as `{:exit, reason}`; neither stops the others or the caller.
-  - `:aggregate` - Function to aggregate results: `([{id, result}] -> term())`
-  - `:on_agent_complete` - Callback: `(agent_id, result -> any)`
-  - `:ordered` - Return results in spec order (default: false)
-
-  ## Example
-
-      {:ok, result} = ParallelOrchestrator.execute(
-        agents,
-        max_concurrency: 5,
-        aggregate: fn results ->
-          Enum.map(results, fn {_id, r} -> r end)
-          |> Enum.join("\\n")
-        end
-      )
+  #{Normandy.Options.docs(@opts_schema)}
   """
-  @spec execute([agent_spec()] | [struct()], keyword() | map()) ::
-          {:ok, execution_result()} | {:ok, list()}
-  def execute(agents, input_or_opts \\ []) do
-    WorkflowSpan.span(:parallel, %{step_count: length(agents)}, fn ->
-      do_execute(agents, input_or_opts)
+  @spec execute([Orchestration.agent()], term(), keyword()) :: Orchestration.result()
+  def execute(agents, input, opts \\ []) do
+    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute, 3})
+    :ok = check_input!(input)
+    specs = Orchestration.specs!(agents, @spec_keys, "#{inspect(__MODULE__)}.execute/3")
+
+    WorkflowSpan.span(:parallel, %{step_count: length(specs)}, fn ->
+      run_specs(specs, input, opts)
     end)
   end
 
-  # Runs specs without opening a workflow span, for callers (the hierarchical
-  # coordinator) that already hold one so a call yields exactly one span.
-  @doc false
-  @spec execute_specs([agent_spec()], keyword()) :: {:ok, execution_result()}
-  def execute_specs(agent_specs, opts), do: do_execute(agent_specs, opts)
+  # Options of execute/3, in 2.0 and in 1.x.
+  @option_keys Keyword.keys(@opts_schema.schema) ++ [:shared_context, :aggregate, :ordered]
 
-  # Simple API: execute(agents, input) -> {:ok, [results]}
-  defp do_execute(agents, input)
-       when is_list(agents) and (is_map(input) or is_binary(input)) do
-    # Ensure input is not a struct (use plain maps only for simple API)
-    cond do
-      is_binary(input) ->
-        execute_simple_api(agents, input)
-
-      is_map(input) and not is_map_key(input, :__struct__) ->
-        execute_simple_api(agents, input)
-
-      true ->
-        # If opts is a keyword list (which is a list), use advanced API
-        execute_with_specs(agents, [])
+  # The 1.x form execute(specs, opts) still compiles: the options bind as the input and
+  # would be ignored. Refuse a non-empty keyword list whose keys are all option names
+  # (decision 9, ruling P3); a real keyword-list input with such keys must be wrapped.
+  defp check_input!(input) do
+    if input != [] and Keyword.keyword?(input) and
+         Enum.all?(Keyword.keys(input), &(&1 in @option_keys)) do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)}.execute/3: the second argument is the input, got a " <>
+              "keyword list of options #{inspect(Keyword.keys(input))}; options go third, " <>
+              "execute(agents, input, opts) (see MIGRATING-2.0.md §27)"
     end
+
+    :ok
   end
 
-  # Advanced API: execute(agent_specs, opts) -> {:ok, execution_result}
-  defp do_execute(agent_specs, opts) when is_list(agent_specs) and is_list(opts) do
-    execute_with_specs(agent_specs, opts)
+  # Runs specs without opening a workflow span, for HierarchicalCoordinator, which already
+  # holds one so a call yields exactly one span. Every spec carries its own :input.
+  @doc false
+  @spec execute_specs([Orchestration.spec()], keyword()) :: Orchestration.result()
+  def execute_specs(specs, opts) do
+    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_specs, 2})
+
+    specs
+    |> Orchestration.specs!(@spec_keys, "#{inspect(__MODULE__)}.execute_specs/2")
+    |> run_specs(nil, opts)
   end
 
-  defp execute_simple_api(agents, input) do
-    # Generate agent specs with unique IDs
-    agent_specs =
-      agents
-      |> Enum.with_index()
-      |> Enum.map(fn {agent, idx} ->
-        %{
-          id: "agent_#{idx}",
-          agent: agent,
-          input: input
-        }
-      end)
-
-    {:ok, %{results: results, errors: errors}} = execute_with_specs(agent_specs, [])
-
-    # One entry per agent, in agent order, so a failure keeps its place.
-    {:ok,
-     Enum.map(agent_specs, fn %{id: id} ->
-       case Map.fetch(results, id) do
-         {:ok, result} -> {:ok, result}
-         :error -> {:error, Map.fetch!(errors, id)}
-       end
-     end)}
-  end
-
-  defp execute_with_specs(agent_specs, opts) when is_list(agent_specs) do
-    context = Keyword.get(opts, :shared_context, SharedContext.new())
-    max_concurrency = Keyword.get(opts, :max_concurrency, 10)
-    timeout = Keyword.get(opts, :timeout, 300_000)
-    aggregate_fn = Keyword.get(opts, :aggregate)
-    on_complete = Keyword.get(opts, :on_agent_complete)
-    ordered = Keyword.get(opts, :ordered, false)
-
-    # Execute agents in parallel using Task.async_stream
+  defp run_specs(specs, input, opts) do
+    timeout = Keyword.fetch!(opts, :timeout)
+    on_complete = opts[:on_agent_complete]
     parent_otel_ctx = OtelCtx.capture()
-    run_marks = KilledRun.new_run_marks(length(agent_specs))
+    run_marks = KilledRun.new_run_marks(length(specs))
 
-    results =
-      Task.async_stream(
-        Enum.with_index(agent_specs),
+    outcomes =
+      specs
+      |> Enum.with_index()
+      |> Task.async_stream(
         fn {spec, idx} ->
           OtelCtx.restore(parent_otel_ctx)
           on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
-          {Map.fetch!(spec, :id), run_spec(spec, on_complete, on_run_done)}
+          {spec.id, run_spec(spec, input, on_complete, on_run_done)}
         end,
-        max_concurrency: max_concurrency,
+        max_concurrency: Keyword.fetch!(opts, :max_concurrency),
         timeout: timeout,
         # A slow agent fails on its own instead of exiting the caller.
         on_timeout: :kill_task,
-        zip_input_on_exit: true,
-        ordered: ordered
+        zip_input_on_exit: true
       )
       |> Enum.to_list()
 
-    Enum.each(results, &report_kill(&1, run_marks, timeout, parent_otel_ctx))
+    Enum.each(outcomes, &report_kill(&1, run_marks, timeout, parent_otel_ctx))
 
-    # Separate successes and errors
-    {successes, errors} =
-      Enum.reduce(results, {%{}, %{}}, fn
-        {:ok, {agent_id, {:ok, result}}}, {succ, err} ->
-          {Map.put(succ, agent_id, result), err}
+    {results, errors} =
+      Enum.reduce(outcomes, {%{}, %{}}, fn
+        {:ok, {id, {:ok, output}}}, {ok, failed} ->
+          {Map.put(ok, id, output), failed}
 
-        {:ok, {agent_id, {:error, reason}}}, {succ, err} ->
-          {succ, Map.put(err, agent_id, reason)}
+        {:ok, {id, {:error, exception}}}, {ok, failed} ->
+          {ok, Map.put(failed, id, exception)}
 
-        {:exit, {{%{id: agent_id}, _idx}, reason}}, {succ, err} ->
-          {succ, Map.put(err, agent_id, {:exit, reason})}
+        # Killed past :timeout (reason :timeout), or the task died.
+        {:exit, {{%{id: id}, _idx}, reason}}, {ok, failed} ->
+          {ok, Map.put(failed, id, TurnError.from_reason({:task_down, reason}))}
       end)
 
-    # Aggregate results if function provided
-    aggregated =
-      if aggregate_fn && map_size(successes) > 0 do
-        aggregate_fn.(Map.to_list(successes))
-      else
-        nil
-      end
-
-    # Store results in context
-    updated_context =
-      Enum.reduce(successes, context, fn {agent_id, result}, ctx ->
-        SharedContext.put(ctx, {"results", agent_id}, result)
-      end)
-
-    {:ok,
-     %{
-       success: map_size(errors) == 0,
-       results: successes,
-       errors: errors,
-       context: updated_context,
-       aggregated: aggregated
-     }}
+    Orchestration.result(results, errors)
   end
 
   @doc """
-  Executes agents with the same input in parallel.
+  Runs agent specs and yields each result as its agent finishes. Each element is one of:
 
-  All agents receive the same input and work on it concurrently.
-
-  ## Example
-
-      # Multiple agents analyze the same data
-      {:ok, results} = ParallelOrchestrator.execute_same_input(
-        agents,
-        input_data,
-        max_concurrency: 5
-      )
-  """
-  @spec execute_same_input([%{id: String.t(), agent: struct()}], term(), keyword()) ::
-          {:ok, execution_result()}
-  def execute_same_input(agents, input, opts \\ []) do
-    WorkflowSpan.span(:parallel, %{step_count: length(agents)}, fn ->
-      run_same_input(agents, input, opts)
-    end)
-  end
-
-  defp run_same_input(agents, input, opts) do
-    # Convert to full agent specs with same input
-    agent_specs =
-      Enum.map(agents, fn agent_info ->
-        %{
-          id: Map.fetch!(agent_info, :id),
-          agent: Map.fetch!(agent_info, :agent),
-          input: input,
-          transform: Map.get(agent_info, :transform)
-        }
-      end)
-
-    do_execute(agent_specs, opts)
-  end
-
-  @doc """
-  Executes agents and collects results as they complete.
-
-  Returns a stream of results as agents finish. Each element is one of:
-
-  - `{:ok, {:ok, {agent_id, result}}}` - the agent finished
-  - `{:ok, {:error, {agent_id, reason}}}` - the agent raised or exited (see `execute/2`)
+  - `{:ok, {:ok, {agent_id, output}}}` - the agent finished
+  - `{:ok, {:error, {agent_id, exception}}}` - the agent failed (exceptions as in
+    `Normandy.OrchestrationError`)
   - `{:exit, {agent_id, :timeout}}` - the agent ran past `:timeout` and was stopped
 
   Emits no `[:normandy, :workflow, :run]` span: the stream is lazy, so it has no
@@ -265,43 +171,44 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   ## Example
 
-      stream = ParallelOrchestrator.execute_stream(agents, timeout: 60_000)
+      stream = ParallelOrchestrator.execute_stream(specs, timeout: 60_000)
 
       stream
       |> Stream.each(fn
-        {:ok, {:ok, {agent_id, result}}} -> IO.puts("Agent \#{agent_id}: \#{inspect(result)}")
-        {:ok, {:error, {agent_id, reason}}} ->
-          IO.puts("Agent \#{agent_id} failed: \#{inspect(reason)}")
+        {:ok, {:ok, {agent_id, output}}} -> IO.puts("Agent \#{agent_id}: \#{inspect(output)}")
+        {:ok, {:error, {agent_id, e}}} -> IO.puts("Agent \#{agent_id} failed: \#{Exception.message(e)}")
         {:exit, {agent_id, :timeout}} -> IO.puts("Agent \#{agent_id} timed out")
       end)
       |> Stream.run()
   """
-  @spec execute_stream([agent_spec()], keyword()) :: Enumerable.t()
+  @spec execute_stream([Orchestration.spec()], keyword()) :: Enumerable.t()
   def execute_stream(agent_specs, opts \\ []) do
+    specs =
+      Orchestration.specs!(agent_specs, @spec_keys, "#{inspect(__MODULE__)}.execute_stream/2")
+
     max_concurrency = Keyword.get(opts, :max_concurrency, 10)
     timeout = Keyword.get(opts, :timeout, 300_000)
 
     parent_otel_ctx = OtelCtx.capture()
 
     # Run marks are per enumeration, so they're made when the stream runs.
-    Stream.flat_map([agent_specs], fn agent_specs ->
-      stream_specs(agent_specs, max_concurrency, timeout, parent_otel_ctx)
+    Stream.flat_map([specs], fn specs ->
+      stream_specs(specs, max_concurrency, timeout, parent_otel_ctx)
     end)
   end
 
-  defp stream_specs(agent_specs, max_concurrency, timeout, parent_otel_ctx) do
-    run_marks = KilledRun.new_run_marks(length(agent_specs))
+  defp stream_specs(specs, max_concurrency, timeout, parent_otel_ctx) do
+    run_marks = KilledRun.new_run_marks(length(specs))
 
     Task.async_stream(
-      Enum.with_index(agent_specs),
+      Enum.with_index(specs),
       fn {spec, idx} ->
         OtelCtx.restore(parent_otel_ctx)
-        agent_id = Map.fetch!(spec, :id)
         on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
 
-        case run_spec(spec, nil, on_run_done) do
-          {:ok, transformed} -> {:ok, {agent_id, transformed}}
-          {:error, reason} -> {:error, {agent_id, reason}}
+        case run_spec(spec, nil, nil, on_run_done) do
+          {:ok, output} -> {:ok, {spec.id, output}}
+          {:error, exception} -> {:error, {spec.id, exception}}
         end
       end,
       max_concurrency: max_concurrency,
@@ -321,8 +228,6 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     end)
   end
 
-  # Private functions
-
   # An agent killed past the timeout before its run returned left its run span
   # open: report it.
   defp report_kill({:exit, {{%{agent: agent}, idx}, :timeout}}, run_marks, timeout, otel_ctx) do
@@ -333,74 +238,22 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
 
   defp report_kill(_result, _run_marks, _timeout, _otel_ctx), do: :ok
 
-  defp execute_agent(agent, input) do
-    # Convert input to agent input format if needed
-    agent_input = prepare_input(input)
-
-    # Run agent
-    {_updated_agent, response} = BaseAgent.run!(agent, agent_input)
-
-    # Extract result from response
-    result = extract_result(response)
-
-    {:ok, result}
-  rescue
-    e ->
-      {:error, {:exception, e, __STACKTRACE__}}
-  catch
-    # An exit (a timed-out GenServer.call, say) would otherwise end the task and,
-    # through its link, the caller.
-    :exit, reason ->
-      {:error, {:exit, reason}}
-  end
-
   # Runs one spec's agent, then its :transform and the :on_agent_complete callback.
   # The callbacks run in the agent's task, so they are guarded: a crash would take
   # the caller down through the task's link.
   # `on_run_done` runs as soon as the agent's run returns, before the callbacks.
-  defp run_spec(spec, on_complete, on_run_done) do
-    outcome = execute_agent(Map.fetch!(spec, :agent), Map.fetch!(spec, :input))
+  defp run_spec(spec, input, on_complete, on_run_done) do
+    outcome = Orchestration.run_agent(spec.id, spec.agent, Map.get(spec, :input, input))
     :ok = on_run_done.()
 
-    with {:ok, result} <- outcome do
-      guarded(fn -> run_callbacks(spec, result, on_complete) end)
+    with {:ok, output} <- outcome do
+      Orchestration.guard(spec.id, fn -> run_callbacks(spec, output, on_complete) end)
     end
   end
 
-  defp run_callbacks(spec, result, on_complete) do
-    transformed = (Map.get(spec, :transform) || (& &1)).(result)
-    if on_complete, do: on_complete.(Map.fetch!(spec, :id), transformed)
+  defp run_callbacks(spec, output, on_complete) do
+    transformed = Map.get(spec, :transform, &Function.identity/1).(output)
+    if on_complete, do: on_complete.(spec.id, transformed)
     transformed
-  end
-
-  # A crash in a spec's callbacks is that agent's error, in execute_agent/2's shapes.
-  defp guarded(fun) do
-    {:ok, fun.()}
-  rescue
-    e -> {:error, {:exception, e, __STACKTRACE__}}
-  catch
-    :exit, reason -> {:error, {:exit, reason}}
-  end
-
-  defp prepare_input(input) when is_map(input) do
-    # Check if it's a struct
-    if is_map_key(input, :__struct__) do
-      # It's a struct, return as-is
-      input
-    else
-      # Plain map - try to extract chat_message if present
-      Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
-    end
-  end
-
-  defp prepare_input(input) when is_binary(input) do
-    %{chat_message: input}
-  end
-
-  defp prepare_input(input), do: input
-
-  defp extract_result(response) when is_map(response) do
-    # Return the full response map - don't extract just chat_message
-    response
   end
 end
