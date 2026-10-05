@@ -65,7 +65,6 @@ defmodule Normandy.MixProject do
             Normandy.Agents.BaseAgent,
             Normandy.Agents.BaseAgentConfig,
             Normandy.Agents.Model,
-            Normandy.Agents.IOModel,
             Normandy.Agents.ToolCallResponse
           ],
           DSL: [

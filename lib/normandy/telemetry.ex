@@ -435,7 +435,7 @@ defmodule Normandy.Telemetry do
     * W3C propagation: `A2A.AgentTool` injects `traceparent` and `tracestate` into the
       A2A request, and `A2A.Server.handle_message/3` extracts them from the carrier it is
       given. The injection needs Claudio's A2A transport `:headers` option (Claudio 0.7.0).
-      MCP calls carry no trace context: `Claudio.MCP.Client.call_tool/4` has no metadata
+      MCP calls carry no trace context: `c:Claudio.MCP.Client.call_tool/4` has no metadata
       or header field, so an MCP server's spans start a new trace.
     * Semantic conventions for GenAI are in Development status and may rename attributes.
   """

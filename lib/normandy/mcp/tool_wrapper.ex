@@ -30,7 +30,7 @@ defmodule Normandy.MCP.ToolWrapper do
   ## Trace context
 
   Unlike `Normandy.A2A.AgentTool`, an MCP call does not carry the W3C trace
-  context to the server. `Claudio.MCP.Client.call_tool/4` takes the tool name,
+  context to the server. `c:Claudio.MCP.Client.call_tool/4` takes the tool name,
   its arguments and transport options (a timeout), with no request metadata
   (MCP `_meta`) or header field, and the adapters build the request inside the
   MCP client library. Putting `traceparent` into the arguments would hand the

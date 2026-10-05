@@ -3,7 +3,7 @@ defmodule Normandy.Hooks.Handlers do
   Wraps a `Normandy.Agents.Turn.Driver.Handlers` set so `before_llm` and `after_compact`
   hooks run whatever handlers a shell was given: BaseAgent's own sets, or the `:handlers`
   a caller passes to `Turn.Server`. BaseAgent wraps its set once per drive; Turn.Server
-  keeps its set unwrapped and, in `Normandy.Hooks.ServerGlue`, wraps a copy whose
+  keeps its set unwrapped and, in its internal hook glue, wraps a copy whose
   `call_llm` or `compact` is a stub, so it can tell a hook's crash from the client's or
   the compactor's. The default sets hold no hook calls, so no hook runs twice. A config
   with no entry exporting a callback gets its handler back unwrapped.
