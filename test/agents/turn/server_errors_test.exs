@@ -2,11 +2,12 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
-  alias Normandy.Agents.{BaseAgent, ToolCallResponse, Turn}
+  alias Normandy.Agents.{BaseAgent, ConfigTemplate, ToolCallResponse, Turn}
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.ToolCall
   alias Normandy.LLMError
+  alias Normandy.Test.TurnConfig
   alias Normandy.TurnError
 
   # A store whose history read fails: the server starts :unavailable.
@@ -138,6 +139,56 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
                ],
                "hi"
              )
+  end
+
+  defmodule RaisingProvider do
+    @moduledoc false
+    def fetch(_handle, _template_id), do: raise(ArgumentError, "provider bug")
+  end
+
+  test "a session whose server raises in init replies :session_unavailable with no stacktrace" do
+    store = InMemory.new()
+    sid = "s-init-raise-#{System.unique_integer([:positive])}"
+    tmpl = ConfigTemplate.from_config(TurnConfig.build(), "kind")
+    :ok = InMemory.save_config_template(store, sid, tmpl)
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    assert {:error, %TurnError{type: :session_unavailable, reason: reason} = error} =
+             Turn.Session.run(
+               [
+                 session_id: sid,
+                 store: {InMemory, store},
+                 registry: {Native, Native.new()},
+                 supervisor: sup,
+                 template_provider: {RaisingProvider, nil}
+               ],
+               "hi"
+             )
+
+    assert %ArgumentError{message: "provider bug"} = reason
+    refute contains_stacktrace?(error)
+  end
+
+  test "a server whose start_link raises replies :session_unavailable with no stacktrace" do
+    # DynamicSupervisor.start_child turns a raise in the start function into
+    # {:error, {exception, stacktrace}}; Turn.Server.start_link/1 raises for a bad option.
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    assert {:error, %TurnError{type: :session_unavailable, reason: reason} = error} =
+             Turn.Session.run(
+               [
+                 session_id: "s-bad-opt-#{System.unique_integer([:positive])}",
+                 store: {InMemory, InMemory.new()},
+                 registry: {Native, Native.new()},
+                 supervisor: sup,
+                 config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"}),
+                 on_approval_timeout: :sometimes
+               ],
+               "hi"
+             )
+
+    assert %ArgumentError{} = reason
+    refute contains_stacktrace?(error)
   end
 
   test "a rejected input replies the bare ValidationError" do

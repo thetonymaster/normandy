@@ -508,25 +508,23 @@ defmodule Normandy.Coordination.AgentProcess do
     _ =
       Task.start(fn ->
         OtelCtx.restore(otel_ctx)
-        # Guarantee reply_to always hears back with {:error, exception}: a raise is
-        # replied as the exception (handle_async_run/3 does the same inline), an exit or
-        # throw (Turn.Session.run/2 exits when the server dies mid-call) as a :task_down
-        # TurnError. Stacktraces are logged (arities only), never replied.
+        # Guarantee reply_to always hears back with {:error, exception}, the same one
+        # run/3 replies when its worker dies of the same failure (the :DOWN clause): a
+        # domain exception bare, any other raise, exit or throw a :task_down TurnError.
+        # Stacktraces are logged (arities only), never replied.
         result =
           try do
             case Turn.Session.run(opts, user_input) do
               {:ok, value} -> {:ok, extract_result(value)}
               {:error, _} = err -> err
             end
-          rescue
-            e -> TurnError.log_raised("Async agent #{agent_id}", e, __STACKTRACE__)
           catch
             kind, reason ->
               Logger.error(
                 "Async agent #{agent_id} #{kind}\n" <> TurnError.format_stacktrace(__STACKTRACE__)
               )
 
-              {:error, TurnError.task_down({kind, reason})}
+              {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
           end
 
         if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
@@ -616,7 +614,7 @@ defmodule Normandy.Coordination.AgentProcess do
         {:noreply, state}
 
       {{from, _start}, rest} ->
-        GenServer.reply(from, {:error, TurnError.task_down(reason)})
+        GenServer.reply(from, {:error, TurnError.from_reason({:task_down, reason})})
         {:noreply, %{state | pending_runs: rest}}
     end
   end
@@ -628,6 +626,12 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   # Private Functions
+
+  # The exit reason a process dies with for a caught kind and reason, so a failure caught
+  # in run_async maps like the same failure arriving as run/3's worker :DOWN.
+  defp exit_reason(:error, reason), do: Exception.normalize(:error, reason)
+  defp exit_reason(:throw, value), do: {:nocatch, value}
+  defp exit_reason(:exit, reason), do: reason
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do
     Map.get(input, :chat_message) || Map.get(input, "chat_message") || input

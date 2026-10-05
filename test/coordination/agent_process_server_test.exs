@@ -397,6 +397,37 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
       assert %{agent_id: _} = AgentProcess.get_stats(pid)
     end
+
+    defmodule RaisingRegistry do
+      def whereis(_handle, _sid), do: raise("registry bug")
+    end
+
+    defmodule LLMErrorRegistry do
+      def whereis(_handle, _sid),
+        do: raise(Normandy.LLMError.new(type: :overloaded, retryable?: true))
+    end
+
+    for {name, registry, expected} <- [
+          {"a raised bug", RaisingRegistry,
+           quote(do: %TurnError{type: :task_down, reason: %RuntimeError{message: "registry bug"}})},
+          {"a raised domain exception", LLMErrorRegistry,
+           quote(do: %Normandy.LLMError{type: :overloaded})},
+          {"a throw", ThrowingRegistry,
+           quote(do: %TurnError{type: :task_down, reason: {:nocatch, :registry_gone}})}
+        ] do
+      test "run/3 and cast/3 reply the same exception for #{name}" do
+        infra = Keyword.put(supplied_infra(), :registry, {unquote(registry), nil})
+
+        {:ok, pid} =
+          AgentProcess.start_link([agent: server_config(), turn_engine: :server] ++ infra)
+
+        assert {:error, unquote(expected) = sync} = AgentProcess.run(pid, "go")
+
+        :ok = AgentProcess.cast(pid, "go", reply_to: self())
+        assert_receive {:agent_result, _id, {:error, async}}, 2_000
+        assert async == sync
+      end
+    end
   end
 
   describe ":server update_agent/2" do

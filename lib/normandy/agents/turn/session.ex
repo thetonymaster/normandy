@@ -62,8 +62,14 @@ defmodule Normandy.Agents.Turn.Session do
   @spec run(keyword(), term()) :: {:ok, term()} | {:error, Exception.t()}
   def run(opts, user_input) do
     case ensure_server(opts) do
-      {:ok, pid} -> Server.run(pid, user_input)
-      {:error, reason} -> {:error, %TurnError{type: :session_unavailable, reason: reason}}
+      {:ok, pid} ->
+        Server.run(pid, user_input)
+
+      # A start function that raised comes back from the supervisor as
+      # {exception, stacktrace}: the stacktrace is dropped (decision 6).
+      {:error, reason} ->
+        {:error,
+         %TurnError{type: :session_unavailable, reason: TurnError.drop_stacktraces(reason)}}
     end
   end
 

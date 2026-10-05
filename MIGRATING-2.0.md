@@ -223,9 +223,11 @@ and never a tagged tuple or a stacktrace. Normandy's own exceptions (`LLMError`,
 | `{:error, store_or_template_reason}` (session couldn't start) | `{:error, %TurnError{type: :session_unavailable, reason: store_or_template_reason}}` |
 
 Any domain exception the turn's worker raises is replied bare like the `LLMError` row (a
-`ModelCatalogError` from compaction, for example). The worker's exit reason loses its
-stacktrace, whatever its shape (a throw's `{{:nocatch, value}, stacktrace}` becomes
-`{:nocatch, value}`). A session that cannot start because an `on_session_start` hook
+`ModelCatalogError` from compaction, for example). A `{reason, stacktrace}` pair in an
+exit reason, at the top or nested in tuples, loses its stacktrace (a throw's
+`{{:nocatch, value}, stacktrace}` becomes `{:nocatch, value}`, a `GenServer.call` exit's
+`{{e, stacktrace}, {GenServer, :call, args}}` becomes `{e, {GenServer, :call, args}}`);
+lists, maps and structs inside the reason are kept as they are. A session that cannot start because an `on_session_start` hook
 crashed or its injection could not be stored replies a `:session_unavailable` `TurnError`
 whose `:reason` is the `:handler_crashed` or `:persist_failed` `TurnError`. The run
 `:exception` telemetry event carries the same exception as `reason`, with `stacktrace: []`
@@ -233,6 +235,10 @@ whose `:reason` is the `:handler_crashed` or `:persist_failed` `TurnError`. The 
 
 `on_turn_end` hooks receive `{:error, exception}` too; a `before_llm` halt is
 `{:error, %HookHaltError{}}`, not `{:error, {:hook_halted, e}}`.
+
+Persisted sessions cannot be downgraded: a failed turn's saved `Turn.State.error` may now
+hold a `%Normandy.TurnError{}`, an atom pre-2.0 code does not have, so its
+`:erlang.binary_to_term(bin, [:safe])` rejects the saved turn state.
 
 A `:subscriber` that raises, exits or throws no longer crashes the session: it is logged and reported as
 `[:normandy, :turn, :subscriber, :exception]`, and the turn continues.

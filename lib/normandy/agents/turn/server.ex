@@ -51,9 +51,10 @@ defmodule Normandy.Agents.Turn.Server do
   the store fails that load, the start still succeeds: the server waits in
   `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s) and
   on every `run/2`, and replies `{:error, %Normandy.TurnError{type: :session_unavailable,
-  reason: reason}}` with the store's reason until a load succeeds. It then carries on as a normal start would, eager resume included.
-  An approval that arrives while the load fails is dropped with a warning. With no
-  call for `:idle_timeout_ms`, the server stops normally.
+  reason: reason}}` with the store's reason until a load succeeds. It then carries on as
+  a normal start would, eager resume included. An approval that arrives while the load
+  fails is dropped with a warning. With no call for `:idle_timeout_ms`, the server stops
+  normally.
 
   A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
   on this node, or invalid hook opts) is handled the same way: the server waits
@@ -323,7 +324,8 @@ defmodule Normandy.Agents.Turn.Server do
   defp session_unavailable({:persist_failed, _r} = reason),
     do: %TurnError{type: :session_unavailable, reason: TurnError.from_reason(reason)}
 
-  defp session_unavailable(reason), do: %TurnError{type: :session_unavailable, reason: reason}
+  defp session_unavailable(reason),
+    do: %TurnError{type: :session_unavailable, reason: TurnError.drop_stacktraces(reason)}
 
   # Loads the session again. On success the transition is the one init/1 would have
   # made, except that a new session's on_session_start hooks run here, inline: a caller
@@ -662,7 +664,7 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # A monitored Task died (an exit or a throw; a raise is the worker's own error event,
-  # worker_event/3): feed the matching *_error event into the core, as a :task_down
+  # worker_event/4): feed the matching *_error event into the core, as a :task_down
   # TurnError with no stacktrace in it.
   def handle_event(
         :info,
@@ -1204,7 +1206,7 @@ defmodule Normandy.Agents.Turn.Server do
   # The worker's event for a :call_llm effect. before_llm runs first, apart from the
   # call: a halt fails the turn with {:hook_halted, e}, a crash with {:handler_crashed,
   # :before_llm, e}. A raise in the call itself fails it with that exception
-  # (worker_event/3), an exit or throw with a :task_down TurnError.
+  # (worker_event/4), an exit or throw with a :task_down TurnError.
   defp call_llm_event(handlers, data, request) do
     with {:ok, :ok} <-
            worker_hook(data, :before_llm, fn ->
