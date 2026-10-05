@@ -4,6 +4,7 @@ defmodule Normandy.LLM.ParseFailure do
   # schema, under the `:on_parse_failure` policy. Shared by every adapter.
 
   alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLMError
 
   require Logger
@@ -31,6 +32,23 @@ defmodule Normandy.LLM.ParseFailure do
       raise ArgumentError,
             ":on_parse_failure must be :fallback or :error; " <>
               "got #{Describe.type_of(policy)}"
+    end
+  end
+
+  @doc """
+  Parses a model's final text into `schema`: one JSON decode and validation, with no
+  retry call, then `apply/4` when the text does not parse. `context` carries the
+  policy (`:client`, optionally `:on_parse_failure`, see `policy/1`).
+
+  The one text-to-schema step for text that arrives outside a structured response:
+  the OpenAI-compatible adapter's response, `BaseAgent`'s tool-loop answer and its
+  streamed answer.
+  """
+  @spec parse_text_output(map(), String.t(), struct()) :: struct() | {:error, LLMError.t()}
+  def parse_text_output(context, text, schema) when is_binary(text) and is_struct(schema) do
+    case JsonDeserializer.parse_and_validate(text, schema) do
+      {:ok, parsed} -> parsed
+      {:error, reason} -> apply(schema, text, reason, context)
     end
   end
 

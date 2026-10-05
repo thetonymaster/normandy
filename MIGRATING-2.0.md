@@ -382,6 +382,21 @@ This also reaches input you don't build by hand:
 - An `on_prompt` hook that rewrites the input to another map is validated the same way.
 - A previous agent's reply whose `chat_message` is `nil` no longer becomes an empty turn.
 
+## 19. An output that breaks its schema is an error
+
+When the model's answer doesn't satisfy the agent's `output_schema` (a required field
+missing, a value outside its allowed set), `run/2` returns
+`{:error, %Normandy.Schema.ValidationError{}}` and `Turn.Server.run/2` replies it. The
+answer is not saved. In 1.x it was returned as if valid, and the whole value was printed to
+stderr. An output already of the schema's struct is now validated too.
+
+A tool-using agent with a custom output schema (one without `:chat_message`) is now told
+that schema in its system prompt, and its final text is parsed into it. In 1.x the raw
+`%Normandy.Agents.ToolCallResponse{}` came back instead. Text that is not JSON for the
+schema returns `{:error, %Normandy.LLMError{type: :invalid_output}}` (under both
+`on_parse_failure` policies: such a schema has no `:chat_message` to fall back to), from
+`run/2` and from `Turn.Server.run/2`.
+
 ## New, non-breaking
 
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

@@ -31,6 +31,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.LLM.Call
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLM.OpenAICompatibleAdapter
+  alias Normandy.LLM.ParseFailure
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
@@ -313,7 +314,8 @@ defmodule Normandy.Agents.BaseAgent do
     system_prompt = SystemPromptGenerator.generate_prompt(prompt_specification)
 
     # Add output schema if available
-    system_prompt_with_schema = with_output_schema(system_prompt, response_model)
+    system_prompt_with_schema =
+      with_output_schema(system_prompt, prompt_output_schema(response_model, config))
 
     tool_schemas =
       if has_tools?(config), do: Registry.to_tool_schemas(config.tool_registry), else: []
@@ -797,38 +799,44 @@ defmodule Normandy.Agents.BaseAgent do
     |> Enum.map(&unwrap_tool_task_result!/1)
   end
 
-  # Mirror of execute_tool_loop's no-tool-call conversion (old ~:562-580).
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes
   # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
   # as the third arg; we use it directly rather than reaching back into config.
-  # For a chat_message schema we map the unwrapped content into it; for any other
-  # schema we return the raw response (parity with the no-tools finalize path).
-  defp convert_turn_output(_config, raw, output_schema) do
-    if raw.content && raw.content != "" do
-      case output_schema do
-        %{chat_message: _} ->
-          Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
+  # A chat_message schema gets the unwrapped content. A schema with a JSON Schema
+  # (the one the system prompt showed, prompt_output_schema/2) gets the text parsed
+  # into it under the client's :on_parse_failure policy; a parse failure raises the
+  # :invalid_output LLMError. Any other struct gets the raw response.
+  defp convert_turn_output(_config, %{content: content}, output_schema)
+       when content in [nil, ""],
+       do: output_schema
 
-        _ ->
-          raw
-      end
-    else
-      output_schema
+  defp convert_turn_output(_config, raw, %{chat_message: _} = output_schema),
+    do: Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
+
+  defp convert_turn_output(config, raw, output_schema) do
+    if Normandy.Schema.json_schema(output_schema),
+      do: parse_text_output!(config, raw.content, output_schema),
+      else: raw
+  end
+
+  defp parse_text_output!(config, text, output_schema) do
+    case ParseFailure.parse_text_output(%{client: config.client}, text, output_schema) do
+      {:error, %LLMError{} = error} -> raise error
+      parsed -> parsed
     end
   end
 
-  # Mirror of the soft validate_output handling (old ~:415-428 / ~:583-597).
+  # An output that breaks its schema is an error (SEC-5): run/2 returns the
+  # ValidationError. Neither the value nor the errors are logged: they can hold user data.
   defp validate_turn_output(config, value) do
-    alias Normandy.Agents.ValidationMiddleware
-
     case ValidationMiddleware.validate_output(config, value) do
       {:ok, validated} ->
         validated || value
 
       {:error, errors} ->
-        error_msg = ValidationMiddleware.error_message(errors)
-        IO.warn("Agent output validation failed: #{error_msg}\nReceived: #{inspect(value)}")
-        value
+        raise Normandy.Schema.ValidationError,
+          message: "Agent output validation failed",
+          errors: errors
     end
   end
 
@@ -1403,15 +1411,20 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp build_streaming_assistant_response(other, _), do: other
 
+  # The schema the system prompt shows. ToolCallResponse is the adapter's internal
+  # shape for a tool-loop reply; tool calls travel through the API's `tools` parameter.
+  # Showing its schema made models write that shape as their text answer, which then
+  # landed verbatim in chat_message. A tool loop's final text is parsed into a custom
+  # output schema (convert_turn_output/3), so the model is told that schema instead; a
+  # chat_message schema takes the text as is and shows none.
+  defp prompt_output_schema(%ToolCallResponse{}, %{output_schema: %{chat_message: _}}), do: nil
+  defp prompt_output_schema(%ToolCallResponse{}, %{output_schema: schema}), do: schema
+  defp prompt_output_schema(response_model, _config), do: response_model
+
   # Appends the response schema's JSON Schema to the system prompt. A struct with
   # no schema adds nothing; an encoding failure raises rather than silently
   # sending the prompt without its schema.
   defp with_output_schema(system_prompt, nil), do: system_prompt
-
-  # ToolCallResponse is the adapter's internal shape for a tool-loop reply; tool calls
-  # travel through the API's `tools` parameter. Showing its schema made models write
-  # that shape as their text answer, which then landed verbatim in chat_message.
-  defp with_output_schema(system_prompt, %Normandy.Agents.ToolCallResponse{}), do: system_prompt
 
   defp with_output_schema(system_prompt, response_model) do
     case Normandy.Schema.json_schema(response_model) do

@@ -1134,19 +1134,28 @@ defmodule Normandy.Agents.Turn.Server do
         end
 
       {:convert_output, raw, schema} ->
+        # An answer that does not parse into the output schema fails the turn with the
+        # :invalid_output LLMError run/2 returns, not a handler crash.
         guarded(
           data,
           :convert,
-          fn -> data.handlers.convert.(data.config, raw, schema) end,
-          &advance(rest, data, {:output_converted, &1})
+          fn -> convert_output(data, raw, schema) end,
+          fn
+            {:output_unparsed, e} -> fail(data, e)
+            converted -> advance(rest, data, {:output_converted, converted})
+          end
         )
 
       {:validate_output, value} ->
+        # An output that breaks its schema is a rejection of the answer, not a crash.
         guarded(
           data,
           :validate,
-          fn -> data.handlers.validate.(data.config, value) end,
-          &advance(rest, data, {:output_validated, &1})
+          fn -> validate_output(data, value) end,
+          fn
+            {:output_invalid, e} -> fail(data, {:rejected, e})
+            validated -> advance(rest, data, {:output_validated, validated})
+          end
         )
 
       {:guard_output, value} ->
@@ -1392,6 +1401,18 @@ defmodule Normandy.Agents.Turn.Server do
     data.handlers.guard.(data.config, value)
   rescue
     e in Normandy.Guardrails.ViolationError -> {:output_rejected, e}
+  end
+
+  defp convert_output(data, raw, schema) do
+    data.handlers.convert.(data.config, raw, schema)
+  rescue
+    e in Normandy.LLMError -> {:output_unparsed, e}
+  end
+
+  defp validate_output(data, value) do
+    data.handlers.validate.(data.config, value)
+  rescue
+    e in Normandy.Schema.ValidationError -> {:output_invalid, e}
   end
 
   defp guarded(data, name, fun, continue) do

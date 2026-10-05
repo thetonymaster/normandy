@@ -153,13 +153,24 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   def validate_output(%BaseAgentConfig{output_schema: output_schema}, output)
       when is_struct(output) do
-    # Output is already a struct, optionally validate its contents
-    if output.__struct__ == output_schema.__struct__ do
-      {:ok, output}
-    else
+    cond do
+      # An output already of the schema's struct is checked like any other: a client
+      # that builds the struct itself must not bypass the schema's constraints.
+      # The struct comes back as it is (the validator does not cast).
+      output.__struct__ == output_schema.__struct__ and validating_schema?(output_schema) ->
+        case validate_output_map(output_schema, present_fields(output)) do
+          {:ok, _validated} -> {:ok, output}
+          {:error, _errors} = error -> error
+        end
+
+      # A schema without validation support has nothing to check, and
+      # validate_output_map/2 would turn the struct into a plain map.
+      output.__struct__ == output_schema.__struct__ ->
+        {:ok, output}
+
       # Different struct type - try to validate as map
-      output_map = Map.from_struct(output)
-      validate_output_map(output_schema, output_map)
+      true ->
+        validate_output_map(output_schema, Map.from_struct(output))
     end
   end
 
@@ -244,6 +255,24 @@ defmodule Normandy.Agents.ValidationMiddleware do
       pair -> pair
     end)
   end
+
+  # A schema struct as the validator reads decoded JSON: a struct has every key, so a
+  # nil field is an absent one, at every depth of nested schema structs. Other values
+  # (plain maps, dates) are left as they are.
+  defp present_fields(%_{} = struct) do
+    if validating_schema?(struct) do
+      struct
+      |> Map.from_struct()
+      |> Map.delete(:__meta__)
+      |> Enum.reject(fn {_field, value} -> is_nil(value) end)
+      |> Map.new(fn {field, value} -> {field, present_fields(value)} end)
+    else
+      struct
+    end
+  end
+
+  defp present_fields(list) when is_list(list), do: Enum.map(list, &present_fields/1)
+  defp present_fields(other), do: other
 
   defp validating_schema?(nil), do: false
 

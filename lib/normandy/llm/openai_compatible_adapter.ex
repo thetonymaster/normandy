@@ -61,7 +61,6 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   use Normandy.Schema
 
   alias Normandy.Components.ContentBlock.Describe
-  alias Normandy.LLM.JsonDeserializer
   alias Normandy.LLM.ParseFailure
   alias Normandy.LLM.Request
   alias Normandy.LLMError
@@ -306,18 +305,11 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
        )}
     end
 
-    # Mirror ClaudioAdapter.convert_response_to_normandy/populate_standard_schema.
-    # max_retries: 0 → one-shot parse: if content is valid JSON it populates
-    # the schema; if not, :on_parse_failure decides (Normandy.LLM.ParseFailure).
-    # No extra LLM round-trips are wasted for prose responses.
-    defp populate(content, client, %Request{response_model: %{__struct__: _} = schema} = request) do
-      case JsonDeserializer.deserialize_with_retry(content, schema, client, request,
-             max_retries: 0
-           ) do
-        {:ok, validated} -> validated
-        {:error, reason} -> ParseFailure.apply(schema, content, reason, %{client: client})
-      end
-    end
+    # One-shot parse: if content is valid JSON it populates the schema; if not,
+    # :on_parse_failure decides (Normandy.LLM.ParseFailure). No extra LLM round-trips
+    # are wasted for prose responses.
+    defp populate(content, client, %Request{response_model: %{__struct__: _} = schema}),
+      do: ParseFailure.parse_text_output(%{client: client}, content, schema)
 
     defp populate(content, _client, _request), do: content
   end

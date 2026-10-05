@@ -18,7 +18,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
   defp system_prompt(output_schema) do
     agent =
       BaseAgent.init(%{
-        client: %StubClient{notify: self()},
+        client: %StubClient{notify: self(), reply: fn rm -> %{rm | verdict: "approve"} end},
         model: "test-model",
         output_schema: output_schema
       })
