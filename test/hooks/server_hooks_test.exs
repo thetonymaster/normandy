@@ -437,7 +437,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       behaviours = %Config{
         hooks: hooks,
-        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+        compactor: {KeepLastCompactor, keep: 1, context_window: 200_000}
       }
 
       {:ok, srv} = start(sid(), hooks, config: %{behaviours: behaviours})
@@ -463,7 +463,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       behaviours = %Config{
         hooks: hooks,
-        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+        compactor: {KeepLastCompactor, keep: 1, context_window: 200_000}
       }
 
       opts = [store: {InMemory, store}, config: %{behaviours: behaviours}]
@@ -489,7 +489,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       behaviours = %Config{
         hooks: hooks,
-        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+        compactor: {KeepLastCompactor, keep: 1, context_window: 200_000}
       }
 
       {:ok, srv} =
@@ -509,7 +509,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       behaviours = %Config{
         hooks: hooks,
-        compactor: {KeepLastCompactor, keep: 1, max_tokens: 200_000}
+        compactor: {KeepLastCompactor, keep: 1, context_window: 200_000}
       }
 
       {:ok, srv} =

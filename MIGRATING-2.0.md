@@ -106,10 +106,10 @@ error); in 1.x it was `type: :unknown`.
   telemetry event reports every compactor run (token counts, strategy, whether it compacted,
   and the compactor's `:error` / `:reason` when it failed).
   Consequence: an agent with no tools and a real compactor now resolves its context window on
-  every run. With a client that isn't a `ClaudioAdapter` and no pinned `:max_tokens`, that
+  every run. With a client that isn't a `ClaudioAdapter` and no pinned `:context_window`, that
   lookup fails and `run/2` returns `{:error, %Normandy.ModelCatalogError{}}` (`run!/2` raises
   it) before the first LLM call, where
-  1.x silently never compacted. Pin `:max_tokens` (see below).
+  1.x silently never compacted. Pin `:context_window` (see below).
 - **Compaction makes a network call:** one Models API request per model per agent config.
   Coordinators that discard the config `BaseAgent.run/2` returns (batch, orchestrators, agent
   processes) repeat it on every run.
@@ -121,11 +121,11 @@ error); in 1.x it was `type: :unknown`.
 
   ```elixir
   behaviours: %Normandy.Behaviours.Config{
-    compactor: {Normandy.Behaviours.Compactor.WindowManager, [max_tokens: 200_000]}
+    compactor: {Normandy.Behaviours.Compactor.WindowManager, [context_window: 200_000]}
   }
   ```
 
-  Pinning `:max_tokens` also skips the lookup entirely (offline use).
+  Pinning `:context_window` also skips the lookup entirely (offline use). It was `:max_tokens` in 1.x (see §22).
 
 ## 6. `WindowManager.new/1` requires `:max_tokens`
 
@@ -532,3 +532,14 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   streaming rejects `:fallbacks`, so the serving model is always the requested one).
 - Compaction keeps each message's turn id, so `AgentMemory.delete_turn/2` works after a
   compaction.
+
+## 22. Config groups, the compactor's window pin, and 1.0 session templates
+
+- The window pin of a compactor is `:context_window`; 1.x called it `:max_tokens`, the name
+  the agent also uses for the answer's limit. `Compactor.WindowManager` with `:max_tokens`
+  raises `ArgumentError` at `init/1` (and when it runs). `BaseAgent` reads `:context_window`
+  as the pin for any compactor, so a custom compactor that was pinned with `:max_tokens` must
+  rename it too; a custom compactor's own `:max_tokens` option is left alone.
+- `Compactor.WindowManager` raises `ArgumentError` naming the field for a pin that is not a
+  positive integer, and for an agent config without a positive `max_tokens` when no
+  `:reserved_tokens` is given (it gave a misleading reserve error or a `KeyError`).

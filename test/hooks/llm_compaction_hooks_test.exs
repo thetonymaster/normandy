@@ -42,7 +42,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
 
   # keep: 2 at turn start holds old-3 and the new input; the rest is dropped.
   defp keep_two(hooks),
-    do: %Config{compactor: {KeepLastCompactor, keep: 2, max_tokens: 200_000}, hooks: hooks}
+    do: %Config{compactor: {KeepLastCompactor, keep: 2, context_window: 200_000}, hooks: hooks}
 
   describe "before_llm" do
     test "runs before each LLM call with the call's info" do
@@ -145,7 +145,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
 
     test "does not fire when the compactor dropped nothing" do
       behaviours = %Config{
-        compactor: {KeepLastCompactor, keep: 100, max_tokens: 200_000},
+        compactor: {KeepLastCompactor, keep: 100, context_window: 200_000},
         hooks: [probe()]
       }
 
@@ -163,7 +163,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
 
       behaviours = %Config{
         compactor:
-          {Normandy.Behaviours.Compactor.WindowManager, max_tokens: 80, reserved_tokens: 16},
+          {Normandy.Behaviours.Compactor.WindowManager, context_window: 80, reserved_tokens: 16},
         hooks: [probe()]
       }
 

@@ -137,6 +137,68 @@ defmodule Normandy.Behaviours.CompactorTest do
       end
     end
 
+    test "a pinned :context_window wins over the window in ctx" do
+      {_acc, meta} =
+        WMCompactor.maybe_compact(history_acc(16_000), %{window: 8_000}, context_window: 20_000)
+
+      # 20_000 pinned - 16_000 reserved = 4_000 tokens of history at most
+      assert meta.compacted
+      assert meta.tokens_after <= 4_000
+    end
+
+    test "the 1.x :max_tokens pin raises, naming :context_window" do
+      assert_raise ArgumentError,
+                   "Compactor.WindowManager: the :max_tokens option was renamed to " <>
+                     ":context_window in 2.0 (the model's context window in tokens); see " <>
+                     "MIGRATING-2.0.md §22",
+                   fn ->
+                     WMCompactor.maybe_compact(history_acc(16_000), %{window: 20_000},
+                       max_tokens: 20_000
+                     )
+                   end
+    end
+
+    test "a pinned :context_window that is not a positive integer raises, naming it" do
+      for bad <- [nil, 0, "200000"] do
+        assert_raise ArgumentError,
+                     "Compactor.WindowManager: :context_window must be a positive integer " <>
+                       "(the model's context window in tokens), got: #{inspect(bad)}",
+                     fn ->
+                       WMCompactor.maybe_compact(history_acc(16_000), %{window: 20_000},
+                         context_window: bad
+                       )
+                     end
+      end
+    end
+
+    test "an acc without :max_tokens and no :reserved_tokens raises, not KeyError" do
+      acc = %{memory: mem_with([{"user", "hi"}])}
+
+      assert_raise ArgumentError,
+                   "Compactor.WindowManager: the agent config has no :max_tokens to reserve " <>
+                     "for the answer; pass :reserved_tokens in the compactor opts",
+                   fn -> WMCompactor.maybe_compact(acc, %{window: 20_000}, []) end
+    end
+
+    test "an acc whose max_tokens is nil raises, naming it" do
+      assert_raise ArgumentError,
+                   "Compactor.WindowManager: the agent's max_tokens is the default " <>
+                     ":reserved_tokens and must be a positive integer, got: nil; set it, or " <>
+                     "pass :reserved_tokens in the compactor opts",
+                   fn -> WMCompactor.maybe_compact(history_acc(nil), %{window: 20_000}, []) end
+    end
+
+    test "a :reserved_tokens that is not a non-negative integer raises, naming it" do
+      assert_raise ArgumentError,
+                   "Compactor.WindowManager: :reserved_tokens must be a non-negative " <>
+                     "integer, got: nil",
+                   fn ->
+                     WMCompactor.maybe_compact(history_acc(16_000), %{window: 20_000},
+                       reserved_tokens: nil
+                     )
+                   end
+    end
+
     test "no window in ctx and no explicit max_tokens → skips, reason :no_window" do
       acc = %{memory: mem_with([{"user", "hi"}])}
 

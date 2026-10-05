@@ -376,12 +376,14 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       client_builder: fn token -> %{api_key: token} end
     }
 
-    assert_raise ArgumentError, ~r/:max_tokens/, fn -> ConfigTemplate.rebuild(tmpl, supp, "T") end
+    assert_raise ArgumentError, ~r/:context_window/, fn ->
+      ConfigTemplate.rebuild(tmpl, supp, "T")
+    end
 
     pinned =
       put_in(
         tmpl.behaviours_refs.compactor,
-        {Normandy.Behaviours.Compactor.WindowManager, [max_tokens: 50_000]}
+        {Normandy.Behaviours.Compactor.WindowManager, [context_window: 50_000]}
       )
 
     assert %Normandy.Agents.BaseAgentConfig{} = ConfigTemplate.rebuild(pinned, supp, "T")

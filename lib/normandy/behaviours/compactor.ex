@@ -11,7 +11,7 @@ defmodule Normandy.Behaviours.Compactor do
   `ctx` carries the decision inputs the core cannot compute (it is pure):
 
     * `:model`  — the model id for this turn
-    * `:window` — the model's context window: the compactor opts' `:max_tokens`
+    * `:window` — the model's context window: the compactor opts' `:context_window`
       when pinned, otherwise resolved through the configured `ModelCatalog`
       (memoised on the agent). `nil` only for the `NoOp` compactor
 

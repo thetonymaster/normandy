@@ -18,14 +18,14 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     BaseAgent.init(%{client: client, model: "m", temperature: nil, behaviours: behaviours})
   end
 
-  @pinned %Config{compactor: {Compactor.WindowManager, [max_tokens: 50_000]}}
+  @pinned %Config{compactor: {Compactor.WindowManager, [context_window: 50_000]}}
   @unpinned %Config{compactor: {Compactor.WindowManager, [reserved_tokens: 16]}}
 
   test "a non-Claudio client with an unpinned compactor and the default catalog raises at init" do
     error = assert_raise ArgumentError, fn -> init(%OtherClient{}, @unpinned) end
 
     assert error.message =~ "Compactor.WindowManager"
-    assert error.message =~ ":max_tokens"
+    assert error.message =~ ":context_window"
     assert error.message =~ "OtherClient"
     refute error.message =~ "sk-secret"
   end
@@ -48,9 +48,26 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     assert_raise ArgumentError, fn -> init(%OtherClient{}, behaviours) end
   end
 
-  test "passes when :max_tokens is pinned" do
-    pinned = %Config{compactor: {Compactor.WindowManager, [max_tokens: 50_000]}}
+  test "passes when :context_window is pinned" do
+    pinned = %Config{compactor: {Compactor.WindowManager, [context_window: 50_000]}}
     assert %Normandy.Agents.BaseAgentConfig{} = init(%OtherClient{}, pinned)
+  end
+
+  test "the 1.x :max_tokens pin on Compactor.WindowManager raises at init, naming :context_window" do
+    behaviours = %Config{compactor: {Compactor.WindowManager, [max_tokens: 50_000]}}
+
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.validate_compaction_config!/1: the :max_tokens " <>
+                   "option of Normandy.Behaviours.Compactor.WindowManager was renamed to " <>
+                   ":context_window in 2.0; see MIGRATING-2.0.md §22",
+                 fn -> init(%Normandy.LLM.ClaudioAdapter{api_key: "k"}, behaviours) end
+  end
+
+  test "a custom compactor's own :max_tokens option is left alone" do
+    behaviours = %Config{compactor: {Normandy.Test.KeepLastCompactor, [keep: 2, max_tokens: 9]}}
+
+    assert %Normandy.Agents.BaseAgentConfig{} =
+             init(%Normandy.LLM.ClaudioAdapter{api_key: "k"}, behaviours)
   end
 
   test "passes with the NoOp compactor (the default)" do

@@ -13,7 +13,7 @@ agent =
     max_tokens: 300,
     name: "s02",
     behaviours: %Config{
-      compactor: {Compactor.WindowManager, [strategy: :summarize, max_tokens: 1_200, reserved_tokens: 200]}
+      compactor: {Compactor.WindowManager, [strategy: :summarize, context_window: 1_200, reserved_tokens: 200]}
     }
   })
 

@@ -33,7 +33,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
       model: "claude-3-5-sonnet-20241022",
       memory: big_memory(),
       behaviours: %Config{
-        compactor: {Compactor.WindowManager, [max_tokens: 80, reserved_tokens: 16]}
+        compactor: {Compactor.WindowManager, [context_window: 80, reserved_tokens: 16]}
       }
     }
 
@@ -69,12 +69,12 @@ defmodule Normandy.Integration.CompactionTurnTest do
     }
   end
 
-  test "a pinned :max_tokens never consults the catalog" do
+  test "a pinned :context_window never consults the catalog" do
     config = %BaseAgentConfig{
       model: "claude-opus-5-5",
       memory: big_memory(),
       behaviours: %Config{
-        compactor: {Compactor.WindowManager, [max_tokens: 80, reserved_tokens: 16]},
+        compactor: {Compactor.WindowManager, [context_window: 80, reserved_tokens: 16]},
         model_catalog: {StubCatalog, [notify: self(), reply: {:error, :must_not_be_called}]}
       }
     }
@@ -161,7 +161,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
       behaviours: %Config{compactor: {Compactor.WindowManager, [reserved_tokens: 16]}}
     }
 
-    assert_raise Normandy.ModelCatalogError, ~r/:no_client.*:max_tokens/s, fn ->
+    assert_raise Normandy.ModelCatalogError, ~r/:no_client.*:context_window/s, fn ->
       BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
     end
   end

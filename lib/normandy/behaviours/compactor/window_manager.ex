@@ -3,17 +3,17 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   Opt-in Compactor that wraps `Normandy.Context.WindowManager`'s truncation
   strategies (`:oldest_first | :sliding_window | :summarize`).
 
-  Triggered at the turn's `:steering` boundary: builds a `WindowManager` whose
-  `max_tokens` is the model's context window (from `ctx.window`, unless `opts`
-  pins an explicit `:max_tokens`), then delegates to
-  `WindowManager.ensure_within_limit/2` — a no-op when already under budget.
+  Triggered at the turn's `:steering` boundary: builds a `WindowManager` sized to the
+  model's context window (`ctx.window`, unless `opts` pins `:context_window`), then
+  delegates to `WindowManager.ensure_within_limit/2` — a no-op when already under budget.
 
-  `opts` flow straight to `WindowManager.new/1` (`:strategy`, `:reserved_tokens`,
-  `:max_tokens`). `:reserved_tokens` defaults to the agent's `max_tokens`; a reserve
-  at or above the context window raises `ArgumentError`. The `:summarize` strategy needs `acc.client`; if summarization
-  fails it returns the original `acc` with `%{compacted: false, error: reason}`
-  rather than crashing the turn. Its meta carries `:dropped`, the removed entries
-  (see `Normandy.Behaviours.Compactor`).
+  Options: `:context_window` pins the window (and skips the model catalog lookup);
+  `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
+  at or above the window raises `ArgumentError`; `:strategy` goes to
+  `WindowManager.new/1`. The 1.x name `:max_tokens` for the pin raises `ArgumentError`.
+  The `:summarize` strategy needs `acc.client`; if summarization fails it returns the
+  original `acc` with `%{compacted: false, error: reason}` rather than crashing the turn.
+  Its meta carries `:dropped`, the removed entries (see `Normandy.Behaviours.Compactor`).
   """
   @behaviour Normandy.Behaviours.Compactor
 
@@ -32,22 +32,46 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     end
   end
 
-  # Honour an explicit opts :max_tokens; otherwise use the model window; if
-  # neither is known, skip (no trigger basis). The answer's room is the agent's
-  # max_tokens unless opts pins :reserved_tokens; it is read only when a manager
+  # A pinned :context_window wins; otherwise the model's window from ctx; with neither
+  # there is nothing to size against, so the compactor skips. The answer's room is the
+  # agent's max_tokens unless opts pins :reserved_tokens; it is read only when a manager
   # is actually built.
   defp build_manager(window, opts, acc) do
-    cond do
-      Keyword.has_key?(opts, :max_tokens) -> checked_manager(opts, acc)
-      is_integer(window) -> checked_manager(Keyword.put(opts, :max_tokens, window), acc)
-      true -> nil
+    :ok = reject_max_tokens!(opts)
+
+    case Keyword.fetch(opts, :context_window) do
+      {:ok, pinned} -> checked_manager(pinned, Keyword.delete(opts, :context_window), acc)
+      :error when is_integer(window) -> checked_manager(window, opts, acc)
+      :error -> nil
     end
   end
 
-  defp checked_manager(opts, acc) do
-    opts = Keyword.put_new_lazy(opts, :reserved_tokens, fn -> Map.fetch!(acc, :max_tokens) end)
-    reserved = Keyword.fetch!(opts, :reserved_tokens)
-    window = Keyword.fetch!(opts, :max_tokens)
+  # 1.x and the 2.0 betas pinned the window with :max_tokens, the name the agent uses
+  # for the answer's limit. Read silently, it would now be ignored.
+  defp reject_max_tokens!(opts) do
+    if Keyword.has_key?(opts, :max_tokens) do
+      raise ArgumentError,
+            "Compactor.WindowManager: the :max_tokens option was renamed to :context_window " <>
+              "in 2.0 (the model's context window in tokens); see MIGRATING-2.0.md §22"
+    end
+
+    :ok
+  end
+
+  defp checked_manager(window, opts, acc) do
+    unless is_integer(window) and window > 0 do
+      raise ArgumentError,
+            "Compactor.WindowManager: :context_window must be a positive integer (the " <>
+              "model's context window in tokens), got: #{inspect(window)}"
+    end
+
+    reserved = Keyword.get_lazy(opts, :reserved_tokens, fn -> agent_max_tokens!(acc) end)
+
+    unless is_integer(reserved) and reserved >= 0 do
+      raise ArgumentError,
+            "Compactor.WindowManager: :reserved_tokens must be a non-negative integer, " <>
+              "got: #{inspect(reserved)}"
+    end
 
     if reserved >= window do
       raise ArgumentError,
@@ -56,7 +80,26 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
               ":reserved_tokens in the compactor opts"
     end
 
-    WM.new(opts)
+    WM.new(
+      [max_tokens: window, reserved_tokens: reserved] ++ Keyword.drop(opts, [:reserved_tokens])
+    )
+  end
+
+  # The default reserve: the agent's max_tokens. A real agent config always has a
+  # positive one (init/1 and ConfigTemplate.rebuild/3 check it).
+  defp agent_max_tokens!(%{max_tokens: n}) when is_integer(n) and n > 0, do: n
+
+  defp agent_max_tokens!(%{max_tokens: other}) do
+    raise ArgumentError,
+          "Compactor.WindowManager: the agent's max_tokens is the default :reserved_tokens " <>
+            "and must be a positive integer, got: #{inspect(other)}; set it, or pass " <>
+            ":reserved_tokens in the compactor opts"
+  end
+
+  defp agent_max_tokens!(_acc) do
+    raise ArgumentError,
+          "Compactor.WindowManager: the agent config has no :max_tokens to reserve for the " <>
+            "answer; pass :reserved_tokens in the compactor opts"
   end
 
   defp run(acc, manager) do

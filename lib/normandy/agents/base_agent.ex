@@ -818,7 +818,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp emit_turn_event(_config, _name, _meta), do: :ok
 
   # Compaction at the :steering boundary. Resolves the configured Compactor and
-  # the model's context window (pinned `:max_tokens`, else the configured
+  # the model's context window (pinned `:context_window`, else the configured
   # ModelCatalog, memoised on the config), compacts the running config.memory,
   # and logs when it actually shrinks the conversation. Every run emits
   # [:normandy, :agent, :compaction] (measurements: whichever of :tokens_before,
@@ -896,7 +896,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   @doc false
   # A real compactor sizes against the model's context window. With no pinned
-  # :max_tokens and the default catalog (the Anthropic Models API), that lookup
+  # :context_window and the default catalog (the Anthropic Models API), that lookup
   # needs a ClaudioAdapter client; any other client makes every compaction raise
   # mid-turn, after tools ran. Called from init/1 and ConfigTemplate.rebuild/3 so
   # the mistake surfaces where the config is made. Never inspects the client value
@@ -913,9 +913,17 @@ defmodule Normandy.Agents.BaseAgent do
               "#{inspect(compactor)} must be a keyword list, got #{inspect(compactor_opts)}"
     end
 
+    if compactor == Normandy.Behaviours.Compactor.WindowManager and
+         Keyword.has_key?(compactor_opts, :max_tokens) do
+      raise ArgumentError,
+            "Normandy.Agents.BaseAgent.validate_compaction_config!/1: the :max_tokens option " <>
+              "of Normandy.Behaviours.Compactor.WindowManager was renamed to :context_window " <>
+              "in 2.0; see MIGRATING-2.0.md §22"
+    end
+
     needs_api_lookup? =
       compactor != Normandy.Behaviours.Compactor.NoOp and
-        not Keyword.has_key?(compactor_opts, :max_tokens) and
+        not Keyword.has_key?(compactor_opts, :context_window) and
         catalog in [
           Normandy.Behaviours.ModelCatalog.ModelsAPI,
           Normandy.Behaviours.ModelCatalog.Static
@@ -926,7 +934,7 @@ defmodule Normandy.Agents.BaseAgent do
             "Normandy.Agents.BaseAgent: compactor #{inspect(compactor)} needs the model's " <>
               "context window, and the model catalog #{inspect(catalog)} reads it from the " <>
               "Anthropic Models API, which needs a Normandy.LLM.ClaudioAdapter client; got " <>
-              "#{client_kind(config.client)}. Pin the window with the compactor's :max_tokens " <>
+              "#{client_kind(config.client)}. Pin the window with the compactor's :context_window " <>
               "option, or configure a model_catalog that works with this client."
     end
 
@@ -939,14 +947,14 @@ defmodule Normandy.Agents.BaseAgent do
   defp client_kind(_other), do: "a non-struct value"
 
   # The window the compactor sizes against. NoOp needs none; a pinned
-  # :max_tokens wins without a lookup (offline use, non-Claude clients);
+  # :context_window wins without a lookup (offline use, non-Claude clients);
   # otherwise the catalog, memoised per model on the config. A failed lookup
   # fails the turn: the agent asked for compaction and can't size it.
   defp resolve_context_window(config, Normandy.Behaviours.Compactor.NoOp, _opts),
     do: {config, nil}
 
   defp resolve_context_window(config, _compactor, opts) do
-    case Keyword.fetch(opts, :max_tokens) do
+    case Keyword.fetch(opts, :context_window) do
       {:ok, pinned} -> {config, pinned}
       :error -> lookup_context_window(config)
     end

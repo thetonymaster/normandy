@@ -47,7 +47,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       model: "m",
       temperature: nil,
       name: Process.get(:agent_name),
-      behaviours: %Config{compactor: {StubCompactor, [max_tokens: 1_000, meta: meta]}}
+      behaviours: %Config{compactor: {StubCompactor, [context_window: 1_000, meta: meta]}}
     })
   end
 
