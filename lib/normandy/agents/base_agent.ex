@@ -21,6 +21,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
   alias Normandy.Components.StreamEvent
@@ -779,21 +780,66 @@ defmodule Normandy.Agents.BaseAgent do
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes
   # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
   # as the third arg; we use it directly rather than reaching back into config.
-  # A chat_message schema gets the unwrapped content. A schema with a JSON Schema
-  # (the one the system prompt showed, prompt_output_schema/2) gets the text parsed
-  # into it under the client's :on_parse_failure policy; a parse failure raises the
-  # :invalid_output LLMError. Any other struct gets the raw response.
-  defp convert_turn_output(_config, %{content: content}, output_schema)
-       when content in [nil, ""],
-       do: output_schema
+  # The final response goes through convert_final_output/4, as stream/3's does. With
+  # no output schema (only when a caller set it to nil after init/1), an empty answer
+  # is nil, as before.
+  defp convert_turn_output(_config, %{content: content}, nil) when content in [nil, ""],
+    do: nil
 
-  defp convert_turn_output(_config, raw, %{chat_message: _} = output_schema),
-    do: Map.put(output_schema, :chat_message, unwrap_llm_content(raw.content))
+  defp convert_turn_output(config, raw, output_schema),
+    do: convert_final_output(config, raw, &turn_text(&1, output_schema), output_schema)
 
-  defp convert_turn_output(config, raw, output_schema) do
-    if Normandy.Schema.json_schema(output_schema),
-      do: parse_text_output!(config, raw.content, output_schema),
-      else: raw
+  # The final answer's text from a tool-loop response: a ToolCallResponse's content
+  # (nil when the model wrote none). A response with no text content is neither that
+  # nor the output schema's own struct (convert_final_output/4 passed that through).
+  defp turn_text(%{content: content}, _output_schema) when is_binary(content) or is_nil(content),
+    do: content || ""
+
+  defp turn_text(raw, output_schema) do
+    raise LLMError.new(
+            type: :invalid_output,
+            retryable?: false,
+            detail:
+              "expected the final response to be a %Normandy.Agents.ToolCallResponse{} " <>
+                "or #{Describe.type_of(output_schema)} (the output schema), got " <>
+                Describe.type_of(raw)
+          )
+  end
+
+  # The one conversion of a turn's final response into the output schema, for run/2's
+  # tool loop and stream/3 (the forced-final streamed call included). A response that
+  # is already the output schema's own struct is the filled response model (what
+  # Response.content holds) and passes through; validate_turn_output/2 still checks
+  # it. Anything else is converted from its text (text_of) by convert_final_text/3.
+  defp convert_final_output(_config, %module{} = raw, _text_of, %module{}), do: raw
+
+  defp convert_final_output(config, raw, text_of, output_schema),
+    do: convert_final_text(config, text_of.(raw), output_schema)
+
+  # A final answer's text as the output schema (convert_final_output/4):
+  #   * a :chat_message schema gets the unwrapped text, "" for an empty answer;
+  #   * a schema with a JSON Schema (the one the system prompt showed,
+  #     prompt_output_schema/2) gets the text parsed into it under the client's
+  #     :on_parse_failure policy (ParseFailure.parse_text_output/3), so an empty
+  #     answer or one that does not parse raises the :invalid_output LLMError;
+  #   * any other struct has nothing to parse the text into: the :invalid_output
+  #     LLMError, never the raw response presented as success.
+  defp convert_final_text(_config, text, %{chat_message: _} = output_schema),
+    do: Map.put(output_schema, :chat_message, unwrap_llm_content(text))
+
+  defp convert_final_text(config, text, %module{} = output_schema) do
+    if Normandy.Schema.json_schema(output_schema) do
+      parse_text_output!(config, text, output_schema)
+    else
+      raise LLMError.new(
+              type: :invalid_output,
+              retryable?: false,
+              detail:
+                "expected an output schema with a JSON Schema to parse the final answer " <>
+                  "into, got %#{inspect(module)}{}, which has no JSON Schema and no " <>
+                  ":chat_message field; define it with io_schema"
+            )
+    end
   end
 
   defp parse_text_output!(config, text, output_schema) do
@@ -1075,19 +1121,16 @@ defmodule Normandy.Agents.BaseAgent do
     convert_stream_output(config, message, output_schema)
   end
 
-  # The streamed message as the output schema, the way the non-streaming path returns
-  # it: a :chat_message schema gets the text; any other schema parses the text as JSON
-  # (the system prompt carried the schema, see build_stream_request/1) under the same
-  # :on_parse_failure policy (parse_text_output!/3). With no output schema, the message
-  # comes back without the keys the FSM and memory needed (:tool_calls, :prefix_key).
+  # The streamed message as the output schema: it goes through
+  # convert_final_output/4, the conversion run/2's tool loop uses (the system prompt
+  # carried a non-chat schema, see build_stream_request/1). With no output schema, the
+  # message comes back without the keys the FSM and memory needed (:tool_calls,
+  # :prefix_key).
   defp convert_stream_output(_config, message, nil),
     do: Map.drop(message, [:tool_calls, :prefix_key])
 
-  defp convert_stream_output(_config, message, %{chat_message: _} = schema),
-    do: Map.put(schema, :chat_message, unwrap_llm_content(extract_streaming_text(message)))
-
   defp convert_stream_output(config, message, %{__struct__: _} = schema),
-    do: parse_text_output!(config, extract_streaming_text(message), schema)
+    do: convert_final_output(config, message, &extract_streaming_text/1, schema)
 
   # Streams one LLM call to a final message, augmenting it with a :tool_calls key
   # so the pure FSM (which branches on .tool_calls) can dispatch. Tool calls are

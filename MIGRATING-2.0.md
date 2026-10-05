@@ -405,6 +405,14 @@ schema returns `{:error, %Normandy.LLMError{type: :invalid_output}}` (under both
 `on_parse_failure` policies: such a schema has no `:chat_message` to fall back to), from
 `run/2` and from `Turn.Server.run/2`.
 
+`run/2` after a tool loop and `stream/3` convert the final answer the same way. An empty
+final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}` for a non-chat schema
+(1.x returned the empty schema struct as success) and `chat_message: ""` for a chat schema.
+A schema with no JSON Schema and no `:chat_message` (a plain `defstruct`) has nothing to
+parse the answer into, so it is `:invalid_output` too: define it with `io_schema`. A final
+response that is already a struct of the output schema's own module (a client that fills
+the response model itself) is returned as is, then validated.
+
 A tool-using agent whose custom output schema has a `:chat_message` field gets only that
 field filled from the final text; its other fields stay unset, so any of them marked
 `required: true` now fails validation (`{:error, %Normandy.Schema.ValidationError{}}`).

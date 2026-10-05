@@ -14,6 +14,93 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
     end
   end
 
+  # A struct with no JSON Schema and no :chat_message: nothing to parse the answer into.
+  defmodule PlainOut do
+    defstruct answer: nil
+  end
+
+  # One tool round, then `:text` as the final answer, for run/2 (converse/3) and
+  # stream/3 alike. `:text` may be "" (an empty final answer). With `:final`, converse/3
+  # answers that struct as the response content instead.
+  defmodule ToolThenText do
+    defstruct text: "", final: nil, options: %{}
+
+    defimpl Normandy.Agents.Model do
+      alias Normandy.Agents.ToolCallResponse
+      alias Normandy.Components.ToolCall
+      alias Normandy.LLM.Response
+
+      def converse(client, request, _opts) do
+        content =
+          cond do
+            not tool_result?(request) ->
+              %ToolCallResponse{
+                content: nil,
+                tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{"city" => "Oslo"}}]
+              }
+
+            client.final ->
+              client.final
+
+            true ->
+              %ToolCallResponse{content: client.text, tool_calls: []}
+          end
+
+        {:ok, %Response{content: content, stop_reason: :end_turn}}
+      end
+
+      def stream(client, request, _opts) do
+        start = %{
+          type: "message_start",
+          message: %{"id" => "msg_1", "model" => "m", "role" => "assistant"}
+        }
+
+        blocks =
+          cond do
+            not tool_result?(request) ->
+              [
+                %{
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: %{"type" => "tool_use", "id" => "t1", "name" => "weather"}
+                },
+                %{
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: %{"type" => "input_json_delta", "partial_json" => ~s({"city":"Oslo"})}
+                },
+                %{type: "content_block_stop", index: 0}
+              ]
+
+            client.text == "" ->
+              []
+
+            true ->
+              [
+                %{
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: %{"type" => "text", "text" => ""}
+                },
+                %{
+                  type: "content_block_delta",
+                  index: 0,
+                  delta: %{"type" => "text_delta", "text" => client.text}
+                },
+                %{type: "content_block_stop", index: 0}
+              ]
+          end
+
+        {:ok, [start | blocks] ++ [%{type: "message_stop"}]}
+      end
+
+      defp tool_result?(request), do: Enum.any?(request.messages, &(&1.role == "tool"))
+    end
+  end
+
+  defp tool_agent(client, extra \\ %{}),
+    do: client |> agent(extra) |> BaseAgent.register_tool(%Normandy.Test.FakeTool{})
+
   defp agent(client, extra \\ %{}),
     do: BaseAgent.init(Map.merge(%{client: client, model: "m"}, extra))
 
@@ -73,8 +160,79 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
   test "a non-chat answer that isn't JSON is the error run/2 would give" do
     client = %ScriptedTextClient{text: "not json at all", options: %{on_parse_failure: :error}}
 
-    assert {:error, %LLMError{type: :invalid_output}} =
+    assert {:error, %LLMError{type: :invalid_output} = streamed} =
              BaseAgent.stream(agent(client, %{output_schema: %Answer{}}), "q", collect())
+
+    # The same answer after a tool loop in run/2 is the same error.
+    tool_client = %ToolThenText{text: "not json at all", options: %{on_parse_failure: :error}}
+
+    assert {:error, %LLMError{type: :invalid_output} = ran} =
+             BaseAgent.run(tool_agent(tool_client, %{output_schema: %Answer{}}), "q")
+
+    assert Map.take(ran, [:type, :message, :reason, :retryable?]) ==
+             Map.take(streamed, [:type, :message, :reason, :retryable?])
+  end
+
+  describe "one output conversion for run/2's tool loop and stream/3" do
+    test "a schema without a JSON Schema is :invalid_output, never a raise or a raw map" do
+      client = %ToolThenText{text: ~s({"answer":"hi"})}
+      a = tool_agent(client, %{output_schema: %PlainOut{}})
+
+      assert {:error, %LLMError{type: :invalid_output} = ran} = BaseAgent.run(a, "q")
+
+      assert {:error, %LLMError{type: :invalid_output} = streamed} =
+               BaseAgent.stream(a, "q", collect())
+
+      for error <- [ran, streamed] do
+        assert Exception.message(error) =~ "no JSON Schema"
+        assert Exception.message(error) =~ "io_schema"
+        assert Exception.message(error) =~ inspect(PlainOut)
+      end
+    end
+
+    test "an empty final answer is \"\" in a chat schema" do
+      a = tool_agent(%ToolThenText{text: ""})
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} = BaseAgent.run(a, "q")
+
+      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} =
+               BaseAgent.stream(a, "q", collect())
+    end
+
+    test "an empty final answer is :invalid_output for a non-chat schema" do
+      a = tool_agent(%ToolThenText{text: ""}, %{output_schema: %Answer{}})
+
+      assert {:error, %LLMError{type: :invalid_output}} = BaseAgent.run(a, "q")
+      assert {:error, %LLMError{type: :invalid_output}} = BaseAgent.stream(a, "q", collect())
+    end
+
+    test "a final response already of the schema's module passes through, validated" do
+      filled =
+        tool_agent(%ToolThenText{final: %Answer{answer: "42"}}, %{output_schema: %Answer{}})
+
+      assert {:ok, _, %Answer{answer: "42"}} = BaseAgent.run(filled, "q")
+
+      # Validated as usual: a missing required field is the ValidationError.
+      missing = tool_agent(%ToolThenText{final: %Answer{}}, %{output_schema: %Answer{}})
+      assert {:error, %Normandy.Schema.ValidationError{}} = BaseAgent.run(missing, "q")
+    end
+
+    test "a final response of a different module is :invalid_output" do
+      a = tool_agent(%ToolThenText{final: %Answer{answer: "42"}}, %{output_schema: %PlainOut{}})
+
+      assert {:error, %LLMError{type: :invalid_output} = error} = BaseAgent.run(a, "q")
+      assert Exception.message(error) =~ inspect(Answer)
+    end
+
+    test "the forced-final streamed answer fills a non-chat schema" do
+      a =
+        tool_agent(%ToolThenText{text: ~s({"answer":"42"})}, %{
+          output_schema: %Answer{},
+          max_tool_iterations: 1
+        })
+
+      assert {:ok, _, %Answer{answer: "42"}} = BaseAgent.stream(a, "q", collect())
+    end
   end
 
   test "a stream that fails after output reached the callback is not retried" do
