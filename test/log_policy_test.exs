@@ -143,6 +143,26 @@ defmodule Normandy.LogPolicyTest do
     end
   end
 
+  describe "Retry (returned errors)" do
+    test "a returned error is logged by type and attempt, never by its detail" do
+      error =
+        LLMError.new(type: :overloaded, status: 529, retryable?: true, detail: "body " <> @secret)
+
+      log =
+        capture_log(fn ->
+          assert {:error, {^error, 2, _}} =
+                   Retry.with_retry(fn -> {:error, error} end,
+                     max_attempts: 2,
+                     base_delay: 1,
+                     retry_if: fn _ -> true end
+                   )
+        end)
+
+      assert log =~ "Retry attempt 1/2 failed: Normandy.LLMError (overloaded)"
+      refute log =~ @secret
+    end
+  end
+
   describe "A2A server" do
     alias Claudio.A2A.Message
     alias Claudio.A2A.Part

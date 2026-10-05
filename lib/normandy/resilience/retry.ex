@@ -39,6 +39,7 @@ defmodule Normandy.Resilience.Retry do
 
   require Logger
 
+  alias Normandy.LLMError
   alias Normandy.TurnError
 
   @type retry_option ::
@@ -222,15 +223,23 @@ defmodule Normandy.Resilience.Retry do
     end
   end
 
-  # A raise, exit or throw is logged by kind and module only (its message, payload and
-  # stacktrace arguments can hold the value it failed on); a returned error as it is.
+  # A failure for a warning: its module or kind, and an LLMError's type; never its
+  # message, payload or stacktrace arguments, which can hold the value it failed on (an
+  # LLMError's detail carries the provider's response body).
   defp describe({:exception, exception, stacktrace}),
     do: TurnError.describe_raised(:error, exception, stacktrace)
 
   defp describe({kind, _payload}) when kind in [:exit, :throw],
     do: TurnError.describe_raised(kind, nil, [])
 
-  defp describe(error), do: inspect(error)
+  defp describe(%LLMError{type: type}), do: "#{inspect(LLMError)} (#{type})"
+  defp describe(%module{} = exception) when is_exception(exception), do: inspect(module)
+  defp describe(atom) when is_atom(atom), do: inspect(atom)
+
+  defp describe(tuple) when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+    do: "{#{inspect(elem(tuple, 0))}, ...}"
+
+  defp describe(_error), do: "a returned error"
 
   # Runs the function, turning a raise, exit or throw into an error value.
   defp execute_safely(fun) do

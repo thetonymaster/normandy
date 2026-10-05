@@ -380,6 +380,7 @@ defmodule E2E.OtelBridge do
   defp provider(other), do: to_s(other)
 
   defp error_type(%{__struct__: Normandy.LLMError, type: type}), do: to_s(type)
+  defp error_type(%{__struct__: Normandy.TurnError, type: type}), do: to_s(type)
   defp error_type(%{__exception__: true, __struct__: mod}), do: inspect(mod)
   defp error_type({tag, _}) when is_atom(tag), do: to_s(tag)
   defp error_type(tag) when is_atom(tag), do: to_s(tag)

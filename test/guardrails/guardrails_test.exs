@@ -3,6 +3,13 @@ defmodule Normandy.GuardrailsTest do
 
   alias Normandy.Guardrails
 
+  # Fails on the guarded value: KeyError's message inspects it.
+  defmodule KeyErrorOnInput do
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(value, _opts), do: Map.fetch!(value, :missing)
+  end
+
   defmodule AlwaysPass do
     @behaviour Normandy.Guardrails.Guard
 
@@ -162,6 +169,14 @@ defmodule Normandy.GuardrailsTest do
 
       assert violation.constraint == :guard_error
       assert violation.guard == RaisesError
+    end
+
+    test ":closed names the crashed guard's exception module, never its message" do
+      assert {:error, [violation]} =
+               Guardrails.run([{KeyErrorOnInput, on_error: :closed}], %{token: "SECRET-in"})
+
+      assert violation.message == "guard #{inspect(KeyErrorOnInput)} crashed: KeyError"
+      refute inspect(violation, limit: :infinity, printable_limit: :infinity) =~ "SECRET-in"
     end
 
     test "rejects an invalid :on_error value" do

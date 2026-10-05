@@ -237,7 +237,9 @@ defmodule Normandy.Guardrails do
        %{
          guard: mod,
          path: [],
-         message: "guard #{inspect(mod)} crashed: #{Exception.message(exception)}",
+         # The module only: the exception's message can inspect the guarded value,
+         # and this violation reaches the caller, telemetry and the store.
+         message: "guard #{inspect(mod)} crashed: #{inspect(exception.__struct__)}",
          constraint: :guard_error
        }
      ]}

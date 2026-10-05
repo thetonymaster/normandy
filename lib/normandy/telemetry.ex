@@ -333,7 +333,7 @@ defmodule Normandy.Telemetry do
   | `gen_ai.tool.type` | tool `tool_type` (`:function` is `"function"`, `:extension` is `"extension"`) |
   | `gen_ai.agent.name` | `agent_name` |
   | `gen_ai.conversation.id` | `conversation_id` |
-  | `error.type` | `:exception` `reason`: an `LLMError`'s or `TurnError`'s `type`, else the exception module; tool `error_type` |
+  | `error.type` | `:exception` `reason`: an `LLMError`'s or `TurnError`'s `type` (a bug is emitted as a `TurnError`, so it maps to `task_down`), else the exception module; tool `error_type` |
   | `gen_ai.response.time_to_first_chunk` | llm_call stop `time_to_first_chunk`; the attribute is a double in **seconds**, so the bridge converts from native units with `System.convert_time_unit/3` (or `/ System.convert_time_unit(1, :second, :native)`) |
   | `server.address` | llm_call start `server_address` |
 
