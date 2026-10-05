@@ -18,7 +18,11 @@ defmodule Normandy.Test.KeepLastCompactor do
       {config, %{compacted: false, dropped: []}}
     else
       {dropped, kept} = Enum.split(entries, length(entries) - keep)
-      fresh = %{AgentMemory.new_memory() | current_turn_id: config.memory.current_turn_id}
+
+      fresh = %{
+        AgentMemory.new_memory(config.memory.max_messages)
+        | current_turn_id: config.memory.current_turn_id
+      }
 
       memory =
         Enum.reduce(kept, fresh, fn entry, mem ->

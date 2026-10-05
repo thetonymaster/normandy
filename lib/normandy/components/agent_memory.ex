@@ -44,7 +44,7 @@ defmodule Normandy.Components.AgentMemory do
   `turn_id:` stores the message under that turn instead of `current_turn_id`;
   compaction uses it to keep each kept message's turn. `id:` gives the entry that id
   instead of a new one (compaction keeps a kept message's id, which compactors report
-  dropped entries by); it must not already be in `memory`.
+  dropped entries by); it must not already be in `memory` (raises `ArgumentError`).
   """
   @spec add_message(t(), String.t(), term(), keyword()) :: t()
   def add_message(%__MODULE__{} = memory, role, content, opts \\ []) do
@@ -52,6 +52,12 @@ defmodule Normandy.Components.AgentMemory do
     memory = if memory.current_turn_id == nil, do: initialize_turn(memory), else: memory
 
     id = Keyword.get(opts, :id) || UUID.uuid4()
+
+    if Map.has_key?(memory.entries, id) do
+      raise ArgumentError,
+            "AgentMemory.add_message/4: entry id #{inspect(id)} is already in the memory; " <>
+              "an :id must be new (it would overwrite the existing entry and corrupt the branch)"
+    end
 
     entry = %Entry{
       id: id,

@@ -58,9 +58,12 @@ if Code.ensure_loaded?(Redix) do
       wait = wait_setting!(handle)
       fields = encode_entry_fields(entry)
 
-      with {:ok, id} <- Redix.command(conn, ["XADD", stream_key(ns, session_id), "*" | fields]),
+      with {:ok, stream_id} <-
+             Redix.command(conn, ["XADD", stream_key(ns, session_id), "*" | fields]),
            :ok <- wait(conn, wait) do
-        {:ok, id}
+        # The id history/2 will return for this entry: the one it was written with, else
+        # the stream id (the other stores return entry.id).
+        {:ok, blank_to_nil(entry.id) || stream_id}
       end
     end
 
@@ -265,8 +268,16 @@ if Code.ensure_loaded?(Redix) do
 
     # An entry is addressed by the id history/2 returned: the stored `id` field, else the
     # stream id.
-    defp entry_matches?([stream_id, kv], target_id),
-      do: stream_id == target_id or kv_to_map(kv)["id"] == target_id
+    # A blank or nil target matches nothing (a blank stored `id` field is not an address).
+    defp entry_matches?([stream_id, kv], target_id) do
+      case blank_to_nil(target_id) do
+        target when is_binary(target) ->
+          stream_id == target or blank_to_nil(kv_to_map(kv)["id"]) == target
+
+        _ ->
+          false
+      end
+    end
 
     defp kv_to_map(kv) do
       kv |> Enum.chunk_every(2) |> Map.new(fn [k, v] -> {k, v} end)

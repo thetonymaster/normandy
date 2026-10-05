@@ -460,6 +460,14 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       assert memory.head == "entry-1"
     end
 
+    test "an id already in the memory raises instead of overwriting the entry" do
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", id: "entry-1")
+
+      assert_raise ArgumentError, ~r/entry id "entry-1" is already in the memory/, fn ->
+        AgentMemory.add_message(memory, "assistant", "y", id: "entry-1")
+      end
+    end
+
     test "turn_id: stores the message under the given turn, not the current one" do
       memory =
         AgentMemory.new_memory()

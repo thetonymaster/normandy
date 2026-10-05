@@ -30,6 +30,10 @@ defmodule Normandy.Behaviours.Compactor do
   reported under one id for as long as the memory lives. `after_compact` hooks
   (`Normandy.Behaviours.Hooks`) run only when `:dropped` is non-empty. The WindowManager
   impl fills it; `NoOp` does not.
+
+  `:dropped` is absent on the error and skip paths (`%{compacted: false, error: reason}`,
+  `%{compacted: false}`), so a consumer matches `%{dropped: [_ | _]}` rather than reading
+  the key.
   """
 
   @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil}

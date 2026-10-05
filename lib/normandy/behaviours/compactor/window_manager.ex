@@ -75,8 +75,9 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   # Gross estimated tokens of the dropped messages that belong to the current turn:
   # what the task budget's `remaining` must subtract (Anthropic task-budgets doc,
   # "Carrying a budget across compaction"). Earlier turns were never this task's
-  # spend, and a summary is new, so it is never dropped. Content is estimated in its
-  # JSON form, the form the model was sent.
+  # spend, and a summary is new, so it is never dropped. Each message's content is
+  # serialized with `BaseIOSchema.to_json/1` for the estimate, plus 10 tokens of
+  # per-message overhead; this approximates, it is not the exact request payload.
   defp tokens_removed_this_turn(before_memory, dropped) do
     turn_id = AgentMemory.get_current_turn_id(before_memory)
 

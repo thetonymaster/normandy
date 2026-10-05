@@ -51,6 +51,32 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert Enum.map(kept, & &1.id) == before |> Enum.take(-length(kept)) |> Enum.map(& &1.id)
     end
 
+    test "a kept message loses its thinking but keeps its id, and is not in meta.dropped" do
+      thinking = [%{"type" => "thinking", "thinking" => "p", "signature" => "s"}]
+      msgs = for i <- 1..40, do: {"user", "message number #{i} padding"}
+
+      memory =
+        msgs
+        |> mem_with()
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          content: "answer",
+          thinking: thinking
+        })
+
+      acc = %{memory: memory}
+      last_id = memory.head
+
+      {result, meta} =
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80}, reserved_tokens: 16)
+
+      assert meta.compacted
+      assert result.memory.head == last_id
+
+      assert [%{type: "text", text: "answer"}] = result.memory.entries[last_id].content
+
+      refute Enum.any?(meta.dropped, &(&1.id == last_id))
+    end
+
     test "nothing removed: meta.dropped is []" do
       acc = %{memory: mem_with([{"user", "short"}, {"assistant", "ok"}])}
       {_result, meta} = WMCompactor.maybe_compact(acc, %{model: "m", window: 200_000}, [])

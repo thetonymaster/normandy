@@ -70,6 +70,24 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
     assert second.parent_id == "mem-1"
   end
 
+  test "append_entry returns the id history will return: the entry's id, else the stream id",
+       %{handle: h} do
+    assert {:ok, "mem-1"} = Redis.append_entry(h, "s-ret", %{e("user", "a") | id: "mem-1"})
+    assert {:ok, stream_id} = Redis.append_entry(h, "s-ret", e("assistant", "b"))
+
+    {:ok, [first, second]} = Redis.history(h, "s-ret")
+    assert first.id == "mem-1"
+    assert second.id == stream_id
+  end
+
+  test "fork with a blank or nil target is :no_such_entry, even when an entry has no id field",
+       %{handle: h} do
+    {:ok, _} = Redis.append_entry(h, "s-blank", e("user", "a"))
+
+    assert {:error, :no_such_entry} = Redis.fork(h, "s-blank", "")
+    assert {:error, :no_such_entry} = Redis.fork(h, "s-blank", nil)
+  end
+
   test "fork accepts the id history returned", %{handle: h} do
     {:ok, _} = Redis.append_entry(h, "s-fork-ids", %{e("user", "a") | id: "mem-1"})
     {:ok, _} = Redis.append_entry(h, "s-fork-ids", %{e("assistant", "b") | id: "mem-2"})
