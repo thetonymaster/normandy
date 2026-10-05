@@ -566,3 +566,16 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 - `Compactor.WindowManager` raises `ArgumentError` naming the field for a pin that is not a
   positive integer, and for an agent config without a positive `max_tokens` when no
   `:reserved_tokens` is given (it gave a misleading reserve error or a `KeyError`).
+- `Normandy.Behaviours.Config` no longer has `session_store` or `session_registry`. Nothing read
+  them; `Turn.Server` takes `:store` and `:registry` (and `Normandy.Cluster`'s child specs pass
+  them). Drop the two keys from any `%Config{}` you build.
+- **Session templates saved by Normandy 1.0.0 rebuild under 2.0.** `ConfigTemplate.rebuild/3`
+  gives `max_tokens: nil` the 2.0 default (16_000), drops the two session slots, and renames a
+  `Compactor.WindowManager` window pin from `:max_tokens` to `:context_window` (a custom
+  compactor's opts are left alone). Fields 2.0 added (`retry`, `circuit_breaker`, `guardrails`,
+  `tool_context`, hooks, ...) get their defaults, as a 1.0 agent behaved.
+- `rebuild/3` raises `ArgumentError` naming the field for anything else it cannot read: a field
+  neither 1.0 nor 2.0 writes (templates saved by unreleased 2.0 builds, which have
+  `retry_options` or `input_guardrails`, are not translated: recreate those sessions), a missing
+  required field, an unknown `behaviours_refs` slot, or a `max_tokens` that is neither `nil` nor
+  a positive integer (a stored `0` or `false` used to pass through).

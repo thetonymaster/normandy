@@ -24,22 +24,16 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert b.after_hooks == []
       assert b.credential == {Normandy.Behaviours.CredentialProvider.FromClient, []}
       assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
-      assert b.session_store == {Normandy.Behaviours.SessionStore.InMemory, []}
     end
 
-    test "default bundle carries the Native session_registry slot" do
-      assert %Normandy.Behaviours.Config{}.session_registry ==
-               {Normandy.Behaviours.SessionRegistry.Native, []}
+    test "has no session_store or session_registry slot (Turn.Server takes :store and :registry)" do
+      refute Map.has_key?(%Config{}, :session_store)
+      refute Map.has_key?(%Config{}, :session_registry)
     end
 
     test "default bundle carries the NoOp compactor slot" do
       b = %Config{}
       assert b.compactor == {Normandy.Behaviours.Compactor.NoOp, []}
-    end
-
-    test "to_pipeline/1 ignores session_registry (not a dispatch-path concern)" do
-      pipeline = Config.to_pipeline(%Normandy.Behaviours.Config{})
-      refute Map.has_key?(Map.from_struct(pipeline), :session_registry)
     end
   end
 

@@ -193,13 +193,8 @@ children =
   )
 ```
 
-```elixir
-# then in Config:
-%Normandy.Behaviours.Config{
-  session_store: {Normandy.Behaviours.SessionStore.Redis, {MyApp.SessionRedix, "normandy"}},
-  session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
-}
-```
+The store and registry are chosen here, in the child specs; `Normandy.Behaviours.Config` has
+no session slots (the two 1.x slots were never read and are gone in 2.0).
 
 > Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
 

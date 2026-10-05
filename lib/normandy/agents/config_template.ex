@@ -12,20 +12,39 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   Everything else travels in the template: model and sampling settings, tool
   limits, prompt, schemas, memory cap, `initial_memory`, the `retry` and
-  `circuit_breaker` options, JSON retry settings, `guardrails`, `tool_context`, behaviour module refs and hook entries
-  (`Normandy.Behaviours.Hooks`; their opts must be plain data and hold no secrets).
-  These must be plain data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
-  `tool_context` must hold no secrets: the template is stored in plaintext.
-  A template saved before these fields existed rebuilds with their defaults.
+  `circuit_breaker` options, JSON retry settings, `guardrails`, `tool_context`,
+  behaviour module refs and hook entries (`Normandy.Behaviours.Hooks`; their opts must
+  be plain data and hold no secrets). These must be plain data: `from_config/2` raises
+  on a function or pid (e.g. a `:retry_if` fun). `tool_context` must hold no secrets:
+  the template is stored in plaintext.
+
+  ## Templates saved by Normandy 1.0
+
+  `rebuild/3` reads templates written by Normandy 1.0.0 and by 2.0. A 1.0 template lacks
+  the fields 2.0 added (they rebuild with their defaults) and differs in three ways, which
+  `rebuild/3` translates:
+
+    * `max_tokens: nil` (the agent set none) rebuilds with
+      `BaseAgentConfig.default_max_tokens/0`;
+    * `behaviours_refs` carries `session_store` and `session_registry`, slots 1.0 never
+      read; they are dropped;
+    * a `Normandy.Behaviours.Compactor.WindowManager` ref pins the window with
+      `:max_tokens`, which 2.0 calls `:context_window`. A custom compactor's opts are
+      left as they are.
+
+  Any other field, a `behaviours_refs` slot or a `node_local_fields` entry that neither
+  version writes, and a missing required field, raise `ArgumentError` naming it. Templates
+  written by unreleased 2.0 builds are not translated.
   """
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
 
-  # Plain-data config fields carried as-is. A template saved before 2.0 lacks
-  # them, so `rebuild/3` leaves the struct defaults in place for missing keys.
+  # Plain-data config fields carried as-is. A 1.0 template lacks them, so
+  # `rebuild/3` leaves the struct defaults in place for missing keys.
   @data_fields [
     :initial_memory,
     :retry,
@@ -40,6 +59,36 @@ defmodule Normandy.Agents.ConfigTemplate do
   # authorization token). The template records which were set, and `rebuild/3`
   # takes them from the supplement.
   @node_local_fields [:circuit_breaker_pid, :mcp_servers]
+
+  # Top-level fields rebuild/3 reads with no default: both 1.0 and 2.0 templates have them.
+  @required_fields [
+    :template_id,
+    :model,
+    :temperature,
+    :max_tokens,
+    :max_tool_iterations,
+    :max_tool_concurrency,
+    :name,
+    :prompt_specification,
+    :input_schema,
+    :output_schema,
+    :behaviours_refs
+  ]
+
+  # Fields read when present: 1.0 wrote resume_policy and max_messages too;
+  # Turn.Session adds server_options (the Turn.Server options it was started with).
+  @optional_fields [
+    :resume_policy,
+    :max_messages,
+    :node_local_fields,
+    :server_options | @data_fields
+  ]
+
+  @required_refs [:policy, :budget, :credential, :compactor, :model_catalog]
+  @optional_refs [:hooks]
+
+  # 1.0's session slots: never read by 1.0's turn loop, so dropping them loses nothing.
+  @dropped_v1_refs [:session_store, :session_registry]
 
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do
@@ -64,8 +113,6 @@ defmodule Normandy.Agents.ConfigTemplate do
         credential: b.credential,
         compactor: b.compactor,
         model_catalog: b.model_catalog,
-        session_store: b.session_store,
-        session_registry: b.session_registry,
         hooks: storable_hooks!(b.hooks)
       }
     }
@@ -116,14 +163,17 @@ defmodule Normandy.Agents.ConfigTemplate do
   @doc """
   Rebuilds a `BaseAgentConfig` from a template and a supplement.
 
-  Raises `ArgumentError` for a compaction setup that can't size its window (see
-  `BaseAgent.validate_compaction_config!/1`), and for a malformed hook entry in the
-  template (shape, `:on_error` and plain-data opts; whether the hook module exists on
+  Translates a template saved by Normandy 1.0 (see the moduledoc). Raises
+  `ArgumentError` naming the field for one it cannot translate, for a `max_tokens` that is
+  neither `nil` (1.0) nor a positive integer, for a compaction setup that can't size its
+  window (see `BaseAgent.validate_compaction_config!/1`), and for a malformed hook entry in
+  the template (shape, `:on_error` and plain-data opts; whether the hook module exists on
   this node is checked later, by `Turn.Server`).
   """
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
           BaseAgentConfig.t()
-  def rebuild(tmpl, supplement, token) do
+  def rebuild(tmpl, supplement, token) when is_map(tmpl) do
+    tmpl = translate!(tmpl)
     refs = tmpl.behaviours_refs
     :ok = Hooks.validate_entries!(Map.get(refs, :hooks, []), load: false)
 
@@ -133,8 +183,6 @@ defmodule Normandy.Agents.ConfigTemplate do
       credential: refs.credential,
       compactor: refs.compactor,
       model_catalog: refs.model_catalog,
-      session_store: refs.session_store,
-      session_registry: refs.session_registry,
       hooks: Map.get(refs, :hooks, []),
       before_hooks: supplement.before_hooks,
       after_hooks: supplement.after_hooks
@@ -143,8 +191,7 @@ defmodule Normandy.Agents.ConfigTemplate do
     %BaseAgentConfig{
       model: tmpl.model,
       temperature: tmpl.temperature,
-      # Templates saved by 1.x store nil for an unset max_tokens; 2.0 sends the default.
-      max_tokens: tmpl.max_tokens || BaseAgentConfig.default_max_tokens(),
+      max_tokens: tmpl.max_tokens,
       max_tool_iterations: tmpl.max_tool_iterations,
       max_tool_concurrency: tmpl.max_tool_concurrency,
       name: tmpl.name,
@@ -160,6 +207,98 @@ defmodule Normandy.Agents.ConfigTemplate do
     |> struct(node_local_fields!(tmpl, supplement))
     |> BaseAgent.validate_compaction_config!()
     |> validate_client_options!()
+  end
+
+  # A 1.0 or 2.0 template -> the 2.0 shape; anything else raises naming the field.
+  defp translate!(tmpl) do
+    id = Map.get(tmpl, :template_id)
+    :ok = check_fields!(tmpl, id)
+
+    tmpl
+    |> Map.update!(:max_tokens, &max_tokens!(&1, id))
+    |> Map.update!(:behaviours_refs, &translate_refs!(&1, id))
+  end
+
+  defp check_fields!(tmpl, id) do
+    case Map.keys(tmpl) -- (@required_fields ++ @optional_fields) do
+      [] -> :ok
+      [field | _] -> untranslatable!(id, "has the field #{inspect(field)}")
+    end
+
+    case @required_fields -- Map.keys(tmpl) do
+      [] -> :ok
+      [field | _] -> missing!(id, "the field #{inspect(field)}")
+    end
+
+    case Map.get(tmpl, :node_local_fields, []) -- @node_local_fields do
+      [] -> :ok
+      [field | _] -> untranslatable!(id, "lists #{inspect(field)} in :node_local_fields")
+    end
+  end
+
+  # 1.0 stored nil for an unset max_tokens; 2.0 always stores a positive integer.
+  defp max_tokens!(nil, _id), do: BaseAgentConfig.default_max_tokens()
+  defp max_tokens!(n, _id) when is_integer(n) and n > 0, do: n
+
+  defp max_tokens!(other, id) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: template #{inspect(id)} has max_tokens " <>
+            "#{inspect(other)}; expected a positive integer, or nil (a 1.0 template that " <>
+            "set none)"
+  end
+
+  defp translate_refs!(refs, id) when is_map(refs) do
+    refs = Map.drop(refs, @dropped_v1_refs)
+
+    case Map.keys(refs) -- (@required_refs ++ @optional_refs) do
+      [] -> :ok
+      [slot | _] -> untranslatable!(id, "has the behaviours_refs slot #{inspect(slot)}")
+    end
+
+    case @required_refs -- Map.keys(refs) do
+      [] -> :ok
+      [slot | _] -> missing!(id, "the behaviours_refs slot #{inspect(slot)}")
+    end
+
+    Map.update!(refs, :compactor, &compactor_ref!(&1, id))
+  end
+
+  defp translate_refs!(_refs, id),
+    do: untranslatable!(id, "has a behaviours_refs that is not a map")
+
+  # 1.0's WindowManager pinned the window with :max_tokens; 2.0 calls it :context_window.
+  # Only Normandy's own compactor: a custom compactor's :max_tokens is its own option.
+  defp compactor_ref!({Compactor.WindowManager, opts}, id) when is_list(opts) do
+    case {Keyword.fetch(opts, :max_tokens), Keyword.has_key?(opts, :context_window)} do
+      {:error, _pinned?} ->
+        {Compactor.WindowManager, opts}
+
+      {{:ok, _window}, true} ->
+        untranslatable!(
+          id,
+          "has Compactor.WindowManager opts with both :max_tokens (1.0) and :context_window (2.0)"
+        )
+
+      {{:ok, window}, false} ->
+        {Compactor.WindowManager,
+         opts |> Keyword.delete(:max_tokens) |> Keyword.put(:context_window, window)}
+    end
+  end
+
+  defp compactor_ref!(ref, _id), do: ref
+
+  @spec untranslatable!(term(), String.t()) :: no_return()
+  defp untranslatable!(id, what) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: template #{inspect(id)} #{what}, which neither a " <>
+            "Normandy 1.0 nor a 2.0 template has; it cannot be rebuilt (MIGRATING-2.0.md §22)"
+  end
+
+  @spec missing!(term(), String.t()) :: no_return()
+  defp missing!(id, what) do
+    raise ArgumentError,
+          "ConfigTemplate.rebuild/3: template #{inspect(id)} lacks #{what}, which every " <>
+            "Normandy 1.0 and 2.0 template has; it cannot be rebuilt (MIGRATING-2.0.md §22)"
   end
 
   defp node_local_fields!(tmpl, supplement) do

@@ -11,12 +11,12 @@ defmodule Normandy.Behaviours.Config do
   `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`)
   into a `%Normandy.Agents.Dispatch.Pipeline{}`.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
-  the dependency points Phase 2 → Phase 1. The `credential`, `compactor`,
-  `model_catalog`, `session_store`, and `session_registry` slots are not
-  dispatch-path concerns and are not placed on the pipeline. `compactor` selects
-  the `:steering`-boundary compaction strategy (Phase 5); `session_store`
-  selects where session entries / turn state persist; it is wired here but not
-  yet consumed by the turn loop (Phase 4 reads it).
+  the dependency points Phase 2 → Phase 1. The `credential`, `compactor` and
+  `model_catalog` slots are not dispatch-path concerns and are not placed on the
+  pipeline. `compactor` selects the `:steering`-boundary compaction strategy. Where
+  sessions persist is not chosen here: `Normandy.Agents.Turn.Server` takes `:store` and
+  `:registry` (the 1.x `session_store`/`session_registry` slots were never read and are
+  gone).
   """
 
   alias Normandy.Agents.Dispatch.Pipeline
@@ -25,8 +25,6 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Behaviours.CredentialProvider
   alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.PolicyEngine
-  alias Normandy.Behaviours.SessionRegistry
-  alias Normandy.Behaviours.SessionStore
   alias Normandy.Hooks.Runner
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
@@ -41,9 +39,7 @@ defmodule Normandy.Behaviours.Config do
           hooks: [Normandy.Behaviours.Hooks.entry()],
           credential: ref(),
           compactor: ref(),
-          model_catalog: ref(),
-          session_store: ref(),
-          session_registry: ref()
+          model_catalog: ref()
         }
 
   defstruct policy: {PolicyEngine.AllowAll, []},
@@ -53,9 +49,7 @@ defmodule Normandy.Behaviours.Config do
             hooks: [],
             credential: {CredentialProvider.FromClient, []},
             compactor: {Compactor.NoOp, []},
-            model_catalog: {ModelCatalog.ModelsAPI, []},
-            session_store: {SessionStore.InMemory, []},
-            session_registry: {SessionRegistry.Native, []}
+            model_catalog: {ModelCatalog.ModelsAPI, []}
 
   @doc """
   Builds a `%Dispatch.Pipeline{}` from the dispatch-path slots of the bundle.
