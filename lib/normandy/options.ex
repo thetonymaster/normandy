@@ -11,7 +11,9 @@ defmodule Normandy.Options do
 
   The value of an option named in `sensitive_keys/0`, or nested under one, never appears in
   a message: the message names the option and shows its `:type_doc` instead. Give every such
-  option a `:type_doc` in its schema.
+  option a `:type_doc` in its schema. Whatever the option, a map, list or tuple value is
+  never echoed either (it can hold a secret under any key): the message states its type, for
+  example `got: a map`. Scalar values appear as NimbleOptions words them.
   """
 
   alias NimbleOptions.ValidationError
@@ -130,9 +132,17 @@ defmodule Normandy.Options do
       "invalid value for #{inspect(key)} option#{under(path)}: expected #{expected}; " <>
         "the value is not shown because #{inspect(key)} can hold a secret"
     else
-      Exception.message(error)
+      redact_container(Exception.message(error), value)
     end
   end
+
+  # A map, list or tuple can hold a secret under any key, so its inspected form is replaced by
+  # its type. Scalars keep NimbleOptions' own message.
+  defp redact_container(message, value)
+       when is_map(value) or is_list(value) or is_tuple(value),
+       do: String.replace(message, inspect(value), Describe.type_of(value))
+
+  defp redact_container(message, _value), do: message
 
   defp definition_at(definition, []), do: definition
 

@@ -109,6 +109,23 @@ defmodule Normandy.OptionsTest do
       refute error.message =~ "sk-ant-canary"
     end
 
+    test "a container value of an ordinary option is described by type, not shown" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Options.validate!(
+            [model: "m", transport: %{headers: [authorization: "sk-canary"]}],
+            @schema,
+            @mfa
+          )
+        end
+
+      assert error.message ==
+               "Normandy.Agents.BaseAgent.init/1: invalid value for :transport option: " <>
+                 "expected keyword list, got: a map"
+
+      refute error.message =~ "sk-canary"
+    end
+
     test "a list that is not a keyword list is rejected by position" do
       assert_raise ArgumentError,
                    "Normandy.Agents.BaseAgent.init/1: expected options as a keyword list or a " <>
