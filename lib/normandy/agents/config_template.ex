@@ -13,8 +13,8 @@ defmodule Normandy.Agents.ConfigTemplate do
   Everything else travels in the template: model and sampling settings, tool
   limits, prompt, schemas, memory cap, `initial_memory`, `retry_options`, JSON
   retry settings, guardrails, `tool_context`, behaviour module refs and hook entries
-  (`Normandy.Behaviours.Hooks`; their opts must be plain data and hold no secrets). These must be plain
-  data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
+  (`Normandy.Behaviours.Hooks`; their opts must be plain data and hold no secrets).
+  These must be plain data: `from_config/2` raises on a function or pid (e.g. a `:retry_if` fun).
   `tool_context` must hold no secrets: the template is stored in plaintext.
   A template saved before these fields existed rebuilds with their defaults.
   """
@@ -120,12 +120,15 @@ defmodule Normandy.Agents.ConfigTemplate do
   Rebuilds a `BaseAgentConfig` from a template and a supplement.
 
   Raises `ArgumentError` for a compaction setup that can't size its window (see
-  `BaseAgent.validate_compaction_config!/1`).
+  `BaseAgent.validate_compaction_config!/1`), and for a malformed hook entry in the
+  template (shape, `:on_error` and plain-data opts; whether the hook module exists on
+  this node is checked later, by `Turn.Server`).
   """
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
           BaseAgentConfig.t()
   def rebuild(tmpl, supplement, token) do
     refs = tmpl.behaviours_refs
+    :ok = Hooks.validate_entries!(Map.get(refs, :hooks, []), load: false)
 
     behaviours = %Config{
       policy: refs.policy,

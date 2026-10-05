@@ -5,6 +5,10 @@ defmodule Normandy.Hooks.Handlers do
   a caller passes to `Turn.Server`. Each shell wraps its set once, and the default sets
   hold no hook calls, so no hook runs twice. A config with no entry exporting a callback
   gets its handler back unwrapped.
+
+  `wrap/2` is not idempotent: wrapping a set twice runs each hook twice. A handler set is
+  a `Driver.Handlers` struct with no room for a "wrapped" marker, so wrap exactly once,
+  at the shell that drives the set.
   """
 
   alias Normandy.Agents.Turn.Driver
@@ -12,6 +16,8 @@ defmodule Normandy.Hooks.Handlers do
   alias Normandy.HookHaltError
   alias Normandy.Hooks.Runner
 
+  # Internal to the shells (BaseAgent, Turn.Server); see the moduledoc: wrap once.
+  @doc false
   @spec wrap(Driver.Handlers.t(), map() | nil) :: Driver.Handlers.t()
   def wrap(%Driver.Handlers{} = handlers, config) do
     handlers
@@ -47,7 +53,7 @@ defmodule Normandy.Hooks.Handlers do
   # halt is a decision, not a failed call, so it is neither retried nor recorded as an
   # LLM exception.
   defp before_llm!(config, state, request) do
-    info = %{final: Map.get(request, :final, false), iterations_left: state.iterations_left}
+    info = %{final: request.final, iterations_left: state.iterations_left}
 
     case Runner.before_llm(config, info) do
       :cont -> :ok

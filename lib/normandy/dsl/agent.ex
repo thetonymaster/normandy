@@ -54,6 +54,27 @@ defmodule Normandy.DSL.Agent do
   - Tool registration support
   - Memory management helpers
   - `hooks` - lifecycle hook modules (`Normandy.Behaviours.Hooks`), `[{Mod, opts}]`
+
+  ## Name clashes
+
+  `use Normandy.DSL.Agent` imports every macro of this module, `hooks/1` included. A
+  module that defines its own `hooks/1` (or imports another one) gets a compile error
+  for the clash. Keep the DSL's `hooks` by calling it qualified, and drop it from the
+  import:
+
+      defmodule MyAgent do
+        use Normandy.DSL.Agent
+        import Normandy.DSL.Agent, except: [hooks: 1]
+
+        def hooks(x), do: x
+
+        agent do
+          model "claude-opus-5-5"
+          Normandy.DSL.Agent.hooks [{MyApp.Hooks.Audit, []}]
+        end
+      end
+
+  A second `import` of the same module replaces the first, so `use` stays as it is.
   """
 
   alias Normandy.Agents.BaseAgent

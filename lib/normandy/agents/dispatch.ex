@@ -204,7 +204,9 @@ defmodule Normandy.Agents.Dispatch do
   Classifies one tool call: registry resolution → before-hooks → policy. Returns
   the routing decision WITHOUT executing the tool, so a durable shell can act on a
   `:needs_approval` verdict (park) before any side effect runs. Its only side
-  effect is the `[:normandy, :tool, :denied]` event for a policy deny or hook halt.
+  effects are the `[:normandy, :tool, :denied]` event for a policy deny or hook halt and,
+  for a `:deny` result, the pipeline's `after_tool` slot (every result the model sees
+  passes it once; an `:execute` or `:needs_approval` verdict has no result yet).
 
     * `{:execute, prepared, call}` — allowed; `prepared` is the built tool struct,
       `call` the post-before-hook `%ToolCall{}` (hooks may have rewritten it).
@@ -278,7 +280,8 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc """
   Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
-  execute → budget record → after-hooks. Returns a `%ToolResult{}`. Skips
+  execute → budget record → `after_tool` slot → after-hooks. A budget denial passes
+  `after_tool` too. Returns a `%ToolResult{}`. Skips
   re-classification — the verdict was already decided by `classify/3` (and, for an
   approved call, by a human), so re-running policy here would re-deny/re-park.
   """

@@ -34,11 +34,6 @@ defmodule Normandy.Hooks.BaseAgentGlue do
     :ok
   end
 
-  def turn_end_ok(config, result) do
-    if Runner.hooks?(config), do: Runner.turn_end(config, {:ok, result})
-    :ok
-  end
-
   @doc """
   Runs `on_turn_end` for a run that raised, exited or threw. The run's config is lost
   with the exception, so the hook gets `turn_id: nil` rather than the previous turn's.

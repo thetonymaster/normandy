@@ -8,7 +8,8 @@ defmodule Normandy.Behaviours.Config do
   so the "everything off" path is observably identical to today.
 
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
-  `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`) into a `%Normandy.Agents.Dispatch.Pipeline{}`.
+  `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`)
+  into a `%Normandy.Agents.Dispatch.Pipeline{}`.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
   the dependency points Phase 2 → Phase 1. The `credential`, `compactor`,
   `model_catalog`, `session_store`, and `session_registry` slots are not

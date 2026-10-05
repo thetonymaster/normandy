@@ -555,7 +555,8 @@ defmodule Normandy.Agents.BaseAgent do
   # the FSM state and performing each effect via the existing BaseAgent helpers.
   # Returns {config, final_response}. Input validation + guardrails + memory init
   # are admission control performed before :start (they raise on failure, as the
-  # pre-FSM loop did). LLM failures raise inside the :call_llm handler (parity:
+  # pre-FSM loop did). Order: schema validation, on_prompt hooks (a rewrite is
+  # re-validated), then input guardrails. LLM failures raise inside the :call_llm handler (parity:
   # exceptions propagate out of run/2), so the FSM's :failed path is only reached
   # on an unexpected event-sequencing bug.
 
@@ -878,7 +879,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   # A policy whose module checks its opts (the optional
   # PolicyEngine.validate_opts!/1) raises here, where the config is made.
-  defp validate_policy_opts!(%Normandy.Behaviours.Config{policy: {mod, opts}}) do
+  defp validate_policy_opts!(%Config{policy: {mod, opts}}) do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :validate_opts!, 1),
       do: mod.validate_opts!(opts),
       else: :ok
@@ -887,7 +888,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp validate_policy_opts!(_behaviours), do: :ok
 
   # Hook entries are checked where the config is made, like the policy's opts.
-  defp validate_hooks!(%Normandy.Behaviours.Config{hooks: hooks}),
+  defp validate_hooks!(%Config{hooks: hooks}),
     do: Hooks.validate_entries!(hooks)
 
   defp validate_hooks!(_behaviours), do: :ok
@@ -1020,8 +1021,8 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Streaming admits input exactly as run/2 does: schema validation, then input
-  # guardrails, then the memory turn.
+  # Streaming admits input exactly as run/2 does: on_prompt hooks (with the rewrite
+  # re-validated), input guardrails, then the memory turn.
   defp admit_stream_turn_input(config, user_input), do: admit_turn_input(config, user_input)
 
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
