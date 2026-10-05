@@ -209,10 +209,35 @@ defmodule Normandy.TurnErrorTest do
       reason = {@key_error, {GenServer, :call, [:pid, [@key_error, llm], 5000]}}
 
       assert TurnError.redact(%TurnError{type: :task_down, reason: reason}).reason ==
-               {%{exception: KeyError},
-                {GenServer, :call, [:pid, [%{exception: KeyError}, llm], 5000]}}
+               {%{exception: KeyError}, {GenServer, :call, 3}}
 
-      assert TurnError.redact({:shutdown, [@key_error]}) == {:shutdown, [%{exception: KeyError}]}
+      assert TurnError.redact({:shutdown, [@key_error, llm]}) ==
+               {:shutdown, [%{exception: KeyError}, llm]}
+    end
+
+    test "a call in an exit reason keeps its module, function and arity, not its arguments" do
+      for mod <- [GenServer, :gen_server, :gen_statem, :gen] do
+        reason = {:timeout, {mod, :call, [:pid, {:get, "sk-secret"}, 5000]}}
+
+        assert TurnError.redact(%TurnError{type: :task_down, reason: reason}).reason ==
+                 {:timeout, {mod, :call, 3}}
+      end
+
+      # Nested: a call exit inside a handler crash inside a session failure.
+      nested = %TurnError{
+        type: :session_unavailable,
+        reason: %TurnError{
+          type: :handler_crashed,
+          handler: :append,
+          reason: {:noproc, {GenServer, :call, [:store, {:append, "sk-secret"}, 5000]}}
+        }
+      }
+
+      refute inspect(TurnError.redact(nested), limit: :infinity) =~ "sk-secret"
+
+      # A 3-tuple that is not an exit's {mod, fun, args} is data and is kept.
+      assert TurnError.redact({:no_config_template, "s1"}) == {:no_config_template, "s1"}
+      assert TurnError.redact({:a, {:b, :c, ["id1"]}, :d}) == {:a, {:b, :c, ["id1"]}, :d}
     end
 
     test "is idempotent" do

@@ -83,7 +83,7 @@ defmodule Normandy.NonDomainRedactionTest do
       assert %TurnError{type: :task_down, reason: %{exception: KeyError}} = meta.reason
     end
 
-    test "an exit carrying a bug and a stacktrace emits neither; the call message stays" do
+    test "an exit carrying a bug, a stacktrace and a call message emits none of them" do
       name = "redact-#{System.unique_integer([:positive])}"
       TelemetryCapture.attach_span([[:normandy, :agent, :run, :exception]], agent_name: name)
 
@@ -95,8 +95,8 @@ defmodule Normandy.NonDomainRedactionTest do
       refute text =~ "SECRET-EXC"
       refute text =~ "SECRET-ARG"
       assert text =~ "%{exception: KeyError}"
-      # Not an exception: exit payload terms are emitted as they are (Q may decide more).
-      assert text =~ "CALLMSG-2"
+      refute text =~ "CALLMSG-2"
+      assert text =~ "{GenServer, :call, 3}"
     end
 
     test "a domain exception's telemetry reason is unchanged" do
@@ -170,6 +170,7 @@ defmodule Normandy.NonDomainRedactionTest do
                Turn.Server.run(srv, "hello")
 
       assert full(replied) =~ "SECRET-EXC"
+      assert full(replied) =~ "CALLMSG-2"
 
       assert {:ok, %Turn.State{status: :failed, error: persisted}} =
                InMemory.load_turn_state(store, sid)
@@ -181,7 +182,8 @@ defmodule Normandy.NonDomainRedactionTest do
         refute text =~ "SECRET-EXC"
         refute text =~ "SECRET-ARG"
         assert text =~ "%{exception: KeyError}"
-        assert text =~ "CALLMSG-2"
+        refute text =~ "CALLMSG-2"
+        assert text =~ "{GenServer, :call, 3}"
       end
     end
 

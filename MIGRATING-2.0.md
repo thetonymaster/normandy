@@ -329,8 +329,11 @@ bug: a `KeyError` from a client, a tool or a hook) is emitted as
 `%Normandy.TurnError{type: :task_down, reason: %{exception: KeyError}}`, and a `TurnError`'s
 non-Normandy `:reason` as `%{exception: module}`; a raw Erlang error (`{:badkey, k, map}`) is
 normalized to its exception first. Inside an exit reason or a thrown term, such an exception is
-reduced at any depth of its tuples and lists, and every `{reason, stacktrace}` pair loses its
-stacktrace; the term's other values are kept. The raise, and the exception replied to the caller,
+reduced at any depth of its tuples and lists, every `{reason, stacktrace}` pair loses its
+stacktrace, and a call (`{reason, {GenServer, :call, [server, message, timeout]}}`) keeps its
+arity in place of its arguments (`{GenServer, :call, 3}`), since the message can hold the
+caller's data; the term's other values are kept. A failed turn's saved `Turn.State.error` is
+reduced the same way. The raise, and the exception replied to the caller,
 keep it whole. `error.type` for such a run is now `task_down`, not the exception module.
 
 ## 15. Agent memory and tool context

@@ -44,10 +44,12 @@ defmodule Normandy.TurnError do
   other than Normandy's own (a `KeyError`, a `MatchError`) is `%{exception: KeyError}`,
   because its fields and its message can hold the value it failed on, and a bare one is
   emitted as `%TurnError{type: :task_down, reason: %{exception: KeyError}}`. The same
-  holds for such an exception at any depth of the tuples and lists in a reason (an exit
-  reason `{%KeyError{}, {GenServer, :call, args}}` keeps only `%{exception: KeyError}`).
-  Normandy's own exceptions, and the rest of a reason that is not an exception (an exit
-  reason's other terms, a thrown term, a store reason, tool call ids), are kept.
+  holds for such an exception at any depth of the tuples and lists in a reason. A call in
+  an exit reason keeps its arity in place of its arguments, which hold the call's message:
+  `{%KeyError{}, {GenServer, :call, [server, message, 5000]}}` is
+  `{%{exception: KeyError}, {GenServer, :call, 3}}`. Normandy's own exceptions, and the
+  rest of a reason (an exit reason's other terms, a thrown term, a store reason, tool
+  call ids), are kept.
   """
 
   require Logger
@@ -129,10 +131,11 @@ defmodule Normandy.TurnError do
   # %{exception: Module}, because its fields and its message can hold the value it
   # failed on. A bare one becomes the :task_down TurnError from_reason/1 would make of
   # it; a TurnError keeps its type and handler and has its reason reduced the same way,
-  # nested TurnErrors included. Tuples and lists (an exit reason, a GenServer.call's
-  # arguments) are walked, so a non-domain exception is reduced at any depth; other
-  # terms (maps, structs, a call's message) are kept. Stacktraces are not dropped here:
-  # see drop_stacktraces/1. Idempotent.
+  # nested TurnErrors included. Tuples and lists (an exit reason) are walked, so a
+  # non-domain exception is reduced at any depth. A call in an exit reason,
+  # {reason, {module, function, args}}, keeps its arity in place of its arguments
+  # (a GenServer.call's message). Other terms (maps, structs) are kept. Stacktraces are
+  # not dropped here: see drop_stacktraces/1. Idempotent.
   @spec redact(term()) :: term()
   def redact(%__MODULE__{reason: reason} = error), do: %{error | reason: redact_reason(reason)}
 
@@ -145,6 +148,12 @@ defmodule Normandy.TurnError do
 
   defp redact_reason(%module{} = exception) when is_exception(exception),
     do: if(domain?(exception), do: exception, else: %{exception: module})
+
+  # An exit from a call ({reason, {GenServer, :call, [server, message, timeout]}}): the
+  # message can hold the caller's data, so the call keeps its arity only.
+  defp redact_reason({reason, {module, function, args}})
+       when is_atom(module) and is_atom(function) and is_list(args),
+       do: {redact_reason(reason), {module, function, length(args)}}
 
   defp redact_reason(tuple) when is_tuple(tuple),
     do: tuple |> Tuple.to_list() |> redact_list() |> List.to_tuple()

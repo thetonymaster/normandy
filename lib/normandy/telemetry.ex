@@ -19,7 +19,9 @@ defmodule Normandy.Telemetry do
       and a `TurnError`'s non-Normandy `:reason` as `%{exception: module}`, because an
       exception's fields and message can hold the value it failed on. An exit reason or
       a thrown term loses every stacktrace in it and has such exceptions reduced at any
-      depth of its tuples and lists; its other terms are emitted as they are. Keys with no value are left out of the map, except where a key is described
+      depth of its tuples and lists; a call in it (`{reason, {GenServer, :call, args}}`)
+      is emitted with its arity in place of its arguments, which hold the call's message;
+      its other terms are emitted as they are. Keys with no value are left out of the map, except where a key is described
       as "always present".
     * Metadata keys are snake_case atoms, not dotted semconv names. The mapping to
       OpenTelemetry GenAI attributes is in "OpenTelemetry GenAI mapping" below.
