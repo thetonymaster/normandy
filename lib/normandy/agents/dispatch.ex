@@ -273,10 +273,24 @@ defmodule Normandy.Agents.Dispatch do
 
   # Every result the model will see passes the after_tool slot once; the result answers
   # the call's id whatever the slot returns.
-  defp answer(_config, _call, result, %Pipeline{after_tool: nil}), do: result
+  defp answer(_config, _call, result, %Pipeline{after_tool: nil}), do: ensure_encodable(result)
 
   defp answer(config, call, result, %Pipeline{after_tool: after_tool}),
-    do: %{after_tool.(config, call, result) | tool_call_id: call.id}
+    do: ensure_encodable(%{after_tool.(config, call, result) | tool_call_id: call.id})
+
+  # Hooks (before-hook halts, after_tool, after_hooks) may build any %ToolResult{},
+  # and memory keeps it for every later request. So the encodability check runs on
+  # the final result, the last point before it can reach memory.
+  defp ensure_encodable(%ToolResult{output: output} = result)
+       when is_binary(output) or is_number(output),
+       do: result
+
+  defp ensure_encodable(%ToolResult{output: output} = result) do
+    case Normandy.JSON.encode(output) do
+      {:ok, _json} -> result
+      {:error, exception} -> %{result | output: unencodable_output(exception), is_error: true}
+    end
+  end
 
   @doc """
   Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
@@ -292,7 +306,11 @@ defmodule Normandy.Agents.Dispatch do
         result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
         result = answer(config, call, result, pipeline)
-        %{run_after_hooks(config, call, result, pipeline.after_hooks) | tool_call_id: call.id}
+
+        config
+        |> run_after_hooks(call, result, pipeline.after_hooks)
+        |> Map.put(:tool_call_id, call.id)
+        |> ensure_encodable()
 
       {:error, reason} ->
         emit_denied(config, call, :budget)
@@ -365,10 +383,7 @@ defmodule Normandy.Agents.Dispatch do
       {:error, exception} ->
         %ToolResult{
           tool_call_id: call.id,
-          output: %{
-            error:
-              "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
-          },
+          output: unencodable_output(exception),
           is_error: true
         }
     end
@@ -385,6 +400,11 @@ defmodule Normandy.Agents.Dispatch do
 
     %ToolResult{tool_call_id: call.id, output: output, is_error: true}
   end
+
+  defp unencodable_output(exception),
+    do: %{
+      error: "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
+    }
 
   defp unencodable(%Protocol.UndefinedError{value: value}),
     do: "it contains #{Describe.type_of(value)}"

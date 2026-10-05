@@ -46,8 +46,8 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
   defp format_tool_output(output) when is_number(output), do: to_string(output)
 
   # Anything else (a map, a list, an atom, a boolean, nil) goes to the model as
-  # JSON. Dispatch has already turned an output JSON cannot express into an
-  # error result, so this raises only for a ToolResult built by hand.
+  # JSON. Dispatch turns an output JSON cannot express into an error result after
+  # every hook has run, so this raises only for a ToolResult built outside Dispatch.
   defp format_tool_output(output), do: Normandy.JSON.encode!(output)
 
   def get_schema(_), do: %{}

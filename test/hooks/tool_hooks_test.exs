@@ -114,6 +114,43 @@ defmodule Normandy.Hooks.ToolHooksTest do
     assert_received {:fun_after, "from-module"}
   end
 
+  describe "a hook-built result JSON cannot express" do
+    alias Normandy.Components.{AgentMemory, BaseIOSchema}
+
+    # The result is an error naming the type, and it still goes to memory and
+    # back out as the model's JSON: the turn continues.
+    defp assert_safe_error(%ToolResult{} = result, type) do
+      assert %ToolResult{is_error: true, output: %{error: error}} = result
+      assert error == "the tool ran, but its output cannot be sent as JSON: it contains #{type}"
+
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "tool", result)
+      assert [%{content: _}] = AgentMemory.history(memory)
+      assert [%{content: content}] = BaseIOSchema.to_json(result)
+      assert is_binary(content)
+    end
+
+    test "a module after_tool output with a tuple" do
+      built = %ToolResult{tool_call_id: "call_1", output: {:ok, 1}, is_error: false}
+      behaviours = %Config{hooks: [probe(:m, returns: [after_tool: {:cont, built}])]}
+
+      assert_safe_error(dispatch(agent(behaviours)), "a tuple")
+    end
+
+    test "a function after-hook output that is a keyword list" do
+      hook = fn _config, _call, result -> %{result | output: [error: "x"]} end
+      behaviours = %Config{after_hooks: [hook]}
+
+      assert_safe_error(dispatch(agent(behaviours)), "a tuple")
+    end
+
+    test "a module before_tool halt result with a tuple" do
+      built = %ToolResult{tool_call_id: "call_1", output: {:x, 1}, is_error: true}
+      behaviours = %Config{hooks: [probe(:m, returns: [before_tool: {:halt, built}])]}
+
+      assert_safe_error(dispatch(agent(behaviours)), "a tuple")
+    end
+  end
+
   test "a policy denial passes after_tool once and the function after-hooks not at all" do
     test_pid = self()
 
