@@ -7,6 +7,9 @@ defmodule Normandy.Guardrails.Builtins.Field do
   alias Normandy.Components.ContentBlock.Describe
 
   @spec extract!(module(), term(), atom() | nil) :: term()
+  # The default input schema's content is its text: a guard with no :field checks the
+  # text for `run(agent, "x")` and `run(agent, %{chat_message: "x"})` alike.
+  def extract!(_guard, %Normandy.Agents.BaseAgentInputSchema{chat_message: text}, nil), do: text
   def extract!(_guard, value, nil), do: value
 
   def extract!(guard, %mod{} = struct, field) do

@@ -100,9 +100,32 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
                )
     end
 
-    test "a non-map input passes through" do
-      assert ValidationMiddleware.validate_input(config(input_schema: %Query{}), "hi") ==
-               {:ok, "hi"}
+    test "a non-map input for a custom schema is a type error naming the schema" do
+      assert {:error, [%{constraint: :type, path: [], message: message}]} =
+               ValidationMiddleware.validate_input(config(input_schema: %Query{}), "hi")
+
+      assert message =~ "Query"
+      assert message =~ "got: a string"
+    end
+
+    test "a string becomes the chat_message of the default schema" do
+      assert {:ok, %BaseAgentInputSchema{chat_message: "hi"}} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 "hi"
+               )
+    end
+
+    test "a default-schema struct is validated, not trusted" do
+      assert {:error, [%{constraint: :type, path: [:chat_message]}]} =
+               ValidationMiddleware.validate_input(
+                 config(input_schema: %BaseAgentInputSchema{}),
+                 %BaseAgentInputSchema{chat_message: nil}
+               )
+    end
+
+    test "with no input schema any input passes through" do
+      assert ValidationMiddleware.validate_input(config(input_schema: nil), "hi") == {:ok, "hi"}
     end
 
     test "a schema without validation support keeps the caller's input" do

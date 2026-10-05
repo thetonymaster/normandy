@@ -381,6 +381,14 @@ This also reaches input you don't build by hand:
   default-schema agent now fails; add a transform that produces `%{chat_message: text}`.
 - An `on_prompt` hook that rewrites the input to another map is validated the same way.
 - A previous agent's reply whose `chat_message` is `nil` no longer becomes an empty turn.
+- `run(agent, "text")` is `run(agent, %{chat_message: "text"})` for the default schema. With
+  a custom input schema, input that isn't a map or the schema's struct (a string, a number)
+  is now a `ValidationError`; in 1.x it was sent as is.
+- A `%BaseAgentInputSchema{}` struct is validated too: `chat_message: nil` is rejected.
+- A list of content blocks still passes through the default schema unvalidated.
+- Input guardrails see a validated `%BaseAgentInputSchema{}` for string and map input alike.
+  Built-in guards without a `:field` option check its `chat_message` text; custom guards
+  receive the struct.
 
 ## 19. An output that breaks its schema is an error
 

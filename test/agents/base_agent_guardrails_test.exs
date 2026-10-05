@@ -57,6 +57,14 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       end
     end
 
+    test "map input to the default schema is checked as its text" do
+      agent =
+        BaseAgent.init(base_config(%{input_guardrails: [{MaxLength, limit: 5}]}))
+
+      assert {:error, %Normandy.Guardrails.ViolationError{}} =
+               BaseAgent.run(agent, %{chat_message: "way too long"})
+    end
+
     test "allows passing inputs through" do
       agent =
         BaseAgent.init(

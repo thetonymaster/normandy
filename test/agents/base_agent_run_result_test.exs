@@ -21,6 +21,18 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
     assert length(AgentMemory.history(config.memory)) == 2
   end
 
+  test "run/2 accepts text for the default schema and sends it as the user message" do
+    client = %StubClient{notify: self()}
+    agent = BaseAgent.init(%{client: client, model: "m"})
+
+    assert {:ok, _config, _output} = BaseAgent.run(agent, "hello")
+
+    assert_receive {:converse, %Normandy.LLM.Request{messages: messages}, _}
+    assert [%{role: "user", content: content}] = messages
+    # Memory renders a default-schema input as its chat_message text.
+    assert content == "hello"
+  end
+
   test "run/2 returns an LLM failure as {:error, %LLMError{}}" do
     assert {:error, %LLMError{type: :rate_limit, status: 429}} =
              BaseAgent.run(agent(&rate_limited/1), %{chat_message: "hello"})

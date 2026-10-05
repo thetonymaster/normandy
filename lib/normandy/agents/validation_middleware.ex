@@ -29,6 +29,8 @@ defmodule Normandy.Agents.ValidationMiddleware do
   """
 
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Schema.Validator
 
   @doc """
@@ -51,6 +53,18 @@ defmodule Normandy.Agents.ValidationMiddleware do
   def validate_input(%BaseAgentConfig{input_schema: nil}, input), do: {:ok, input}
   def validate_input(%BaseAgentConfig{}, nil), do: {:ok, nil}
 
+  def validate_input(%BaseAgentConfig{input_schema: %BaseAgentInputSchema{}}, text)
+      when is_binary(text),
+      do: {:ok, %BaseAgentInputSchema{chat_message: text}}
+
+  # A default-schema struct is checked like a map: %BaseAgentInputSchema{chat_message: nil}
+  # would otherwise send an empty user turn.
+  def validate_input(
+        %BaseAgentConfig{input_schema: %BaseAgentInputSchema{}},
+        %BaseAgentInputSchema{} = input
+      ),
+      do: validate_base_input(Map.from_struct(input))
+
   def validate_input(%BaseAgentConfig{input_schema: input_schema}, input) when is_map(input) do
     # Check if input is a struct
     if is_map_key(input, :__struct__) do
@@ -68,9 +82,21 @@ defmodule Normandy.Agents.ValidationMiddleware do
     end
   end
 
-  # Catch-all for non-map inputs (e.g., strings, integers, etc.)
-  def validate_input(%BaseAgentConfig{}, input) do
-    {:ok, input}
+  # Content blocks (multimodal input) pass through to the default schema's agent unvalidated.
+  def validate_input(%BaseAgentConfig{input_schema: %BaseAgentInputSchema{}}, blocks)
+      when is_list(blocks),
+      do: {:ok, blocks}
+
+  # Anything but a map or struct can't be cast into a schema.
+  def validate_input(%BaseAgentConfig{input_schema: %schema{}}, input) do
+    {:error,
+     format_validation_errors("Input", [
+       %{
+         path: [],
+         message: "expected a map or %#{inspect(schema)}{}, got: #{Describe.type_of(input)}",
+         constraint: :type
+       }
+     ])}
   end
 
   defp validate_input_map(input_schema, input_map) do

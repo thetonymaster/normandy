@@ -58,6 +58,13 @@ defmodule Normandy.Guardrails do
   as a `:field` the struct does not have or a missing option). A `:field` on a plain map cannot be checked: a map
   has no fixed keys, so a missing key reads as `nil`.
 
+  ## What an input guard receives
+
+  An input guard receives the validated input: a `%BaseAgentInputSchema{}` for the default
+  schema (whether the caller passed `"text"` or `%{chat_message: "text"}`), or the custom
+  schema's struct. A built-in guard with no `:field` option checks the `chat_message` text of
+  a default-schema input; with `field: :chat_message` it reads that field of the struct.
+
   ## Structured reason
 
   A violation's `:constraint` (an atom) is the machine-readable rejection
