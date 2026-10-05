@@ -21,7 +21,11 @@ defmodule Normandy.NonDomainRedactionTest do
     defstruct content: "", tool_calls: nil
   end
 
-  defp secret_key_error, do: Map.fetch!(%{api_key: @secret}, :missing)
+  # A key the compiler can't see, so it doesn't flag the fetch that fails by design; the
+  # map with the secret still lands in the KeyError and the :erlang.map_get frame.
+  defp missing_key, do: String.to_atom("missing")
+
+  defp secret_key_error, do: Map.fetch!(%{api_key: @secret}, missing_key())
 
   # Every term below is walked in full: no truncation can hide the secret.
   defp leaks?(term), do: inspect(term, limit: :infinity, printable_limit: :infinity) =~ @secret

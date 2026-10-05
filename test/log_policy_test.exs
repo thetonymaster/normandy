@@ -32,7 +32,11 @@ defmodule Normandy.LogPolicyTest do
   defp rate_limited(_rm),
     do: {:error, LLMError.new(type: :rate_limit, retryable?: true, status: 429)}
 
-  defp secret_key_error(_rm), do: Map.fetch!(%{api_key: @secret}, :missing)
+  # A key the compiler can't see, so it doesn't flag the fetch that fails by design; the
+  # map with the secret still lands in the KeyError and the :erlang.map_get frame.
+  defp missing_key, do: String.to_atom("missing")
+
+  defp secret_key_error(_rm), do: Map.fetch!(%{api_key: @secret}, missing_key())
 
   # Every metadata key is printed too: a value hidden in metadata is still logged.
   defp capture_log(fun), do: ExUnit.CaptureLog.capture_log([metadata: :all], fun)
