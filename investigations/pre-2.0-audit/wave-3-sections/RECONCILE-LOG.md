@@ -89,3 +89,95 @@ task and step.
 Creator-first check after D1–D31: `Normandy.Options.plain_map/1` is created by 3.1a and first used
 by 3.1b (`:tool_context`); no task creates it again. Neither old missing-`:model` string nor
 "map of plain data" survives outside the appendix's record of #2/#26 and the 1.x "Old" column.
+
+## Pre-flight
+
+Applies `PREFLIGHT.md` (Tables A–D) with the controller's rulings P0–P6
+(`.superpowers/sdd/plan-wave-3/progress.md`, "Pre-flight"). Every row was re-checked against
+the plan text and the code at `efb6b2a` before editing. 63 CONFLICT/ISSUE rows applied, 0
+"no change"; C-17 (carried-over code) kept as is. Checks run: `elixir -e`/`Code.string_to_quoted`
+over every `elixir` block (no block that parsed before stops parsing; the 4 blocks holding the
+3.4d nested-paren sigils now parse), scratch runs of 3.1a's module and tests (20 tests,
+0 failures), the 3.2b breaker message against NimbleOptions 1.1.1, 3.5a's perl plus the undo
+on a scratch copy (36 → 34), `Code.format_string!` on 3.3a's renamed test (4 rewraps), and
+Credo `--strict` on scratch copies (server.ex's `Toolset.fetch` flagged as A#46 says; the new
+breaker validator, `check_input!/1`, `remaining/2` and `retry/1` clean).
+
+### Global
+
+| Row(s) | Plan location | Edit |
+|---|---|---|
+| C-12, D-8, B 3.8(d) | Global Constraints; every task's suite run | 30 `mix test ... \| tail -N` gates became `mix test ... > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" ...`; 9 `mix credo/compile/docs ... \| tail` lost the pipe so their exit status counts; the form is defined once in Global Constraints |
+| P6, A#20, D-9, B 3.1c(b) | Header, Out of scope | `examples/` DSL call sites (`examples/README.md:70`, `agent_horde`, `customer_support_app`) → Wave 7 |
+| A#76, C-6, D-5 | Header sensitive-key list; Convention 10 | `:workers` added (3.7b); Convention 10's stale `3.1-3.2.md` ref → Task 3.1a |
+| P5, A#70, D-6 | Convention 4 | `:timeout` everywhere a caller waits, code handles `:infinity`; positive-ms exceptions named (tool-call bounds, breaker open period); session keys typed from `Turn.Session` (P4) |
+| A#19, C-8 | Header Options block | Empty-schema message `"...; it takes no options"` |
+
+### Per task
+
+| Row(s) | Task | Edit |
+|---|---|---|
+| B 3.1a(a), A#83 | 3.1a Files, Step 1 | `.dialyzer_ignore.exs` in Files; `Normandy.Options` added to the `Agents` docs group (ExDoc never warns for an ungrouped module) |
+| B 3.1a(b) | 3.1a Step 3 | Expected failure: compiles with warnings, 20 tests fail with `UndefinedFunctionError` |
+| B 3.1a(c) | 3.1a Interfaces | Dropped the stale "Header conflict 2" ref |
+| A#19, C-8 | 3.1a Step 2/4/5 | `supported/1` helper (`[]` → "it takes no options") + one test; 19 → 20 tests |
+| B 3.1a(d), A#32 | 3.1a–3.2c suite runs | Absolute rehearsed totals replaced by "the suite's total grows by N" (20, 17, 11, 8, 20, 10) |
+| B 3.1b, C-5, D-2, P2 | 3.1b `InitOptions.validate!/1` | Missing-`:model` raised only when there is no unknown key (`unknown_keys/2`), so `:modle` is named; new test |
+| B 3.1b (1.15) | 3.1b `retry/1` | `Keyword.keyword?/1` guard before `Retry.validate_options!/1`; note reworded |
+| C-11 (clamp) | 3.1b `max_tool_concurrency/1` | Delegates to `BaseAgent.normalize_max_tool_concurrency/1` |
+| B 3.1c(a), P2 | 3.1c `base_config/0`, `init_config!/4` | Model check moved after option validation and the merge (`base_config/0` no longer raises); 2 tests (model via `new/1`, `:modle` named); Interfaces, header and MIGRATING say "declares no model and is given none" |
+| B 3.1c(c) | 3.1c intro | "Open question for Q" → decision 18 settled it |
+| B 3.2a | 3.2a Files, Step 5 | MIGRATING §17 dropped from Files; `config_template_test.exs:382` → `:379` |
+| D-1, A#10, P1 | 3.2b `circuit_breaker/1`, Step 6 table | Unknown keys checked first in house style (`unknown option :x; supported: ...`) via `validate_breaker/1`; expected test text updated; message verified on NimbleOptions 1.1.1 |
+| B 3.2b(a) | 3.2b Step 2 | Expected failure: `CompileError` for the struct literal; DSL file fails at runtime |
+| B 3.2b(b) | 3.2b Step 6 | Row renaming the four `input_guardrails`/`output_guardrails` describes |
+| B 3.2b(c)(d) | 3.2b Files, Step 9 | §21 in Files; CLAUDE.md edits anchored by text/heading |
+| B 3.2c, A#22 | 3.2c Step 3 | Unknown-field / bad-`max_tokens` cases fail on 3.2a's compactor raise first |
+| B 3.3a(a) | 3.3a (and 3.3b Files) | 6 mojibake sequences (`c3a2 c280 c294` → `—`, `c3a2 c286 c292` → `→`); the 4776-4778 anchor now byte-equal to `claudio_adapter.ex:337-339` |
+| B 3.3a(b)(c) | 3.3a Steps 8, 9 | Rewrap count 2 → 4 (304, 307, 314, 321); examples Poison grep now prints nothing |
+| A#46, B 3.4a | 3.4a Step 1 Credo list; 3.4c 4e | `lib/normandy/agents/turn/server.ex` added (13 files); 3.4c 4e deletes the `Toolset` alias once its only use goes |
+| C-4 | 3.4b `Tools.Input` | `validate_map/2` clause for a non-map `input_schema/1` → `{:error, [%{constraint: :schema}]}`; test; moduledoc sentence |
+| C-16 | 3.4b moduledoc | Unknown `type` names are not checked (documented) |
+| C-14 (3.4b) | 3.4b `tool_test.exs` | Test renamed `"a new context's :input defaults to nil"` |
+| B 3.4c B1–B6 | 3.4c | Step 2: two files are CompileErrors, run the other two alone; "7 sites" → 9; "see Notes" → Appendix #8; Jason kept (no open choice); Consumes adds 3.1a/3.3a/3.3b; "at the end of §25" |
+| A#45, C-1 | 3.4c Step 6a | `tool2 = %Normandy.Test.FakeTool{name: "calculator"}` by hand after the perl |
+| C-2 | 3.4c `executor_test.exs` | Test: without `:timeout` the default applies, not the struct's field |
+| C-3 | 3.4c Step 3 + 6a | Filters `Map.take` the timeouts; test that a dropped tool's timeout is `nil` |
+| B 3.4d, C-10 | 3.4d | Five `~s(... (...))` sigils → plain strings (now parse); Step 2: `agent_tool_test.exs` CompileError first; MIGRATING "each names what it found"; `@tools_section` copy kept with a comment (scan's "accept the copy") |
+| B 3.5a | 3.5a Steps 2, 6 | Step 2: CompileError (struct patterns); Step 6: count 36, undo perl for the two must-raise calls, then 34 (rehearsed) |
+| P4, A#60 | 3.5a Session schema | `__opts_schema__(:new)`; `:handlers` struct-or-`nil`; `_ms` keys `:timeout` (P5); `:config` `type_doc` (A#9) |
+| A#65 | 3.5b Step 9 | "add `OrchestrationError` after `ToolNotFoundError`" instead of a literal list |
+| A#70, P5 | 3.5b schema, MIGRATING | `:timeout` type `:timeout`; bullet |
+| D-3, P3 | 3.5b `execute/3`, test, MIGRATING | `check_input!/1` raises for a keyword-list input whose keys are all (2.0 or 1.x) option names; test; §27 row |
+| C-13 | 3.5c `execute_with_messages/3` | `Orchestration.specs!/3` with `[:id, :agent]`; test; MIGRATING |
+| B 3.5d | 3.5d | Step 2: the `all/3` exit test also kills the test process; line refs (218-223, 268-269, 175, describe `"some/4"`); MIGRATING adds `all/3` |
+| B 3.6a, C-14 | 3.6a | Step 2 text ("Expected exception ... but got ..."); the "with a toolset" case added |
+| B 3.6c | 3.6c | `redact_test.exs` found by test name |
+| A#75, B 3.7a | 3.7a `options_assertions.ex`, Step 2 | `:: Exception.t()`; docs test fails on `Turn.Server.start_link/1` ("has no @doc") |
+| C-15 | 3.7a `assert_documents_options/3` | Also requires a generated bullet or a "The options of"/"None; any key raises" pointer (the forms 3.7b–d use); regex checked against NimbleOptions output |
+| P4, A#60 | 3.7a Server schema, MIGRATING | `@session_types` from `Session.__opts_schema__(:new)` for `:template_provider`, `:handlers`, `_ms`; plain-map handlers rejected (bullet); handler test renamed |
+| A#9, C-7 | 3.7a/3.7b/3.7c schemas | `type_doc` on `:config` (Server, Session), `:agent`, `:agent_config`, `:workers`, `:agents`, `:auth_token`, `:transport_opts`, AgentProcess `{module, handle}` keys |
+| C-9 | 3.7a Server | `validate_on_approval_timeout!/1` names the saved template, not `start_link/1`; MIGRATING bullet |
+| A#59 | 3.7a Step 4, Files, commit | `server_errors_test` split: `assert_raise` from `Supervisor.start_server/2` (Ruling 7) + `:session_unavailable` kept through an `UncheckedSupervisor`; `Session.run/2` doc; Step 5 runs the file |
+| A#61, D-4, P4 | 3.7b AgentProcess schema, test, MIGRATING | Every session key typed from `Session.__opts_schema__(:new)`; test that `handlers: %{}`, `store: {nil, _}`, `supervisor: "sup"` raise in the caller |
+| A#71, B 3.7b, D-6 | 3.7b Step 3f, test | `remaining/2` handles `:infinity` in both await loops; test with the model mockup |
+| A#76, C-6, D-5 | 3.7b Step 3, test | `:workers` sensitive; no-echo test |
+| B 3.7b | 3.7b Steps 3e, 3g | Hierarchical moduledoc example uses `%{id:, agent:}`; BaseAgent `process_batch/3`'s existing `## Options` list is replaced, not doubled |
+| B 3.7c (3.7b test) | 3.7b test | `"AgentSupervisor.start_agent/2 accepts :restart"` |
+| D-7, P6 | 3.7b, 3.7c MIGRATING | Bullets for CircuitBreaker unknown keys, AgentProcess types, Hierarchical bare workers, `some/3` `count: 0` and `:infinity`, AgentMessage `:from`/`:to`/`:type`/`:metadata`; the duplicate `circuit_breaker:` bullet dropped |
+| C-11 (breaker) | 3.7b Step 3i | `CircuitBreaker.__opts_schema__(:start_link)`; 3.2b's `@breaker_schema` derived from it (no `:name`, no defaults; key order kept); Files, Produces, `git add` |
+| A#28 | 3.7c Files, Step 3f | `checked_manager/3`; the moduledoc edit appends to 3.2a's "Options:" paragraph |
+| A#30 | 3.7c `validate_opts!/1`, test, MIGRATING | mfa `{BaseAgent, :validate_compaction_config!, 1}` |
+| C-11 (compactor) | 3.7c Steps 3e, 3f | `Context.WindowManager.__opts_schema__(:new)`; the compactor's `:strategy` type and default come from it; `checked_manager/3` passes `:strategy` only when given |
+| A#54 | 3.7c A2A Registry | Body uses `registry` (the head 3.4a left) |
+| B 3.7c | 3.7c Files, test | `window_manager_test.exs` dropped from Files; `Pattern.ok!/2` test renamed |
+| A#70, P5 | 3.7c A2A doc; 3.7d table | A2A `:timeout` labelled positive ms; table rows for Toolset/Executor/A2A say "(positive ms)" |
+| B 3.7d | 3.7d `## Timeouts` | `:wait_timeout` named as an exception; `_ms` options take `:infinity` |
+| A#82, B 3.8(a) | 3.8 Step 5 | Fifth grep's expectation lists 3.2b's survivors |
+| A#83, B 3.8(b) | 3.8 Step 2, Files | Explicit `grep` of `groups_for_modules` for the new modules |
+| B 3.8(c) | 3.8 Step 6 | Range `efb6b2a..HEAD` |
+
+### Not resolved here
+
+- Suite totals are stated as growth per task, not absolutes: nothing after 3.2c was ever totalled, and the pre-flight fixes add tests the rehearsal did not run.
+- None of the edited code was compiled in the real tree (no code was touched): the new snippets were checked for syntax, and the ones that run standalone were run on scratch copies.

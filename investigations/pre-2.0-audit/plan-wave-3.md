@@ -14,12 +14,12 @@
 
 **Findings closed:** DX-5 rest (DSL `new/1`), DX-6, DX-7, DX-14, DX-15, DX-16, DX-17, DX-18, DX-19, DX-21 (the `__str__`/`__rich__` part), DX-22, DX-25, DX-26, DX-28 (option names only), DX-31 (the `KeyError` bullets), SEC-1. Deferred minors closed: `config_template.ex` `||` lets a stored 0/negative/false `max_tokens` through (Wave 1 Task 1.3 → Task 3.2); `Compactor.WindowManager.checked_manager/2` misleading message for `max_tokens: nil` and bare `KeyError` (Wave 2 Task 2.0 → Task 3.2); `check_run_opts!/1` message does not name `run/3` (Wave 2 Task 2.8 → Task 3.1).
 
-**Out of scope (owner):** what `circuit_breaker:` options mean at runtime and the breaker's key (Wave 4; this wave only renames and validates them), tool-result caps (Task 5.4), consolidating the four schema accessors `get_schema`/`get_json_schema`/`__schema__(:specification)`/`__specification__` (Wave 7 docs task; this wave removes only `__str__`/`__rich__`), the `examples/` apps' own configs beyond the Poison lines (Wave 7), unreleased dev-branch templates (decision 17c: only v1.0.0 templates translate).
+**Out of scope (owner):** what `circuit_breaker:` options mean at runtime and the breaker's key (Wave 4; this wave only renames and validates them), tool-result caps (Task 5.4), consolidating the four schema accessors `get_schema`/`get_json_schema`/`__schema__(:specification)`/`__specification__` (Wave 7 docs task; this wave removes only `__str__`/`__rich__`), the `examples/` apps' own configs beyond the Poison lines (Wave 7), the `examples/` DSL call sites (`{:ok, agent} = X.new(...)` in `examples/README.md:70`, `examples/agent_horde`, `examples/customer_support_app`; Wave 7, ruling P6: `examples/` is not compiled or tested by `mix precommit`), unreleased dev-branch templates (decision 17c: only v1.0.0 templates translate).
 
 ## Global Constraints
 
 - Elixir `~> 1.15`; CI matrix Elixir 1.15–1.19 on OTP 26–28. Anything newer than 1.15 needs a guard.
-- Each task ends with `mix format` then `mix test` showing ` 0 failures`; the wave ends with `mix precommit` exit 0. Gate on the literal ` 0 failures`, never on `| tail` output alone.
+- Each task ends with `mix format` then `mix test` showing ` 0 failures`; the wave ends with `mix precommit` exit 0. Gate on the literal ` 0 failures`, never on `| tail` output alone. Every test run below has the form `mix test [args] > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`: it passes only when it prints `test exit=0` and the grep prints the summary line (no line printed is a failure; read the log). Credo, compile and docs gates run unpiped so their exit status counts.
 - Credo: stock `.credo.exs`. Complexity or nesting findings get an inline `# credo:disable-for-next-line`, never a threshold change.
 - Dialyzer: a new `.dialyzer_ignore.exs` entry needs a reason comment.
 - Every emitted telemetry event is documented in the `Normandy.Telemetry` moduledoc (`test/telemetry/catalogue_test.exs` enforces it). This wave adds none.
@@ -41,13 +41,14 @@ Normandy.Options.validate!(opts :: keyword() | map(), schema :: NimbleOptions.t(
 # keyword list first; string keys and duplicated keys raise with their own messages.
 # Unknown keys (house style, NimbleOptions' own wording is replaced):
 #   "M.f/1: unknown option :x; supported: :a, :b"   (several: "unknown options [:x, :y]; ...";
-#   nested: "unknown option :x in :parent; supported: ...")
+#   nested: "unknown option :x in :parent; supported: ..."; a schema with no options:
+#   "M.f/1: unknown option :x; it takes no options")
 # Any other error: NimbleOptions' message after the prefix, except for a sensitive key.
 Normandy.Options.docs(schema :: NimbleOptions.t()) :: String.t()
 Normandy.Options.sensitive_keys() :: [atom()]
 # :api_key, :authorization, :client, :credential, :headers, :mcp_servers, :password,
 # :req_options, :secret, :token (Tasks 3.7a–d add :config, :agent, :agent_config, :agents,
-# :auth_token, :transport_opts, :context, :url, :redix, :templates). An error on such a key,
+# :auth_token, :transport_opts, :context, :url, :redix, :templates, :workers). An error on such a key,
 # or nested under one, shows the key and its :type_doc, never the value:
 #   "M.f/1: invalid value for :client option: expected <type_doc>; the value is not shown
 #    because :client can hold a secret"
@@ -67,7 +68,8 @@ BaseAgent.init(keyword() | map()) :: BaseAgentConfig.t()    # schema: BaseAgent.
 #   "Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"   (absent key or model: nil)
 # Task 3.1c — DSL: MyAgent.new(keyword() | map()) :: BaseAgentConfig.t() (was {:ok, config});
 #   raises ArgumentError prefixed "MyAgent.new/1: " (init/1's schema without defaults);
-#   no declared model: "MyAgent.new/1: requires :model (a string), got none" (decision 18).
+#   no declared model and none given to new/1: "MyAgent.new/1: requires :model (a string), got none"
+#   (decision 18), checked after the unknown-key check and the new/1 merge.
 
 # Task 3.2 — BaseAgentConfig fields that replace the 1.x ones
 retry: keyword() | nil                 # was retry_options
@@ -170,7 +172,8 @@ SharedContext.fetch/2, StatefulContext.fetch/2, AgentSupervisor.fetch_agent/2   
 ### Task 3.1a: `Normandy.Options` and the NimbleOptions dependency (decision 9)
 
 **Files:**
-- Modify: `mix.exs:170-176` (`deps/0`)
+- Modify: `mix.exs:170-176` (`deps/0`) and `mix.exs:64-69` (docs `groups_for_modules`, `Agents:`)
+- Modify: `.dialyzer_ignore.exs` (Step 6)
 - Create: `lib/normandy/options.ex`
 - Test: `test/options_test.exs` (new)
 
@@ -182,7 +185,7 @@ SharedContext.fetch/2, StatefulContext.fetch/2, AgentSupervisor.fetch_agent/2   
     mfa :: {module(), atom(), arity()}) :: keyword()`: defaults filled; raises `ArgumentError`
     prefixed `"Mod.fun/arity: "`.
   - `Normandy.Options.docs(schema :: NimbleOptions.t()) :: String.t()`.
-  - `Normandy.Options.sensitive_keys() :: [atom()]` (see Header conflict 2).
+  - `Normandy.Options.sensitive_keys() :: [atom()]`.
   - `Normandy.Options.plain_map(term()) :: {:ok, map()} | {:error, String.t()}` (`@doc false`):
     the one NimbleOptions custom type for a plain map, `{:custom, Normandy.Options, :plain_map,
     []}` (decision 18), used by Task 3.1b's `:tool_context` and Tasks 3.7a–d. Error (exact):
@@ -193,7 +196,8 @@ SharedContext.fetch/2, StatefulContext.fetch/2, AgentSupervisor.fetch_agent/2   
   - Message shapes later tasks may assert:
     - unknown: `"M.f/1: unknown option :x; supported: :a, :b"` (several:
       `"unknown options [:x, :y]; supported: ..."`; nested:
-      `"unknown option :x in :parent; supported: ..."`)
+      `"unknown option :x in :parent; supported: ..."`; a schema with no options:
+      `"M.f/1: unknown option :x; it takes no options"`)
     - sensitive: `"M.f/1: invalid value for :client option: expected <type_doc>; the value is
       not shown because :client can hold a secret"`
     - everything else: NimbleOptions' own message after the prefix, e.g.
@@ -210,6 +214,10 @@ In `mix.exs` `deps/0`, after `{:jason, "~> 1.4"},` add:
       # Option schemas for every public entry point (Normandy.Options).
       {:nimble_options, "~> 1.1"},
 ```
+
+In `docs: [groups_for_modules: [Agents: [...]]]`, change `Normandy.Agents.ToolCallResponse` to
+`Normandy.Agents.ToolCallResponse,` and add `Normandy.Options` after it (ExDoc warns about no
+ungrouped module, so nothing later would catch a missing entry; no other task edits this group).
 
 Run: `mix deps.get && mix deps.unlock --check-unused`
 Expected: exit 0 and `mix.lock` unchanged (it already locks 1.1.1; verified on a scratch copy).
@@ -273,6 +281,12 @@ defmodule Normandy.OptionsTest do
                    "Normandy.Agents.BaseAgent.init/1: unknown option :poool in :transport; " <>
                      "supported: :headers, :pool",
                    fn -> Options.validate!([model: "m", transport: [poool: 2]], @schema, @mfa) end
+    end
+
+    test "an unknown option to a schema with no options says it takes none" do
+      assert_raise ArgumentError,
+                   "Normandy.Agents.BaseAgent.init/1: unknown option :name; it takes no options",
+                   fn -> Options.validate!([name: "x"], NimbleOptions.new!([]), @mfa) end
     end
 
     test "an unknown option's value is never shown" do
@@ -392,8 +406,9 @@ end
 - [ ] **Step 3: Run to verify they fail**
 
 Run: `mix test test/options_test.exs`
-Expected: FAIL to compile, `Normandy.Options.validate!/3 is undefined (module Normandy.Options
-is not available)`.
+Expected: the file compiles with warnings (`Normandy.Options.validate!/3 is undefined (module
+Normandy.Options is not available or is yet to be defined)`) and the 20 tests FAIL at runtime
+with `UndefinedFunctionError`.
 
 - [ ] **Step 4: Implement**
 
@@ -521,9 +536,7 @@ defmodule Normandy.Options do
   # NimbleOptions reports unknown options with the list of them in :key.
   defp describe(%ValidationError{key: keys, keys_path: path}, schema) when is_list(keys) do
     supported = schema.schema |> definition_at(path) |> Keyword.keys()
-
-    "unknown #{option_names(keys)}#{under(path)}; supported: " <>
-      Enum.map_join(supported, ", ", &inspect/1)
+    "unknown #{option_names(keys)}#{under(path)}; #{supported(supported)}"
   end
 
   defp describe(%ValidationError{key: key, keys_path: path, value: value} = error, schema) do
@@ -546,6 +559,9 @@ defmodule Normandy.Options do
   defp option_names([key]), do: "option #{inspect(key)}"
   defp option_names(keys), do: "options #{inspect(keys)}"
 
+  defp supported([]), do: "it takes no options"
+  defp supported(keys), do: "supported: " <> Enum.map_join(keys, ", ", &inspect/1)
+
   defp under([]), do: ""
   defp under(path), do: " in #{Enum.map_join(path, ".", &inspect/1)}"
 end
@@ -557,14 +573,14 @@ nested-unknown, sensitive and duplicate messages above are what it produces.)
 - [ ] **Step 5: Run to verify they pass**
 
 Run: `mix test test/options_test.exs`
-Expected: PASS, 19 tests, 0 failures.
+Expected: PASS, 20 tests, 0 failures.
 
 - [ ] **Step 6: Format, full suite**
 
-Run: `mix format && mix test 2>&1 | tail -5`
-Expected: ` 0 failures` (2710 tests on the scratch copy, rehearsed before `plain_map/1`'s test
-moved here from Task 3.7a; expect 2711. Later rehearsed totals predate decision 18 too: add
-one from here on, two from Task 3.1c (`NoModelAgent`), and Task 3.4b's tests as it lists them).
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
+Expected: `test exit=0` and ` 0 failures`; the suite's total grows by 20 (this file). Later
+tasks state their growth the same way, not an absolute total: the rehearsed totals predate
+decision 18 and the pre-flight fixes.
 
 Run: `mix dialyzer`. Expected: one new warning, `lib/normandy/options.ex:<line>:guard_fail ...
 is_list(_keys :: atom()) can never succeed`. It is a false positive: `NimbleOptions.ValidationError`
@@ -705,6 +721,13 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
                  "Normandy.Agents.BaseAgent.init/1: required :client option not found, " <>
                    "received options: [:model]",
                  fn -> BaseAgent.init(model: "m") end
+  end
+
+  test "a misspelled :model is named, not reported missing" do
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.init/1: unknown option :modle; supported: " <>
+                   @supported,
+                 fn -> BaseAgent.init(client: client(), modle: "m") end
   end
 
   # Review Focus #5.
@@ -1005,12 +1028,14 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   def schema, do: @schema
 
   @doc false
-  # Checks `BaseAgent.init/1`'s options: misnamed keys, then :model, then the schema.
+  # Checks `BaseAgent.init/1`'s options: misnamed keys, then unknown keys (so a misspelled
+  # :model is named, decision 9), then :model, then the schema. With an unknown key,
+  # Options.validate!/3 reports it: NimbleOptions checks unknown keys before required ones.
   @spec validate!(keyword() | map()) :: keyword()
   def validate!(opts) do
     :ok = check_misnamed!(opts, @schema, @init)
 
-    if model_missing?(opts) do
+    if model_missing?(opts) and unknown_keys(opts, @schema) == [] do
       raise ArgumentError,
             "Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"
     end
@@ -1063,6 +1088,9 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   defp option_keys(opts) when is_list(opts), do: for({key, _value} <- opts, do: key)
   defp option_keys(_opts), do: []
 
+  defp unknown_keys(opts, %NimbleOptions{} = schema),
+    do: option_keys(opts) -- Keyword.keys(schema.schema)
+
   defp model_missing?(%_{}), do: false
 
   defp model_missing?(opts) when is_map(opts),
@@ -1094,7 +1122,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     do: {:error, "expected a schema struct or nil, got #{Describe.type_of(other)}"}
 
   @doc false
-  def max_tool_concurrency(n) when is_integer(n), do: {:ok, max(n, 1)}
+  # The clamp is BaseAgent's (the DSL also calls it at compile time): one definition.
+  def max_tool_concurrency(n) when is_integer(n),
+    do: {:ok, Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(n)}
+
   def max_tool_concurrency(other), do: {:error, "expected an integer, got: #{inspect(other)}"}
 
   @doc false
@@ -1103,8 +1134,12 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   def retry(nil), do: {:ok, nil}
 
   def retry(opts) when is_list(opts) do
-    :ok = Retry.validate_options!(opts)
-    {:ok, opts}
+    if Keyword.keyword?(opts) do
+      :ok = Retry.validate_options!(opts)
+      {:ok, opts}
+    else
+      {:error, "expected a keyword list or nil, got a list that is not one"}
+    end
   rescue
     error in ArgumentError -> {:error, Exception.message(error)}
   end
@@ -1116,9 +1151,9 @@ end
 
 `tool_context` uses a custom check rather than `{:map, :any, :any}` because NimbleOptions
 enumerates a map type's entries and raises `Protocol.UndefinedError` on a struct (verified).
-`retry/1` rescues only `ArgumentError`, the one exception `Retry.validate_options!/1` raises
-(including `Keyword.keys/1`'s on a non-keyword list), and turns it into this option's error;
-nothing is swallowed.
+`retry/1` checks `Keyword.keyword?/1` itself (what `Keyword.keys/1` raises on a non-keyword
+list differs across Elixir 1.15–1.19), then rescues only `ArgumentError`, the one exception
+`Retry.validate_options!/1` raises, and turns it into this option's error; nothing is swallowed.
 
 - [ ] **Step 4: Rewrite `init/1`, drop its helpers, name `run/3` in the option check**
 
@@ -1340,8 +1375,9 @@ and add under `### Agent System`, after the `BaseAgentConfig` bullet:
 
 - [ ] **Step 9: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -3 && mix credo --strict`
-Expected: ` 0 failures` (2726 tests on the scratch copy) and no credo issues.
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log" && mix credo --strict`
+Expected: `test exit=0`, ` 0 failures` (the suite's total grows by 17: the new file's 16 tests
+and `base_agent_stream_test.exs`'s added one) and no credo issues.
 
 ```bash
 git add lib/normandy/agents/base_agent/init_options.ex lib/normandy/agents/base_agent.ex \
@@ -1358,8 +1394,8 @@ git commit -m "feat(agent)!: init/1 checks every option with NimbleOptions and t
 
 `plan-wave-2.md:15` left "DSL `new/1` return shape" to this task. DX-5's fix offers "return the
 agent, or rename it `new!/1`". This task makes `new/1` return the `%BaseAgentConfig{}` and raise
-`ArgumentError`, like `BaseAgent.init/1` (it never returned `{:error, _}`). Open question for Q in
-the notes.
+`ArgumentError`, like `BaseAgent.init/1` (it never returned `{:error, _}`); decision 18 settled
+the shape.
 
 **Files:**
 - Modify: `lib/normandy/dsl/agent.ex`: aliases (`:80-84`), `@override_keys` +
@@ -1377,8 +1413,8 @@ the notes.
 - Produces:
   - Generated `MyAgent.new(opts :: keyword() | map()) :: BaseAgentConfig.t()` (was
     `{:ok, BaseAgentConfig.t()}`); raises `ArgumentError` prefixed `"MyAgent.new/1: "`.
-    An agent that declares no model raises `"MyAgent.new/1: requires :model (a string), got
-    none"` (decision 18: init/1's message under new/1's prefix; 1.x raised a `RuntimeError`
+    An agent that declares no model and is given none raises `"MyAgent.new/1: requires :model
+    (a string), got none"`, checked after every option check and the merge (decision 18: init/1's message under new/1's prefix; 1.x raised a `RuntimeError`
     `"model is required in agent definition"`).
   - Options: every `BaseAgent.init/1` option without its default (one left out keeps the
     declared value), `:client` required, plus `:override` (keyword list, wins over top-level),
@@ -1410,6 +1446,18 @@ which asserts `KeyError`) with:
                    "Normandy.DSL.AgentTest.NoModelAgent.new/1: requires :model (a string), " <>
                      "got none",
                    fn -> NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}) end
+    end
+
+    test "a model given to new/1 serves an agent that declares none" do
+      agent = NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}, model: "m")
+
+      assert agent.model == "m"
+    end
+
+    test "a misspelled :model is named, not reported missing" do
+      assert_raise ArgumentError,
+                   ~r/^Normandy.DSL.AgentTest.NoModelAgent.new\/1: unknown option :modle; supported: /,
+                   fn -> NoModelAgent.new(client: %NormandyTest.Support.ModelMockup{}, modle: "m") end
     end
 
     test "a missing client raises ArgumentError naming new/1" do
@@ -1568,6 +1616,13 @@ instead of the struct, the old `"...new/1: unknown option :temprature; allowed: 
       |> Keyword.merge(explicit)
       |> Keyword.pop(:max_messages, compile_config.max_messages)
 
+    # After every option check (a misspelled :model is named first) and after the merge (a
+    # :model given to new/1 serves an agent that declares none).
+    if Keyword.get(overrides, :model, base_config.model) == nil do
+      raise ArgumentError,
+            "#{inspect(agent_module)}.new/1: requires :model (a string), got none"
+    end
+
     config =
       base_config
       |> Map.merge(Map.new(overrides))
@@ -1622,20 +1677,16 @@ instead of the struct, the old `"...new/1: unknown option :temprature; allowed: 
       end
 ```
 
-4. Replace `defp build_config(client, overrides)` (`:630-668`) with `defp base_config`: keep its
-   `unless @agent_compile_config.model do raise ... end` check (its `raise` becomes the
-   `ArgumentError` below, decision 18) and its `%{...}` map minus the
-   `client: client,` line; delete everything after the map (the `validate_overrides!` call, the
-   merge, `put_declared_hooks`, the `max_messages` case; `init_config!/4` does those now). It
-   becomes:
+4. Replace `defp build_config(client, overrides)` (`:630-668`) with `defp base_config`: delete
+   its `unless @agent_compile_config.model do raise ... end` check (`init_config!/4` raises the
+   decision 18 `ArgumentError` instead, after the merge: `base_config/0` is evaluated before
+   `init_config!/4`, so a check here would reject a `model:` given to `new/1`), keep its `%{...}`
+   map minus the `client: client,` line, and delete everything after the map (the
+   `validate_overrides!` call, the merge, `put_declared_hooks`, the `max_messages` case;
+   `init_config!/4` does those now). It becomes:
 
 ```elixir
       defp base_config do
-        unless @agent_compile_config.model do
-          raise ArgumentError,
-                "#{inspect(__MODULE__)}.new/1: requires :model (a string), got none"
-        end
-
         %{
           model: @agent_compile_config.model,
           temperature: @agent_compile_config.temperature,
@@ -1689,8 +1740,9 @@ e2e/09_dsl 1, agent-memory.md 1). Count before and after with
 
 - [ ] **Step 6: Run the suite**
 
-Run: `mix format && mix test 2>&1 | tail -3`
-Expected: ` 0 failures` (2734 tests on the scratch copy). The existing
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
+Expected: `test exit=0`, ` 0 failures` (the suite's total grows by 11: `agent_test.exs` gains 12
+tests and loses `"raises when client is missing"`). The existing
 `"an unknown option raises, naming it"` test (`agent_test.exs:172-180`) keeps passing unchanged:
 the messages still contain `unknown option :temprature` / `unknown option :maxtokens`.
 
@@ -1703,7 +1755,7 @@ Append to §21 (Task 3.1b):
   `{:ok, agent}` and never `{:error, _}`. It takes the same options as `BaseAgent.init/1`
   (top level or under `:override`) plus `:memory_store` and `:max_messages`, checks them the
   same way, and its errors name `MyAgent.new/1`. A missing `:client` raises `ArgumentError`
-  (1.x: `KeyError`); an agent that declares no model raises `ArgumentError`
+  (1.x: `KeyError`); an agent that declares no model and is given none in `new/1` raises `ArgumentError`
   `"MyAgent.new/1: requires :model (a string), got none"` (1.x: `RuntimeError`
   `"model is required in agent definition"`).
 ```
@@ -1743,7 +1795,7 @@ git commit -m "feat(dsl)!: new/1 returns the agent and checks options with the i
   shifted by 3.1b; the diff below has the post-3.1b positions)
 - Modify: `lib/normandy/behaviours/compactor.ex:14`, `lib/normandy/exceptions.ex:127,136`
   (`ModelCatalogError`)
-- Modify: `e2e/02_compaction.exs:16`, `MIGRATING-2.0.md` §5 (`:109-128`) and §17 (`:394`)
+- Modify: `e2e/02_compaction.exs:16`, `MIGRATING-2.0.md` §5 (`:109-128`)
 - Test: `test/behaviours/compactor_test.exs`, `test/agents/base_agent_compaction_config_test.exs`,
   and the 14 renamed opts in Step 5
 
@@ -2088,7 +2140,7 @@ And the texts that name the option:
 |---|---|---|
 | `compaction_turn_test.exs:72` | `test "a pinned :max_tokens never consults the catalog"` | `test "a pinned :context_window never consults the catalog"` |
 | `compaction_turn_test.exs:164` | `~r/:no_client.*:max_tokens/s` | `~r/:no_client.*:context_window/s` |
-| `config_template_test.exs:382` | `~r/:max_tokens/` (the unpinned rebuild) | `~r/:context_window/` |
+| `config_template_test.exs:379` | `~r/:max_tokens/` (the unpinned rebuild) | `~r/:context_window/` |
 | `base_agent_compaction_config_test.exs:28` | `assert error.message =~ ":max_tokens"` | `assert error.message =~ ":context_window"` |
 | `base_agent_compaction_config_test.exs:51` | `test "passes when :max_tokens is pinned"` | `test "passes when :context_window is pinned"` |
 
@@ -2121,8 +2173,8 @@ Then start §22 after §21 (Tasks 3.2b and 3.2c append to it):
 
 - [ ] **Step 7: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -3 && mix credo --strict`
-Expected: ` 0 failures` (2742 tests on the scratch copy), no credo issues.
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log" && mix credo --strict`
+Expected: `test exit=0`, ` 0 failures` (the suite's total grows by 8), no credo issues.
 
 ```bash
 git add lib/normandy/behaviours/compactor/window_manager.ex lib/normandy/agents/base_agent.ex \
@@ -2156,7 +2208,9 @@ reviewer checks the rewrite script and its per-file counts, then the hand edits.
   `lib/normandy/resilience/retry.ex:136`
 - Modify: 21 test files + `test/support/integration_helper.ex` + `e2e/06_resilience.exs`,
   `e2e/07_guardrails.exs`, `e2e/08_streaming.exs` (Steps 5-6)
-- Modify: `MIGRATING-2.0.md` (§22, §11 line 200), `CLAUDE.md:61-62,134-140`
+- Modify: `MIGRATING-2.0.md` (§22, §21's breaker bullet, §11 line 200), `CLAUDE.md` (the
+  `BaseAgentConfig` bullet and `### Resilience & Error Handling`; found by text, since 3.1b's
+  insertion shifts the lines)
 - Test: `test/agents/base_agent_config_groups_test.exs` (new), `test/dsl/agent_guardrails_test.exs`
 
 **Interfaces:**
@@ -2337,8 +2391,10 @@ Append to `test/dsl/agent_guardrails_test.exs`, before the final `end`:
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/agents/base_agent_config_groups_test.exs test/dsl/agent_guardrails_test.exs`
-Expected: FAIL (`unknown option :retry`, `KeyError` on `config.retry`,
-`BaseAgentConfig.default_guardrails/0 is undefined`, the 1.x keys still accepted).
+Expected: `base_agent_config_groups_test.exs` does not compile (`CompileError`: the struct
+literal `%BaseAgentConfig{guardrails: ...}` names a field that does not exist yet), which aborts
+the run; `test/dsl/agent_guardrails_test.exs` alone (`mix test test/dsl/agent_guardrails_test.exs`)
+FAILS at runtime (`unknown option :guardrails`, the 1.x keys still accepted).
 
 - [ ] **Step 3: Implement the config and the schema**
 
@@ -2619,10 +2675,7 @@ index b33b51f..fa1f3f2 100644
 +
 +  def circuit_breaker(opts) when is_list(opts) do
 +    if Keyword.keyword?(opts) do
-+      case NimbleOptions.validate(opts, @breaker_schema) do
-+        {:ok, validated} -> {:ok, validated}
-+        {:error, %NimbleOptions.ValidationError{} = error} -> {:error, Exception.message(error)}
-+      end
++      validate_breaker(opts)
 +    else
 +      {:error, "expected a keyword list or nil, got a list that is not one"}
 +    end
@@ -2630,13 +2683,30 @@ index b33b51f..fa1f3f2 100644
 +
 +  def circuit_breaker(other),
 +    do: {:error, "expected a keyword list or nil, got #{Describe.type_of(other)}"}
++
++  # Unknown keys in the house style ("unknown option :x; supported: ..."), like
++  # Normandy.Options; any other error is NimbleOptions' message.
++  defp validate_breaker(opts) do
++    supported = Enum.map_join(Keyword.keys(@breaker_schema.schema), ", ", &inspect/1)
++
++    with [] <- Enum.uniq(Keyword.keys(opts) -- Keyword.keys(@breaker_schema.schema)),
++         {:ok, validated} <- NimbleOptions.validate(opts, @breaker_schema) do
++      {:ok, validated}
++    else
++      {:error, %NimbleOptions.ValidationError{} = error} -> {:error, Exception.message(error)}
++      [key] -> {:error, "unknown option #{inspect(key)}; supported: #{supported}"}
++      keys -> {:error, "unknown options #{inspect(keys)}; supported: #{supported}"}
++    end
++  end
  end
 ```
 
 `circuit_breaker/1` validates the nested options itself instead of a `keys:` schema under
 `{:or, [nil, :keyword_list]}`: NimbleOptions 1.1.1 crashes with `FunctionClauseError` validating a
 `nil` default against nested `keys:` (verified), and an `{:or, ...}` error lists every branch's
-failure.
+failure. It names unknown keys itself because NimbleOptions' own wording ("unknown options
+[...], valid options are: [...]") is what the header replaces everywhere (ruling P1; message
+verified against NimbleOptions 1.1.1 on a scratch module).
 
 - [ ] **Step 4: Implement the readers, templates, DSL and docs**
 
@@ -3290,7 +3360,8 @@ the 1.x key as `{:input_guardrails, []}`, which the script does not match.
 | same | `~r/:input_guardrails option: expected list, got: :not_a_list/` | `~r/:input option: expected list, got: :not_a_list \(in options \[:guardrails\]\)/` |
 | same | `~r/:output_guardrails option: expected list, got: %\{not: "a list"\}/` | `~r/:output option: expected list, got: %\{not: "a list"\} \(in options \[:guardrails\]\)/` |
 | same, test names | `"an invalid :output_guardrails_on_violation is rejected at init"`, `"raises ArgumentError when :input_guardrails is not a list"`, `"... :output_guardrails is not a list"` | `"an invalid guardrails :on_violation is rejected at init"`, `"raises ArgumentError when guardrails :input is not a list"`, `"... guardrails :output is not a list"` |
-| `test/agents/base_agent_init_options_test.exs` (`"an unknown circuit breaker option is named"`) | `circuit_breaker_options: [error_threshold: 3]` and the expected `"...unknown option :error_threshold in :circuit_breaker_options; supported: ..."` | `circuit_breaker: [error_threshold: 3]` and `"Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker option: unknown options [:error_threshold], valid options are: [:failure_threshold, :success_threshold, :timeout, :half_open_max_calls]"` |
+| `test/agents/base_agent_init_options_test.exs` (`"an unknown circuit breaker option is named"`) | `circuit_breaker_options: [error_threshold: 3]` and the expected `"...unknown option :error_threshold in :circuit_breaker_options; supported: ..."` | `circuit_breaker: [error_threshold: 3]` and `"Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker option: unknown option :error_threshold; supported: :failure_threshold, :success_threshold, :timeout, :half_open_max_calls"` |
+| `test/agents/base_agent_guardrails_test.exs`, describe names (`:52`, `:141`, `:254`, `:347`) | `describe "input_guardrails"`, `describe "output_guardrails"`, `describe "streaming input_guardrails"`, `describe "output_guardrails on exhausted tool loop"` | `describe "guardrails :input"`, `describe "guardrails :output"`, `describe "streaming guardrails :input"`, `describe "guardrails :output on exhausted tool loop"` |
 | test names: `base_agent_stream_resilience_test.exs` `"...retried under retry_options"`, `base_agent_llm_error_test.exs` `"without retry_options an LLM error..."`, `retry_test.exs` `"BaseAgent.init checks :retry_options when..."`; comment `base_agent_hooks_test.exs:21` `retry_options defaults to nil` | | `retry` in each |
 
 Then `mix format`. Acceptance grep (expected: only `init_options.ex`'s `@renamed` list, the DSL
@@ -3304,8 +3375,8 @@ grep -rnE "retry_options|enable_circuit_breaker|circuit_breaker_options|input_gu
 
 - [ ] **Step 7: Run the suite**
 
-Run: `mix test 2>&1 | tail -3 && mix credo --strict && mix compile --force --warnings-as-errors`
-Expected: ` 0 failures` (2762 tests on the scratch copy), no credo issues, no warnings.
+Run: `mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log" && mix credo --strict && mix compile --force --warnings-as-errors`
+Expected: `test exit=0`, ` 0 failures` (the suite's total grows by 20), no credo issues, no warnings.
 
 - [ ] **Step 8: MIGRATING**
 
@@ -3360,7 +3431,7 @@ with
   - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window, and the option groups `retry` (Retry options or nil), `circuit_breaker` (breaker options or nil; `circuit_breaker_pid` is the node-local breaker init/1 started) and `guardrails` (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`, read with `BaseAgentConfig.guardrail/2`)
 ```
 
-and in `### Resilience & Error Handling` (`:134-140`) change "Configurable max attempts, backoff
+and in `### Resilience & Error Handling` (find the heading; `:134-140` before 3.1b's insertion) change "Configurable max attempts, backoff
 factor, and delay" to "Configured per agent with `init/1`'s `retry:` (max attempts, backoff
 factor, delay)" and "Thresholds and timeouts are configurable per agent" to "Configured per agent
 with `init/1`'s `circuit_breaker:` (thresholds, timeout)".
@@ -3732,8 +3803,9 @@ translation too.
 
 Run: `mix test test/agents/config_template_v1_test.exs test/behaviours/config_test.exs`
 Expected: FAIL: the fixture's `{WindowManager, [max_tokens: ...]}` hits Task 3.2a's
-"renamed to :context_window" error; the unknown-field and bad-`max_tokens` cases rebuild instead
-of raising (`0` passes through `||`); `%Config{}` still has the slots.
+"renamed to :context_window" error. The unknown-field and bad-`max_tokens` cases fail on that same
+raise (it fires before any field is checked), not yet on the checks this task adds; `%Config{}`
+still has the slots.
 
 - [ ] **Step 4: Implement**
 
@@ -4069,10 +4141,10 @@ Acceptance: `grep -c "session_store\|session_registry" docs/guides/distributed_s
 
 - [ ] **Step 6: Run the suite and the gate**
 
-Run: `mix format && mix test 2>&1 | tail -3`
-Expected: ` 0 failures` (2772 tests on the scratch copy). Then `mix precommit` → exit 0
-(verified on the scratch copy at the end of this task: credo clean, Dialyzer "passed
-successfully" with the 3.1a ignore entry, 2772 tests, 0 failures) and
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
+Expected: `test exit=0`, ` 0 failures` (the suite's total grows by 10). Then `mix precommit` →
+exit 0 (verified on the scratch copy at the end of this task, before the pre-flight fixes: credo
+clean, Dialyzer "passed successfully" with the 3.1a ignore entry, 0 failures) and
 `mix docs --warnings-as-errors` → exit 0 (verified).
 
 The tagged suites (`postgres`, `redis`, `distributed`, Horde) were not run; they build their
@@ -4227,7 +4299,7 @@ Create `test/json_struct_encoding_test.exs` (Review Focus 4):
 defmodule Normandy.JSONStructEncodingTest do
   @moduledoc """
   Review Focus 4: a struct Jason has no encoder for, inside a tool result, a memory
-  dump or a context-window estimate, is encoded as its map without __meta__ â
+  dump or a context-window estimate, is encoded as its map without __meta__ —
   never a Protocol.UndefinedError and never inspect/1 output sent to the model.
   """
   use ExUnit.Case, async: true
@@ -4469,9 +4541,9 @@ defmodule Normandy.JSON do
   runtime config applies), default `Jason`. Normandy calls exactly two of its
   functions, so any module that provides them works:
 
-    * `encode!(term, opts) :: String.t()` â raises on a term it cannot encode.
+    * `encode!(term, opts) :: String.t()` — raises on a term it cannot encode.
       `opts` is `[]` or `[pretty: true]`.
-    * `decode(String.t()) :: {:ok, term()} | {:error, Exception.t()}` â objects
+    * `decode(String.t()) :: {:ok, term()} | {:error, Exception.t()}` — objects
       decode to string-keyed maps.
 
   ## Structs
@@ -4706,7 +4778,7 @@ At lines 337-339, the stale comment is wrong: Claudio 0.7 decodes SSE data with 
 
 ```elixir
     # Claudio's parse_events emits `%{event: "...", data: %{...}}` where
-    # `data` was decoded with `Poison.decode(..., keys: :atoms)` â so its
+    # `data` was decoded with `Poison.decode(..., keys: :atoms)` — so its
     # keys are atoms. Normandy's StreamProcessor pattern-matches
 ```
 
@@ -4995,7 +5067,7 @@ Check: `grep -rn "Poison" lib/ test/ config/` prints nothing.
 
 Run: `mix format && mix test test/json_test.exs test/json_struct_encoding_test.exs test/components/tool_result_test.exs test/schema/redact_test.exs test/schema/io_schema_json_test.exs test/app_env_config_test.exs test/llm test/components test/context test/schema`
 
-Expected: ` 0 failures`. `mix format` re-wraps two lines in `json_deserializer_test.exs` (304, 307) that the rename made too long.
+Expected: ` 0 failures`. `mix format` re-wraps four lines in `json_deserializer_test.exs` (304, 307, 314, 321) that the rename made too long (checked with `Code.format_string!/1` on a renamed copy).
 
 - [ ] **Step 9: Docs and example configs**
 
@@ -5029,7 +5101,7 @@ Example apps (the Poison lines only; Wave 7 owns the rest):
 - `examples/customer_support_app/config/config.exs`: delete the three lines `# Configure the JSON adapter for Normandy`, `config :normandy,` and `  adapter: Poison`, and the blank line after them.
 - `examples/customer_support_app/config/dev.exs`, `prod.exs`, `test.exs`: delete the three lines `# Configure JSON adapter`, `config :normandy,` and `  adapter: Poison`, and the blank line before them.
 
-Check: `git ls-files examples | xargs grep -n "Poison"` now prints only the two stale example `mix.lock` lines (Wave 7).
+Check: `git ls-files examples | xargs grep -n "Poison"` now prints nothing. (The two example `mix.lock` files still name `poison` in lowercase as a Claudio dependency; Wave 7.)
 
 - [ ] **Step 10: MIGRATING**
 
@@ -5063,7 +5135,7 @@ Append a new section to `MIGRATING-2.0.md`, numbered §23 (after Task 3.2's §22
 
 - [ ] **Step 11: Full suite and commit**
 
-Run: `mix format && mix test 2>&1 | tail -3`. Expected: ` 0 failures`.
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`. Expected: ` 0 failures`.
 
 Run: `mix credo --strict 2>&1 | grep found`. Expected: `found no issues`.
 
@@ -5093,8 +5165,8 @@ git commit -m "feat!(json): Normandy.JSON with Jason by default; drop Poison"
 ### Task 3.3b: Example tools leave `lib/` (roadmap 3.7; DX-25)
 
 **Files:**
-- Move: `lib/normandy/tools/examples/{calculator,enhanced_calculator,list_processor,string_manipulator}.ex` â `test/support/tools/` (same file names)
-- Move: `lib/normandy/tools/examples/weather.ex` â `examples/tools/weather.ex`
+- Move: `lib/normandy/tools/examples/{calculator,enhanced_calculator,list_processor,string_manipulator}.ex` → `test/support/tools/` (same file names)
+- Move: `lib/normandy/tools/examples/weather.ex` → `examples/tools/weather.ex`
 - Modify: `lib/normandy/agents/base_agent.ex:2014-2016` (the `register_tool/2` doc example)
 - Modify: `test/support/normandy_integration_helper.ex:88-98`, `test/support/integration_helper.ex:248-259`
 - Modify: `examples/README.md`, `MIGRATING-2.0.md`
@@ -5265,7 +5337,7 @@ package.
 
 - [ ] **Step 7: Run to verify it passes, then check the package**
 
-Run: `mix format && mix test test/tools test/agents test/integration test/telemetry 2>&1 | tail -3`. Expected: ` 0 failures`.
+Run: `mix format && mix test test/tools test/agents test/integration test/telemetry > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`. Expected: ` 0 failures`.
 
 Run: `mix compile --warnings-as-errors && MIX_ENV=test mix compile --warnings-as-errors`. Expected: no warnings. The dev build drops the five beams.
 
@@ -5299,7 +5371,7 @@ fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
 
 - [ ] **Step 9: Full suite and commit**
 
-Run: `mix format && mix test 2>&1 | tail -3`. Expected: ` 0 failures`.
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`. Expected: ` 0 failures`.
 
 Run: `mix credo --strict 2>&1 | grep found`. Expected: `found no issues`.
 
@@ -5406,9 +5478,12 @@ Then fix by hand the prose the rules cannot see:
 Credo: `Registry` was exempt from Credo's `AliasUsage` check (aliasing it would shadow
 Elixir's `Registry`); `Toolset` is not, so every fully qualified `Normandy.Tools.Toolset.f(...)`
 or `%Normandy.Tools.Toolset{...}` in code becomes a "Nested modules could be aliased" finding.
-At `95dc149` that is these 12 files (verified by running the rename and `mix credo --strict`):
+At `95dc149` that is these 13 files (12 verified by running the rename and `mix credo --strict`;
+`lib/normandy/agents/turn/server.ex`, whose line 1552 becomes `Normandy.Tools.Toolset.get(...)`,
+verified in pre-flight with Credo on a scratch copy: "Nested modules could be aliased"):
 
 ```
+lib/normandy/agents/turn/server.ex
 test/a2a/agent_tool_test.exs
 test/a2a/server_test.exs
 test/agents/base_agent_tools_test.exs
@@ -5437,10 +5512,10 @@ order (after `alias Normandy.Tools.Examples...` / `alias Normandy.Test...`, befo
 Run:
 
 ```bash
-mix compile --warnings-as-errors 2>&1 | tail -5
+mix compile --warnings-as-errors
 grep -rnE "Tools\.Registry\b|\btool_registry\b" lib test e2e docs/guides mix.exs CLAUDE.md
-mix credo --strict 2>&1 | tail -3
-mix test 2>&1 | tail -5
+mix credo --strict
+mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
 ```
 
 Expected: compiles; the grep prints nothing; Credo "found no issues"; ` 0 failures` (a pure
@@ -5768,7 +5843,7 @@ and 3.4d extend it, and Task 3.4d's error messages name it as `MIGRATING-2.0.md 
 
 - [ ] **Step 7: Format, full suite, commit**
 
-Run: `mix format && mix credo --strict 2>&1 | tail -3 && mix test 2>&1 | tail -5`
+Run: `mix format && mix credo --strict && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: Credo "found no issues"; ` 0 failures`.
 
 ```bash
@@ -5941,7 +6016,7 @@ defmodule Normandy.ToolTest do
     end
   end
 
-  test "a context has no input until the dispatcher sets one" do
+  test "a new context's :input defaults to nil" do
     assert %Context{tool_call_id: "c"}.input == nil
   end
 end
@@ -6121,6 +6196,15 @@ defmodule Normandy.Tools.InputTest do
 
     test "a schema with no properties key still wants an object" do
       assert {:error, [%{path: [], constraint: :type}]} = Input.validate(%SchemaTool{}, [1])
+    end
+
+    # An MCP tool whose server sent no schema has input_schema nil (Claudio's
+    # %MCP.Client.Tool{} default): an error result for the model, not a crash in the turn.
+    test "an input_schema/1 that is not a map is an error, not a crash" do
+      assert {:error, [%{path: [], constraint: :schema, message: message}]} =
+               Input.validate(%SchemaTool{schema: nil}, %{"q" => 1})
+
+      assert message == "the tool's input_schema/1 returned nil, not a JSON Schema map"
     end
   end
 
@@ -6354,7 +6438,9 @@ defmodule Normandy.Tools.Input do
       absent `additionalProperties` counts as `false` here, unlike JSON Schema's default). A
       schema with no `properties` key declares no keys, so it limits none: any key is
       accepted (an MCP server's loose `{"type": "object"}` keeps working). Nested schemas,
-      enums and formats are the tool's to check.
+      enums and formats are the tool's to check. A `type` name outside the seven above (a
+      typo such as `"intger"`) is not checked: any value passes it. An `input_schema/1` that
+      returns something other than a map is an error (`constraint: :schema`).
 
   An unknown key is an error for a declared input schema and for a map that declares
   `properties`, and keys are matched against declared names, so model input never creates an
@@ -6455,6 +6541,20 @@ defmodule Normandy.Tools.Input do
       [] -> {:ok, given}
       errors -> {:error, errors}
     end
+  end
+
+  # No silent default: a tool whose input_schema/1 is not a map (an MCP tool whose server
+  # sent none) gets an error result naming what it returned.
+  defp validate_map(schema, _input) do
+    {:error,
+     [
+       %{
+         path: [],
+         message:
+           "the tool's input_schema/1 returned #{Describe.type_of(schema)}, not a JSON Schema map",
+         constraint: :schema
+       }
+     ]}
   end
 
   defp string_keys(input) do
@@ -6607,7 +6707,7 @@ field defaults to `nil`.
 No MIGRATING text in this task: nothing a user calls has changed yet (Task 3.4c adds the
 section's tool-author table when the old contracts go).
 
-Run: `mix format && mix credo --strict 2>&1 | tail -3 && mix test 2>&1 | tail -5`
+Run: `mix format && mix credo --strict && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: Credo finds no issues; ` 0 failures`.
 
 ```bash
@@ -6673,15 +6773,19 @@ after Step 9, `mix compile --warnings-as-errors`, `mix credo --strict` (no issue
 - Modify: `MIGRATING-2.0.md` (the tools section from Task 3.4a)
 
 **Interfaces:**
-- Consumes: Task 3.4a (`Toolset`, `fetch/2`, `register/3` options through `Normandy.Options`),
-  Task 3.4b (`Normandy.Tool`, `Normandy.Tools.Input`, `Context.input`).
+- Consumes: Task 3.1a (`Normandy.Options.validate!/3`, `docs/1`), Task 3.3a (`Normandy.JSON`;
+  `Dispatch.execute_and_wrap/4`'s `wrap_output/2`/`wrap_error/2`), Task 3.3b (the example tools
+  in `test/support/tools/`, module names kept), Task 3.4a (`Toolset`, `fetch/2`, `register/3`
+  options through `Normandy.Options`), Task 3.4b (`Normandy.Tool`, `Normandy.Tools.Input`,
+  `Context.input`).
 - Produces:
   - `Toolset.register/3` option `timeout: pos_integer()`; `Toolset.timeout/2`.
   - `Context.build(config, call, input)` (replaces `build/2`).
   - `Executor.execute_tool/2`, `execute_tool_classified/2`: options `:context` (required, a
     `%Context{}`) and `:timeout` (default `Executor.default_timeout/0` = 30_000), validated
     through `Normandy.Options`; the tool struct's fields are never read. `execute/3`,
-    `execute_parallel/3`, `execute_sequential/3` and `:max_retries` are removed (see Notes).
+    `execute_parallel/3`, `execute_sequential/3` and `:max_retries` are removed (see Appendix:
+    open questions, #8).
   - `Dispatch.Invocation{tool, input, timeout}`; `classify/3` returns
     `{:execute, Invocation.t(), call}` / `{:needs_approval, Invocation.t(), call, info}`;
     `execute/4` takes the invocation; `policy_fn.(config, call, invocation)`;
@@ -6700,8 +6804,8 @@ after Step 9, `mix compile --warnings-as-errors`, `mix credo --strict` (no issue
 - [ ] **Step 1: Write the failing tests**
 
 1a. `test/tools/tool_input_isolation_test.exs`, the Review Focus #2 test under `run/2`,
-`stream/3` and `Turn.Server` (it decodes tool results with `Jason`, a runtime dependency; use
-`Normandy.JSON.decode!/1` instead if Task 3.3 asks every JSON call to go through it):
+`stream/3` and `Turn.Server` (it decodes tool results with `Jason`, a runtime dependency, as
+Task 3.3a's own tests do):
 
 ```elixir
 defmodule Normandy.Tools.ToolInputIsolationTest do
@@ -7322,6 +7426,11 @@ defmodule NormandyTest.Tools.ExecutorTest do
                )
     end
 
+    test "without :timeout the default applies, not the struct's :timeout field" do
+      assert {:ok, "completed"} =
+               Executor.execute_tool(%SlowTool{timeout: 10}, context: ctx(%{"delay" => 50}))
+    end
+
     test "the default is 30 seconds" do
       assert Executor.default_timeout() == 30_000
     end
@@ -7542,10 +7651,13 @@ end
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/tools/tool_input_isolation_test.exs test/agents/dispatch_split_test.exs test/tools/executor_test.exs test/tools/context_test.exs`
-Expected: FAIL. `Normandy.Agents.Dispatch.Invocation` and `Context.build/3` are undefined;
-registering a `use Normandy.Tool` struct fails in `Toolset.register/3` with
-`Protocol.UndefinedError` (`Normandy.Tools.BaseTool` not implemented); `Calculator.Input`
-does not exist yet.
+Expected: FAIL. `dispatch_split_test.exs` (`%Invocation{}` patterns) and `executor_test.exs`
+(`%Calculator.Input{}`) do not compile (`CompileError`: undefined structs), which aborts the
+four-file run. Run the other two alone
+(`mix test test/tools/tool_input_isolation_test.exs test/tools/context_test.exs`): they FAIL
+at runtime: `Context.build/3` is undefined, and registering a `use Normandy.Tool` struct fails
+in `Toolset.register/3` with `Protocol.UndefinedError` (`Normandy.Tools.BaseTool` not
+implemented).
 
 - [ ] **Step 3: Context, executor, toolset**
 
@@ -7786,7 +7898,12 @@ end
   end
 ```
 
-- Rewrite rule for the rest of the file (7 sites at `95dc149`): `BaseTool.tool_name(tool)` →
+- `filter_by_required_params/2` and `filter_by_param_type/2` drop the timeouts of the tools
+  they drop (otherwise `timeout/2` answers for a tool that is not in the toolset): in each,
+  the last line `%{registry | tools: filtered_tools}` (Task 3.4a's rules leave the lowercase variable)
+  becomes `%{registry | tools: filtered_tools, timeouts: Map.take(registry.timeouts, Map.keys(filtered_tools))}`.
+
+- Rewrite rule for the rest of the file (9 sites at `95dc149`, besides `register/3`'s): `BaseTool.tool_name(tool)` →
   `Tool.name(tool)`, `BaseTool.tool_description(tool)` → `Tool.description(tool)`,
   `BaseTool.input_schema(tool)` → `Tool.input_schema(tool)`.
 - Replace `get_schema_introspection/1` (it introspected the tool struct's own module, which
@@ -8094,7 +8211,10 @@ tool, called `Dispatch.prepare_tool/2` and ran `Dispatch.execute/4` with:
 ```
 
 (A parked call whose tool is no longer in the toolset now gets the not-found result instead
-of crashing the server on `{:ok, tool} = ...`.)
+of crashing the server on `{:ok, tool} = ...`.) That lookup was the only use of the
+`alias Normandy.Tools.Toolset` Task 3.4a added to server.ex for Credo: delete the alias unless
+`grep -n "Toolset" lib/normandy/agents/turn/server.ex` still shows a use (an unused alias fails
+`--warnings-as-errors`).
 
 4f. `lib/normandy/telemetry/metadata.ex`: `alias Normandy.Tools.BaseTool` →
 `alias Normandy.Tool`; `tool/3`'s doc ("run by `tool` (the tool as registered)"), parameter
@@ -8370,7 +8490,7 @@ git rm lib/normandy/tools/base_tool.ex lib/normandy/tools/schema_base_tool.ex li
 says "`Normandy.Tool.run/2`'s spec allows only ..." instead of "`BaseTool.run/1`'s spec ...".
 (The rehearsal's `mix dialyzer` still uses the entry: 30 skipped, 0 unnecessary.)
 
-Run: `mix compile --warnings-as-errors 2>&1 | tail -3` (the dev env compiles `lib` only, not
+Run: `mix compile --warnings-as-errors` (the dev env compiles `lib` only, not
 `test/support`). Expected: compiles with no warning.
 
 - [ ] **Step 6: Test support tools**
@@ -8390,6 +8510,23 @@ grep -rlE "%(Normandy\.Tools\.Examples\.)?(Calculator|EnhancedCalculator|StringM
 
 (`-0777` because the helpers' literals span lines. If Task 3.3 removed `Weather` from the
 helpers, the `Weather` alternative simply matches nothing.)
+
+Then, by hand, in `test/tools/toolset_test.exs`:
+- `"replace: true replaces the tool with the same name"`: the perl made `tool1` and `tool2`
+  both `%Calculator{}`, so `{:ok, ^tool2}` would pass without a replace. Make `tool2`
+  `%Normandy.Test.FakeTool{name: "calculator"}` (same name, a different struct) and keep the
+  `{:ok, ^tool2}` assertion.
+- After that test, add (the filters keep only the kept tools' timeouts, Step 3):
+
+```elixir
+    test "a filter drops the timeouts of the tools it drops" do
+      toolset = Toolset.register(Toolset.new(), %Calculator{}, timeout: 1_000)
+      filtered = Toolset.filter_by_param_type(toolset, "no-such-type")
+
+      assert Toolset.timeout(toolset, "calculator") == 1_000
+      assert Toolset.timeout(filtered, "calculator") == nil
+    end
+```
 
 6b. Replace the four example tools Task 3.3 moved:
 
@@ -9391,12 +9528,12 @@ own: they compile.)
 - [ ] **Step 9: Run to verify everything passes**
 
 ```bash
-mix compile --warnings-as-errors 2>&1 | tail -3
+mix compile --warnings-as-errors
 grep -rnE "Tools\.BaseTool|BaseTool\.|SchemaBaseTool|ContextualTool|prepare_tool|normalize_tool_field_key|Dispatch\.validate_input" lib test e2e
 grep -rln "prepare_input" lib test e2e
 mix test test/tools/tool_input_isolation_test.exs test/agents/dispatch_split_test.exs test/tools/executor_test.exs test/tools/context_test.exs test/json_struct_encoding_test.exs
-mix format && mix test 2>&1 | tail -5
-mix credo --strict 2>&1 | tail -3
+mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
+mix credo --strict
 mix dialyzer 2>&1 | grep -E "Total errors|passed"
 ```
 
@@ -9408,7 +9545,8 @@ files PASS; ` 0 failures`; Credo finds no issues; Dialyzer passes with no unnece
 
 - [ ] **Step 10: MIGRATING**
 
-Append to the "Tools: one `Normandy.Tool` behaviour" section (after its toolset table):
+Append at the end of §25 ("Tools: one `Normandy.Tool` behaviour"), after the toolset table and
+the bullet that follows it:
 
 ```markdown
 ### Writing a tool
@@ -9523,7 +9661,7 @@ tools and the e2e scenarios implement Normandy.Tool."
                "Normandy.Tools.Toolset.register/3: NormandyTest.Tools.ToolsetTest.OldStyleTool " <>
                  "does not implement the Normandy.Tool behaviour. 1.x tools " <>
                  "(Normandy.Tools.BaseTool, SchemaBaseTool, ContextualTool) are replaced by it " <>
-                 ~s(in 2.0; see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour))
+                 "in 2.0; see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
       refute error.message =~ "secret-value"
     end
@@ -9534,7 +9672,7 @@ tools and the e2e scenarios implement Normandy.Tool."
       assert error.message ==
                "Normandy.Tools.Toolset.register/3: expected a tool struct whose module " <>
                  "implements Normandy.Tool, got: a map; " <>
-                 ~s(see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour))
+                 "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
     end
   end
 ```
@@ -9565,7 +9703,7 @@ tools and the e2e scenarios implement Normandy.Tool."
       assert error.message ==
                "ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
                  ":toolset (a %Normandy.Tools.Toolset{} or nil); " <>
-                 ~s(see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour))
+                 "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
     end
 
     test "a supplement toolset holding a 1.x tool raises, naming its module" do
@@ -9655,10 +9793,12 @@ end
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/tools/toolset_test.exs test/agents/config_template_test.exs test/dsl/agent_tool_test.exs`
-Expected: FAIL. `Toolset.register/3` raises `UndefinedFunctionError` (`OldStyleTool.name/1`)
-or `FunctionClauseError` (a map) instead of the `ArgumentError`; `rebuild/3` raises
-`KeyError` for the `:tool_registry` supplement and accepts the old-style tool; `tool/2` is
-undefined in the DSL (compile error naming `tool/2`).
+Expected: `test/dsl/agent_tool_test.exs` does not compile (`tool/2` is undefined in the DSL),
+which aborts the run. Run the first two alone
+(`mix test test/tools/toolset_test.exs test/agents/config_template_test.exs`): FAIL.
+`Toolset.register/3` raises `UndefinedFunctionError` (`OldStyleTool.name/1`) or
+`FunctionClauseError` (a map) instead of the `ArgumentError`; `rebuild/3` raises `KeyError`
+for the `:tool_registry` supplement and accepts the old-style tool.
 
 - [ ] **Step 3: Implement**
 
@@ -9674,7 +9814,7 @@ undefined in the DSL (compile error naming `tool/2`).
 and, before `timeout/2`:
 
 ```elixir
-  @migration ~s(see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour))
+  @migration "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
   @doc false
   # Ruling 5: a 1.x tool reaches a 2.0 node only through registration or a template
@@ -9705,7 +9845,8 @@ and `alias Normandy.Tools.Toolset`; in `rebuild/3`'s `%BaseAgentConfig{}`,
 `node_local_fields!/2`:
 
 ```elixir
-  @tools_section ~s(see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour))
+  # The same pointer as Toolset's @migration (check_tool!/2), kept as a copy: one string.
+  @tools_section "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
   # Ruling 5: the supplement is where a 1.x tool setup can reach a 2.0 node.
   defp supplement_toolset!(%{tool_registry: _}) do
@@ -9924,7 +10065,8 @@ Append to the "Tools: one `Normandy.Tool` behaviour" section:
   `:toolset`; `rebuild/3` raises `ArgumentError` on the old key, on a `:toolset` that is not a
   `%Normandy.Tools.Toolset{}` or `nil`, and on a tool whose module does not implement
   `Normandy.Tool`. `Toolset.register/3` (and `BaseAgent.register_tool/3`) raise the same
-  error for a 1.x tool. Each names the module and this section.
+  error for a 1.x tool. Each names what it found (the 1.x key, the type it got, or the
+  tool's module); the old-key and 1.x-tool errors also point at this section.
 - A session parked on an approval under 1.x resumes under 2.0: the parked call's input is
   validated again when it is approved, and a call whose tool is gone or whose input no
   longer validates is answered with an error result instead of crashing the server.
@@ -9935,7 +10077,7 @@ Append to the "Tools: one `Normandy.Tool` behaviour" section:
 
 - [ ] **Step 7: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5 && mix credo --strict 2>&1 | tail -3 && mix docs --warnings-as-errors 2>&1 | tail -2`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log" && mix credo --strict && mix docs --warnings-as-errors`
 Expected: ` 0 failures`; Credo finds no issues; docs build.
 
 ```bash
@@ -9972,6 +10114,11 @@ Guides, CLAUDE.md and MIGRATING describe the one tool contract."
   - `Session.run(Session.t(), input) :: {:ok, output} | {:error, Exception.t()}`.
   - `Session.approve(Session.t(), decisions) :: :ok | {:error, Normandy.TurnError.t()}`.
   - `Session.put_config(Session.t(), BaseAgentConfig.t()) :: Session.t()`.
+  - `Session.__opts_schema__(:new) :: NimbleOptions.t()` (`@doc false`, Convention 6): the
+    single source of the session keys' types, which `Turn.Server.start_link/1` (Task 3.7a)
+    and `AgentProcess.start_link/1` (Task 3.7b) reuse (ruling P4). `:handlers` is a
+    `Turn.Driver.Handlers` struct or `nil`; `:approval_timeout_ms`/`:idle_timeout_ms` are
+    `:timeout` (ms or `:infinity`, ruling P5), as `Turn.Server` handles them.
   - `%Session{session_id, registry, supervisor, supervisor_mod, store, config, template_provider, template_id, resume_policy, subscriber, handlers, server_options}` (`server_options`: the keyword of `:approval_timeout_ms`, `:on_approval_timeout`, `:idle_timeout_ms` that were given).
   - `AgentProcess.approve/2` returns what `Session.approve/2` returns (plus `{:error, :inline_mode}`, unchanged).
 
@@ -10167,9 +10314,10 @@ with
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/agents/turn/session_test.exs test/coordination/agent_process_server_test.exs`
-Expected: FAIL. `UndefinedFunctionError: function Normandy.Agents.Turn.Session.new/1 is undefined`
-for the new `session_test` tests; `MatchError` on `:sys.get_state(pid)` (no `:session` key)
-and `{:error, :no_session}` not matching in `agent_process_server_test`.
+Expected: neither file compiles (`CompileError`: both match on `%Turn.Session{}` /
+`%Normandy.Agents.Turn.Session{}`, a struct that does not exist yet), which aborts the run.
+That is the failure; the runtime checks (`Session.new/1` undefined, `:sys.get_state(pid)` with
+no `:session` key, `{:error, :no_session}`) only show once Step 3 defines the struct.
 
 - [ ] **Step 3: Rewrite `lib/normandy/agents/turn/session.ex`**
 
@@ -10218,6 +10366,7 @@ defmodule Normandy.Agents.Turn.Session do
             ],
             config: [
               type: {:custom, __MODULE__, :validate_config, []},
+              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
               doc:
                 "The `%Normandy.Agents.BaseAgentConfig{}` a server starts with. With " <>
                   "`:template_provider` too, it is saved as the session's template on first start."
@@ -10246,22 +10395,28 @@ defmodule Normandy.Agents.Turn.Session do
               doc: "`fn event_name, meta -> any end`, passed to `Turn.Server`."
             ],
             handlers: [
-              type: {:struct, Normandy.Agents.Turn.Driver.Handlers},
-              doc: "A `Turn.Driver.Handlers` set, passed to `Turn.Server`."
+              type: {:or, [{:struct, Normandy.Agents.Turn.Driver.Handlers}, nil]},
+              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
+              doc: "A `Turn.Driver.Handlers` set, passed to `Turn.Server`; `nil` is its default."
             ],
             approval_timeout_ms: [
-              type: :pos_integer,
-              doc: "Passed to `Turn.Server`; saved with a Tier-2 template."
+              type: :timeout,
+              doc: "Passed to `Turn.Server`, in ms or `:infinity`; saved with a Tier-2 template."
             ],
             on_approval_timeout: [
               type: {:in, [:continue, :fail]},
               doc: "Passed to `Turn.Server`; saved with a Tier-2 template."
             ],
             idle_timeout_ms: [
-              type: :pos_integer,
-              doc: "Passed to `Turn.Server`; saved with a Tier-2 template."
+              type: :timeout,
+              doc: "Passed to `Turn.Server`, in ms or `:infinity`; saved with a Tier-2 template."
             ]
           )
+
+  @doc false
+  # The session keys' types; Turn.Server and AgentProcess reuse them (ruling P4).
+  @spec __opts_schema__(:new) :: NimbleOptions.t()
+  def __opts_schema__(:new), do: @schema
 
   @moduledoc """
   A handle on one durable session. `new/1` checks the options once; `run/2` routes a turn
@@ -10782,10 +10937,23 @@ perl -0pi -e 's/((?:Normandy\.Agents\.)?(?:Turn\.)?Session)\.(run|approve)\((\s*
 grep -c "Session.new(" test/agents/turn/session_test.exs test/agents/turn/server_integration_test.exs test/agents/turn/server_errors_test.exs test/agents/turn/server_postgres_e2e_test.exs test/agents/turn/eager_handoff_distributed_test.exs test/agents/turn/tier2_integration_test.exs test/support/e2e/distributed.ex
 ```
 
-Expected counts (37 total, verified against HEAD 95dc149 on a copy): session_test 25,
-server_integration 3, server_errors 3, server_postgres_e2e 2, eager_handoff_distributed 1,
-tier2_integration 1, distributed.ex 2. Run the perl before the explicit edits below (they
-contain `Turn.Session.run(session, ...)` with a struct, which must not be wrapped again).
+Expected counts (48 total; verified against HEAD 95dc149 on a copy, plus Step 1's tests):
+session_test 36 (25 wrapped 1.x calls, the 9 lines of Step 1 that already call `new/1`, and 2
+wrapped by mistake, undone next), server_integration 3, server_errors 3, server_postgres_e2e
+2, eager_handoff_distributed 1, tier2_integration 1, distributed.ex 2. Run the perl before the
+explicit edits below (they contain `Turn.Session.run(session, ...)` with a struct, which must
+not be wrapped again).
+
+The perl also wraps Step 1's two calls that must raise because they pass an option list
+(`"run/2 and approve/2 reject an option list with a pointer to new/1"`). Undo those two:
+
+```bash
+perl -pi -e 's/Turn\.Session\.(run|approve)\(Turn\.Session\.new\(new_opts\(\)\),/Turn.Session.$1(new_opts(),/' \
+  test/agents/turn/session_test.exs
+grep -c "Session.new(" test/agents/turn/session_test.exs
+```
+
+Expected: `34`.
 
 Then these explicit edits (after the perl):
 
@@ -10936,7 +11104,7 @@ session = Turn.Session.new(session_id: sid, config: config, store: store, regist
 
 - [ ] **Step 9: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -11164,6 +11332,14 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
         assert {:ok, %{"a" => %{chat_message: "a(x)"}, "b" => %{chat_message: "b(x)"}}} =
                  ParallelOrchestrator.execute(specs, input)
       end
+    end
+
+    test "the 1.x execute(specs, opts) form raises instead of ignoring the options" do
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.ParallelOrchestrator.execute/3: the second argument " <>
+                     "is the input, got a keyword list of options [:timeout, :ordered]; options " <>
+                     "go third, execute(agents, input, opts) (see MIGRATING-2.0.md §27)",
+                   fn -> ParallelOrchestrator.execute([tagging("a")], timeout: 100, ordered: true) end
     end
 
     test "a spec's :input replaces the shared input for that agent" do
@@ -11492,11 +11668,11 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
                    doc: "How many agents run at once."
                  ],
                  timeout: [
-                   type: :pos_integer,
+                   type: :timeout,
                    default: 300_000,
                    doc:
-                     "Each agent's limit in ms. An agent past it is stopped and fails with " <>
-                       "`%Normandy.TurnError{type: :task_down, reason: :timeout}`."
+                     "Each agent's limit in ms, or `:infinity`. An agent past it is stopped " <>
+                       "and fails with `%Normandy.TurnError{type: :task_down, reason: :timeout}`."
                  ],
                  on_agent_complete: [
                    type: {:fun, 2},
@@ -11559,11 +11735,30 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   @spec execute([Orchestration.agent()], term(), keyword()) :: Orchestration.result()
   def execute(agents, input, opts \\ []) do
     opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute, 3})
+    :ok = check_input!(input)
     specs = Orchestration.specs!(agents, @spec_keys, "#{inspect(__MODULE__)}.execute/3")
 
     WorkflowSpan.span(:parallel, %{step_count: length(specs)}, fn ->
       run_specs(specs, input, opts)
     end)
+  end
+
+  # Options of execute/3, in 2.0 and in 1.x.
+  @option_keys Keyword.keys(@opts_schema.schema) ++ [:shared_context, :aggregate, :ordered]
+
+  # The 1.x form execute(specs, opts) still compiles: the options bind as the input and
+  # would be ignored. Refuse a non-empty keyword list whose keys are all option names
+  # (decision 9, ruling P3); a real keyword-list input with such keys must be wrapped.
+  defp check_input!(input) do
+    if input != [] and Keyword.keyword?(input) and
+         Enum.all?(Keyword.keys(input), &(&1 in @option_keys)) do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)}.execute/3: the second argument is the input, got a " <>
+              "keyword list of options #{inspect(Keyword.keys(input))}; options go third, " <>
+              "execute(agents, input, opts) (see MIGRATING-2.0.md §27)"
+    end
+
+    :ok
   end
 
   # Runs specs without opening a workflow span, for HierarchicalCoordinator, which already
@@ -11791,7 +11986,7 @@ reported to the manager"` asserts the text `"worker down"`, the `RuntimeError` m
 - [ ] **Step 7: Other call sites**
 
 1. `lib/normandy/telemetry.ex:167`: `` `ParallelOrchestrator` (`execute/2`, `execute_same_input/3`) and `` becomes `` `ParallelOrchestrator` (`execute/3`) and ``.
-2. `mix.exs:140-143`: the `Errors` group becomes `[Normandy.LLMError, Normandy.TurnError, Normandy.OrchestrationError]`.
+2. `mix.exs:140-143`: in the `Errors` group, add `Normandy.OrchestrationError` after `Normandy.ToolNotFoundError` (Task 3.4a's entry; keep it).
 3. `test/telemetry/killed_run_test.exs`: add `alias Normandy.OrchestrationError` between `:16` and `:17` and `alias Normandy.TurnError` after `:18` (alphabetical, for Credo's `AliasOrder`). `:242-246` becomes
 
 ```elixir
@@ -11883,7 +12078,7 @@ agents, one input and options, and return:
 
 | 1.x | 2.0 |
 |---|---|
-| `ParallelOrchestrator.execute(specs, opts)` | `ParallelOrchestrator.execute(specs, nil, opts)` (each spec keeps its `:input`) |
+| `ParallelOrchestrator.execute(specs, opts)` | `ParallelOrchestrator.execute(specs, nil, opts)` (each spec keeps its `:input`); the 1.x call raises `ArgumentError` when every key of `opts` is an option name (wrap a real keyword-list input whose keys are all option names, e.g. `%{input: kw}`) |
 | `ParallelOrchestrator.execute(agents, input)` → `{:ok, [{:ok, r} \| {:error, e}]}` | `{:ok, %{"agent_0" => r, ...}}` or `{:error, %OrchestrationError{}}` |
 | `ParallelOrchestrator.execute_same_input(specs, input, opts)` | `ParallelOrchestrator.execute(specs, input, opts)` |
 | `{:ok, %{success: true, results: results, errors: %{}, context: ctx, aggregated: a}}` | `{:ok, results}` |
@@ -11899,6 +12094,7 @@ agents, one input and options, and return:
   `ArgumentError`.
 - A struct input (`%BaseAgentInputSchema{}`) reaches every agent; 1.x dropped it, and with bare
   agents raised a `KeyError` in a linked task.
+- `ParallelOrchestrator.execute/3`'s `:timeout` also takes `:infinity`.
 - `ParallelOrchestrator.execute_stream/2` yields `{:ok, {:error, {id, exception}}}` for a failed
   agent (was `{id, {:exception, e, stacktrace}}` or `{id, {:exit, reason}}`).
 - `HierarchicalCoordinator` keeps its shapes; its aggregation prompt names a failed worker
@@ -11907,7 +12103,7 @@ agents, one input and options, and return:
 
 - [ ] **Step 10: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -12069,6 +12265,19 @@ defmodule Normandy.Coordination.SequentialOrchestratorTest do
       assert error.payload.error == "a failed"
     end
 
+    test "an unknown spec key raises, as in execute/3" do
+      first = AgentMessage.new(from: "user", to: "a", payload: %{chat_message: "hi"})
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy\.Coordination\.SequentialOrchestrator\.execute_with_messages\/3: unknown agent spec keys \[:transform\]/,
+                   fn ->
+                     SequentialOrchestrator.execute_with_messages(
+                       [%{id: "a", agent: agent("a"), transform: & &1}],
+                       first
+                     )
+                   end
+    end
+
     test "rejects options" do
       first = AgentMessage.new(from: "user", to: "a", payload: %{chat_message: "hi"})
 
@@ -12215,8 +12424,17 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
       {__MODULE__, :execute_with_messages, 3}
     )
 
-    WorkflowSpan.span(:sequential, %{step_count: length(agent_specs)}, fn ->
-      run_with_messages(agent_specs, initial_message)
+    # The same spec check as execute/3: an unknown key or a bad agent raises ArgumentError
+    # here, not a FunctionClauseError mid-pipeline.
+    specs =
+      Orchestration.specs!(
+        agent_specs,
+        [:id, :agent],
+        "#{inspect(__MODULE__)}.execute_with_messages/3"
+      )
+
+    WorkflowSpan.span(:sequential, %{step_count: length(specs)}, fn ->
+      run_with_messages(specs, initial_message)
     end)
   end
 
@@ -12285,13 +12503,14 @@ Append to the orchestrators section (§27, Task 3.5b):
 - `on_agent_complete` takes `fn id, output -> ... end` (1.x: `fn id, result, ctx -> ... end`).
   `:shared_context` and `:store_intermediate` are removed.
 - `SequentialOrchestrator.execute_with_messages/3` rejects options (it ignored
-  `:shared_context`); an error message's `payload.error` is the exception's message (was
+  `:shared_context`) and checks its specs like `execute/3` (`:id` and `:agent` only; a bad
+  one raised a `KeyError` or `FunctionClauseError`); an error message's `payload.error` is the exception's message (was
   `inspect/1` of `{:exception, e, stacktrace}`).
 ```
 
 - [ ] **Step 7: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -12336,7 +12555,7 @@ The Wave 2 deferral "reactive_test.exs:381 vacuous assertion" is already closed:
 Nothing to do there.
 
 **Files:**
-- Modify: `lib/normandy/coordination/reactive.ex` — `all/3` doc `:139-174` and body `:198-217`; `some/3` doc `:254-261` and `:267-268`; `execute_agent/2` `:392-405`
+- Modify: `lib/normandy/coordination/reactive.ex` — `all/3` doc `:139-174` and body `:198-224`; `some/3` doc `:254-261` and `:268-269`; `execute_agent/2` `:392-406`
 - Modify: `MIGRATING-2.0.md` (the orchestrators section)
 - Test: `test/coordination/reactive_test.exs:95-115`, `:223-229`, new tests in `describe "race/3"` and `describe "all/3"`
 
@@ -12403,9 +12622,11 @@ In `describe "some/3"`, replace the test `"returns error if count exceeds agent 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mix test test/coordination/reactive_test.exs`
-Expected: FAIL. The race test process exits with `:boom` (`** (EXIT from #PID<...>) :boom`);
-the `all/3` tests get `{:error, {:exit, :timeout}}` / `{:error, {:exit, :boom}}`; `some/3`
-returns `{:error, :count_exceeds_agent_count}`.
+Expected: FAIL. The race test process exits with `:boom` (`** (EXIT from #PID<...>) :boom`), and
+so does the new `all/3` exit test (`Task.async_stream` links its tasks to the caller, so the
+exit reaches the test process before any `{:exit, _}` element); the two `all/3` timeout tests
+get `{:error, {:exit, :timeout}}`; `some/3` returns `{:error, :count_exceeds_agent_count}`
+(the describe is named `"some/4"` in the file).
 
 - [ ] **Step 3: Implement**
 
@@ -12434,7 +12655,7 @@ returns `{:error, :count_exceeds_agent_count}`.
   end
 ```
 
-(b) In `all/3`'s `Enum.reduce_while` (`:209-216`), replace
+(b) In `all/3`'s `Enum.reduce_while` (the `{:exit, ...}` clause, `:218-223`), replace
 
 ```elixir
         {:exit, {agent_id, reason}}, {:ok, acc} ->
@@ -12493,7 +12714,7 @@ with
 
 and add to its `## Returns` list: ``Raises `ArgumentError` when `:count` is above the number of agents.``
 
-(e) The `@spec` of `some/3` (`:262`) and `all/3` (`:176`) stay; `@type result` (`:54`) becomes
+(e) The `@spec` of `some/3` (`:262`) and `all/3` (`:175`) stay; `@type result` (`:54`) becomes
 `@type result :: {:ok, term()} | {:error, Exception.t() | :all_failed | :timeout | :insufficient_successes}`.
 
 - [ ] **Step 4: Run to verify they pass**
@@ -12510,14 +12731,14 @@ Append to the orchestrators section (§27):
   output} | {:error, e}}}`, `some/3` → `{:ok, %{id => output}}`, and `{:error, :all_failed |
   :timeout | :insufficient_successes}`). An agent that exits or runs past `:timeout` is
   `{:error, %Normandy.TurnError{type: :task_down}}` (was `{:error, {:exit, reason}}`), and an
-  agent struct that exits no longer takes down the caller of `race/3` or `some/3`.
+  agent struct that exits no longer takes down the caller of `race/3`, `all/3` or `some/3`.
 - `Reactive.some/3` with `count:` above the number of agents raises `ArgumentError` (was
   `{:error, :count_exceeds_agent_count}`).
 ```
 
 - [ ] **Step 6: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -12594,6 +12815,12 @@ header lists no entry exception, and `KeyError` is what `Map.fetch!/2` raises. I
     } do
       assert agent.toolset == nil
       assert_raise Normandy.ToolNotFoundError, fn -> BaseAgent.fetch_tool!(agent, "missing") end
+
+      with_tool = BaseAgent.register_tool(agent, %Calculator{})
+
+      assert_raise Normandy.ToolNotFoundError, fn ->
+        BaseAgent.fetch_tool!(with_tool, "missing")
+      end
     end
 ```
 
@@ -12640,8 +12867,8 @@ header lists no entry exception, and `KeyError` is what `Map.fetch!/2` raises. I
 
 Run: `mix test test/agents/base_agent_test.exs test/agents/base_agent_tools_test.exs test/components/context_provider_test.exs test/components/date_time_provider_test.exs test/components/agent_memory_test.exs`
 Expected: FAIL. `UndefinedFunctionError` for `fetch_context_provider/2`, `fetch_tool/2`,
-`fetch_entry/2`; `Normandy.TurnNotFoundError` / `Normandy.ContextProviderNotFoundError` are
-undefined modules (`assert_raise` reports `UndefinedFunctionError ... exception/1`).
+`fetch_entry/2`; for the renamed exceptions `assert_raise` reports the old one, e.g.
+"Expected exception Normandy.TurnNotFoundError but got Normandy.NonExistentTurn".
 
 - [ ] **Step 3: Implement**
 
@@ -12825,7 +13052,7 @@ The renamed exceptions build their own message and take no `:message` option.
 
 - [ ] **Step 6: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -13004,7 +13231,7 @@ Add these rows to the table of §28, "Lookups are `fetch_*`" (Task 3.6a):
 
 - [ ] **Step 6: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -13021,7 +13248,7 @@ git commit -m "feat(coordination)!: SharedContext, StatefulContext and AgentSupe
 - Modify: `lib/normandy/schema.ex:21-22` (moduledoc), `:409-424` (the `defimpl` in `io_schema`'s postlude)
 - Modify: `lib/normandy/agents/tool_call_response.ex:124-125`, `lib/normandy/components/tool_result.ex:64-65`
 - Modify: `CLAUDE.md:129`, `MIGRATING-2.0.md` (new section before `## New, non-breaking`)
-- Test: `test/components/base_io_schema_test.exs:20-23`, `test/agents/base_agent_test.exs:117-125`, `test/app_env_config_test.exs:64-65`, `test/schema/redact_test.exs:63-68`, `test/support/iotest.ex:11-12`, `test/agents/turn/server_test.exs:30-31`, `test/hooks/server_hooks_test.exs:27-28`
+- Test: `test/components/base_io_schema_test.exs:20-23`, `test/agents/base_agent_test.exs:117-125`, `test/app_env_config_test.exs:64-65`, `test/schema/redact_test.exs:63-68` (drifts after 3.3a; found by test name), `test/support/iotest.ex:11-12`, `test/agents/turn/server_test.exs:30-31`, `test/hooks/server_hooks_test.exs:27-28`
 
 **Interfaces:**
 - Produces: `Normandy.Components.BaseIOSchema` with exactly `to_json/1` and `get_schema/1`. Renaming `get_schema/1`/`get_json_schema/0` is out of scope (plan header: Wave 7).
@@ -13088,7 +13315,7 @@ Expected: FAIL: left is `[__rich__: 1, __str__: 1, get_schema: 1, to_json: 1]`.
    `to_json` one above them stays). Leave `TaggingJson` and both its `encode!` clauses as Task
    3.3a left them (`encode!(_value, [])` and `encode!(_value, pretty: true)`): `Normandy.JSON`
    calls the adapter's `encode!/2` even without options.
-7. `test/schema/redact_test.exs:63-68`: delete the test `"__str__ and __rich__"` (the `to_json`
+7. `test/schema/redact_test.exs:63-68` (before Task 3.3a's inserts; find it with `grep -n '__str__ and __rich__' test/schema/redact_test.exs`): delete the test `"__str__ and __rich__"` (the `to_json`
    redaction test above it stays and covers what the model sees).
 8. `CLAUDE.md:129`: `` - Methods: `to_json/1`, `get_schema/1`, `__str__/1`, `__rich__/1` `` →
    `` - Methods: `to_json/1`, `get_schema/1` ``.
@@ -13118,7 +13345,7 @@ fields, as `__str__/1` did.
 
 - [ ] **Step 6: Format, full suite, commit**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 ```bash
@@ -13152,8 +13379,12 @@ Every rule below applies to every entry point in this group; the tasks give the 
      `:resume_policy` on to `Turn.Session.new/1`, whose schema defaults them).
    For every other key the default moves into the schema and the reader becomes
    `Keyword.fetch!(opts, :key)`.
-4. **Types.** Caller-facing waits are `:timeout` (ms or `:infinity`; DX-28). A `{module, handle}`
-   pair is `{:tuple, [:atom, :any]}`. A struct is `{:struct, Mod}`. A plain map is
+4. **Types.** Caller-facing waits are `:timeout` (ms or `:infinity`; DX-28), and code that
+   reads one handles `:infinity` (ruling P5). The exceptions are positive ms (`:pos_integer`),
+   and their docs say so: a timeout that bounds one tool call (`Toolset.register/3`'s, the
+   Executor's, `A2A.Registry.discover_and_register/3`'s) and the `CircuitBreaker`'s open period
+   (not a wait). A `{module, handle}` pair is `{:tuple, [:atom, :any]}`, except the session keys,
+   whose types come from `Turn.Session.__opts_schema__(:new)` (ruling P4). A struct is `{:struct, Mod}`. A plain map is
    `{:custom, Normandy.Options, :plain_map, []}`. A callback is `{:fun, n}`. An option a
    caller may pass as an explicit `nil` (built from a struct field) is `{:or, [type, nil]}`.
 5. **Docs.** The function's `@doc` gets an `## Options` heading followed by
@@ -13178,9 +13409,9 @@ Every rule below applies to every entry point in this group; the tasks give the 
     messages include the value (`expected Normandy.Agents.BaseAgentConfig, got: %{client: ...}`).
     Task 3.1's `Normandy.Options` hides the value of any key in its `@sensitive_keys` list
     (`:api_key, :authorization, :client, :credential, :headers, :mcp_servers, :password,
-    :req_options, :secret, :token`; `3.1-3.2.md` Step 4). Each sub-task adds the keys it
+    :req_options, :secret, :token`; Task 3.1a Step 4). Each sub-task adds the keys it
     introduces whose value can hold an agent config, a client, a token, a URL with a password or
-    connection options: 3.7a `:config`; 3.7b `:agent`, `:agent_config`, `:agents`; 3.7c
+    connection options: 3.7a `:config`; 3.7b `:agent`, `:agent_config`, `:agents`, `:workers`; 3.7c
     `:auth_token`, `:transport_opts`, `:context`; 3.7d `:url`, `:redix`, `:templates`. Each adds
     one test that a bad value under one of them does not appear in the message.
     `Options.plain_map/1` never echoes (it names the type through `Describe.type_of/1`).
@@ -13197,14 +13428,18 @@ Every rule below applies to every entry point in this group; the tasks give the 
 - Modify: `lib/normandy/agents/turn/supervisor/horde.ex` (`start_link/1` 20-32, `start_server/2` 34-47)
 - Modify: `lib/normandy/agents/turn/resume_reaper.ex` (`start_link/1` 43-49, `init/1` 52-66)
 - Modify: `lib/normandy/agents/turn.ex` (`new/1` docs and body, lines 75-101)
+- Modify: `lib/normandy/agents/turn/session.ex` (`run/2`'s `@doc`: Ruling 7's raise)
 - Modify: `MIGRATING-2.0.md` (new section)
 - Create: `test/options/turn_options_test.exs`
-- Modify: `test/agents/turn_test.exs:32`, `test/agents/turn/server_test.exs:2138-2149`
+- Modify: `test/agents/turn_test.exs:32`, `test/agents/turn/server_test.exs:2138-2149`,
+  `test/agents/turn/server_errors_test.exs` (the start_link-raises test, Step 4)
 
 **Interfaces:**
 - Consumes: `Normandy.Options.validate!/3`, `Normandy.Options.docs/1`, `Normandy.Options.plain_map/1`
-  (Task 3.1a; decision 18). `Turn.Session.new/1`
-  is validated by Task 3.5 and is not touched here (listed in the coverage test, Task 3.7d).
+  (Task 3.1a; decision 18); `Turn.Session.__opts_schema__(:new)` (Task 3.5a: the types of
+  `:template_provider`, `:handlers`, `:approval_timeout_ms`, `:idle_timeout_ms`, ruling P4).
+  `Turn.Session.new/1` is validated by Task 3.5 and is not touched here (listed in the
+  coverage test, Task 3.7d).
 - Produces: `Turn.Server.__opts_schema__(:start_link) :: NimbleOptions.t()`
   (`@doc false`); `Normandy.Test.OptionsAssertions.assert_rejects/4` and
   `assert_documents_options/3` (test support, used by 3.7b–3.7d). Validated:
@@ -13244,7 +13479,7 @@ defmodule Normandy.Test.OptionsAssertions do
   """
   import ExUnit.Assertions
 
-  @spec assert_rejects(atom(), module(), atom(), list()) :: ArgumentError.t()
+  @spec assert_rejects(atom(), module(), atom(), list()) :: Exception.t()
   def assert_rejects(key, mod, fun, args) do
     prefix = "#{inspect(mod)}.#{fun}/#{length(args)}: "
     error = assert_raise ArgumentError, fn -> apply(mod, fun, args) end
@@ -13270,6 +13505,13 @@ defmodule Normandy.Test.OptionsAssertions do
 
     assert is_binary(doc), "#{inspect(mod)}.#{fun}/#{arity} has no @doc"
     assert doc =~ "## Options", "#{inspect(mod)}.#{fun}/#{arity} has no ## Options section"
+
+    # A generated list (Normandy.Options.docs/1: "* `:key` (type) - ...") or a pointer to
+    # another function's options; hand-written "- `:key` - ..." bullets left in place fail.
+    assert doc =~ ~r/^\* `:\w+[?!]?`( \(.*\))?( - |$)/m or
+             doc =~ ~r/## Options\s+(The options of `|None; any key raises)/,
+           "#{inspect(mod)}.#{fun}/#{arity}'s ## Options is not generated by Normandy.Options.docs/1"
+
     :ok
   end
 end
@@ -13370,7 +13612,7 @@ defmodule Normandy.Options.TurnOptionsTest do
                "invalid value for :resume_policy option: expected one of [:lazy, :eager], got: :sometimes"
     end
 
-    test "a struct where :handlers expects a map is an ArgumentError, not Protocol.UndefinedError" do
+    test "a :handlers that is not a Handlers struct is an ArgumentError, not Protocol.UndefinedError" do
       error =
         assert_raise ArgumentError, fn ->
           Turn.Server.start_link(
@@ -13396,8 +13638,8 @@ ones" (~line 1380) and the saved-`server_options` case (~line 1341) guard Conven
 Run: `mix test test/options/turn_options_test.exs`
 Expected: FAIL. Every `rejects` row reports "Expected exception ArgumentError but nothing was
 raised" or another exception (`Turn.Server.start_link/1` starts and crashes in `init/1`, which can
-also exit the test process); the docs test fails on `Turn.Supervisor.start_link/1` ("has no
-@doc").
+also exit the test process); the docs test fails on the first `@cases` row,
+`Turn.Server.start_link/1` ("has no @doc": it has none today).
 
 - [ ] **Step 3a: `:config` is a sensitive key**
 
@@ -13411,6 +13653,12 @@ Add `alias Normandy.Options` to the alias block. Above `@spec start_link(keyword
 the schema, the accessor and the doc:
 
 ```elixir
+  # Turn.Session.new/1's schema is the single source of the types of the keys a session
+  # passes on (ruling P4): a value one accepts, the other accepts too.
+  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
+                   {key, Keyword.fetch!(spec, :type)}
+                 end)
+
   @start_link_opts_schema NimbleOptions.new!(
                             session_id: [
                               type: :string,
@@ -13432,13 +13680,15 @@ the schema, the accessor and the doc:
                             ],
                             config: [
                               type: {:struct, Normandy.Agents.BaseAgentConfig},
+                              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
                               doc:
                                 "The agent config. Without it the server rebuilds the config " <>
                                   "from the template saved in `:store` (a thin start), which " <>
                                   "needs `:template_provider`."
                             ],
                             template_provider: [
-                              type: {:or, [{:tuple, [:atom, :any]}, nil]},
+                              type: @session_types.template_provider,
+                              type_doc: "`{module, handle}`",
                               doc:
                                 "The `Normandy.Behaviours.AgentTemplate` as `{module, handle}`, " <>
                                   "for a thin start."
@@ -13459,13 +13709,8 @@ the schema, the accessor and the doc:
                                   "and ignored. Never saved with the template."
                             ],
                             handlers: [
-                              type:
-                                {:or,
-                                 [
-                                   {:struct, Normandy.Agents.Turn.Driver.Handlers},
-                                   {:custom, Normandy.Options, :plain_map, []},
-                                   nil
-                                 ]},
+                              type: @session_types.handlers,
+                              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
                               doc:
                                 "A `Normandy.Agents.Turn.Driver.Handlers` set (default " <>
                                   "`Normandy.Agents.BaseAgent.non_streaming_handlers/0`). A `nil` " <>
@@ -13474,7 +13719,7 @@ the schema, the accessor and the doc:
                                   "with the template."
                             ],
                             approval_timeout_ms: [
-                              type: :timeout,
+                              type: @session_types.approval_timeout_ms,
                               doc:
                                 "How long a parked turn waits for `approve/2`, in ms (default " <>
                                   "300_000). Wins over a saved template's value."
@@ -13489,7 +13734,7 @@ the schema, the accessor and the doc:
                                   "saved template's value."
                             ],
                             idle_timeout_ms: [
-                              type: :timeout,
+                              type: @session_types.idle_timeout_ms,
                               doc:
                                 "Idle time before passivation, in ms (default 60_000). Wins " <>
                                   "over a saved template's value."
@@ -13529,8 +13774,22 @@ Replace the body of `start_link/1` (lines 222-229):
 ```
 
 `validate_on_approval_timeout!/1` stays: `timeout_options/2` (line 515) still checks a value read
-from a saved template. No `Keyword.get(opts, ...)` reader in `init/1` changes: none of those keys
-has a schema default (Convention 3).
+from a saved template. That is now the only value it sees, so its message names that source
+instead of `start_link/1`; its second clause becomes:
+
+```elixir
+  defp validate_on_approval_timeout!(other) do
+    raise ArgumentError,
+          "Normandy.Agents.Turn.Server: the saved template's :on_approval_timeout must be " <>
+            ":continue or :fail, got: #{inspect(other)}"
+  end
+```
+
+No `Keyword.get(opts, ...)` reader in `init/1` changes: none of those keys has a schema default
+(Convention 3). The session keys' types come from `Turn.Session` (ruling P4), so `:handlers` no
+longer takes a plain map and `:template_provider` no longer takes `nil` or `{nil, handle}`; no
+caller in `lib` or `test` passes either (checked with `grep -rn "template_provider: nil\|handlers: nil" lib test`
+and the `handlers:` call sites, which all pass a `%Handlers{}` or an update of one).
 
 In the moduledoc, replace lines 10-28 (from `## Options (besides ...` through the
 `:idle_timeout_ms` bullet) with:
@@ -13848,7 +14107,7 @@ Add `alias Normandy.Options`. Replace the `@doc`, `@spec` and `new/1` (lines 75-
 If Task 3.1–3.6 added other fields to the `%State{}` built here, keep them: only the opts reads and
 the `unless ... raise` block change.
 
-- [ ] **Step 4: Update the two tests that pinned the old messages**
+- [ ] **Step 4: Update the tests that pinned the old messages and the old start failure**
 
 `test/agents/turn_test.exs:32`: replace `~r/:max_iterations must be an integer >= 1/` with
 `~r/^Normandy\.Agents\.Turn\.new\/1: invalid value for :max_iterations option: expected positive integer, got: 0/`.
@@ -13859,9 +14118,84 @@ The `got: -1`, `got: 1.5` and `got: "5"` assertions (lines 36-47) still match.
 and replace the regex with
 `~r/^Normandy\.Agents\.Turn\.Server\.start_link\/1: invalid value for :on_approval_timeout option: expected one of \[:continue, :fail\], got: :sometimes/`.
 
+`test/agents/turn/server_errors_test.exs`, the test `"a server whose start_link raises replies
+:session_unavailable with no stacktrace"` (as Task 3.5a left it: a valid handle whose
+`server_options` are set to `[on_approval_timeout: :sometimes]` by hand). After Ruling 7,
+`Turn.Supervisor.start_server/2` checks that option in the caller, so `Session.run/2` raises
+instead of returning `{:error, %TurnError{type: :session_unavailable}}`. Do not rescue it in
+`Session.run/2` (that would undo Ruling 7). Split the test in two. Add, below the aliases:
+
+```elixir
+  # Starts the server like Turn.Supervisor.start_server/2 but without its caller-side
+  # option check, so a raise in Turn.Server.start_link/1 comes back as the
+  # DynamicSupervisor's {:error, {exception, stacktrace}}.
+  defmodule UncheckedSupervisor do
+    @moduledoc false
+    def start_server(sup, server_opts) do
+      DynamicSupervisor.start_child(sup, %{
+        id: Normandy.Agents.Turn.Server,
+        start: {Normandy.Agents.Turn.Server, :start_link, [server_opts]},
+        restart: :transient,
+        type: :worker
+      })
+    end
+  end
+```
+
+and replace the test with:
+
+```elixir
+  test "a bad server option raises in the caller of Session.run/2 (Ruling 7)" do
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    session =
+      Turn.Session.new(
+        session_id: "s-bad-opt-#{System.unique_integer([:positive])}",
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
+      )
+
+    # Bypasses new/1's check on purpose: start_server/2 checks it again in the caller.
+    session = %{session | server_options: [on_approval_timeout: :sometimes]}
+
+    assert_raise ArgumentError,
+                 ~r/^Normandy\.Agents\.Turn\.Supervisor\.start_server\/2: invalid value for :on_approval_timeout/,
+                 fn -> Turn.Session.run(session, "hi") end
+  end
+
+  test "a server whose start_link raises replies :session_unavailable with no stacktrace" do
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    session =
+      Turn.Session.new(
+        session_id: "s-bad-opt-#{System.unique_integer([:positive])}",
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        supervisor_mod: UncheckedSupervisor,
+        config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
+      )
+
+    session = %{session | server_options: [on_approval_timeout: :sometimes]}
+
+    assert {:error, %TurnError{type: :session_unavailable, reason: reason} = error} =
+             Turn.Session.run(session, "hi")
+
+    assert %ArgumentError{} = reason
+    refute contains_stacktrace?(error)
+  end
+```
+
+In `lib/normandy/agents/turn/session.ex`, `run/2`'s `@doc`: after the `:session_unavailable`
+sentence add "A server option `Turn.Server` rejects (only reachable by editing the struct, since
+`new/1` checks them too) raises `ArgumentError` in the caller, from
+`Turn.Supervisor.start_server/2` (Ruling 7)."
+
 - [ ] **Step 5: Run the new tests**
 
-Run: `mix test test/options/turn_options_test.exs test/agents/turn_test.exs test/agents/turn/server_test.exs`
+Run: `mix test test/options/turn_options_test.exs test/agents/turn_test.exs test/agents/turn/server_test.exs test/agents/turn/server_errors_test.exs`
 Expected: PASS, ` 0 failures`.
 
 - [ ] **Step 6: MIGRATING**
@@ -13889,12 +14223,21 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - The messages for a bad `:on_approval_timeout` and a bad `Turn.new/1` `:max_iterations`
   changed: `...: invalid value for :on_approval_timeout option: expected one of
   [:continue, :fail], got: :sometimes`.
-- `:handlers` must be a `Turn.Driver.Handlers` struct or a plain map.
+- `Turn.Server.start_link/1` takes the keys a session passes on with `Turn.Session.new/1`'s
+  types: `:handlers` must be a `Turn.Driver.Handlers` struct or `nil` (a plain map is
+  rejected), and `:template_provider` a `{module, handle}` tuple with a module (1.x took any
+  pair, or `nil`). `:approval_timeout_ms` and `:idle_timeout_ms` take ms or `:infinity`.
+- A server option `Turn.Server` rejects, reaching `Turn.Session.run/2` through a hand-edited
+  `%Turn.Session{}`, raises `ArgumentError` in the caller (it returned a `:session_unavailable`
+  `TurnError`).
+- A saved template's invalid `:on_approval_timeout` is reported as
+  `Normandy.Agents.Turn.Server: the saved template's :on_approval_timeout must be :continue
+  or :fail, got: ...`.
 ```
 
 - [ ] **Step 7: Format and run the suite**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`. A failing caller is handled by Convention 8; name each fixed caller in the
 commit body.
 
@@ -13904,8 +14247,9 @@ commit body.
 git add lib/normandy/options.ex test/support/options_assertions.ex \
   lib/normandy/agents/turn/server.ex lib/normandy/agents/turn/supervisor.ex \
   lib/normandy/agents/turn/supervisor/horde.ex lib/normandy/agents/turn/resume_reaper.ex \
-  lib/normandy/agents/turn.ex MIGRATING-2.0.md test/options/turn_options_test.exs \
-  test/agents/turn_test.exs test/agents/turn/server_test.exs
+  lib/normandy/agents/turn.ex lib/normandy/agents/turn/session.ex MIGRATING-2.0.md \
+  test/options/turn_options_test.exs test/agents/turn_test.exs test/agents/turn/server_test.exs \
+  test/agents/turn/server_errors_test.exs
 git commit -m "feat(turn): reject unknown options at the turn entry points"
 ```
 
@@ -13916,21 +14260,25 @@ Add any caller fixed under Convention 8 to the `git add` line by name.
 ### Task 3.7b: Options at the coordination, batch, workflow and resilience entry points
 
 **Files:**
-- Modify: `lib/normandy/options.ex` (`:agent`, `:agent_config`, `:agents` join `@sensitive_keys`)
+- Modify: `lib/normandy/options.ex` (`:agent`, `:agent_config`, `:agents`, `:workers` join `@sensitive_keys`)
 - Modify: `lib/normandy/coordination/agent_process.ex` (`start_link/1` 70-103, `run/3` 105-121,
   `cast/3` 123-146, `init/1` 253-272, `@type run_opts` 63-67)
 - Modify: `lib/normandy/coordination/agent_supervisor.ex` (`start_link/1` 40-71, `start_agent/2` 73-110)
 - Modify: `lib/normandy/coordination/agent_pool.ex` (`start_link/1` 77-111, `transaction/3`
   113-162, `checkout/2` 164-207, `init/1` 264-268)
 - Modify: `lib/normandy/coordination/parallel_orchestrator.ex` (`execute_stream/2` only)
-- Modify: `lib/normandy/coordination/hierarchical_coordinator.ex` (`new/1` 41-70, `execute/3`
-  72-104, `execute_with_tasks/3` 120-153)
-- Modify: `lib/normandy/coordination/reactive.ex` (`race/3` ~93, `all/3` ~176, `some/3` ~263)
+- Modify: `lib/normandy/coordination/hierarchical_coordinator.ex` (moduledoc example 10-14,
+  `new/1` 41-70, `execute/3` 72-104, `execute_with_tasks/3` 120-153)
+- Modify: `lib/normandy/coordination/reactive.ex` (`race/3` ~93, `all/3` ~176, `some/3` ~263,
+  `await_first_success_loop/5` ~426, `await_n_successes_loop/7` ~462)
 - Modify: `lib/normandy/batch/processor.ex` (`@type batch_option` 56-61, docs 81-118,
   `process_batch/3` 121-128, `process_batch_with_stats/3` 192-196, `process_batch_chunked/3` 222-252)
 - Modify: `lib/normandy/agents/base_agent.ex` (`process_batch/3`, `process_batch_with_stats/3`, ~2130-2192)
 - Modify: `lib/normandy/dsl/workflow.ex` (module attributes; the generated `execute/1` and its doc, 399-430)
-- Modify: `lib/normandy/resilience/circuit_breaker.ex` (`start_link/1` 92-122, `init/1` 238-254)
+- Modify: `lib/normandy/resilience/circuit_breaker.ex` (`start_link/1` 92-122, `init/1` 238-254,
+  `__opts_schema__/1`)
+- Modify: `lib/normandy/agents/base_agent/init_options.ex` (`@breaker_schema` derived from
+  `CircuitBreaker.__opts_schema__(:start_link)`)
 - Modify: `MIGRATING-2.0.md` (Task 3.7a's section)
 - Create: `test/options/coordination_options_test.exs`
 - Modify: `test/coordination/agent_pool_test.exs:296-305`
@@ -13938,10 +14286,11 @@ Add any caller fixed under Convention 8 to the `git add` line by name.
 **Interfaces:**
 - Consumes: `Normandy.Options.validate!/3`, `docs/1`, `plain_map/1` (Task 3.1a);
   `Normandy.Test.OptionsAssertions` (Task 3.7a); Task 3.5a's `AgentProcess` (a `Turn.Session`
-  handle built in `init/1` from `@session_options`); Task 3.5b's `ParallelOrchestrator`
+  handle built in `init/1` from `@session_options`) and `Turn.Session.__opts_schema__(:new)`
+  (the session keys' types, ruling P4); Task 3.5b's `ParallelOrchestrator`
   `@opts_schema`. Not touched (validated by Task 3.5): `ParallelOrchestrator.execute/3`,
   `execute_specs/2`, `SequentialOrchestrator.execute/3`, `execute_with_messages/3`.
-- Produces: `AgentProcess.__opts_schema__(:start_link)`, `Batch.Processor.__opts_schema__/1`
+- Produces: `AgentProcess.__opts_schema__(:start_link)`, `CircuitBreaker.__opts_schema__(:start_link)`, `Batch.Processor.__opts_schema__/1`
   (`:process_batch | :process_batch_with_stats`), `Normandy.DSL.Workflow.__validate_execute_opts__/2`
   (all `@doc false`). Validated: `AgentProcess.start_link/1`, `run/3`, `cast/3`;
   `AgentSupervisor.start_link/1`, `start_agent/2`; `AgentPool.start_link/1`, `transaction/3`,
@@ -14058,7 +14407,7 @@ defmodule Normandy.Options.CoordinationOptionsTest do
   defp agent, do: BaseAgent.init(%{client: %StubClient{}, model: "m"})
 
   describe "behaviour the schemas must keep" do
-    test "AgentSupervisor.start_agent/2 keeps :restart for the child spec and does not pass it on" do
+    test "AgentSupervisor.start_agent/2 accepts :restart" do
       sup = start_supervised!(AgentSupervisor)
       assert {:ok, pid} = AgentSupervisor.start_agent(sup, agent: agent(), restart: :temporary)
       assert is_pid(pid)
@@ -14087,6 +14436,39 @@ defmodule Normandy.Options.CoordinationOptionsTest do
       assert error.message =~ ":failure_treshold"
     end
 
+    test "a server-mode option Turn.Session.new/1 would reject raises in the caller" do
+      for {key, value} <- [handlers: %{}, store: {nil, :h}, supervisor: "sup"] do
+        error =
+          assert_raise ArgumentError, fn ->
+            AgentProcess.start_link([agent: agent(), turn_engine: :server] ++ [{key, value}])
+          end
+
+        assert error.message =~ "Normandy.Coordination.AgentProcess.start_link/1: "
+        assert error.message =~ inspect(key)
+      end
+    end
+
+    # The model mockup answers, so each run succeeds; :infinity used to raise ArithmeticError.
+    test "Reactive.race/3 and some/3 take timeout: :infinity" do
+      answering = BaseAgent.init(%{client: %NormandyTest.Support.ModelMockup{}, model: "m"})
+
+      assert {:ok, _} = Reactive.race([answering], "go", timeout: :infinity)
+      assert {:ok, results} = Reactive.some([answering], "go", count: 1, timeout: :infinity)
+      assert map_size(results) == 1
+    end
+
+    test "a :workers value that is not a list is rejected without echoing it" do
+      worker = %{id: "w", agent: %{client: %{api_key: "sk-secret"}}}
+
+      error =
+        assert_raise ArgumentError, fn ->
+          HierarchicalCoordinator.new(manager: agent(), workers: worker)
+        end
+
+      assert error.message =~ ":workers"
+      refute error.message =~ "sk-secret"
+    end
+
     test "a bad :agent value is rejected without echoing it" do
       error =
         assert_raise ArgumentError, fn ->
@@ -14113,12 +14495,17 @@ Run: `mix test test/options/coordination_options_test.exs`
 Expected: FAIL. Rows report "nothing was raised" or another exception (`KeyError` from
 `AgentProcess.start_link/1`, an exit from `GenServer.call(:no_server, ...)`,
 `FunctionClauseError`/`CaseClauseError` from the orchestrators); the docs test fails on the
-first function without generated options; the `:turn_engine` test gets a `CaseClauseError` exit.
+first function without generated options; the `:turn_engine` test gets a `CaseClauseError` exit;
+the server-mode test gets an exit from `init/1` (`Turn.Session.new/1` raising there); the
+`:infinity` test an `ArithmeticError`; the `:workers` test no `ArgumentError` (`new/1` takes the
+map today).
 
 - [ ] **Step 3: Sensitive keys**
 
-In `lib/normandy/options.ex`, add `:agent`, `:agent_config` and `:agents` to `@sensitive_keys`
-(Convention 10): each holds agent configs, whose `:client` carries an API key.
+In `lib/normandy/options.ex`, add `:agent`, `:agent_config`, `:agents` and `:workers` to
+`@sensitive_keys` (Convention 10): each holds agent configs, whose `:client` carries an API key
+(`HierarchicalCoordinator.new/1`'s `:workers` is a list of `%{id:, agent:}` maps; a non-list
+value would otherwise be echoed by NimbleOptions' "expected list, got: ...").
 
 - [ ] **Step 3a: `AgentProcess`**
 
@@ -14126,10 +14513,18 @@ Add `alias Normandy.Options`. Replace `@type run_opts` (lines 63-67) with
 `@type run_opts :: [timeout: timeout()]`. Above `start_link/1`'s `@doc` add:
 
 ```elixir
+  # The :server-mode keys go to Turn.Session.new/1 in init/1; its schema is the single
+  # source of their types (ruling P4), so a value accepted here cannot fail there and
+  # crash init/1 (Review Focus 3). Types only: Session's required/default flags do not apply.
+  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
+                   {key, Keyword.fetch!(spec, :type)}
+                 end)
+
   @start_link_opts_schema NimbleOptions.new!(
                             agent: [
                               type: {:struct, Normandy.Agents.BaseAgentConfig},
                               required: true,
+                              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
                               doc: "The agent config the process runs."
                             ],
                             name: [type: :any, doc: "A `t:GenServer.name/0` for the process."],
@@ -14154,64 +14549,64 @@ Add `alias Normandy.Options`. Replace `@type run_opts` (lines 63-67) with
                                   "parking, passivation, persistence)."
                             ],
                             store: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @session_types.store,
+                              type_doc: "`{module, handle}`",
                               doc:
                                 "`:server` mode: the `SessionStore` as `{module, handle}`. " <>
                                   "Without it the process starts and owns an in-memory store."
                             ],
                             registry: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @session_types.registry,
+                              type_doc: "`{module, handle}`",
                               doc:
                                 "`:server` mode: the `SessionRegistry` as `{module, handle}`. " <>
                                   "Without it the process starts and owns a `Native` registry."
                             ],
                             supervisor: [
-                              type: :any,
+                              type: @session_types.supervisor,
+                              type_doc: "a pid or a supervisor name",
                               doc:
                                 "`:server` mode: the session supervisor. Without it the process " <>
                                   "starts and owns a `Turn.Supervisor`."
                             ],
                             supervisor_mod: [
-                              type: :atom,
+                              type: @session_types.supervisor_mod,
                               doc:
                                 "`:server` mode: the module whose `start_server/2` starts " <>
                                   "sessions (default `Normandy.Agents.Turn.Supervisor`)."
                             ],
                             template_provider: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @session_types.template_provider,
+                              type_doc: "`{module, handle}`",
                               doc: "`:server` mode: the `AgentTemplate` as `{module, handle}`."
                             ],
                             resume_policy: [
-                              type: {:in, [:lazy, :eager]},
+                              type: @session_types.resume_policy,
                               doc: "`:server` mode: the session's resume policy (default `:lazy`)."
                             ],
                             template_id: [
-                              type: :string,
+                              type: @session_types.template_id,
                               doc: "`:server` mode: the template id (default: the config's name)."
                             ],
                             subscriber: [
-                              type: {:fun, 2},
+                              type: @session_types.subscriber,
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
                             ],
                             handlers: [
-                              type:
-                                {:or,
-                                 [
-                                   {:struct, Normandy.Agents.Turn.Driver.Handlers},
-                                   {:custom, Normandy.Options, :plain_map, []}
-                                 ]},
+                              type: @session_types.handlers,
+                              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
                             ],
                             approval_timeout_ms: [
-                              type: :timeout,
+                              type: @session_types.approval_timeout_ms,
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
                             ],
                             on_approval_timeout: [
-                              type: {:in, [:continue, :fail]},
+                              type: @session_types.on_approval_timeout,
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
                             ],
                             idle_timeout_ms: [
-                              type: :timeout,
+                              type: @session_types.idle_timeout_ms,
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
                             ]
                           )
@@ -14348,6 +14743,7 @@ Add `alias Normandy.Options`. Schemas:
                                 {:or,
                                  [{:custom, Normandy.Options, :plain_map, []}, :keyword_list]},
                               required: true,
+                              type_doc: "a map or keyword list of `BaseAgent.init/1` options",
                               doc: "The `BaseAgent.init/1` config every pooled agent is built from."
                             ],
                             size: [type: :pos_integer, default: 10, doc: "Agents started up front."],
@@ -14470,6 +14866,7 @@ Add `alias Normandy.Options`. Schemas:
                      workers: [
                        type: {:list, {:custom, Normandy.Options, :plain_map, []}},
                        required: true,
+                       type_doc: "a list of `%{id: String.t(), agent: agent}` maps",
                        doc: "The workers, each `%{id: String.t(), agent: agent}`."
                      ],
                      delegation_strategy: [
@@ -14514,7 +14911,10 @@ with `delegation_strategy: Keyword.fetch!(opts, :delegation_strategy)` and
 `execute_with_tasks/3` validate as their first expression (before `WorkflowSpan.span/3`) with
 `{__MODULE__, :execute, 3}` / `{__MODULE__, :execute_with_tasks, 3}`; in `run_hierarchy/3` and
 `run_tasks/3`, `Keyword.get(opts, :max_concurrency, 5)` → `Keyword.fetch!(opts, :max_concurrency)`
-(2 occurrences). The three `@doc`s get generated docs.
+(2 occurrences). The three `@doc`s get generated docs. The moduledoc's `## Example`
+(lines 10-14) passes bare agents (`workers: [worker1, worker2, worker3]`), which `new/1` now
+rejects: write them as `workers: [%{id: "worker_1", agent: worker1}, %{id: "worker_2", agent:
+worker2}]`, the shape `new/1`'s own example already uses.
 
 - [ ] **Step 3f: `Reactive`**
 
@@ -14559,6 +14959,27 @@ First expression of `race/3`, `all/3`, `some/3`:
 `Keyword.fetch!(opts, :timeout)` (3 occurrences); `Keyword.get(opts, :fail_fast, false)` →
 `Keyword.fetch!(opts, :fail_fast)`; `:max_concurrency` keeps `Keyword.get(opts, :max_concurrency, length(agents))`;
 `:on_complete` keeps `Keyword.get/2`. The three `@doc`s get generated docs.
+
+`:timeout` accepts `:infinity` (a `:timeout` type, as Convention 4 promises), but
+`await_first_success_loop/5` and `await_n_successes_loop/7` compute `timeout - elapsed`, which
+raises `ArithmeticError` for `:infinity` (`all/3` is fine: `Task.async_stream` takes it). In both
+loops replace
+
+```elixir
+    elapsed = System.monotonic_time(:millisecond) - start_time
+    remaining_timeout = timeout - elapsed
+```
+
+with `remaining_timeout = remaining(timeout, start_time)`, and add after the second loop:
+
+```elixir
+  # :infinity never runs out: `:infinity <= 0` is false (an atom sorts after every number)
+  # and `after :infinity` waits for the agents.
+  defp remaining(:infinity, _start_time), do: :infinity
+
+  defp remaining(timeout, start_time),
+    do: timeout - (System.monotonic_time(:millisecond) - start_time)
+```
 
 - [ ] **Step 3g: `Batch.Processor` and `BaseAgent`'s batch functions**
 
@@ -14696,9 +15117,13 @@ In `base_agent.ex` (add `alias Normandy.Options` if Task 3.1 did not), the two d
   end
 ```
 
-and each of their `@doc`s gets `## Options\n\nThe options of `Normandy.Batch.Processor.process_batch/3``
-(resp. `process_batch_with_stats/3`). The docs are not generated from Processor's schema on
-purpose: that would make `BaseAgent` a compile-time dependent of `Batch.Processor`.
+and their `@doc`s point at Processor's options: in `process_batch/3`'s doc, replace its existing
+`## Options` bullet list (base_agent.ex:2138-2146, up to `## Examples`) with
+`## Options\n\nThe options of `Normandy.Batch.Processor.process_batch/3`.` (one heading, not a
+second one); `process_batch_with_stats/3`'s doc has none, so add
+`## Options\n\nThe options of `Normandy.Batch.Processor.process_batch_with_stats/3`.` before its
+`## Examples`. The docs are not generated from Processor's schema on purpose: that would make
+`BaseAgent` a compile-time dependent of `Batch.Processor`.
 
 - [ ] **Step 3h: The workflow DSL's generated `execute/1`**
 
@@ -14710,6 +15135,7 @@ In `lib/normandy/dsl/workflow.ex` add `alias Normandy.Options` and, above
                          agents: [
                            type: {:custom, Normandy.Options, :plain_map, []},
                            required: true,
+                           type_doc: "a map of agent module to agent config",
                            doc: "Each step's agent module mapped to its agent config."
                          ],
                          initial_input: [
@@ -14803,7 +15229,28 @@ Replace the doc's `## Options` list with the generated docs. Bodies:
 ```
 
 In `init/1` the four `Keyword.get(opts, :key, default)` become `Keyword.fetch!(opts, :key)`.
-`:timeout` keeps its name and meaning (Wave 4 owns the breaker's options).
+`:timeout` keeps its name and meaning (Wave 4 owns the breaker's options). Expose the schema
+(Convention 6) below it:
+
+```elixir
+  @doc false
+  # BaseAgent.InitOptions builds :circuit_breaker's check from it (one list of keys).
+  def __opts_schema__(:start_link), do: @start_link_opts_schema
+```
+
+In `lib/normandy/agents/base_agent/init_options.ex`, Task 3.2b's `@breaker_schema` restates
+these four keys; derive it instead, without the defaults (the config stores only the options
+given; the breaker fills the rest) and without `:name` (the agent's breaker is unnamed):
+
+```elixir
+  @breaker_schema Normandy.Resilience.CircuitBreaker.__opts_schema__(:start_link).schema
+                  |> Keyword.delete(:name)
+                  |> Enum.map(fn {key, spec} -> {key, Keyword.delete(spec, :default)} end)
+                  |> NimbleOptions.new!()
+```
+
+The key order is unchanged, so `circuit_breaker/1`'s "supported: :failure_threshold,
+:success_threshold, :timeout, :half_open_max_calls" (Task 3.2b's test) is too.
 
 - [ ] **Step 4: Run the new tests**
 
@@ -14824,7 +15271,16 @@ Append to Task 3.7a's section (§30):
   reject `:ordered`; it was overridden to `false`.
 - `HierarchicalCoordinator.new/1`'s `:delegation_strategy` must be `:round_robin`,
   `:broadcast` or `:conditional`.
-- A misspelled `circuit_breaker:` option (`failure_treshold:`) raises when the agent is built.
+- `CircuitBreaker.start_link/1` raises for an unknown key (it ignored it).
+- `AgentProcess.start_link/1` checks `:agent` (a `%BaseAgentConfig{}`) and, in `:server` mode,
+  every session key with `Turn.Session.new/1`'s types, in the caller: `:handlers` a
+  `Turn.Driver.Handlers` struct or `nil` (a plain map is rejected), `:store`/`:registry`/
+  `:template_provider` a `{module, handle}` with a module, `:supervisor` a pid or a name. A value
+  `Turn.Session.new/1` rejects used to stop the process in `init/1` (an exit in the caller).
+- `HierarchicalCoordinator.new/1` takes `:workers` only as a list of `%{id: ..., agent: ...}`
+  maps; bare agents (`workers: [agent1, agent2]`) raise.
+- `Reactive.some/3` raises for `count: 0` (`:count` is a positive integer). `Reactive.race/3`
+  and `some/3` accept `timeout: :infinity` (it raised `ArithmeticError`).
 - `AgentPool.checkout/2`'s message for a bad `:timeout` is now `...: invalid value for :timeout
   option: expected non-negative integer or :infinity, got: -1`.
 - A workflow's `execute/1` raises for a missing `:agents` or `:initial_input` (it raised
@@ -14833,7 +15289,7 @@ Append to Task 3.7a's section (§30):
 
 - [ ] **Step 6: Format and run the suite**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`. Callers fixed under Convention 8 are named in the commit body.
 
 - [ ] **Step 7: Commit**
@@ -14844,8 +15300,8 @@ git add lib/normandy/options.ex lib/normandy/coordination/agent_process.ex \
   lib/normandy/coordination/agent_pool.ex lib/normandy/coordination/parallel_orchestrator.ex \
   lib/normandy/coordination/hierarchical_coordinator.ex lib/normandy/coordination/reactive.ex \
   lib/normandy/batch/processor.ex lib/normandy/agents/base_agent.ex lib/normandy/dsl/workflow.ex \
-  lib/normandy/resilience/circuit_breaker.ex MIGRATING-2.0.md \
-  test/options/coordination_options_test.exs test/coordination/agent_pool_test.exs
+  lib/normandy/resilience/circuit_breaker.ex lib/normandy/agents/base_agent/init_options.ex \
+  MIGRATING-2.0.md test/options/coordination_options_test.exs test/coordination/agent_pool_test.exs
 git commit -m "feat(coordination): reject unknown options at the coordination, batch and workflow entry points"
 ```
 
@@ -14866,14 +15322,13 @@ git commit -m "feat(coordination): reject unknown options at the coordination, b
   `estimate_savings/2`, `do_compress_conversation/7` line ~396)
 - Modify: `lib/normandy/context/window_manager.ex` (`new/1` 57-97)
 - Modify: `lib/normandy/behaviours/compactor/window_manager.ex` (schema, `validate_opts!/1`,
-  `checked_manager/2`)
+  `checked_manager/3`, moduledoc "Options:" paragraph)
 - Modify: `lib/normandy/coordination/stateful_context.ex` (`start_link/1` 38-63, `init/1` 232-233)
 - Modify: `lib/normandy/coordination/agent_message.ex` (`new/1` 43-75)
 - Modify: `lib/normandy/coordination/pattern.ex` (`ok!/2` 84-106, `error!/2` 124-145)
 - Modify: `lib/normandy/components/agent_memory.ex` (`add_message/4` 40-51)
 - Modify: `MIGRATING-2.0.md` (Task 3.7a's section)
 - Create: `test/options/integration_options_test.exs`
-- Modify: `test/context/window_manager_test.exs:9-21`
 - Not touched: `lib/normandy/tools/executor.ex` (Task 3.4c already validates `execute_tool/2` and
   `execute_tool_classified/2` through `Normandy.Options` and deleted `execute/3`,
   `execute_parallel/3`, `execute_sequential/3` and `:max_retries`)
@@ -14883,7 +15338,8 @@ git commit -m "feat(coordination): reject unknown options at the coordination, b
   `Normandy.Options` (Task 3.1); `Normandy.Tools.Toolset` (Task 3.4a); the tool contract and
   `Executor` as Task 3.4c leaves them; the compactor key `:context_window` (Task 3.2).
 - Produces: `A2A.AgentTool.__opts_schema__(:new)`, `MCP.Registry.__opts_schema__(:discover_and_register)`,
-  `Normandy.Behaviours.Compactor.WindowManager.validate_opts!/1` (all `@doc false`). Validated:
+  `Normandy.Behaviours.Compactor.WindowManager.validate_opts!/1`,
+  `Normandy.Context.WindowManager.__opts_schema__(:new)` (all `@doc false`). Validated:
   `A2A.AgentTool.new/3`, `A2A.Registry.discover_and_register/3`, `from_agent_card/3`,
   `A2A.Server.build_agent_card/2`, `MCP.ToolWrapper.new/4`, `MCP.Registry.discover_and_register/4`,
   `wrap_tools/4`, `BaseAgent.register_mcp_tools/4`, `Context.Summarizer.summarize_messages/4`,
@@ -14983,7 +15439,7 @@ defmodule Normandy.Options.IntegrationOptionsTest do
       refute error.message =~ "sk-ant-secret"
     end
 
-    test "Pattern.ok!/2 validates on the {:ok, _} path too, and still returns the value" do
+    test "Pattern.ok!/2 with valid options returns the value, or the default on {:error, _}" do
       assert Pattern.ok!({:ok, 1}, default: 2) == 1
       assert Pattern.ok!({:error, :x}, default: 2) == 2
     end
@@ -15021,7 +15477,7 @@ defmodule Normandy.Options.IntegrationOptionsTest do
           )
         end
 
-      assert error.message =~ "Normandy.Agents.BaseAgent.init/1: "
+      assert error.message =~ "Normandy.Agents.BaseAgent.validate_compaction_config!/1: "
       assert error.message =~ ":stratgy"
     end
 
@@ -15065,10 +15521,15 @@ agent's `tool_context` data) to `@sensitive_keys` (Convention 10).
                        type: :string,
                        doc: "The skill to expose (default: general access to the agent)."
                      ],
-                     auth_token: [type: :string, doc: "A bearer token for the remote agent."],
+                     auth_token: [
+                       type: :string,
+                       type_doc: "`t:String.t/0`",
+                       doc: "A bearer token for the remote agent."
+                     ],
                      transport_opts: [
                        type: :keyword_list,
                        default: [],
+                       type_doc: "`t:keyword/0`",
                        doc:
                          "Options for the A2A transport. Its `:headers` (`[{name, value}]`) " <>
                            "are sent on every request; with OpenTelemetry loaded and a span " <>
@@ -15125,7 +15586,7 @@ about the registration timeout); body:
                                              type: :pos_integer,
                                              default: 60_000,
                                              doc:
-                                               "Each tool's registration timeout, in ms " <>
+                                               "Each tool's registration timeout, in positive ms " <>
                                                  "(`Normandy.Tools.Toolset.register/3`; " <>
                                                  "60_000 as in 1.x)."
                                            ]
@@ -15137,7 +15598,7 @@ Each `@doc` replaces its `## Options` list with the generated docs of its own sc
 `## Options` heading to `from_agent_card/3`'s doc). Bodies:
 
 ```elixir
-  def discover_and_register(%Toolset{} = toolset, base_url, opts \\ []) do
+  def discover_and_register(%Toolset{} = registry, base_url, opts \\ []) do
     opts =
       Options.validate!(
         opts,
@@ -15150,7 +15611,7 @@ Each `@doc` replaces its `## Options` list with the generated docs of its own sc
         endpoint = derive_endpoint(base_url, agent_card)
         tools = from_agent_card(agent_card, endpoint, Keyword.delete(opts, :timeout))
 
-        register_all(tools, toolset, timeout: Keyword.fetch!(opts, :timeout))
+        register_all(tools, registry, timeout: Keyword.fetch!(opts, :timeout))
 
       {:error, _reason} = error ->
         error
@@ -15173,8 +15634,8 @@ Each `@doc` replaces its `## Options` list with the generated docs of its own sc
   end
 ```
 
-(`%Toolset{} = toolset` is whatever head Task 3.4a gave the function, and `register_all/3` is
-Task 3.4c's; only the body changes. Task 3.4c's `Keyword.get(opts, :timeout, 60_000)` and
+(`%Toolset{} = registry` is the head Task 3.4a gave the function: its rule (a) renamed the
+module, not the lowercase variable. `register_all/3` is Task 3.4c's; only the body changes. Task 3.4c's `Keyword.get(opts, :timeout, 60_000)` and
 `Keyword.take(opts, [:auth_token, :transport_opts])` are replaced by the schemas above.)
 
 `server.ex` (add `alias Normandy.Options`):
@@ -15345,6 +15806,10 @@ keeps its explanation):
                        doc: "The truncation strategy."
                      ]
                    )
+
+  @doc false
+  # The compactor (Behaviours.Compactor.WindowManager) takes :strategy's type from here.
+  def __opts_schema__(:new), do: @new_opts_schema
 ```
 
 `new/1`:
@@ -15389,34 +15854,41 @@ would raise mid-turn. In `lib/normandy/behaviours/compactor/window_manager.ex` a
                      "Tokens kept free for the answer (default: the agent's `max_tokens`). " <>
                        "Must be smaller than the context window."
                  ],
+                 # The type and the default are Context.WindowManager.new/1's (one source).
                  strategy: [
-                   type: {:in, [:oldest_first, :sliding_window, :summarize]},
-                   doc: "The truncation strategy (default `:oldest_first`)."
+                   type:
+                     Normandy.Context.WindowManager.__opts_schema__(:new).schema
+                     |> Keyword.fetch!(:strategy)
+                     |> Keyword.fetch!(:type),
+                   doc: "The truncation strategy (default: `Normandy.Context.WindowManager.new/1`'s)."
                  ]
                )
 
   @doc false
   # Called by BaseAgent.validate_compaction_config!/1, i.e. at BaseAgent.init/1 and at
-  # template rebuild, so a typo surfaces where the config is made, not mid-turn.
+  # template rebuild, so a typo surfaces where the config is made, not mid-turn. The
+  # prefix names that function, which both paths run (as Task 3.2a's messages do).
   @spec validate_opts!(keyword()) :: keyword()
   def validate_opts!(opts),
-    do: Options.validate!(opts, @opts_schema, {Normandy.Agents.BaseAgent, :init, 1})
+    do:
+      Options.validate!(
+        opts,
+        @opts_schema,
+        {Normandy.Agents.BaseAgent, :validate_compaction_config!, 1}
+      )
 ```
 
-In `checked_manager/2`, replace the final
+In `checked_manager/3`, replace the final
 `WM.new([max_tokens: window, reserved_tokens: reserved] ++ Keyword.drop(opts, [:reserved_tokens]))`
 (Task 3.2a's form; `mix format` may have wrapped it) with an explicit list, so only
-`WindowManager.new/1`'s keys reach it whatever the compactor opts hold:
+`WindowManager.new/1`'s keys reach it whatever the compactor opts hold (an absent `:strategy`
+takes `WindowManager.new/1`'s default):
 
 ```elixir
-    WM.new(
-      max_tokens: window,
-      reserved_tokens: reserved,
-      strategy: Keyword.get(opts, :strategy, :oldest_first)
-    )
+    WM.new([max_tokens: window, reserved_tokens: reserved] ++ Keyword.take(opts, [:strategy]))
 ```
 
-(`window` and `reserved` are the locals `checked_manager/2` already computes.) In
+(`window` and `reserved` are the locals `checked_manager/3` already computes.) In
 `BaseAgent.validate_compaction_config!/1`, right after the `:max_tokens` rename check Task 3.2a
 added (the `if compactor == Normandy.Behaviours.Compactor.WindowManager and
 Keyword.has_key?(compactor_opts, :max_tokens) do raise ... end` block, which must keep firing
@@ -15428,9 +15900,10 @@ first so 3.2a's test "the 1.x :max_tokens pin on Compactor.WindowManager raises 
       do: Normandy.Behaviours.Compactor.WindowManager.validate_opts!(compactor_opts)
 ```
 
-Update the moduledoc sentence "`opts` flow straight to `WindowManager.new/1` (...)" to "`opts`:
-`:context_window`, `:reserved_tokens`, `:strategy`; any other key raises `ArgumentError` at
-`BaseAgent.init/1`."
+Task 3.2a replaced the moduledoc sentence "`opts` flow straight to `WindowManager.new/1` (...)"
+with an "Options:" paragraph (`:context_window` pins ..., `:strategy` goes to
+`WindowManager.new/1`, ...). Append to that paragraph: "Any other key raises `ArgumentError`
+when the agent is built (`BaseAgent.init/1`, DSL `new/1`) or its template is rebuilt."
 
 - [ ] **Step 3g: `Tools.Executor` (already done by Task 3.4c)**
 
@@ -15571,7 +16044,11 @@ Append to Task 3.7a's section (§30):
 - `Context.WindowManager.new/1`: `:strategy` must be `:oldest_first`, `:sliding_window` or
   `:summarize`, and `:reserved_tokens` a non-negative integer. A
   `Compactor.WindowManager` compactor's opts (`:context_window`, `:reserved_tokens`,
-  `:strategy`) are checked at `BaseAgent.init/1`.
+  `:strategy`) are checked when the agent is built and when its template is rebuilt; the error
+  names `Normandy.Agents.BaseAgent.validate_compaction_config!/1`.
+- `AgentMessage.new/1` raises for a missing `:from` or `:to` with `ArgumentError` (was
+  `KeyError`), for a `:from`/`:to` that is not a string or an atom, a `:type` that is not an
+  atom or a string, and a `:metadata` that is not a plain map (each was stored as given).
 - `AgentMemory.add_message/4`'s message for an unknown option now names the function.
 - `Coordination.Pattern.ok!/2` and `error!/2` check their options on every call, including
   when the result matches.
@@ -15579,7 +16056,7 @@ Append to Task 3.7a's section (§30):
 
 - [ ] **Step 6: Format and run the suite**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`. Callers fixed under Convention 8 are named in the commit body.
 
 - [ ] **Step 7: Commit**
@@ -16184,8 +16661,11 @@ Append to `Normandy.Options`'s moduledoc (`lib/normandy/options.ex`):
 ```markdown
   ## Timeouts
 
-  Every option a caller waits on is called `:timeout` (ms or `:infinity`), except the
-  durable server's two `_ms` options, which are not waits on a call. Defaults:
+  Every option a caller waits on is called `:timeout` and takes ms or `:infinity`, except the
+  durable server's two `_ms` options (not waits on a call; they also take ms or `:infinity`)
+  and the Mnesia stores' `:wait_timeout` (ms or `:infinity`, as `:mnesia.wait_for_tables/2`). A
+  `:timeout` that bounds one tool call takes positive ms only: a tool call is always bounded.
+  Defaults:
 
   | Option | Where | Default |
   |---|---|---|
@@ -16194,9 +16674,9 @@ Append to `Normandy.Options`'s moduledoc (`lib/normandy/options.ex`):
   | `:timeout` | `Reactive.race/3`, `all/3`, `some/3` | 60_000 |
   | `:timeout` | `ParallelOrchestrator.execute/3`, `execute_stream/2` | 300_000 per agent |
   | `:timeout` | `Batch.Processor.process_batch/3` and its variants, `BaseAgent.process_batch/3` | 300_000 per item |
-  | `:timeout` | `Toolset.register/3`, `BaseAgent.register_tool/3`, DSL `tool Mod, timeout: ms` | the tool call's timeout; unset: 30_000 (`Tools.Executor.default_timeout/0`) |
-  | `:timeout` | `Tools.Executor.execute_tool/2`, `execute_tool_classified/2` | 30_000 (the dispatcher passes the registration timeout) |
-  | `:timeout` | `A2A.Registry.discover_and_register/3` | 60_000 (each registered tool's timeout) |
+  | `:timeout` (positive ms) | `Toolset.register/3`, `BaseAgent.register_tool/3`, DSL `tool Mod, timeout: ms` | the tool call's timeout; unset: 30_000 (`Tools.Executor.default_timeout/0`) |
+  | `:timeout` (positive ms) | `Tools.Executor.execute_tool/2`, `execute_tool_classified/2` | 30_000 (the dispatcher passes the registration timeout) |
+  | `:timeout` (positive ms) | `A2A.Registry.discover_and_register/3` | 60_000 (each registered tool's timeout) |
   | `:approval_timeout_ms` | `Turn.Server.start_link/1` | 300_000 |
   | `:idle_timeout_ms` | `Turn.Server.start_link/1` | 60_000 |
   | `:wait_timeout` | `SessionStore.Mnesia.create_tables/1`, `MemoryStore.Mnesia.create_tables/1` | 30_000 |
@@ -16494,7 +16974,7 @@ Append to Task 3.7a's section (§30):
 
 - [ ] **Step 8: Format and run the suite**
 
-Run: `mix format && mix test 2>&1 | tail -5`
+Run: `mix format && mix test > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`
 Expected: ` 0 failures`.
 
 - [ ] **Step 9: Commit**
@@ -16521,7 +17001,7 @@ Add any file fixed in Step 6 to the `git add` line by name and say why in the co
 - Modify: `investigations/pre-2.0-audit/decisions.md` ("Progress")
 - Modify: `/Users/antonio/.claude/projects/-Users-antonio-personal-normandy/memory/pre-2-0-audit-2026-10.md`
   and its line in `MEMORY.md` (same directory)
-- Modify: `mix.exs` docs groups only if Step 2 reports a module missing from them
+- Modify: `mix.exs` docs groups only if Step 2's check finds a new public module missing from them
 
 **Interfaces:**
 - Consumes: Tasks 3.1–3.7d committed.
@@ -16545,21 +17025,30 @@ comment. Record the test count and the seed from `$LOG`.
 
 ```bash
 mix docs --warnings-as-errors; echo "docs exit=$?"
-mix test --trace 2>&1 | tail -3
+mix test --trace > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
 ```
 
-Expected: `docs exit=0`; the trace run ends with ` 0 failures`. A warning for a module missing
-from a `mix.exs` docs group: add it next to its neighbours (`Normandy.Options` beside the
-`Agents` group's config modules, `Normandy.Tool` and `Normandy.Tools.Toolset` in `Tools`, the
-`*NotFoundError` exceptions in `Errors`); the full regrouping is Task 7.2.
+Expected: `docs exit=0`; `test exit=0` and the grep prints the trace run's ` 0 failures` line.
+
+ExDoc puts a module that no `groups_for_modules` entry names in its default section without a
+warning, so check the groups explicitly:
+
+```bash
+grep -n "Normandy.Options\b\|Normandy.JSON\b\|Normandy.Tool,\|Normandy.Tool$\|Normandy.Tools.Toolset\|Normandy.Tools.Input\|Normandy.ToolNotFoundError\|Normandy.OrchestrationError\|Normandy.TurnNotFoundError\|Normandy.ContextProviderNotFoundError" mix.exs
+```
+
+Expected: each of those modules on a line of `groups_for_modules` (`Normandy.Options` in `Agents`,
+Task 3.1a; `Normandy.JSON` in `Core`, Task 3.3a; the tool modules in `Tools`, Task 3.4c; the
+errors in `Errors`, Tasks 3.4a, 3.5b, 3.6a). A module missing: add it next to its neighbours;
+the full regrouping is Task 7.2.
 
 - [ ] **Step 3: Tagged suites**
 
 ```bash
 docker ps --filter name=normandy-test-redis --filter name=normandy-test-pg --format '{{.Names}} {{.Status}}'
-NORMANDY_REDIS=true mix test --only redis 2>&1 | tail -3
-POSTGRES_PORT=55432 PGPORT=55432 mix test.postgres 2>&1 | tail -3
-POSTGRES_PORT=55432 PGPORT=55432 NORMANDY_POSTGRES=true mix test --only distributed --include postgres 2>&1 | tail -3
+NORMANDY_REDIS=true mix test --only redis > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
+POSTGRES_PORT=55432 PGPORT=55432 mix test.postgres > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
+POSTGRES_PORT=55432 PGPORT=55432 NORMANDY_POSTGRES=true mix test --only distributed --include postgres > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"
 ```
 
 Expected: both containers `Up` (start a stopped one with `docker start normandy-test-redis` or
@@ -16571,7 +17060,7 @@ Constraints).
 
 The `:integration` and `:normandy_integration` suites call the Anthropic API and need
 `ANTHROPIC_API_KEY` (or `API_KEY`). Run them only when Q provides a key:
-`mix test --only integration --only normandy_integration 2>&1 | tail -3`, expecting
+`mix test --only integration --only normandy_integration > "${TMPDIR:-/tmp}/w3-test.log" 2>&1; echo "test exit=$?"; grep " 0 failures" "${TMPDIR:-/tmp}/w3-test.log"`, expecting
 ` 0 failures`; otherwise record "integration suites not run (no API key)".
 
 - [ ] **Step 4: Package contents**
@@ -16604,13 +17093,25 @@ grep -rln "retry_options\|enable_circuit_breaker\|circuit_breaker_options" lib t
 Expected: the first four print nothing, except that the third may list
 `lib/normandy/tools/toolset.ex`, `lib/normandy/agents/config_template.ex` and their tests when the
 hit is the 1.x guard of Ruling 5 naming a removed module (open each hit: anything else is a
-missed rename). The fifth lists only the 1.x template translation (`config_template.ex`, Task
-3.2), its tests and fixtures; any other file still uses a 1.x option name.
+missed rename). The fifth lists only the survivors Task 3.2b keeps on purpose (its Step 6
+acceptance list):
+- the 1.x template translation (`lib/normandy/agents/config_template.ex`, Task 3.2c), its tests
+  and fixtures;
+- `lib/normandy/agents/base_agent/init_options.ex` (`@renamed`, the 1.x keys that raise with
+  their 2.0 home) and the tests of those hints (`test/agents/base_agent_config_groups_test.exs`,
+  `test/dsl/agent_guardrails_test.exs`);
+- `lib/normandy/resilience/retry.ex` (`@type retry_options`) and
+  `lib/normandy/resilience/circuit_breaker.ex` (`@type circuit_breaker_options`), public types
+  kept (renaming them is not in this wave);
+- `lib/normandy/agents/base_agent.ex` (the private `retry_options/2` helper).
+
+Open each hit: a file outside this list still uses a 1.x option name.
 
 - [ ] **Step 6: Record**
 
 Append a Wave 3 line to `investigations/pre-2.0-audit/decisions.md` → "Progress", in the form of
-the Wave 2 line: the commit range (`git log --oneline 95dc149..HEAD | tail -1` and `| head -1`),
+the Wave 2 line: the commit range (`git log --oneline efb6b2a..HEAD | tail -1` and `| head -1`;
+`efb6b2a` is the plan commit, so the range holds only the wave's own commits),
 the test count and seeds from Steps 1-2, the tagged-suite results from Step 3 (including "not
 run" for any suite that was not), the package check from Step 4, and every ruling made while
 executing the wave (Convention 8 caller fixes, Convention 9 schema changes, anything Q decided).
