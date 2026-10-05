@@ -565,7 +565,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
                          kind: :error,
                          reason: %TurnError{
                            type: :task_down,
-                           reason: %RuntimeError{message: "llm down"}
+                           reason: %{exception: RuntimeError}
                          },
                          stacktrace: []
                        }}
@@ -1834,7 +1834,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
       answered = for %{role: "tool", content: %ToolResult{tool_call_id: id}} <- entries, do: id
       assert Enum.sort(answered) == ["ok1", "pk1"]
 
-      assert {:ok, %Turn.State{status: :failed, error: {:approval_timeout, ["pk1"]}}} =
+      assert {:ok,
+              %Turn.State{
+                status: :failed,
+                error: %TurnError{type: :approval_timeout, reason: ["pk1"]}
+              }} =
                InMemory.load_turn_state(store, "s-exp-fail")
 
       :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
@@ -2420,7 +2424,11 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert {:ok,
               %Turn.State{
                 status: :failed,
-                error: {:handler_crashed, :append, %RuntimeError{message: "append boom"}}
+                error: %TurnError{
+                  type: :handler_crashed,
+                  handler: :append,
+                  reason: %{exception: RuntimeError}
+                }
               }} = InMemory.load_turn_state(store, sid)
 
       assert tool_ids(store, sid) == []

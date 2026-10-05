@@ -164,4 +164,49 @@ defmodule Normandy.TurnErrorTest do
     assert log =~ "M.f/1"
     refute log =~ "sk-secret"
   end
+
+  describe "redact/1" do
+    @key_error %KeyError{key: :k, term: %{api_key: "SECRET"}}
+
+    test "a non-domain exception becomes a :task_down TurnError naming only its module" do
+      assert TurnError.redact(@key_error) ==
+               %TurnError{type: :task_down, reason: %{exception: KeyError}}
+    end
+
+    test "a TurnError keeps its type and handler; a non-domain reason is reduced" do
+      e = %TurnError{type: :handler_crashed, handler: :append, reason: @key_error}
+
+      assert TurnError.redact(e) ==
+               %TurnError{
+                 type: :handler_crashed,
+                 handler: :append,
+                 reason: %{exception: KeyError}
+               }
+    end
+
+    test "a TurnError nested in a TurnError is redacted too" do
+      e = %TurnError{type: :session_unavailable, reason: TurnError.task_down(@key_error)}
+
+      assert %TurnError{reason: %TurnError{type: :task_down, reason: %{exception: KeyError}}} =
+               TurnError.redact(e)
+    end
+
+    test "domain exceptions, domain reasons and other terms are unchanged" do
+      llm = Normandy.LLMError.new(type: :rate_limit, retryable?: true)
+      assert TurnError.redact(llm) == llm
+
+      crashed = %TurnError{type: :handler_crashed, handler: :guard, reason: llm}
+      assert TurnError.redact(crashed) == crashed
+
+      timeout = %TurnError{type: :approval_timeout, reason: ["c1"]}
+      assert TurnError.redact(timeout) == timeout
+
+      assert TurnError.redact({:shutdown, :normal}) == {:shutdown, :normal}
+    end
+
+    test "is idempotent" do
+      once = TurnError.redact(@key_error)
+      assert TurnError.redact(once) == once
+    end
+  end
 end

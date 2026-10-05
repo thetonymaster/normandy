@@ -177,6 +177,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.Span
   alias Normandy.TurnError
 
   require Logger
@@ -780,7 +781,7 @@ defmodule Normandy.Agents.Turn.Server do
   def terminate(reason, _state, data) do
     data = stop_approval_span(data, :terminated)
 
-    stop_run_span(data, :exception, %{kind: :exit, reason: reason, stacktrace: []})
+    stop_run_span(data, :exception, Span.exception_metadata(:exit, reason, []))
   end
 
   defp validate_on_approval_timeout!(mode) when mode in [:continue, :fail], do: :ok
@@ -882,11 +883,11 @@ defmodule Normandy.Agents.Turn.Server do
   defp emit_rejected_run(data, caller_ctx, exception) do
     span = start_run_span(data, data.config, caller_ctx, nil)
 
-    stop_run_span(%{data | run_span: span, approval_wait: 0}, :exception, %{
-      kind: :error,
-      reason: exception,
-      stacktrace: []
-    })
+    stop_run_span(
+      %{data | run_span: span, approval_wait: 0},
+      :exception,
+      Span.exception_metadata(:error, exception, [])
+    )
   end
 
   # The run span of a turn a restarted server resumes, under the original caller's
@@ -1198,7 +1199,7 @@ defmodule Normandy.Agents.Turn.Server do
         # Persist the terminal (:failed) turn state (best-effort) for the same reason.
         _ = persist_turn_state(data, data.turn_state)
         exception = TurnError.from_reason(reason)
-        stop_run_span(data, :exception, %{kind: :error, reason: exception, stacktrace: []})
+        stop_run_span(data, :exception, Span.exception_metadata(:error, exception, []))
         reply(data, {:error, exception})
         turn_end(data, data.config, ServerGlue.fail_outcome(reason))
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
@@ -1474,8 +1475,15 @@ defmodule Normandy.Agents.Turn.Server do
       else: :self_register
   end
 
+  # A failed turn's error is persisted as the exception the turn failed with, redacted
+  # (TurnError.redact/1): a bug's fields and message never reach the store.
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
-    do: mod.save_turn_state(handle, sid, turn_state)
+    do: mod.save_turn_state(handle, sid, persistable(turn_state))
+
+  defp persistable(%Turn.State{error: nil} = turn_state), do: turn_state
+
+  defp persistable(%Turn.State{error: reason} = turn_state),
+    do: %{turn_state | error: reason |> TurnError.from_reason() |> TurnError.redact()}
 
   # The entry carries the turn id the memory gave this message, so a memory rebuilt from
   # the store keeps the turn boundaries, and the entry id the memory gave it, so a

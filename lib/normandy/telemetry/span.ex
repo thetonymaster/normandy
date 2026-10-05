@@ -7,10 +7,17 @@ defmodule Normandy.Telemetry.Span do
   logged by the code that rescues the failure and never emitted in telemetry. The
   raise itself keeps its original stacktrace.
 
+  The `:exception` `reason` is redacted the same way (`exception_metadata/3`): an
+  exception that is not one of Normandy's own (a bug) is emitted as
+  `%Normandy.TurnError{reason: %{exception: module}}`, since its fields and message can
+  hold the value it failed on. The raise itself is unchanged.
+
   Events, measurements and metadata are otherwise those of `:telemetry.span/3`:
   `:start` and `:stop` (and `:exception` with `kind`, `reason` on top of the start
   metadata), all sharing a `telemetry_span_context`.
   """
+
+  alias Normandy.TurnError
 
   @type event_prefix :: [atom()]
 
@@ -45,7 +52,7 @@ defmodule Normandy.Telemetry.Span do
           :telemetry.execute(
             event_prefix ++ [:exception],
             %{duration: stop_time - start_time, monotonic_time: stop_time},
-            Map.merge(start_metadata, %{kind: kind, reason: reason, stacktrace: []})
+            Map.merge(start_metadata, exception_metadata(kind, reason, __STACKTRACE__))
           )
 
           :erlang.raise(kind, reason, __STACKTRACE__)
@@ -61,6 +68,20 @@ defmodule Normandy.Telemetry.Span do
 
     result
   end
+
+  @doc false
+  # The keys every Normandy :exception event adds: `kind`, the `reason` as
+  # Normandy.TurnError.redact/1 leaves it, and an empty `stacktrace`. A caught :error
+  # is normalized first, so a raw {:badkey, key, map} is a KeyError reduced to its
+  # module rather than the map. Exits and throws keep their term.
+  @spec exception_metadata(:error | :exit | :throw, term(), Exception.stacktrace()) :: map()
+  def exception_metadata(:error, reason, stacktrace) do
+    exception = Exception.normalize(:error, reason, stacktrace)
+    %{kind: :error, reason: TurnError.redact(exception), stacktrace: []}
+  end
+
+  def exception_metadata(kind, reason, _stacktrace),
+    do: %{kind: kind, reason: TurnError.redact(reason), stacktrace: []}
 
   defp normalize({result, stop_metadata}), do: {result, %{}, stop_metadata}
   defp normalize({_result, _measurements, _stop_metadata} = triple), do: triple

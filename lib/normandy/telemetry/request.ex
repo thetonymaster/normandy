@@ -44,6 +44,7 @@ defmodule Normandy.Telemetry.Request do
   """
 
   alias Normandy.LLMError
+  alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
 
   @event [:normandy, :llm, :request]
@@ -128,7 +129,7 @@ defmodule Normandy.Telemetry.Request do
         fun.()
       catch
         class, reason ->
-          emit_exception(start_metadata, start_time, class, reason)
+          emit_exception(start_metadata, start_time, class, reason, __STACKTRACE__)
           :erlang.raise(class, reason, __STACKTRACE__)
       end
 
@@ -143,7 +144,7 @@ defmodule Normandy.Telemetry.Request do
         )
 
       {:error, %LLMError{} = error} ->
-        emit_exception(start_metadata, start_time, :error, error)
+        emit_exception(start_metadata, start_time, :error, error, [])
     end
 
     result
@@ -178,13 +179,13 @@ defmodule Normandy.Telemetry.Request do
     {:counters.get(c, @requests), kind}
   end
 
-  defp emit_exception(start_metadata, start_time, kind, reason) do
+  defp emit_exception(start_metadata, start_time, kind, reason, stacktrace) do
     stop_time = System.monotonic_time()
 
     :telemetry.execute(
       @event ++ [:exception],
       %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.merge(start_metadata, %{kind: kind, reason: reason, stacktrace: []})
+      Map.merge(start_metadata, Span.exception_metadata(kind, reason, stacktrace))
     )
   end
 

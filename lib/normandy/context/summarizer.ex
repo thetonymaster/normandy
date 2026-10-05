@@ -24,6 +24,7 @@ defmodule Normandy.Context.Summarizer do
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
 
   # Compaction summarizes its own earlier summaries, so a fact the conversation has moved
@@ -285,7 +286,7 @@ defmodule Normandy.Context.Summarizer do
         fun.()
       catch
         kind, reason ->
-          llm_call_exception(metadata, start_time, kind, reason)
+          llm_call_exception(metadata, start_time, kind, reason, __STACKTRACE__)
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
@@ -307,19 +308,19 @@ defmodule Normandy.Context.Summarizer do
         )
 
       {:error, %LLMError{} = error} ->
-        llm_call_exception(metadata, start_time, :error, error)
+        llm_call_exception(metadata, start_time, :error, error, [])
     end
 
     result
   end
 
-  defp llm_call_exception(metadata, start_time, kind, reason) do
+  defp llm_call_exception(metadata, start_time, kind, reason, stacktrace) do
     stop_time = System.monotonic_time()
 
     :telemetry.execute(
       [:normandy, :agent, :llm_call, :exception],
       %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.merge(metadata, %{kind: kind, reason: reason, stacktrace: []})
+      Map.merge(metadata, Span.exception_metadata(kind, reason, stacktrace))
     )
   end
 

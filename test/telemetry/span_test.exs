@@ -38,9 +38,27 @@ defmodule Normandy.Telemetry.SpanTest do
                      %{
                        a: 1,
                        kind: :error,
-                       reason: %RuntimeError{message: "boom"},
+                       reason: %Normandy.TurnError{
+                         type: :task_down,
+                         reason: %{exception: RuntimeError}
+                       },
                        stacktrace: [],
                        telemetry_span_context: ^ctx
+                     }}
+  end
+
+  test "a domain exception is emitted as is; a raw Erlang error is normalized, then redacted" do
+    error = Normandy.LLMError.new(type: :rate_limit, retryable?: true)
+    assert_raise Normandy.LLMError, fn -> Span.span([:t], %{}, fn -> raise error end) end
+    assert_received {:telemetry, [:t, :exception], _, %{kind: :error, reason: ^error}}
+
+    assert catch_error(Span.span([:t], %{}, fn -> :erlang.error({:badmatch, "SECRET"}) end)) ==
+             {:badmatch, "SECRET"}
+
+    assert_received {:telemetry, [:t, :exception], _,
+                     %{
+                       kind: :error,
+                       reason: %Normandy.TurnError{reason: %{exception: MatchError}}
                      }}
   end
 

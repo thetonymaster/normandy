@@ -225,7 +225,10 @@ defmodule Normandy.Context.SummarizerTest do
       end
 
       assert_received {:span, [:normandy, :agent, :llm_call, :exception], meta}
-      assert %{kind: :error, reason: %RuntimeError{}, purpose: :summary, stacktrace: []} = meta
+      assert %{kind: :error, purpose: :summary, stacktrace: []} = meta
+
+      assert %Normandy.TurnError{type: :task_down, reason: %{exception: RuntimeError}} =
+               meta.reason
     end
   end
 

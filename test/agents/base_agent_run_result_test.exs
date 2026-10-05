@@ -106,6 +106,7 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
                      %{kind: :error, reason: %LLMError{type: :rate_limit}, stacktrace: []}}
   end
 
+  # A bug's reason is redacted to its module (TurnError.redact/1); the raise is whole.
   test "a raised bug's run and llm_call :exception events carry no stacktrace either" do
     ref =
       :telemetry_test.attach_event_handlers(self(), [
@@ -119,14 +120,20 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
     assert_received {[:normandy, :agent, :run, :exception], ^ref, _,
                      %{
                        kind: :error,
-                       reason: %RuntimeError{message: "client bug 2"},
+                       reason: %Normandy.TurnError{
+                         type: :task_down,
+                         reason: %{exception: RuntimeError}
+                       },
                        stacktrace: []
                      }}
 
     assert_received {[:normandy, :agent, :llm_call, :exception], ^ref, _,
                      %{
                        kind: :error,
-                       reason: %RuntimeError{message: "client bug 2"},
+                       reason: %Normandy.TurnError{
+                         type: :task_down,
+                         reason: %{exception: RuntimeError}
+                       },
                        stacktrace: []
                      }}
   end

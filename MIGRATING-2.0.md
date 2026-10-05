@@ -231,10 +231,17 @@ lists, maps and structs inside the reason are kept as they are. A session that c
 crashed or its injection could not be stored replies a `:session_unavailable` `TurnError`
 whose `:reason` is the `:handler_crashed` or `:persist_failed` `TurnError`. The run
 `:exception` telemetry event carries the same exception as `reason`, with `stacktrace: []`
-(rejected input included, which was `reason: {:rejected, e}`).
+(rejected input included, which was `reason: {:rejected, e}`), except that a non-Normandy
+exception in it is reduced to `%{exception: module}` (see §14).
 
 `on_turn_end` hooks receive `{:error, exception}` too; a `before_llm` halt is
 `{:error, %HookHaltError{}}`, not `{:error, {:hook_halted, e}}`.
+
+A failed turn's saved `Turn.State.error` is now the exception the turn failed with (the
+one replied, so `{:approval_timeout, ids}` is saved as
+`%TurnError{type: :approval_timeout, reason: ids}`), not the core's failure tuple, and a
+non-Normandy exception in it is saved as `%{exception: module}` only: its fields and
+message can hold the value it failed on. Nothing reads the field back.
 
 Persisted sessions cannot be downgraded: a failed turn's saved `Turn.State.error` may now
 hold a `%Normandy.TurnError{}`, an atom pre-2.0 code does not have, so its
@@ -306,6 +313,13 @@ The `stacktrace` of every Normandy `:exception` event (agent run, llm_call, tool
 hook, memory command, A2A request, workflow run, LLM request, `Turn.Server`) is now always
 `[]` (1.x passed the real one, as `:telemetry.span/3` does). A stacktrace can hold call
 arguments such as the config, so Normandy logs it and never emits it.
+
+For the same reason, an `:exception` `reason` that is not one of Normandy's own exceptions (a
+bug: a `KeyError` from a client, a tool or a hook) is emitted as
+`%Normandy.TurnError{type: :task_down, reason: %{exception: KeyError}}`, and a `TurnError`'s
+non-Normandy `:reason` as `%{exception: module}`; a raw Erlang error (`{:badkey, k, map}`) is
+normalized to its exception first. The raise, and the exception replied to the caller, keep it
+whole. `error.type` for such a run is now `task_down`, not the exception module.
 
 ## 15. Agent memory and tool context
 

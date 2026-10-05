@@ -13,8 +13,12 @@ defmodule Normandy.Telemetry do
     * Durations and `monotonic_time` are in native time units; convert with
       `System.convert_time_unit/3`. Fields named `*_ms` say so.
     * The keys Normandy adds never carry message, prompt or output content. The
-      `:exception` `reason` is the raw error term and may embed provider or parse
-      details. Keys with no value are left out of the map, except where a key is described
+      `:exception` `reason` is Normandy's own exception as raised or returned (an
+      `LLMError` may embed provider or parse details); any other exception (a bug) is
+      emitted as `%Normandy.TurnError{type: :task_down, reason: %{exception: module}}`,
+      and a `TurnError`'s non-Normandy `:reason` as `%{exception: module}`, because an
+      exception's fields and message can hold the value it failed on. Exit reasons and
+      thrown terms are emitted as they are. Keys with no value are left out of the map, except where a key is described
       as "always present".
     * Metadata keys are snake_case atoms, not dotted semconv names. The mapping to
       OpenTelemetry GenAI attributes is in "OpenTelemetry GenAI mapping" below.
@@ -45,7 +49,8 @@ defmodule Normandy.Telemetry do
     * Turn.Server only: stop and exception measurements add `approval_wait` (see
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
     * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
-      replies (rejected input included), and `stacktrace: []`.
+      replies (rejected input included), redacted as described above, and
+      `stacktrace: []`.
 
   A run `:exception` may be synthetic: see "Killed runs".
 

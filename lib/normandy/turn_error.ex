@@ -35,6 +35,17 @@ defmodule Normandy.TurnError do
   A `TurnError` never carries a stacktrace; Normandy logs it where the failure happened.
   Its message names the failure but not values from it (they can hold the config or user
   data); read `:reason` for those.
+
+  ## `:reason` in replies, in the store and in telemetry
+
+  The `TurnError` replied to the caller holds the full `:reason`, a non-Normandy exception
+  included. The copy `Turn.Server` persists as a failed turn's `Turn.State.error`, and
+  every telemetry `:exception` `reason`, are redacted: a `:reason` that is an exception
+  other than Normandy's own (a `KeyError`, a `MatchError`) is `%{exception: KeyError}`,
+  because its fields and its message can hold the value it failed on, and a bare one is
+  emitted as `%TurnError{type: :task_down, reason: %{exception: KeyError}}`. Normandy's
+  own exceptions, and reasons that are not exceptions (exit reasons, thrown terms, store
+  reasons, tool call ids), are kept.
   """
 
   require Logger
@@ -108,6 +119,29 @@ defmodule Normandy.TurnError do
   # True for the exceptions run/2,3 returns instead of raising.
   @spec domain?(Exception.t()) :: boolean()
   def domain?(%module{}), do: module in @domain
+
+  @doc false
+  # The form of a failure that is persisted (Turn.State.error) or emitted (every
+  # telemetry :exception reason, see Normandy.Telemetry.Span.exception_metadata/3):
+  # Normandy's own exceptions unchanged, any other exception (a bug) reduced to
+  # %{exception: Module}, because its fields and its message can hold the value it
+  # failed on. A bare one becomes the :task_down TurnError from_reason/1 would make of
+  # it; a TurnError keeps its type and handler and has its reason reduced the same way,
+  # nested TurnErrors included. Every other term is returned as is. Idempotent.
+  @spec redact(term()) :: term()
+  def redact(%__MODULE__{reason: reason} = error), do: %{error | reason: redact_reason(reason)}
+
+  def redact(exception) when is_exception(exception),
+    do: if(domain?(exception), do: exception, else: redact(task_down(exception)))
+
+  def redact(term), do: term
+
+  defp redact_reason(%__MODULE__{} = error), do: redact(error)
+
+  defp redact_reason(%module{} = exception) when is_exception(exception),
+    do: if(domain?(exception), do: exception, else: %{exception: module})
+
+  defp redact_reason(term), do: term
 
   @doc false
   # A worker's exit reason as a TurnError, with every stacktrace dropped from it: a
