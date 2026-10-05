@@ -79,6 +79,69 @@ defmodule Normandy.Coordination.OrchestratorContractTest do
                  @orchestrator.execute([%{id: "e", agent: exiting}], "x")
       end
 
+      test "a throwing agent fails with a :task_down TurnError; the caller lives" do
+        thrower =
+          BaseAgent.init(%{
+            client: %StubClient{reply: fn _ -> throw(:oops) end},
+            model: "test-model"
+          })
+
+        assert {:error,
+                %OrchestrationError{
+                  results: %{"ok" => _},
+                  errors: %{"t" => %TurnError{type: :task_down, reason: {:nocatch, :oops}}}
+                }} =
+                 @orchestrator.execute(
+                   [%{id: "ok", agent: agent("ok")}, %{id: "t", agent: thrower}],
+                   "x"
+                 )
+      end
+
+      test "a crash in a process an agent linked to fails that agent; the caller lives" do
+        linker =
+          BaseAgent.init(%{
+            client: %StubClient{
+              reply: fn _ ->
+                spawn_link(fn -> raise "helper" end)
+                Process.sleep(1_000)
+              end
+            },
+            model: "test-model"
+          })
+
+        assert {:error,
+                %OrchestrationError{
+                  results: %{"ok" => _},
+                  errors: %{"l" => %TurnError{type: :task_down}}
+                }} =
+                 @orchestrator.execute(
+                   [%{id: "ok", agent: agent("ok")}, %{id: "l", agent: linker}],
+                   "x"
+                 )
+      end
+
+      test "no task supervisor is left behind, after a run or a raise on bad input" do
+        owner = self()
+
+        # Processes the test process started: capture_log's StringIO is one.
+        started = fn ->
+          Enum.filter(Process.list(), fn pid ->
+            case Process.info(pid, :dictionary) do
+              {:dictionary, dict} -> owner in List.wrap(dict[:"$ancestors"])
+              nil -> false
+            end
+          end)
+        end
+
+        before = started.()
+
+        assert {:ok, _} = @orchestrator.execute([agent("a")], "x")
+        assert started.() == before
+
+        assert_raise ArgumentError, fn -> @orchestrator.execute([agent("a")], "x", bogus: 1) end
+        assert started.() == before
+      end
+
       test "a repeated id raises before any agent runs" do
         assert_raise ArgumentError,
                      "#{inspect(@orchestrator)}.execute/3: agent ids must be unique, " <>

@@ -55,7 +55,9 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   `{:ok, %{id => output}}` when every agent succeeded; otherwise
   `{:error, %Normandy.OrchestrationError{results: %{id => output}, errors: %{id =>
   exception}}}`, with every agent in one of the two maps. A failure never stops the other
-  agents or exits the caller. See `Normandy.OrchestrationError` for what the exceptions
+  agents or exits the caller: an exception, an exit, a throw, a timeout and a crash of a
+  process the agent linked to are all that agent's error (`execute_stream/2` still links its
+  tasks to the caller). See `Normandy.OrchestrationError` for what the exceptions
   are.
 
   ## Telemetry
@@ -124,21 +126,23 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     run_marks = KilledRun.new_run_marks(length(specs))
 
     outcomes =
-      specs
-      |> Enum.with_index()
-      |> Task.async_stream(
-        fn {spec, idx} ->
-          OtelCtx.restore(parent_otel_ctx)
-          on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
-          {spec.id, run_spec(spec, input, on_complete, on_run_done)}
-        end,
-        max_concurrency: Keyword.fetch!(opts, :max_concurrency),
-        timeout: timeout,
-        # A slow agent fails on its own instead of exiting the caller.
-        on_timeout: :kill_task,
-        zip_input_on_exit: true
-      )
-      |> Enum.to_list()
+      with_task_supervisor(fn supervisor ->
+        supervisor
+        |> Task.Supervisor.async_stream_nolink(
+          Enum.with_index(specs),
+          fn {spec, idx} ->
+            OtelCtx.restore(parent_otel_ctx)
+            on_run_done = fn -> KilledRun.mark_run_done(run_marks, idx) end
+            {spec.id, run_spec(spec, input, on_complete, on_run_done)}
+          end,
+          max_concurrency: Keyword.fetch!(opts, :max_concurrency),
+          timeout: timeout,
+          # A slow agent fails on its own instead of exiting the caller.
+          on_timeout: :kill_task,
+          zip_input_on_exit: true
+        )
+        |> Enum.to_list()
+      end)
 
     Enum.each(outcomes, &report_kill(&1, run_marks, timeout, parent_otel_ctx))
 
@@ -156,6 +160,20 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       end)
 
     Orchestration.result(results, errors)
+  end
+
+  # The tasks are not linked to the caller: a crash in a process an agent linked to
+  # (which kills its task) arrives as an {:exit, reason} outcome, not as an exit of the
+  # caller. There is no application supervision tree to hang them on, so each call
+  # starts a Task.Supervisor and stops it however the call ends.
+  defp with_task_supervisor(fun) do
+    {:ok, supervisor} = Task.Supervisor.start_link()
+
+    try do
+      fun.(supervisor)
+    after
+      Supervisor.stop(supervisor)
+    end
   end
 
   @doc """

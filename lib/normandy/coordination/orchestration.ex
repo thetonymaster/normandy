@@ -87,7 +87,7 @@ defmodule Normandy.Coordination.Orchestration do
   rescue
     e -> TurnError.log_raised("Agent #{inspect(id)}", e, __STACKTRACE__)
   catch
-    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
+    kind, reason -> {:error, caught(kind, reason)}
   end
 
   # A spec's callback (:transform, :on_agent_complete) run where a crash would take the
@@ -99,8 +99,13 @@ defmodule Normandy.Coordination.Orchestration do
   rescue
     e -> TurnError.log_raised("Agent #{inspect(id)} callback", e, __STACKTRACE__)
   catch
-    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
+    kind, reason -> {:error, caught(kind, reason)}
   end
+
+  # An exit is the exit reason; a throw nobody caught is {:nocatch, value}, as in an
+  # uncaught throw's exit reason.
+  defp caught(:exit, reason), do: TurnError.from_reason({:task_down, reason})
+  defp caught(:throw, value), do: TurnError.from_reason({:task_down, {:nocatch, value}})
 
   @spec result(%{String.t() => term()}, %{String.t() => Exception.t()}) :: result()
   def result(results, errors) when map_size(errors) == 0, do: {:ok, results}
