@@ -19,6 +19,17 @@
   # Ecto create/index/drop calls discard their return values; :unmatched_returns is just noisy here.
   {"lib/normandy/behaviours/session_store/postgres/migration.ex", :unmatched_return},
 
+  # options.ex describe/2: NimbleOptions.ValidationError types :key as atom(), but an
+  # unknown-option error puts the list of unknown keys there (nimble_options 1.1.1,
+  # validate_unknown_options/2), so the is_list/1 guard Dialyzer calls impossible is the
+  # clause that formats "unknown option :x; supported: ...". Covered by test/options_test.exs.
+  {"lib/normandy/options.ex", :guard_fail},
+
+  # options.ex supported/1 (same cause as the guard_fail above): with the is_list/1 clause of
+  # describe/2 judged impossible, Dialyzer (OTP 28.4 / Elixir 1.19.5) also reports its only
+  # caller-side helper supported/1 as never called. It is called from that clause.
+  {"lib/normandy/options.ex", :unused_fun},
+
   # --- CI-toolchain-specific ---
 
   # llm/json_deserializer.ex (cast_map/resolve_inner region): a redundant `_` clause the CI

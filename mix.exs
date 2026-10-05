@@ -65,7 +65,8 @@ defmodule Normandy.MixProject do
             Normandy.Agents.BaseAgent,
             Normandy.Agents.BaseAgentConfig,
             Normandy.Agents.Model,
-            Normandy.Agents.ToolCallResponse
+            Normandy.Agents.ToolCallResponse,
+            Normandy.Options
           ],
           DSL: [
             Normandy.DSL.Agent,
@@ -175,6 +176,8 @@ defmodule Normandy.MixProject do
       {:claudio, path: "../Claudio"},
       {:req, "~> 0.6 and >= 0.6.1"},
       {:jason, "~> 1.4"},
+      # Option schemas for every public entry point (Normandy.Options).
+      {:nimble_options, "~> 1.1"},
       {:bypass, "~> 2.1", only: :test},
       # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
       # fails to compile on OTP 26, which CI still tests. Lift these pins when OTP 26 leaves
