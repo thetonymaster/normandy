@@ -79,6 +79,7 @@ defmodule Normandy.MixProject do
             Normandy.Coordination.AgentPool,
             Normandy.Coordination.SequentialOrchestrator,
             Normandy.Coordination.ParallelOrchestrator,
+            Normandy.Coordination.Orchestration,
             Normandy.Coordination.HierarchicalCoordinator,
             Normandy.Coordination.AgentProcess,
             Normandy.Coordination.AgentSupervisor,

@@ -1,7 +1,9 @@
 defmodule Normandy.Coordination.Orchestration do
-  @moduledoc false
-  # What SequentialOrchestrator and ParallelOrchestrator share: the agent list's normal
-  # form, one agent's run, and the {:ok, results} | {:error, OrchestrationError} shape.
+  @moduledoc """
+  The types shared by the orchestrators (`Normandy.Coordination.SequentialOrchestrator` and
+  `Normandy.Coordination.ParallelOrchestrator`): an agent, an agent spec and the result
+  shape. Its functions are internal to the orchestrators and not part of the public API.
+  """
 
   alias Normandy.Agents.{BaseAgent, BaseAgentConfig}
   alias Normandy.Components.ContentBlock.Describe
@@ -9,6 +11,7 @@ defmodule Normandy.Coordination.Orchestration do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
 
+  @typedoc "An agent with its id and optional `:input` and `:transform`."
   @type spec :: %{
           required(:id) => String.t(),
           required(:agent) => BaseAgentConfig.t(),
@@ -16,14 +19,17 @@ defmodule Normandy.Coordination.Orchestration do
           optional(:transform) => (term() -> term())
         }
 
+  @typedoc "A bare agent config (id `\"agent_<index>\"`) or a spec."
   @type agent :: BaseAgentConfig.t() | spec()
 
+  @typedoc "Outputs keyed by agent id, or an `Normandy.OrchestrationError` carrying results and errors."
   @type result ::
           {:ok, %{String.t() => term()}} | {:error, OrchestrationError.t()}
 
   # The agents as specs, in list order. A bare %BaseAgentConfig{} gets the id
   # "agent_<index>". A spec key outside `allowed`, a repeated id or anything that is not
   # an agent raises: results are keyed by id, so a repeated id would hide an output.
+  @doc false
   @spec specs!(term(), [atom()], String.t()) :: [spec()]
   def specs!(agents, allowed, caller) when is_list(agents) do
     specs =
@@ -78,6 +84,7 @@ defmodule Normandy.Coordination.Orchestration do
   # own errors come back from BaseAgent.run/2; a raise (a bug) is logged with its
   # stacktrace (arities only) and returned; an exit (a timed-out GenServer.call, a client
   # that exits) is a :task_down TurnError.
+  @doc false
   @spec run_agent(String.t(), BaseAgentConfig.t(), term()) ::
           {:ok, term()} | {:error, Exception.t()}
   def run_agent(id, %BaseAgentConfig{} = agent, input) do
@@ -95,6 +102,7 @@ defmodule Normandy.Coordination.Orchestration do
   # process an agent linked to (which kills its task) arrives as an {:exit, reason}
   # outcome, not as an exit of the caller. There is no application supervision tree to
   # hang them on, so each call starts a Task.Supervisor and stops it however the call ends.
+  @doc false
   @spec with_task_supervisor((Supervisor.supervisor() -> result)) :: result when result: term()
   def with_task_supervisor(fun) do
     {:ok, supervisor} = Task.Supervisor.start_link()
@@ -109,6 +117,7 @@ defmodule Normandy.Coordination.Orchestration do
   # run_agent/3 in an unlinked task under `supervisor`, the caller's OTel context restored
   # in it. A task that dies (a crash in a process the agent linked to) is that agent's
   # :task_down TurnError, as in run_agent/3.
+  @doc false
   @spec run_agent_isolated(Supervisor.supervisor(), String.t(), BaseAgentConfig.t(), term()) ::
           {:ok, term()} | {:error, Exception.t()}
   def run_agent_isolated(supervisor, id, %BaseAgentConfig{} = agent, input) do
@@ -129,6 +138,7 @@ defmodule Normandy.Coordination.Orchestration do
   # A spec's callback (:transform, :on_agent_complete) run where a crash would take the
   # caller down (a linked task): a raise or an exit becomes that agent's error, as in
   # run_agent/3.
+  @doc false
   @spec guard(String.t(), (-> term())) :: {:ok, term()} | {:error, Exception.t()}
   def guard(id, fun) do
     {:ok, fun.()}
@@ -143,6 +153,7 @@ defmodule Normandy.Coordination.Orchestration do
   defp caught(:exit, reason), do: TurnError.from_reason({:task_down, reason})
   defp caught(:throw, value), do: TurnError.from_reason({:task_down, {:nocatch, value}})
 
+  @doc false
   @spec result(%{String.t() => term()}, %{String.t() => Exception.t()}) :: result()
   def result(results, errors) when map_size(errors) == 0, do: {:ok, results}
   def result(results, errors), do: {:error, %OrchestrationError{results: results, errors: errors}}
