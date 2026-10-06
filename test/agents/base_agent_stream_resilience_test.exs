@@ -88,7 +88,11 @@ defmodule Normandy.Agents.BaseAgentStreamResilienceTest do
   test "stream failures count toward the circuit breaker" do
     {agent, counter} =
       agent([fail_times: 10], %{
-        circuit_breaker: [failure_threshold: 1, timeout: 60_000]
+        circuit_breaker: [
+          failure_threshold: 1,
+          timeout: 60_000,
+          scope: {__MODULE__, System.unique_integer([:positive])}
+        ]
       })
 
     assert {:error, %LLMError{}} = stream(agent)

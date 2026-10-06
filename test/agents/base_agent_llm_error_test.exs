@@ -114,7 +114,10 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
   end
 
   test "an exception under the circuit breaker (no retry) is re-raised with its original type" do
-    agent = agent(raising_client(), %{circuit_breaker: []})
+    agent =
+      agent(raising_client(), %{
+        circuit_breaker: [scope: {__MODULE__, System.unique_integer([:positive])}]
+      })
 
     assert_raise ArgumentError, "transport blew up", fn -> BaseAgent.run!(agent, input()) end
     assert calls() == 1
@@ -134,7 +137,11 @@ defmodule Normandy.Agents.BaseAgentLLMErrorTest do
 
     agent =
       agent(error_client(e), %{
-        circuit_breaker: [failure_threshold: 2, timeout: 60_000]
+        circuit_breaker: [
+          failure_threshold: 2,
+          timeout: 60_000,
+          scope: {__MODULE__, System.unique_integer([:positive])}
+        ]
       })
 
     assert_raise LLMError, ~r/server/, fn -> BaseAgent.run!(agent, input()) end

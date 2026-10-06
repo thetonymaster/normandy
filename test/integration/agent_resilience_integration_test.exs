@@ -61,7 +61,8 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
           temperature: 0.3,
           circuit_breaker: [
             failure_threshold: 3,
-            timeout: 60_000
+            timeout: 60_000,
+            scope: {__MODULE__, System.unique_integer([:positive])}
           ]
         )
 
@@ -76,7 +77,7 @@ defmodule Normandy.Integration.AgentResilienceIntegrationTest do
       agent_with_cb =
         IntegrationHelper.create_real_agent(
           temperature: 0.3,
-          circuit_breaker: []
+          circuit_breaker: [scope: {__MODULE__, System.unique_integer([:positive])}]
         )
 
       # Make multiple successful calls
