@@ -159,10 +159,19 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
     on_exit(fn -> :telemetry.detach(id) end)
 
+    # capture_log/2 sees every process's logs, so concurrent async tests may
+    # log `[error]` lines on purpose. Only this run's marker can name this run.
+    marker = "overloaded-#{System.unique_integer([:positive])}"
+
     agent =
       BaseAgent.init(%{
         client: %EventsClient{
-          events: [start(), block(), delta("Hel"), error_event()],
+          events: [
+            start(),
+            block(),
+            delta("Hel"),
+            %{type: "error", error: %{"type" => "overloaded_error", "message" => marker}}
+          ],
           api_key: "sk-fv1-secret"
         },
         model: "claude-opus-5-5",
@@ -171,13 +180,15 @@ defmodule Normandy.Agents.BaseAgentStreamErrorsTest do
 
     log =
       ExUnit.CaptureLog.capture_log([metadata: [:reason]], fn ->
-        error_of(agent)
+        send(test_pid, {:returned, error_of(agent)})
       end)
 
+    assert_received {:returned, returned_error}
     assert_received {:exception_metadata, metadata}
     refute inspect(metadata, limit: :infinity, printable_limit: :infinity) =~ "sk-fv1-secret"
     # A returned Normandy error is recorded by telemetry, not logged.
-    refute log =~ "[error]"
+    assert %LLMError{} = returned_error
+    refute log =~ marker
     refute log =~ "sk-fv1-secret"
   end
 
