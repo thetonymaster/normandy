@@ -296,9 +296,9 @@ defmodule Normandy.Coordination.AgentPoolTest do
     test "an invalid :timeout raises in the caller, naming the value" do
       {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 1)
 
-      assert_raise ArgumentError, ~r/AgentPool.checkout\/2: invalid :timeout.*-1/, fn ->
-        AgentPool.checkout(pool, timeout: -1)
-      end
+      assert_raise ArgumentError,
+                   ~r/^Normandy\.Coordination\.AgentPool\.checkout\/2: invalid value for :timeout option: expected non-negative integer or :infinity, got: -1/,
+                   fn -> AgentPool.checkout(pool, timeout: -1) end
 
       assert Process.alive?(pool)
       AgentPool.stop(pool)

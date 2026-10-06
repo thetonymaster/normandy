@@ -837,3 +837,25 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - A saved template's invalid `:on_approval_timeout` is reported as
   `Normandy.Agents.Turn.Server: the saved template's :on_approval_timeout must be :continue
   or :fail, got: ...`.
+- `AgentProcess.start_link/1` raises for a `:turn_engine` other than `:inline` or `:server`
+  (it used to crash `init/1` with a `CaseClauseError`), and `AgentPool.start_link/1` for a
+  missing `:agent_config` (a `KeyError` exit from `init/1`).
+- `AgentSupervisor.start_link/1`'s `:strategy` accepts only `:one_for_one`, the only strategy
+  `DynamicSupervisor` has (any other value crashed `init/1`).
+- `Batch.Processor.process_batch_with_stats/3` and `BaseAgent.process_batch_with_stats/3`
+  reject `:ordered`; it was overridden to `false`.
+- `HierarchicalCoordinator.new/1`'s `:delegation_strategy` must be `:round_robin`,
+  `:broadcast` or `:conditional`.
+- `CircuitBreaker.start_link/1` raises for an unknown key (it ignored it).
+- `AgentProcess.start_link/1` checks `:agent` (a `%BaseAgentConfig{}`) and, in `:server` mode,
+  every session key with `Turn.Session.new/1`'s types, in the caller: `:handlers` a
+  `Turn.Driver.Handlers` struct or `nil` (a plain map is rejected), `:store`/`:registry`/
+  `:template_provider` a `{module, handle}` with a module, `:supervisor` a pid or a name. A value
+  `Turn.Session.new/1` rejects used to stop the process in `init/1` (an exit in the caller).
+- `HierarchicalCoordinator.new/1` takes `:workers` only as a list of `%{id: ..., agent: ...}`
+  maps; bare agents (`workers: [agent1, agent2]`) raise.
+- `Reactive.some/3` raises for `count: 0` (`:count` is a positive integer).
+- `AgentPool.checkout/2`'s message for a bad `:timeout` is now `...: invalid value for :timeout
+  option: expected non-negative integer or :infinity, got: -1`.
+- A workflow's `execute/1` raises for a missing `:agents` or `:initial_input` (it raised
+  `KeyError`) and for an unknown key.

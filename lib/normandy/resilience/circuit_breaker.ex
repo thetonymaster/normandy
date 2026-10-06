@@ -49,6 +49,8 @@ defmodule Normandy.Resilience.CircuitBreaker do
   use GenServer
   require Logger
 
+  alias Normandy.Options
+
   @type state :: :closed | :open | :half_open
   @type circuit_breaker_option ::
           {:name, atom()}
@@ -90,16 +92,43 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   ## Client API
 
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the breaker."],
+                            failure_threshold: [
+                              type: :pos_integer,
+                              default: 5,
+                              doc: "Failures that open the breaker."
+                            ],
+                            success_threshold: [
+                              type: :pos_integer,
+                              default: 2,
+                              doc: "Successes while half-open that close it again."
+                            ],
+                            timeout: [
+                              type: :pos_integer,
+                              default: 60_000,
+                              doc:
+                                "Milliseconds the breaker stays open before it lets probe " <>
+                                  "calls through (half-open). Not a call timeout."
+                            ],
+                            half_open_max_calls: [
+                              type: :pos_integer,
+                              default: 1,
+                              doc: "Probe calls allowed at once while half-open."
+                            ]
+                          )
+
+  @doc false
+  # BaseAgent.InitOptions builds :circuit_breaker's check from it (one list of keys).
+  @spec __opts_schema__(:start_link) :: NimbleOptions.t()
+  def __opts_schema__(:start_link), do: @start_link_opts_schema
+
   @doc """
   Start a circuit breaker GenServer.
 
   ## Options
 
-  - `:name` - Registered name for the circuit breaker
-  - `:failure_threshold` - Number of failures before opening (default: 5)
-  - `:success_threshold` - Number of successes to close from half-open (default: 2)
-  - `:timeout` - Milliseconds before transitioning to half-open (default: 60_000)
-  - `:half_open_max_calls` - Max concurrent calls in half-open state (default: 1)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Examples
 
@@ -112,12 +141,11 @@ defmodule Normandy.Resilience.CircuitBreaker do
   """
   @spec start_link(circuit_breaker_options()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    {name, opts} = Keyword.pop(opts, :name)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
-    if name do
-      GenServer.start_link(__MODULE__, opts, name: name)
-    else
-      GenServer.start_link(__MODULE__, opts)
+    case Keyword.pop(opts, :name) do
+      {nil, opts} -> GenServer.start_link(__MODULE__, opts)
+      {name, opts} -> GenServer.start_link(__MODULE__, opts, name: name)
     end
   end
 
@@ -242,10 +270,10 @@ defmodule Normandy.Resilience.CircuitBreaker do
       state: :closed,
       failure_count: 0,
       success_count: 0,
-      failure_threshold: Keyword.get(opts, :failure_threshold, 5),
-      success_threshold: Keyword.get(opts, :success_threshold, 2),
-      timeout: Keyword.get(opts, :timeout, 60_000),
-      half_open_max_calls: Keyword.get(opts, :half_open_max_calls, 1),
+      failure_threshold: Keyword.fetch!(opts, :failure_threshold),
+      success_threshold: Keyword.fetch!(opts, :success_threshold),
+      timeout: Keyword.fetch!(opts, :timeout),
+      half_open_max_calls: Keyword.fetch!(opts, :half_open_max_calls),
       half_open_calls: 0,
       opened_at: nil,
       last_failure_time: nil

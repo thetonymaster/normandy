@@ -168,12 +168,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     output_guardrails_on_violation: "moved to guardrails: [on_violation: ...]"
   ]
 
-  @breaker_schema NimbleOptions.new!(
-                    failure_threshold: [type: :pos_integer],
-                    success_threshold: [type: :pos_integer],
-                    timeout: [type: :pos_integer],
-                    half_open_max_calls: [type: :pos_integer]
-                  )
+  @breaker_schema Normandy.Resilience.CircuitBreaker.__opts_schema__(:start_link).schema
+                  |> Keyword.delete(:name)
+                  |> Enum.map(fn {key, spec} -> {key, Keyword.delete(spec, :default)} end)
+                  |> NimbleOptions.new!()
 
   @init {BaseAgent, :init, 1}
 

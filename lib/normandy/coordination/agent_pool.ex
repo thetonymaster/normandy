@@ -21,7 +21,7 @@ defmodule Normandy.Coordination.AgentPool do
         name: :my_pool,
         agent_config: my_agent_config,
         size: 10,
-        overflow: 5,
+        max_overflow: 5,
         strategy: :fifo
       )
 
@@ -45,6 +45,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentSupervisor
+  alias Normandy.Options
 
   @type strategy :: :lifo | :fifo
   @type pool_stat :: %{
@@ -76,16 +77,65 @@ defmodule Normandy.Coordination.AgentPool do
 
   # Client API
 
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the pool."],
+                            agent_config: [
+                              type:
+                                {:or,
+                                 [{:custom, Normandy.Options, :plain_map, []}, :keyword_list]},
+                              required: true,
+                              type_doc: "a map or keyword list of `BaseAgent.init/1` options",
+                              doc:
+                                "The `BaseAgent.init/1` config every pooled agent is built from."
+                            ],
+                            size: [
+                              type: :pos_integer,
+                              default: 10,
+                              doc: "Agents started up front."
+                            ],
+                            max_overflow: [
+                              type: :non_neg_integer,
+                              default: 5,
+                              doc: "Extra agents started while every pooled agent is checked out."
+                            ],
+                            strategy: [
+                              type: {:in, [:lifo, :fifo]},
+                              default: :lifo,
+                              doc:
+                                "Which free agent a checkout gets: the most (`:lifo`) or least " <>
+                                  "(`:fifo`) recently returned."
+                            ]
+                          )
+
+  @transaction_opts_schema NimbleOptions.new!(
+                             timeout: [
+                               type: :timeout,
+                               default: 5000,
+                               doc: "How long to wait for a free agent, in ms."
+                             ]
+                           )
+
+  @checkout_opts_schema NimbleOptions.new!(
+                          timeout: [
+                            type: :timeout,
+                            default: 5000,
+                            doc: "How long to wait for a free agent, in ms (blocking checkout)."
+                          ],
+                          block: [
+                            type: :boolean,
+                            default: true,
+                            doc:
+                              "`false` returns `{:error, :no_agents}` at once when every agent " <>
+                                "is in use and the overflow limit is reached."
+                          ]
+                        )
+
   @doc """
   Starts an agent pool.
 
   ## Options
 
-  - `:name` - Register the pool with a name (required for named access)
-  - `:agent_config` - BaseAgent configuration map (required)
-  - `:size` - Pool size (default: 10)
-  - `:max_overflow` - Maximum overflow workers (default: 5)
-  - `:strategy` - Checkout strategy `:lifo` or `:fifo` (default: `:lifo`)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Examples
 
@@ -102,12 +152,11 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    name = Keyword.get(opts, :name)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
-    if name do
-      GenServer.start_link(__MODULE__, opts, name: name)
-    else
-      GenServer.start_link(__MODULE__, opts)
+    case Keyword.get(opts, :name) do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
     end
   end
 
@@ -119,7 +168,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Options
 
-  - `:timeout` - Checkout timeout in ms, or `:infinity` (default: 5000)
+  #{Options.docs(@transaction_opts_schema)}
 
   ## Examples
 
@@ -146,9 +195,9 @@ defmodule Normandy.Coordination.AgentPool do
   @spec transaction(GenServer.server(), keyword(), (pid() -> term())) ::
           {:ok, term()} | {:error, term()}
   def transaction(pool, opts \\ [], fun) when is_function(fun, 1) do
-    timeout = Keyword.get(opts, :timeout, 5000)
+    opts = Options.validate!(opts, @transaction_opts_schema, {__MODULE__, :transaction, 3})
 
-    case checkout(pool, timeout: timeout) do
+    case checkout(pool, timeout: Keyword.fetch!(opts, :timeout)) do
       {:ok, agent_pid} ->
         try do
           result = fun.(agent_pid)
@@ -167,8 +216,7 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Options
 
-  - `:timeout` - Maximum time to wait in ms, or `:infinity` (default: 5000)
-  - `:block` - Whether to block if no agents available (default: true)
+  #{Options.docs(@checkout_opts_schema)}
 
   ## Returns
 
@@ -192,18 +240,15 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec checkout(GenServer.server(), keyword()) :: {:ok, pid()} | {:error, term()}
   def checkout(pool, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5000)
-    block = Keyword.get(opts, :block, true)
-
-    unless timeout == :infinity or (is_integer(timeout) and timeout >= 0) do
-      raise ArgumentError,
-            "AgentPool.checkout/2: invalid :timeout, expected a non-negative integer " <>
-              "or :infinity, got #{inspect(timeout)}"
-    end
+    opts = Options.validate!(opts, @checkout_opts_schema, {__MODULE__, :checkout, 2})
 
     # The pool enforces the timeout and always replies, so a caller never exits
     # on a busy pool and an agent is never handed to a caller that gave up.
-    GenServer.call(pool, {:checkout, block, timeout}, :infinity)
+    GenServer.call(
+      pool,
+      {:checkout, Keyword.fetch!(opts, :block), Keyword.fetch!(opts, :timeout)},
+      :infinity
+    )
   end
 
   @doc """
@@ -263,9 +308,9 @@ defmodule Normandy.Coordination.AgentPool do
   @impl true
   def init(opts) do
     agent_config = Keyword.fetch!(opts, :agent_config)
-    size = Keyword.get(opts, :size, 10)
-    max_overflow = Keyword.get(opts, :max_overflow, 5)
-    strategy = Keyword.get(opts, :strategy, :lifo)
+    size = Keyword.fetch!(opts, :size)
+    max_overflow = Keyword.fetch!(opts, :max_overflow)
+    strategy = Keyword.fetch!(opts, :strategy)
 
     # Start supervisor for agents
     {:ok, supervisor} = AgentSupervisor.start_link()

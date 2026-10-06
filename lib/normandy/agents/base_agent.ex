@@ -36,6 +36,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.LLM.OpenAICompatibleAdapter
   alias Normandy.LLM.ParseFailure
   alias Normandy.LLMError
+  alias Normandy.Options
   alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
 
@@ -2085,13 +2086,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Options
 
-  - `:max_concurrency` - Maximum concurrent tasks (default: 10)
-  - `:ordered` - Return `[{:ok, response} | {:error, error}]` in input order
-    (default: true); with `false`, a stats map
-  - `:timeout` - Timeout per item in milliseconds (default: 300_000ms); a
-    timed-out item fails with `{:exit, :timeout}`
-  - `:on_progress` - Called after each completion with `(completed, total)`
-  - `:on_error` - Called for each failed item with `(input, error)`
+  The options of `Normandy.Batch.Processor.process_batch/3`.
 
   ## Examples
 
@@ -2113,6 +2108,13 @@ defmodule Normandy.Agents.BaseAgent do
   @spec process_batch(BaseAgentConfig.t(), [term()], keyword()) ::
           {:ok, [Processor.item_result()] | Processor.batch_result()}
   def process_batch(agent, inputs, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        Processor.__opts_schema__(:process_batch),
+        {__MODULE__, :process_batch, 3}
+      )
+
     Processor.process_batch(agent, inputs, opts)
   end
 
@@ -2120,6 +2122,10 @@ defmodule Normandy.Agents.BaseAgent do
   Process a batch and return detailed statistics.
 
   Returns success/error breakdown with counts.
+
+  ## Options
+
+  The options of `Normandy.Batch.Processor.process_batch_with_stats/3`.
 
   ## Examples
 
@@ -2136,6 +2142,13 @@ defmodule Normandy.Agents.BaseAgent do
   @spec process_batch_with_stats(BaseAgentConfig.t(), [term()], keyword()) ::
           {:ok, Processor.batch_result()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        Processor.__opts_schema__(:process_batch_with_stats),
+        {__MODULE__, :process_batch_with_stats, 3}
+      )
+
     Processor.process_batch_with_stats(agent, inputs, opts)
   end
 

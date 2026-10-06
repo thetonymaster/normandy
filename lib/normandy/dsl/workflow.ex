@@ -134,7 +134,47 @@ defmodule Normandy.DSL.Workflow do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.Reactive
+  alias Normandy.Options
   alias Normandy.Telemetry.WorkflowSpan
+
+  @execute_opts_schema NimbleOptions.new!(
+                         agents: [
+                           type: {:custom, Normandy.Options, :plain_map, []},
+                           required: true,
+                           type_doc: "a map of agent module to agent config",
+                           doc: "Each step's agent module mapped to its agent config."
+                         ],
+                         initial_input: [
+                           type: :any,
+                           required: true,
+                           doc: "The first step's input."
+                         ],
+                         context: [
+                           type: {:custom, Normandy.Options, :plain_map, []},
+                           default: %{},
+                           doc: "A context map the steps share."
+                         ]
+                       )
+
+  @execute_doc """
+  Executes the workflow.
+
+  ## Options
+
+  #{Options.docs(@execute_opts_schema)}
+  ## Examples
+
+      {:ok, result} = MyWorkflow.execute(
+        agents: %{MyAgent => agent_instance},
+        initial_input: "start here"
+      )
+  """
+
+  @doc false
+  # Called by every workflow's generated execute/1, so the error names that module.
+  @spec __validate_execute_opts__(keyword(), module()) :: keyword()
+  def __validate_execute_opts__(opts, workflow),
+    do: Options.validate!(opts, @execute_opts_schema, {workflow, :execute, 1})
 
   defmacro __using__(_opts) do
     quote do
@@ -398,26 +438,12 @@ defmodule Normandy.DSL.Workflow do
 
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
-      @doc """
-      Executes the workflow.
-
-      ## Options
-
-      - `:agents` - Map of agent modules to instances
-      - `:initial_input` - Initial input for the workflow
-      - `:context` - Optional shared context map
-
-      ## Examples
-
-          {:ok, result} = MyWorkflow.execute(
-            agents: %{MyAgent => agent_instance},
-            initial_input: "start here"
-          )
-      """
+      @doc unquote(@execute_doc)
       def execute(opts) do
+        opts = unquote(__MODULE__).__validate_execute_opts__(opts, __MODULE__)
         agents_map = Keyword.fetch!(opts, :agents)
         initial_input = Keyword.fetch!(opts, :initial_input)
-        context = Keyword.get(opts, :context, %{})
+        context = Keyword.fetch!(opts, :context)
 
         steps = unquote(Macro.escape(steps))
 

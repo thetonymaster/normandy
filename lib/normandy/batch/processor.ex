@@ -50,15 +50,18 @@ defmodule Normandy.Batch.Processor do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Options
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
 
   @type batch_option ::
           {:max_concurrency, pos_integer()}
           | {:ordered, boolean()}
-          | {:timeout, pos_integer()}
+          | {:timeout, timeout()}
           | {:on_progress, progress_callback()}
           | {:on_error, error_callback()}
+          | {:chunk_size, pos_integer()}
+          | {:chunk_delay, non_neg_integer()}
 
   @type batch_options :: [batch_option()]
 
@@ -78,20 +81,68 @@ defmodule Normandy.Batch.Processor do
   @default_max_concurrency 10
   @default_timeout 300_000
 
+  # Keys every batch entry point takes. process_batch_with_stats/3 takes only these: it
+  # always returns the stats map, so an :ordered option would be ignored.
+  @batch_opts [
+    max_concurrency: [
+      type: :pos_integer,
+      default: @default_max_concurrency,
+      doc: "Items processed at once."
+    ],
+    timeout: [
+      type: :timeout,
+      default: @default_timeout,
+      doc:
+        "Timeout per item, in ms. An item that runs past it is stopped and fails with " <>
+          "`{:exit, :timeout}`; the other items carry on."
+    ],
+    on_progress: [
+      type: {:fun, 2},
+      doc: "Called in the caller after each item completes: `(completed, total -> any)`."
+    ],
+    on_error: [
+      type: {:fun, 2},
+      doc: "Called in the caller for each failed item: `(input, error -> any)`."
+    ]
+  ]
+  @ordered_opt [
+    ordered: [
+      type: :boolean,
+      default: true,
+      doc: "`true`: one result per input, in input order. `false`: a `batch_result` map."
+    ]
+  ]
+
+  @process_batch_opts_schema NimbleOptions.new!(@batch_opts ++ @ordered_opt)
+  @process_batch_with_stats_opts_schema NimbleOptions.new!(@batch_opts)
+  @process_batch_chunked_opts_schema NimbleOptions.new!(
+                                       @batch_opts ++
+                                         @ordered_opt ++
+                                         [
+                                           chunk_size: [
+                                             type: :pos_integer,
+                                             default: 100,
+                                             doc: "Items per chunk."
+                                           ],
+                                           chunk_delay: [
+                                             type: :non_neg_integer,
+                                             default: 0,
+                                             doc: "Milliseconds to wait between chunks."
+                                           ]
+                                         ]
+                                     )
+
+  @doc false
+  @spec __opts_schema__(:process_batch | :process_batch_with_stats) :: NimbleOptions.t()
+  def __opts_schema__(:process_batch), do: @process_batch_opts_schema
+  def __opts_schema__(:process_batch_with_stats), do: @process_batch_with_stats_opts_schema
+
   @doc """
   Process a batch of inputs through an agent concurrently.
 
   ## Options
 
-  - `:max_concurrency` - Maximum concurrent tasks (default: #{@default_max_concurrency})
-  - `:ordered` - Return one result per input, in input order (default: true).
-    With `false`, return a `batch_result` map instead.
-  - `:timeout` - Timeout per item in milliseconds (default: #{@default_timeout}ms).
-    An item that runs past it is stopped and fails with `{:exit, :timeout}`;
-    the other items carry on.
-  - `:on_progress` - Called in the caller after each item completes, with the
-    number of items completed so far: `(completed, total -> any)`
-  - `:on_error` - Called in the caller for each failed item: `(input, error -> any)`
+  #{Options.docs(@process_batch_opts_schema)}
 
   ## Returns
 
@@ -121,9 +172,10 @@ defmodule Normandy.Batch.Processor do
   @spec process_batch(agent :: struct(), inputs :: [term()], batch_options()) ::
           {:ok, [item_result()] | batch_result()}
   def process_batch(agent, inputs, opts \\ []) when is_list(inputs) do
-    max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
-    ordered = Keyword.get(opts, :ordered, true)
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    opts = Options.validate!(opts, @process_batch_opts_schema, {__MODULE__, :process_batch, 3})
+    max_concurrency = Keyword.fetch!(opts, :max_concurrency)
+    ordered = Keyword.fetch!(opts, :ordered)
+    timeout = Keyword.fetch!(opts, :timeout)
     on_progress = Keyword.get(opts, :on_progress)
     on_error = Keyword.get(opts, :on_error)
 
@@ -176,6 +228,10 @@ defmodule Normandy.Batch.Processor do
 
   Returns a map with separate success/error lists and counts.
 
+  ## Options
+
+  #{Options.docs(@process_batch_with_stats_opts_schema)}
+
   ## Example
 
       result = Processor.process_batch_with_stats(agent, inputs)
@@ -190,9 +246,14 @@ defmodule Normandy.Batch.Processor do
   @spec process_batch_with_stats(agent :: struct(), inputs :: [term()], batch_options()) ::
           {:ok, batch_result()}
   def process_batch_with_stats(agent, inputs, opts \\ []) do
-    opts = Keyword.put(opts, :ordered, false)
+    opts =
+      Options.validate!(
+        opts,
+        @process_batch_with_stats_opts_schema,
+        {__MODULE__, :process_batch_with_stats, 3}
+      )
 
-    process_batch(agent, inputs, opts)
+    process_batch(agent, inputs, Keyword.put(opts, :ordered, false))
   end
 
   @doc """
@@ -202,9 +263,7 @@ defmodule Normandy.Batch.Processor do
 
   ## Options
 
-  All options from `process_batch/3` plus:
-  - `:chunk_size` - Number of items per chunk (default: 100)
-  - `:chunk_delay` - Milliseconds to wait between chunks (default: 0)
+  #{Options.docs(@process_batch_chunked_opts_schema)}
 
   Returns the same shape as `process_batch/3` for the same `:ordered` option,
   covering all chunks.
@@ -222,9 +281,15 @@ defmodule Normandy.Batch.Processor do
   @spec process_batch_chunked(agent :: struct(), inputs :: [term()], batch_options()) ::
           {:ok, [item_result()] | batch_result()}
   def process_batch_chunked(agent, inputs, opts \\ []) do
-    chunk_size = Keyword.get(opts, :chunk_size, 100)
-    chunk_delay = Keyword.get(opts, :chunk_delay, 0)
-    opts = Keyword.drop(opts, [:chunk_size, :chunk_delay])
+    opts =
+      Options.validate!(
+        opts,
+        @process_batch_chunked_opts_schema,
+        {__MODULE__, :process_batch_chunked, 3}
+      )
+
+    {chunk_size, opts} = Keyword.pop!(opts, :chunk_size)
+    {chunk_delay, opts} = Keyword.pop!(opts, :chunk_delay)
 
     Logger.info("Processing #{length(inputs)} items in chunks of #{chunk_size}")
 
@@ -246,7 +311,7 @@ defmodule Normandy.Batch.Processor do
         chunk_result
       end)
 
-    if Keyword.get(opts, :ordered, true) do
+    if Keyword.fetch!(opts, :ordered) do
       {:ok, Enum.concat(chunk_results)}
     else
       {:ok, Enum.reduce(chunk_results, empty_stats(), &merge_stats(&2, &1))}

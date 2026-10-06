@@ -47,6 +47,7 @@ defmodule Normandy.Coordination.Reactive do
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Coordination.Orchestration
   alias Normandy.Coordination.Reactive
+  alias Normandy.Options
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
@@ -56,6 +57,37 @@ defmodule Normandy.Coordination.Reactive do
           {:ok, term()}
           | {:error, Exception.t() | :all_failed | :timeout | :insufficient_successes}
 
+  @timeout_opt [
+    timeout: [type: :timeout, default: 60_000, doc: "How long to wait, in ms."]
+  ]
+  @on_complete_opt [
+    on_complete: [
+      type: {:fun, 2},
+      doc: "Called as each agent finishes: `(agent_id, result -> any)`."
+    ]
+  ]
+
+  @race_opts_schema NimbleOptions.new!(@timeout_opt ++ @on_complete_opt)
+  @all_opts_schema NimbleOptions.new!(
+                     @timeout_opt ++
+                       @on_complete_opt ++
+                       [
+                         max_concurrency: [
+                           type: :pos_integer,
+                           doc: "Agents run at once (default: all of them)."
+                         ],
+                         fail_fast: [
+                           type: :boolean,
+                           default: false,
+                           doc: "Stop at the first failure."
+                         ]
+                       ]
+                   )
+  @some_opts_schema NimbleOptions.new!(
+                      [count: [type: :pos_integer, required: true, doc: "Successes needed."]] ++
+                        @timeout_opt ++ @on_complete_opt
+                    )
+
   @doc """
   Races multiple agents and returns the first successful result.
 
@@ -64,8 +96,7 @@ defmodule Normandy.Coordination.Reactive do
 
   ## Options
 
-  - `:timeout` - Maximum time to wait in ms (default: 60_000)
-  - `:on_complete` - Callback `fn agent_id, result -> any end`
+  #{Options.docs(@race_opts_schema)}
 
   ## Examples
 
@@ -94,7 +125,8 @@ defmodule Normandy.Coordination.Reactive do
   """
   @spec race([agent_or_pid()], term(), keyword()) :: result()
   def race(agents, input, opts \\ []) when is_list(agents) do
-    timeout = Keyword.get(opts, :timeout, 60_000)
+    opts = Options.validate!(opts, @race_opts_schema, {__MODULE__, :race, 3})
+    timeout = Keyword.fetch!(opts, :timeout)
     on_complete = Keyword.get(opts, :on_complete)
 
     Orchestration.with_task_supervisor(fn supervisor ->
@@ -122,10 +154,7 @@ defmodule Normandy.Coordination.Reactive do
 
   ## Options
 
-  - `:timeout` - Maximum time to wait in ms (default: 60_000)
-  - `:max_concurrency` - Maximum concurrent agents (default: length of agents)
-  - `:on_complete` - Callback `fn agent_id, result -> any end`
-  - `:fail_fast` - Stop on first failure (default: false)
+  #{Options.docs(@all_opts_schema)}
 
   ## Examples
 
@@ -153,10 +182,11 @@ defmodule Normandy.Coordination.Reactive do
   """
   @spec all([agent_or_pid()], term(), keyword()) :: {:ok, %{String.t() => result()}} | result()
   def all(agents, input, opts \\ []) when is_list(agents) do
-    timeout = Keyword.get(opts, :timeout, 60_000)
+    opts = Options.validate!(opts, @all_opts_schema, {__MODULE__, :all, 3})
+    timeout = Keyword.fetch!(opts, :timeout)
     max_concurrency = Keyword.get(opts, :max_concurrency, length(agents))
     on_complete = Keyword.get(opts, :on_complete)
-    fail_fast = Keyword.get(opts, :fail_fast, false)
+    fail_fast = Keyword.fetch!(opts, :fail_fast)
 
     agent_specs =
       agents
@@ -217,9 +247,7 @@ defmodule Normandy.Coordination.Reactive do
 
   ## Options
 
-  - `:count` - Number of successful results needed (required)
-  - `:timeout` - Maximum time to wait in ms (default: 60_000)
-  - `:on_complete` - Callback `fn agent_id, result -> any end`
+  #{Options.docs(@some_opts_schema)}
 
   ## Examples
 
@@ -245,8 +273,9 @@ defmodule Normandy.Coordination.Reactive do
   """
   @spec some([agent_or_pid()], term(), keyword()) :: {:ok, %{String.t() => term()}} | result()
   def some(agents, input, opts) when is_list(agents) do
+    opts = Options.validate!(opts, @some_opts_schema, {__MODULE__, :some, 3})
     count = Keyword.fetch!(opts, :count)
-    timeout = Keyword.get(opts, :timeout, 60_000)
+    timeout = Keyword.fetch!(opts, :timeout)
     on_complete = Keyword.get(opts, :on_complete)
 
     if count > length(agents) do

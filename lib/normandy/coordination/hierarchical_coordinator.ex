@@ -9,7 +9,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
       coordinator = HierarchicalCoordinator.new(
         manager: manager_agent,
-        workers: [worker1, worker2, worker3],
+        workers: [
+          %{id: "worker_1", agent: worker1},
+          %{id: "worker_2", agent: worker2}
+        ],
         delegation_strategy: :round_robin
       )
 
@@ -23,6 +26,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
+  alias Normandy.Options
   alias Normandy.OrchestrationError
   alias Normandy.Telemetry.WorkflowSpan
 
@@ -39,15 +43,54 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
             delegation_strategy: :round_robin,
             shared_context: nil
 
+  @new_opts_schema NimbleOptions.new!(
+                     manager: [type: :any, required: true, doc: "The manager agent."],
+                     workers: [
+                       type: {:list, {:custom, Normandy.Options, :plain_map, []}},
+                       required: true,
+                       type_doc: "a list of `%{id: String.t(), agent: agent}` maps",
+                       doc: "The workers, each `%{id: String.t(), agent: agent}`."
+                     ],
+                     delegation_strategy: [
+                       type: {:in, [:round_robin, :broadcast, :conditional]},
+                       default: :round_robin,
+                       doc: "How the manager's plan is delegated."
+                     ],
+                     shared_context: [
+                       type: {:struct, Normandy.Coordination.SharedContext},
+                       doc: "The context the agents share (default: a new `SharedContext`)."
+                     ]
+                   )
+
+  @execute_opts_schema NimbleOptions.new!(
+                         shared_context: [
+                           type: {:struct, Normandy.Coordination.SharedContext},
+                           doc: "Overrides the coordinator's shared context for this run."
+                         ],
+                         max_concurrency: [
+                           type: :pos_integer,
+                           default: 5,
+                           doc: "Workers run at once."
+                         ],
+                         manager_prompt: [
+                           type: :string,
+                           doc: "A prompt put before the input the manager gets."
+                         ]
+                       )
+
+  @execute_with_tasks_opts_schema NimbleOptions.new!(
+                                    Keyword.take(@execute_opts_schema.schema, [
+                                      :shared_context,
+                                      :max_concurrency
+                                    ])
+                                  )
+
   @doc """
   Creates a new hierarchical coordinator.
 
   ## Options
 
-  - `:manager` - Manager agent (required)
-  - `:workers` - List of worker agents (required)
-  - `:delegation_strategy` - How to delegate: `:round_robin`, `:broadcast`, `:conditional`
-  - `:shared_context` - SharedContext to use (default: new context)
+  #{Options.docs(@new_opts_schema)}
 
   ## Example
 
@@ -62,11 +105,13 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   """
   @spec new(keyword()) :: t()
   def new(opts) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
     %__MODULE__{
       manager: Keyword.fetch!(opts, :manager),
       workers: Keyword.fetch!(opts, :workers),
-      delegation_strategy: Keyword.get(opts, :delegation_strategy, :round_robin),
-      shared_context: Keyword.get(opts, :shared_context, SharedContext.new())
+      delegation_strategy: Keyword.fetch!(opts, :delegation_strategy),
+      shared_context: Keyword.get_lazy(opts, :shared_context, &SharedContext.new/0)
     }
   end
 
@@ -78,9 +123,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
   ## Options
 
-  - `:shared_context` - Override coordinator's shared context
-  - `:max_concurrency` - Max concurrent workers (default: 5)
-  - `:manager_prompt` - Custom prompt for manager
+  #{Options.docs(@execute_opts_schema)}
 
   ## Example
 
@@ -92,6 +135,8 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   """
   @spec execute(t(), term(), keyword()) :: {:ok, term()} | {:error, term()}
   def execute(%__MODULE__{} = coordinator, input, opts \\ []) do
+    opts = Options.validate!(opts, @execute_opts_schema, {__MODULE__, :execute, 3})
+
     # step_count: the coordinator's workers (the delegation plan is not known yet).
     WorkflowSpan.span(:hierarchical, %{step_count: length(coordinator.workers)}, fn ->
       run_hierarchy(coordinator, input, opts)
@@ -100,7 +145,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
   defp run_hierarchy(coordinator, input, opts) do
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
-    max_concurrency = Keyword.get(opts, :max_concurrency, 5)
+    max_concurrency = Keyword.fetch!(opts, :max_concurrency)
     manager_prompt = Keyword.get(opts, :manager_prompt)
 
     # Step 1: Manager analyzes input and creates delegation plan
@@ -130,6 +175,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
   Bypasses manager's delegation planning and directly assigns tasks to workers.
 
+  ## Options
+
+  #{Options.docs(@execute_with_tasks_opts_schema)}
+
   ## Example
 
       tasks = [
@@ -145,13 +194,20 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   @spec execute_with_tasks(t(), [%{worker_id: String.t(), task: term()}], keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute_with_tasks(%__MODULE__{} = coordinator, tasks, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        @execute_with_tasks_opts_schema,
+        {__MODULE__, :execute_with_tasks, 3}
+      )
+
     WorkflowSpan.span(:hierarchical, %{step_count: length(tasks)}, fn ->
       run_tasks(coordinator, tasks, opts)
     end)
   end
 
   defp run_tasks(coordinator, tasks, opts) do
-    max_concurrency = Keyword.get(opts, :max_concurrency, 5)
+    max_concurrency = Keyword.fetch!(opts, :max_concurrency)
     context = Keyword.get(opts, :shared_context, coordinator.shared_context)
 
     # Map tasks to worker specs

@@ -47,7 +47,7 @@ defmodule Normandy.Coordination.AgentProcess do
     that terminate with it. `start_link` builds one `Turn.Session` from them and from
     `:supervisor_mod`, `:template_provider`, `:template_id`, `:resume_policy`,
     `:subscriber`, `:handlers`, `:approval_timeout_ms`, `:on_approval_timeout` and
-    `:idle_timeout_ms` (see `Turn.Session.new/1`; an invalid one stops the process);
+    `:idle_timeout_ms` (see `Turn.Session.new/1`; `start_link/1` checks them with its types);
     `update_agent/2` gives it the new config for the next server start.
   """
 
@@ -57,44 +57,149 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
-
-  @agent_id_key :"$normandy_agent_id"
-
-  # start_link options that go to Turn.Session.new/1 in :server mode, besides the infra.
-  @session_options [
-    :supervisor_mod,
-    :template_provider,
-    :template_id,
-    :resume_policy,
-    :subscriber,
-    :handlers,
-    :approval_timeout_ms,
-    :on_approval_timeout,
-    :idle_timeout_ms
-  ]
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
 
+  @agent_id_key :"$normandy_agent_id"
+
+  # The :server-mode keys go to Turn.Session.new/1 in init/1; its schema is the single
+  # source of their types (ruling P4), so a value accepted here cannot fail there and
+  # crash init/1 (Review Focus 3). Types only: Session's required/default flags do not apply.
+  @session_types Map.new(Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
+                   {key, Keyword.fetch!(spec, :type)}
+                 end)
+
+  # The session keys init/1 passes on untouched: all of Session's but the ones it builds
+  # itself (the id, the config and the infra it may start and own).
+  @session_options Map.keys(@session_types) --
+                     [:session_id, :config, :store, :registry, :supervisor]
+
   @type agent_id :: String.t()
-  @type run_opts :: [
-          timeout: non_neg_integer(),
-          async: boolean(),
-          reply_to: pid()
-        ]
+  @type run_opts :: [timeout: timeout()]
 
   # Client API
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            agent: [
+                              type: {:struct, Normandy.Agents.BaseAgentConfig},
+                              required: true,
+                              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
+                              doc: "The agent config the process runs."
+                            ],
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the process."],
+                            agent_id: [
+                              type: :string,
+                              doc:
+                                "The agent's id (default: a new UUID). In `:server` mode it is " <>
+                                  "also the session id."
+                            ],
+                            context_pid: [
+                              type: {:or, [:pid, :atom]},
+                              doc:
+                                "A `Normandy.Coordination.StatefulContext` process, kept in the " <>
+                                  "agent's state."
+                            ],
+                            turn_engine: [
+                              type: {:in, [:inline, :server]},
+                              default: :inline,
+                              doc:
+                                "`:inline` runs `BaseAgent.run/2` in this process; `:server` " <>
+                                  "routes turns through `Turn.Session`/`Turn.Server` (approval " <>
+                                  "parking, passivation, persistence)."
+                            ],
+                            store: [
+                              type: @session_types.store,
+                              type_doc: "`{module, handle}`",
+                              doc:
+                                "`:server` mode: the `SessionStore` as `{module, handle}`. " <>
+                                  "Without it the process starts and owns an in-memory store."
+                            ],
+                            registry: [
+                              type: @session_types.registry,
+                              type_doc: "`{module, handle}`",
+                              doc:
+                                "`:server` mode: the `SessionRegistry` as `{module, handle}`. " <>
+                                  "Without it the process starts and owns a `Native` registry."
+                            ],
+                            supervisor: [
+                              type: @session_types.supervisor,
+                              type_doc: "a pid or a supervisor name",
+                              doc:
+                                "`:server` mode: the session supervisor. Without it the process " <>
+                                  "starts and owns a `Turn.Supervisor`."
+                            ],
+                            supervisor_mod: [
+                              type: @session_types.supervisor_mod,
+                              doc:
+                                "`:server` mode: the module whose `start_server/2` starts " <>
+                                  "sessions (default `Normandy.Agents.Turn.Supervisor`)."
+                            ],
+                            template_provider: [
+                              type: @session_types.template_provider,
+                              type_doc: "`{module, handle}`",
+                              doc: "`:server` mode: the `AgentTemplate` as `{module, handle}`."
+                            ],
+                            resume_policy: [
+                              type: @session_types.resume_policy,
+                              doc:
+                                "`:server` mode: the session's resume policy (default `:lazy`)."
+                            ],
+                            template_id: [
+                              type: @session_types.template_id,
+                              doc: "`:server` mode: the template id (default: the config's name)."
+                            ],
+                            subscriber: [
+                              type: @session_types.subscriber,
+                              doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ],
+                            handlers: [
+                              type: @session_types.handlers,
+                              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
+                              doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ],
+                            approval_timeout_ms: [
+                              type: @session_types.approval_timeout_ms,
+                              doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ],
+                            on_approval_timeout: [
+                              type: @session_types.on_approval_timeout,
+                              doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ],
+                            idle_timeout_ms: [
+                              type: @session_types.idle_timeout_ms,
+                              doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ]
+                          )
+
+  @run_opts_schema NimbleOptions.new!(
+                     timeout: [
+                       type: :timeout,
+                       default: 60_000,
+                       doc: "How long the caller waits for the reply, in ms."
+                     ]
+                   )
+
+  @cast_opts_schema NimbleOptions.new!(
+                      reply_to: [
+                        type: {:or, [:pid, :atom]},
+                        doc:
+                          "Where to send `{:agent_result, agent_id, result}` when the run ends."
+                      ]
+                    )
+
+  @doc false
+  @spec __opts_schema__(:start_link) :: NimbleOptions.t()
+  def __opts_schema__(:start_link), do: @start_link_opts_schema
 
   @doc """
   Starts an AgentProcess GenServer.
 
   ## Options
 
-  - `:agent` - BaseAgent struct (required)
-  - `:name` - Register the process with a name (optional)
-  - `:agent_id` - Unique identifier for this agent (default: UUID)
-  - `:context_pid` - StatefulContext process to use (optional)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Example
 
@@ -106,14 +211,11 @@ defmodule Normandy.Coordination.AgentProcess do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    # Validate that :agent key exists (will raise if missing)
-    _agent = Keyword.fetch!(opts, :agent)
-    name = Keyword.get(opts, :name)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
-    if name do
-      GenServer.start_link(__MODULE__, opts, name: name)
-    else
-      GenServer.start_link(__MODULE__, opts)
+    case Keyword.get(opts, :name) do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
     end
   end
 
@@ -124,16 +226,16 @@ defmodule Normandy.Coordination.AgentProcess do
 
   ## Options
 
-  - `:timeout` - Call timeout in ms (default: 60_000)
+  #{Options.docs(@run_opts_schema)}
 
   ## Example
 
       {:ok, result} = AgentProcess.run(pid, "What is AI?")
   """
-  @spec run(GenServer.server(), term(), keyword()) :: {:ok, term()} | {:error, Exception.t()}
+  @spec run(GenServer.server(), term(), run_opts()) :: {:ok, term()} | {:error, Exception.t()}
   def run(server, input, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 60_000)
-    GenServer.call(server, {:run, input, OtelCtx.capture()}, timeout)
+    opts = Options.validate!(opts, @run_opts_schema, {__MODULE__, :run, 3})
+    GenServer.call(server, {:run, input, OtelCtx.capture()}, Keyword.fetch!(opts, :timeout))
   end
 
   @doc """
@@ -144,7 +246,7 @@ defmodule Normandy.Coordination.AgentProcess do
 
   ## Options
 
-  - `:reply_to` - PID to send result to (optional)
+  #{Options.docs(@cast_opts_schema)}
 
   ## Example
 
@@ -157,6 +259,7 @@ defmodule Normandy.Coordination.AgentProcess do
   """
   @spec cast(GenServer.server(), term(), keyword()) :: :ok
   def cast(server, input, opts \\ []) do
+    opts = Options.validate!(opts, @cast_opts_schema, {__MODULE__, :cast, 3})
     reply_to = Keyword.get(opts, :reply_to)
     GenServer.cast(server, {:run_async, input, reply_to, OtelCtx.capture()})
   end
@@ -269,11 +372,11 @@ defmodule Normandy.Coordination.AgentProcess do
   @impl true
   def init(opts) do
     agent = Keyword.fetch!(opts, :agent)
-    agent_id = Keyword.get(opts, :agent_id, UUID.uuid4())
+    agent_id = Keyword.get_lazy(opts, :agent_id, &UUID.uuid4/0)
     # Readable without a call (see agent_id_of/1), so a busy agent can be listed.
     Process.put(@agent_id_key, agent_id)
     context_pid = Keyword.get(opts, :context_pid)
-    turn_engine = Keyword.get(opts, :turn_engine, :inline)
+    turn_engine = Keyword.fetch!(opts, :turn_engine)
 
     base = %{
       agent: agent,

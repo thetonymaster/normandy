@@ -20,6 +20,9 @@ defmodule Normandy.Options do
   alias Normandy.Components.ContentBlock.Describe
 
   @sensitive_keys [
+    :agent,
+    :agent_config,
+    :agents,
     :api_key,
     :authorization,
     :client,
@@ -30,7 +33,8 @@ defmodule Normandy.Options do
     :password,
     :req_options,
     :secret,
-    :token
+    :token,
+    :workers
   ]
 
   @doc "Option names whose values are never shown in an error message."

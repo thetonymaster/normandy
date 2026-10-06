@@ -26,6 +26,10 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
                  ]
                )
 
+  @execute_stream_opts_schema NimbleOptions.new!(
+                                Keyword.take(@opts_schema.schema, [:max_concurrency, :timeout])
+                              )
+
   @spec_keys [:id, :agent, :input, :transform]
 
   @moduledoc """
@@ -177,6 +181,10 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   Emits no `[:normandy, :workflow, :run]` span: the stream is lazy, so it has no
   defined start and end (a current limitation).
 
+  ## Options
+
+  #{Normandy.Options.docs(@execute_stream_opts_schema)}
+
   ## Example
 
       stream = ParallelOrchestrator.execute_stream(specs, timeout: 60_000)
@@ -191,11 +199,18 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   """
   @spec execute_stream([Orchestration.spec()], keyword()) :: Enumerable.t()
   def execute_stream(agent_specs, opts \\ []) do
+    opts =
+      Normandy.Options.validate!(
+        opts,
+        @execute_stream_opts_schema,
+        {__MODULE__, :execute_stream, 2}
+      )
+
     specs =
       Orchestration.specs!(agent_specs, @spec_keys, "#{inspect(__MODULE__)}.execute_stream/2")
 
-    max_concurrency = Keyword.get(opts, :max_concurrency, 10)
-    timeout = Keyword.get(opts, :timeout, 300_000)
+    max_concurrency = Keyword.fetch!(opts, :max_concurrency)
+    timeout = Keyword.fetch!(opts, :timeout)
 
     parent_otel_ctx = OtelCtx.capture()
 
