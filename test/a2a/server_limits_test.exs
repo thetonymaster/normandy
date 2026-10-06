@@ -50,6 +50,21 @@ defmodule Normandy.A2A.ServerLimitsTest do
       assert {:ok, _task} = Server.handle_message(stub_agent(), message, [], max_text_bytes: 11)
     end
 
+    test "a non-binary text from from_map/1 cannot bypass the limit" do
+      big = String.duplicate("a", 6)
+
+      message =
+        Message.from_map(%{
+          "role" => "user",
+          "parts" => [%{"text" => [big, big]}]
+        })
+
+      assert {:error, :invalid_message} =
+               Server.handle_message(stub_agent(), message, [], max_text_bytes: 10)
+
+      refute_received {:converse, _request, _opts}
+    end
+
     test "nil sets no limit" do
       assert {:ok, _task} =
                Server.handle_message(stub_agent(), text_message(100_001), [], max_text_bytes: nil)

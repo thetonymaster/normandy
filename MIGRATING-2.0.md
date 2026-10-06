@@ -1289,6 +1289,10 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   for one call: give each caller its own memory namespace. Authentication and the HTTP body
   limit stay with your Plug, and every caller that gets through can reach every tool in the
   config's toolset.
+- `A2A.Server.handle_message` returns `{:error, :invalid_message}` for a text part whose
+  `text` is neither a string nor `nil` (a decoded JSON list, say), before any model call;
+  `error_type: :invalid_message` on the request span's stop. The text size limit counts
+  the same normalised text the agent receives.
 
 ## New, non-breaking
 

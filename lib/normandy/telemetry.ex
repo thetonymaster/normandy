@@ -181,7 +181,7 @@ defmodule Normandy.Telemetry do
 
     * Start metadata: `task_id`, `agent_name`.
     * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type` (`:no_text`,
-      `:too_large` or `:agent_failed`).
+      `:too_large`, `:invalid_message` or `:agent_failed`).
     * Parenting: when the carrier passed to `handle_message/3` has a valid W3C
       `traceparent`, the request span (and the agent run inside it) joins that trace.
 

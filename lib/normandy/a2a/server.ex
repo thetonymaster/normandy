@@ -150,6 +150,8 @@ defmodule Normandy.A2A.Server do
 
     - `{:error, :no_text}` - the message has no text part (file or data parts
       alone are not run as an empty prompt)
+    - `{:error, :invalid_message}` - a text part whose `text` is neither a string nor
+      `nil` (a decoded JSON list, say); the agent does not run
     - `{:error, :agent_failed}` - the agent raised or exited. The remote caller
       gets only this; the detail is logged.
 
@@ -180,7 +182,7 @@ defmodule Normandy.A2A.Server do
   Emits a `[:normandy, :a2a, :request]` `Normandy.Telemetry.Span.span/3`. Start metadata:
   `:task_id` (the id of the returned task) and `:agent_name` (`config.name`).
   Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error_type`
-  (`:no_text`, `:too_large` or `:agent_failed`). No message content is included.
+  (`:no_text`, `:too_large`, `:invalid_message` or `:agent_failed`). No message content is included.
 
   Same as `handle_message/4` with no options.
   """
@@ -247,13 +249,20 @@ defmodule Normandy.A2A.Server do
     metadata = %{task_id: task_id, agent_name: config.name}
 
     Span.span([:normandy, :a2a, :request], metadata, fn ->
-      result =
-        if too_large?(message, max_text_bytes),
-          do: {:error, :too_large},
-          else: run_text(config, message_text(message), task_id)
+      result = run_message(config, message, max_text_bytes, task_id)
 
       {result, Map.merge(metadata, stop_status(result))}
     end)
+  end
+
+  defp run_message(config, message, max_text_bytes, task_id) do
+    with {:ok, texts} <- part_texts(message),
+         false <- too_large?(texts, max_text_bytes) do
+      run_text(config, join_text(texts), task_id)
+    else
+      true -> {:error, :too_large}
+      :error -> {:error, :invalid_message}
+    end
   end
 
   defp stop_status({:ok, _task}), do: %{status: :ok}
@@ -262,25 +271,27 @@ defmodule Normandy.A2A.Server do
   defp run_text(_config, "", _task_id), do: {:error, :no_text}
   defp run_text(config, text, task_id), do: run_agent(config, text, task_id)
 
-  # Summed per part before anything is joined or copied.
-  defp too_large?(_message, nil), do: false
-
-  defp too_large?(message, max_bytes) do
-    message.parts
-    |> Enum.reduce(0, fn part, total ->
+  # Each part's text, normalised once for the size check and the join. A binary is kept and
+  # nil is absent; anything else (a decoded JSON list, say) would be flattened by the join
+  # past the size check, so the message is refused.
+  defp part_texts(message) do
+    Enum.reduce_while(message.parts, {:ok, []}, fn part, {:ok, acc} ->
       case Map.get(part, :text) do
-        text when is_binary(text) -> total + byte_size(text)
-        _ -> total
+        nil -> {:cont, {:ok, ["" | acc]}}
+        text when is_binary(text) -> {:cont, {:ok, [text | acc]}}
+        _ -> {:halt, :error}
       end
     end)
-    |> Kernel.>(max_bytes)
+    |> case do
+      {:ok, texts} -> {:ok, Enum.reverse(texts)}
+      :error -> :error
+    end
   end
 
-  defp message_text(message) do
-    message.parts
-    |> Enum.map_join("\n", fn part -> Map.get(part, :text) || "" end)
-    |> String.trim()
-  end
+  defp too_large?(_texts, nil), do: false
+  defp too_large?(texts, max_bytes), do: Enum.sum(Enum.map(texts, &byte_size/1)) > max_bytes
+
+  defp join_text(texts), do: texts |> Enum.join("\n") |> String.trim()
 
   defp run_agent(config, text, task_id) do
     # Build user input matching the agent's input schema
