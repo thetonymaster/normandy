@@ -62,20 +62,29 @@ defmodule Normandy.Options.StoreOptionsTest do
                "connection) or :url"
   end
 
-  test "a bad :redix value is rejected without echoing it" do
-    error =
-      assert_raise ArgumentError, fn ->
-        Cluster.redis_child_specs(
-          redix: %{password: "sk-secret"},
-          namespace: "n",
-          registry: :r,
-          supervisor: :s
-        )
-      end
+  test ":url, :redix and :templates are sensitive keys" do
+    for key <- [:url, :redix, :templates], do: assert(key in Normandy.Options.sensitive_keys())
+  end
 
-    assert error.message =~ "Normandy.Cluster.redis_child_specs/1: "
-    assert error.message =~ ":redix"
-    refute error.message =~ "sk-secret"
+  # Each value is a wrong-type scalar whose text holds a secret: NimbleOptions would echo it,
+  # so only the sensitive-key redaction hides it and shows the option's :type_doc instead.
+  @redaction_cases [
+    {:url, "`t:String.t/0`", {RedisReg, :new, [[url: :"redis://:sk-secret@h"]]}},
+    {:redix, "`t:keyword/0`",
+     {Cluster, :redis_child_specs,
+      [[redix: :"sk-secret", namespace: "n", registry: :r, supervisor: :s]]}},
+    {:templates, "`t:map/0`", {Catalog, :start_link, [[templates: :"sk-secret"]]}}
+  ]
+
+  for {key, type_doc, {mod, fun, args}} <- @redaction_cases do
+    test "a bad #{inspect(key)} value is not echoed; its type_doc is shown" do
+      error =
+        assert_rejects(unquote(key), unquote(mod), unquote(fun), unquote(Macro.escape(args)))
+
+      assert error.message =~ "invalid value for #{inspect(unquote(key))} option"
+      assert error.message =~ "expected #{unquote(type_doc)}", error.message
+      refute error.message =~ "sk-secret"
+    end
   end
 
   test "Cluster.redis_child_specs/1 names a :redix list without :name" do
