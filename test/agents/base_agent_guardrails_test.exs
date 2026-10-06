@@ -317,10 +317,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   # - First call (no "tool" messages in history yet): returns a ToolCallResponse
   #   with one tool call targeting NoopTool ("noop"), forcing the loop to
   #   dispatch the tool and exhaust the single allowed iteration.
-  # - Forced-final call (after a "tool" message exists, response_model is the
-  #   output_schema): returns response_model unchanged. Since output_schema is
-  #   %BaseAgentOutputSchema{chat_message: nil}, the RequiredFields guardrail
-  #   will fire on the nil field.
+  # - Final call (after a "tool" message exists; tool_choice :none): answers text containing
+  #   "leak", which the ForbiddenSubstrings output guardrail flags.
   defmodule MockCapClient do
     defstruct []
 
@@ -337,9 +335,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
               ]
             }
           else
-            # Forced-final call: return the output_schema (chat_message: nil)
-            # so RequiredFields fires.
-            request.response_model
+            # The final call: an answer the output guardrail flags.
+            %ToolCallResponse{content: "a leak in the answer", tool_calls: []}
           end
 
         {:ok, %Normandy.LLM.Response{content: content}}
@@ -353,18 +350,19 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   describe "guardrails :output on exhausted tool loop" do
     test "max-iterations branch still runs output guardrails" do
       # max_tool_iterations: 1. MockCapClient returns a ToolCall on the first
-      # LLM call → NoopTool dispatches → iterations_left hits 0 → Turn FSM
-      # forces a final LLM call against the output_schema. MockCapClient returns
-      # the output_schema unchanged (%BaseAgentOutputSchema{chat_message: nil}),
-      # which violates RequiredFields([:chat_message]). The memory history will
-      # contain a "tool" role message, proving the cap path was taken (not the
-      # completed path).
+      # LLM call → NoopTool dispatches → iterations_left hits 0 → Turn FSM makes the final call
+      # (tool_choice :none). MockCapClient answers "a leak in the answer", which
+      # ForbiddenSubstrings flags. The memory history will contain a "tool" role message,
+      # proving the cap path was taken (not the completed path).
       agent =
         BaseAgent.init(
           base_config(%{
             client: %MockCapClient{},
             max_tool_iterations: 1,
-            guardrails: [output: [{RequiredFields, fields: [:chat_message]}], on_violation: :warn]
+            guardrails: [
+              output: [{ForbiddenSubstrings, terms: ["leak"], field: :chat_message}],
+              on_violation: :warn
+            ]
           })
         )
 

@@ -386,7 +386,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       {:ok, updated_config, response} = BaseAgent.stream(config, user_input, callback)
 
       # The forced-final streaming call produced a final answer, converted to the
-      # output schema (the core skips its convert step on this path).
+      # output schema by the core's convert step, as on the normal path.
       assert %BaseAgentOutputSchema{chat_message: text} = response
       assert is_binary(text)
 

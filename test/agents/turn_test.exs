@@ -7,6 +7,10 @@ defmodule Normandy.Agents.TurnTest do
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.LLMError
+
+  @cap_notice "You have used all available tool calls for this turn. Answer now with what you " <>
+                "have, and say what you could not finish."
 
   describe "new/1" do
     test "seeds a provisioning state with iterations_left = max_iterations" do
@@ -23,9 +27,10 @@ defmodule Normandy.Agents.TurnTest do
              } = s
     end
 
-    test "defaults max_iterations to 5" do
-      assert Turn.new().max_iterations == 5
-      assert Turn.new().iterations_left == 5
+    test "defaults max_iterations to 20" do
+      assert Turn.new().max_iterations == 20
+      assert Turn.new().iterations_left == 20
+      assert %State{}.max_iterations == 20
     end
 
     test "rejects max_iterations below 1, mirroring the pos_integer() contract" do
@@ -247,8 +252,11 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.awaiting_final == false
       assert s2.iterations_left == 0
 
+      # The notice follows the batch's results and is persisted with them, before
+      # the steering state: a resumed turn does not append it twice.
       assert effects == [
                {:append_message, "tool", Enum.at(results, 0)},
+               {:append_message, "user", @cap_notice},
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 0}},
                {:maybe_compact, %{iterations_left: 0}}
@@ -261,11 +269,11 @@ defmodule Normandy.Agents.TurnTest do
 
       assert effects2 == [
                {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
-               {:call_llm, %{response_model: :os, final: true}}
+               {:call_llm, %{response_model: :rm, final: true}}
              ]
     end
 
-    test "the forced final response enters :finalizing as :max_iterations, skipping convert" do
+    test "the forced final response enters :finalizing as :max_iterations and is converted" do
       s = %State{
         status: :assistant_streaming,
         awaiting_final: true,
@@ -275,9 +283,8 @@ defmodule Normandy.Agents.TurnTest do
         output_schema: :os
       }
 
-      # Even though resp carries tool calls and response_model != output_schema,
-      # the forced-final path skips conversion (parity with execute_tool_loop's
-      # iterations_left <= 0 branch, which calls get_response(output_schema)).
+      # The final call ran under tool_choice :none, so tool calls here are ignored: the
+      # answer is converted from its text like any final answer.
       resp = %ToolCallResponse{
         content: "forced answer",
         tool_calls: [%ToolCall{id: "z", name: "noop", input: %{}}]
@@ -290,7 +297,149 @@ defmodule Normandy.Agents.TurnTest do
       assert s2.awaiting_final == false
       assert s2.last_response == resp
 
-      assert effects == [{:validate_output, resp}]
+      assert effects == [{:convert_output, resp, :os}]
+    end
+
+    test "a cap-hitting batch is the only one that appends the notice" do
+      s = %State{
+        status: :tool_dispatch,
+        iterations_left: 2,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]
+      }
+
+      results = [%ToolResult{tool_call_id: "c1", output: "x", is_error: false}]
+      {_s2, effects} = Turn.step(s, {:tool_results, results})
+
+      refute Enum.any?(effects, &match?({:append_message, "user", _}, &1))
+    end
+
+    test "an empty batch at the cap appends no notice" do
+      s = %State{
+        status: :tool_dispatch,
+        iterations_left: 1,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: []
+      }
+
+      {s2, effects} = Turn.step(s, {:tool_results, []})
+
+      assert s2.iterations_left == 0
+
+      assert effects == [
+               {:persist, s2},
+               {:emit_event, :steering, %{iterations_left: 0}},
+               {:maybe_compact, %{iterations_left: 0}}
+             ]
+    end
+
+    test "a paused final call is continued as the final call, with no user message" do
+      s = %State{
+        status: :assistant_streaming,
+        awaiting_final: true,
+        iterations_left: 0,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os
+      }
+
+      paused = %{content: "Searching.", tool_calls: [], stop_reason: :pause_turn}
+      {s2, effects} = Turn.step(s, {:llm_response, paused})
+
+      # final_pauses counts the continuation; iterations_left stays at 0.
+      assert s2.status == :steering
+      assert s2.awaiting_final == false
+      assert s2.final_pauses == 1
+      assert s2.iterations_left == 0
+
+      assert effects == [
+               {:append_message, "assistant", paused},
+               {:persist, s2},
+               {:emit_event, :steering, %{iterations_left: 0}},
+               {:maybe_compact, %{iterations_left: 0}}
+             ]
+
+      {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
+
+      assert s3.awaiting_final == true
+
+      assert effects2 == [
+               {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
+               {:call_llm, %{response_model: :rm, final: true}}
+             ]
+    end
+
+    test "a final call still paused after 3 continuations fails the turn with :pause_turn" do
+      usage = %{input_tokens: 10, output_tokens: 2}
+
+      paused = %{
+        content: "Searching.",
+        tool_calls: [],
+        stop_reason: :pause_turn,
+        usage: usage
+      }
+
+      s = %State{
+        status: :assistant_streaming,
+        awaiting_final: true,
+        iterations_left: 0,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os
+      }
+
+      {s, effects, continuations} =
+        Enum.reduce_while(1..10, {s, [], 0}, fn _, {s, _effects, n} ->
+          case Turn.step(s, {:llm_response, paused}) do
+            {%State{status: :steering} = s2, _} ->
+              {s3, _} = Turn.step(s2, {:compaction_done, %{}})
+              {:cont, {s3, [], n + 1}}
+
+            {s2, effects} ->
+              {:halt, {s2, effects, n}}
+          end
+        end)
+
+      assert continuations == 3
+      assert s.status == :failed
+      assert s.final_pauses == 3
+      assert s.iterations_left == 0
+      assert [{:fail, %LLMError{} = error}] = effects
+      assert s.error == error
+
+      # No model text in the error; the response's usage is kept.
+      assert %LLMError{
+               type: :pause_turn,
+               retryable?: false,
+               reason: {:stop_reason, :pause_turn},
+               usage: ^usage
+             } = error
+
+      refute error.message =~ "Searching."
+    end
+
+    test "a paused final call with tool calls is not continued" do
+      s = %State{
+        status: :assistant_streaming,
+        awaiting_final: true,
+        iterations_left: 0,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os
+      }
+
+      paused = %{
+        content: nil,
+        tool_calls: [%ToolCall{id: "z", name: "noop", input: %{}}],
+        stop_reason: :pause_turn
+      }
+
+      assert {%State{status: :finalizing}, [{:convert_output, ^paused, :os}]} =
+               Turn.step(s, {:llm_response, paused})
     end
   end
 

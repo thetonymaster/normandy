@@ -130,13 +130,29 @@ defmodule Normandy.Components.AgentMemory do
   model as one user message, as the Messages API expects of parallel tool use. Memory,
   the session store and the turn keep one entry per result; only the request merges
   them. A `"tool"` message whose content is not a list stays a message of its own.
+
+  A non-empty text `"user"` message right after such a run (the iteration-cap notice, an
+  `after_compact` injection) becomes its last block, as the API expects text sent with
+  tool results.
   """
   @spec request_messages([%{role: String.t(), content: term()}]) :: [Message.t()]
   def request_messages(history) when is_list(history) do
     history
     |> Enum.reduce([], &add_request_message/2)
     |> Enum.reverse()
+    |> fold_user_text()
   end
+
+  defp fold_user_text([
+         %Message{role: "tool", content: blocks} = tool,
+         %Message{role: "user", content: text} | rest
+       ])
+       when is_list(blocks) and is_binary(text) and text != "" do
+    fold_user_text([%{tool | content: blocks ++ [%{type: "text", text: text}]} | rest])
+  end
+
+  defp fold_user_text([message | rest]), do: [message | fold_user_text(rest)]
+  defp fold_user_text([]), do: []
 
   defp add_request_message(
          %{role: "tool", content: blocks},

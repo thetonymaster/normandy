@@ -63,7 +63,12 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       type_doc: "a `Normandy.Tools.Toolset` or `nil`",
       doc: "The agent's tools."
     ],
-    max_tool_iterations: [type: :pos_integer, default: 5, doc: "Tool rounds per turn."],
+    max_tool_iterations: [
+      type: :pos_integer,
+      default: 20,
+      doc:
+        "Tool rounds per turn. After the last one the turn stores a notice and makes one more call with `tool_choice: :none`, whose answer is the turn's output."
+    ],
     max_tool_concurrency: [
       type: {:custom, __MODULE__, :max_tool_concurrency, []},
       default: 1,

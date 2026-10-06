@@ -60,7 +60,7 @@ defmodule Normandy.Agents.Turn.Server do
   ## Events (`:subscriber`)
 
     * `:iteration` — `%{iteration: n, iterations_left: m, final: boolean}` before each
-      LLM call; `final: true` marks the forced-final call after the budget is spent.
+      LLM call; `final: true` marks the last call, made with `tool_choice: :none` after the budget is spent.
     * `:steering` — `%{iterations_left: m}` after a tool batch, once its state is saved.
     * `:awaiting_approval` — `%{parked: n, resumed: boolean}` when a batch parks, and
       again (`resumed: true`) when a restarted server resumes a parked turn.

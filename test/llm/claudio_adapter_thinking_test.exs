@@ -141,8 +141,8 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
     end
   end
 
-  describe "a changed system prompt" do
-    test "the forced final call at max_tool_iterations does not replay the loop's thinking" do
+  describe "the final call at max_tool_iterations" do
+    test "keeps the loop's prefix and thinking, and withholds tools with tool_choice none" do
       script(__MODULE__.Forced)
 
       agent =
@@ -158,11 +158,30 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
       assert_received {:body, first}
       assert_received {:body, forced}
 
-      # The forced call asks for the output schema, so its system prompt differs and
-      # the loop's thinking no longer applies; the tool call itself still goes back.
-      refute first["system"] == forced["system"]
-      assistant = Enum.find(forced["messages"], &(&1["role"] == "assistant"))
-      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
+      # Same system prompt and tools: the thinking prefix key is unchanged, so the
+      # loop's thinking goes back intact; only tool_choice differs.
+      assert first["system"] == forced["system"]
+      assert first["tools"] == forced["tools"]
+      refute Map.has_key?(first, "tool_choice")
+      assert forced["tool_choice"] == %{"type" => "none"}
+
+      assert [
+               %{"role" => "user"},
+               %{"role" => "assistant", "content" => assistant},
+               %{"role" => "user", "content" => results}
+             ] = forced["messages"]
+
+      assert [@thinking, @redacted, %{"type" => "tool_use", "id" => "t1"}] = assistant
+
+      assert [
+               %{"type" => "tool_result", "tool_use_id" => "t1"},
+               %{
+                 "type" => "text",
+                 "text" =>
+                   "You have used all available tool calls for this turn. Answer now with " <>
+                     "what you have, and say what you could not finish."
+               }
+             ] = results
     end
   end
 

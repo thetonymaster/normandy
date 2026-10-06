@@ -17,6 +17,9 @@ defmodule Normandy.LLM.Request do
   - `:tools` - tool schemas, `%{name:, description:, input_schema:}` maps
   - `:mcp_servers` - MCP server configs for server-side MCP, or `nil`
   - `:task_budget_remaining` - the remaining task budget after in-turn compaction, or `nil`
+  - `:tool_choice` - `nil` (the provider's default) or `:none`: tools stay listed, but the
+    model may not call one. BaseAgent sets `:none` on the call after the last tool round
+    (`max_tool_iterations`); a client without tool choice may ignore it
   """
 
   alias Normandy.Components.Message
@@ -31,7 +34,8 @@ defmodule Normandy.LLM.Request do
             max_tokens: nil,
             tools: [],
             mcp_servers: nil,
-            task_budget_remaining: nil
+            task_budget_remaining: nil,
+            tool_choice: nil
 
   @type t :: %__MODULE__{
           model: String.t(),
@@ -43,7 +47,8 @@ defmodule Normandy.LLM.Request do
           max_tokens: pos_integer(),
           tools: [map()],
           mcp_servers: [struct() | map()] | nil,
-          task_budget_remaining: non_neg_integer() | nil
+          task_budget_remaining: non_neg_integer() | nil,
+          tool_choice: :none | nil
         }
 
   @doc false

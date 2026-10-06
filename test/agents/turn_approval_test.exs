@@ -207,6 +207,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
+               {:append_message, "user", "You have used all available tool calls" <> _},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 0}},
                {:maybe_compact, %{iterations_left: 0}}
@@ -219,7 +220,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert effects2 == [
                {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
-               {:call_llm, %{response_model: :os, final: true}}
+               {:call_llm, %{response_model: :rm, final: true}}
              ]
     end
 

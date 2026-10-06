@@ -89,6 +89,11 @@ defmodule Normandy.Agents.Turn.Driver do
       {:finalize, _value} ->
         {acc, state}
 
+      # A turn the core fails with a Normandy error (a final call that keeps pausing,
+      # a :pause_turn LLMError) raises it; run/3 and stream/3 return it.
+      {:fail, %Normandy.LLMError{} = error} ->
+        raise error
+
       {:fail, reason} ->
         raise "Turn FSM reached :failed unexpectedly: #{inspect(reason)}"
     end

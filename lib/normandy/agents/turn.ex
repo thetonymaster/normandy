@@ -21,14 +21,23 @@ defmodule Normandy.Agents.Turn do
   A response whose `stop_reason` is `:pause_turn` (the API paused a long server-tool
   or MCP-connector turn) and that has no tool calls is appended and sent back as it
   is, with no user message after it, for the model to continue; it spends one
-  iteration, like a tool batch.
+  iteration, like a tool batch. A paused final call (after the iteration cap) is continued the same way as the final call, at most three times; a fourth pause fails the turn with `{:error, %Normandy.LLMError{type: :pause_turn}}`.
   """
 
   alias Normandy.Agents.Turn.State
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.LLMError
   alias Normandy.Options
+
+  # Appended after the batch that spends the last tool iteration (decision 22, R4).
+  @cap_notice "You have used all available tool calls for this turn. Answer now with " <>
+                "what you have, and say what you could not finish."
+
+  # How many times a paused final call (pause_turn) is sent back for the model to
+  # continue; one more pause fails the turn with a :pause_turn LLMError.
+  @max_final_continuations 3
 
   defmodule State do
     @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`). `tokens_compacted` is the estimated tokens of this turn's messages removed by in-turn compaction (feeds the task budget's `remaining`). `trace_carrier` is the W3C text-map carrier of the OpenTelemetry context the turn was started under (`[]` without OTel); the core never reads it, the durable shell persists it so a resumed turn keeps its trace."
@@ -46,8 +55,9 @@ defmodule Normandy.Agents.Turn do
     @type t :: %__MODULE__{
             status: status(),
             max_iterations: pos_integer(),
-            iterations_left: integer(),
+            iterations_left: non_neg_integer(),
             awaiting_final: boolean(),
+            final_pauses: non_neg_integer(),
             response_model: term(),
             output_schema: term(),
             pending_calls: [term()],
@@ -62,9 +72,10 @@ defmodule Normandy.Agents.Turn do
           }
 
     defstruct status: :provisioning,
-              max_iterations: 5,
-              iterations_left: 5,
+              max_iterations: 20,
+              iterations_left: 20,
               awaiting_final: false,
+              final_pauses: 0,
               response_model: nil,
               output_schema: nil,
               pending_calls: [],
@@ -81,9 +92,9 @@ defmodule Normandy.Agents.Turn do
   @new_opts_schema NimbleOptions.new!(
                      max_iterations: [
                        type: :pos_integer,
-                       default: 5,
+                       default: 20,
                        doc:
-                         "Tool-loop iterations before the forced final call. Enforces the " <>
+                         "Tool-loop iterations before the final call (made with the loop's response model; the shell sends `tool_choice: :none`). Enforces the " <>
                            "`pos_integer()` contract on `State.max_iterations` (`BaseAgent.init/1` " <>
                            "applies the same check at the shell boundary)."
                      ],
@@ -95,7 +106,7 @@ defmodule Normandy.Agents.Turn do
                      output_schema: [
                        type: :any,
                        doc:
-                         "The response model for the forced final call when the iteration cap is hit."
+                         "The schema the final answer is converted into (`{:convert_output, resp, output_schema}`) when it differs from `:response_model`."
                      ]
                    )
 
@@ -131,14 +142,27 @@ defmodule Normandy.Agents.Turn do
     {%{s | status: :steering}, [{:maybe_compact, %{iterations_left: s.iterations_left}}]}
   end
 
+  # The final call ran with tool_choice :none, so tool calls in its response are not
+  # dispatched: the answer is converted like any final answer. A paused final call (no
+  # tool calls) is continued like a paused loop call (continue_paused/2: appended, no
+  # user message), and the :compaction_done clause for left <= 0 makes the final call
+  # again. final_pauses counts the continuations; one more pause fails the turn.
   def step(%State{status: :assistant_streaming, awaiting_final: true} = s, {:llm_response, resp}) do
-    {%{
-       s
-       | status: :finalizing,
-         awaiting_final: false,
-         last_response: resp,
-         stop_reason: :max_iterations
-     }, [{:validate_output, resp}]}
+    pauses = final_pauses(s)
+
+    cond do
+      not (paused?(resp) and tool_calls(resp) == []) ->
+        finish_final(s, resp)
+
+      pauses < @max_final_continuations ->
+        s
+        |> Map.put(:final_pauses, pauses + 1)
+        |> Map.put(:awaiting_final, false)
+        |> continue_paused(resp)
+
+      true ->
+        fail_paused_final(s, resp)
+    end
   end
 
   def step(%State{status: :assistant_streaming} = s, {:llm_response, resp}) do
@@ -171,15 +195,16 @@ defmodule Normandy.Agents.Turn do
 
   # Compaction (or its no-op) finished. Record the tokens it removed from this
   # turn (for the task budget), then resolve the steering boundary. At/after
-  # the iteration cap, issue the forced-final call (skipping convert, like the old
-  # path); otherwise emit the next :iteration and continue. iterations_left was
-  # already decremented in apply_tool_results.
+  # the iteration cap, issue the final call with the loop's response model (the shell
+  # sends tool_choice :none; the notice was appended with the last batch); otherwise
+  # emit the next :iteration and continue. iterations_left was already decremented in
+  # apply_tool_results.
   def step(%State{status: :steering, iterations_left: left} = s, {:compaction_done, meta})
       when left <= 0 do
     s = add_compacted(s, meta)
 
     {%{s | status: :assistant_streaming, awaiting_final: true},
-     [iteration_event(s, true), {:call_llm, %{response_model: s.output_schema, final: true}}]}
+     [iteration_event(s, true), {:call_llm, %{response_model: s.response_model, final: true}}]}
   end
 
   def step(%State{status: :steering} = s, {:compaction_done, meta}) do
@@ -384,8 +409,10 @@ defmodule Normandy.Agents.Turn do
   # clauses below. Always clears the per-batch scratch fields (`pending_calls`,
   # `parked_calls`, `held_results`); on the normal path the latter two are empty.
   defp apply_tool_results(%State{} = s, results) do
-    new_left = s.iterations_left - 1
+    # Never below 0: a paused final call's continuation passes here with 0 left.
+    new_left = max(s.iterations_left - 1, 0)
     append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
+    notice = cap_notice(new_left, results)
     steering = {:emit_event, :steering, %{iterations_left: new_left}}
 
     s2 = %{
@@ -398,18 +425,49 @@ defmodule Normandy.Agents.Turn do
     }
 
     {s2,
-     append_effects ++ [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left}}]}
+     append_effects ++
+       notice ++ [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left}}]}
   end
 
   defp finalize(s, resp) do
     s = %{s | status: :finalizing, last_response: resp, stop_reason: :completed}
-
-    if convert_needed?(s) do
-      {s, [{:convert_output, resp, s.output_schema}]}
-    else
-      {s, [{:validate_output, resp}]}
-    end
+    {s, [finish_effect(s, resp)]}
   end
+
+  defp finish_final(s, resp) do
+    s = %{
+      s
+      | status: :finalizing,
+        awaiting_final: false,
+        last_response: resp,
+        stop_reason: :max_iterations
+    }
+
+    {s, [finish_effect(s, resp)]}
+  end
+
+  # A final call still paused after @max_final_continuations continuations: an
+  # incomplete answer is never a success (decision 23). The reason is the stop reason,
+  # never model text; usage is the response's own, when it carries any.
+  defp fail_paused_final(s, resp) do
+    error =
+      [
+        type: :pause_turn,
+        retryable?: false,
+        reason: {:stop_reason, :pause_turn},
+        detail:
+          "the final call after max_tool_iterations was still paused (stop_reason " <>
+            "pause_turn) after #{@max_final_continuations} continuations"
+      ]
+      |> LLMError.new()
+      |> LLMError.with_usage(Map.get(resp, :usage))
+
+    {%{s | status: :failed, awaiting_final: false, last_response: resp, error: error},
+     [{:fail, error}]}
+  end
+
+  # Map.get: a Turn.State persisted before final_pauses existed decodes without it.
+  defp final_pauses(s), do: Map.get(s, :final_pauses, 0)
 
   # The API paused a long server-tool turn (stop_reason pause_turn). The paused turn is
   # appended as it is and sent back with no user message after it, for the model to
@@ -498,7 +556,19 @@ defmodule Normandy.Agents.Turn do
   # the turn's normal-call response model differs from the output schema — i.e.
   # the tool-loop case, where the LLM was asked for %ToolCallResponse{}. A
   # no-tools turn sets response_model == output_schema and skips conversion,
-  # matching run_without_tools. The forced-final (:max_iterations) path skips
-  # conversion structurally (see the awaiting_final clause).
+  # matching run_without_tools. The final call after the iteration cap uses the loop's
+  # response model too, so it converts the same way.
   defp convert_needed?(%State{response_model: rm, output_schema: os}), do: rm != os
+
+  # The iteration-cap notice, after the batch that spent the last iteration. An empty
+  # batch (a paused turn's continuation, Task 5.3c) gets none: the API requires its
+  # resend to add no user message.
+  defp cap_notice(left, [_ | _]) when left <= 0, do: [{:append_message, "user", @cap_notice}]
+  defp cap_notice(_left, _results), do: []
+
+  defp finish_effect(s, resp) do
+    if convert_needed?(s),
+      do: {:convert_output, resp, s.output_schema},
+      else: {:validate_output, resp}
+  end
 end

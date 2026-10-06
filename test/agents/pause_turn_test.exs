@@ -115,7 +115,7 @@ defmodule Normandy.Agents.PauseTurnTest do
       paused = %{tool_calls: [], stop_reason: :pause_turn}
       {s, _} = Turn.step(running(1), {:llm_response, paused})
 
-      assert {_s, [_iteration, {:call_llm, %{response_model: :os, final: true}}]} =
+      assert {_s, [_iteration, {:call_llm, %{response_model: :rm, final: true}}]} =
                Turn.step(s, {:compaction_done, %{compacted: false}})
     end
 

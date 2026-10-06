@@ -778,8 +778,20 @@ defmodule Normandy.LLM.ClaudioAdapter do
       |> add_messages(Request.messages_with_system(request), enable_caching)
       |> add_tools(request.tools, enable_caching)
       |> add_mcp_servers(request.mcp_servers)
+      |> add_tool_choice(request.tool_choice)
       |> add_client_options(client.options, call_opts ++ task_budget_opts(request))
     end
+
+    # tool_choice is valid only next to tools (the agent's, or an MCP server's
+    # mcp_toolset), so a request with none leaves it unset.
+    defp add_tool_choice(claudio_request, nil), do: claudio_request
+
+    defp add_tool_choice(%Claudio.Messages.Request{tools: tools} = claudio_request, :none)
+         when tools in [nil, []],
+         do: claudio_request
+
+    defp add_tool_choice(claudio_request, :none),
+      do: Claudio.Messages.Request.set_tool_choice(claudio_request, :none)
 
     defp task_budget_opts(%Request{task_budget_remaining: nil}), do: []
     defp task_budget_opts(%Request{task_budget_remaining: n}), do: [task_budget_remaining: n]

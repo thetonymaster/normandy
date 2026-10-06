@@ -16,6 +16,12 @@ defmodule Normandy.LLMError do
   `:usage` is what the call billed. Normandy builds them from the response's
   `stop_reason`, so every client gets them.
 
+  `type: :pause_turn` means the final call after `max_tool_iterations` was still paused
+  (`stop_reason` `pause_turn`) after three continuations. It is `retryable?: false`;
+  `:reason` is `{:stop_reason, :pause_turn}`, never model text, and `:usage` is the paused
+  response's own when it carries any (BaseAgent's do not: each call's usage is on its
+  `llm_call` span). The turn core builds it, so no circuit breaker counts it.
+
   - `:type` — failure class (see `t:error_type/0`)
   - `:status` — HTTP status when there was one, else `nil`
   - `:retryable?` — whether a retry can help; set by the adapter that classified the failure
@@ -48,6 +54,7 @@ defmodule Normandy.LLMError do
     :invalid_output,
     :max_tokens,
     :refusal,
+    :pause_turn,
     :stream,
     :circuit_open,
     :unsupported,
@@ -68,6 +75,7 @@ defmodule Normandy.LLMError do
           | :invalid_output
           | :max_tokens
           | :refusal
+          | :pause_turn
           | :stream
           | :circuit_open
           | :unsupported

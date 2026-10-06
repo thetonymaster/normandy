@@ -69,7 +69,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
 
       assert effects == [
                {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
-               {:call_llm, %{response_model: :os, final: true}}
+               {:call_llm, %{response_model: :rm, final: true}}
              ]
     end
 

@@ -87,7 +87,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:temperature, :float, default: nil)
     field(:max_tokens, :integer, default: @default_max_tokens)
     field(:toolset, :struct, default: nil)
-    field(:max_tool_iterations, :integer, default: 5)
+    field(:max_tool_iterations, :integer, default: 20)
     field(:max_tool_concurrency, :integer, default: 1)
     field(:retry, :any, default: nil)
     field(:circuit_breaker, :any, default: nil)

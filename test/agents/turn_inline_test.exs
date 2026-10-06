@@ -127,10 +127,10 @@ defmodule Normandy.Agents.Turn.InlineTest do
       # 3 normal tool-dispatching calls + 1 forced final call = 4.
       assert Agent.get(counter, & &1) == 4
 
-      # Three normal calls (response_model :rm) and one forced final call
-      # (response_model :os, final: true). assert_received consumes one matching
-      # message each; order between distinct patterns does not matter.
-      assert_received {:llm_call, %{response_model: :os, final: true}}
+      # Three normal calls and one final call, all with the loop's response model (:rm);
+      # the final one is marked final: true. assert_received consumes one matching message
+      # each; order between distinct patterns does not matter.
+      assert_received {:llm_call, %{response_model: :rm, final: true}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}

@@ -156,7 +156,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
       }
 
       agent = BaseAgent.init(config)
-      assert agent.max_tool_iterations == 5
+      assert agent.max_tool_iterations == 20
     end
   end
 

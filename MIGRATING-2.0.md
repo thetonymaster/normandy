@@ -999,6 +999,34 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   summary cut off at its `max_tokens`, instead of the fragment.
 - New `Normandy.LLMError` types `:max_tokens` and `:refusal`; telemetry `error.type` reports
   them as `max_tokens` and `refusal`.
+- `max_tool_iterations` defaults to 20 (was 5) in `BaseAgent.init/1`, `BaseAgentConfig`,
+  the DSL and `Turn.new/1`. Set it to 5 to keep the old budget.
+- After the last tool round, the turn makes one more call that keeps the loop's system
+  prompt, tools and response model and sends `tool_choice: none` (new
+  `Normandy.LLM.Request.tool_choice`, `nil | :none`). 1.x switched the system prompt to the
+  output schema for that call, which changed the prompt-cache prefix and dropped the loop's
+  thinking. The answer is converted to the output schema like any final answer.
+- Before that call the turn stores a `"user"` message, "You have used all available tool
+  calls for this turn. Answer now with what you have, and say what you could not finish.",
+  in memory and in the `Turn.Server` session store. Requests send it as a text block after
+  the last tool results. Code that walks `AgentMemory.messages/1` sees it.
+- Requests now send any plain-text `"user"` message that directly follows tool results (an
+  `after_compact` injection too) as a text block in the tool-result message. Memory is
+  unchanged.
+- Custom `Turn.Inline` or `Turn.Driver` handlers: the final `{:call_llm, %{final: true}}`
+  carries the loop's `response_model` (for example `%ToolCallResponse{}`), not the output
+  schema, and the core then emits `{:convert_output, response, output_schema}`. A `call_llm`
+  that answered the output schema on `final: true` answers the loop's response model now.
+- A custom `Normandy.Agents.Model` may honour `request.tool_choice`; one that ignores it may
+  return tool calls on the final call, and they are not run.
+- A final call that stops at `pause_turn` is sent back as the final call (`tool_choice: none`,
+  the paused turn last, no new user message), at most three times. `iterations_left` stays
+  at 0 in the `:iteration` and `:steering` events while it is continued.
+- A final call still paused after those three continuations is
+  `{:error, %Normandy.LLMError{type: :pause_turn}}` (new type) on `run/3`, `stream/3`,
+  `Turn.Server` and `Turn.Session`, never the paused text as the answer. It is
+  `retryable?: false`, not counted by the circuit breaker, and its `:reason` is
+  `{:stop_reason, :pause_turn}`. `Turn.Server` keeps the paused turns it stored.
 
 ## 33. Tool calls and assistant turns are replayed as received
 

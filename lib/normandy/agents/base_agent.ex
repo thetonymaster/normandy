@@ -243,7 +243,7 @@ defmodule Normandy.Agents.BaseAgent do
       if has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
 
     # Thinking is valid only under the system prompt, tools and model that produced
-    # it (a context provider, a tool change, the forced final call's schema or a
+    # it (a context provider, a tool change or a
     # model change can change them), so stale thinking is left out and this call's
     # response is stamped.
     prefix_key = &ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas, &1)
@@ -263,7 +263,8 @@ defmodule Normandy.Agents.BaseAgent do
       max_tokens: config.max_tokens,
       tools: tool_schemas,
       mcp_servers: config.mcp_servers,
-      task_budget_remaining: Keyword.get(extra_opts, :task_budget_remaining)
+      task_budget_remaining: Keyword.get(extra_opts, :task_budget_remaining),
+      tool_choice: Keyword.get(extra_opts, :tool_choice)
     }
 
     # How many times the adapter re-asks after a response that does not parse.
@@ -671,7 +672,12 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp task_budget_call_opts(_config, _state), do: []
 
-  defp call_turn_llm(config, state, %{response_model: response_model}) do
+  # The call after the last tool round (the core's final: true) keeps the loop's
+  # system prompt, tools and response model, and asks for no more tool calls.
+  defp final_call_opts(%{final: true}), do: [tool_choice: :none]
+  defp final_call_opts(_request), do: []
+
+  defp call_turn_llm(config, state, %{response_model: response_model} = request) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
 
     llm_metadata =
@@ -693,7 +699,8 @@ defmodule Normandy.Agents.BaseAgent do
         get_response_with_usage(
           config,
           response_model,
-          [request_tracker: tracker] ++ task_budget_call_opts(config, state)
+          [request_tracker: tracker] ++
+            task_budget_call_opts(config, state) ++ final_call_opts(request)
         )
 
       # When this agent has no tools, strip any tool_calls the LLM may have
@@ -783,7 +790,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # The one conversion of a turn's final response into the output schema, for run/2's
-  # tool loop and stream/3 (the forced-final streamed call included). A response that
+  # tool loop and stream/3 (the final call after the iteration cap included). A response that
   # is already the output schema's own struct is the filled response model (what
   # Response.content holds) and passes through; validate_turn_output/2 still checks
   # it. Anything else is converted from its text (text_of) by convert_final_text/3.
@@ -1055,7 +1062,7 @@ defmodule Normandy.Agents.BaseAgent do
   # Streaming analog of run_turn/2: the same admission, then the FSM driven with the
   # streaming handler set. Returns {config, output}, the output converted to the output
   # schema (streaming_handlers/2). A failed stream raises its Normandy.LLMError from
-  # inside the llm_call span (stream_llm_attempt/4); stream/3 returns it.
+  # inside the llm_call span (stream_llm_attempt/5); stream/3 returns it.
   defp run_stream_turn(config, user_input, callback) when is_function(callback, 1) do
     config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
@@ -1075,19 +1082,11 @@ defmodule Normandy.Agents.BaseAgent do
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
 
   @doc false
-  # The forced-final call (max_tool_iterations reached) skips the core's convert step,
-  # because a non-streaming call asks the model for the output schema itself. A
-  # streamed answer is always a message map, so that call converts it here.
+  # The final call after max_tool_iterations streams like any other; the core converts
+  # its message (Turn.convert_needed?/1).
   def streaming_handlers(callback) do
     %Driver.Handlers{
-      call_llm: fn
-        config, state, %{final: true} ->
-          message = call_stream_llm(config, state, callback)
-          stream_output(config, message, config.output_schema, callback)
-
-        config, state, _request ->
-          call_stream_llm(config, state, callback)
-      end,
+      call_llm: fn config, state, request -> call_stream_llm(config, state, callback, request) end,
       dispatch_tools: fn config, calls -> dispatch_stream_tools(config, calls, callback) end,
       convert: fn config, message, output_schema ->
         stream_output(config, message, output_schema, callback)
@@ -1120,7 +1119,7 @@ defmodule Normandy.Agents.BaseAgent do
   # mirroring call_turn_llm's no-tools strip. A stream failure raises its LLMError
   # from inside the llm_call span, so the span emits :exception with `kind: :error`
   # and the LLMError, as run/2's call does; stream/3 rescues and returns it.
-  defp call_stream_llm(config, state, callback) do
+  defp call_stream_llm(config, state, callback, turn_request) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
 
     llm_metadata =
@@ -1137,7 +1136,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     final_message =
       with_llm_call_span(config, llm_metadata, fn ->
-        stream_llm_attempt(config, state, callback, llm_metadata)
+        stream_llm_attempt(config, state, callback, llm_metadata, turn_request)
       end)
 
     tool_calls = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
@@ -1146,13 +1145,14 @@ defmodule Normandy.Agents.BaseAgent do
 
   # Runs inside the llm_call span: a failed stream raises here so the span emits
   # :exception rather than :stop.
-  defp stream_llm_attempt(config, state, callback, llm_metadata) do
+  defp stream_llm_attempt(config, state, callback, llm_metadata, turn_request) do
     {request, prefix_key} = build_stream_request(config)
 
     request = %{
       request
       | task_budget_remaining:
-          Keyword.get(task_budget_call_opts(config, state), :task_budget_remaining)
+          Keyword.get(task_budget_call_opts(config, state), :task_budget_remaining),
+        tool_choice: Keyword.get(final_call_opts(turn_request), :tool_choice)
     }
 
     {callback, first_chunk} = track_first_chunk(callback)
