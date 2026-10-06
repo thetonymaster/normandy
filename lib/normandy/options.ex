@@ -177,12 +177,14 @@ defmodule Normandy.Options do
   # its type. NimbleOptions' nested errors ({:or}, {:list}, {:tuple}, keyword_list) echo the
   # inner value that failed, not the top one, so every container inside `value` is replaced,
   # longest inspected form first: an inner container's text is part of the outer one's.
-  # Scalars keep NimbleOptions' own message.
+  # Strings inside a container are replaced too; a top-level scalar keeps NimbleOptions' own
+  # message.
   @doc false
   @spec redact_container(String.t(), term()) :: String.t()
   def redact_container(message, value) do
     value
     |> containers([])
+    |> Enum.reject(&(&1 == value and is_binary(&1)))
     |> Enum.map(&{inspect(&1), Describe.type_of(&1)})
     |> Enum.uniq()
     |> Enum.sort_by(fn {inspected, _type} -> String.length(inspected) end, :desc)
@@ -201,6 +203,10 @@ defmodule Normandy.Options do
     do: value |> Tuple.to_list() |> Enum.reduce([value | acc], &containers/2)
 
   defp containers(value, acc) when is_list(value), do: list_containers(value, [value | acc])
+  # A string inside a container is echoed by NimbleOptions' nested errors too; "" is skipped
+  # because its inspected form would match unrelated text (its container still hides it).
+  defp containers("", acc), do: acc
+  defp containers(value, acc) when is_binary(value), do: [value | acc]
   defp containers(_scalar, acc), do: acc
 
   # Walks an improper list's tail too.

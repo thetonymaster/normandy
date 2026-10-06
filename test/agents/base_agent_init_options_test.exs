@@ -212,5 +212,31 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
       assert error.message =~ "must be a keyword list, got a map"
       refute error.message =~ "sk-"
     end
+
+    for {label, guardrails, bytes} <- [
+          {"a string in a tuple", [input: [{Foo, "sk-LEAK"}]], 7},
+          {"a bare string in a list", [input: ["sk-LEAK2"]], 8},
+          {"a string in a builtin's opts",
+           [output: [{Normandy.Guardrails.Builtins.MaxLength, "sk-LEAK3"}]], 8}
+        ] do
+      test "#{label} is described by type" do
+        error =
+          assert_raise ArgumentError, fn ->
+            BaseAgent.init(
+              client: client(),
+              model: "m",
+              guardrails: unquote(Macro.escape(guardrails))
+            )
+          end
+
+        refute error.message =~ "sk-LEAK"
+        assert error.message =~ "a string (#{unquote(bytes)} bytes)"
+      end
+    end
+
+    test "a top-level scalar keeps NimbleOptions' message" do
+      error = assert_raise ArgumentError, fn -> BaseAgent.init(client: client(), model: 123) end
+      assert error.message =~ "123"
+    end
   end
 end

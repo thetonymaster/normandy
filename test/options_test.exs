@@ -188,4 +188,23 @@ defmodule Normandy.OptionsTest do
     assert {:error, "expected a plain map (not a struct), got: a string (4 bytes)"} =
              Options.plain_map("acme")
   end
+
+  describe "redact_container/2" do
+    test "no string inside a container survives, at any depth" do
+      value = %{"sk-key" => [1 | "sk-tail"], a: ["sk-x", {1, "sk-y"}]}
+      message = "bad: " <> inspect(value) <> " / " <> inspect("sk-x") <> " / " <> inspect("sk-y")
+
+      redacted = Options.redact_container(message, value)
+
+      refute redacted =~ "sk-"
+      assert redacted =~ "a string (4 bytes)"
+    end
+
+    test "a top-level string keeps the message; an empty string inside is described only via its container" do
+      assert Options.redact_container("got: \"abc\"", "abc") == "got: \"abc\""
+
+      assert Options.redact_container(~s(got: "" and [""]), [""]) ==
+               ~s(got: "" and a list)
+    end
+  end
 end
