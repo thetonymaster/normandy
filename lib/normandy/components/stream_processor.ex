@@ -8,6 +8,10 @@ defmodule Normandy.Components.StreamProcessor do
 
   alias Normandy.LLMError
 
+  # Blocks whose input arrives as input_json_delta: client tool calls, and the server
+  # and MCP tool calls the API runs (replayed as they streamed).
+  @tool_use_types ["tool_use", "server_tool_use", "mcp_tool_use"]
+
   @doc """
   Returns the failure a collected stream carries, or `nil` for a complete stream.
 
@@ -109,29 +113,8 @@ defmodule Normandy.Components.StreamProcessor do
     %{acc | content: new_content}
   end
 
-  defp process_event(%{type: "content_block_delta", delta: delta, index: index}, acc) do
-    content = acc.content || []
-
-    updated_content =
-      case delta do
-        %{"type" => "text_delta", "text" => text} ->
-          append_text_delta(content, index, text)
-
-        %{"type" => "input_json_delta", "partial_json" => json} ->
-          append_json_delta(content, index, json)
-
-        %{"type" => "thinking_delta", "thinking" => text} ->
-          update_block(content, index, "thinking", &((&1 || "") <> text))
-
-        %{"type" => "signature_delta", "signature" => signature} ->
-          update_block(content, index, "signature", fn _ -> signature end)
-
-        _ ->
-          content
-      end
-
-    %{acc | content: updated_content}
-  end
+  defp process_event(%{type: "content_block_delta", delta: delta, index: index}, acc),
+    do: %{acc | content: apply_delta(acc.content || [], index, delta)}
 
   # After a mid-stream fallback, message_delta repeats input_transformations with the
   # serving model's entries, replacing the message_start ones.
@@ -142,12 +125,14 @@ defmodule Normandy.Components.StreamProcessor do
     |> maybe_set_input_transformations(Map.get(event, :input_transformations))
   end
 
-  # A finished tool_use block's accumulated JSON is decoded. Input that does not
-  # decode to an object stays a string; Dispatch refuses it and tells the model.
+  # A finished tool_use, server_tool_use or mcp_tool_use block's accumulated JSON is
+  # decoded. Input that does not decode to an object stays a string; Dispatch refuses
+  # a client tool_use with such input and tells the model.
   defp process_event(%{type: "content_block_stop", index: index}, acc) do
     content =
       List.update_at(acc.content || [], index, fn
-        %{"type" => "tool_use", "input" => json} = block when is_binary(json) ->
+        %{"type" => type, "input" => json} = block
+        when type in @tool_use_types and is_binary(json) ->
           %{block | "input" => decode_tool_input(json)}
 
         block ->
@@ -159,6 +144,24 @@ defmodule Normandy.Components.StreamProcessor do
 
   defp process_event(%{type: "message_stop"}, acc), do: acc
   defp process_event(_, acc), do: acc
+
+  defp apply_delta(content, index, %{"type" => "text_delta", "text" => text}),
+    do: append_text_delta(content, index, text)
+
+  defp apply_delta(content, index, %{"type" => "input_json_delta", "partial_json" => json}),
+    do: append_json_delta(content, index, json)
+
+  defp apply_delta(content, index, %{"type" => "thinking_delta", "thinking" => text}),
+    do: update_block(content, index, "thinking", &((&1 || "") <> text))
+
+  defp apply_delta(content, index, %{"type" => "signature_delta", "signature" => signature}),
+    do: update_block(content, index, "signature", fn _ -> signature end)
+
+  # A text block's citations arrive one per delta, in order.
+  defp apply_delta(content, index, %{"type" => "citations_delta", "citation" => citation}),
+    do: update_block(content, index, "citations", &((&1 || []) ++ [citation]))
+
+  defp apply_delta(content, _index, _delta), do: content
 
   defp append_text_delta(content, index, text) do
     List.update_at(content, index, fn
@@ -172,10 +175,11 @@ defmodule Normandy.Components.StreamProcessor do
 
   defp append_json_delta(content, index, partial_json) do
     List.update_at(content, index, fn
-      %{"type" => "tool_use", "input" => existing} = block when is_binary(existing) ->
+      %{"type" => type, "input" => existing} = block
+      when type in @tool_use_types and is_binary(existing) ->
         %{block | "input" => existing <> partial_json}
 
-      %{"type" => "tool_use"} = block ->
+      %{"type" => type} = block when type in @tool_use_types ->
         Map.put(block, "input", partial_json)
 
       block ->

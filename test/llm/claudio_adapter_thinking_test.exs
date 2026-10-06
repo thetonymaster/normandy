@@ -227,7 +227,10 @@ defmodule Normandy.LLM.ClaudioAdapterThinkingTest do
       assert_received {:body, _first}
       assert_received {:body, second}
       assistant = Enum.find(second["messages"], &(&1["role"] == "assistant"))
-      assert [%{"type" => "tool_use", "id" => "t1"}] = assistant["content"]
+      # The turn is replayed as received (Claudio's continuation rules keep the
+      # fallback block); the served model's thinking is stale and left out.
+      assert [%{"type" => "fallback"}, %{"type" => "tool_use", "id" => "t1"}] =
+               assistant["content"]
     end
   end
 

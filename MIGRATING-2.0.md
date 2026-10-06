@@ -994,6 +994,26 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `"<server_name>__<tool>"` (or answered "not found"), and a second, client `tool_result` for
   it was sent to the API. A local tool registered under such a name is no longer called for
   connector calls.
+- `%Normandy.Agents.ToolCallResponse{}` has a new field `content_blocks`: the assistant turn as
+  the API returned it, as string-keyed blocks (`Claudio.Messages.Response.to_assistant_content/1`;
+  `ToolCallResponse.api_blocks/1` for a streamed message's blocks). The next request replays it
+  unchanged: thinking, text, `tool_use`, `server_tool_use`, `mcp_tool_use` and their results, in
+  their order. It used to be rebuilt as `thinking ++ [text] ++ tool_use`, which merged the text
+  blocks, moved all thinking first, and dropped server and MCP blocks. A response stored before
+  this field existed, or built by hand with `content_blocks: []`, is rebuilt as before. Claudio
+  0.7 leaves `citations` out of replayed text blocks, and `server_name` out of a replayed
+  `mcp_tool_result` (the API rejects it there).
+- After a server-side fallback, the replayed turn keeps the `fallback` block (the API's
+  continuation rules). Only the blocks after it used to be replayed.
+- A streamed turn's `server_tool_use` and `mcp_tool_use` inputs and its text `citations` are now
+  accumulated by `StreamProcessor.build_final_message/1`. They used to be dropped: inputs stayed
+  `{}` and citations were lost.
+- An earlier chat answer (`%BaseAgentOutputSchema{chat_message: text}` in memory) goes back to
+  the model as `text`, not as `{"chat_message": ...}` JSON. The chat input already did this.
+- After compaction (`Normandy.Context.WindowManager`, `Summarizer.compress_conversation/3`,
+  `Normandy.Behaviours.Compactor.WindowManager`), kept messages keep their stored content
+  (`%ToolCallResponse{}`, `%ToolResult{}`, ...) minus thinking. They used to be replaced by
+  their serialized blocks, which hid a kept tool batch from `Turn.unanswered_tool_calls/1`.
 
 ## New, non-breaking
 

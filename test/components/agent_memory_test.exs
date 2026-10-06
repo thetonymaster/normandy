@@ -94,7 +94,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     end
   end
 
-  test "history gives the default chat input to the model as its plain text" do
+  test "history gives the default chat input and output to the model as their plain text" do
     history =
       AgentMemory.new_memory()
       |> AgentMemory.add_message("user", %Normandy.Agents.BaseAgentInputSchema{
@@ -107,7 +107,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     assert history == [
              %{role: "user", content: "My locker number is 4417."},
-             %{role: "assistant", content: "{\"chat_message\":\"Noted.\"}"}
+             %{role: "assistant", content: "Noted."}
            ]
   end
 

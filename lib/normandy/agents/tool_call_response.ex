@@ -14,17 +14,28 @@ defmodule Normandy.Agents.ToolCallResponse do
   response was produced under. The API accepts a thinking block only under that
   same prefix and model, so `Normandy.Components.AgentMemory.drop_stale_thinking/2` drops
   thinking whose key no longer matches. It is never sent to the API.
+
+  `:content_blocks` holds the assistant turn as the API returned it: string-keyed,
+  API-shaped blocks in their order (thinking, text with its citations, `tool_use`,
+  `server_tool_use`, `mcp_tool_use` and their results), as
+  `Claudio.Messages.Response.to_assistant_content/1` makes them. When it is not empty,
+  the turn is replayed from it unchanged, so the next request carries exactly what the
+  model produced; `:content`, `:tool_calls` and `:thinking` are what Normandy reads.
+  A response built without it (by hand, or stored before it existed) is rebuilt from
+  those three fields.
   """
 
   use Normandy.Schema
 
+  alias Claudio.Messages.Response, as: ClaudioResponse
   alias Normandy.Components.ToolCall
 
   @type t :: %__MODULE__{
           content: String.t() | nil,
           tool_calls: [ToolCall.t()],
           thinking: [map()],
-          prefix_key: integer() | nil
+          prefix_key: integer() | nil,
+          content_blocks: [map()]
         }
 
   schema do
@@ -32,6 +43,19 @@ defmodule Normandy.Agents.ToolCallResponse do
     field(:tool_calls, {:array, :struct}, default: [])
     field(:thinking, {:array, :map}, default: [])
     field(:prefix_key, :integer, default: nil)
+    field(:content_blocks, {:array, :map}, default: [])
+  end
+
+  @doc """
+  `:content_blocks` for a response's content blocks given as maps (a streamed message's
+  string-keyed blocks): `Claudio.Messages.Response.to_assistant_content/1` of them, so a
+  streamed turn is replayed in the same shape as a non-streamed one.
+  """
+  @spec api_blocks([map()]) :: [map()]
+  def api_blocks(blocks) when is_list(blocks) do
+    %{"content" => blocks}
+    |> ClaudioResponse.from_map()
+    |> ClaudioResponse.to_assistant_content()
   end
 
   @doc """
@@ -83,11 +107,33 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Agents.ToolCallResponse 
   """
 
   def to_json(%Normandy.Agents.ToolCallResponse{} = response) do
-    # Thinking blocks come first, as the API returned them.
-    response.thinking ++ content_blocks(response)
+    # Map.get: a response stored before :content_blocks existed has no key.
+    case Map.get(response, :content_blocks, []) do
+      [] -> response.thinking ++ rebuilt_blocks(response)
+      blocks -> replayed_blocks(blocks, response.thinking)
+    end
   end
 
-  defp content_blocks(%{content: content, tool_calls: tool_calls}) do
+  # The turn as the API returned it. Thinking dropped from the response
+  # (AgentMemory.drop_thinking/1 empties :thinking) is left out here too. A client
+  # tool_use whose input is not an object goes back as {}: the API requires an
+  # object, and Dispatch refused the call and told the model.
+  defp replayed_blocks(blocks, thinking) do
+    blocks
+    |> Enum.reject(&(thinking == [] and thinking_block?(&1)))
+    |> Enum.map(&object_input/1)
+  end
+
+  defp thinking_block?(%{"type" => type}), do: type in ["thinking", "redacted_thinking"]
+  defp thinking_block?(_block), do: false
+
+  defp object_input(%{"type" => "tool_use", "input" => input} = block) when not is_map(input),
+    do: %{block | "input" => %{}}
+
+  defp object_input(block), do: block
+
+  # Thinking blocks first, as the API returned them, then the text and tool calls.
+  defp rebuilt_blocks(%{content: content, tool_calls: tool_calls}) do
     # Build content blocks array for Claude API
     blocks = []
 

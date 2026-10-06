@@ -155,6 +155,12 @@ defmodule Normandy.Components.AgentMemory do
        when is_binary(text),
        do: text
 
+  # The default chat output, likewise: an earlier answer replayed as
+  # {"chat_message": ...} JSON taught the model to answer in JSON (AX-21).
+  defp model_content(%Normandy.Agents.BaseAgentOutputSchema{chat_message: text})
+       when is_binary(text),
+       do: text
+
   defp model_content(content), do: BaseIOSchema.to_json(content)
 
   @doc """

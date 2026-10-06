@@ -1,6 +1,7 @@
 defmodule Normandy.Context.WindowManagerTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
   alias Normandy.Context.WindowManager
 
@@ -267,6 +268,23 @@ defmodule Normandy.Context.WindowManagerTest do
       blocks = kept_assistant_blocks(truncated.memory)
       assert Enum.any?(blocks, &(&1[:type] == "tool_use"))
       refute Enum.any?(blocks, &(&1["type"] == "thinking"))
+    end
+
+    test "kept messages keep their stored structs, so the kept batch is still answered" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+      agent = %{memory: memory_ending_in_thinking_round(), config: %{}}
+
+      {:ok, truncated} = WindowManager.truncate_conversation(agent, manager)
+
+      messages = AgentMemory.messages(truncated.memory)
+
+      assert [%Normandy.Agents.ToolCallResponse{thinking: []}] =
+               for(%{role: "assistant", content: c} <- messages, do: c)
+
+      assert [%Normandy.Components.ToolResult{tool_call_id: "t1"}] =
+               for(%{role: "tool", content: c} <- messages, do: c)
+
+      assert Turn.unanswered_tool_calls(messages) == []
     end
 
     test "removes oldest messages first" do

@@ -265,6 +265,20 @@ defmodule Normandy.Context.SummarizerTest do
       refute Enum.any?(blocks, &(&1["type"] == "thinking"))
     end
 
+    test "kept messages keep their stored structs", %{client: client} do
+      agent = %{memory: memory_ending_in_thinking_round(), model: "test-model", config: %{}}
+
+      {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 3)
+
+      messages = AgentMemory.messages(compressed.memory)
+
+      assert [%Normandy.Agents.ToolCallResponse{thinking: []}] =
+               for(%{role: "assistant", content: c} <- messages, do: c)
+
+      assert [%Normandy.Components.ToolResult{tool_call_id: "t1"}] =
+               for(%{role: "tool", content: c} <- messages, do: c)
+    end
+
     test "the kept messages start at a user message, never an orphan tool result",
          %{client: client} do
       memory =

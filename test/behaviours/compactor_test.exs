@@ -72,7 +72,8 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert meta.compacted
       assert result.memory.head == last_id
 
-      assert [%{type: "text", text: "answer"}] = result.memory.entries[last_id].content
+      assert %Normandy.Agents.ToolCallResponse{content: "answer", thinking: []} =
+               result.memory.entries[last_id].content
 
       refute Enum.any?(meta.dropped, &(&1.id == last_id))
     end

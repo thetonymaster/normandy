@@ -403,10 +403,12 @@ defmodule Normandy.Context.WindowManager do
     memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
 
     # Add messages in chronological order, each under its original turn and entry id
-    # (a compactor reports what it dropped by entry id). Their thinking was produced
-    # after the removed messages, so it no longer applies.
+    # (a compactor reports what it dropped by entry id), with their stored content (a
+    # %ToolCallResponse{} or %ToolResult{} stays one, so the turn still sees the kept
+    # batch). Their thinking was produced after the removed messages, so it no longer
+    # applies.
     Enum.reduce(kept, memory, fn {msg, entry}, mem ->
-      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(msg.content),
+      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(entry.content),
         turn_id: entry.turn_id,
         id: entry.id
       )

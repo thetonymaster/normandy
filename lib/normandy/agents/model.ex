@@ -18,7 +18,9 @@ defprotocol Normandy.Agents.Model do
   `request.response_model` is an empty struct of the shape the caller expects. Return it
   filled in as `response.content`: `%Normandy.Agents.BaseAgentOutputSchema{}` gets the
   answer text in `:chat_message`, and `%Normandy.Agents.ToolCallResponse{}` gets
-  `:content`, `:tool_calls` and `:thinking`. When `response_model` is `nil`, return the
+  `:content`, `:tool_calls`, `:thinking` and `:content_blocks` (the assistant turn as
+  string-keyed, API-shaped blocks, replayed unchanged on the next request; leave it `[]`
+  and the turn is rebuilt from the other three). When `response_model` is `nil`, return the
   answer text as a binary.
 
   `request.output_format`, when set, is the output schema the final answer's text must

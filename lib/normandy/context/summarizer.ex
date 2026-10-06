@@ -401,10 +401,11 @@ defmodule Normandy.Context.Summarizer do
       AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
 
     # Add recent messages in chronological order, each under its original turn and
-    # entry id. The summary (added above) takes current_turn_id and a new id. Their
-    # thinking was produced before the summary existed, so it no longer applies.
+    # entry id, with its stored content (not the serialized history). The summary
+    # (added above) takes current_turn_id and a new id. Their thinking was produced
+    # before the summary existed, so it no longer applies.
     Enum.reduce(recent_messages, memory, fn {msg, entry}, mem ->
-      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(msg.content),
+      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(entry.content),
         turn_id: entry.turn_id,
         id: entry.id
       )

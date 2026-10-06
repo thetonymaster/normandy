@@ -861,6 +861,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
       |> Map.put(:content, content)
       |> Map.put(:tool_calls, tool_calls)
       |> Map.put(:thinking, ClaudioAdapter.extract_thinking(claudio_response))
+      |> Map.put(
+        :content_blocks,
+        Claudio.Messages.Response.to_assistant_content(claudio_response)
+      )
     end
 
     defp populate_standard_schema(schema, content, context) do

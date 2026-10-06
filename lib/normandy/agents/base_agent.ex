@@ -1309,7 +1309,8 @@ defmodule Normandy.Agents.BaseAgent do
       content: if(text == "", do: nil, else: text),
       tool_calls: calls,
       thinking: ToolCallResponse.thinking_blocks(content),
-      prefix_key: Map.get(response, :prefix_key)
+      prefix_key: Map.get(response, :prefix_key),
+      content_blocks: ToolCallResponse.api_blocks(content)
     }
   end
 

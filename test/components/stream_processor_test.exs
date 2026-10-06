@@ -330,5 +330,72 @@ defmodule Normandy.Components.StreamProcessorTest do
              } =
                StreamProcessor.build_final_message(events)
     end
+
+    test "server_tool_use and mcp_tool_use inputs are accumulated and decoded" do
+      events =
+        for {type, index} <- [{"server_tool_use", 0}, {"mcp_tool_use", 1}],
+            event <- [
+              %{
+                type: "content_block_start",
+                content_block: %{"type" => type, "id" => "s#{index}", "input" => %{}},
+                index: index
+              },
+              %{
+                type: "content_block_delta",
+                delta: %{"type" => "input_json_delta", "partial_json" => ~s({"q":)},
+                index: index
+              },
+              %{
+                type: "content_block_delta",
+                delta: %{"type" => "input_json_delta", "partial_json" => ~s("x"})},
+                index: index
+              },
+              %{type: "content_block_stop", index: index}
+            ],
+            do: event
+
+      assert %{
+               content: [
+                 %{"type" => "server_tool_use", "input" => %{"q" => "x"}},
+                 %{"type" => "mcp_tool_use", "input" => %{"q" => "x"}}
+               ]
+             } = StreamProcessor.build_final_message(events)
+    end
+
+    test "citations deltas are kept on their text block, in order" do
+      events = [
+        %{
+          type: "content_block_start",
+          content_block: %{"type" => "text", "text" => ""},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "citations_delta", "citation" => %{"cited_text" => "a"}},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "text_delta", "text" => "Sunny."},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "citations_delta", "citation" => %{"cited_text" => "b"}},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{
+               content: [
+                 %{
+                   "type" => "text",
+                   "text" => "Sunny.",
+                   "citations" => [%{"cited_text" => "a"}, %{"cited_text" => "b"}]
+                 }
+               ]
+             } = StreamProcessor.build_final_message(events)
+    end
   end
 end
