@@ -503,8 +503,8 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 - `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`,
   `:success_threshold`, `:timeout` and `:half_open_max_calls` only. `:name` is gone: a
   registered breaker name made a second `init/1` with the same options crash.
-- A bad option raises before the circuit breaker starts, so it no longer leaves a linked
-  breaker process behind.
+- A bad option raises before anything else happens; `init/1` starts no process at all (the
+  circuit breaker is shared and started on the first LLM call, §31).
 - The value of a credential-carrying option (`:client`, `:mcp_servers`) never appears in the
   message.
 - `run/3` and `run!/3` name themselves in their option error, and options that are not a
@@ -526,7 +526,7 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 | 1.x option / `BaseAgentConfig` field | 2.0 |
 |---|---|
 | `retry_options: opts` | `retry: opts` |
-| `enable_circuit_breaker: true, circuit_breaker_options: opts` | `circuit_breaker: opts` (`[]` for the defaults; `nil`, the default, starts none) |
+| `enable_circuit_breaker: true, circuit_breaker_options: opts` | `circuit_breaker: opts` (`[]` for the defaults; `nil`, the default, uses none) |
 | `config.circuit_breaker` (the pid) | `config.circuit_breaker` is now the options; the breaker is shared, see §31 |
 | `input_guardrails: specs` | `guardrails: [input: specs]` |
 | `output_guardrails: specs` | `guardrails: [output: specs]` |
