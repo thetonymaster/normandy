@@ -41,9 +41,10 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           handlers: Turn.Driver.Handlers.t() | nil
         ]
 
-  # The reaper passes :template_provider, :subscriber and :handlers to
-  # Turn.Server.start_link/1 on every reap, so it takes the types the server takes: a value
-  # the server would reject raises here, not later in the reaper process.
+  # The reaper passes :store, :registry, :template_provider, :subscriber and :handlers to
+  # Turn.Server.start_link/1 on every reap, so it takes the types the server takes (which
+  # are Turn.Session.new/1's, ruling P4): a value the server would reject raises here, not
+  # later in the reaper process.
   @server_types Map.new(Turn.Server.__opts_schema__(:start_link).schema, fn {key, spec} ->
                   {key, Keyword.fetch!(spec, :type)}
                 end)
@@ -51,14 +52,14 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   @start_link_opts_schema NimbleOptions.new!(
                             name: [type: :any, doc: "A `t:GenServer.name/0` for the reaper."],
                             store: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @server_types.store,
                               required: true,
                               doc:
                                 "The `SessionStore` as `{module, handle}`; its " <>
                                   "`list_resumable/1` names the `:eager` sessions."
                             ],
                             registry: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @server_types.registry,
                               required: true,
                               doc: "The `SessionRegistry` as `{module, handle}`."
                             ],

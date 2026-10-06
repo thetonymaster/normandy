@@ -104,6 +104,37 @@ defmodule Normandy.Options.TurnOptionsTest do
       assert error.message =~ ":handlers"
     end
 
+    # Ruling P4: the session keys' types come from Turn.Session.new/1's schema, whose
+    # {module, handle} check rejects a nil module; init/1 would crash on it instead.
+    test "Turn.Server.start_link/1 rejects a {nil, handle} :store in the caller" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Server.start_link(
+            session_id: "s-nil-store",
+            store: {nil, :handle},
+            registry: {Native, Native.new()}
+          )
+        end
+
+      assert error.message =~ ~r/^Normandy\.Agents\.Turn\.Server\.start_link\/1: /
+      assert error.message =~ ":store"
+    end
+
+    test "Turn.ResumeReaper.start_link/1 rejects a {nil, handle} :store in the caller" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.ResumeReaper.start_link(
+            store: {nil, :handle},
+            registry: {Native, Native.new()},
+            supervisor: :no_supervisor,
+            template_provider: {Normandy.Behaviours.AgentTemplate, :handle}
+          )
+        end
+
+      assert error.message =~ ~r/^Normandy\.Agents\.Turn\.ResumeReaper\.start_link\/1: /
+      assert error.message =~ ":store"
+    end
+
     # The reaper forwards :handlers to Turn.Server.start_link/1 on every reap; a value the
     # server rejects would raise there, in the reaper, long after start_link/1 returned.
     test "Turn.ResumeReaper.start_link/1 rejects a :handlers that Turn.Server would reject" do

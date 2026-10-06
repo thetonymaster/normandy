@@ -213,17 +213,17 @@ defmodule Normandy.Agents.Turn.Server do
 
   @start_link_opts_schema NimbleOptions.new!(
                             session_id: [
-                              type: :string,
+                              type: @session_types.session_id,
                               required: true,
                               doc: "The session this server runs."
                             ],
                             store: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @session_types.store,
                               required: true,
                               doc: "The `Normandy.Behaviours.SessionStore` as `{module, handle}`."
                             ],
                             registry: [
-                              type: {:tuple, [:atom, :any]},
+                              type: @session_types.registry,
                               required: true,
                               doc:
                                 "The `Normandy.Behaviours.SessionRegistry` as `{module, handle}`. " <>
@@ -246,7 +246,7 @@ defmodule Normandy.Agents.Turn.Server do
                                   "for a thin start."
                             ],
                             resume_policy: [
-                              type: {:in, [:lazy, :eager]},
+                              type: @session_types.resume_policy,
                               doc:
                                 "`:lazy` (the default) or `:eager`: `:eager` resumes an " <>
                                   "in-flight turn as soon as the server starts. A saved " <>
@@ -277,7 +277,7 @@ defmodule Normandy.Agents.Turn.Server do
                                   "300_000). Wins over a saved template's value."
                             ],
                             on_approval_timeout: [
-                              type: {:in, [:continue, :fail]},
+                              type: @session_types.on_approval_timeout,
                               doc:
                                 "`:continue` (the default) or `:fail`. On expiry every parked " <>
                                   "call gets an `expired: true` tool result; `:continue` hands it " <>
