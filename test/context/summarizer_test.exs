@@ -303,7 +303,7 @@ defmodule Normandy.Context.SummarizerTest do
       {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 4)
 
       [summary | kept] = AgentMemory.history(compressed.memory)
-      assert summary.content =~ "Previous conversation summary"
+      assert summary.content =~ "<conversation_summary>"
       assert [%{role: "user", content: "thanks"}, %{role: "assistant"}] = kept
     end
 
@@ -331,7 +331,7 @@ defmodule Normandy.Context.SummarizerTest do
       # First message should be the summary
       summary_msg = List.first(history)
       assert summary_msg.role == "user"
-      assert String.contains?(summary_msg.content, "Previous conversation summary")
+      assert String.contains?(summary_msg.content, "<conversation_summary>")
     end
 
     test "the summary reaches the model as plain text, not a JSON-wrapped schema", %{
@@ -346,7 +346,9 @@ defmodule Normandy.Context.SummarizerTest do
       {:ok, compressed} = Summarizer.compress_conversation(client, agent, keep_recent: 2)
 
       [summary | _] = AgentMemory.history(compressed.memory)
-      assert summary.content =~ ~r/\APrevious conversation summary: /
+
+      assert summary.content =~
+               ~r/\AThe earlier part of this conversation was summarized automatically/
     end
 
     test "keeps all messages if below keep_recent threshold", %{client: client} do
@@ -580,7 +582,7 @@ defmodule Normandy.Context.SummarizerTest do
       before = AgentMemory.entry_chain(memory)
       [summary | kept] = AgentMemory.entry_chain(compressed.memory)
 
-      assert summary.content =~ "Previous conversation summary"
+      assert summary.content =~ "<conversation_summary>"
       refute summary.id in Enum.map(before, & &1.id)
       assert Enum.map(kept, & &1.id) == before |> Enum.take(-3) |> Enum.map(& &1.id)
     end

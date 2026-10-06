@@ -47,12 +47,14 @@ defmodule Normandy.Context.WindowManager do
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
           reserved_tokens: non_neg_integer(),
-          strategy: strategy()
+          strategy: strategy(),
+          summary_max_tokens: pos_integer() | nil
         }
 
   defstruct max_tokens: nil,
             reserved_tokens: 4096,
-            strategy: :oldest_first
+            strategy: :oldest_first,
+            summary_max_tokens: nil
 
   @new_opts_schema NimbleOptions.new!(
                      max_tokens: [
@@ -72,6 +74,14 @@ defmodule Normandy.Context.WindowManager do
                        type: {:in, [:oldest_first, :sliding_window, :summarize]},
                        default: :oldest_first,
                        doc: "The truncation strategy."
+                     ],
+                     summary_max_tokens: [
+                       type: {:or, [:pos_integer, nil]},
+                       default: nil,
+                       doc:
+                         "`max_tokens` of the `:summarize` strategy's summary call; `nil` is " <>
+                           "`Normandy.Context.Summarizer`'s default (the agent's `max_tokens`, " <>
+                           "else 16_000)."
                      ]
                    )
 
@@ -104,7 +114,8 @@ defmodule Normandy.Context.WindowManager do
     %__MODULE__{
       max_tokens: Keyword.fetch!(opts, :max_tokens),
       reserved_tokens: Keyword.fetch!(opts, :reserved_tokens),
-      strategy: Keyword.fetch!(opts, :strategy)
+      strategy: Keyword.fetch!(opts, :strategy),
+      summary_max_tokens: Keyword.fetch!(opts, :summary_max_tokens)
     }
   end
 
@@ -342,11 +353,11 @@ defmodule Normandy.Context.WindowManager do
       client = Map.get(agent, :client)
 
       if client do
-        # Use summarizer to compress conversation
+        # Use summarizer to compress conversation; a nil budget is the Summarizer's default.
         Summarizer.compress_conversation(
           client,
           agent,
-          keep_recent: keep_messages
+          [keep_recent: keep_messages] ++ summary_budget(manager)
         )
       else
         # Fall back to oldest-first if no client available
@@ -354,6 +365,9 @@ defmodule Normandy.Context.WindowManager do
       end
     end
   end
+
+  defp summary_budget(%__MODULE__{summary_max_tokens: nil}), do: []
+  defp summary_budget(%__MODULE__{summary_max_tokens: n}), do: [max_tokens: n]
 
   defp estimate_messages_for_tokens(memory, target_tokens) do
     history = AgentMemory.history(memory)

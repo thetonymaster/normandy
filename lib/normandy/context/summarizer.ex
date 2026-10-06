@@ -14,7 +14,9 @@ defmodule Normandy.Context.Summarizer do
       {:ok, updated_agent} = Summarizer.compress_conversation(client, agent, keep_recent: 5)
   """
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock
   alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
   alias Normandy.LLM.Call
@@ -43,13 +45,22 @@ defmodule Normandy.Context.Summarizer do
   Conversation to summarize:
   """
 
+  @tool_call_types ["tool_use", "server_tool_use", "mcp_tool_use"]
+  @tool_result_types ["tool_result", "mcp_tool_result"]
+  @max_result_chars 4_000
+
   @summary_opts [
     prompt: [
       type: :string,
       doc: "The summarization prompt (default: the built-in prompt, which keeps stated facts)."
     ],
     model: [type: :string, doc: "The model to summarize with (default: the agent's model)."],
-    max_tokens: [type: :pos_integer, default: 500, doc: "Maximum tokens for the summary."]
+    max_tokens: [
+      type: :pos_integer,
+      doc:
+        "Maximum tokens for the summary call (default: the agent's `max_tokens`, else " <>
+          "16_000). Thinking shares this budget, and current models cannot turn it off."
+    ]
   ]
 
   @summarize_messages_opts_schema NimbleOptions.new!(@summary_opts)
@@ -110,7 +121,7 @@ defmodule Normandy.Context.Summarizer do
       )
 
     prompt = Keyword.get(opts, :prompt, @default_summarization_prompt)
-    max_tokens = Keyword.fetch!(opts, :max_tokens)
+    max_tokens = Keyword.get_lazy(opts, :max_tokens, fn -> agent_max_tokens!(agent) end)
 
     # Format messages for summarization
     conversation_text = format_messages_for_summary(messages)
@@ -224,43 +235,132 @@ defmodule Normandy.Context.Summarizer do
 
   # Private functions
 
+  # The transcript the summary model reads: one paragraph per message, "Role: text" per
+  # text block, and a line of its own for each tool call and tool result, so the facts a
+  # tool returned reach the summary. history/1 gives blocks string-keyed (a response's API
+  # blocks) or atom-keyed (ToolResult, a rebuilt ToolCallResponse); both read the same.
+  # Thinking is left out: it is the model's scratch work, not conversation.
   defp format_messages_for_summary(messages) do
+    names = tool_names(messages)
+
     messages
-    |> Enum.map_join("\n\n", fn msg ->
-      role = String.capitalize(msg.role)
-      content = extract_content(msg.content)
-      "#{role}: #{content}"
-    end)
+    |> Enum.map(fn msg -> msg.content |> content_lines(msg.role, names) |> Enum.join("\n") end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
   end
 
-  defp extract_content(content) when is_binary(content), do: content
+  defp content_lines(content, role, _names) when is_binary(content),
+    do: [label(role, unwrap_chat_message(content))]
 
-  defp extract_content(content) when is_map(content) do
-    # Try to extract chat_message or convert to JSON (structs as their maps).
+  defp content_lines(content, role, names) when is_list(content),
+    do: Enum.flat_map(content, &block_lines(&1, role, names))
+
+  # A struct or map given to summarize_messages/4 directly: its chat_message, else JSON.
+  defp content_lines(content, role, _names) when is_map(content) do
     case Map.get(content, :chat_message) do
-      nil -> Normandy.JSON.encode!(content)
-      message -> message
+      nil -> [label(role, Normandy.JSON.encode!(content))]
+      message -> [label(role, message)]
     end
   end
 
-  defp extract_content(content) when is_list(content) do
-    # Multimodal content — join text blocks for the summary transcript
-    # and emit a short placeholder for non-text blocks so summaries
-    # don't silently drop images/documents from the context.
-    content
-    |> Enum.map(fn
-      %Normandy.Components.ContentBlock.Text{text: t} -> t
-      %Normandy.Components.ContentBlock.Image{} -> "[image]"
-      %Normandy.Components.ContentBlock.Document{} -> "[document]"
-      %{"type" => "text", "text" => t} when is_binary(t) -> t
-      %{"type" => type} -> "[#{type}]"
-      _ -> ""
-    end)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" ")
+  defp content_lines(nil, _role, _names), do: []
+
+  defp block_lines(%ContentBlock.Text{text: text}, role, _names), do: [label(role, text)]
+  defp block_lines(%ContentBlock.Image{}, role, _names), do: [label(role, "[image]")]
+  defp block_lines(%ContentBlock.Document{}, role, _names), do: [label(role, "[document]")]
+
+  defp block_lines(block, role, names) when is_map(block) do
+    case field(block, :type) do
+      "text" ->
+        [label(role, field(block, :text))]
+
+      type when type in ["thinking", "redacted_thinking"] ->
+        []
+
+      type when type in @tool_call_types ->
+        input = Normandy.JSON.encode!(field(block, :input) || %{})
+        ["Assistant called #{field(block, :name)}(#{input})"]
+
+      type when type in @tool_result_types ->
+        id = field(block, :tool_use_id)
+        kind = if field(block, :is_error) == true, do: "Tool error", else: "Tool result"
+        ["#{kind} (#{Map.get(names, id, id)}): #{cap(result_text(field(block, :content)))}"]
+
+      type when is_binary(type) ->
+        [label(role, "[#{type}]")]
+    end
   end
 
-  defp extract_content(_), do: ""
+  # The name of every call in the messages, by id, so a result names its tool.
+  defp tool_names(messages) do
+    for %{content: blocks} when is_list(blocks) <- messages,
+        block when is_map(block) <- blocks,
+        field(block, :type) in @tool_call_types,
+        into: %{},
+        do: {field(block, :id), field(block, :name)}
+  end
+
+  defp result_text(text) when is_binary(text), do: text
+  defp result_text(nil), do: ""
+
+  defp result_text(blocks) when is_list(blocks) do
+    Enum.map_join(blocks, " ", fn block ->
+      case field(block, :type) do
+        "text" -> field(block, :text)
+        type -> "[#{type}]"
+      end
+    end)
+  end
+
+  # A tool result keeps its first @max_result_chars characters (graphemes) in the
+  # transcript; the summary needs its facts, not a whole page.
+  defp cap(text) when byte_size(text) <= @max_result_chars, do: text
+
+  defp cap(text) do
+    case String.length(text) - @max_result_chars do
+      cut when cut > 0 ->
+        String.slice(text, 0, @max_result_chars) <> " [#{cut} more characters cut]"
+
+      _fits ->
+        text
+    end
+  end
+
+  # A final answer the structured path stored as {"chat_message": ...} JSON reads as its
+  # text. Any other JSON (a custom schema's) stays as it is.
+  defp unwrap_chat_message("{" <> _ = text) do
+    case Normandy.JSON.decode(text) do
+      {:ok, %{"chat_message" => message} = map} when map_size(map) == 1 and is_binary(message) ->
+        message
+
+      _not_a_chat_message ->
+        text
+    end
+  end
+
+  defp unwrap_chat_message(text), do: text
+
+  defp label(role, text), do: "#{String.capitalize(role)}: #{text}"
+
+  defp field(block, key), do: Map.get(block, key, Map.get(block, Atom.to_string(key)))
+
+  # Thinking shares max_tokens with the summary text and cannot be turned off on current
+  # models, so the summary gets the agent's own answer budget, not a summary-sized one.
+  defp agent_max_tokens!(agent) do
+    case Map.get(agent, :max_tokens) do
+      nil ->
+        BaseAgentConfig.default_max_tokens()
+
+      n when is_integer(n) and n > 0 ->
+        n
+
+      other ->
+        raise ArgumentError,
+              "Normandy.Context.Summarizer: the agent's :max_tokens is the summary's default " <>
+                "budget and must be a positive integer, got: #{inspect(other)}; set it, or " <>
+                "pass :max_tokens"
+    end
+  end
 
   defp get_model(agent, opts) do
     Keyword.get(opts, :model) || Map.get(agent, :model) ||
@@ -397,8 +497,7 @@ defmodule Normandy.Context.Summarizer do
 
     # The summary goes first, as plain text: wrapped in a schema it reached the model
     # as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not conversation.
-    memory =
-      AgentMemory.add_message(memory, summary_role, "Previous conversation summary: " <> summary)
+    memory = AgentMemory.add_message(memory, summary_role, summary_message(summary))
 
     # Add recent messages in chronological order, each under its original turn and
     # entry id, with its stored content (not the serialized history). The summary
@@ -410,6 +509,13 @@ defmodule Normandy.Context.Summarizer do
         id: entry.id
       )
     end)
+  end
+
+  # Framed so the model does not read the summary as something the user just said (AX-28).
+  defp summary_message(summary) do
+    "The earlier part of this conversation was summarized automatically to save space. " <>
+      "The summary is context, not a new message.\n\n" <>
+      "<conversation_summary>\n" <> summary <> "\n</conversation_summary>"
   end
 
   # history/1 and entry_chain/1 walk the same chain in the same order, so the kept

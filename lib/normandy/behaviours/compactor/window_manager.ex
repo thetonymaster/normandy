@@ -10,7 +10,9 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   Options: `:context_window` pins the window (and skips the model catalog lookup);
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
   at or above the window raises `ArgumentError`; `:strategy` goes to
-  `WindowManager.new/1`. The 1.x name `:max_tokens` for the pin raises `ArgumentError`.
+  `WindowManager.new/1`; `:summary_max_tokens` is the `:summarize` strategy's summary
+  budget (default: the agent's `max_tokens`). The 1.x name `:max_tokens` for the pin
+  raises `ArgumentError`.
   Any other key raises `ArgumentError` when the agent is built (`BaseAgent.init/1`, DSL
   `new/1`) or its template is rebuilt.
   The `:summarize` strategy needs `acc.client`; if summarization fails it returns the
@@ -43,6 +45,13 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
                      |> Keyword.fetch!(:type),
                    doc:
                      "The truncation strategy (default: `Normandy.Context.WindowManager.new/1`'s)."
+                 ],
+                 summary_max_tokens: [
+                   type: {:or, [:pos_integer, nil]},
+                   default: nil,
+                   doc:
+                     "`max_tokens` of the `:summarize` strategy's summary call (default `nil`: " <>
+                       "the agent's `max_tokens`, else 16_000). Thinking shares it."
                  ]
                )
 
@@ -112,7 +121,10 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
               ":reserved_tokens in the compactor opts"
     end
 
-    WM.new([max_tokens: window, reserved_tokens: reserved] ++ Keyword.take(opts, [:strategy]))
+    WM.new(
+      [max_tokens: window, reserved_tokens: reserved] ++
+        Keyword.take(opts, [:strategy, :summary_max_tokens])
+    )
   end
 
   # The default reserve: the agent's max_tokens. A real agent config always has a

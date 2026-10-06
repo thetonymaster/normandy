@@ -41,8 +41,8 @@ SystemPromptGenerator.generate_prompt(spec)
   `BaseAgentInputSchema`) reach the model as their plain text, not `{"chat_message": ...}`
   JSON. As JSON, Haiku 4.5 often denied remembering earlier turns. Custom input schemas are
   still sent as JSON.
-- A `:summarize` compaction stores its summary as a plain string
-  (`"Previous conversation summary: ..."`), not a `BaseAgentOutputSchema`.
+- A `:summarize` compaction stores its summary as a plain string, inside
+  `<conversation_summary>` tags (§35), not a `BaseAgentOutputSchema`.
 - The default summarization prompt changed. It tells the model to keep facts the user stated
   word for word and to carry an earlier summary's facts forward; the 1.x prompt asked for a
   concise summary and lost such facts after a few rounds. Direct `Summarizer` callers can
@@ -1105,6 +1105,30 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   and document count); a database migrated by a pre-release drops and re-runs the memory
   migration. Write memory documents only through the store: a row written by other SQL is
   not counted. Redis keeps a `:bytes` counter key beside each namespace's index.
+
+## 35. Compaction
+
+- The summarizer now reads tool rounds. Its transcript holds the assistant's text, a line
+  `Assistant called <name>(<input as JSON>)` for each tool call (client, server and MCP
+  tools), and a line `Tool result (<name>): <text>` for each result (`Tool error (<name>): ...`
+  for an error result), cut to 4000 characters. Thinking is left out. Before, tool results
+  and the text of tool-turn assistant messages were dropped (their blocks have atom keys,
+  which the summarizer did not read), so a tool-heavy conversation was summarized without the
+  facts its tools returned. A final answer stored as `{"chat_message": ...}` JSON reads as its
+  text.
+- The summary message reads `The earlier part of this conversation was summarized
+  automatically to save space. The summary is context, not a new message.`, a blank line,
+  then the summary between `<conversation_summary>` and `</conversation_summary>` lines. It
+  was `Previous conversation summary: <summary>`, which the model could take for something
+  the user had just said. Code or tests that match the old prefix must change.
+- `Context.Summarizer`'s `:max_tokens` now defaults to the agent's `max_tokens` (16_000 when
+  the agent has none), not 500. Thinking shares that budget and current models cannot turn it
+  off, so 500 left little or nothing for the summary. An agent `max_tokens` that is not a
+  positive integer raises `ArgumentError`; pass `:max_tokens` to choose another budget.
+- `Compactor.WindowManager` takes `:summary_max_tokens` (a positive integer, or `nil`, the
+  default, for the summarizer's default above): the `:summarize` strategy's summary budget.
+  `Context.WindowManager.new/1` takes the same option and the struct has the field. Before,
+  compaction always summarized with 500.
 
 ## New, non-breaking
 
