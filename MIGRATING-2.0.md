@@ -959,6 +959,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   session, as for the other unreleased 2.0 templates (§22).
 - `CircuitBreaker.start_link/1` and `call/3` remain for a breaker you start and supervise
   yourself.
+- A shared breaker that has been closed and idle for 15 minutes stops; the next call starts a fresh one. Open and half-open breakers stay.
 
 ## New, non-breaking
 

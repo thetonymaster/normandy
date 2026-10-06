@@ -86,6 +86,10 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   # An admission: the generation it was admitted in, and the probe's monitor (half-open
   # only). A result whose generation is not the breaker's current one is ignored.
+  # A keyed (shared) breaker that has been closed with no probes and received no
+  # message for this long stops itself; the next use starts a fresh one.
+  @idle_stop_ms 900_000
+
   @typep token :: {non_neg_integer(), reference() | nil}
 
   defmodule State do
@@ -103,7 +107,8 @@ defmodule Normandy.Resilience.CircuitBreaker do
       :half_open_max_calls,
       :probes,
       :opened_at,
-      :last_failure_time
+      :last_failure_time,
+      :idle_timeout
     ]
 
     @type t :: %__MODULE__{
@@ -119,7 +124,8 @@ defmodule Normandy.Resilience.CircuitBreaker do
             half_open_max_calls: pos_integer(),
             probes: %{reference() => pid()},
             opened_at: integer() | nil,
-            last_failure_time: integer() | nil
+            last_failure_time: integer() | nil,
+            idle_timeout: pos_integer() | :infinity
           }
   end
 
@@ -441,8 +447,10 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   @impl true
   def init(opts) do
+    key = Keyword.get(opts, :key)
+
     state = %State{
-      key: Keyword.get(opts, :key),
+      key: key,
       name: Keyword.get(opts, :name),
       state: :closed,
       generation: 0,
@@ -454,16 +462,17 @@ defmodule Normandy.Resilience.CircuitBreaker do
       half_open_max_calls: Keyword.fetch!(opts, :half_open_max_calls),
       probes: %{},
       opened_at: nil,
-      last_failure_time: nil
+      last_failure_time: nil,
+      idle_timeout: if(key == nil, do: :infinity, else: @idle_stop_ms)
     }
 
-    {:ok, state}
+    {:ok, state, state.idle_timeout}
   end
 
   @impl true
   def handle_call(:get_state, _from, state) do
     state = maybe_transition_to_half_open(state)
-    {:reply, state.state, state}
+    reply(state.state, state)
   end
 
   # One call decides admission, so no state change can slip in between a state check
@@ -474,15 +483,15 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
     case state.state do
       :closed ->
-        {:reply, {:ok, {state.generation, nil}}, state}
+        reply({:ok, {state.generation, nil}}, state)
 
       :half_open when map_size(state.probes) < state.half_open_max_calls ->
         ref = Process.monitor(caller)
         probes = Map.put(state.probes, ref, caller)
-        {:reply, {:ok, {state.generation, ref}}, %{state | probes: probes}}
+        reply({:ok, {state.generation, ref}}, %{state | probes: probes})
 
       _open_or_full ->
-        {:reply, {:error, :open}, state}
+        reply({:error, :open}, state)
     end
   end
 
@@ -497,7 +506,7 @@ defmodule Normandy.Resilience.CircuitBreaker do
         outcome == :failure -> handle_failure(state, :probe_failure)
       end
 
-    {:reply, :ok, state}
+    reply(:ok, state)
   end
 
   def handle_call(:get_metrics, _from, state) do
@@ -513,29 +522,41 @@ defmodule Normandy.Resilience.CircuitBreaker do
       last_failure_time: state.last_failure_time
     }
 
-    {:reply, metrics, state}
+    reply(metrics, state)
   end
 
   def handle_call(:reset, _from, state) do
     state = transition(state, :closed, :reset)
-    {:reply, :ok, %{state | last_failure_time: nil}}
+    reply(:ok, %{state | last_failure_time: nil})
   end
 
   def handle_call(:trip, _from, state) do
-    {:reply, :ok, transition(state, :open, :trip)}
+    reply(:ok, transition(state, :open, :trip))
   end
 
   @impl true
+  def handle_info(:timeout, %State{key: key, state: :closed, probes: probes} = state)
+      when key != nil and probes == %{} do
+    {:stop, :normal, state}
+  end
+
+  def handle_info(:timeout, state), do: noreply(state)
+
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     if Map.has_key?(state.probes, ref) do
       # A probe died without recording a result: its slot is free and it counts as a
       # failed probe.
       state = %{state | probes: Map.delete(state.probes, ref)}
-      {:noreply, handle_failure(state, :probe_down)}
+      noreply(handle_failure(state, :probe_down))
     else
-      {:noreply, state}
+      noreply(state)
     end
   end
+
+  # Every callback returns through reply/2 or noreply/1, so none can forget to re-arm
+  # the idle timeout.
+  defp reply(result, %State{} = state), do: {:reply, result, state, state.idle_timeout}
+  defp noreply(%State{} = state), do: {:noreply, state, state.idle_timeout}
 
   ## Private Functions
 

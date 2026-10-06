@@ -171,6 +171,64 @@ defmodule Normandy.Resilience.CircuitBreakerKeyedTest do
     end
   end
 
+  describe "idle stop" do
+    test "a closed keyed breaker stops on :timeout; the next run starts a fresh, closed one" do
+      key = stub_key()
+      {:ok, pid} = CircuitBreaker.ensure_started(key)
+      ref = Process.monitor(pid)
+
+      send(pid, :timeout)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      assert wait_until(fn -> CircuitBreaker.fetch(key) == :error end)
+
+      assert CircuitBreaker.run(key, fn -> {:ok, :again} end) == {:ok, :again}
+      {:ok, new_pid} = CircuitBreaker.fetch(key)
+      assert new_pid != pid
+      assert CircuitBreaker.state(new_pid) == :closed
+    end
+
+    test "an open keyed breaker stays alive and open" do
+      {:ok, pid} = CircuitBreaker.ensure_started(stub_key())
+      :ok = CircuitBreaker.trip(pid)
+      ref = Process.monitor(pid)
+
+      send(pid, :timeout)
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 50
+      assert CircuitBreaker.state(pid) == :open
+    end
+
+    test "a half-open keyed breaker with a probe in flight stays alive" do
+      {:ok, pid} = CircuitBreaker.ensure_started(stub_key(timeout: 1))
+      :ok = CircuitBreaker.trip(pid)
+      Process.sleep(5)
+      assert {:ok, {_generation, probe}} = GenServer.call(pid, :acquire)
+      assert is_reference(probe)
+      assert CircuitBreaker.state(pid) == :half_open
+      ref = Process.monitor(pid)
+
+      send(pid, :timeout)
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 50
+      assert Process.alive?(pid)
+    end
+
+    test "a start_link/1 breaker never idle-stops" do
+      {:ok, pid} = CircuitBreaker.start_link()
+      ref = Process.monitor(pid)
+
+      send(pid, :timeout)
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 50
+      assert CircuitBreaker.state(pid) == :closed
+    end
+
+    test "the GenServer timeout is 15 minutes for keyed breakers, :infinity otherwise" do
+      {:ok, keyed} = CircuitBreaker.ensure_started(stub_key())
+      {:ok, owned} = CircuitBreaker.start_link()
+
+      assert %{idle_timeout: 900_000} = :sys.get_state(keyed)
+      assert %{idle_timeout: :infinity} = :sys.get_state(owned)
+    end
+  end
+
   test "the application supervises the registry and the breaker supervisor" do
     assert is_pid(Process.whereis(Normandy.Supervisor))
     assert is_pid(Process.whereis(Normandy.Resilience.CircuitBreaker.Registry))
