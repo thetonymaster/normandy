@@ -272,7 +272,7 @@ defmodule Normandy.Agents.ToolResultCapTest do
     test "an output that is not valid UTF-8 becomes an error result" do
       assert %ToolResult{
                is_error: true,
-               output: %{error: "the tool ran, but its output is not valid UTF-8 text"}
+               output: "the tool ran, but its output is not valid UTF-8 text"
              } = dispatch(config(%ReturnTool{output: <<"ok", 255, 254>>}))
     end
   end

@@ -1839,7 +1839,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
                      tool_call_id: "pk1",
                      output: %{
                        expired: true,
-                       error: "approval timed out: no approver responded within 50ms"
+                       error:
+                         "No approver answered within 50ms, so the tool was not run. " <>
+                           "Do not retry it; tell the user the approval did not arrive."
                      }
                    }
                  },
@@ -2239,7 +2241,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
                      interrupted: true,
                      error:
                        "tool call interrupted: the previous turn ended before a result was " <>
-                         "recorded; the tool may or may not have run"
+                         "recorded; the tool may or may not have run. Check the current " <>
+                         "state before repeating it."
                    }
                  }
                },
@@ -2783,7 +2786,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       {_state, data} = :sys.get_state(srv)
 
-      assert [%ToolResult{is_error: true, output: %{error: error}}] =
+      assert [%ToolResult{is_error: true, output: error}] =
                for(
                  %{content: %ToolResult{} = r} <- AgentMemory.messages(data.config.memory),
                  do: r

@@ -105,7 +105,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
 
       result = Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
 
-      assert %ToolResult{is_error: true, output: %{error: "Cannot divide by zero"}} = result
+      assert %ToolResult{is_error: true, output: "Cannot divide by zero"} = result
 
       assert_received {:event, [:normandy, :tool, :execute, :stop], _,
                        %{status: :error, error_type: :tool_error, tool_call_id: "c2"}}

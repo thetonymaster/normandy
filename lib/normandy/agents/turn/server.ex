@@ -1135,16 +1135,12 @@ defmodule Normandy.Agents.Turn.Server do
   defp close_resumed_batch(data), do: {:ok, data}
 
   defp interrupted_result(call) do
-    %Normandy.Components.ToolResult{
-      tool_call_id: Map.get(call, :id),
-      output: %{
-        error:
-          "tool call interrupted: the previous turn ended before a result was recorded; " <>
-            "the tool may or may not have run",
-        interrupted: true
-      },
-      is_error: true
-    }
+    Dispatch.error_result(
+      Map.get(call, :id),
+      "tool call interrupted: the previous turn ended before a result was recorded; " <>
+        "the tool may or may not have run. Check the current state before repeating it.",
+      %{interrupted: true}
+    )
   end
 
   # Returns {:ok, config} with every result folded, or {:error, config, reason} where

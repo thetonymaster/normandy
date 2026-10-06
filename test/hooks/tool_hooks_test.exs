@@ -84,7 +84,12 @@ defmodule Normandy.Hooks.ToolHooksTest do
     assert %ToolResult{
              tool_call_id: "call_1",
              is_error: true,
-             output: %{error: "blocked", denied: true}
+             output: %{
+               error:
+                 "This call was blocked by a hook: blocked. " <>
+                   "Do not retry it; continue without it or tell the user.",
+               denied: true
+             }
            } = dispatch(agent(behaviours, name))
 
     refute_received {:hook, :second, :before_tool, _}
@@ -120,7 +125,7 @@ defmodule Normandy.Hooks.ToolHooksTest do
     # The result is an error naming the type, and it still goes to memory and
     # back out as the model's JSON: the turn continues.
     defp assert_safe_error(%ToolResult{} = result, type) do
-      assert %ToolResult{is_error: true, output: %{error: error}} = result
+      assert %ToolResult{is_error: true, output: error} = result
       assert error == "the tool ran, but its output cannot be sent as JSON: it contains #{type}"
 
       memory = AgentMemory.add_message(AgentMemory.new_memory(), "tool", result)

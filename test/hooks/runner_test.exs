@@ -113,7 +113,12 @@ defmodule Normandy.Hooks.RunnerTest do
                {:halt,
                 %ToolResult{
                   tool_call_id: "c1",
-                  output: %{error: "blocked", denied: true},
+                  output: %{
+                    error:
+                      "This call was blocked by a hook: blocked. " <>
+                        "Do not retry it; continue without it or tell the user.",
+                    denied: true
+                  },
                   is_error: true
                 }}
 
@@ -253,7 +258,9 @@ defmodule Normandy.Hooks.RunnerTest do
               %ToolResult{tool_call_id: "c1", is_error: true, output: %{error: msg, denied: true}}} =
                Runner.before_tool(tool, call())
 
-      assert msg == "hook Normandy.Test.Hooks.Probe crashed: throw"
+      assert msg ==
+               "This call was blocked by a hook: hook Normandy.Test.Hooks.Probe crashed: " <>
+                 "throw. Do not retry it; continue without it or tell the user."
     end
 
     @tag :capture_log

@@ -34,6 +34,7 @@ defmodule Normandy.Hooks.Runner do
 
   require Logger
 
+  alias Normandy.Agents.Dispatch
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.ToolCall
@@ -267,8 +268,15 @@ defmodule Normandy.Hooks.Runner do
   defp answered({:halt, _mod, {:crashed, reason}}, call),
     do: %ToolResult{tool_call_id: call.id, output: %{error: reason}, is_error: true}
 
-  defp denial(call, reason),
-    do: %ToolResult{tool_call_id: call.id, output: %{error: reason, denied: true}, is_error: true}
+  # A before_tool halt answers the call: the hook's reason, then what to do next.
+  defp denial(call, reason) do
+    Dispatch.error_result(
+      call.id,
+      "This call was blocked by a hook: #{String.trim_trailing(reason, ".")}. " <>
+        "Do not retry it; continue without it or tell the user.",
+      %{denied: true}
+    )
+  end
 
   defp tool_meta(%ToolCall{id: id, name: name}), do: %{tool_call_id: id, tool: name}
 

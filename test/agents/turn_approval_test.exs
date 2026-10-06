@@ -72,11 +72,18 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool",
-                %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
+                %ToolResult{tool_call_id: "p1", is_error: true, output: rejected}},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 4}},
                {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
+
+      assert rejected == %{
+               error:
+                 "The approver rejected this call; the tool was not run. " <>
+                   "Do not retry it; tell the user it was rejected.",
+               denied: true
+             }
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
 
@@ -321,10 +328,11 @@ defmodule Normandy.Agents.TurnApprovalTest do
              ] = effects
 
       assert output == %{
-               error: "approval timed out: no approver responded within 50ms",
+               error:
+                 "No approver answered within 50ms, so the tool was not run. " <>
+                   "Do not retry it; tell the user the approval did not arrive.",
                denied: true,
-               expired: true,
-               pending_approval: false
+               expired: true
              }
     end
 

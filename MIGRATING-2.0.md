@@ -261,8 +261,8 @@ A `:subscriber` that raises, exits or throws no longer crashes the session: it i
 `[:normandy, :turn, :subscriber, :exception]`, and the turn continues.
 
 Approval expiry: a parked call that nobody approved now gets
-`%{error: "approval timed out: no approver responded within <ms>ms", denied: true,
-expired: true, pending_approval: false}` instead of `"tool call rejected by approver"`, and an
+`%{error: "No approver answered within <ms>ms, so the tool was not run. ...", denied: true,
+expired: true}` (see §36) instead of the rejection result, and an
 `:approval_expired` event plus `[:normandy, :turn, :approval, :expired]` telemetry
 are emitted. Pass `on_approval_timeout: :fail` to end the turn instead of continuing.
 
@@ -1173,6 +1173,28 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   and returns its reply. It describes itself as: <card or skill description>", with the
   card's text cut to 1_000 characters; the `message` input says the remote agent cannot see
   this conversation.
+- Results the model gets instead of a tool's output (policy and budget denials, unknown
+  tools, invalid input, approval rejections and expiries, interrupted calls, `before_tool`
+  hook halts) now say what to do next, and carry no `null` keys. Each is still
+  `%{error: message, ...}` with `is_error: true`; the keys are described in the
+  `Normandy.Agents.Dispatch` moduledoc ("Results the model sees").
+- `pending_approval` is gone from every result, and `Normandy.Agents.Dispatch.DenialEnvelope`
+  is deleted. The synchronous path's `:needs_approval` result says approval is not available
+  in this run.
+- A policy deny whose reason is `nil` (a `PolicyEngine.Ruleset` default-action deny) sent
+  `"error": null`; it now has a message.
+- Input that fails the tool's schema, or is not a JSON object, is no longer marked
+  `denied: true` (it is a mistake the model can fix); `validation_errors` stays.
+- A budget refusal no longer shows the budget tracker's reason term (`inspect/1`); a binary
+  reason is shown in parentheses.
+- An unknown tool's result lists the available tool names (sorted, at most 20) instead of
+  `"Tool 'x' not found in registry"`.
+- A tool's `{:error, binary}`, a raised exception, the Executor's timeout and crash
+  messages, the invalid-UTF-8 error (§34) and the error for an output JSON cannot express
+  (§23, "the tool ran, but its output cannot be sent as JSON: ...") reach the model as that
+  text with `is_error: true`, not as `{"error": "..."}`.
+  `%ToolResult{}.output` is that binary. Code that matched `output: %{error: msg}` for these
+  must match the binary. Other error terms keep `%{error: term}`.
 
 ## New, non-breaking
 

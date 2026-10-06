@@ -63,7 +63,11 @@ defmodule Normandy.Agents.DispatchSplitTest do
         assert {:deny, %ToolResult{tool_call_id: "bad", is_error: true, output: output}} =
                  Dispatch.classify(config, call, Dispatch.default_pipeline())
 
-        assert output.error =~ "not a JSON object"
+        assert output == %{
+                 error:
+                   "tool input is not a JSON object (it may have been cut off); " <>
+                     "the tool was not run. Send the arguments as a JSON object."
+               }
       end
     end
 
@@ -168,12 +172,13 @@ defmodule Normandy.Agents.DispatchSplitTest do
       assert {:deny, %ToolResult{tool_call_id: "v1", is_error: true} = result} =
                Dispatch.classify(config, call, Dispatch.default_pipeline())
 
-      assert result.output.denied == true
+      # A fixable mistake is not a denial: the model is told to correct it and retry.
+      refute Map.has_key?(result.output, :denied)
       assert [%{constraint: :enum, path: [:operation]}] = result.output.validation_errors
 
       assert result.output.error ==
                ~s(invalid input for schema_tool: operation must be one of ["add", "subtract"]; ) <>
-                 "the tool was not run"
+                 "the tool was not run. Correct the input and call the tool again."
     end
 
     test "a missing required field → {:deny, validation error}" do
@@ -204,7 +209,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       assert output.error ==
                ~s(invalid input for weather: unknown key "bogus"; expected only "city"; ) <>
-                 "the tool was not run"
+                 "the tool was not run. Correct the input and call the tool again."
     end
 
     test "a value of the wrong basic type on a hand-written schema" do
@@ -237,7 +242,9 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       result = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
 
-      assert %ToolResult{tool_call_id: "v4", is_error: true, output: %{denied: true}} = result
+      assert %ToolResult{tool_call_id: "v4", is_error: true, output: %{validation_errors: [_]}} =
+               result
+
       # run/2 would have produced the string "did power"; a map proves it never ran.
       refute result.output == "did power"
     end
@@ -275,14 +282,15 @@ defmodule Normandy.Agents.DispatchSplitTest do
 
       result = Dispatch.execute(config, invocation, call, pipeline)
       assert %ToolResult{tool_call_id: "c8", is_error: true, output: %{denied: true}} = result
-      assert result.output.error =~ "budget check failed"
+      assert result.output.error =~ "The tool budget is used up"
     end
 
     test "the registration timeout bounds the run" do
       config = config_with_tools([{%FakeTool{sleep_ms: 1_000}, timeout: 20}])
       call = %ToolCall{id: "c14", name: "weather", input: %{}}
 
-      assert %ToolResult{is_error: true, output: %{error: "Tool execution timeout after 20ms"}} =
+      # A binary error reason is sent as it is (AX-15), with is_error set.
+      assert %ToolResult{is_error: true, output: "Tool execution timeout after 20ms"} =
                Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
     end
   end
@@ -323,7 +331,7 @@ defmodule Normandy.Agents.DispatchSplitTest do
       assert %ToolResult{
                tool_call_id: "a3",
                is_error: true,
-               output: %{denied: true, validation_errors: [%{constraint: :unknown_keys}]}
+               output: %{validation_errors: [%{constraint: :unknown_keys}]}
              } = Dispatch.execute_approved(config, call, Dispatch.default_pipeline())
     end
   end
@@ -340,14 +348,17 @@ defmodule Normandy.Agents.DispatchSplitTest do
                Dispatch.execute(config, invocation, call2, p)
     end
 
-    test "needs_approval still collapses to the interim denial (pending_approval: true)" do
+    test "needs_approval still collapses to the interim denial" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c10", name: "weather", input: %{"city" => "NYC"}}
       approve = fn _c, _call, _invocation -> {:needs_approval, %{rationale: "r"}} end
       pipeline = %{Dispatch.default_pipeline() | policy_fn: approve}
 
-      assert %ToolResult{is_error: true, output: %{pending_approval: true, denied: true}} =
+      assert %ToolResult{is_error: true, output: %{denied: true} = output} =
                Dispatch.dispatch_one(config, call, pipeline)
+
+      refute Map.has_key?(output, :pending_approval)
+      assert output.error =~ "needs human approval, which is not available in this run"
     end
   end
 end

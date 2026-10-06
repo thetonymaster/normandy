@@ -3,7 +3,7 @@ defmodule Normandy.Tools.MemoryTest do
 
   alias Normandy.Behaviours.MemoryStore.InMemory
   alias Normandy.Tool
-  alias Normandy.Tools.{Context, Input, Memory}
+  alias Normandy.Tools.{Context, Input, Memory, Toolset}
 
   defp tool(opts \\ []), do: Memory.new(Keyword.merge([store: {InMemory, InMemory.new()}], opts))
 
@@ -1111,5 +1111,31 @@ defmodule Normandy.Tools.MemoryTest do
       create_in(t, "/memories/a", "x")
       assert {:ok, _, _} = create_in(t, "/memories/ab/x", "y")
     end
+  end
+
+  # AX-15: the reference error string reaches the model as it is, not as
+  # {"error": "Error: ..."}.
+  test "a memory error is sent bare, with is_error, through Dispatch" do
+    alias Normandy.Agents.Dispatch
+    alias Normandy.Components.{BaseIOSchema, ToolCall, ToolResult}
+
+    config = %{
+      name: "a",
+      toolset: Toolset.new([tool()]),
+      tool_context: %{memory_namespace: "acme/u-1"}
+    }
+
+    call = %ToolCall{
+      id: "m1",
+      name: "memory",
+      input: %{"command" => "str_replace", "path" => "/memories/x.md", "old_str" => "a"}
+    }
+
+    expected = "Error: The path /memories/x.md does not exist. Please provide a valid path."
+
+    assert %ToolResult{is_error: true, output: ^expected} =
+             result = Dispatch.dispatch_one(config, call)
+
+    assert [%{content: ^expected, is_error: true}] = BaseIOSchema.to_json(result)
   end
 end

@@ -131,12 +131,13 @@ defmodule Normandy.MCP.ToolWrapperTest do
       config = %{name: "a", toolset: Toolset.new([wrapper])}
       call = %ToolCall{id: "m2", name: "search", input: %{"query" => "x"}}
 
-      assert %ToolResult{is_error: true, output: %{error: error, denied: true}} =
+      assert %ToolResult{is_error: true, output: %{error: error}} =
                Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
 
       assert error ==
                "invalid input for search: the tool's input_schema/1 returned nil, " <>
-                 "not a JSON Schema map; the tool was not run"
+                 "not a JSON Schema map; the tool was not run. Correct the input and call " <>
+                 "the tool again."
     end
   end
 

@@ -27,6 +27,7 @@ defmodule Normandy.Agents.Turn do
   iteration, like a tool batch. A paused final call (after the iteration cap) is continued the same way as the final call, at most three times; a fourth pause fails the turn with `{:error, %Normandy.LLMError{type: :pause_turn}}`.
   """
 
+  alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn.State
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
@@ -525,25 +526,22 @@ defmodule Normandy.Agents.Turn do
 
   # Denial result for a parked call the approver rejected (or never decided).
   defp rejection_result(%ToolCall{id: id}) do
-    %ToolResult{
-      tool_call_id: id,
-      output: %{error: "tool call rejected by approver", denied: true, pending_approval: false},
-      is_error: true
-    }
+    Dispatch.error_result(
+      id,
+      "The approver rejected this call; the tool was not run. " <>
+        "Do not retry it; tell the user it was rejected.",
+      %{denied: true}
+    )
   end
 
   # Result for a parked call whose approval window expired with no decision.
   defp expiry_result(%ToolCall{id: id}, ms) do
-    %ToolResult{
-      tool_call_id: id,
-      output: %{
-        error: "approval timed out: no approver responded within #{ms}ms",
-        denied: true,
-        expired: true,
-        pending_approval: false
-      },
-      is_error: true
-    }
+    Dispatch.error_result(
+      id,
+      "No approver answered within #{ms}ms, so the tool was not run. " <>
+        "Do not retry it; tell the user the approval did not arrive.",
+      %{denied: true, expired: true}
+    )
   end
 
   # Tokens of this turn's messages removed by an in-turn compaction (the

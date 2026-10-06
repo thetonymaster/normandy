@@ -61,9 +61,7 @@ defmodule Normandy.JSONStructEncodingTest do
   test "a tool output JSON cannot express becomes an error result naming its type" do
     assert %ToolResult{
              is_error: true,
-             output: %{
-               error: "the tool ran, but its output cannot be sent as JSON: it contains a tuple"
-             }
+             output: "the tool ran, but its output cannot be sent as JSON: it contains a tuple"
            } = execute({:ok, %{at: {2026, 10, 5}}})
   end
 
@@ -81,8 +79,8 @@ defmodule Normandy.JSONStructEncodingTest do
         ] do
       result = execute({:error, reason})
 
-      assert %ToolResult{is_error: true, output: %{error: "upstream down"}} = result
-      assert Jason.decode!(model_content(result)) == %{"error" => "upstream down"}
+      assert %ToolResult{is_error: true, output: "upstream down"} = result
+      assert model_content(result) == "upstream down"
     end
   end
 

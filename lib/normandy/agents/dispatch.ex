@@ -25,6 +25,18 @@ defmodule Normandy.Agents.Dispatch do
   unknown key, a missing required key, a wrong type) answers the call with an `is_error`
   result naming the keys, and the turn goes on.
 
+  ## Results the model sees
+
+  A call answered without running its tool as asked gets `is_error: true` and an
+  `output` of `%{error: message}` plus only the keys that apply (never a `null`). The
+  message says what happened and what to do next. Keys: `denied: true` (a policy deny,
+  the synchronous `:needs_approval` collapse, a budget refusal, a before-hook halt, a
+  rejected or expired approval), `rule_id` and `rationale` (a policy's, when set),
+  `validation_errors` (input that failed the tool's schema: a fixable mistake, so not
+  `denied`), `expired: true` and `interrupted: true`. A tool's own `{:error, binary}`,
+  or a raised exception, reaches the model as that text alone; any other error term as
+  `%{error: term}`.
+
   ## Telemetry
 
   A call answered without running its tool emits `[:normandy, :tool, :denied]`
@@ -81,22 +93,6 @@ defmodule Normandy.Agents.Dispatch do
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Input
   alias Normandy.Tools.Toolset
-
-  defmodule DenialEnvelope do
-    @moduledoc "Structured record of a denied (or approval-pending) tool call."
-    @type t :: %__MODULE__{
-            call_id: String.t() | nil,
-            reason: String.t(),
-            rule_id: String.t() | nil,
-            rationale: String.t() | nil,
-            pending_approval: boolean()
-          }
-    defstruct call_id: nil,
-              reason: "denied",
-              rule_id: nil,
-              rationale: nil,
-              pending_approval: false
-  end
 
   defmodule Invocation do
     @moduledoc """
@@ -226,7 +222,7 @@ defmodule Normandy.Agents.Dispatch do
         end
 
       :error ->
-        {:deny, not_found_result(call)}
+        {:deny, not_found_result(config, call)}
     end
   end
 
@@ -238,7 +234,7 @@ defmodule Normandy.Agents.Dispatch do
   defp decide(pipeline, config, call, invocation) do
     case apply_policy(pipeline, config, call, invocation) do
       {:allow, _meta} -> {:execute, invocation, call}
-      {:deny, info} -> {:deny, policy_denial(config, call, info, false)}
+      {:deny, info} -> {:deny, policy_denial(config, call, info, :deny)}
       {:needs_approval, info} -> {:needs_approval, invocation, call, info}
     end
   end
@@ -344,7 +340,7 @@ defmodule Normandy.Agents.Dispatch do
          {:ok, invocation} <- invocation(config, tool, call) do
       execute(config, invocation, call, pipeline)
     else
-      :error -> answer(config, call, not_found_result(call), pipeline)
+      :error -> answer(config, call, not_found_result(config, call), pipeline)
       {:deny, %ToolResult{} = result} -> answer(config, call, result, pipeline)
     end
   end
@@ -384,7 +380,7 @@ defmodule Normandy.Agents.Dispatch do
         result
 
       {:needs_approval, _invocation, call, info} ->
-        answer(config, call, policy_denial(config, call, info, true), pipeline)
+        answer(config, call, policy_denial(config, call, info, :needs_approval), pipeline)
     end
   end
 
@@ -420,15 +416,16 @@ defmodule Normandy.Agents.Dispatch do
     end
   end
 
-  # An error reason is a message for the model: an exception is sent as its message
-  # (encoding it would send its fields and "__exception__"), and one JSON cannot express
-  # (a tuple such as {:http, 500}) as its inspect/1 text, the only form it has.
+  # An error reason is a message for the model. A binary is sent as it is (AX-15: the
+  # memory tool's reference strings, an Executor timeout), with is_error carrying the
+  # flag; an exception as its message (encoding it would send its fields and
+  # "__exception__"). Any other term keeps the %{error: term} shape, as its inspect/1
+  # text when JSON cannot express it (a tuple such as {:http, 500}).
+  defp wrap_error(call, error) when is_binary(error),
+    do: %ToolResult{tool_call_id: call.id, output: error, is_error: true}
+
   defp wrap_error(call, error) when is_exception(error),
-    do: %ToolResult{
-      tool_call_id: call.id,
-      output: %{error: Exception.message(error)},
-      is_error: true
-    }
+    do: %ToolResult{tool_call_id: call.id, output: Exception.message(error), is_error: true}
 
   defp wrap_error(call, error) do
     output =
@@ -440,8 +437,8 @@ defmodule Normandy.Agents.Dispatch do
     %ToolResult{tool_call_id: call.id, output: output, is_error: true}
   end
 
-  defp invalid_utf8_output,
-    do: %{error: "the tool ran, but its output is not valid UTF-8 text"}
+  # Sent bare, like a tool's own {:error, binary} (AX-15).
+  defp invalid_utf8_output, do: "the tool ran, but its output is not valid UTF-8 text"
 
   # The tool's registration :max_result_chars wins over the agent's
   # :max_tool_result_chars, including a registered nil. Dispatch's callers pass partial
@@ -494,10 +491,9 @@ defmodule Normandy.Agents.Dispatch do
     end
   end
 
+  # Sent bare, like invalid_utf8_output/0 and a tool's own {:error, binary} (AX-15).
   defp unencodable_output(exception),
-    do: %{
-      error: "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
-    }
+    do: "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
 
   defp unencodable(%Protocol.UndefinedError{value: value}),
     do: "it contains #{Describe.type_of(value)}"
@@ -510,9 +506,9 @@ defmodule Normandy.Agents.Dispatch do
   defp call_execute_fn(execute_fn, config, invocation, call),
     do: execute_fn.(config, invocation, call.name)
 
-  defp policy_denial(config, call, info, pending?) do
+  defp policy_denial(config, call, info, verdict) do
     emit_denied(config, call, :policy, Map.get(info, :rule_id))
-    denial_result(call, info, pending?)
+    denial_result(call, info, verdict)
   end
 
   defp run_before_hooks(_config, call, []), do: {:cont, call}
@@ -555,58 +551,94 @@ defmodule Normandy.Agents.Dispatch do
     run_after_hooks(config, call, hook.(config, call, result), rest)
   end
 
-  defp denial_result(call, info, pending?) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{
-        error: Map.get(info, :reason, "denied by policy"),
-        rationale: Map.get(info, :rationale),
-        rule_id: Map.get(info, :rule_id),
-        denied: true,
-        pending_approval: pending?
-      },
-      is_error: true
-    }
+  @doc false
+  # The one shape of a result answering a call Normandy did not run as asked (Dispatch's
+  # denials and errors, Turn's rejection and expiry, Turn.Server's interrupted result,
+  # Hooks.Runner's halts): `%{error: message}` plus every extra key whose value is not
+  # nil, with is_error set. A nil is never sent as a JSON null.
+  @spec error_result(String.t() | nil, String.t(), map()) :: ToolResult.t()
+  def error_result(call_id, message, extra \\ %{}) when is_binary(message) and is_map(extra) do
+    output =
+      for {key, value} <- extra, not is_nil(value), into: %{error: message}, do: {key, value}
+
+    %ToolResult{tool_call_id: call_id, output: output, is_error: true}
   end
+
+  defp denial_result(call, info, :deny) do
+    message =
+      case Map.get(info, :reason) do
+        reason when is_binary(reason) and reason != "" ->
+          "This call was blocked by policy (#{reason}). " <>
+            "Do not retry it; continue without it or tell the user."
+
+        _none ->
+          "This call was blocked by policy. Do not retry it; continue without it or tell the user."
+      end
+
+    error_result(call.id, message, policy_keys(info))
+  end
+
+  defp denial_result(call, info, :needs_approval) do
+    error_result(
+      call.id,
+      "This action needs human approval, which is not available in this run. " <>
+        "Do not retry it; tell the user it requires approval.",
+      policy_keys(info)
+    )
+  end
+
+  defp policy_keys(info),
+    do: %{rule_id: Map.get(info, :rule_id), rationale: Map.get(info, :rationale), denied: true}
 
   defp validation_error_result(call, errors) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{
-        error: "invalid input for #{call.name}: #{Input.message(errors)}; the tool was not run",
-        validation_errors: errors,
-        denied: true
-      },
-      is_error: true
-    }
+    error_result(
+      call.id,
+      "invalid input for #{call.name}: #{Input.message(errors)}; the tool was not run. " <>
+        "Correct the input and call the tool again.",
+      %{validation_errors: errors}
+    )
   end
 
+  # The budget tracker's reason is shown only when it is text; any other term is the
+  # tracker's own data, not a message for the model.
   defp budget_denial_result(call, reason) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{error: "budget check failed: #{inspect(reason)}", denied: true},
-      is_error: true
-    }
+    detail = if is_binary(reason) and reason != "", do: " (#{reason})", else: ""
+
+    error_result(
+      call.id,
+      "The tool budget is used up#{detail}; the tool was not run. Answer with what you have.",
+      %{denied: true}
+    )
   end
 
   defp invalid_input_result(call) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{
-        error: "tool input is not a JSON object (it may have been cut off); the tool was not run",
-        denied: true
-      },
-      is_error: true
-    }
+    error_result(
+      call.id,
+      "tool input is not a JSON object (it may have been cut off); the tool was not run. " <>
+        "Send the arguments as a JSON object."
+    )
   end
 
-  defp not_found_result(call) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{error: "Tool '#{call.name}' not found in registry"},
-      is_error: true
-    }
+  @max_listed_tools 20
+
+  defp not_found_result(config, call),
+    do: error_result(call.id, "No tool named '#{call.name}'. #{available_tools(config)}")
+
+  defp available_tools(%{toolset: %Toolset{} = toolset}) do
+    case toolset |> Toolset.list_names() |> Enum.sort() do
+      [] ->
+        "This agent has no tools."
+
+      names when length(names) > @max_listed_tools ->
+        {listed, rest} = Enum.split(names, @max_listed_tools)
+        "Available tools: #{Enum.join(listed, ", ")}, and #{length(rest)} more."
+
+      names ->
+        "Available tools: #{Enum.join(names, ", ")}."
+    end
   end
+
+  defp available_tools(_config), do: "This agent has no tools."
 
   # A JSON object string is decoded. Anything that is not an object (truncated
   # JSON, an array, a number) is kept as it came, so classify/3 can refuse the

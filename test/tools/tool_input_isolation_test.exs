@@ -144,13 +144,15 @@ defmodule Normandy.Tools.ToolInputIsolationTest do
 
     assert output["error"] ==
              ~s(invalid input for lookup: unknown keys "endpoint", "timeout"; ) <>
-               ~s(expected only "query"; the tool was not run)
+               ~s(expected only "query"; the tool was not run. ) <>
+               "Correct the input and call the tool again."
 
     assert [%{"constraint" => "unknown_keys"}] = output["validation_errors"]
 
     slow = Map.fetch!(results, "slow")
     assert slow.is_error
-    assert Jason.decode!(slow.content) == %{"error" => "Tool execution timeout after 50ms"}
+    # A binary error reason reaches the model bare, with is_error (AX-15).
+    assert slow.content == "Tool execution timeout after 50ms"
 
     # The tool ran once, for "slow", with its struct exactly as registered.
     expected = tool()
