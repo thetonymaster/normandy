@@ -34,7 +34,23 @@ defmodule Normandy.Agents.Dispatch do
   budget pre-check refused it). Approval outcomes (`:approval_rejected`,
   `:approval_expired`) are emitted by `Turn.Server`, the only shell that parks.
   Toolset misses and invalid or schema-failing input are errors, not denials,
-  and emit nothing.
+  and emit nothing. A result cut by the cap (below) emits
+  `[:normandy, :tool, :result_truncated]` (`%{original_chars, kept_chars}`, metadata from
+  `Normandy.Telemetry.Metadata.tool_result_truncated/3`).
+
+  ## Result cap
+
+  Every result leaves the chokepoint through `finish/3`, after the `after_tool` slot and
+  the after-hooks (which see the whole output): an output JSON cannot express, or a
+  binary that is not valid UTF-8, becomes an error result; then a result whose text (what
+  the model reads: a binary as-is, a number as its digits, anything else as JSON) is
+  longer than the limit is cut to the limit, in characters (graphemes, so a
+  multi-codepoint character is never split), and ends with
+  `"\n[truncated: <kept> of <total> chars shown]"`. Error results are capped too. The
+  limit is the tool's `Normandy.Tools.Toolset.register/3` `:max_result_chars` when it was
+  registered with one (`nil` there turns the cap off for that tool), else the agent's
+  `:max_tool_result_chars` (default 100_000; `nil` = no cap). A map or list output is cut
+  as its JSON text, so the model gets a string.
 
   ## `after_tool`
 
@@ -56,6 +72,7 @@ defmodule Normandy.Agents.Dispatch do
   them.
   """
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
@@ -249,21 +266,37 @@ defmodule Normandy.Agents.Dispatch do
 
   # Every result the model will see passes the after_tool slot once; the result answers
   # the call's id whatever the slot returns.
-  defp answer(_config, _call, result, %Pipeline{after_tool: nil}), do: ensure_encodable(result)
+  defp after_tool_slot(_config, _call, result, %Pipeline{after_tool: nil}), do: result
 
-  defp answer(config, call, result, %Pipeline{after_tool: after_tool}),
-    do: ensure_encodable(%{after_tool.(config, call, result) | tool_call_id: call.id})
+  defp after_tool_slot(config, call, result, %Pipeline{after_tool: after_tool}),
+    do: %{after_tool.(config, call, result) | tool_call_id: call.id}
+
+  # A result that leaves Dispatch with no after-hooks to run: the slot, then finish/3.
+  defp answer(config, call, result, pipeline),
+    do: finish(config, call, after_tool_slot(config, call, result, pipeline))
+
+  @doc false
+  # The last step of every result that leaves Dispatch, and of the results
+  # Normandy.Hooks.ServerGlue rewrites through after_tool (interrupted, rejected and
+  # expired results, which skip Dispatch): ensure_encodable/1, then the cap (see the
+  # moduledoc's "Result cap"). Runs once per result: the cap's note is not idempotent.
+  @spec finish(map(), ToolCall.t(), ToolResult.t()) :: ToolResult.t()
+  def finish(config, %ToolCall{} = call, %ToolResult{} = result),
+    do: result |> ensure_encodable() |> cap(config, call)
 
   # Hooks (before-hook halts, after_tool, after_hooks) may build any %ToolResult{},
   # and memory keeps it for every later request. So the encodability check runs on
   # the final result, the last point before it can reach memory.
   @doc false
-  # Also called by Normandy.Hooks.ServerGlue on the results it rewrites through
-  # after_tool (interrupted, rejected and expired results), which skip Dispatch.
   @spec ensure_encodable(ToolResult.t()) :: ToolResult.t()
-  def ensure_encodable(%ToolResult{output: output} = result)
-      when is_binary(output) or is_number(output),
-      do: result
+  def ensure_encodable(%ToolResult{output: output} = result) when is_binary(output) do
+    if String.valid?(output),
+      do: result,
+      else: %{result | output: invalid_utf8_output(), is_error: true}
+  end
+
+  def ensure_encodable(%ToolResult{output: output} = result) when is_number(output),
+    do: result
 
   def ensure_encodable(%ToolResult{output: output} = result) do
     case Normandy.JSON.encode(output) do
@@ -285,12 +318,12 @@ defmodule Normandy.Agents.Dispatch do
       :ok ->
         result = execute_and_wrap(config, call, invocation, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
-        result = answer(config, call, result, pipeline)
+        result = config |> after_tool_slot(call, result, pipeline) |> ensure_encodable()
 
         config
         |> run_after_hooks(call, result, pipeline.after_hooks)
         |> Map.put(:tool_call_id, call.id)
-        |> ensure_encodable()
+        |> then(&finish(config, call, &1))
 
       {:error, reason} ->
         emit_denied(config, call, :budget)
@@ -405,6 +438,60 @@ defmodule Normandy.Agents.Dispatch do
       end
 
     %ToolResult{tool_call_id: call.id, output: output, is_error: true}
+  end
+
+  defp invalid_utf8_output,
+    do: %{error: "the tool ran, but its output is not valid UTF-8 text"}
+
+  # The tool's registration :max_result_chars wins over the agent's
+  # :max_tool_result_chars, including a registered nil. Dispatch's callers pass partial
+  # configs (bare maps in tests), so a config without the key has the default cap.
+  defp cap(result, config, call) do
+    case result_limit(config, call.name) do
+      {nil, _source} ->
+        result
+
+      {limit, source} ->
+        text = ToolResult.render_output(result.output)
+        cap_text(result, text, %{limit: limit, source: source}, config, call)
+    end
+  end
+
+  defp result_limit(config, name) do
+    case tool_limit(config, name) do
+      {:ok, limit} ->
+        {limit, :tool}
+
+      :error ->
+        default = BaseAgentConfig.default_max_tool_result_chars()
+        {Map.get(config, :max_tool_result_chars, default), :agent}
+    end
+  end
+
+  defp tool_limit(%{toolset: %Toolset{} = toolset}, name),
+    do: Toolset.max_result_chars(toolset, name)
+
+  defp tool_limit(_config, _name), do: :error
+
+  # A text's byte size bounds its grapheme count, so a short text skips the walk.
+  defp cap_text(result, text, %{limit: limit}, _config, _call) when byte_size(text) <= limit,
+    do: result
+
+  defp cap_text(result, text, %{limit: limit, source: source}, config, call) do
+    case String.length(text) do
+      total when total <= limit ->
+        result
+
+      total ->
+        :telemetry.execute(
+          [:normandy, :tool, :result_truncated],
+          %{original_chars: total, kept_chars: limit},
+          Metadata.tool_result_truncated(config, call, source)
+        )
+
+        kept = String.slice(text, 0, limit)
+        %{result | output: kept <> "\n[truncated: #{limit} of #{total} chars shown]"}
+    end
   end
 
   defp unencodable_output(exception),

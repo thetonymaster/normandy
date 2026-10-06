@@ -13,10 +13,11 @@ defmodule Normandy.Tools.Toolset do
 
   @type t :: %__MODULE__{
           tools: %{String.t() => struct()},
-          timeouts: %{String.t() => pos_integer()}
+          timeouts: %{String.t() => pos_integer()},
+          max_result_chars: %{String.t() => pos_integer() | nil}
         }
 
-  defstruct tools: %{}, timeouts: %{}
+  defstruct tools: %{}, timeouts: %{}, max_result_chars: %{}
 
   @register_schema NimbleOptions.new!(
                      timeout: [
@@ -24,6 +25,13 @@ defmodule Normandy.Tools.Toolset do
                        doc:
                          "Milliseconds a call to this tool may run before it fails with a timeout. " <>
                            "Without it, `Normandy.Tools.Executor.default_timeout/0` (30_000)."
+                     ],
+                     max_result_chars: [
+                       type: {:or, [:pos_integer, nil]},
+                       type_doc: "`t:pos_integer/0` or `nil`",
+                       doc:
+                         "The longest result of this tool, in characters (graphemes), the model " <>
+                           "sees; `nil` = no cap. Without it, the agent's `:max_tool_result_chars`."
                      ],
                      replace: [
                        type: :boolean,
@@ -66,7 +74,7 @@ defmodule Normandy.Tools.Toolset do
   #{Normandy.Options.docs(@register_schema)}
   """
   @spec register(t(), struct(), keyword()) :: t()
-  def register(%__MODULE__{tools: tools, timeouts: timeouts} = toolset, tool, opts \\ []) do
+  def register(%__MODULE__{tools: tools} = toolset, tool, opts \\ []) do
     opts = Normandy.Options.validate!(opts, @register_schema, {__MODULE__, :register, 3})
     :ok = check_tool!(tool, "Normandy.Tools.Toolset.register/3")
     tool_name = Tool.name(tool)
@@ -83,14 +91,22 @@ defmodule Normandy.Tools.Toolset do
               "registered; pass replace: true to replace it"
     end
 
-    timeouts =
-      case Keyword.fetch(opts, :timeout) do
-        {:ok, timeout} -> Map.put(timeouts, tool_name, timeout)
-        :error -> Map.delete(timeouts, tool_name)
-      end
-
-    %{toolset | tools: Map.put(tools, tool_name, tool), timeouts: timeouts}
+    # An option left out drops what an earlier registration under the name set.
+    %{
+      toolset
+      | tools: Map.put(tools, tool_name, tool),
+        timeouts: put_or_delete(toolset.timeouts, tool_name, Keyword.fetch(opts, :timeout)),
+        max_result_chars:
+          put_or_delete(
+            toolset.max_result_chars,
+            tool_name,
+            Keyword.fetch(opts, :max_result_chars)
+          )
+    }
   end
+
+  defp put_or_delete(map, key, {:ok, value}), do: Map.put(map, key, value)
+  defp put_or_delete(map, key, :error), do: Map.delete(map, key)
 
   @migration "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
@@ -123,6 +139,15 @@ defmodule Normandy.Tools.Toolset do
   @spec timeout(t(), String.t()) :: pos_integer() | nil
   def timeout(%__MODULE__{timeouts: timeouts}, tool_name), do: Map.get(timeouts, tool_name)
 
+  @doc """
+  The `:max_result_chars` `tool_name` was registered with: `{:ok, chars}`, `{:ok, nil}` (no
+  cap), or `:error` when it was registered without one (the agent's
+  `:max_tool_result_chars` applies) or is not registered.
+  """
+  @spec max_result_chars(t(), String.t()) :: {:ok, pos_integer() | nil} | :error
+  def max_result_chars(%__MODULE__{max_result_chars: caps}, tool_name),
+    do: Map.fetch(caps, tool_name)
+
   @doc "The tool registered as `tool_name`: `{:ok, tool}`, or `:error`."
   @spec fetch(t(), String.t()) :: {:ok, struct()} | :error
   def fetch(%__MODULE__{tools: tools}, tool_name), do: Map.fetch(tools, tool_name)
@@ -151,12 +176,17 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
       iex> Normandy.Tools.Toolset.unregister(toolset, "calculator")
-      %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}}
+      %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec unregister(t(), String.t()) :: t()
-  def unregister(%__MODULE__{tools: tools, timeouts: timeouts} = toolset, tool_name) do
-    %{toolset | tools: Map.delete(tools, tool_name), timeouts: Map.delete(timeouts, tool_name)}
+  def unregister(%__MODULE__{} = toolset, tool_name) do
+    %{
+      toolset
+      | tools: Map.delete(toolset.tools, tool_name),
+        timeouts: Map.delete(toolset.timeouts, tool_name),
+        max_result_chars: Map.delete(toolset.max_result_chars, tool_name)
+    }
   end
 
   @doc """
@@ -310,7 +340,7 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
       iex> Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
-      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}, timeouts: %{}}
+      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec filter_by_required_params(t(), boolean()) :: t()
@@ -322,11 +352,7 @@ defmodule Normandy.Tools.Toolset do
       end)
       |> Map.new()
 
-    %{
-      toolset
-      | tools: filtered_tools,
-        timeouts: Map.take(toolset.timeouts, Map.keys(filtered_tools))
-    }
+    keep(toolset, filtered_tools)
   end
 
   @doc """
@@ -338,7 +364,7 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
       iex> Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
-      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}, timeouts: %{}}
+      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec filter_by_param_type(t(), String.t()) :: t()
@@ -350,10 +376,18 @@ defmodule Normandy.Tools.Toolset do
       end)
       |> Map.new()
 
+    keep(toolset, filtered_tools)
+  end
+
+  # The filtered tools, with the registration options of the tools kept.
+  defp keep(toolset, tools) do
+    names = Map.keys(tools)
+
     %{
       toolset
-      | tools: filtered_tools,
-        timeouts: Map.take(toolset.timeouts, Map.keys(filtered_tools))
+      | tools: tools,
+        timeouts: Map.take(toolset.timeouts, names),
+        max_result_chars: Map.take(toolset.max_result_chars, names)
     }
   end
 

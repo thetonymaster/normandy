@@ -85,6 +85,24 @@ defmodule Normandy.Telemetry.Metadata do
     )
   end
 
+  @doc """
+  `[:normandy, :tool, :result_truncated]` metadata: a tool result cut to its cap.
+  `limit_source` is `:tool` (the tool's `Toolset.register/3` `:max_result_chars`) or
+  `:agent` (the agent's `:max_tool_result_chars`).
+  """
+  @spec tool_result_truncated(map(), ToolCall.t(), :agent | :tool) :: map()
+  def tool_result_truncated(config, %ToolCall{} = call, limit_source) do
+    optional =
+      %{tool_call_id: call.id}
+      |> Map.merge(ids(config))
+      |> reject_nil()
+
+    Map.merge(
+      %{tool_name: call.name, agent_name: Map.get(config, :name), limit_source: limit_source},
+      optional
+    )
+  end
+
   defp tool_type(%ToolWrapper{}), do: :extension
   defp tool_type(_tool), do: :function
 

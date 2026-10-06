@@ -1076,8 +1076,23 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   answer is plain text. It used to be `{"chat_message": ...}` JSON constrained by structured
   outputs.
 
+## 34. Tool results and memory namespaces are capped
+
+- A tool result longer than 100_000 characters (graphemes) is cut to 100_000 and ends with
+  `"\n[truncated: <kept> of <total> chars shown]"` before it reaches memory and the model.
+  Error results are capped too. A map or list output over the cap reaches the model as its
+  JSON text, cut, so it is a string. Set `max_tool_result_chars:` on `BaseAgent.init/1` or
+  the DSL's `new/1` (`nil` = no cap), or per tool with `Toolset.register/3`'s
+  `max_result_chars:` (`nil` = no cap for that tool; it wins over the agent's). The cap is
+  saved in session templates. `after_tool` and after-hooks still see the whole output; the
+  `:tool_result` stream event, memory and the session store hold the cut one.
+- A tool that returns a binary that is not valid UTF-8 gets an error result
+  (`"the tool ran, but its output is not valid UTF-8 text"`); 1.x stored the bytes, and every
+  later request of the session failed to encode.
+
 ## New, non-breaking
 
+- `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.
 - `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker.
 - `[:normandy, :circuit_breaker, :state_change]` and `[:normandy, :retry, :attempt]` telemetry events (see the `Normandy.Telemetry` catalogue); breaker and Retry log lines carry structured metadata and name the breaker.
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`

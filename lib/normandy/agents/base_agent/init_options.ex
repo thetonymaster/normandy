@@ -75,6 +75,15 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       type_doc: "`t:integer/0`",
       doc: "Tool calls run at once; a value below 1 counts as 1."
     ],
+    max_tool_result_chars: [
+      type: {:or, [:pos_integer, nil]},
+      default: BaseAgentConfig.default_max_tool_result_chars(),
+      type_doc: "`t:pos_integer/0` or `nil`",
+      doc:
+        "The longest tool result, in characters (graphemes), the model sees; a longer one " <>
+          "is cut and ends with a note saying how much was shown. `nil` = no cap. A tool's " <>
+          "`Normandy.Tools.Toolset.register/3` `:max_result_chars` overrides it."
+    ],
     retry: [
       type: {:custom, __MODULE__, :retry, []},
       default: nil,

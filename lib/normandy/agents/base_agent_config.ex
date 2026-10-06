@@ -27,6 +27,15 @@ defmodule Normandy.Agents.BaseAgentConfig do
   @spec default_max_tokens() :: pos_integer()
   def default_max_tokens, do: @default_max_tokens
 
+  @default_max_tool_result_chars 100_000
+
+  @doc """
+  The `max_tool_result_chars` a config has when it sets none: #{@default_max_tool_result_chars}
+  characters (graphemes).
+  """
+  @spec default_max_tool_result_chars() :: pos_integer()
+  def default_max_tool_result_chars, do: @default_max_tool_result_chars
+
   @default_guardrails [
     input: [],
     output: [],
@@ -58,6 +67,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
           toolset: Toolset.t() | nil,
           max_tool_iterations: pos_integer(),
           max_tool_concurrency: pos_integer(),
+          max_tool_result_chars: pos_integer() | nil,
           retry: keyword() | nil,
           circuit_breaker: keyword() | nil,
           enable_json_retry: boolean(),
@@ -89,6 +99,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:toolset, :struct, default: nil)
     field(:max_tool_iterations, :integer, default: 20)
     field(:max_tool_concurrency, :integer, default: 1)
+    field(:max_tool_result_chars, :any, default: @default_max_tool_result_chars)
     field(:retry, :any, default: nil)
     field(:circuit_breaker, :any, default: nil)
     field(:enable_json_retry, :boolean, default: true)

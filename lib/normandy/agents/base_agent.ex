@@ -91,6 +91,7 @@ defmodule Normandy.Agents.BaseAgent do
       toolset: Keyword.fetch!(opts, :toolset),
       max_tool_iterations: Keyword.fetch!(opts, :max_tool_iterations),
       max_tool_concurrency: Keyword.fetch!(opts, :max_tool_concurrency),
+      max_tool_result_chars: Keyword.fetch!(opts, :max_tool_result_chars),
       retry: Keyword.fetch!(opts, :retry),
       circuit_breaker: Keyword.fetch!(opts, :circuit_breaker),
       enable_json_retry: Keyword.fetch!(opts, :enable_json_retry),

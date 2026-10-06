@@ -207,6 +207,16 @@ defmodule Normandy.Telemetry do
   when known), the ids. Emitted by `Dispatch` and by `Turn.Server` for rejected or
   expired approvals, so every denial has one shape.
 
+  ### `[:normandy, :tool, :result_truncated]`
+
+  A tool result longer than its cap, cut by `Normandy.Agents.Dispatch` before it reaches
+  memory (error results too). Measurements: `original_chars` (the result's length, in
+  characters: graphemes) and `kept_chars` (the cap; the note is added after them).
+  Metadata: `tool_name`, `agent_name`, `tool_call_id`, the ids, and `limit_source`
+  (`:tool` for a tool's `Toolset.register/3` `:max_result_chars`, `:agent` for the
+  agent's `:max_tool_result_chars`). Emitted where the call was dispatched, often a tool
+  task, so match on `tool_call_id` or `agent_name` rather than the process.
+
   ### `[:normandy, :turn, :approval, :expired]`
 
   A parked batch whose approval window closed with no decision. Measurement

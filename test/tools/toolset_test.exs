@@ -160,6 +160,50 @@ defmodule NormandyTest.Tools.ToolsetTest do
       assert String.starts_with?(error.message, "Normandy.Tools.Toolset.register/3: ")
       assert error.message =~ ":replace"
     end
+
+    test "max_result_chars: a cap, nil (no cap), or absent (the agent's cap)" do
+      toolset =
+        Toolset.new()
+        |> Toolset.register(%Calculator{}, max_result_chars: 500)
+        |> Toolset.register(%StringManipulator{}, max_result_chars: nil)
+        |> Toolset.register(%ListProcessor{})
+
+      assert Toolset.max_result_chars(toolset, "calculator") == {:ok, 500}
+      assert Toolset.max_result_chars(toolset, "string_manipulator") == {:ok, nil}
+      assert Toolset.max_result_chars(toolset, "list_processor") == :error
+      assert Toolset.max_result_chars(toolset, "not_registered") == :error
+    end
+
+    test "re-registering without max_result_chars drops the old cap" do
+      toolset =
+        Toolset.new()
+        |> Toolset.register(%Calculator{}, max_result_chars: 500)
+        |> Toolset.register(%Calculator{}, replace: true)
+
+      assert Toolset.max_result_chars(toolset, "calculator") == :error
+    end
+
+    test "unregister/2 and the filters drop the caps of the tools they drop" do
+      toolset = Toolset.register(Toolset.new(), %Calculator{}, max_result_chars: 500)
+
+      assert Toolset.max_result_chars(Toolset.unregister(toolset, "calculator"), "calculator") ==
+               :error
+
+      filtered = Toolset.filter_by_param_type(toolset, "no-such-type")
+      assert Toolset.max_result_chars(filtered, "calculator") == :error
+    end
+
+    test "a max_result_chars that is not a positive integer or nil raises, naming the key" do
+      for bad <- [0, -1, 1.5] do
+        error =
+          assert_raise ArgumentError, fn ->
+            Toolset.register(Toolset.new(), %Calculator{}, max_result_chars: bad)
+          end
+
+        assert String.starts_with?(error.message, "Normandy.Tools.Toolset.register/3: ")
+        assert error.message =~ "invalid value for :max_result_chars option"
+      end
+    end
   end
 
   describe "Toolset.unregister/2" do

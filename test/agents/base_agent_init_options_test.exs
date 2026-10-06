@@ -107,6 +107,24 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     assert error.message =~ "Normandy.Agents.BaseAgent.init/1: invalid value for :client option"
   end
 
+  test ":max_tool_result_chars defaults to 100_000 and takes nil" do
+    assert BaseAgent.init(model: "m", client: client()).max_tool_result_chars == 100_000
+
+    assert BaseAgent.init(model: "m", client: client(), max_tool_result_chars: 5).max_tool_result_chars ==
+             5
+
+    assert BaseAgent.init(model: "m", client: client(), max_tool_result_chars: nil).max_tool_result_chars ==
+             nil
+
+    for bad <- [0, -3, 1.5] do
+      assert_raise ArgumentError,
+                   ~r/\ANormandy.Agents.BaseAgent.init\/1: .*invalid value for :max_tool_result_chars option: expected positive integer, got: #{inspect(bad)}/s,
+                   fn ->
+                     BaseAgent.init(model: "m", client: client(), max_tool_result_chars: bad)
+                   end
+    end
+  end
+
   test ":session_id is an option" do
     assert BaseAgent.init(model: "m", client: client(), session_id: "s-1").session_id == "s-1"
   end

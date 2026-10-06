@@ -298,6 +298,28 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").tool_context == %{}
     end
 
+    test "max_tool_result_chars travels in the template, nil included" do
+      supp = round_trip_supplement()
+
+      for cap <- [2_000, nil] do
+        tmpl =
+          %{full_config(supp) | max_tool_result_chars: cap} |> ConfigTemplate.from_config("t")
+
+        assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").max_tool_result_chars == cap
+      end
+    end
+
+    test "a template saved before max_tool_result_chars existed rebuilds with 100_000" do
+      supp = round_trip_supplement()
+
+      tmpl =
+        full_config(supp)
+        |> ConfigTemplate.from_config("t")
+        |> Map.delete(:max_tool_result_chars)
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").max_tool_result_chars == 100_000
+    end
+
     test "from_config refuses a pid in tool_context" do
       config = %{full_config(round_trip_supplement()) | tool_context: %{owner: self()}}
 

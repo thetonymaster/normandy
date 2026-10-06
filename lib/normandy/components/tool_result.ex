@@ -19,6 +19,17 @@ defmodule Normandy.Components.ToolResult do
     field(:output, :any)
     field(:is_error, :boolean, default: false)
   end
+
+  @doc false
+  # The text the model reads for `output` (BaseIOSchema.to_json/1 below, and the cap in
+  # Normandy.Agents.Dispatch.finish/3): a binary as-is, a number as its digits, anything
+  # else (a map, a list, an atom, a boolean, nil) as JSON. Dispatch turns an output JSON
+  # cannot express into an error result after every hook has run, so this raises only
+  # for a ToolResult built outside Dispatch.
+  @spec render_output(term()) :: String.t()
+  def render_output(output) when is_binary(output), do: output
+  def render_output(output) when is_number(output), do: to_string(output)
+  def render_output(output), do: Normandy.JSON.encode!(output)
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
@@ -34,21 +45,13 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
       %{
         type: "tool_result",
         tool_use_id: result.tool_call_id,
-        content: format_tool_output(result.output),
+        content: Normandy.Components.ToolResult.render_output(result.output),
         is_error: result.is_error
       }
     ]
 
     blocks
   end
-
-  defp format_tool_output(output) when is_binary(output), do: output
-  defp format_tool_output(output) when is_number(output), do: to_string(output)
-
-  # Anything else (a map, a list, an atom, a boolean, nil) goes to the model as
-  # JSON. Dispatch turns an output JSON cannot express into an error result after
-  # every hook has run, so this raises only for a ToolResult built outside Dispatch.
-  defp format_tool_output(output), do: Normandy.JSON.encode!(output)
 
   def get_schema(_), do: %{}
 end

@@ -55,7 +55,8 @@ defmodule Normandy.Agents.ConfigTemplate do
     :enable_json_retry,
     :json_retry_max_attempts,
     :guardrails,
-    :tool_context
+    :tool_context,
+    :max_tool_result_chars
   ]
 
   # Fields a template cannot hold (MCP settings that may carry an authorization token).
