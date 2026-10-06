@@ -45,6 +45,10 @@ defmodule Normandy.Agents.Turn.Server do
   A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
   on this node, or invalid hook opts) is handled the same way: the server waits
   `:unavailable`, retries, and replies that reason in a `:session_unavailable` `TurnError`.
+  So is a stored template that `Normandy.Agents.ConfigTemplate.check_loaded!/1` refuses,
+  or whose security settings differ from the supplement's `:pinned`
+  (`{:invalid_template, message}`): nothing in it is used, and its credential provider is
+  not called.
 
   ## Session start
 
@@ -447,6 +451,7 @@ defmodule Normandy.Agents.Turn.Server do
         template_provider = Keyword.get(opts, :template_provider)
 
         with {:ok, tmpl} <- load_config_template(store, template_provider, session_id),
+             :ok <- check_loaded(tmpl),
              {:ok, config} <- reconstruct_config(tmpl, template_provider) do
           {:ok, config, tmpl}
         end
@@ -562,12 +567,28 @@ defmodule Normandy.Agents.Turn.Server do
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
 
     with {:supplement, {:ok, supplement}} <- {:supplement, tp_mod.fetch(tp_handle, template_id)},
+         {:pinned, :ok} <- {:pinned, check_pinned(tmpl, supplement)},
          {:token, {:ok, token}} <- {:token, cred_mod.get_token(token_provider(tmpl), cred_opts)} do
       {:ok, ConfigTemplate.rebuild(tmpl, supplement, token)}
     else
       {:supplement, :error} -> {:error, {:no_template_supplement, template_id}}
+      {:pinned, {:error, _} = error} -> error
       {:token, {:error, reason}} -> {:error, {:credential_unavailable, cred_mod, reason}}
     end
+  end
+
+  defp check_loaded(tmpl), do: check_template(fn -> ConfigTemplate.check_loaded!(tmpl) end)
+
+  defp check_pinned(tmpl, supplement),
+    do: check_template(fn -> ConfigTemplate.check_pinned!(tmpl, supplement) end)
+
+  # A template the checks refuse is reported like a store fault: the server waits
+  # :unavailable instead of crashing its start, and nothing in the template is used. The
+  # message names fields and modules, never values.
+  defp check_template(check) do
+    check.()
+  rescue
+    e in ArgumentError -> {:error, {:invalid_template, Exception.message(e)}}
   end
 
   # Rebuild the conversation from the store's history, keeping the configured

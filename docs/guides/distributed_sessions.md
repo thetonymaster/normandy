@@ -116,6 +116,39 @@ For Tier 2 you must therefore use an env/vault-backed `CredentialProvider` (NOT
 in-memory client) and register your tools by name on every node (true by default —
 same code per node).
 
+## The session store is a trust boundary
+
+The template is non-secret, but it is not harmless: it names the policy, the guardrails,
+the hooks, the credential provider, `tool_context` (the memory namespace) and the
+`template_id` that picks the node's supplement and toolset, and the store also holds the
+turn state (a call parked for approval, with its input) and the history. **Write access
+to the session store is as powerful as a code deploy.** Keep the store single-tenant, or
+give Normandy its own database role or ACL'd Redis key prefix; never share it with a
+service you trust less than your code.
+
+Every node checks a template before using it (`ConfigTemplate.check_loaded!/1`: plain
+data only, behaviour modules that implement their behaviour), and a supplement can pin the
+security settings so a tampered store cannot swap them:
+
+```elixir
+Catalog.put(cat, "support", %{
+  toolset: toolset,
+  before_hooks: [],
+  after_hooks: [],
+  client_builder: &MyApp.LLM.client/1,
+  pinned: [
+    policy: {Normandy.Behaviours.PolicyEngine.Ruleset, rules: rules, default_action: :deny},
+    guardrails: guardrails,
+    credential: {MyApp.VaultCreds, []}
+  ]
+})
+```
+
+A template that fails either check is never used: the server stays `:unavailable` and
+`run/2` replies `{:error, %TurnError{type: :session_unavailable, reason: {:invalid_template,
+message}}}`, without calling the template's credential provider. `tool_context`,
+`template_id`, turn state and history cannot be pinned, and templates are not signed.
+
 ## Eager handoff (`resume_policy: :eager`)
 
 Most sessions are request-driven and should be **lazy** (the default): they recover

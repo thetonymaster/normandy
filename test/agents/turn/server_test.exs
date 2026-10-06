@@ -1277,6 +1277,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
   describe "a thin start that cannot rebuild its config" do
     defmodule FailingCreds do
+      @behaviour Normandy.Behaviours.CredentialProvider
+      @impl true
       def get_token(_provider, _opts), do: {:error, :vault_sealed}
     end
 

@@ -1293,6 +1293,21 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `text` is neither a string nor `nil` (a decoded JSON list, say), before any model call;
   `error_type: :invalid_message` on the request span's stop. The text size limit counts
   the same normalised text the agent receives.
+- **The session store is a trust boundary.** Write access to it decides the policy,
+  guardrails, hooks, credential provider, `tool_context` and toolset of every session it
+  holds (see "Trust boundary" in `Normandy.Agents.ConfigTemplate`). Keep it single-tenant.
+- `Turn.Server` checks every template it loads (`ConfigTemplate.check_loaded!/1`, also run
+  by `rebuild/3`): a function, pid, reference or port anywhere in it, a `behaviours_refs`
+  module that does not declare its behaviour (`@behaviour Normandy.Behaviours.PolicyEngine`,
+  `BudgetTracker`, `CredentialProvider`, `Compactor`, `ModelCatalog`), or a guard module that
+  does not declare `@behaviour Normandy.Guardrails.Guard`, and the template is not used:
+  the server waits `:unavailable` and `run/2` replies
+  `%TurnError{type: :session_unavailable, reason: {:invalid_template, message}}`. **Add the
+  `@behaviour` line to your own policy, budget, credential, compactor, catalog and guard
+  modules** if they lack it. `from_config/2` now refuses references and ports too.
+- New supplement key `:pinned`: `pinned: [policy: ref, guardrails: g, credential: ref]`
+  (also `:budget`, `:compactor`, `:model_catalog`, `:hooks`). A stored template whose value
+  differs is refused, before its credential provider runs. Templates are not signed.
 
 ## New, non-breaking
 

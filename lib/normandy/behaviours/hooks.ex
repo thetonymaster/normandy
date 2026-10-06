@@ -242,16 +242,20 @@ defmodule Normandy.Behaviours.Hooks do
               __STACKTRACE__
   end
 
-  defp plain_data?(value)
-       when is_function(value) or is_pid(value) or is_reference(value) or is_port(value),
-       do: false
+  @doc false
+  # Plain data: no function, pid, reference or port anywhere inside. A stored template's
+  # rule too (Normandy.Agents.ConfigTemplate).
+  @spec plain_data?(term()) :: boolean()
+  def plain_data?(value)
+      when is_function(value) or is_pid(value) or is_reference(value) or is_port(value),
+      do: false
 
-  defp plain_data?([head | tail]), do: plain_data?(head) and plain_data?(tail)
-  defp plain_data?(value) when is_tuple(value), do: value |> Tuple.to_list() |> plain_data?()
-  defp plain_data?(%_{} = value), do: value |> Map.from_struct() |> plain_data?()
+  def plain_data?([head | tail]), do: plain_data?(head) and plain_data?(tail)
+  def plain_data?(value) when is_tuple(value), do: value |> Tuple.to_list() |> plain_data?()
+  def plain_data?(%_{} = value), do: value |> Map.from_struct() |> plain_data?()
 
-  defp plain_data?(value) when is_map(value),
+  def plain_data?(value) when is_map(value),
     do: Enum.all?(value, fn {k, v} -> plain_data?(k) and plain_data?(v) end)
 
-  defp plain_data?(_value), do: true
+  def plain_data?(_value), do: true
 end

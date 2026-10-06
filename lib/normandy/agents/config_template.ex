@@ -36,6 +36,37 @@ defmodule Normandy.Agents.ConfigTemplate do
   Any other field, a `behaviours_refs` slot or a `node_local_fields` entry that neither
   version writes, and a missing required field, raise `ArgumentError` naming it. Templates
   written by unreleased 2.0 builds are not translated.
+
+  ## Trust boundary
+
+  The session store is as trusted as your code. Whoever can write it (a shared Redis, a
+  Postgres role another service uses) decides, on the next rehydrate on any node:
+
+    * the policy, budget, compactor and model catalog modules and their opts, the
+      guardrails and the hooks (removing them, or `PolicyEngine.AllowAll`);
+    * the credential provider and its opts (`Turn.Server` calls it to get a token);
+    * `tool_context`, so another tenant's memory namespace;
+    * `template_id`, so which node-local supplement, and so which toolset, is used;
+    * the saved server options (`on_approval_timeout`, the timeouts);
+    * the turn state, including the input of a call parked for approval, and the
+      conversation history.
+
+  Keep the store single-tenant, or give Normandy's role its own database or ACL'd key
+  prefix. Postgres and Redis decode stored bytes with `binary_to_term(_, [:safe])`, which
+  still builds local functions.
+
+  Normandy checks what it can without keys. `check_loaded!/1` runs on every template
+  `Turn.Server` loads, before anything in it is used, and in `rebuild/3`: it refuses a
+  function, pid, reference or port anywhere in the template, a behaviour ref whose module
+  does not implement its behaviour (`policy` a `Normandy.Behaviours.PolicyEngine`,
+  `budget` a `BudgetTracker`, `credential` a `CredentialProvider`, `compactor` a
+  `Compactor`, `model_catalog` a `ModelCatalog`) and a guard module that does not
+  implement `Normandy.Guardrails.Guard`. A supplement's `:pinned` fixes security settings
+  on the node: with `pinned: [policy: ref, guardrails: g, credential: ref]` a template
+  whose `policy`, `guardrails` or `credential` differs raises, before the credential
+  provider is called. `:pinned` takes `:policy`, `:budget`, `:credential`, `:compactor`,
+  `:model_catalog`, `:hooks` and `:guardrails`; `tool_context`, `template_id`, turn
+  state and history cannot be pinned. Templates are not signed (a known limit).
   """
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
@@ -124,39 +155,28 @@ defmodule Normandy.Agents.ConfigTemplate do
   end
 
   # Hook entries travel as given; validate_entries!/2 (load: false) refuses opts that
-  # are not plain data, as unstorable?/1 does for the fields above.
+  # are not plain data, as storable_fields!/1 does for the fields above.
   defp storable_hooks!(hooks) do
     :ok = Hooks.validate_entries!(hooks, load: false)
     hooks
   end
 
-  # A function or pid would be persisted as a term that only works on this
-  # node and this code version, so refuse it here rather than at rebuild.
+  # A function, pid, reference or port would be persisted as a term that only works on
+  # this node and this code version, so refuse it here; check_loaded!/1 refuses it on load.
   defp storable_fields!(c) do
     fields = Map.take(Map.from_struct(c), @data_fields)
 
     Enum.each(fields, fn {key, value} ->
-      if unstorable?(value) do
+      unless Hooks.plain_data?(value) do
         raise ArgumentError,
-              "Normandy.Agents.ConfigTemplate.from_config/2: #{inspect(key)} contains a function or pid, " <>
-                "which a template cannot store. Keep it to plain data (modules, atoms, " <>
-                "numbers, strings, lists, maps)."
+              "Normandy.Agents.ConfigTemplate.from_config/2: #{inspect(key)} contains a function, " <>
+                "pid, reference or port, which a template cannot store. Keep it to plain data " <>
+                "(modules, atoms, numbers, strings, lists, maps)."
       end
     end)
 
     fields
   end
-
-  defp unstorable?(value) when is_function(value) or is_pid(value), do: true
-  defp unstorable?(value) when is_list(value), do: Enum.any?(value, &unstorable?/1)
-  defp unstorable?(value) when is_tuple(value), do: value |> Tuple.to_list() |> unstorable?()
-
-  defp unstorable?(value) when is_struct(value), do: value |> Map.from_struct() |> unstorable?()
-
-  defp unstorable?(value) when is_map(value),
-    do: Enum.any?(value, fn {k, v} -> unstorable?(k) or unstorable?(v) end)
-
-  defp unstorable?(_value), do: false
 
   @spec from_config(BaseAgentConfig.t(), String.t(), :lazy | :eager) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id, resume_policy) do
@@ -179,7 +199,9 @@ defmodule Normandy.Agents.ConfigTemplate do
   @spec rebuild(map(), Normandy.Behaviours.AgentTemplate.supplement(), String.t()) ::
           BaseAgentConfig.t()
   def rebuild(tmpl, supplement, token) when is_map(tmpl) do
+    :ok = check_loaded!(tmpl)
     tmpl = translate!(tmpl)
+    :ok = pinned!(tmpl, supplement)
     refs = tmpl.behaviours_refs
     :ok = Hooks.validate_entries!(Map.get(refs, :hooks, []), load: false)
 
@@ -214,6 +236,167 @@ defmodule Normandy.Agents.ConfigTemplate do
     |> BaseAgent.validate_compaction_config!({__MODULE__, :rebuild, 3})
     |> validate_client_options!()
   end
+
+  @refs_behaviours [
+    policy: Normandy.Behaviours.PolicyEngine,
+    budget: Normandy.Behaviours.BudgetTracker,
+    credential: Normandy.Behaviours.CredentialProvider,
+    compactor: Normandy.Behaviours.Compactor,
+    model_catalog: Normandy.Behaviours.ModelCatalog
+  ]
+
+  @pinnable [:policy, :budget, :credential, :compactor, :model_catalog, :hooks, :guardrails]
+
+  @doc """
+  Checks a template read from a session store before anything in it is used (see "Trust
+  boundary"). `Turn.Server` calls it on every template it loads, and `rebuild/3` calls it
+  first.
+
+  Raises `ArgumentError` naming the field for a function, pid, reference or port anywhere
+  in the template, a `behaviours_refs` slot that is not `{module, keyword}` or whose module
+  is not loaded on this node or does not implement the slot's behaviour, and a guard in
+  `guardrails` whose module does not implement `Normandy.Guardrails.Guard`. A missing or
+  unknown field or slot is left to `rebuild/3`, which names it. Values are never shown.
+  """
+  @spec check_loaded!(map()) :: :ok
+  def check_loaded!(tmpl) when is_map(tmpl) do
+    id = Map.get(tmpl, :template_id)
+
+    case Enum.find(Enum.sort(tmpl), fn {_key, value} -> not Hooks.plain_data?(value) end) do
+      nil -> :ok
+      {key, _} -> refused!(id, "#{inspect(key)} holds a function, pid, reference or port")
+    end
+
+    :ok = check_refs!(Map.get(tmpl, :behaviours_refs), id)
+    check_guards!(Map.get(tmpl, :guardrails, []), id)
+  end
+
+  def check_loaded!(other) do
+    raise ArgumentError,
+          "Normandy.Agents.ConfigTemplate.check_loaded!/1: expected a template map, got: " <>
+            Describe.type_of(other)
+  end
+
+  defp check_refs!(refs, id) when is_map(refs) do
+    Enum.each(@refs_behaviours, fn {slot, behaviour} ->
+      case Map.fetch(refs, slot) do
+        :error -> :ok
+        {:ok, ref} -> check_ref!(slot, ref, behaviour, id)
+      end
+    end)
+  end
+
+  # Not a map: translate!/1 names it.
+  defp check_refs!(_refs, _id), do: :ok
+
+  defp check_ref!(slot, {mod, opts}, behaviour, id) when is_atom(mod) and is_list(opts) do
+    unless Keyword.keyword?(opts),
+      do: bad_ref!(slot, behaviour, id, "opts that are not a keyword list")
+
+    unless implements?(mod, behaviour),
+      do: bad_ref!(slot, behaviour, id, inspect(mod))
+
+    :ok
+  end
+
+  defp check_ref!(slot, other, behaviour, id),
+    do: bad_ref!(slot, behaviour, id, Describe.type_of(other))
+
+  @spec bad_ref!(atom(), module(), term(), String.t()) :: no_return()
+  defp bad_ref!(slot, behaviour, id, got) do
+    refused!(
+      id,
+      "behaviours_refs #{inspect(slot)} must be {module, keyword} whose module is loaded on " <>
+        "this node and implements #{inspect(behaviour)}, got: #{got}"
+    )
+  end
+
+  defp check_guards!(guardrails, id) when is_list(guardrails) do
+    for stage <- [:input, :output],
+        {^stage, specs} <- guardrails,
+        spec <- List.wrap(specs) do
+      check_guard!(stage, spec, id)
+    end
+
+    :ok
+  end
+
+  defp check_guards!(other, id),
+    do: refused!(id, ":guardrails must be a keyword list, got: #{Describe.type_of(other)}")
+
+  defp check_guard!(stage, {mod, opts}, id) when is_atom(mod) and is_list(opts),
+    do: check_guard!(stage, mod, id)
+
+  defp check_guard!(stage, mod, id) when is_atom(mod) do
+    unless implements?(mod, Normandy.Guardrails.Guard),
+      do:
+        refused!(
+          id,
+          ":guardrails #{inspect(stage)} guard #{inspect(mod)} is not loaded on this node or " <>
+            "does not implement Normandy.Guardrails.Guard"
+        )
+
+    :ok
+  end
+
+  defp check_guard!(stage, other, id) do
+    refused!(
+      id,
+      ":guardrails #{inspect(stage)} has a guard that is not a module or {module, opts}: " <>
+        Describe.type_of(other)
+    )
+  end
+
+  defp implements?(mod, behaviour) do
+    Code.ensure_loaded?(mod) and
+      behaviour in (mod.module_info(:attributes)
+                    |> Keyword.get_values(:behaviour)
+                    |> List.flatten())
+  end
+
+  @spec refused!(term(), String.t()) :: no_return()
+  defp refused!(id, what) do
+    raise ArgumentError,
+          "Normandy.Agents.ConfigTemplate.check_loaded!/1: template #{inspect(id)} #{what}; " <>
+            "it is not used (see the Trust boundary section of Normandy.Agents.ConfigTemplate)"
+  end
+
+  @doc false
+  # The supplement's :pinned against a template as stored: Turn.Server checks it before it
+  # calls the template's credential provider, rebuild/3 again after translation.
+  @spec check_pinned!(map(), map()) :: :ok
+  def check_pinned!(tmpl, supplement), do: tmpl |> translate!() |> pinned!(supplement)
+
+  defp pinned!(tmpl, supplement) do
+    pinned = Map.get(supplement, :pinned, [])
+
+    unless Keyword.keyword?(pinned) do
+      raise ArgumentError,
+            "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement's :pinned must be a " <>
+              "keyword list, got: #{Describe.type_of(pinned)}"
+    end
+
+    Enum.each(pinned, fn {field, expected} ->
+      unless field in @pinnable do
+        raise ArgumentError,
+              "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement pins #{inspect(field)}; " <>
+                ":pinned takes #{Enum.map_join(@pinnable, ", ", &inspect/1)}"
+      end
+
+      if pinned_value(tmpl, field) != expected do
+        raise ArgumentError,
+              "Normandy.Agents.ConfigTemplate.rebuild/3: template #{inspect(tmpl.template_id)} " <>
+                "has a #{inspect(field)} that differs from the one this node's supplement pins; " <>
+                "it is not used (see the Trust boundary section of Normandy.Agents.ConfigTemplate)"
+      end
+    end)
+  end
+
+  defp pinned_value(tmpl, :guardrails),
+    do: Map.get(tmpl, :guardrails, BaseAgentConfig.default_guardrails())
+
+  defp pinned_value(tmpl, :hooks), do: Map.get(tmpl.behaviours_refs, :hooks, [])
+  defp pinned_value(tmpl, slot), do: Map.fetch!(tmpl.behaviours_refs, slot)
 
   # A 1.0 or 2.0 template -> the 2.0 shape; anything else raises naming the field.
   defp translate!(tmpl) do

@@ -10,6 +10,28 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     defstruct []
   end
 
+  # rebuild/3 checks that a template's guards implement the Guard behaviour.
+  defmodule SomeGuard do
+    @moduledoc false
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(_value, _opts), do: :ok
+  end
+
+  defmodule OtherGuard do
+    @moduledoc false
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(_value, _opts), do: :ok
+  end
+
+  defmodule OutGuard do
+    @moduledoc false
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(_value, _opts), do: :ok
+  end
+
   test "from_config produces a serializable, secret-free template" do
     config = %BaseAgentConfig{
       model: "claude-x",
@@ -264,9 +286,16 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         )
       end
 
-      assert_raise ArgumentError, ~r/must be plain data/, fn ->
-        ConfigTemplate.rebuild(bad.([{Normandy.Test.Hooks.Probe, notify: self()}]), supp, "T")
-      end
+      # check_loaded!/1 runs first and refuses the pid for the whole slot.
+      assert_raise ArgumentError,
+                   ~r/:behaviours_refs holds a function, pid, reference or port/,
+                   fn ->
+                     ConfigTemplate.rebuild(
+                       bad.([{Normandy.Test.Hooks.Probe, notify: self()}]),
+                       supp,
+                       "T"
+                     )
+                   end
 
       assert_raise ArgumentError, ~r/invalid hook entry/, fn ->
         ConfigTemplate.rebuild(bad.([Normandy.Test.Hooks.Probe]), supp, "T")

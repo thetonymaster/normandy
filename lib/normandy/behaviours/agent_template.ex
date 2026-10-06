@@ -5,6 +5,9 @@ defmodule Normandy.Behaviours.AgentTemplate do
   `client_builder` that turns a credential token into an LLM client struct.
   Optionally `:mcp_servers` (which may carry authorization tokens);
   `ConfigTemplate.rebuild/3` requires it when the original config had it set.
+  Optionally `:pinned`: the security settings this node fixes for the template,
+  `[policy: ref, guardrails: list, credential: ref, ...]`. A stored template whose value
+  differs is refused (see `Normandy.Agents.ConfigTemplate`'s "Trust boundary").
 
   The host registers a supplement per `template_id` on **every node** at boot
   (same code → same supplement). Combined with the persisted non-secret template
@@ -18,7 +21,8 @@ defmodule Normandy.Behaviours.AgentTemplate do
           required(:before_hooks) => [term()],
           required(:after_hooks) => [term()],
           required(:client_builder) => (String.t() -> struct()),
-          optional(:mcp_servers) => [term()]
+          optional(:mcp_servers) => [term()],
+          optional(:pinned) => keyword()
         }
 
   @callback fetch(handle :: term(), template_id :: String.t()) :: {:ok, supplement()} | :error
