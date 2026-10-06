@@ -1310,7 +1310,9 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   differs is refused, before its credential provider runs. Templates are not signed.
 - `Turn.Session.new/1` and `Turn.Server.start_link/1` refuse an empty `session_id` or one
   containing `{` or `}` (the Redis stores put the id inside a cluster hash tag). Key formats
-  are unchanged.
+  are unchanged. `AgentProcess.start_link/1` (and so `AgentSupervisor.start_agent/3`) applies
+  the same rule to `agent_id` under `turn_engine: :server`, where it is the session id, and
+  raises `ArgumentError` before any process starts; other engines accept any string.
 - Tool error text sent to the model no longer quotes remote data or exception terms: an MCP
   or A2A transport error is named by its tag (`"MCP tool 'search' failed:
   :unexpected_response"`), and a tool that raises `KeyError` gives `"Tool execution failed:

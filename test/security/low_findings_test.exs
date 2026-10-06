@@ -9,6 +9,7 @@ defmodule Normandy.Security.LowFindingsTest do
   alias Normandy.Behaviours.MemoryStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory, as: SessionInMemory
+  alias Normandy.Coordination.AgentProcess
   alias Normandy.Guardrails.Builtins.SemanticScope
   alias Normandy.LLM.{ClaudioAdapter, OpenAICompatibleAdapter}
   alias Normandy.MCP.ToolWrapper
@@ -180,6 +181,28 @@ defmodule Normandy.Security.LowFindingsTest do
       error = assert_raise ArgumentError, fn -> Session.new(session_opts("SECRET-ID{x}")) end
       refute error.message =~ "SECRET"
       assert error.message =~ "got: a string (12 bytes)"
+    end
+
+    test "AgentProcess under :server applies the rule to agent_id, other engines do not" do
+      for id <- ["a{b", ""] do
+        error =
+          assert_raise ArgumentError, fn ->
+            AgentProcess.start_link(
+              agent: %BaseAgentConfig{},
+              agent_id: id,
+              turn_engine: :server
+            )
+          end
+
+        assert error.message =~ "Normandy.Coordination.AgentProcess.start_link/1: invalid value"
+        assert error.message =~ ":agent_id"
+        refute error.message =~ "a{b"
+      end
+
+      assert {:ok, pid} =
+               AgentProcess.start_link(agent: %BaseAgentConfig{}, agent_id: "a{b")
+
+      assert AgentProcess.agent_id_of(pid) == {:ok, "a{b"}
     end
 
     test "Turn.Server.start_link/1 takes the same type" do

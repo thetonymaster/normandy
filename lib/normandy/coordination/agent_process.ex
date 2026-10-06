@@ -214,10 +214,25 @@ defmodule Normandy.Coordination.AgentProcess do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+    check_session_agent_id!(opts)
 
     case Keyword.get(opts, :name) do
       nil -> GenServer.start_link(__MODULE__, opts)
       name -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
+  end
+
+  # In :server mode the agent id is the session id (init/1), so it must obey Session's rule
+  # now, not crash init/1. Other engines accept any string.
+  defp check_session_agent_id!(opts) do
+    with :server <- Keyword.fetch!(opts, :turn_engine),
+         {:ok, id} <- Keyword.fetch(opts, :agent_id),
+         {:error, message} <- Turn.Session.validate_session_id(id) do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)}.start_link/1: invalid value for :agent_id option " <>
+              "(the session id under turn_engine: :server): " <> message
+    else
+      _ok_or_not_applicable -> :ok
     end
   end
 
