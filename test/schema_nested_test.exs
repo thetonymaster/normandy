@@ -65,6 +65,7 @@ defmodule Normandy.SchemaNestedTest do
                    pattern: "^[0-9]{5}$"
                  }
                },
+               property_order: [:street, :city, :state, :postal_code],
                required: [:street, :city]
              }
     end

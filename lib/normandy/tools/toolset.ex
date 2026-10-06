@@ -9,6 +9,7 @@ defmodule Normandy.Tools.Toolset do
 
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Schema.Introspection
+  alias Normandy.Schema.Wire
   alias Normandy.Tool
 
   @type t :: %__MODULE__{
@@ -278,7 +279,7 @@ defmodule Normandy.Tools.Toolset do
       %{
         name: Tool.name(tool),
         description: Tool.description(tool),
-        input_schema: Tool.input_schema(tool)
+        input_schema: Wire.encodable(Tool.input_schema(tool))
       }
     end)
   end

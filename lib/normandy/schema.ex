@@ -527,7 +527,7 @@ defmodule Normandy.Schema do
     }
 
     specification =
-      if description != nil do
+      if is_binary(description) and description != "" do
         Map.put(specification, :description, description)
       else
         specification
@@ -541,9 +541,12 @@ defmodule Normandy.Schema do
         build_property_spec(name, type, description, opts)
       end
 
+    # :property_order keeps the declaration order a map loses; Normandy.Schema.Wire
+    # sends the properties in it (declaration order is generation order, AX-17).
     specification =
       specification
       |> Map.put(:properties, Map.new(properties))
+      |> Map.put(:property_order, Enum.map(properties, &elem(&1, 0)))
       |> set_required(required_fields)
 
     single_arg = [
@@ -585,10 +588,12 @@ defmodule Normandy.Schema do
     {name, spec_with_constraints}
   end
 
-  # Get base JSON Schema type specification
-  defp get_base_type_spec(type, description) do
-    Map.put(json_type(type), :description, description)
-  end
+  # Get base JSON Schema type specification. A field declared without a description has
+  # no :description key (AX-11): never "" or null in what the model reads.
+  defp get_base_type_spec(type, description) when is_binary(description) and description != "",
+    do: Map.put(json_type(type), :description, description)
+
+  defp get_base_type_spec(type, _description), do: json_type(type)
 
   # Maps a Normandy field type to its JSON Schema fragment. A custom or
   # parameterized type uses the base type it declares; a type with no JSON
@@ -804,7 +809,7 @@ defmodule Normandy.Schema do
     if function_exported?(schema_module, :__schema__, 1) do
       spec = schema_module.__schema__(:specification)
       # Return the relevant parts for inlining (exclude top-level metadata like title, $schema)
-      Map.take(spec, [:type, :properties, :required, :description])
+      Map.take(spec, [:type, :properties, :property_order, :required, :description])
     else
       raise ArgumentError, "Module #{inspect(schema_module)} is not a valid schema"
     end

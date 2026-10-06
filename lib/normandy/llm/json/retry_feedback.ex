@@ -5,6 +5,7 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   """
 
   alias Normandy.Components.Message
+  alias Normandy.Schema.Wire
   alias Normandy.Validate
 
   @spec build(term(), binary(), struct(), module()) :: String.t()
@@ -14,7 +15,8 @@ defmodule Normandy.LLM.Json.RetryFeedback do
         schema,
         adapter
       ) do
-    schema_json = adapter.encode!(Normandy.Schema.json_schema(schema), pretty: true)
+    schema_json =
+      adapter.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     # Extract detailed field-level errors using traverse_errors
     error_details =
@@ -80,7 +82,8 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   end
 
   defp parse_feedback(heading, summary, details, content, schema, adapter) do
-    schema_json = adapter.encode!(Normandy.Schema.json_schema(schema), pretty: true)
+    schema_json =
+      adapter.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     """
     # #{heading}

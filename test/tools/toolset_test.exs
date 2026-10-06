@@ -293,7 +293,10 @@ defmodule NormandyTest.Tools.ToolsetTest do
                "Performs basic arithmetic operations (add, subtract, multiply, divide) on two numbers"
 
       assert schema.input_schema.type == :object
-      assert Map.has_key?(schema.input_schema.properties, :operation)
+      # Declaration order, through Normandy.Schema.Wire (AX-17).
+      assert %Jason.OrderedObject{} = schema.input_schema.properties
+      assert %{type: :string} = schema.input_schema.properties[:operation]
+      refute Map.has_key?(schema.input_schema, :property_order)
     end
 
     test "generates multiple tool schemas" do

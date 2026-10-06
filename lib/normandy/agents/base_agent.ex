@@ -45,6 +45,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
   alias Normandy.Behaviours.Compactor.WindowManager, as: WindowCompactor
+  alias Normandy.Schema.Wire
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
@@ -1390,7 +1391,7 @@ defmodule Normandy.Agents.BaseAgent do
         system_prompt
 
       schema ->
-        schema_json = Normandy.JSON.encode!(schema, pretty: true)
+        schema_json = Normandy.JSON.encode!(Wire.encodable(schema), pretty: true)
 
         system_prompt <>
           "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"

@@ -57,6 +57,7 @@ defmodule Normandy.MixProject do
         groups_for_modules: [
           Core: [
             Normandy.Schema,
+            Normandy.Schema.Wire,
             Normandy.Type,
             Normandy.Validate,
             Normandy.ParameterizedType,

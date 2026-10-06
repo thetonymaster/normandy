@@ -20,7 +20,8 @@ defmodule Normandy.LLM.Json.SchemaTranslatorTest do
     assert props["at"]["format"] == "time"
     assert props["lasts"]["format"] == "duration"
     assert props["mail"]["format"] == "email"
-    assert props["blob"] == %{"type" => "string"}
+    # An unsupported format is stated, not sent (AX-18).
+    assert props["blob"] == %{"type" => "string", "description" => "Format: binary."}
   end
 
   test "translates a flat object: string keys, additionalProperties:false, required" do
@@ -121,5 +122,70 @@ defmodule Normandy.LLM.Json.SchemaTranslatorTest do
     spec = %{type: :object, properties: %{ratio: %{type: :float}}, required: [:ratio]}
     assert {:ok, schema} = SchemaTranslator.translate(spec)
     assert schema["properties"]["ratio"] == %{"type" => "number"}
+  end
+
+  test "constraints constrained decoding cannot enforce are stated in the description (AX-18)" do
+    spec = %{
+      type: :object,
+      properties: %{
+        zip: %{
+          type: :string,
+          description: "Postal code",
+          pattern: "^[0-9]{5}$",
+          minLength: 5,
+          maxLength: 5
+        },
+        qty: %{type: :integer, description: "How many.", minimum: 1, maximum: 100},
+        price: %{type: :number, exclusiveMinimum: 0},
+        tags: %{
+          type: :array,
+          items: %{type: :string},
+          minItems: 1,
+          maxItems: 3,
+          uniqueItems: true
+        },
+        nick: %{type: :string, maxLength: 20}
+      },
+      required: []
+    }
+
+    assert {:ok, %{"properties" => props}} = SchemaTranslator.translate(spec)
+
+    assert props["zip"] == %{
+             "type" => "string",
+             "description" =>
+               "Postal code. Exactly 5 characters. Must match the regular expression ^[0-9]{5}$."
+           }
+
+    assert props["qty"]["description"] == "How many. Minimum 1. Maximum 100."
+    assert props["price"]["description"] == "Greater than 0."
+    assert props["tags"]["description"] == "Between 1 and 3 items. Items must be unique."
+    assert props["nick"]["description"] == "At most 20 characters."
+    refute Map.has_key?(props["zip"], "pattern")
+  end
+
+  defmodule Address do
+    use Normandy.Schema
+
+    io_schema "Address information" do
+      field(:street, :string, description: "Street address", required: true)
+      field(:city, :string, description: "City name", required: true)
+      field(:state, :string, description: "State or province")
+      field(:postal_code, :string, description: "Postal code", pattern: "^[0-9]{5}$")
+    end
+  end
+
+  test "an io_schema's field order and constraints reach the constrained schema" do
+    {:ok, schema} = SchemaTranslator.translate(Address.__schema__(:specification))
+
+    assert Enum.map(schema["properties"], &elem(&1, 0)) == [
+             "street",
+             "city",
+             "state",
+             "postal_code"
+           ]
+
+    assert schema["properties"]["postal_code"]["description"] ==
+             "Postal code. Must match the regular expression ^[0-9]{5}$."
   end
 end

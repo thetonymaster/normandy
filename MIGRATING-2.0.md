@@ -1208,6 +1208,34 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   It is not retried. A test model client that answers with an empty response model must
   answer with text.
 
+- Schema properties reach the model in declaration order, in tool `input_schema`, the
+  `# OUTPUT SCHEMA` block, JSON retry feedback and the structured-outputs schema (which was
+  alphabetical). Declaration order is generation order: declare `reasoning` before `answer`
+  to have the model reason first.
+- `__schema__(:specification)` (and `get_json_schema/0`) gains `:property_order`, the field
+  names in declaration order, at the top and in every inlined nested schema. A test that
+  compares a whole specification with `==` must add it.
+- A field declared without `description:` no longer has `description: ""` in the
+  specification (the model saw `"description": ""`); the key is absent.
+  `Normandy.Schema.Introspection.get_field_metadata/2` returns `description: nil` for it.
+- `Normandy.Tools.Toolset.to_tool_schemas/1` returns `input_schema` without `"$schema"` and
+  `"title"`, and a Normandy schema's `properties` as a `Jason.OrderedObject` (use
+  `properties[:name]`, not `Map.get/2`). The `# OUTPUT SCHEMA` block and retry feedback drop
+  `"$schema"` and `"title"` too. A custom `config :normandy, :adapter` receives
+  `Jason.OrderedObject` structs from these call sites.
+- Because the system prompt's headings (above), tool `input_schema`s and the
+  `# OUTPUT SCHEMA` block change shape (declaration order, no empty descriptions, no
+  `"$schema"` or `"title"`), thinking stored before the upgrade no longer matches its
+  prefix key: from the first request after upgrading, requests leave it out of the
+  replayed history (`AgentMemory.drop_stale_thinking/2`; memory keeps it). Thinking
+  produced after the upgrade is replayed as before, and responses stored without a prefix
+  key are unaffected.
+- With structured outputs, constraints the API cannot enforce (`pattern`, `min_length`,
+  `max_length`, `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`, `min_items`,
+  `max_items`, `unique_items`, an unsupported `format`) are stated at the end of the
+  property's description (for example "Postal code. Must match the regular expression
+  ^[0-9]{5}$."). The answer is still validated against them.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.
@@ -1229,3 +1257,5 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   streaming rejects `:fallbacks`, so the serving model is always the requested one).
 - Compaction keeps each message's turn id, so `AgentMemory.delete_turn/2` works after a
   compaction.
+- `Normandy.Schema.Wire.encodable/1` turns a schema specification into what Normandy sends
+  the model: properties in declaration order, no `"$schema"` or `"title"`.

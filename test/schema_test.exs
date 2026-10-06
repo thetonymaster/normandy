@@ -65,27 +65,24 @@ defmodule Normandy.SchemaTest do
                  default: "eric"
                },
                password: %{
-                 description: "",
                  type: :string
                },
                count: %{
-                 description: "",
                  type: :integer
                },
                map: %{
-                 description: "",
                  type: :object,
                  default: nil,
                  additionalProperties: %{type: :string}
                },
                array: %{
-                 description: "",
                  type: :array,
                  items: %{
                    type: :string
                  }
                }
              },
+             property_order: [:name, :password, :count, :map, :array],
              required: [:name, :password]
            }
   end
@@ -103,27 +100,24 @@ defmodule Normandy.SchemaTest do
                  default: "eric"
                },
                password: %{
-                 description: "",
                  type: :string
                },
                count: %{
-                 description: "",
                  type: :integer
                },
                map: %{
-                 description: "",
                  type: :object,
                  default: nil,
                  additionalProperties: %{type: :string}
                },
                array: %{
-                 description: "",
                  type: :array,
                  items: %{
                    type: :string
                  }
                }
              },
+             property_order: [:name, :password, :count, :map, :array],
              required: [:name, :password]
            }
   end
@@ -379,10 +373,8 @@ defmodule Normandy.SchemaTest do
                description: "Just a name"
              }
 
-      assert spec.properties.count == %{
-               type: :integer,
-               description: ""
-             }
+      # AX-11: no description key at all, never "" or null.
+      assert spec.properties.count == %{type: :integer}
     end
   end
 end
