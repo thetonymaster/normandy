@@ -9,6 +9,13 @@ defmodule Normandy.LLMError do
   `type: :unsupported` means the client can't do what was asked (a client without
   streaming answering `Normandy.Agents.Model.stream/3`); it is never retryable.
 
+  `type: :max_tokens` means the answer stopped before it was complete: the response hit
+  the request's `max_tokens`, or the context window (`model_context_window_exceeded`; the
+  message names which). `type: :refusal` means the model declined to answer. Both are
+  `retryable?: false`; `:reason` is `{:stop_reason, reason}`, never model text, and
+  `:usage` is what the call billed. Normandy builds them from the response's
+  `stop_reason`, so every client gets them.
+
   - `:type` — failure class (see `t:error_type/0`)
   - `:status` — HTTP status when there was one, else `nil`
   - `:retryable?` — whether a retry can help; set by the adapter that classified the failure
@@ -39,6 +46,8 @@ defmodule Normandy.LLMError do
     :not_found,
     :invalid_request,
     :invalid_output,
+    :max_tokens,
+    :refusal,
     :stream,
     :circuit_open,
     :unsupported,
@@ -57,6 +66,8 @@ defmodule Normandy.LLMError do
           | :not_found
           | :invalid_request
           | :invalid_output
+          | :max_tokens
+          | :refusal
           | :stream
           | :circuit_open
           | :unsupported

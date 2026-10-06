@@ -114,6 +114,38 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
                Model.converse(client, %Request{model: "m", max_tokens: 8, messages: []}, [])
     end
 
+    test "a cut-off (length) or filtered answer is not parsed into the response model" do
+      for finish_reason <- ["length", "content_filter"] do
+        req_options =
+          stub(fn conn ->
+            Req.Test.json(conn, %{
+              "choices" => [
+                %{
+                  "message" => %{"content" => ~s({"chat_message": "cu)},
+                  "finish_reason" => finish_reason
+                }
+              ]
+            })
+          end)
+
+        client = %Adapter{
+          api_key: "k",
+          options: %{req_options: req_options, on_parse_failure: :fallback}
+        }
+
+        request = %Request{
+          model: "m",
+          max_tokens: 8,
+          messages: [],
+          response_model: %Normandy.Agents.BaseAgentOutputSchema{}
+        }
+
+        assert {:ok,
+                %Response{content: %Normandy.Agents.BaseAgentOutputSchema{chat_message: nil}}} =
+                 Model.converse(client, request, [])
+      end
+    end
+
     test "an unknown finish_reason is a nil stop_reason; the string stays in meta" do
       req_options =
         stub(fn conn ->

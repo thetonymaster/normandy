@@ -384,7 +384,7 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}` when Normandy's own checks or the model failed:
   `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
   `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
-  `Normandy.ModelCatalogError` or `Normandy.TurnError`. Any other exception (a bug in a
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. Any other exception (a bug in a
   tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
   turn is lost: keep using the config you passed in.
 
@@ -475,6 +475,11 @@ defmodule Normandy.Agents.BaseAgent do
   report (`:guardrail_violation` event, telemetry) and don't block: the text was already
   delivered; with `guardrails: [streaming_mode: :incremental]` a violation stops
   the stream at the next chunk boundary.
+
+  A stream that stops at `max_tokens`, the context window or a refusal returns
+  `{:error, %Normandy.LLMError{type: :max_tokens | :refusal}}`, as `run/3` does: the
+  deltas already delivered to `callback` stay delivered, and nothing of that response is
+  stored or run.
 
   ## Example
 
@@ -1155,6 +1160,17 @@ defmodule Normandy.Agents.BaseAgent do
 
     case stream_from_llm(config, request, callback, first_chunk, tracker) do
       {:ok, final_message} ->
+        # The streamed stop reason is the provider's string; as an atom it reads like
+        # the sync path's. Cut off or refused raises here, inside the llm_call span, before
+        # the core sees the message: no tool runs and nothing is appended. Deltas already
+        # delivered to the callback stay delivered.
+        final_message = Map.update(final_message, :stop_reason, nil, &Call.stop_reason/1)
+
+        case Call.check_stop_reason(final_message) do
+          {:ok, _} -> :ok
+          {:error, error} -> raise error
+        end
+
         # The prefix this response was produced under, stamped when it is appended.
         final_message = Map.put(final_message, :prefix_key, prefix_key)
         tcs = if has_tools?(config), do: extract_tool_calls(final_message) || [], else: []

@@ -274,7 +274,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
         {:ok, %Req.Response{status: status, body: resp_body}} when status in 200..299 ->
           content = A.extract_text(resp_body)
 
-          case populate(content, client, request) do
+          case populate(content, client, request, A.stop_reason(resp_body)) do
             {:error, %Normandy.LLMError{} = error} ->
               {:error, Normandy.LLMError.with_usage(error, Map.get(resp_body, "usage"))}
 
@@ -308,6 +308,14 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
     # One-shot parse: if content is valid JSON it populates the schema; if not,
     # :on_parse_failure decides (Normandy.LLM.ParseFailure). No extra LLM round-trips
     # are wasted for prose responses.
+    # A cut-off (length) or filtered (content_filter) answer is not parsed: the empty
+    # response model goes back with its stop_reason for Normandy.LLM.Call to reject.
+    defp populate(content, _client, %Request{response_model: rm}, reason)
+         when reason in [:max_tokens, :refusal],
+         do: rm || content
+
+    defp populate(content, client, request, _reason), do: populate(content, client, request)
+
     defp populate(content, client, %Request{response_model: %{__struct__: _} = schema}),
       do: ParseFailure.parse_text_output(%{client: client}, content, schema)
 

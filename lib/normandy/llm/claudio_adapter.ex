@@ -117,11 +117,13 @@ defmodule Normandy.LLM.ClaudioAdapter do
     `tool_use` response is still a tool call. `stream/3` re-sends without the format on a 400
     naming it, as `converse/3` does.
   - Any other call that carries tools.
-  - The model returns `refusal`, `max_tokens`, or context-exceeded — these route through the
-    existing `:on_parse_failure` policy and legacy fallback.
   - The API answers 400 with a message naming the output format or schema. Any other 400 (such
     as "prompt is too long") is returned as the error, without a second request.
 
+  A response that stops at `max_tokens`, `model_context_window_exceeded` or `refusal` is
+  never parsed, re-asked or passed to `:on_parse_failure`, on either path: `converse/3`
+  returns the empty response model with that `stop_reason`, and Normandy turns it into
+  `{:error, %Normandy.LLMError{type: :max_tokens | :refusal}}`.
   """
 
   use Normandy.Schema
@@ -166,6 +168,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
     alias Normandy.Components.Message
     alias Normandy.LLMError
 
+    # Stop reasons whose answer is incomplete: cut off (max_tokens, the context
+    # window) or withheld (refusal). Claudio parses each to this atom.
+    @incomplete_stop_reasons [:max_tokens, :model_context_window_exceeded, :refusal]
+
     @doc """
     Converse with Claude via the Claudio library.
 
@@ -193,6 +199,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
              opts,
              request_kind
            ) do
+        # An answer cut off or refused is never parsed or re-asked: the empty response
+        # model goes back with its stop reason, and Normandy.LLM.Call makes the error.
+        {:ok, %Claudio.Messages.Response{stop_reason: reason} = response}
+        when reason in @incomplete_stop_reasons ->
+          {:ok, ClaudioAdapter.__incomplete_response__(request, response)}
+
         {:ok, response} ->
           # Pass context for JSON retry
           context = %{
@@ -235,6 +247,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
       case create(claudio_client, claudio_request, request.model, opts, nil) do
+        # An answer cut off or refused is never parsed or re-asked: the empty response
+        # model goes back with its stop reason, and Normandy.LLM.Call makes the error.
+        {:ok, %Claudio.Messages.Response{stop_reason: reason} = response}
+        when reason in @incomplete_stop_reasons ->
+          {:ok, ClaudioAdapter.__incomplete_response__(request, response)}
+
         {:ok, response} ->
           context = %{client: client, request: request}
 
@@ -1444,12 +1462,24 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def __structured_schema_for__(_client, %Request{}), do: :skip
 
   @doc false
+  # The %Normandy.LLM.Response{} for an incomplete answer: the request's empty response
+  # model, the stop reason and the billed usage. Normandy.LLM.Call turns it into the
+  # :max_tokens or :refusal LLMError.
+  @spec __incomplete_response__(Request.t(), Claudio.Messages.Response.t()) ::
+          Normandy.LLM.Response.t()
+  def __incomplete_response__(%Request{response_model: response_model}, response),
+    do: __response__(response_model, response, extract_usage(response))
+
+  @doc false
   def __handle_structured_response__(response, response_model, context) do
     content = extract_content(response)
 
     stop_reason = Map.get(response, :stop_reason) || Map.get(response, "stop_reason")
 
     case stop_reason do
+      # Incomplete (cut off or refused): not parsed, whatever the :on_parse_failure
+      # policy; converse/3 never gets here with one (its incomplete clause), so this
+      # serves direct callers.
       reason
       when reason in [
              :refusal,
@@ -1459,12 +1489,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
              :model_context_window_exceeded,
              "model_context_window_exceeded"
            ] ->
-        apply_parse_failure(
-          response_model,
-          content,
-          {:structured_output_incomplete, reason},
-          context
-        )
+        response_model
 
       _ ->
         with {:ok, parsed} when is_map(parsed) <-

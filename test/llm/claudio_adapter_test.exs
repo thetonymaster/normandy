@@ -260,31 +260,26 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
     end
 
-    test "refusal routes to the parse-failure policy (default :fallback)" do
+    test "refusal is not parsed: the empty response model comes back" do
       resp = text_response(:refusal, "I can't help with that.")
 
-      assert %MultiField{chat_message: "I can't help with that."} =
-               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+      assert ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{}) ==
+               %MultiField{}
     end
 
-    test "max_tokens routes to the parse-failure policy" do
+    test "max_tokens is not parsed or put in chat_message" do
       resp = text_response(:max_tokens, ~s({"chat_message": "trunca))
 
-      assert %MultiField{chat_message: ~s({"chat_message": "trunca)} =
-               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{})
+      assert ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{}) ==
+               %MultiField{}
     end
 
-    test "non-conforming content under :error policy returns an error tuple" do
-      resp = text_response(:refusal, "nope")
+    test "an incomplete answer ignores the :on_parse_failure policy" do
+      resp = text_response(:model_context_window_exceeded, "nope")
 
-      assert {:error,
-              %Normandy.LLMError{
-                type: :invalid_output,
-                reason: {:structured_output_incomplete, :refusal}
-              }} =
-               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
-                 on_parse_failure: :error
-               })
+      assert ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+               on_parse_failure: :error
+             }) == %MultiField{}
     end
 
     test "string-keyed stop_reason is classified like the atom-keyed form" do
@@ -294,14 +289,9 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         "usage" => %{}
       }
 
-      assert {:error,
-              %Normandy.LLMError{
-                type: :invalid_output,
-                reason: {:structured_output_incomplete, "refusal"}
-              }} =
-               ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
-                 on_parse_failure: :error
-               })
+      assert ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
+               on_parse_failure: :error
+             }) == %MultiField{}
     end
   end
 

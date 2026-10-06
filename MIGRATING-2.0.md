@@ -979,6 +979,26 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `%ToolCallResponse{}`.
 - `[:normandy, :agent, :llm_call, :start]` metadata `structured_output` is now `true` for these
   calls and streams.
+- A response that stopped at `max_tokens` or `model_context_window_exceeded` is
+  `{:error, %Normandy.LLMError{type: :max_tokens}}` (the message names which), and a
+  refusal is `{:error, %Normandy.LLMError{type: :refusal}}`, on `run/3`, `stream/3`,
+  `Turn.Server` and `Turn.Session`. 1.x returned the cut-off text as the answer, ran a
+  cut-off `tool_use` with its partial input, and on the structured-output path put the
+  truncated JSON or the refusal text in `chat_message` (under `on_parse_failure: :fallback`)
+  or JSON-retried it. Both types are `retryable?: false`: neither retried nor counted by
+  the circuit breaker. `:reason` is `{:stop_reason, reason}`; `:usage` is what the call billed.
+- A chat agent whose plain answer reaches `max_tokens` now gets the error, not the partial
+  text. Raise `max_tokens` (default 16_000) for long answers.
+- `stream/3`: text deltas delivered before the stop stay delivered; the turn returns the
+  error, runs no tool from that response and stores nothing of it.
+- `ClaudioAdapter` and `OpenAICompatibleAdapter` no longer parse, JSON-retry or apply
+  `:on_parse_failure` to an incomplete answer: `Model.converse/3` returns
+  `{:ok, %Response{content: <the empty response model>, stop_reason: ...}}`, and Normandy
+  makes the error. A custom `Normandy.Agents.Model` only reports `Response.stop_reason`.
+- `Normandy.Context.Summarizer` returns `{:error, %LLMError{type: :max_tokens}}` for a
+  summary cut off at its `max_tokens`, instead of the fragment.
+- New `Normandy.LLMError` types `:max_tokens` and `:refusal`; telemetry `error.type` reports
+  them as `max_tokens` and `refusal`.
 
 ## 33. Tool calls and assistant turns are replayed as received
 

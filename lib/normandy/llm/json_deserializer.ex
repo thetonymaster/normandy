@@ -262,9 +262,12 @@ defmodule Normandy.LLM.JsonDeserializer do
     llm_opts = [request_kind: :json_retry] ++ Keyword.take(opts, [:request_tracker])
 
     case Call.converse(client, retry_request, llm_opts) do
-      # An LLM failure is not a parse failure: stop and hand it back.
-      {:error, %LLMError{}} = error ->
-        error
+      # An LLM failure is not a parse failure: stop and hand it back. A billed failure
+      # (a retry cut off at max_tokens) reports its usage like a successful retry, so the
+      # adapter attaches the call's total instead of this retry's alone.
+      {:error, %LLMError{} = error} ->
+        report_retry_usage(opts, error.usage)
+        {:error, %{error | usage: nil, usage_counts: nil}}
 
       {:ok, %Response{content: response, usage: usage}} ->
         report_retry_usage(opts, usage)

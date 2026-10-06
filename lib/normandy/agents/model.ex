@@ -24,6 +24,11 @@ defprotocol Normandy.Agents.Model do
   and the turn is rebuilt from the other three). When `response_model` is `nil`, return the
   answer text as a binary.
 
+  An answer that stopped at `:max_tokens`, `:model_context_window_exceeded` or
+  `:refusal` need not be parsed: return the empty `response_model` as `content` with that
+  `stop_reason`. Normandy turns any response with one of these stop reasons into
+  `{:error, %Normandy.LLMError{type: :max_tokens | :refusal}}`, whatever its content.
+
   `request.output_format`, when set, is the output schema the final answer's text must
   match on a tool-loop call (`response_model: %ToolCallResponse{}`) or a stream. An
   implementation with constrained decoding may send it; the text still goes in
