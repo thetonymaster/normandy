@@ -1,7 +1,8 @@
 defmodule Normandy.Application do
   @moduledoc false
   # Normandy's own processes: the keyed circuit breakers (Normandy.Resilience.CircuitBreaker).
-  # :rest_for_one, so breakers registered in a crashed Registry are restarted with it.
+  # :rest_for_one, so a crashed Registry also stops every breaker (their registrations are
+  # gone; they are `restart: :temporary`). Each starts again, closed, on its next call.
   use Application
 
   @impl true

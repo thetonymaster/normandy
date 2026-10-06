@@ -163,7 +163,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   @renamed [
     retry_options: "was renamed to :retry",
     enable_circuit_breaker:
-      "was removed: circuit_breaker: [] (or the breaker's options) starts a breaker",
+      "was removed: circuit_breaker: [] (or the breaker's options) configures a breaker",
     circuit_breaker_options: "was renamed to :circuit_breaker",
     input_guardrails: "moved to guardrails: [input: ...]",
     output_guardrails: "moved to guardrails: [output: ...]",

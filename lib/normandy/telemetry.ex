@@ -258,7 +258,7 @@ defmodule Normandy.Telemetry do
   :half_open`), `reason` (`:failure_threshold | :timeout | :probe_success | :probe_failure
   | :probe_down | :reset | :trip`). Emitted in the breaker's process, so outside the
   caller's trace context; the open-to-half-open change is emitted by the first admission
-  (or `state/1`, `metrics/1`) after the open window.
+  (or `state/1`) after the open window.
 
   ### `[:normandy, :retry, :attempt]`
 

@@ -118,7 +118,7 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
                  fn -> BaseAgent.init([1, 2]) end
   end
 
-  test "every option is checked before the circuit breaker starts" do
+  test "every option is checked before anything starts" do
     {:links, before} = Process.info(self(), :links)
 
     assert_raise ArgumentError, ~r/:max_tool_iterations option/, fn ->
