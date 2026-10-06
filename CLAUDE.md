@@ -59,7 +59,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Context provider management: `register_context_provider/3`, `fetch_context_provider/2` and `fetch_context_provider!/2`, `delete_context_provider/2`
 
 - **`Normandy.Agents.BaseAgentConfig`** - Agent state container
-  - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window, and the option groups `retry` (Retry options or nil), `circuit_breaker` (breaker options or nil; `circuit_breaker_pid` is the node-local breaker init/1 started) and `guardrails` (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`, read with `BaseAgentConfig.guardrail/2`)
+  - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window, and the option groups `retry` (Retry options or nil), `circuit_breaker` (breaker options or nil; calls go through the breaker shared per client module, endpoint, model and options, `BaseAgentConfig.circuit_breaker_key/1`) and `guardrails` (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`, read with `BaseAgentConfig.guardrail/2`)
 
 - **`Normandy.Options`** - `validate!(opts, schema, {mod, fun, arity})` for every public entry point: NimbleOptions schema, map or keyword input, `ArgumentError` prefixed `Mod.fun/arity:`; values of `sensitive_keys/0` (`:client`, `:api_key`, ...) never appear in a message
 
