@@ -41,6 +41,7 @@ defmodule Normandy.MCP.ToolWrapper do
 
   use Normandy.Tool
 
+  alias Normandy.Options
   alias Normandy.Tools.Context
 
   @type t :: %__MODULE__{
@@ -52,6 +53,17 @@ defmodule Normandy.MCP.ToolWrapper do
 
   defstruct [:adapter, :client, :tool, :prefix]
 
+  @new_opts_schema NimbleOptions.new!(
+                     prefix: [
+                       type: :string,
+                       doc: "Namespaces the tool's name as `prefix__name`."
+                     ]
+                   )
+
+  @doc false
+  # Normandy.MCP.Registry takes its options from here (one source).
+  def __opts_schema__(:new), do: @new_opts_schema
+
   @doc """
   Creates a new ToolWrapper for an MCP tool.
 
@@ -60,11 +72,16 @@ defmodule Normandy.MCP.ToolWrapper do
     - `adapter` - The MCP adapter module (e.g., `Claudio.MCP.Adapters.ExMCP`)
     - `client` - The MCP client connection
     - `tool` - A `Claudio.MCP.Client.Tool` struct
-    - `opts` - Options including `:prefix` for namespacing
+    - `opts` - see Options
 
+  ## Options
+
+  #{Options.docs(@new_opts_schema)}
   """
   @spec new(module(), term(), Claudio.MCP.Client.Tool.t(), keyword()) :: t()
   def new(adapter, client, tool, opts \\ []) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 4})
+
     %__MODULE__{
       adapter: adapter,
       client: client,

@@ -25,6 +25,7 @@ defmodule Normandy.A2A.AgentTool do
   alias Claudio.A2A.Client
   alias Claudio.A2A.Message
   alias Claudio.A2A.Part
+  alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Context
 
@@ -47,17 +48,37 @@ defmodule Normandy.A2A.AgentTool do
     transport_opts: []
   ]
 
+  @new_opts_schema NimbleOptions.new!(
+                     skill_id: [
+                       type: :string,
+                       doc: "The skill to expose (default: general access to the agent)."
+                     ],
+                     auth_token: [
+                       type: :string,
+                       type_doc: "`t:String.t/0`",
+                       doc: "A bearer token for the remote agent."
+                     ],
+                     transport_opts: [
+                       type: :keyword_list,
+                       default: [],
+                       type_doc: "`t:keyword/0`",
+                       doc:
+                         "Options for the A2A transport. Its `:headers` (`[{name, value}]`) " <>
+                           "are sent on every request; with OpenTelemetry loaded and a span " <>
+                           "active, W3C `traceparent`/`tracestate` headers are added beside them " <>
+                           "(a same-named header you set is kept)."
+                     ]
+                   )
+
+  @doc false
+  def __opts_schema__(:new), do: @new_opts_schema
+
   @doc """
   Creates a new AgentTool for a remote A2A agent.
 
   ## Options
 
-    - `:skill_id` - Specific skill to expose (nil for general agent access)
-    - `:auth_token` - Bearer token for authentication
-    - `:transport_opts` - Options passed to the A2A transport. Its `:headers`
-      (`[{name, value}]`) are sent on every request; when OpenTelemetry is
-      loaded and a span is active, W3C `traceparent`/`tracestate` headers are
-      added beside them (a same-named header you set is kept)
+  #{Options.docs(@new_opts_schema)}
 
   The call's timeout is a registration option:
   `BaseAgent.register_tool(agent, tool, timeout: ms)`. Passing `:timeout` here raises
@@ -71,12 +92,14 @@ defmodule Normandy.A2A.AgentTool do
               "to BaseAgent.register_tool/3 or Normandy.Tools.Toolset.register/3"
     end
 
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 3})
+
     %__MODULE__{
       endpoint: endpoint,
       agent_card: agent_card,
       skill_id: Keyword.get(opts, :skill_id),
       auth_token: Keyword.get(opts, :auth_token),
-      transport_opts: Keyword.get(opts, :transport_opts, [])
+      transport_opts: Keyword.fetch!(opts, :transport_opts)
     }
   end
 

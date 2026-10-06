@@ -19,8 +19,27 @@ defmodule Normandy.A2A.Registry do
 
   alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
+  alias Normandy.Options
   alias Normandy.Tool
   alias Normandy.Tools.Toolset
+
+  # AgentTool.new/3's options except :skill_id, which from_agent_card/3 sets per skill.
+  @card_opts Keyword.delete(AgentTool.__opts_schema__(:new).schema, :skill_id)
+  @from_agent_card_opts_schema NimbleOptions.new!(@card_opts)
+  # Task 3.4c: discover_and_register/3's :timeout is each tool's registration timeout.
+  @discover_and_register_opts_schema NimbleOptions.new!(
+                                       @card_opts ++
+                                         [
+                                           timeout: [
+                                             type: :pos_integer,
+                                             default: 60_000,
+                                             doc:
+                                               "Each tool's registration timeout, in positive ms " <>
+                                                 "(`Normandy.Tools.Toolset.register/3`; " <>
+                                                 "60_000 as in 1.x)."
+                                           ]
+                                         ]
+                                     )
 
   @doc """
   Discovers a remote A2A agent and registers it as tool(s) in the registry.
@@ -28,25 +47,28 @@ defmodule Normandy.A2A.Registry do
   Creates one tool per skill if the agent has skills, or a single general
   tool if it has no skills.
 
+  `:transport_opts` is also used for discovery.
+
   ## Options
 
-    - `:auth_token` - Bearer token for authentication
-    - `:transport_opts` - Options passed to the A2A transport (also used for discovery)
-    - `:timeout` - each tool's registration timeout, in ms (`Normandy.Tools.Toolset.register/3`;
-      default 60_000, as in 1.x)
-
+  #{Options.docs(@discover_and_register_opts_schema)}
   """
   @spec discover_and_register(Toolset.t(), String.t(), keyword()) ::
           {:ok, Toolset.t()} | {:error, term()}
   def discover_and_register(%Toolset{} = registry, base_url, opts \\ []) do
-    transport_opts = Keyword.get(opts, :transport_opts, [])
+    opts =
+      Options.validate!(
+        opts,
+        @discover_and_register_opts_schema,
+        {__MODULE__, :discover_and_register, 3}
+      )
 
-    case Client.discover(base_url, transport_opts) do
+    case Client.discover(base_url, Keyword.fetch!(opts, :transport_opts)) do
       {:ok, agent_card} ->
         endpoint = derive_endpoint(base_url, agent_card)
-        tools = from_agent_card(agent_card, endpoint, opts)
+        tools = from_agent_card(agent_card, endpoint, Keyword.delete(opts, :timeout))
 
-        register_all(tools, registry, timeout: Keyword.get(opts, :timeout, 60_000))
+        register_all(tools, registry, timeout: Keyword.fetch!(opts, :timeout))
 
       {:error, _reason} = error ->
         error
@@ -57,10 +79,15 @@ defmodule Normandy.A2A.Registry do
   Creates `AgentTool` structs from a pre-fetched agent card.
 
   Returns one tool per skill, or a single general tool if no skills.
+
+  ## Options
+
+  #{Options.docs(@from_agent_card_opts_schema)}
   """
   @spec from_agent_card(Claudio.A2A.AgentCard.t(), String.t(), keyword()) :: [AgentTool.t()]
   def from_agent_card(agent_card, endpoint, opts \\ []) do
-    tool_opts = Keyword.take(opts, [:auth_token, :transport_opts])
+    tool_opts =
+      Options.validate!(opts, @from_agent_card_opts_schema, {__MODULE__, :from_agent_card, 3})
 
     case agent_card.skills do
       [] ->

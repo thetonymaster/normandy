@@ -11,6 +11,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
   at or above the window raises `ArgumentError`; `:strategy` goes to
   `WindowManager.new/1`. The 1.x name `:max_tokens` for the pin raises `ArgumentError`.
+  Any other key raises `ArgumentError` when the agent is built (`BaseAgent.init/1`, DSL
+  `new/1`) or its template is rebuilt.
   The `:summarize` strategy needs `acc.client`; if summarization fails it returns the
   original `acc` with `%{compacted: false, error: reason}` rather than crashing the turn.
   Its meta carries `:dropped`, the removed entries (see `Normandy.Behaviours.Compactor`).
@@ -20,6 +22,42 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Context.WindowManager, as: WM
+  alias Normandy.Options
+
+  @opts_schema NimbleOptions.new!(
+                 context_window: [
+                   type: :pos_integer,
+                   doc: "Pins the context window instead of asking the model catalog."
+                 ],
+                 reserved_tokens: [
+                   type: :non_neg_integer,
+                   doc:
+                     "Tokens kept free for the answer (default: the agent's `max_tokens`). " <>
+                       "Must be smaller than the context window."
+                 ],
+                 # The type and the default are Context.WindowManager.new/1's (one source).
+                 strategy: [
+                   type:
+                     Normandy.Context.WindowManager.__opts_schema__(:new).schema
+                     |> Keyword.fetch!(:strategy)
+                     |> Keyword.fetch!(:type),
+                   doc:
+                     "The truncation strategy (default: `Normandy.Context.WindowManager.new/1`'s)."
+                 ]
+               )
+
+  @doc false
+  # Called by BaseAgent.validate_compaction_config!/1, i.e. at BaseAgent.init/1 and at
+  # template rebuild, so a typo surfaces where the config is made, not mid-turn. The
+  # prefix names that function, which both paths run (as Task 3.2a's messages do).
+  @spec validate_opts!(keyword()) :: keyword()
+  def validate_opts!(opts),
+    do:
+      Options.validate!(
+        opts,
+        @opts_schema,
+        {Normandy.Agents.BaseAgent, :validate_compaction_config!, 1}
+      )
 
   @impl true
   def maybe_compact(acc, %{window: window}, opts) do
@@ -80,9 +118,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
               ":reserved_tokens in the compactor opts"
     end
 
-    WM.new(
-      [max_tokens: window, reserved_tokens: reserved] ++ Keyword.drop(opts, [:reserved_tokens])
-    )
+    WM.new([max_tokens: window, reserved_tokens: reserved] ++ Keyword.take(opts, [:strategy]))
   end
 
   # The default reserve: the agent's max_tokens. A real agent config always has a

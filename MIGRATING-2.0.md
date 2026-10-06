@@ -867,3 +867,31 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `BaseAgent.init/1` option) raises in the caller as `...AgentPool.start_link/1: invalid
   :agent_config: ...` instead of crashing the pool's `init/1`; `HierarchicalCoordinator.execute/3`'s
   `:manager_prompt` is a string; a workflow's `execute/1` `:context` is a plain map.
+- `Context.Summarizer.compress_conversation/3` documented `:max_summary_tokens` but never read
+  it; the summary size is `:max_tokens`, as in `summarize_messages/4`, and
+  `:max_summary_tokens` now raises. `:summary_role` must be `"user"` or `"assistant"`.
+- `A2A.Registry.from_agent_card/3` used to drop keys it did not use (including `:timeout`,
+  which only `discover_and_register/3` reads, as the registration timeout); they now raise.
+- `Context.WindowManager.new/1`: `:strategy` must be `:oldest_first`, `:sliding_window` or
+  `:summarize`, and `:reserved_tokens` a non-negative integer. A
+  `Compactor.WindowManager` compactor's opts (`:context_window`, `:reserved_tokens`,
+  `:strategy`) are checked when the agent is built and when its template is rebuilt; the error
+  starts with `Normandy.Agents.BaseAgent.validate_compaction_config!/1: `.
+- `AgentMessage.new/1` raises for a missing `:from` or `:to` with `ArgumentError` (was
+  `KeyError`), for a `:from`/`:to` that is not a string or an atom, a `:type` that is not an
+  atom or a string, and a `:metadata` that is not a plain map (each was stored as given).
+- `AgentMemory.add_message/4`'s message for an unknown option now names the function.
+- `Coordination.Pattern.ok!/2` and `error!/2` check their options on every call, including
+  when the result matches.
+- More value types that are now checked: `A2A.AgentTool.new/3`'s and the A2A registry's
+  `:auth_token` and `:skill_id` are strings and `:transport_opts` a keyword list;
+  `A2A.Registry.discover_and_register/3`'s `:timeout` a positive integer;
+  `A2A.Server.build_agent_card/2`'s `:name`, `:description`, `:url`, `:version`,
+  `:provider_url` and `:provider_org` are strings and `:expose_tools` a list of strings or
+  `:all`; the MCP `:prefix` (`MCP.ToolWrapper.new/4`, `MCP.Registry`,
+  `BaseAgent.register_mcp_tools/4`) a string; `Context.Summarizer`'s `:prompt` and `:model`
+  are strings, `:max_tokens` a positive integer, and `:keep_recent` and `:summary_tokens`
+  non-negative integers; `StatefulContext.start_link/1`'s `:notify_on_change` a boolean;
+  `AgentMemory.add_message/4`'s `:turn_id` and `:id` strings or `nil`; a
+  `Compactor.WindowManager` compactor's `:context_window` a positive integer (a `nil` or a
+  string such as `"200000"` used to raise only mid-turn).

@@ -19,6 +19,8 @@ defmodule Normandy.Coordination.AgentMessage do
 
   use Normandy.Schema
 
+  alias Normandy.Options
+
   @type t :: %__MODULE__{
           __meta__: Normandy.Metadata.t(),
           id: String.t(),
@@ -40,16 +42,37 @@ defmodule Normandy.Coordination.AgentMessage do
     field(:timestamp, :integer, description: "Unix timestamp", default: 0)
   end
 
+  @new_opts_schema NimbleOptions.new!(
+                     from: [
+                       type: {:or, [:string, :atom]},
+                       required: true,
+                       doc: "The sender's id."
+                     ],
+                     to: [
+                       type: {:or, [:string, :atom]},
+                       required: true,
+                       doc: "The recipient's id."
+                     ],
+                     type: [
+                       type: {:or, [:atom, :string]},
+                       default: :request,
+                       doc:
+                         "`:request`, `:response`, `:broadcast` or `:error` (stored as a string)."
+                     ],
+                     payload: [type: :any, default: %{}, doc: "The message content."],
+                     metadata: [
+                       type: {:custom, Normandy.Options, :plain_map, []},
+                       default: %{},
+                       doc: "Extra data about the message."
+                     ]
+                   )
+
   @doc """
   Creates a new agent message.
 
   ## Options
 
-  - `:from` - Source agent identifier (required)
-  - `:to` - Destination agent identifier (required)
-  - `:type` - Message type (`:request`, `:response`, `:broadcast`, `:error`)
-  - `:payload` - Message content (map)
-  - `:metadata` - Additional metadata (map)
+  #{Options.docs(@new_opts_schema)}
 
   ## Example
 
@@ -62,13 +85,15 @@ defmodule Normandy.Coordination.AgentMessage do
   """
   @spec new(keyword()) :: %__MODULE__{}
   def new(opts \\ []) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
     %__MODULE__{
       id: UUID.uuid4(),
       from: Keyword.fetch!(opts, :from),
       to: Keyword.fetch!(opts, :to),
-      type: Keyword.get(opts, :type, :request) |> to_string(),
-      payload: Keyword.get(opts, :payload, %{}),
-      metadata: Keyword.get(opts, :metadata, %{}),
+      type: opts |> Keyword.fetch!(:type) |> to_string(),
+      payload: Keyword.fetch!(opts, :payload),
+      metadata: Keyword.fetch!(opts, :metadata),
       timestamp: :os.system_time(:second)
     }
   end

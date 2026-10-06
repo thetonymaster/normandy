@@ -15,6 +15,7 @@ defmodule Normandy.Components.AgentMemory do
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.Message
+  alias Normandy.Options
 
   defstruct entries: %{}, head: nil, current_turn_id: nil, max_messages: nil
 
@@ -24,6 +25,20 @@ defmodule Normandy.Components.AgentMemory do
           current_turn_id: String.t() | nil,
           max_messages: pos_integer() | nil
         }
+
+  @add_message_opts_schema NimbleOptions.new!(
+                             turn_id: [
+                               type: {:or, [:string, nil]},
+                               doc:
+                                 "Store the message under this turn instead of the current one."
+                             ],
+                             id: [
+                               type: {:or, [:string, nil]},
+                               doc:
+                                 "The entry's id (default: a new UUID). It must not already be " <>
+                                   "in the memory."
+                             ]
+                           )
 
   @spec new_memory(pos_integer() | nil) :: t()
   def new_memory(max_messages \\ nil) do
@@ -45,10 +60,14 @@ defmodule Normandy.Components.AgentMemory do
   compaction uses it to keep each kept message's turn. `id:` gives the entry that id
   instead of a new one (compaction keeps a kept message's id, which compactors report
   dropped entries by); it must not already be in `memory` (raises `ArgumentError`).
+
+  ## Options
+
+  #{Options.docs(@add_message_opts_schema)}
   """
   @spec add_message(t(), String.t(), term(), keyword()) :: t()
   def add_message(%__MODULE__{} = memory, role, content, opts \\ []) do
-    opts = Keyword.validate!(opts, [:turn_id, :id])
+    opts = Options.validate!(opts, @add_message_opts_schema, {__MODULE__, :add_message, 4})
     memory = if memory.current_turn_id == nil, do: initialize_turn(memory), else: memory
 
     id = Keyword.get(opts, :id) || UUID.uuid4()

@@ -43,6 +43,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
+  alias Normandy.Behaviours.Compactor.WindowManager, as: WindowCompactor
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
@@ -926,6 +927,8 @@ defmodule Normandy.Agents.BaseAgent do
               "of Normandy.Behaviours.Compactor.WindowManager was renamed to :context_window " <>
               "in 2.0; see MIGRATING-2.0.md §22"
     end
+
+    _ = if compactor == WindowCompactor, do: WindowCompactor.validate_opts!(compactor_opts)
 
     needs_api_lookup? =
       compactor != Normandy.Behaviours.Compactor.NoOp and
@@ -2055,7 +2058,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Options
 
-    - `:prefix` - Namespace prefix for tool names (e.g., `"my_server"`)
+  The options of `Normandy.MCP.Registry.discover_and_register/4`.
 
   ## Examples
 
@@ -2065,6 +2068,13 @@ defmodule Normandy.Agents.BaseAgent do
   @spec register_mcp_tools(BaseAgentConfig.t(), module(), term(), keyword()) ::
           {:ok, BaseAgentConfig.t()} | {:error, term()}
   def register_mcp_tools(%BaseAgentConfig{} = config, adapter, client, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        Normandy.MCP.Registry.__opts_schema__(:discover_and_register),
+        {__MODULE__, :register_mcp_tools, 4}
+      )
+
     registry = config.toolset || Toolset.new()
 
     case Normandy.MCP.Registry.discover_and_register(registry, adapter, client, opts) do

@@ -32,8 +32,19 @@ defmodule Normandy.Coordination.StatefulContext do
   use GenServer
   require Logger
 
+  alias Normandy.Options
+
   @type key :: String.t() | {String.t(), String.t()}
   @type subscriber :: pid()
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the context."],
+                            notify_on_change: [
+                              type: :boolean,
+                              default: true,
+                              doc: "Send subscribers a message on every change."
+                            ]
+                          )
 
   # Client API
 
@@ -42,8 +53,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
   ## Options
 
-  - `:name` - Register the process with a name (optional)
-  - `:notify_on_change` - Enable change notifications (default: true)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Example
 
@@ -51,6 +61,7 @@ defmodule Normandy.Coordination.StatefulContext do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
     name = Keyword.get(opts, :name)
 
     if name do
@@ -230,7 +241,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
   @impl true
   def init(opts) do
-    notify_on_change = Keyword.get(opts, :notify_on_change, true)
+    notify_on_change = Keyword.fetch!(opts, :notify_on_change)
 
     # Create ETS table for data storage
     table =

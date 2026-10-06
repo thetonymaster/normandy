@@ -41,11 +41,12 @@ defmodule Normandy.Context.WindowManager do
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Context.Summarizer
+  alias Normandy.Options
 
   @type strategy :: :oldest_first | :sliding_window | :summarize
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
-          reserved_tokens: pos_integer(),
+          reserved_tokens: non_neg_integer(),
           strategy: strategy()
         }
 
@@ -53,17 +54,37 @@ defmodule Normandy.Context.WindowManager do
             reserved_tokens: 4096,
             strategy: :oldest_first
 
+  @new_opts_schema NimbleOptions.new!(
+                     max_tokens: [
+                       type: :pos_integer,
+                       doc:
+                         "**Required.** The model's context window in tokens. Inside an agent the " <>
+                           "compactor passes the window resolved through the configured " <>
+                           "`Normandy.Behaviours.ModelCatalog`; standalone, take it from " <>
+                           "`Claudio.Models.get/2` (`\"max_input_tokens\"`)."
+                     ],
+                     reserved_tokens: [
+                       type: :non_neg_integer,
+                       default: 4096,
+                       doc: "Tokens kept free for the response."
+                     ],
+                     strategy: [
+                       type: {:in, [:oldest_first, :sliding_window, :summarize]},
+                       default: :oldest_first,
+                       doc: "The truncation strategy."
+                     ]
+                   )
+
+  @doc false
+  # The compactor (Behaviours.Compactor.WindowManager) takes :strategy's type from here.
+  def __opts_schema__(:new), do: @new_opts_schema
+
   @doc """
   Creates a new WindowManager.
 
   ## Options
 
-  - `:max_tokens` - **Required.** The model's context window in tokens. Inside an
-    agent the compactor passes the window resolved through the configured
-    `Normandy.Behaviours.ModelCatalog`; standalone, take it from
-    `Claudio.Models.get/2` (`"max_input_tokens"`).
-  - `:reserved_tokens` - Tokens to reserve for the response (default: 4096)
-  - `:strategy` - Truncation strategy (default: :oldest_first)
+  #{Options.docs(@new_opts_schema)}
 
   ## Example
 
@@ -71,27 +92,19 @@ defmodule Normandy.Context.WindowManager do
   """
   @spec new(keyword()) :: t()
   def new(opts \\ []) when is_list(opts) do
-    max_tokens =
-      case Keyword.fetch(opts, :max_tokens) do
-        {:ok, n} when is_integer(n) and n > 0 ->
-          n
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
 
-        {:ok, other} ->
-          raise ArgumentError,
-                "WindowManager.new/1 :max_tokens must be a positive integer (the model's " <>
-                  "context window in tokens); got #{inspect(other)}"
-
-        :error ->
-          raise ArgumentError,
-                "WindowManager.new/1 requires :max_tokens (the model's context window in " <>
-                  "tokens); Normandy no longer ships a static model table. Use the agent's " <>
-                  "resolved window or Claudio.Models.get/2 \"max_input_tokens\"."
-      end
+    unless Keyword.has_key?(opts, :max_tokens) do
+      raise ArgumentError,
+            "Normandy.Context.WindowManager.new/1: requires :max_tokens (the model's context " <>
+              "window in tokens); Normandy no longer ships a static model table. Use the " <>
+              "agent's resolved window or Claudio.Models.get/2 \"max_input_tokens\"."
+    end
 
     %__MODULE__{
-      max_tokens: max_tokens,
-      reserved_tokens: Keyword.get(opts, :reserved_tokens, 4096),
-      strategy: Keyword.get(opts, :strategy, :oldest_first)
+      max_tokens: Keyword.fetch!(opts, :max_tokens),
+      reserved_tokens: Keyword.fetch!(opts, :reserved_tokens),
+      strategy: Keyword.fetch!(opts, :strategy)
     }
   end
 

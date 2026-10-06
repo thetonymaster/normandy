@@ -15,8 +15,13 @@ defmodule Normandy.Coordination.AgentMessageTest do
   end
 
   test "new/1 requires :from and :to" do
-    assert_raise KeyError, ~r/key :from not found/, fn -> AgentMessage.new(to: "b") end
-    assert_raise KeyError, ~r/key :to not found/, fn -> AgentMessage.new(from: "a") end
+    assert_raise ArgumentError,
+                 ~r/^Normandy\.Coordination\.AgentMessage\.new\/1: required :from option not found/,
+                 fn -> AgentMessage.new(to: "b") end
+
+    assert_raise ArgumentError,
+                 ~r/^Normandy\.Coordination\.AgentMessage\.new\/1: required :to option not found/,
+                 fn -> AgentMessage.new(from: "a") end
   end
 
   test "reply/2 swaps sender and recipient and marks a response" do

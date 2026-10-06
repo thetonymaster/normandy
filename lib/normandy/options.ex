@@ -24,9 +24,11 @@ defmodule Normandy.Options do
     :agent_config,
     :agents,
     :api_key,
+    :auth_token,
     :authorization,
     :client,
     :config,
+    :context,
     :credential,
     :headers,
     :mcp_servers,
@@ -34,6 +36,7 @@ defmodule Normandy.Options do
     :req_options,
     :secret,
     :token,
+    :transport_opts,
     :workers
   ]
 

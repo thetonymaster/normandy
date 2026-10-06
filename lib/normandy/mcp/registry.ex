@@ -19,20 +19,29 @@ defmodule Normandy.MCP.Registry do
   """
 
   alias Normandy.MCP.ToolWrapper
+  alias Normandy.Options
   alias Normandy.Tool
   alias Normandy.Tools.Toolset
+
+  # The same options as ToolWrapper.new/4, which receives them (one source).
+  @opts_schema ToolWrapper.__opts_schema__(:new)
+
+  @doc false
+  # BaseAgent.register_mcp_tools/4 takes its options from here.
+  def __opts_schema__(:discover_and_register), do: @opts_schema
 
   @doc """
   Discovers tools from an MCP server and registers them in a tool registry.
 
   ## Options
 
-    - `:prefix` - Namespace prefix for tool names
-
+  #{Options.docs(@opts_schema)}
   """
   @spec discover_and_register(Toolset.t(), module(), term(), keyword()) ::
           {:ok, Toolset.t()} | {:error, term()}
   def discover_and_register(%Toolset{} = registry, adapter, client, opts \\ []) do
+    opts = Options.validate!(opts, @opts_schema, {__MODULE__, :discover_and_register, 4})
+
     case adapter.list_tools(client, []) do
       {:ok, tools} ->
         wrappers = wrap_tools(adapter, client, tools, opts)
@@ -49,12 +58,13 @@ defmodule Normandy.MCP.Registry do
 
   ## Options
 
-    - `:prefix` - Namespace prefix for tool names
-
+  #{Options.docs(@opts_schema)}
   """
   @spec wrap_tools(module(), term(), [Claudio.MCP.Client.Tool.t()], keyword()) ::
           [ToolWrapper.t()]
   def wrap_tools(adapter, client, tools, opts \\ []) when is_list(tools) do
+    opts = Options.validate!(opts, @opts_schema, {__MODULE__, :wrap_tools, 4})
+
     Enum.map(tools, fn tool ->
       ToolWrapper.new(adapter, client, tool, opts)
     end)

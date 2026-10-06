@@ -151,6 +151,7 @@ defmodule Normandy.DSL.Workflow do
                          ],
                          context: [
                            type: {:custom, Normandy.Options, :plain_map, []},
+                           type_doc: "`t:map/0`",
                            default: %{},
                            doc: "A context map the steps share."
                          ]

@@ -34,7 +34,13 @@ defmodule Normandy.Coordination.Pattern do
         |> Pattern.ok!(default: "EMPTY")
   """
 
+  alias Normandy.Options
+
   @type result :: {:ok, term()} | {:error, term()}
+
+  @default_opts_schema NimbleOptions.new!(
+                         default: [type: :any, doc: "Returned when the result does not match."]
+                       )
 
   @doc """
   Returns true if the result is `{:ok, _}`.
@@ -87,7 +93,7 @@ defmodule Normandy.Coordination.Pattern do
 
   ## Options
 
-  - `:default` - Value to return if result is not `{:ok, value}` (default: nil)
+  #{Options.docs(@default_opts_schema)}
 
   ## Examples
 
@@ -101,9 +107,14 @@ defmodule Normandy.Coordination.Pattern do
       nil
   """
   @spec ok!(result(), keyword()) :: term()
-  def ok!(result, opts \\ [])
-  def ok!({:ok, value}, _opts), do: value
-  def ok!(_result, opts), do: Keyword.get(opts, :default)
+  def ok!(result, opts \\ []) do
+    opts = Options.validate!(opts, @default_opts_schema, {__MODULE__, :ok!, 2})
+
+    case result do
+      {:ok, value} -> value
+      _other -> Keyword.get(opts, :default)
+    end
+  end
 
   @doc """
   Extracts the error reason from an `{:error, reason}` tuple.
@@ -126,7 +137,7 @@ defmodule Normandy.Coordination.Pattern do
 
   ## Options
 
-  - `:default` - Value to return if result is not `{:error, reason}` (default: nil)
+  #{Options.docs(@default_opts_schema)}
 
   ## Examples
 
@@ -140,9 +151,14 @@ defmodule Normandy.Coordination.Pattern do
       nil
   """
   @spec error!(result(), keyword()) :: term()
-  def error!(result, opts \\ [])
-  def error!({:error, reason}, _opts), do: reason
-  def error!(_result, opts), do: Keyword.get(opts, :default)
+  def error!(result, opts \\ []) do
+    opts = Options.validate!(opts, @default_opts_schema, {__MODULE__, :error!, 2})
+
+    case result do
+      {:error, reason} -> reason
+      _other -> Keyword.get(opts, :default)
+    end
+  end
 
   @doc """
   Filters a list of results to only include successful ones.

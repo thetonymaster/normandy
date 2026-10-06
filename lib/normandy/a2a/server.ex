@@ -29,35 +29,52 @@ defmodule Normandy.A2A.Server do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.BaseIOSchema
+  alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
   alias Normandy.Tool
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
+  @build_agent_card_opts_schema NimbleOptions.new!(
+                                  name: [type: :string, required: true, doc: "The agent's name."],
+                                  description: [
+                                    type: :string,
+                                    required: true,
+                                    doc: "What the agent does."
+                                  ],
+                                  url: [type: :string, doc: "The A2A endpoint URL."],
+                                  version: [type: :string, doc: "The agent's version."],
+                                  provider_url: [type: :string, doc: "The provider's URL."],
+                                  provider_org: [
+                                    type: :string,
+                                    doc:
+                                      "The provider's organization (used with `:provider_url`)."
+                                  ],
+                                  expose_tools: [
+                                    type: {:or, [{:list, :string}, {:in, [:all]}]},
+                                    default: [],
+                                    doc:
+                                      "Tool names to list as skills in the public card, or " <>
+                                        "`:all`. By default none, so an internal or privileged " <>
+                                        "tool is not advertised unless you choose to."
+                                  ]
+                                )
+
   @doc """
   Builds a `Claudio.A2A.AgentCard` from a Normandy agent configuration.
 
   Introspects registered tools to generate skill descriptions.
 
-  ## Required Options
+  ## Options
 
-    - `:name` - Agent name
-    - `:description` - Agent description
-
-  ## Optional
-
-    - `:url` - A2A endpoint URL
-    - `:version` - Agent version
-    - `:provider_url` - Provider URL
-    - `:provider_org` - Provider organization name
-    - `:expose_tools` - tool names to list as skills in the public card, or `:all`.
-      Default: none, so an internal or privileged tool is not advertised unless
-      you choose to.
-
+  #{Options.docs(@build_agent_card_opts_schema)}
   """
   @spec build_agent_card(BaseAgentConfig.t(), keyword()) :: Claudio.A2A.AgentCard.t()
   def build_agent_card(%BaseAgentConfig{} = config, opts) do
+    opts =
+      Options.validate!(opts, @build_agent_card_opts_schema, {__MODULE__, :build_agent_card, 2})
+
     name = Keyword.fetch!(opts, :name)
     description = Keyword.fetch!(opts, :description)
 
@@ -84,7 +101,7 @@ defmodule Normandy.A2A.Server do
           AgentCard.add_interface(card, url, "jsonrpc+http", "0.3")
       end
 
-    add_tool_skills(card, config.toolset, Keyword.get(opts, :expose_tools, []))
+    add_tool_skills(card, config.toolset, Keyword.fetch!(opts, :expose_tools))
   end
 
   @doc """

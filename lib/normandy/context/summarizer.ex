@@ -21,6 +21,7 @@ defmodule Normandy.Context.Summarizer do
   alias Normandy.LLM.Request, as: LLMRequest
   alias Normandy.LLM.Response
   alias Normandy.LLMError
+  alias Normandy.Options
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
@@ -42,14 +43,51 @@ defmodule Normandy.Context.Summarizer do
   Conversation to summarize:
   """
 
+  @summary_opts [
+    prompt: [
+      type: :string,
+      doc: "The summarization prompt (default: the built-in prompt, which keeps stated facts)."
+    ],
+    model: [type: :string, doc: "The model to summarize with (default: the agent's model)."],
+    max_tokens: [type: :pos_integer, default: 500, doc: "Maximum tokens for the summary."]
+  ]
+
+  @summarize_messages_opts_schema NimbleOptions.new!(@summary_opts)
+  @compress_conversation_opts_schema NimbleOptions.new!(
+                                       [
+                                         keep_recent: [
+                                           type: :non_neg_integer,
+                                           default: 10,
+                                           doc:
+                                             "Recent messages kept as they are. The kept " <>
+                                               "messages start at a user message: the oldest " <>
+                                               "one among the last `:keep_recent`, or the " <>
+                                               "newest one when none is."
+                                         ],
+                                         summary_role: [
+                                           type: {:in, ["user", "assistant"]},
+                                           default: "user",
+                                           doc:
+                                             "The summary message's role. Not \"system\": the " <>
+                                               "adapter sends the agent's own system prompt and " <>
+                                               "refuses a second one."
+                                         ]
+                                       ] ++ @summary_opts
+                                     )
+  @estimate_savings_opts_schema NimbleOptions.new!(
+                                  summary_tokens: [
+                                    type: :non_neg_integer,
+                                    default: 500,
+                                    doc: "The summary's expected size in tokens."
+                                  ]
+                                )
+
   @doc """
   Summarizes a list of messages using the LLM.
 
   ## Options
 
-  - `:prompt` - Custom summarization prompt (default: built-in prompt)
-  - `:model` - Model to use for summarization (default: from agent config)
-  - `:max_tokens` - Maximum tokens for summary (default: 500)
+  #{Options.docs(@summarize_messages_opts_schema)}
 
   ## Example
 
@@ -64,8 +102,15 @@ defmodule Normandy.Context.Summarizer do
   @spec summarize_messages(struct(), struct(), list(), keyword()) ::
           {:ok, String.t()} | {:error, term()}
   def summarize_messages(client, agent, messages, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        @summarize_messages_opts_schema,
+        {__MODULE__, :summarize_messages, 4}
+      )
+
     prompt = Keyword.get(opts, :prompt, @default_summarization_prompt)
-    max_tokens = Keyword.get(opts, :max_tokens, 500)
+    max_tokens = Keyword.fetch!(opts, :max_tokens)
 
     # Format messages for summarization
     conversation_text = format_messages_for_summary(messages)
@@ -90,12 +135,7 @@ defmodule Normandy.Context.Summarizer do
 
   ## Options
 
-  - `:keep_recent` - Number of recent messages to keep (default: 10). The kept
-    messages start at a user message: the oldest one among the last `:keep_recent`,
-    or the newest one when none is
-  - `:summary_role` - Role for summary message (default: "user"). Keep it out of
-    "system": the adapter sends the agent's own system prompt and refuses a second one
-  - `:max_summary_tokens` - Max tokens for summary (default: 500)
+  #{Options.docs(@compress_conversation_opts_schema)}
 
   ## Example
 
@@ -108,8 +148,15 @@ defmodule Normandy.Context.Summarizer do
   @spec compress_conversation(struct(), struct(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def compress_conversation(client, agent, opts \\ []) do
-    keep_recent = Keyword.get(opts, :keep_recent, 10)
-    summary_role = Keyword.get(opts, :summary_role, "user")
+    opts =
+      Options.validate!(
+        opts,
+        @compress_conversation_opts_schema,
+        {__MODULE__, :compress_conversation, 3}
+      )
+
+    keep_recent = Keyword.fetch!(opts, :keep_recent)
+    summary_role = Keyword.fetch!(opts, :summary_role)
 
     history = AgentMemory.history(agent.memory)
     total_messages = length(history)
@@ -136,6 +183,10 @@ defmodule Normandy.Context.Summarizer do
   @doc """
   Estimates token savings from summarization.
 
+  ## Options
+
+  #{Options.docs(@estimate_savings_opts_schema)}
+
   ## Example
 
       {:ok, savings} = Summarizer.estimate_savings(messages, summary_tokens: 200)
@@ -143,7 +194,10 @@ defmodule Normandy.Context.Summarizer do
   """
   @spec estimate_savings(list(), keyword()) :: {:ok, map()}
   def estimate_savings(messages, opts \\ []) do
-    summary_tokens = Keyword.get(opts, :summary_tokens, 500)
+    opts =
+      Options.validate!(opts, @estimate_savings_opts_schema, {__MODULE__, :estimate_savings, 2})
+
+    summary_tokens = Keyword.fetch!(opts, :summary_tokens)
 
     # Estimate original token count
     original_tokens =
@@ -392,7 +446,12 @@ defmodule Normandy.Context.Summarizer do
     {old_messages, recent_messages} = Enum.split(history, total_messages - keep_recent)
 
     # Summarize old messages
-    case summarize_messages(client, agent, old_messages, opts) do
+    case summarize_messages(
+           client,
+           agent,
+           old_messages,
+           Keyword.take(opts, [:prompt, :model, :max_tokens])
+         ) do
       {:ok, summary} ->
         # Create new memory with summary + recent messages
         new_memory =
