@@ -770,3 +770,11 @@ agents, one input and options, and return:
   `:shared_context`) and checks its specs like `execute/3` (`:id` and `:agent` only; a bad
   one raised a `KeyError` or `FunctionClauseError`); an error message's `payload.error` is the exception's message (was
   `inspect/1` of `{:exception, e, stacktrace}`).
+- `Reactive` keeps its shapes (`race/3` → `{:ok, output}`, `all/3` → `{:ok, %{id => {:ok,
+  output} | {:error, e}}}`, `some/3` → `{:ok, %{id => output}}`, and `{:error, :all_failed |
+  :timeout | :insufficient_successes}`). An agent that exits or runs past `:timeout` is
+  `{:error, %Normandy.TurnError{type: :task_down}}` (was `{:error, {:exit, reason}}`), and an
+  agent struct that exits no longer takes down the caller of `race/3`, `all/3` or `some/3`.
+- `Reactive.race/3` and `some/3` accept `timeout: :infinity` (it raised `ArithmeticError`).
+- `Reactive.some/3` with `count:` above the number of agents raises `ArgumentError` (was
+  `{:error, :count_exceeds_agent_count}`).

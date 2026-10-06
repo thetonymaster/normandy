@@ -3,6 +3,7 @@ defmodule Normandy.Coordination.ReactiveTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.{AgentProcess, Reactive}
+  alias Normandy.TurnError
 
   # Helper to create a test agent
   defp create_test_agent do
@@ -22,7 +23,31 @@ defmodule Normandy.Coordination.ReactiveTest do
     pid
   end
 
+  # An agent whose model call exits (as a timed-out GenServer.call does) instead of raising.
+  defp exiting_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{reply: fn _ -> exit(:boom) end},
+      model: "exiting-model"
+    })
+  end
+
   describe "race/3" do
+    test "an agent that exits is a failure, not an exit of the caller" do
+      test_pid = self()
+
+      assert {:error, :all_failed} =
+               Reactive.race([exiting_agent()], "x",
+                 on_complete: fn id, result -> send(test_pid, {:done, id, result}) end
+               )
+
+      assert_receive {:done, "agent_0", {:error, %TurnError{type: :task_down, reason: :boom}}}
+    end
+
+    test "timeout: :infinity waits for the first success" do
+      assert {:ok, result} = Reactive.race([create_test_agent()], "test", timeout: :infinity)
+      assert is_map(result)
+    end
+
     test "returns first successful result from agents" do
       agents = [create_test_agent(), create_test_agent(), create_test_agent()]
 
@@ -100,13 +125,18 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert %{
                "agent_0" => {:ok, _},
-               "agent_1" => {:error, {:exit, :timeout}},
+               "agent_1" => {:error, %TurnError{type: :task_down, reason: :timeout}},
                "agent_2" => {:ok, _}
              } = results
     end
 
+    test "an agent that exits is reported as a :task_down TurnError" do
+      assert {:ok, %{"agent_0" => {:error, %TurnError{type: :task_down, reason: :boom}}}} =
+               Reactive.all([exiting_agent()], "x")
+    end
+
     test "fail_fast still stops on an agent that times out" do
-      assert {:error, {:exit, :timeout}} =
+      assert {:error, %TurnError{type: :task_down, reason: :timeout}} =
                Reactive.all([stuck_agent(), create_test_agent()], "test",
                  timeout: 100,
                  fail_fast: true
@@ -221,11 +251,27 @@ defmodule Normandy.Coordination.ReactiveTest do
       assert map_size(results) == 3
     end
 
-    test "returns error if count exceeds agent count" do
+    test "a count above the number of agents raises before any agent runs" do
       agents = [create_test_agent(), create_test_agent()]
 
-      assert {:error, :count_exceeds_agent_count} =
-               Reactive.some(agents, "test", count: 5)
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.Reactive.some/3: :count must be at most the " <>
+                     "number of agents (2), got: 5",
+                   fn -> Reactive.some(agents, "test", count: 5) end
+    end
+
+    test "timeout: :infinity waits for the successes" do
+      agents = [create_test_agent(), create_test_agent()]
+
+      assert {:ok, results} = Reactive.some(agents, "test", count: 2, timeout: :infinity)
+      assert map_size(results) == 2
+    end
+
+    test "an agent that exits does not kill the caller" do
+      agents = [exiting_agent(), create_test_agent()]
+
+      assert {:ok, results} = Reactive.some(agents, "test", count: 1)
+      assert [{"agent_1", _}] = Map.to_list(results)
     end
 
     test "calls on_complete callback" do

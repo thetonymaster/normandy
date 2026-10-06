@@ -51,7 +51,9 @@ defmodule Normandy.Coordination.Reactive do
   alias Normandy.TurnError
 
   @type agent_or_pid :: struct() | pid()
-  @type result :: {:ok, term()} | {:error, term()}
+  @type result ::
+          {:ok, term()}
+          | {:error, Exception.t() | :all_failed | :timeout | :insufficient_successes}
 
   @doc """
   Races multiple agents and returns the first successful result.
@@ -164,13 +166,11 @@ defmodule Normandy.Coordination.Reactive do
 
   ## Returns
 
-  - `{:ok, %{agent_id => result}}` - Map of all results. An agent that runs
-    past `:timeout` (the limit applies to each agent) is stopped and appears
-    as `{:error, {:exit, :timeout}}`; one whose task exits otherwise, as
-    `{:error, {:exit, reason}}`
-  - `{:error, reason}` - If fail_fast is true and an agent fails
-  - `{:error, {:exit, reason}}` - If fail_fast is true and an agent exits or
-    times out
+  - `{:ok, %{agent_id => {:ok, output} | {:error, exception}}}` - every agent's result.
+    An agent that runs past `:timeout` (the limit applies to each agent) is stopped and
+    appears as `{:error, %Normandy.TurnError{type: :task_down, reason: :timeout}}`; one
+    that exits, as that `TurnError` with the exit reason
+  - `{:error, exception}` - with `fail_fast: true`, the first failure
   """
   @spec all([agent_or_pid()], term(), keyword()) :: {:ok, %{String.t() => result()}} | result()
   def all(agents, input, opts \\ []) when is_list(agents) do
@@ -215,11 +215,14 @@ defmodule Normandy.Coordination.Reactive do
               {:cont, {:ok, Map.put(acc, agent_id, result)}}
           end
 
+        # Killed past :timeout, or the task died.
         {:exit, {agent_id, reason}}, {:ok, acc} ->
+          error = TurnError.from_reason({:task_down, reason})
+
           if fail_fast do
-            {:halt, {:error, {:exit, reason}}}
+            {:halt, {:error, error}}
           else
-            {:cont, {:ok, Map.put(acc, agent_id, {:error, {:exit, reason}})}}
+            {:cont, {:ok, Map.put(acc, agent_id, {:error, error})}}
           end
       end)
 
@@ -258,6 +261,7 @@ defmodule Normandy.Coordination.Reactive do
   - `{:ok, %{agent_id => result}}` - Map of N successful results
   - `{:error, :insufficient_successes}` - Not enough agents succeeded
   - `{:error, :timeout}` - Timeout reached before N successes
+  - Raises `ArgumentError` when `:count` is above the number of agents.
   """
   @spec some([agent_or_pid()], term(), keyword()) :: {:ok, %{String.t() => term()}} | result()
   def some(agents, input, opts) when is_list(agents) do
@@ -266,7 +270,9 @@ defmodule Normandy.Coordination.Reactive do
     on_complete = Keyword.get(opts, :on_complete)
 
     if count > length(agents) do
-      {:error, :count_exceeds_agent_count}
+      raise ArgumentError,
+            "Normandy.Coordination.Reactive.some/3: :count must be at most the number of " <>
+              "agents (#{length(agents)}), got: #{inspect(count)}"
     else
       parent = self()
       ref = make_ref()
@@ -390,19 +396,24 @@ defmodule Normandy.Coordination.Reactive do
   defp report_kill(result, _run_marks, _timeout, _otel_ctx), do: result
 
   @doc false
-  def execute_agent(agent, input) when is_pid(agent) do
-    # Agent process
-    AgentProcess.run(agent, input)
+  # One agent's result: {:ok, output} or {:error, exception}. A raise (a bug) is logged
+  # and returned; an exit (a timed-out call, a client that exits) is a :task_down
+  # TurnError, so it never takes down the task and, through Task.async's link, the caller.
+  def execute_agent(agent, input) do
+    run_one(agent, input)
+  rescue
+    e -> TurnError.log_raised("Reactive agent", e, __STACKTRACE__)
+  catch
+    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
   end
 
-  def execute_agent(agent, input) do
-    # Agent struct
+  defp run_one(pid, input) when is_pid(pid), do: AgentProcess.run(pid, input)
+
+  defp run_one(agent, input) do
     case BaseAgent.run(agent, prepare_input(input)) do
       {:ok, _updated_agent, response} -> {:ok, response}
       {:error, exception} -> {:error, exception}
     end
-  rescue
-    e -> TurnError.log_raised("Reactive agent", e, __STACKTRACE__)
   end
 
   defp prepare_input(input) when is_map(input) and not is_struct(input) do
@@ -411,6 +422,11 @@ defmodule Normandy.Coordination.Reactive do
 
   defp prepare_input(input) when is_binary(input), do: %{chat_message: input}
   defp prepare_input(input), do: input
+
+  defp remaining(:infinity, _start_time), do: :infinity
+
+  defp remaining(timeout, start_time),
+    do: timeout - (System.monotonic_time(:millisecond) - start_time)
 
   defp await_first_success(ref, total_agents, timeout) do
     start_time = System.monotonic_time(:millisecond)
@@ -424,10 +440,9 @@ defmodule Normandy.Coordination.Reactive do
   end
 
   defp await_first_success_loop(ref, total_agents, failures, start_time, timeout) do
-    elapsed = System.monotonic_time(:millisecond) - start_time
-    remaining_timeout = timeout - elapsed
+    remaining_timeout = remaining(timeout, start_time)
 
-    if remaining_timeout <= 0 do
+    if remaining_timeout != :infinity and remaining_timeout <= 0 do
       {:error, :timeout}
     else
       receive do
@@ -460,10 +475,9 @@ defmodule Normandy.Coordination.Reactive do
   end
 
   defp await_n_successes_loop(ref, count, total, successes, failures, start_time, timeout) do
-    elapsed = System.monotonic_time(:millisecond) - start_time
-    remaining_timeout = timeout - elapsed
+    remaining_timeout = remaining(timeout, start_time)
 
-    if remaining_timeout <= 0 do
+    if remaining_timeout != :infinity and remaining_timeout <= 0 do
       {:error, :timeout}
     else
       receive do
