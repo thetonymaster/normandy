@@ -240,9 +240,9 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     memory = AgentMemory.delete_turn(memory, other_turn_id)
     assert AgentMemory.count_messages(memory) == 0
 
-    assert_raise Normandy.NonExistentTurn, fn ->
-      AgentMemory.delete_turn(memory, other_turn_id)
-    end
+    assert_raise Normandy.TurnNotFoundError,
+                 "no turn #{inspect(other_turn_id)} in this AgentMemory",
+                 fn -> AgentMemory.delete_turn(memory, other_turn_id) end
   end
 
   test "delete_turn re-links survivors around a deleted middle turn" do
@@ -343,7 +343,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     # a and b are gone; c survives. Its parent walked up into the cycle, so no
     # surviving ancestor exists -> nil.
     assert AgentMemory.count_messages(result) == 1
-    assert AgentMemory.get_entry(result, "c").parent_id == nil
+    assert AgentMemory.fetch_entry!(result, "c").parent_id == nil
     assert result.head == "c"
   end
 
@@ -651,6 +651,27 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       assert_raise ArgumentError, ~r/unsupported dump version 99/, fn ->
         AgentMemory.load(dump)
       end
+    end
+  end
+
+  test "fetch_entry/2 and fetch_entry!/2" do
+    memory =
+      AgentMemory.new_memory()
+      |> AgentMemory.initialize_turn()
+      |> AgentMemory.add_message("user", %{c: "a"})
+
+    id = memory.head
+
+    assert {:ok, %Normandy.Components.AgentMemory.Entry{role: "user"}} =
+             AgentMemory.fetch_entry(memory, id)
+
+    assert :error = AgentMemory.fetch_entry(memory, "missing")
+
+    assert %Normandy.Components.AgentMemory.Entry{role: "user"} =
+             AgentMemory.fetch_entry!(memory, id)
+
+    assert_raise KeyError, ~s(no entry "missing" in this AgentMemory), fn ->
+      AgentMemory.fetch_entry!(memory, "missing")
     end
   end
 end

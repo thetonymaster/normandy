@@ -133,16 +133,33 @@ defmodule Normandy.Components.AgentMemory do
   @spec entries(t()) :: %{String.t() => Entry.t()}
   def entries(%__MODULE__{entries: entries}), do: entries
 
-  @spec get_entry(t(), String.t()) :: Entry.t() | nil
-  def get_entry(%__MODULE__{entries: entries}, id), do: Map.get(entries, id)
+  @doc "Looks up the entry with id `id`: `{:ok, entry}` or `:error`."
+  @spec fetch_entry(t(), String.t()) :: {:ok, Entry.t()} | :error
+  def fetch_entry(%__MODULE__{entries: entries}, id), do: Map.fetch(entries, id)
 
+  @doc """
+  Like `fetch_entry/2`, but returns the entry or raises `KeyError` (its message names the
+  id, never the memory).
+  """
+  @spec fetch_entry!(t(), String.t()) :: Entry.t()
+  def fetch_entry!(%__MODULE__{entries: entries}, id) do
+    case Map.fetch(entries, id) do
+      {:ok, entry} -> entry
+      :error -> raise KeyError, key: id, message: "no entry #{inspect(id)} in this AgentMemory"
+    end
+  end
+
+  @doc """
+  Removes every entry of turn `turn_id`, re-linking the survivors around it. Raises
+  `Normandy.TurnNotFoundError` when the memory has no entry of that turn.
+  """
   @spec delete_turn(t(), String.t()) :: t()
   def delete_turn(%__MODULE__{} = memory, turn_id) do
     deleted =
       for {id, %Entry{turn_id: ^turn_id}} <- memory.entries, into: MapSet.new(), do: id
 
     if MapSet.size(deleted) == 0 do
-      raise Normandy.NonExistentTurn, value: turn_id
+      raise Normandy.TurnNotFoundError, turn_id: turn_id
     end
 
     entries =

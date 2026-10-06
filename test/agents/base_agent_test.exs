@@ -52,25 +52,17 @@ defmodule NormandyTest.BaseAgentsTest do
     assert response == %Normandy.Agents.BaseAgentOutputSchema{}
   end
 
-  test "get context provider", %{agent: agent = %BaseAgentConfig{prompt_specification: prompt}} do
-    mock_provider = %ContextProvider{}
+  test "fetch_context_provider/2 and fetch_context_provider!/2", %{agent: agent} do
+    provider = %ContextProvider{}
+    agent = BaseAgent.register_context_provider(agent, :ctx, provider)
 
-    context_providers =
-      prompt
-      |> Map.get(:context_providers)
-      |> Map.put(:ctx, mock_provider)
+    assert {:ok, ^provider} = BaseAgent.fetch_context_provider(agent, :ctx)
+    assert :error = BaseAgent.fetch_context_provider(agent, :not_exists)
+    assert BaseAgent.fetch_context_provider!(agent, :ctx) == provider
 
-    prompt = Map.put(prompt, :context_providers, context_providers)
-    agent = Map.put(agent, :prompt_specification, prompt)
-
-    ctx = BaseAgent.get_context_provider(agent, :ctx)
-    assert ctx == mock_provider
-
-    assert_raise Normandy.NonExistentContextProvider,
-                 "context provider :not_exists does not exist",
-                 fn ->
-                   BaseAgent.get_context_provider(agent, :not_exists)
-                 end
+    assert_raise Normandy.ContextProviderNotFoundError,
+                 "no context provider :not_exists; registered: [:ctx]",
+                 fn -> BaseAgent.fetch_context_provider!(agent, :not_exists) end
   end
 
   test "register context provider", %{agent: agent} do

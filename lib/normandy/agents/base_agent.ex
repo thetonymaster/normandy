@@ -1900,19 +1900,33 @@ defmodule Normandy.Agents.BaseAgent do
   defp log_agent_name(%BaseAgentConfig{name: name}) when is_atom(name), do: Atom.to_string(name)
   defp log_agent_name(%BaseAgentConfig{}), do: "unnamed_agent"
 
-  @spec get_context_provider(BaseAgentConfig.t(), atom()) :: struct()
-  def get_context_provider(
-        %BaseAgentConfig{prompt_specification: prompt_specification},
-        provider_name
-      ) do
-    context_provider =
-      Map.get(prompt_specification, :context_providers, nil)
-      |> Map.get(provider_name, nil)
+  @doc """
+  Looks up the context provider registered under `name`: `{:ok, provider}` or `:error`.
+  """
+  @spec fetch_context_provider(BaseAgentConfig.t(), atom()) :: {:ok, struct()} | :error
+  def fetch_context_provider(
+        %BaseAgentConfig{prompt_specification: %{context_providers: providers}},
+        name
+      ),
+      do: Map.fetch(providers, name)
 
-    if context_provider == nil do
-      raise Normandy.NonExistentContextProvider, value: provider_name
-    else
-      context_provider
+  @doc """
+  Like `fetch_context_provider/2`, but returns the provider or raises
+  `Normandy.ContextProviderNotFoundError`.
+  """
+  @spec fetch_context_provider!(BaseAgentConfig.t(), atom()) :: struct()
+  def fetch_context_provider!(
+        %BaseAgentConfig{prompt_specification: %{context_providers: providers}},
+        name
+      ) do
+    case Map.fetch(providers, name) do
+      {:ok, provider} ->
+        provider
+
+      :error ->
+        raise Normandy.ContextProviderNotFoundError,
+          name: name,
+          registered: providers |> Map.keys() |> Enum.sort()
     end
   end
 
@@ -1960,21 +1974,23 @@ defmodule Normandy.Agents.BaseAgent do
     do: %{config | toolset: Toolset.register(toolset, tool, opts)}
 
   @doc """
-  Gets a tool from the agent's tool registry by name.
-
-  ## Examples
-
-      iex> agent = BaseAgent.register_tool(agent, %Calculator{})
-      iex> BaseAgent.get_tool(agent, "calculator")
-      {:ok, %Calculator{}}
-
+  Looks up a registered tool by name: `{:ok, tool}` or `:error` (also when no tool is
+  registered).
   """
-  @spec get_tool(BaseAgentConfig.t(), String.t()) :: {:ok, struct()} | :error
-  def get_tool(%BaseAgentConfig{toolset: nil}, _tool_name), do: :error
+  @spec fetch_tool(BaseAgentConfig.t(), String.t()) :: {:ok, struct()} | :error
+  def fetch_tool(%BaseAgentConfig{} = config, tool_name),
+    do: Toolset.fetch(toolset_of(config), tool_name)
 
-  def get_tool(%BaseAgentConfig{toolset: registry}, tool_name) do
-    Toolset.fetch(registry, tool_name)
-  end
+  @doc """
+  Like `fetch_tool/2`, but returns the tool or raises `Normandy.ToolNotFoundError`.
+  """
+  @spec fetch_tool!(BaseAgentConfig.t(), String.t()) :: struct()
+  def fetch_tool!(%BaseAgentConfig{} = config, tool_name),
+    do: Toolset.fetch!(toolset_of(config), tool_name)
+
+  # No toolset yet is an empty one: the lookups answer the same way.
+  defp toolset_of(%BaseAgentConfig{toolset: nil}), do: Toolset.new([])
+  defp toolset_of(%BaseAgentConfig{toolset: toolset}), do: toolset
 
   @doc """
   Lists all tools available to the agent.

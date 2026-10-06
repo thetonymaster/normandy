@@ -56,7 +56,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - `stream/3` - like `run/3`, streaming `%Normandy.Components.StreamEvent{}` to a 1-arity callback; returns the output schema like `run/3`
   - `get_response/2` - Get LLM response using prompt specification
   - `reset_memory/1` - Reset conversation to initial state
-  - Context provider management: `register_context_provider/3`, `get_context_provider/2`, `delete_context_provider/2`
+  - Context provider management: `register_context_provider/3`, `fetch_context_provider/2` and `fetch_context_provider!/2`, `delete_context_provider/2`
 
 - **`Normandy.Agents.BaseAgentConfig`** - Agent state container
   - Stores: input/output schemas, memory, prompt specification, LLM client/model, optional temperature, max_tokens, resolved context window, and the option groups `retry` (Retry options or nil), `circuit_breaker` (breaker options or nil; `circuit_breaker_pid` is the node-local breaker init/1 started) and `guardrails` (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`, read with `BaseAgentConfig.guardrail/2`)

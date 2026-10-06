@@ -12,28 +12,33 @@ defmodule Normandy.CastError do
   end
 end
 
-# credo:disable-for-next-line Credo.Check.Consistency.ExceptionNames
-defmodule Normandy.NonExistentTurn do
-  defexception [:message, :value]
+defmodule Normandy.TurnNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Components.AgentMemory.delete_turn/2` when no entry in the memory
+  belongs to the turn. `:turn_id` is the id that was asked for.
+  """
+  defexception [:turn_id]
 
-  def exception(opts) do
-    value = Keyword.fetch!(opts, :value)
+  @type t :: %__MODULE__{turn_id: String.t()}
 
-    msg = opts[:message] || "turn #{inspect(value)} does not exist"
-    %__MODULE__{message: msg, value: value}
-  end
+  @impl true
+  def message(%__MODULE__{turn_id: turn_id}),
+    do: "no turn #{inspect(turn_id)} in this AgentMemory"
 end
 
-# credo:disable-for-next-line Credo.Check.Consistency.ExceptionNames
-defmodule Normandy.NonExistentContextProvider do
-  defexception [:message, :value]
+defmodule Normandy.ContextProviderNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Agents.BaseAgent.fetch_context_provider!/2` when the agent's prompt
+  specification has no context provider under the name. `:name` is the name that was
+  asked for; `:registered` lists the names that exist, sorted.
+  """
+  defexception [:name, registered: []]
 
-  def exception(opts) do
-    value = Keyword.fetch!(opts, :value)
+  @type t :: %__MODULE__{name: atom(), registered: [atom()]}
 
-    msg = opts[:message] || "context provider #{inspect(value)} does not exist"
-    %__MODULE__{message: msg, value: value}
-  end
+  @impl true
+  def message(%__MODULE__{name: name, registered: registered}),
+    do: "no context provider #{inspect(name)}; registered: #{inspect(registered)}"
 end
 
 defmodule Normandy.InvalidChangesetError do

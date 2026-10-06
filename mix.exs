@@ -144,8 +144,15 @@ defmodule Normandy.MixProject do
           Errors: [
             Normandy.LLMError,
             Normandy.TurnError,
+            Normandy.OrchestrationError,
             Normandy.ToolNotFoundError,
-            Normandy.OrchestrationError
+            Normandy.TurnNotFoundError,
+            Normandy.ContextProviderNotFoundError,
+            Normandy.HookHaltError,
+            Normandy.ModelCatalogError,
+            Normandy.Schema.ValidationError,
+            Normandy.CastError,
+            Normandy.InvalidChangesetError
           ],
           Telemetry: [
             Normandy.Telemetry,

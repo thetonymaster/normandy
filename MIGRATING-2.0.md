@@ -780,3 +780,17 @@ agents, one input and options, and return:
 - `Reactive.race/3` and `some/3` accept `timeout: :infinity` (it raised `ArithmeticError`).
 - `Reactive.some/3` with `count:` above the number of agents raises `ArgumentError` (was
   `{:error, :count_exceeds_agent_count}`).
+
+## 28. Lookups are `fetch_*`; two exceptions renamed
+
+A lookup returns `{:ok, value}` or `:error`; its `!` variant returns the value or raises.
+
+| 1.x | 2.0 |
+|---|---|
+| `BaseAgent.get_tool(agent, name)` → `{:ok, tool} \| :error` | `BaseAgent.fetch_tool(agent, name)` (same result); `fetch_tool!/2` returns the tool or raises `Normandy.ToolNotFoundError` |
+| `BaseAgent.get_context_provider(agent, name)` → the provider, or raises `Normandy.NonExistentContextProvider` | `BaseAgent.fetch_context_provider(agent, name)` → `{:ok, provider} \| :error`; `fetch_context_provider!/2` returns it or raises `Normandy.ContextProviderNotFoundError` |
+| `AgentMemory.get_entry(memory, id)` → the entry or `nil` | `AgentMemory.fetch_entry(memory, id)` → `{:ok, entry} \| :error`; `fetch_entry!/2` returns it or raises `KeyError` |
+| `rescue Normandy.NonExistentTurn` (`AgentMemory.delete_turn/2`) | `rescue Normandy.TurnNotFoundError`; field `:turn_id` (was `:value`) |
+| `rescue Normandy.NonExistentContextProvider` | `rescue Normandy.ContextProviderNotFoundError`; fields `:name` and `:registered` (was `:value`) |
+
+The renamed exceptions build their own message and take no `:message` option.

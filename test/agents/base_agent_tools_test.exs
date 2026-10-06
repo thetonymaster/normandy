@@ -22,7 +22,7 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
       agent = BaseAgent.register_tool(agent, tool)
 
       assert BaseAgent.has_tools?(agent)
-      assert {:ok, ^tool} = BaseAgent.get_tool(agent, "calculator")
+      assert {:ok, ^tool} = BaseAgent.fetch_tool(agent, "calculator")
     end
 
     test "registers multiple tools", %{agent: agent} do
@@ -52,21 +52,35 @@ defmodule NormandyTest.Agents.BaseAgentToolsTest do
     end
   end
 
-  describe "BaseAgent.get_tool/2" do
+  describe "BaseAgent.fetch_tool/2 and fetch_tool!/2" do
     test "retrieves registered tool", %{agent: agent} do
       tool = %Calculator{}
       agent = BaseAgent.register_tool(agent, tool)
 
-      assert {:ok, ^tool} = BaseAgent.get_tool(agent, "calculator")
+      assert {:ok, ^tool} = BaseAgent.fetch_tool(agent, "calculator")
+      assert BaseAgent.fetch_tool!(agent, "calculator") == tool
     end
 
     test "returns error for unregistered tool", %{agent: agent} do
-      assert :error = BaseAgent.get_tool(agent, "nonexistent")
+      assert :error = BaseAgent.fetch_tool(agent, "nonexistent")
     end
 
     test "returns error when no registry exists", %{agent: agent} do
       assert agent.toolset == nil
-      assert :error = BaseAgent.get_tool(agent, "calculator")
+      assert :error = BaseAgent.fetch_tool(agent, "calculator")
+    end
+
+    test "fetch_tool!/2 raises Normandy.ToolNotFoundError, with or without a toolset", %{
+      agent: agent
+    } do
+      assert agent.toolset == nil
+      assert_raise Normandy.ToolNotFoundError, fn -> BaseAgent.fetch_tool!(agent, "missing") end
+
+      with_tool = BaseAgent.register_tool(agent, %Calculator{})
+
+      assert_raise Normandy.ToolNotFoundError, fn ->
+        BaseAgent.fetch_tool!(with_tool, "missing")
+      end
     end
   end
 

@@ -42,7 +42,7 @@ defmodule NormandyTest.Components.DateTimeProviderTest do
       provider = %DateTimeProvider{}
 
       agent = BaseAgent.register_context_provider(agent, :datetime, provider)
-      retrieved = BaseAgent.get_context_provider(agent, :datetime)
+      retrieved = BaseAgent.fetch_context_provider!(agent, :datetime)
 
       assert retrieved == provider
       assert ContextProvider.title(retrieved) == "Current Date"

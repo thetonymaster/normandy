@@ -144,7 +144,7 @@ defmodule NormandyTest.Components.ContextProviderTest do
       provider = %DateTimeProvider{format: :long}
 
       agent = BaseAgent.register_context_provider(agent, :datetime, provider)
-      retrieved = BaseAgent.get_context_provider(agent, :datetime)
+      retrieved = BaseAgent.fetch_context_provider!(agent, :datetime)
 
       assert retrieved == provider
       assert ContextProvider.title(retrieved) == "Current Date and Time"
@@ -165,9 +165,11 @@ defmodule NormandyTest.Components.ContextProviderTest do
       agent = BaseAgent.register_context_provider(agent, :user, provider)
       agent = BaseAgent.delete_context_provider(agent, :user)
 
-      assert_raise Normandy.NonExistentContextProvider, fn ->
-        BaseAgent.get_context_provider(agent, :user)
-      end
+      assert :error = BaseAgent.fetch_context_provider(agent, :user)
+
+      assert_raise Normandy.ContextProviderNotFoundError,
+                   "no context provider :user; registered: []",
+                   fn -> BaseAgent.fetch_context_provider!(agent, :user) end
     end
   end
 end
