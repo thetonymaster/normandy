@@ -6,6 +6,7 @@ defmodule Normandy.Behaviours.MemoryStore.InMemory do
   """
   @behaviour Normandy.Behaviours.MemoryStore
 
+  alias Normandy.Behaviours.MemoryStore
   alias Normandy.Behaviours.MemoryStore.Docs
   alias Normandy.Options
 
@@ -32,8 +33,10 @@ defmodule Normandy.Behaviours.MemoryStore.InMemory do
   def get(pid, ns, path), do: Agent.get(pid, &Docs.get(Map.get(&1, ns, %{}), path))
 
   @impl true
-  def put(pid, ns, path, content, expected),
-    do: update(pid, ns, &Docs.put(&1, path, content, expected))
+  def put(pid, ns, path, content, expected, limits \\ []) do
+    limits = MemoryStore.validate_limits!(limits, __MODULE__)
+    update(pid, ns, &Docs.put(&1, path, content, expected, limits))
+  end
 
   @impl true
   def delete(pid, ns, path, expected), do: update(pid, ns, &Docs.delete(&1, path, expected))

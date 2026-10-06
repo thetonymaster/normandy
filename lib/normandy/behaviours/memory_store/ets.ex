@@ -8,6 +8,7 @@ defmodule Normandy.Behaviours.MemoryStore.ETS do
 
   use GenServer
 
+  alias Normandy.Behaviours.MemoryStore
   alias Normandy.Behaviours.MemoryStore.Docs
   alias Normandy.Options
 
@@ -34,8 +35,10 @@ defmodule Normandy.Behaviours.MemoryStore.ETS do
   def get({_pid, table}, ns, path), do: Docs.get(docs(table, ns), path)
 
   @impl Normandy.Behaviours.MemoryStore
-  def put({pid, _}, ns, path, content, expected),
-    do: GenServer.call(pid, {:apply, ns, :put, [path, content, expected]})
+  def put({pid, _}, ns, path, content, expected, limits \\ []) do
+    limits = MemoryStore.validate_limits!(limits, __MODULE__)
+    GenServer.call(pid, {:apply, ns, :put, [path, content, expected, limits]})
+  end
 
   @impl Normandy.Behaviours.MemoryStore
   def delete({pid, _}, ns, path, expected),

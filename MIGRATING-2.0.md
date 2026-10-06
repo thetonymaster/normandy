@@ -1089,6 +1089,22 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - A tool that returns a binary that is not valid UTF-8 gets an error result
   (`"the tool ran, but its output is not valid UTF-8 text"`); 1.x stored the bytes, and every
   later request of the session failed to encode.
+- The memory tool's namespace caps are exact. `max_namespace_bytes` (default 1_000_000)
+  is checked by the store in the same atomic step as the write, so concurrent writers can
+  no longer exceed it together, and it counts every document (it used to sum only the first
+  1,000 a listing returned). A new `max_namespace_documents` (default 1000, `nil` = no cap)
+  caps the number of files; a `create` past it returns
+  `Error: memory is full: creating <path> would make <n> files; the limit is <max>. Delete files first.`
+  A write that does not grow the namespace is always allowed, so a namespace over a
+  lowered cap can be shortened.
+- `Normandy.Behaviours.MemoryStore` (new in 2.0): `put` takes a sixth argument, `limits`
+  (`[max_bytes:, max_documents:]`), and returns `{:error, {:namespace_full, :bytes |
+  :documents, would_be}}` when a write would exceed one; `MemoryStore.check_limits/3` is
+  the rule. A custom store written against a 2.0 pre-release implements `put/6`. The
+  Postgres migration adds the table `normandy_memory_namespaces` (each namespace's bytes
+  and document count); a database migrated by a pre-release drops and re-runs the memory
+  migration. Write memory documents only through the store: a row written by other SQL is
+  not counted. Redis keeps a `:bytes` counter key beside each namespace's index.
 
 ## New, non-breaking
 

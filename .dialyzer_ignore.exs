@@ -19,6 +19,10 @@
   # Ecto create/index/drop calls discard their return values; :unmatched_returns is just noisy here.
   {"lib/normandy/behaviours/session_store/postgres/migration.ex", :unmatched_return},
 
+  # behaviours/memory_store/postgres/migration.ex up/0 + down/0: the same idiomatic Ecto
+  # create/drop calls, two tables (documents and the namespace counters).
+  {"lib/normandy/behaviours/memory_store/postgres/migration.ex", :unmatched_return},
+
   # options.ex describe/2: NimbleOptions.ValidationError types :key as atom(), but an
   # unknown-option error puts the list of unknown keys there (nimble_options 1.1.1,
   # validate_unknown_options/2), so the is_list/1 guard Dialyzer calls impossible is the

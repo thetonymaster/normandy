@@ -90,5 +90,53 @@ defmodule Normandy.Behaviours.MemoryStore.PostgresTest do
     end
   end
 
+  defp totals(ns) do
+    %{rows: rows} =
+      Normandy.TestRepo.query!(
+        "SELECT bytes, documents FROM normandy_memory_namespaces WHERE namespace = $1",
+        [ns]
+      )
+
+    rows
+  end
+
+  test "the namespace counter row follows every write and goes with the namespace" do
+    repo = Normandy.TestRepo
+    ns = "counters-#{System.unique_integer([:positive])}"
+
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "12345", :new)
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/b/c", "日本", :new)
+    assert totals(ns) == [[11, 2]]
+
+    {:ok, 2} = Postgres.put(repo, ns, "/memories/a", "1", 1)
+    assert totals(ns) == [[7, 2]]
+
+    {:ok, 1} = Postgres.rename(repo, ns, "/memories/b", "/memories/d")
+    assert totals(ns) == [[7, 2]]
+
+    :ok = Postgres.delete(repo, ns, "/memories/a", 2)
+    assert totals(ns) == [[6, 1]]
+
+    {:ok, 1} = Postgres.delete_tree(repo, ns, "/memories/d")
+    assert totals(ns) == [[0, 0]]
+
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "x", :new)
+    :ok = Postgres.delete_namespace(repo, ns)
+    assert totals(ns) == []
+  end
+
+  test "a refused put rolls back: no document and no counter change" do
+    repo = Normandy.TestRepo
+    ns = "refused-#{System.unique_integer([:positive])}"
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "12345", :new)
+
+    assert {:error, {:namespace_full, :bytes, 10}} =
+             Postgres.put(repo, ns, "/memories/b", "12345", :new, max_bytes: 9)
+
+    assert {:error, :conflict} = Postgres.put(repo, ns, "/memories/a", "x", :new)
+    assert :not_found = Postgres.get(repo, ns, "/memories/b")
+    assert totals(ns) == [[5, 1]]
+  end
+
   use Normandy.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.Postgres
 end

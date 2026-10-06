@@ -19,8 +19,19 @@ if Code.ensure_loaded?(Ecto.Migration) do
         add(:version, :integer, null: false)
         add(:updated_at, :utc_datetime_usec, null: false)
       end
+
+      # Each namespace's content bytes and document count, kept by the store's writes
+      # for put/6's limits.
+      create table(:normandy_memory_namespaces, primary_key: false) do
+        add(:namespace, :text, primary_key: true)
+        add(:bytes, :bigint, null: false, default: 0)
+        add(:documents, :integer, null: false, default: 0)
+      end
     end
 
-    def down, do: drop(table(:normandy_memory_documents))
+    def down do
+      drop(table(:normandy_memory_namespaces))
+      drop(table(:normandy_memory_documents))
+    end
   end
 end

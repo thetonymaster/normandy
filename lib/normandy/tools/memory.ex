@@ -15,16 +15,19 @@ defmodule Normandy.Tools.Memory do
 
   Options (`new/1`): `:store` (required, `{module, handle}`), `:namespace_key`, `:mounts`
   (`%{"/memories/org" => {"acme/org-kb", :read_only | :read_write}}`),
-  `:max_document_bytes` (100_000), `:max_namespace_bytes` (1_000_000), `:max_view_chars`
-  (16_000), `:max_cas_retries` (3), `:telemetry_include_paths` (false).
+  `:max_document_bytes` (100_000), `:max_namespace_bytes` (1_000_000),
+  `:max_namespace_documents` (1000), `:max_view_chars` (16_000), `:max_cas_retries` (3),
+  `:telemetry_include_paths` (false).
 
-  `:max_namespace_bytes` (a positive integer, or `nil` for no cap) bounds the total size of
-  the documents in a namespace: `create`, `str_replace` and `insert` that would push the
-  namespace past it are refused with error type `:namespace_full`. The stores keep a
-  namespace as one unit, so its cost grows with its size. The cap is approximate: two
-  concurrent writers can each pass the check and together exceed it, and it only sees the
-  first #{Normandy.Behaviours.MemoryStore.list_limit()} documents of a namespace (the store's list limit), so a
-  namespace with more is under-counted. A mount's cap applies to the mount's namespace.
+  `:max_namespace_bytes` bounds the total content bytes of a namespace's documents and
+  `:max_namespace_documents` their number; each is a positive integer, or `nil` for no
+  cap, and they apply independently. A `create`, `str_replace` or `insert` that would push
+  the namespace past either is refused with error type `:namespace_full` and writes
+  nothing. The store checks the caps in the same atomic step as the write
+  (`Normandy.Behaviours.MemoryStore` `put/6`), so they hold under concurrent writers and
+  count every document. A write that does not grow the namespace is always allowed, so a
+  namespace over a lowered cap can still be shortened. A mount's caps apply to the
+  mount's namespace.
 
   Memory carries content across sessions, so it is a prompt-injection channel that
   persists: keep a namespace no wider than the trust boundary of the people whose input
@@ -43,6 +46,7 @@ defmodule Normandy.Tools.Memory do
             mounts: %{},
             max_document_bytes: 100_000,
             max_namespace_bytes: 1_000_000,
+            max_namespace_documents: 1000,
             max_view_chars: 16_000,
             max_cas_retries: 3,
             telemetry_include_paths: false
@@ -53,6 +57,7 @@ defmodule Normandy.Tools.Memory do
           mounts: %{String.t() => {String.t(), :read_only | :read_write}},
           max_document_bytes: pos_integer(),
           max_namespace_bytes: pos_integer() | nil,
+          max_namespace_documents: pos_integer() | nil,
           max_view_chars: pos_integer(),
           max_cas_retries: non_neg_integer(),
           telemetry_include_paths: boolean()
@@ -64,6 +69,7 @@ defmodule Normandy.Tools.Memory do
     :mounts,
     :max_document_bytes,
     :max_namespace_bytes,
+    :max_namespace_documents,
     :max_view_chars,
     :max_cas_retries,
     :telemetry_include_paths
@@ -93,13 +99,16 @@ defmodule Normandy.Tools.Memory do
     check!(:namespace_key, tool.namespace_key, is_atom(tool.namespace_key), "an atom")
     for key <- [:max_document_bytes, :max_view_chars], do: positive!(key, Map.fetch!(tool, key))
 
-    check!(
-      :max_namespace_bytes,
-      tool.max_namespace_bytes,
-      is_nil(tool.max_namespace_bytes) or
-        (is_integer(tool.max_namespace_bytes) and tool.max_namespace_bytes > 0),
-      "a positive integer or nil"
-    )
+    for key <- [:max_namespace_bytes, :max_namespace_documents] do
+      value = Map.fetch!(tool, key)
+
+      check!(
+        key,
+        value,
+        is_nil(value) or (is_integer(value) and value > 0),
+        "a positive integer or nil"
+      )
+    end
 
     check!(
       :max_cas_retries,

@@ -6,6 +6,9 @@ if Code.ensure_loaded?(Redix) do
     write is one Lua script, so compare-and-set, rename and delete_tree are atomic. All of
     a namespace's keys share the `{namespace}` hash tag, so they live in one Redis Cluster
     slot; the scripts derive document keys from the declared index key's prefix.
+    A namespace's content bytes live in a counter key beside its index (the document
+    count is the index's size), kept by the same scripts, so `put/6`'s limits are checked
+    in the write's script.
 
     The handle is `{conn, prefix}`; the host owns the Redix connection.
     """
@@ -23,24 +26,41 @@ if Code.ensure_loaded?(Redix) do
                        prefix: [type: :string, doc: "The key prefix (default: a unique one)."]
                      )
 
+    # KEYS: index, document, bytes. ARGV: path, content, expected, updated_at, max_bytes,
+    # max_documents ('' = no limit). The limits rule is MemoryStore.check_limits/3's.
     @put """
     local cur = redis.call('HGET', KEYS[2], 'version')
     local exp = ARGV[3]
     if exp == 'new' and cur then return -1 end
     if exp ~= 'new' and exp ~= 'any' and cur ~= exp then return -1 end
+    local was_bytes = tonumber(redis.call('GET', KEYS[3]) or '0')
+    local was_docs = redis.call('ZCARD', KEYS[1])
+    local bytes = was_bytes + string.len(ARGV[2])
+    local docs = was_docs
     local v = 1
-    if cur then v = tonumber(cur) + 1 end
+    if cur then
+      v = tonumber(cur) + 1
+      bytes = bytes - redis.call('HSTRLEN', KEYS[2], 'content')
+    else
+      docs = docs + 1
+    end
+    if ARGV[5] ~= '' and bytes > was_bytes and bytes > tonumber(ARGV[5]) then return {-2, bytes} end
+    if ARGV[6] ~= '' and docs > was_docs and docs > tonumber(ARGV[6]) then return {-3, docs} end
     redis.call('HSET', KEYS[2], 'content', ARGV[2], 'version', v, 'updated_at', ARGV[4])
     redis.call('ZADD', KEYS[1], 0, ARGV[1])
+    redis.call('SET', KEYS[3], bytes)
     return v
     """
 
+    # KEYS: index, document, bytes.
     @delete """
     local cur = redis.call('HGET', KEYS[2], 'version')
     if not cur then return 0 end
     if ARGV[2] ~= 'any' and cur ~= ARGV[2] then return -1 end
+    redis.call('DECRBY', KEYS[3], redis.call('HSTRLEN', KEYS[2], 'content'))
     redis.call('DEL', KEYS[2])
     redis.call('ZREM', KEYS[1], ARGV[1])
+    if redis.call('ZCARD', KEYS[1]) == 0 then redis.call('DEL', KEYS[3]) end
     return 1
     """
 
@@ -58,15 +78,21 @@ if Code.ensure_loaded?(Redix) do
     return out
     """
 
+    # KEYS: index, bytes.
     @delete_tree """
     local n = 0
+    local freed = 0
     local function del(p)
-      redis.call('DEL', ARGV[1] .. p)
+      local k = ARGV[1] .. p
+      freed = freed + redis.call('HSTRLEN', k, 'content')
+      redis.call('DEL', k)
       redis.call('ZREM', KEYS[1], p)
       n = n + 1
     end
     if redis.call('ZSCORE', KEYS[1], ARGV[2]) then del(ARGV[2]) end
     for _, p in ipairs(redis.call('ZRANGEBYLEX', KEYS[1], '[' .. ARGV[2] .. '/', '[' .. ARGV[2] .. '/\\255')) do del(p) end
+    if n > 0 then redis.call('DECRBY', KEYS[2], freed) end
+    if redis.call('ZCARD', KEYS[1]) == 0 then redis.call('DEL', KEYS[2]) end
     return n
     """
 
@@ -90,9 +116,10 @@ if Code.ensure_loaded?(Redix) do
     return #moving
     """
 
+    # KEYS: index, bytes.
     @delete_namespace """
     for _, p in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do redis.call('DEL', ARGV[1] .. p) end
-    redis.call('DEL', KEYS[1])
+    redis.call('DEL', KEYS[1], KEYS[2])
     return 1
     """
 
@@ -161,24 +188,32 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def put({conn, _} = h, ns, path, content, expected) do
+    def put({conn, _} = h, ns, path, content, expected, limits \\ []) do
+      limits = MemoryStore.validate_limits!(limits, __MODULE__)
+
       args = [
         path,
         content,
         expected_arg(expected),
-        Integer.to_string(System.os_time(:microsecond))
+        Integer.to_string(System.os_time(:microsecond)),
+        limit_arg(Keyword.fetch!(limits, :max_bytes)),
+        limit_arg(Keyword.fetch!(limits, :max_documents))
       ]
 
-      case eval(conn, :put, [idx(h, ns), doc(h, ns, path)], args) do
+      case eval(conn, :put, [idx(h, ns), doc(h, ns, path), bytes_key(h, ns)], args) do
         {:ok, -1} -> {:error, :conflict}
-        {:ok, version} -> {:ok, version}
+        {:ok, [-2, bytes]} -> {:error, {:namespace_full, :bytes, bytes}}
+        {:ok, [-3, documents]} -> {:error, {:namespace_full, :documents, documents}}
+        {:ok, version} when is_integer(version) -> {:ok, version}
         {:error, _} = error -> error
       end
     end
 
     @impl true
     def delete({conn, _} = h, ns, path, expected) do
-      case eval(conn, :delete, [idx(h, ns), doc(h, ns, path)], [path, expected_arg(expected)]) do
+      keys = [idx(h, ns), doc(h, ns, path), bytes_key(h, ns)]
+
+      case eval(conn, :delete, keys, [path, expected_arg(expected)]) do
         {:ok, 1} -> :ok
         {:ok, 0} -> :not_found
         {:ok, -1} -> {:error, :conflict}
@@ -188,7 +223,7 @@ if Code.ensure_loaded?(Redix) do
 
     @impl true
     def delete_tree({conn, _} = h, ns, prefix),
-      do: eval(conn, :delete_tree, [idx(h, ns)], [doc_prefix(h, ns), prefix])
+      do: eval(conn, :delete_tree, [idx(h, ns), bytes_key(h, ns)], [doc_prefix(h, ns), prefix])
 
     @impl true
     def rename({conn, _} = h, ns, from, to) do
@@ -202,7 +237,9 @@ if Code.ensure_loaded?(Redix) do
 
     @impl true
     def delete_namespace({conn, _} = h, ns) do
-      with {:ok, 1} <- eval(conn, :delete_namespace, [idx(h, ns)], [doc_prefix(h, ns)]), do: :ok
+      with {:ok, 1} <-
+             eval(conn, :delete_namespace, [idx(h, ns), bytes_key(h, ns)], [doc_prefix(h, ns)]),
+           do: :ok
     end
 
     # EVALSHA first; on NOSCRIPT (a restarted or flushed server) send the source once.
@@ -223,8 +260,12 @@ if Code.ensure_loaded?(Redix) do
     defp expected_arg(:any), do: "any"
     defp expected_arg(v) when is_integer(v), do: Integer.to_string(v)
 
+    defp limit_arg(nil), do: ""
+    defp limit_arg(limit), do: Integer.to_string(limit)
+
     defp idx({_, prefix}, ns), do: "#{prefix}:mem:{#{enc(ns)}}:idx"
     defp doc_prefix({_, prefix}, ns), do: "#{prefix}:mem:{#{enc(ns)}}:doc:"
+    defp bytes_key({_, prefix}, ns), do: "#{prefix}:mem:{#{enc(ns)}}:bytes"
 
     # URL-safe base64 has no `}` or `:`, so a namespace can never alter the key structure
     # or produce an empty hash tag.

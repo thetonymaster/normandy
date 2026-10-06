@@ -13,6 +13,25 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
              "/memories/z/e/2"
   end
 
+  test "check_limits/3: bytes first, then documents; a write that does not grow passes" do
+    lim = [max_bytes: 10, max_documents: 2]
+    assert MemoryStore.check_limits(lim, {5, 1}, {10, 2}) == :ok
+
+    assert MemoryStore.check_limits(lim, {5, 1}, {11, 3}) ==
+             {:error, {:namespace_full, :bytes, 11}}
+
+    assert MemoryStore.check_limits(lim, {5, 1}, {6, 3}) ==
+             {:error, {:namespace_full, :documents, 3}}
+
+    assert MemoryStore.check_limits(lim, {20, 5}, {19, 5}) == :ok
+
+    assert MemoryStore.check_limits(lim, {20, 5}, {20, 6}) ==
+             {:error, {:namespace_full, :documents, 6}}
+
+    assert MemoryStore.check_limits([], {0, 0}, {10_000_000, 10_000}) == :ok
+    assert MemoryStore.check_limits([max_bytes: nil, max_documents: nil], {0, 0}, {9, 9}) == :ok
+  end
+
   describe "Docs (pure)" do
     alias MemoryStore.Docs
 
@@ -41,6 +60,18 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
       assert {{:ok, 1}, d2} = Docs.rename(d, "/memories/d", "/memories/z")
       assert {:ok, %{version: 2}} = Docs.get(d2, "/memories/z/1")
       assert {:not_found, ^d2} = Docs.rename(d2, "/memories/nope", "/memories/q")
+    end
+
+    test "put/5 checks the namespace's totals and writes nothing when full" do
+      {{:ok, 1}, d} = Docs.put(%{}, "/memories/a", "12345", :new, max_bytes: 10)
+
+      assert {{:error, {:namespace_full, :bytes, 11}}, ^d} =
+               Docs.put(d, "/memories/b", "123456", :new, max_bytes: 10)
+
+      assert {{:error, {:namespace_full, :documents, 2}}, ^d} =
+               Docs.put(d, "/memories/b", "", :new, max_documents: 1)
+
+      assert {{:ok, 2}, _d} = Docs.put(d, "/memories/a", "1234567890", :any, max_bytes: 10)
     end
 
     test "delete_tree counts and keeps siblings" do

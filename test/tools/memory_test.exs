@@ -733,7 +733,6 @@ defmodule Normandy.Tools.MemoryTest do
 
     alias Normandy.Test.{
       AncestorDownStore,
-      CapListDownStore,
       CountingStore,
       FullListStore,
       RawErrorStore,
@@ -831,32 +830,20 @@ defmodule Normandy.Tools.MemoryTest do
       assert doc(store, "acme/org", "/memories/a") == "123456"
     end
 
-    test "nil disables the cap and lists nothing" do
+    test "every write passes the tool's caps to the store, nil included" do
       t = Memory.new(store: {RecordingStore, self()}, max_namespace_bytes: nil)
       assert {:ok, _, _} = create_in(t, "/memories/a", String.duplicate("x", 5_000))
-      # the only list is not_directory's, at the document's own path
+      assert_received {:call, :put, [max_bytes: nil, max_documents: 1000]}
+      # the only list is not_directory's, at the document's own path: no cap listing
       assert_received {:call, :list}
       refute_received {:call, :list}
+
+      t = Memory.new(store: {RecordingStore, self()}, max_namespace_documents: nil)
+      assert {:ok, _, _} = create_in(t, "/memories/a", "x")
+      assert_received {:call, :put, [max_bytes: 1_000_000, max_documents: nil]}
     end
 
-    @tag :capture_log
-    test "a list failure during the cap check goes through the backend mapping" do
-      absent = Memory.new(store: {CapListDownStore, :absent})
-      present = Memory.new(store: {CapListDownStore, :present})
-
-      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
-               create_in(absent, "/memories/a", "x")
-
-      assert {:error, :backend, "Error: memory store unavailable: :timeout"} =
-               typed(present, %{
-                 "command" => "str_replace",
-                 "path" => "/memories/a",
-                 "old_str" => "alpha",
-                 "new_str" => "beta"
-               })
-    end
-
-    test "the cap is listed once for an edit even when it retries" do
+    test "an edit passes the caps on every compare-and-set attempt and lists nothing" do
       t = Memory.new(store: {CountingStore, self()}, max_cas_retries: 2)
 
       assert {:error, :conflict_exhausted, _} =
@@ -867,8 +854,85 @@ defmodule Normandy.Tools.MemoryTest do
                  "new_str" => "beta"
                })
 
-      assert_received :listed
+      for _attempt <- 1..3,
+          do: assert_received({:put, [max_bytes: 1_000_000, max_documents: 1000]})
+
+      refute_received {:put, _}
       refute_received :listed
+    end
+
+    test "max_namespace_documents: default, nil, and bad values" do
+      assert tool().max_namespace_documents == 1000
+      assert tool(max_namespace_documents: nil).max_namespace_documents == nil
+      assert tool(max_namespace_documents: 5).max_namespace_documents == 5
+
+      for bad <- [0, -1, 1.5, "x"] do
+        assert_raise ArgumentError,
+                     ~r/:max_namespace_documents must be a positive integer or nil, got: #{inspect(bad)}/,
+                     fn -> tool(max_namespace_documents: bad) end
+      end
+    end
+
+    test "a create past the document cap is refused; overwriting a file is not" do
+      store = InMemory.new()
+      t = Memory.new(store: {InMemory, store}, max_namespace_documents: 2)
+      assert {:ok, _, _} = create_in(t, "/memories/a", "1")
+      assert {:ok, _, _} = create_in(t, "/memories/b", "2")
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: creating /memories/c would make 3 files; the limit is 2. Delete files first."} =
+               create_in(t, "/memories/c", "3")
+
+      assert InMemory.get(store, "acme/u-1", "/memories/c") == :not_found
+      assert {:ok, _, _} = create_in(t, "/memories/b", "two")
+    end
+
+    test "the caps are independent: no byte cap still counts documents, and the reverse" do
+      store = InMemory.new()
+
+      t =
+        Memory.new(
+          store: {InMemory, store},
+          max_document_bytes: 2_000_000,
+          max_namespace_bytes: nil,
+          max_namespace_documents: 1
+        )
+
+      assert {:ok, _, _} = create_in(t, "/memories/a", String.duplicate("x", 2_000_000))
+
+      assert {:error, :namespace_full, "Error: memory is full: creating /memories/b" <> _} =
+               create_in(t, "/memories/b", "x")
+
+      t = Memory.new(store: {InMemory, store}, max_namespace_documents: nil)
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: writing /memories/c would bring it to 2000001 bytes; the limit is 1000000. Delete or shorten files first."} =
+               create_in(t, "/memories/c", "x")
+    end
+
+    test "a namespace over a lowered cap can still be shortened, not grown" do
+      store = InMemory.new()
+      create_in(Memory.new(store: {InMemory, store}), "/memories/a", "1234567890")
+      t = Memory.new(store: {InMemory, store}, max_namespace_bytes: 5)
+
+      assert {:ok, _, _} =
+               typed(t, %{
+                 "command" => "str_replace",
+                 "path" => "/memories/a",
+                 "old_str" => "12345",
+                 "new_str" => ""
+               })
+
+      assert doc(store, "acme/u-1", "/memories/a") == "67890"
+
+      assert {:error, :namespace_full,
+              "Error: memory is full: writing /memories/a would bring it to 6 bytes; the limit is 5. Delete or shorten files first."} =
+               typed(t, %{
+                 "command" => "insert",
+                 "path" => "/memories/a",
+                 "insert_line" => 0,
+                 "insert_text" => ""
+               })
     end
 
     # B2

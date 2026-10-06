@@ -15,6 +15,7 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
   # :mnesia is not a declared application dependency (see the moduledoc).
   @compile {:no_warn_undefined, :mnesia}
 
+  alias Normandy.Behaviours.MemoryStore
   alias Normandy.Behaviours.MemoryStore.Docs
   alias Normandy.Behaviours.MnesiaSetup
   alias Normandy.Options
@@ -92,8 +93,10 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
   def get(table, ns, path), do: read(table, ns, &Docs.get(&1, path))
 
   @impl true
-  def put(table, ns, path, content, expected),
-    do: update(table, ns, &Docs.put(&1, path, content, expected))
+  def put(table, ns, path, content, expected, limits \\ []) do
+    limits = MemoryStore.validate_limits!(limits, __MODULE__)
+    update(table, ns, &Docs.put(&1, path, content, expected, limits))
+  end
 
   @impl true
   def delete(table, ns, path, expected), do: update(table, ns, &Docs.delete(&1, path, expected))

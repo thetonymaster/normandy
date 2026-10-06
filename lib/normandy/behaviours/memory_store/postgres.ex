@@ -5,16 +5,25 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     Repo module; run `Normandy.Behaviours.MemoryStore.Postgres.Migration` from a host
     migration.
 
-    Compare-and-set is a conditional `UPDATE … WHERE version = $v`; `:new` is
-    `INSERT … ON CONFLICT DO NOTHING`. `rename/4` locks the moving rows `FOR UPDATE` in
-    one transaction. Prefixes match with `starts_with/2` (nothing to escape); listing
-    orders by `path COLLATE "C"` (byte order).
+    Every write (`put`, `delete`, `delete_tree`, `rename`, `delete_namespace`) is one
+    transaction that first locks the namespace's row in `normandy_memory_namespaces`,
+    which tracks the namespace's content bytes and document count for `put/6`'s limits.
+    So the writers of one namespace run one at a time, and compare-and-set, the limits
+    check and the counters change atomically with the document. `rename/4` also locks the
+    moving rows `FOR UPDATE`. Prefixes match with `starts_with/2` (nothing to escape);
+    listing orders by `path COLLATE "C"` (byte order).
+
+    The counters are kept by these functions only: a row written to
+    `normandy_memory_documents` by other SQL is not counted, and the limits then count
+    wrong for its namespace.
     """
     @behaviour Normandy.Behaviours.MemoryStore
 
     alias Normandy.Behaviours.MemoryStore
+    alias Normandy.Behaviours.MemoryStore.Docs
 
     @table "normandy_memory_documents"
+    @namespaces "normandy_memory_namespaces"
 
     @doc "Test/default handle: the Repo configured for :normandy."
     @spec new() :: module()
@@ -57,72 +66,70 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def put(repo, ns, path, content, :new) do
-      sql =
-        "INSERT INTO #{@table} (namespace, path, content, version, updated_at) VALUES ($1, $2, $3, 1, $4) ON CONFLICT DO NOTHING"
+    def put(repo, ns, path, content, expected, limits \\ []) do
+      limits = MemoryStore.validate_limits!(limits, __MODULE__)
 
-      backend(fn -> repo.query(sql, [ns, path, content, now()]) |> one_row(1) end)
-    end
+      in_transaction(repo, fn ->
+        {bytes, documents} = lock_totals(repo, ns)
+        {version, size} = current(repo, ns, path)
+        totals = {bytes - size + byte_size(content), documents + if(version, do: 0, else: 1)}
 
-    def put(repo, ns, path, content, :any) do
-      sql = """
-      INSERT INTO #{@table} (namespace, path, content, version, updated_at)
-      VALUES ($1, $2, $3, 1, $4)
-      ON CONFLICT (namespace, path) DO UPDATE
-        SET content = EXCLUDED.content, version = #{@table}.version + 1, updated_at = EXCLUDED.updated_at
-      RETURNING version
-      """
-
-      backend(fn -> repo.query(sql, [ns, path, content, now()]) |> returned_version() end)
-    end
-
-    def put(repo, ns, path, content, version) when is_integer(version) do
-      sql = """
-      UPDATE #{@table} SET content = $3, version = version + 1, updated_at = $5
-      WHERE namespace = $1 AND path = $2 AND version = $4
-      RETURNING version
-      """
-
-      backend(fn ->
-        repo.query(sql, [ns, path, content, version, now()]) |> returned_version()
+        with {:ok, next} <- Docs.next_version(version, expected),
+             :ok <- MemoryStore.check_limits(limits, {bytes, documents}, totals) do
+          write(repo, ns, path, content, next)
+          set_totals(repo, ns, totals)
+          {:ok, next}
+        else
+          {:error, reason} -> repo.rollback(reason)
+        end
       end)
     end
 
     @impl true
     def delete(repo, ns, path, :any) do
-      backend(fn ->
-        case repo.query("DELETE FROM #{@table} WHERE namespace = $1 AND path = $2", [ns, path]) do
-          {:ok, %{num_rows: 1}} -> :ok
-          {:ok, %{num_rows: 0}} -> :not_found
-          {:error, _} = error -> error
+      in_transaction(repo, fn ->
+        totals = lock_totals(repo, ns)
+
+        case repo.query!(
+               "DELETE FROM #{@table} WHERE namespace = $1 AND path = $2 RETURNING octet_length(content)",
+               [ns, path]
+             ) do
+          %{rows: [[size]]} -> release(repo, ns, totals, [size])
+          %{rows: []} -> :not_found
         end
       end)
     end
 
     def delete(repo, ns, path, version) when is_integer(version) do
-      # The outer SELECT sees the snapshot before the CTE's DELETE, so `existed` tells a
-      # stale version (conflict) from a missing document.
+      # The outer SELECT sees the snapshot before the CTE's DELETE, so its count tells a
+      # stale version (conflict) from a missing document; `size` is the deleted bytes.
       sql = """
-      WITH d AS (DELETE FROM #{@table} WHERE namespace = $1 AND path = $2 AND version = $3 RETURNING 1)
-      SELECT (SELECT count(*) FROM d), (SELECT count(*) FROM #{@table} WHERE namespace = $1 AND path = $2)
+      WITH d AS (DELETE FROM #{@table} WHERE namespace = $1 AND path = $2 AND version = $3 RETURNING octet_length(content) AS size)
+      SELECT (SELECT size FROM d), (SELECT count(*) FROM #{@table} WHERE namespace = $1 AND path = $2)
       """
 
-      backend(fn ->
-        case repo.query(sql, [ns, path, version]) do
-          {:ok, %{rows: [[1, _]]}} -> :ok
-          {:ok, %{rows: [[0, 1]]}} -> {:error, :conflict}
-          {:ok, %{rows: [[0, 0]]}} -> :not_found
-          {:error, _} = error -> error
+      in_transaction(repo, fn ->
+        totals = lock_totals(repo, ns)
+
+        case repo.query!(sql, [ns, path, version]) do
+          %{rows: [[nil, 1]]} -> {:error, :conflict}
+          %{rows: [[nil, 0]]} -> :not_found
+          %{rows: [[size, _]]} -> release(repo, ns, totals, [size])
         end
       end)
     end
 
     @impl true
     def delete_tree(repo, ns, prefix) do
-      sql = "DELETE FROM #{@table} WHERE namespace = $1 AND (path = $2 OR starts_with(path, $3))"
+      sql =
+        "DELETE FROM #{@table} WHERE namespace = $1 AND (path = $2 OR starts_with(path, $3)) RETURNING octet_length(content)"
 
-      backend(fn ->
-        with {:ok, %{num_rows: n}} <- repo.query(sql, [ns, prefix, prefix <> "/"]), do: {:ok, n}
+      in_transaction(repo, fn ->
+        totals = lock_totals(repo, ns)
+        %{rows: rows} = repo.query!(sql, [ns, prefix, prefix <> "/"])
+        sizes = List.flatten(rows)
+        if sizes != [], do: release(repo, ns, totals, sizes)
+        {:ok, length(sizes)}
       end)
     end
 
@@ -149,6 +156,9 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     defp rename_in_transaction(repo, ns, from, to) do
+      # Moves documents within the namespace: bytes and count stay, but the counter row
+      # lock keeps rename and the other writers in one order.
+      _totals = lock_totals(repo, ns)
       moving = lock_moving(repo, ns, from)
 
       cond do
@@ -171,9 +181,76 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     @impl true
     def delete_namespace(repo, ns) do
-      backend(fn ->
-        with {:ok, _} <- repo.query("DELETE FROM #{@table} WHERE namespace = $1", [ns]), do: :ok
+      # The counter row goes first: its lock waits for the namespace's writers in flight.
+      in_transaction(repo, fn ->
+        repo.query!("DELETE FROM #{@namespaces} WHERE namespace = $1", [ns])
+        repo.query!("DELETE FROM #{@table} WHERE namespace = $1", [ns])
+        :ok
       end)
+    end
+
+    # One transaction per write. `repo.rollback(reason)` makes the reply
+    # `{:error, reason}`; a raised Postgrex error rolls back and is backend/1's.
+    defp in_transaction(repo, fun) do
+      backend(fn ->
+        case repo.transaction(fun) do
+          {:ok, reply} -> reply
+          {:error, _reason} = error -> error
+        end
+      end)
+    end
+
+    # Every write locks the namespace's counter row first (creating it on the first write),
+    # so the namespace's writers take their locks in one order and the counters match the
+    # documents. Returns {bytes, documents} as of the lock.
+    defp lock_totals(repo, ns) do
+      %{rows: [[bytes, documents]]} =
+        repo.query!(
+          """
+          INSERT INTO #{@namespaces} (namespace, bytes, documents) VALUES ($1, 0, 0)
+          ON CONFLICT (namespace) DO UPDATE SET bytes = #{@namespaces}.bytes
+          RETURNING bytes, documents
+          """,
+          [ns]
+        )
+
+      {bytes, documents}
+    end
+
+    defp set_totals(repo, ns, {bytes, documents}) do
+      repo.query!(
+        "UPDATE #{@namespaces} SET bytes = $2, documents = $3 WHERE namespace = $1",
+        [ns, bytes, documents]
+      )
+    end
+
+    # Takes the deleted documents' sizes off the totals; the reply of a delete.
+    defp release(repo, ns, {bytes, documents}, sizes) do
+      set_totals(repo, ns, {bytes - Enum.sum(sizes), documents - length(sizes)})
+      :ok
+    end
+
+    # {version, content bytes} of the document at `path`, or {nil, 0}.
+    defp current(repo, ns, path) do
+      case repo.query!(
+             "SELECT version, octet_length(content) FROM #{@table} WHERE namespace = $1 AND path = $2",
+             [ns, path]
+           ) do
+        %{rows: [[version, size]]} -> {version, size}
+        %{rows: []} -> {nil, 0}
+      end
+    end
+
+    defp write(repo, ns, path, content, version) do
+      repo.query!(
+        """
+        INSERT INTO #{@table} (namespace, path, content, version, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (namespace, path) DO UPDATE
+          SET content = EXCLUDED.content, version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
+        """,
+        [ns, path, content, version, now()]
+      )
     end
 
     # A document at `from` moves alone; otherwise everything under `from/`.
@@ -210,14 +287,6 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
       rows != []
     end
-
-    defp one_row({:ok, %{num_rows: 1}}, version), do: {:ok, version}
-    defp one_row({:ok, %{num_rows: 0}}, _version), do: {:error, :conflict}
-    defp one_row({:error, _} = error, _version), do: error
-
-    defp returned_version({:ok, %{rows: [[version]]}}), do: {:ok, version}
-    defp returned_version({:ok, %{rows: []}}), do: {:error, :conflict}
-    defp returned_version({:error, _} = error), do: error
 
     defp now, do: NaiveDateTime.utc_now()
     defp utc(%NaiveDateTime{} = at), do: DateTime.from_naive!(at, "Etc/UTC")

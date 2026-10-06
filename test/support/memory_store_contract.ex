@@ -209,6 +209,149 @@ defmodule Normandy.MemoryStoreContract do
         assert :ok = @store.delete_namespace(h, "never-used")
       end
 
+      describe "put/6 limits" do
+        test "the byte and document limits count every document, past the list limit", %{
+          handle: h,
+          ns: ns
+        } do
+          limit = MemoryStore.list_limit()
+
+          for i <- 1..(limit + 1) do
+            path = "/memories/f#{String.pad_leading("#{i}", 5, "0")}"
+            {:ok, 1} = @store.put(h, ns, path, "x", :new, max_documents: nil)
+          end
+
+          assert {:error, {:namespace_full, :bytes, 1002}} =
+                   @store.put(h, ns, "/memories/g", "y", :new, max_bytes: limit + 1)
+
+          assert {:error, {:namespace_full, :documents, 1002}} =
+                   @store.put(h, ns, "/memories/g", "y", :new, max_documents: limit + 1)
+
+          assert {:ok, 1} = @store.put(h, ns, "/memories/g", "y", :new, max_bytes: limit + 2)
+        end
+
+        test "a new document past the count is refused and not written; an overwrite is not", %{
+          handle: h,
+          ns: ns
+        } do
+          lim = [max_documents: 3]
+
+          for p <- ~w(/memories/a /memories/b /memories/c),
+              do: {:ok, 1} = @store.put(h, ns, p, "x", :new, lim)
+
+          assert {:error, {:namespace_full, :documents, 4}} =
+                   @store.put(h, ns, "/memories/d", "x", :any, lim)
+
+          assert :not_found = @store.get(h, ns, "/memories/d")
+          assert {:ok, 2} = @store.put(h, ns, "/memories/a", "xx", :any, lim)
+          assert {:ok, 3} = @store.put(h, ns, "/memories/a", "xxx", 2, lim)
+        end
+
+        test "replacing a document counts its old size once", %{handle: h, ns: ns} do
+          {:ok, 1} = @store.put(h, ns, "/memories/a", "123456", :new)
+          assert {:ok, 2} = @store.put(h, ns, "/memories/a", "1234567890", :any, max_bytes: 10)
+
+          assert {:error, {:namespace_full, :bytes, 11}} =
+                   @store.put(h, ns, "/memories/a", "12345678901", 2, max_bytes: 10)
+
+          assert {:ok, %{content: "1234567890", version: 2}} = @store.get(h, ns, "/memories/a")
+        end
+
+        test "a write that does not grow the namespace is allowed over a lowered limit", %{
+          handle: h,
+          ns: ns
+        } do
+          {:ok, 1} = @store.put(h, ns, "/memories/a", "1234567890", :new)
+          {:ok, 1} = @store.put(h, ns, "/memories/b", "12345", :new)
+          lim = [max_bytes: 5, max_documents: 1]
+
+          assert {:ok, 2} = @store.put(h, ns, "/memories/a", "123", 1, lim)
+          assert {:ok, 3} = @store.put(h, ns, "/memories/a", "123", :any, lim)
+
+          assert {:error, {:namespace_full, :bytes, 9}} =
+                   @store.put(h, ns, "/memories/a", "1234", 3, lim)
+
+          assert {:error, {:namespace_full, :documents, 3}} =
+                   @store.put(h, ns, "/memories/c", "", :new, lim)
+        end
+
+        test "bytes are checked before documents, and a version conflict before both", %{
+          handle: h,
+          ns: ns
+        } do
+          {:ok, 1} = @store.put(h, ns, "/memories/a", "12345", :new)
+          lim = [max_bytes: 5, max_documents: 1]
+
+          assert {:error, {:namespace_full, :bytes, 6}} =
+                   @store.put(h, ns, "/memories/b", "1", :new, lim)
+
+          assert {:error, :conflict} = @store.put(h, ns, "/memories/a", "123456", :new, lim)
+          assert {:error, :conflict} = @store.put(h, ns, "/memories/a", "123456", 7, lim)
+        end
+
+        # Review Focus #5. On Postgres the sandbox serializes both writers on one
+        # connection, so this proves the check, not row-lock contention.
+        test "two writers that fit alone but not together: one succeeds, one is full", %{
+          handle: h,
+          ns: ns
+        } do
+          parent = self()
+
+          tasks =
+            for p <- ["/memories/x", "/memories/y"] do
+              Task.async(fn ->
+                send(parent, {:ready, self()})
+
+                receive do
+                  :go -> @store.put(h, ns, p, "123456", :new, max_bytes: 10)
+                end
+              end)
+            end
+
+          for _task <- tasks, do: assert_receive({:ready, _pid}, 5_000)
+          Enum.each(tasks, &send(&1.pid, :go))
+          results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+          assert Enum.sort(results) == [{:error, {:namespace_full, :bytes, 12}}, {:ok, 1}]
+          assert {:ok, [_one]} = @store.list(h, ns, "/memories")
+        end
+
+        test "delete, delete_tree, rename and delete_namespace keep the totals", %{
+          handle: h,
+          ns: ns
+        } do
+          lim = [max_bytes: 10, max_documents: 3]
+          {:ok, 1} = @store.put(h, ns, "/memories/a", "12345", :new, lim)
+          {:ok, 1} = @store.put(h, ns, "/memories/d/1", "12", :new, lim)
+          {:ok, 1} = @store.put(h, ns, "/memories/d/2", "12", :new, lim)
+
+          assert {:error, {:namespace_full, :documents, 4}} =
+                   @store.put(h, ns, "/memories/b", "", :new, lim)
+
+          assert :ok = @store.delete(h, ns, "/memories/a", :any)
+          assert {:ok, 1} = @store.put(h, ns, "/memories/b", "123456", :new, lim)
+          assert {:ok, 2} = @store.rename(h, ns, "/memories/d", "/memories/e")
+
+          assert {:error, {:namespace_full, :bytes, 11}} =
+                   @store.put(h, ns, "/memories/c", "1", :new, lim)
+
+          assert {:ok, 2} = @store.delete_tree(h, ns, "/memories/e")
+          assert {:ok, 1} = @store.put(h, ns, "/memories/c", "1234", :new, lim)
+          assert :ok = @store.delete(h, ns, "/memories/c", 1)
+          assert {:ok, 2} = @store.put(h, ns, "/memories/b", "1234567890", 1, lim)
+
+          assert :ok = @store.delete_namespace(h, ns)
+          assert {:ok, 1} = @store.put(h, ns, "/memories/z", "1234567890", :new, lim)
+          assert {:ok, 1} = @store.put(h, ns, "/memories/y", "", :new, lim)
+        end
+
+        test "an unknown limit raises, naming put/6", %{handle: h, ns: ns} do
+          assert_raise ArgumentError,
+                       "#{inspect(@store)}.put/6: unknown option :max_byte; supported: :max_bytes, :max_documents",
+                       fn -> @store.put(h, ns, "/memories/a", "x", :new, max_byte: 1) end
+        end
+      end
+
       # Review Focus #3: concurrent edits through the memory tool keep every edit.
       test "concurrent inserts through the memory tool lose no edit", %{handle: h, ns: ns} do
         tool = Memory.new(store: {@store, h}, max_cas_retries: 100)

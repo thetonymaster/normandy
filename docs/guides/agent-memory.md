@@ -175,9 +175,15 @@ end
 store = {MemoryStore.Postgres, MyApp.Repo}
 ```
 
+The migration creates two tables: `normandy_memory_documents`, and
+`normandy_memory_namespaces`, which holds each namespace's content bytes and document count
+for the caps. Every write locks its namespace's row there first, so the writers of one
+namespace run one at a time. Write documents only through the store: a row written by other
+SQL is not counted.
+
 **Redis:** the handle is `{conn, prefix}`, a `Redix` connection and your key prefix.
-Documents are hashes and each namespace keeps a sorted set of its paths, written by Lua
-scripts so every operation is atomic. A namespace is base64url-encoded into the key and is
+Documents are hashes and each namespace keeps a sorted set of its paths and a counter of
+its content bytes, written by Lua scripts so every operation is atomic. A namespace is base64url-encoded into the key and is
 one hash tag, so it lives in exactly one Redis Cluster slot: a very large or very hot
 namespace cannot be spread across the cluster.
 
@@ -209,12 +215,15 @@ found again.
 | `max_cas_retries` | 3 | `Memory.new/1`; `str_replace` / `insert` retries on conflict |
 | list limit | 1,000 documents | `MemoryStore.list_limit/0`; a longer listing says it stopped |
 | `max_namespace_bytes` | 1_000_000 | `Memory.new/1`; `nil` disables the cap; a write that would exceed it returns `Error: memory is full: writing {path} would bring it to {total} bytes; the limit is {max}. Delete or shorten files first.` |
+| `max_namespace_documents` | 1000 | `Memory.new/1`; `nil` disables the cap; a `create` that would exceed it returns `Error: memory is full: creating {path} would make {count} files; the limit is {max}. Delete files first.` |
 | path length | 255 bytes | path validation in the memory tool |
 
-`max_namespace_bytes` is approximate. Two concurrent writers can each pass the check and
-together exceed it. It also sums only the first 1,000 documents the store lists, so for a
-namespace with more it is a lower bound, not a limit. A mount's cap applies to the mount's
-namespace.
+The two namespace caps are independent, and the store checks them in the same atomic
+step as the write (`MemoryStore` `put/6`): two concurrent writers cannot exceed a cap
+together, and every document counts, not only the first 1,000 a listing shows. A write
+that does not grow the namespace (a shorter replacement, an overwrite of the same size) is
+always allowed, so a namespace over a lowered cap can still be shortened. A mount's caps
+apply to the mount's namespace.
 
 The Postgres and Redis backends stamp `updated_at` from the application's clock, so across
 nodes with clock skew it can move backwards.

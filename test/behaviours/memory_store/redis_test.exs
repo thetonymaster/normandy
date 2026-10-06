@@ -56,6 +56,25 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
     end
   end
 
+  test "the byte counter holds the namespace's content bytes and goes with its last document",
+       %{handle: {conn, prefix} = h, ns: ns} do
+    # the key layout of Redis.bytes_key/2
+    bytes_key = "#{prefix}:mem:{#{Base.url_encode64(ns, padding: false)}}:bytes"
+    {:ok, 1} = Redis.put(h, ns, "/memories/a", "12345", :new)
+    {:ok, 1} = Redis.put(h, ns, "/memories/b/c", "日本", :new)
+    assert {:ok, "11"} = Redix.command(conn, ["GET", bytes_key])
+
+    :ok = Redis.delete(h, ns, "/memories/a", :any)
+    assert {:ok, "6"} = Redix.command(conn, ["GET", bytes_key])
+
+    {:ok, 1} = Redis.delete_tree(h, ns, "/memories/b")
+    assert {:ok, nil} = Redix.command(conn, ["GET", bytes_key])
+
+    {:ok, 1} = Redis.put(h, ns, "/memories/a", "12345", :new)
+    :ok = Redis.delete_namespace(h, ns)
+    assert {:ok, nil} = Redix.command(conn, ["GET", bytes_key])
+  end
+
   # A separate connection: the test's own may already be gone when on_exit runs.
   defp delete_prefix(prefix) do
     url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")

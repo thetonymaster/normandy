@@ -24,14 +24,29 @@ defmodule Normandy.Behaviours.MemoryStore.Docs do
     end
   end
 
-  def put(docs, path, content, expected) do
-    case {Map.get(docs, path), expected} do
-      {nil, e} when e in [:new, :any] -> write(docs, path, content, 1)
-      {%{version: v}, :any} -> write(docs, path, content, v + 1)
-      {%{version: v}, v} -> write(docs, path, content, v + 1)
-      _ -> {{:error, :conflict}, docs}
+  # `limits` are validated (MemoryStore.validate_limits!/2). The whole namespace is in
+  # hand, so its totals are exact: no counter to keep.
+  def put(docs, path, content, expected, limits \\ []) do
+    current = Map.get(docs, path)
+    before = totals(docs)
+
+    with {:ok, version} <- next_version(current && current.version, expected),
+         :ok <- MemoryStore.check_limits(limits, before, after_put(before, current, content)) do
+      write(docs, path, content, version)
+    else
+      {:error, _reason} = error -> {error, docs}
     end
   end
+
+  @doc false
+  # Compare-and-set on a document's current version (`nil` when it is missing). Shared
+  # with the Postgres backend.
+  @spec next_version(pos_integer() | nil, pos_integer() | :new | :any) ::
+          {:ok, pos_integer()} | {:error, :conflict}
+  def next_version(nil, expected) when expected in [:new, :any], do: {:ok, 1}
+  def next_version(version, :any) when is_integer(version), do: {:ok, version + 1}
+  def next_version(version, version) when is_integer(version), do: {:ok, version + 1}
+  def next_version(_version, _expected), do: {:error, :conflict}
 
   def delete(docs, path, expected) do
     case {Map.get(docs, path), expected} do
@@ -67,6 +82,15 @@ defmodule Normandy.Behaviours.MemoryStore.Docs do
         {{:ok, length(moving)}, docs |> Map.drop(moving) |> Map.merge(moved)}
     end
   end
+
+  defp totals(docs),
+    do:
+      {Enum.reduce(docs, 0, fn {_path, d}, sum -> sum + byte_size(d.content) end), map_size(docs)}
+
+  defp after_put({bytes, count}, nil, content), do: {bytes + byte_size(content), count + 1}
+
+  defp after_put({bytes, count}, %{content: old}, content),
+    do: {bytes - byte_size(old) + byte_size(content), count}
 
   defp write(docs, path, content, version) do
     doc = %{content: content, version: version, updated_at: DateTime.utc_now()}

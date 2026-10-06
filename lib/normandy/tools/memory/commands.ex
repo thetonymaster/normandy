@@ -106,13 +106,14 @@ defmodule Normandy.Tools.Memory.Commands do
          {:ok, text} <- text(cmd, :file_text, loc),
          :ok <- fits(tool, loc, text),
          :ok <- not_directory(tool, loc),
-         :ok <- not_under_file(tool, loc),
-         {:ok, others} <- others_bytes(tool, loc, nil),
-         :ok <- within_cap(tool, loc, others, byte_size(text)) do
-      case store(tool, :put, [loc.namespace, loc.path, text, :any]) do
+         :ok <- not_under_file(tool, loc) do
+      case store(tool, :put, [loc.namespace, loc.path, text, :any, limits(tool)]) do
         {:ok, _version} ->
           {:ok, "File created successfully at: #{loc.model_path}",
            %{bytes_written: byte_size(text)}}
+
+        {:error, {:namespace_full, which, would_be}} ->
+          namespace_full(tool, loc, which, would_be)
 
         {:error, reason} ->
           backend(reason)
@@ -194,10 +195,8 @@ defmodule Normandy.Tools.Memory.Commands do
   end
 
   # Read-modify-write with compare-and-set. A lost race re-reads and re-applies, up to
-  # max_cas_retries extra attempts.
-  # The namespace's other documents are listed once, on the first attempt, and carried
-  # through the retries as `others`.
-  defp edit(tool, loc, missing, transform, success, attempt \\ 0, others \\ nil) do
+  # max_cas_retries extra attempts. The store checks the namespace caps on every attempt.
+  defp edit(tool, loc, missing, transform, success, attempt \\ 0) do
     case store(tool, :get, [loc.namespace, loc.path]) do
       :not_found ->
         {:error, :not_found, missing}
@@ -207,11 +206,9 @@ defmodule Normandy.Tools.Memory.Commands do
 
       {:ok, %{content: content, version: version}} ->
         with {:ok, updated, info} <- transform.(content),
-             :ok <- fits(tool, loc, updated),
-             {:ok, others} <- others_bytes(tool, loc, others),
-             :ok <- within_cap(tool, loc, others, byte_size(updated)) do
+             :ok <- fits(tool, loc, updated) do
           # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case store(tool, :put, [loc.namespace, loc.path, updated, version]) do
+          case store(tool, :put, [loc.namespace, loc.path, updated, version, limits(tool)]) do
             {:ok, _} ->
               {:ok, success.(updated, info),
                %{
@@ -221,11 +218,14 @@ defmodule Normandy.Tools.Memory.Commands do
                }}
 
             {:error, :conflict} when attempt < tool.max_cas_retries ->
-              edit(tool, loc, missing, transform, success, attempt + 1, others)
+              edit(tool, loc, missing, transform, success, attempt + 1)
 
             {:error, :conflict} ->
               {:error, :conflict_exhausted,
                "Error: #{loc.model_path} was changed by another writer #{attempt + 1} times while editing; view it and retry"}
+
+            {:error, {:namespace_full, which, would_be}} ->
+              namespace_full(tool, loc, which, would_be)
 
             {:error, reason} ->
               backend(reason)
@@ -393,32 +393,19 @@ defmodule Normandy.Tools.Memory.Commands do
     |> Enum.drop(1)
   end
 
-  # Bytes held by every document in the namespace except the target's current one.
-  # `nil` means not computed yet; no cap means nothing to compute.
-  defp others_bytes(%Memory{max_namespace_bytes: nil}, _loc, _known), do: {:ok, 0}
-  defp others_bytes(_tool, _loc, known) when is_integer(known), do: {:ok, known}
+  # The namespace caps every write passes to the store (MemoryStore put/6).
+  defp limits(%Memory{} = tool),
+    do: [max_bytes: tool.max_namespace_bytes, max_documents: tool.max_namespace_documents]
 
-  defp others_bytes(tool, loc, nil) do
-    case store(tool, :list, [loc.namespace, @root]) do
-      {:ok, entries} ->
-        {:ok, entries |> Enum.reject(&(&1.path == loc.path)) |> Enum.map(& &1.size) |> Enum.sum()}
+  defp namespace_full(tool, loc, :bytes, total),
+    do:
+      {:error, :namespace_full,
+       "Error: memory is full: writing #{loc.model_path} would bring it to #{total} bytes; the limit is #{tool.max_namespace_bytes}. Delete or shorten files first."}
 
-      {:error, reason} ->
-        backend(reason)
-    end
-  end
-
-  defp within_cap(%Memory{max_namespace_bytes: nil}, _loc, _others, _size), do: :ok
-
-  defp within_cap(%Memory{max_namespace_bytes: max}, loc, others, size) do
-    total = others + size
-
-    if total > max,
-      do:
-        {:error, :namespace_full,
-         "Error: memory is full: writing #{loc.model_path} would bring it to #{total} bytes; the limit is #{max}. Delete or shorten files first."},
-      else: :ok
-  end
+  defp namespace_full(tool, loc, :documents, count),
+    do:
+      {:error, :namespace_full,
+       "Error: memory is full: creating #{loc.model_path} would make #{count} files; the limit is #{tool.max_namespace_documents}. Delete files first."}
 
   defp fits(tool, loc, text) do
     n = byte_size(text)

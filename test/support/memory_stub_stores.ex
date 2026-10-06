@@ -3,7 +3,7 @@ defmodule Normandy.Test.ConflictStore do
   @behaviour Normandy.Behaviours.MemoryStore
   def list(_, _, _), do: {:ok, []}
   def get(_, _, _), do: {:ok, %{content: "alpha\nbeta", version: 1}}
-  def put(_, _, _, _, _), do: {:error, :conflict}
+  def put(_, _, _, _, _, _), do: {:error, :conflict}
   def delete(_, _, _, _), do: {:error, :conflict}
   def delete_tree(_, _, _), do: {:ok, 0}
   def rename(_, _, _, _), do: :not_found
@@ -15,7 +15,7 @@ defmodule Normandy.Test.DownStore do
   @behaviour Normandy.Behaviours.MemoryStore
   def list(_, _, _), do: {:error, :timeout}
   def get(_, _, _), do: {:error, :timeout}
-  def put(_, _, _, _, _), do: {:error, :timeout}
+  def put(_, _, _, _, _, _), do: {:error, :timeout}
   def delete(_, _, _, _), do: {:error, :timeout}
   def delete_tree(_, _, _), do: {:error, :timeout}
   def rename(_, _, _, _), do: {:error, :timeout}
@@ -27,7 +27,7 @@ defmodule Normandy.Test.DirDownStore do
   @behaviour Normandy.Behaviours.MemoryStore
   def list(_, _, _), do: {:error, :timeout}
   def get(_, _, _), do: :not_found
-  def put(_, _, _, _, _), do: {:error, :timeout}
+  def put(_, _, _, _, _, _), do: {:error, :timeout}
   def delete(_, _, _, _), do: :not_found
   def delete_tree(_, _, _), do: {:error, :timeout}
   def rename(_, _, _, _), do: {:error, :timeout}
@@ -39,7 +39,7 @@ defmodule Normandy.Test.RawErrorStore do
   @behaviour Normandy.Behaviours.MemoryStore
   def list(reason, _, _), do: {:error, reason}
   def get(reason, _, _), do: {:error, reason}
-  def put(reason, _, _, _, _), do: {:error, reason}
+  def put(reason, _, _, _, _, _), do: {:error, reason}
   def delete(reason, _, _, _), do: {:error, reason}
   def delete_tree(reason, _, _), do: {:error, reason}
   def rename(reason, _, _, _), do: {:error, reason}
@@ -47,7 +47,7 @@ defmodule Normandy.Test.RawErrorStore do
 end
 
 defmodule Normandy.Test.RecordingStore do
-  @moduledoc "A MemoryStore whose handle is a pid that is told about every get/list; nothing is ever stored."
+  @moduledoc "A MemoryStore whose handle is a pid that is told about every get, list and put (with its limits); nothing is ever stored."
   @behaviour Normandy.Behaviours.MemoryStore
   def list(pid, _, _) do
     send(pid, {:call, :list})
@@ -59,7 +59,11 @@ defmodule Normandy.Test.RecordingStore do
     :not_found
   end
 
-  def put(_, _, _, _, _), do: {:ok, 1}
+  def put(pid, _, _, _, _, limits) do
+    send(pid, {:call, :put, limits})
+    {:ok, 1}
+  end
+
   def delete(_, _, _, _), do: :not_found
   def delete_tree(_, _, _), do: {:ok, 0}
   def rename(_, _, _, _), do: {:ok, 1}
@@ -79,27 +83,10 @@ defmodule Normandy.Test.FullListStore do
   end
 
   def get(_, _, _), do: :not_found
-  def put(_, _, _, _, _), do: {:ok, 1}
+  def put(_, _, _, _, _, _), do: {:ok, 1}
   def delete(_, _, _, _), do: :not_found
   def delete_tree(_, _, _), do: {:ok, 0}
   def rename(_, _, _, _), do: {:ok, 1}
-  def delete_namespace(_, _), do: :ok
-end
-
-defmodule Normandy.Test.CapListDownStore do
-  @moduledoc """
-  A MemoryStore whose list of the namespace root fails while every other list is empty.
-  The handle picks get/3: `:absent` finds nothing, `:present` finds a document.
-  """
-  @behaviour Normandy.Behaviours.MemoryStore
-  def list(_, _, "/memories"), do: {:error, :timeout}
-  def list(_, _, _), do: {:ok, []}
-  def get(:present, _, _), do: {:ok, %{content: "alpha", version: 1}}
-  def get(:absent, _, _), do: :not_found
-  def put(_, _, _, _, _), do: {:ok, 1}
-  def delete(_, _, _, _), do: :not_found
-  def delete_tree(_, _, _), do: {:ok, 0}
-  def rename(_, _, _, _), do: :not_found
   def delete_namespace(_, _), do: :ok
 end
 
@@ -109,7 +96,7 @@ defmodule Normandy.Test.AncestorDownStore do
   def list(_, _, _), do: {:ok, []}
   def get(_, _, "/memories/a"), do: {:error, :timeout}
   def get(_, _, _), do: :not_found
-  def put(_, _, _, _, _), do: {:ok, 1}
+  def put(_, _, _, _, _, _), do: {:ok, 1}
   def delete(_, _, _, _), do: :not_found
   def delete_tree(_, _, _), do: {:ok, 0}
   def rename(_, _, _, _), do: :not_found
@@ -117,7 +104,7 @@ defmodule Normandy.Test.AncestorDownStore do
 end
 
 defmodule Normandy.Test.CountingStore do
-  @moduledoc "A MemoryStore (handle: a pid) that reports every list and whose writes always conflict."
+  @moduledoc "A MemoryStore (handle: a pid) that reports every list and put (with its limits) and whose writes always conflict."
   @behaviour Normandy.Behaviours.MemoryStore
   def list(pid, _, _) do
     send(pid, :listed)
@@ -125,7 +112,12 @@ defmodule Normandy.Test.CountingStore do
   end
 
   def get(_, _, _), do: {:ok, %{content: "alpha", version: 1}}
-  def put(_, _, _, _, _), do: {:error, :conflict}
+
+  def put(pid, _, _, _, _, limits) do
+    send(pid, {:put, limits})
+    {:error, :conflict}
+  end
+
   def delete(_, _, _, _), do: :not_found
   def delete_tree(_, _, _), do: {:ok, 0}
   def rename(_, _, _, _), do: :not_found
