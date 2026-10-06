@@ -1840,3 +1840,305 @@ Each has a recommendation; the plan is written as if every recommendation is acc
 8. **Keep `start_link/1` and `call/2`** for users who supervise their own breaker. *Recommended.* Alternative: remove them and offer only the keyed API.
 9. **plan.md's "a 1.x template holding a pid rebuilds with a key"** is replaced (R3): no released template holds a breaker. *Recommended.*
 10. **The orchestrators' per-call `Task.Supervisor` (Wave 3) stays per call**; moving it into the new application tree is not in this wave. *Recommended.* Alternative: move it now (a fourth child of `Normandy.Supervisor`).
+
+---
+
+## Follow-up (decision 20, 2026-10-06)
+
+### Task 4.4: A shared breaker counts only endpoint-health failures (final-review I1)
+
+The final review found that a shared breaker counted every failed call, including failures caused by the caller: a 400 `:invalid_request`, an `:authentication` error, `:invalid_output`, a raise from a stream callback or guardrail. With breakers shared per client module, endpoint, model and options, one conversation's bad requests opened the circuit for every agent on that model. Q chose option (a): count only failures that say the endpoint is unhealthy.
+
+**Files:**
+- Modify: `lib/normandy/resilience/circuit_breaker.ex` (`call/3`, `run/3` with a `:failure_if` option; an `:ignore` outcome)
+- Modify: `lib/normandy/agents/base_agent.ex` (`with_resilience/3` passes `failure_if: &endpoint_failure?/1`; the classifier)
+- Modify: `lib/normandy/agents/base_agent/init_options.ex` (the `:circuit_breaker` doc: one sentence on what counts)
+- Modify: `MIGRATING-2.0.md` (§31 bullet; `## New, non-breaking` bullet for `call/3`/`run/3`)
+- Test: `test/resilience/circuit_breaker_test.exs`, `test/agents/base_agent_shared_breaker_test.exs`; `test/options_coverage_test.exs` only if it fails for the new option-taking arities
+
+**Interfaces:**
+- Produces: `CircuitBreaker.call(server, fun, opts \\ [])`, `CircuitBreaker.run(key, fun, opts \\ [])`; option `failure_if: (({:error, term()}) -> boolean())`; default (no `:failure_if`) counts every failure, as before. Options validated through `Normandy.Options.validate!/3` with `{CircuitBreaker, :call, 3}` / `{CircuitBreaker, :run, 3}`.
+- The record outcome `:ignore` (classifier said `false`): releases the probe's slot (demonitor), changes no count and no state.
+
+**Which failures count (BaseAgent's classifier):**
+- `%LLMError{}` whose `type` is `:rate_limit`, `:overloaded`, `:server`, `:transport` or `:stream`, or whose `retryable?` is `true`;
+- the same `%LLMError{}` when it is the last error of an exhausted Retry (`{last_error, attempts, errors}`) or raised inside the call (`{:exception, %LLMError{}}`, `{:exception, %LLMError{}, stacktrace}`).
+- Nothing else counts: `:invalid_request`, `:authentication`, `:permission`, `:not_found`, `:invalid_output`, `:unsupported`, `:unknown` (non-retryable), and any raise, exit, throw or unexpected return that is not an `LLMError` (the caller's own code: a stream callback, a guardrail, a hook).
+
+- [ ] **Step 1: Failing tests**
+
+Append to `test/resilience/circuit_breaker_test.exs` (before the final `end`):
+
+```elixir
+  describe "failure_if" do
+    test "a failure the classifier rejects is not counted" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      not_counted = fn {:error, reason} -> reason != :caller_error end
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end, failure_if: not_counted) ==
+               {:error, :caller_error}
+
+      assert CircuitBreaker.state(cb) == :closed
+      assert CircuitBreaker.metrics(cb).failure_count == 0
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :down} end, failure_if: not_counted) ==
+               {:error, :down}
+
+      assert CircuitBreaker.state(cb) == :open
+
+      GenServer.stop(cb)
+    end
+
+    test "the classifier sees raises as {:error, {:exception, e}}" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      test_pid = self()
+
+      classifier = fn result ->
+        send(test_pid, {:classified, result})
+        false
+      end
+
+      assert {:error, {:exception, %RuntimeError{}}} =
+               CircuitBreaker.call(cb, fn -> raise "boom" end, failure_if: classifier)
+
+      assert_received {:classified, {:error, {:exception, %RuntimeError{message: "boom"}}}}
+      assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+
+    test "an ignored half-open probe frees its slot and leaves the breaker half-open" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      :ok = CircuitBreaker.trip(cb)
+      Process.sleep(2)
+      assert CircuitBreaker.state(cb) == :half_open
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end,
+               failure_if: fn _ -> false end
+             ) == {:error, :caller_error}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+
+      GenServer.stop(cb)
+    end
+
+    test "success is never classified" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_if: fn _ -> flunk("called") end) ==
+               {:ok, 1}
+
+      GenServer.stop(cb)
+    end
+
+    test "an unknown option raises in the house style" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy.Resilience.CircuitBreaker.call\/3: unknown option :failure_iff/,
+                   fn -> CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_iff: & &1) end
+
+      GenServer.stop(cb)
+    end
+  end
+```
+
+Append to `test/agents/base_agent_shared_breaker_test.exs` (before the final `end`):
+
+```elixir
+  describe "which failures count (decision 20)" do
+    defp error_reply(type, retryable? \\ false) do
+      fn _response_model -> {:error, LLMError.new(type: type, retryable?: retryable?, status: 400)} end
+    end
+
+    for type <- [:invalid_request, :authentication, :permission, :not_found, :invalid_output] do
+      test "#{type} does not open a shared breaker" do
+        s = scope()
+        a = %{agent(s) | client: %StubClient{reply: error_reply(unquote(type))}}
+        b = agent(s)
+
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "1")
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "2")
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "3")
+
+        assert {:ok, _agent, _out} = BaseAgent.run(b, "4")
+      end
+    end
+
+    test "a retryable error of any type counts" do
+      s = scope()
+      a = %{agent(s) | client: %StubClient{reply: error_reply(:unknown, true)}}
+
+      assert {:error, _} = BaseAgent.run(a, "1")
+      assert {:error, _} = BaseAgent.run(a, "2")
+      assert {:error, %LLMError{type: :circuit_open}} = BaseAgent.run(agent(s), "3")
+    end
+
+    test "a failure that exhausted Retry counts by its last error" do
+      s = scope()
+
+      a =
+        BaseAgent.init(
+          client: %StubClient{reply: &overloaded/1},
+          model: "m",
+          retry: [max_attempts: 2, base_delay: 0, max_delay: 0, jitter: false],
+          circuit_breaker: [failure_threshold: 2, timeout: 60_000, scope: s]
+        )
+
+      assert {:error, %LLMError{type: :overloaded}} = BaseAgent.run(a, "1")
+      assert {:error, %LLMError{type: :overloaded}} = BaseAgent.run(a, "2")
+      assert {:error, %LLMError{type: :circuit_open}} = BaseAgent.run(agent(s), "3")
+    end
+
+    test "a raise from the caller's own code does not count" do
+      s = scope()
+      a = %{agent(s) | client: %StubClient{reply: fn _ -> raise ArgumentError, "caller bug" end}}
+
+      assert_raise ArgumentError, fn -> BaseAgent.run(a, "1") end
+      assert_raise ArgumentError, fn -> BaseAgent.run(a, "2") end
+
+      assert {:ok, _agent, _out} = BaseAgent.run(agent(s), "3")
+    end
+  end
+```
+
+(`agent/2`, `scope/0` and `overloaded/1` already exist in that file. If `BaseAgent.run/2` returns `{:error, _}` instead of raising for a raising client, adjust the last test's two assertions to `assert {:error, _} = ...`, keep the final `{:ok, ...}` assertion, and note it in the report.)
+
+Run: `mix format && mix test test/resilience/circuit_breaker_test.exs test/agents/base_agent_shared_breaker_test.exs`
+Expected: FAIL — `call/3` undefined (`UndefinedFunctionError`), and the agent tests see `:circuit_open` on the healthy agent.
+
+- [ ] **Step 2: CircuitBreaker**
+
+After `@key_opts_schema`/`@type key`, add:
+
+```elixir
+  @call_opts_schema NimbleOptions.new!(
+                      failure_if: [
+                        type: {:fun, 1},
+                        doc:
+                          "Decides whether a failed call counts against the breaker. It gets " <>
+                            "the `{:error, reason}` the call returns (a raise, exit or throw " <>
+                            "is `{:error, {:exception | :exit | :throw, _}}`); `false` leaves " <>
+                            "the counts unchanged and frees a half-open probe's slot. By " <>
+                            "default every failure counts."
+                      ]
+                    )
+```
+
+`call/2` becomes `call/3` (keep its existing `@doc`, add an `## Options` section with `#{Options.docs(@call_opts_schema)}`):
+
+```elixir
+  @spec call(GenServer.server(), (-> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  def call(server, fun, opts \\ []) when is_function(fun, 0) do
+    opts = Options.validate!(opts, @call_opts_schema, {__MODULE__, :call, 3})
+
+    case GenServer.call(server, :acquire) do
+      {:ok, token} -> execute_and_record(server, token, fun, opts[:failure_if])
+      {:error, :open} -> {:error, :open}
+    end
+  end
+```
+
+`run/2` becomes `run/3` the same way (`{__MODULE__, :run, 3}`, doc: "Takes `call/3`'s options."):
+
+```elixir
+  @spec run(key(), (-> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  def run(key, fun, opts \\ []) when is_function(fun, 0) do
+    opts = Options.validate!(opts, @call_opts_schema, {__MODULE__, :run, 3})
+
+    case admit(key) do
+      {pid, {:ok, token}} -> execute_and_record(pid, token, fun, opts[:failure_if])
+      {_pid, {:error, :open}} -> {:error, :open}
+    end
+  end
+```
+
+`execute_and_record/3` becomes:
+
+```elixir
+  defp execute_and_record(server, token, fun, failure_if) do
+    {outcome, result} = run_fun(fun)
+    :ok = record(server, token, classify(outcome, result, failure_if))
+    result
+  end
+
+  # A failure the caller's classifier rejects is recorded as :ignore: its probe slot is
+  # freed and no count changes.
+  defp classify(:failure, result, failure_if) when is_function(failure_if, 1),
+    do: if(failure_if.(result), do: :failure, else: :ignore)
+
+  defp classify(outcome, _result, _failure_if), do: outcome
+```
+
+In `handle_call({:record, ...})`, add the `:ignore` branch after the generation check:
+
+```elixir
+      cond do
+        generation != state.generation -> state
+        outcome == :ignore -> state
+        outcome == :success -> handle_success(state)
+        outcome == :failure -> handle_failure(state, :probe_failure)
+      end
+```
+
+Fix the `@spec`/typespec of `record/3` if it lists outcomes. Moduledoc "## Shared breakers": add "`BaseAgent` counts only failures that say the endpoint is unhealthy (see `BaseAgent.init/1`'s `:circuit_breaker`); `call/3` and `run/3` take the same choice as `:failure_if`."
+
+- [ ] **Step 3: BaseAgent**
+
+In `with_resilience/3`: `key -> CircuitBreaker.run(key, retryable_call, failure_if: &endpoint_failure?/1)`.
+
+Add near `default_retry_if/1`:
+
+```elixir
+  # Which failed LLM calls count against the shared circuit breaker: only those that say
+  # the endpoint is unhealthy. A request the provider rejected, output that did not parse,
+  # or a raise, exit or throw from the caller's own code (a stream callback, a guardrail)
+  # must not open a breaker every agent on that model shares (decision 20).
+  @endpoint_failure_types [:rate_limit, :overloaded, :server, :transport, :stream]
+
+  defp endpoint_failure?({:error, reason}), do: endpoint_reason?(reason)
+
+  # Retry gave up: {last_error, attempts, errors}.
+  defp endpoint_reason?({last_error, attempts, errors})
+       when is_integer(attempts) and is_list(errors),
+       do: endpoint_reason?(last_error)
+
+  defp endpoint_reason?(%LLMError{type: type, retryable?: retryable?}),
+    do: retryable? or type in @endpoint_failure_types
+
+  defp endpoint_reason?({:exception, %LLMError{} = error}), do: endpoint_reason?(error)
+  defp endpoint_reason?({:exception, %LLMError{} = error, _stacktrace}), do: endpoint_reason?(error)
+  defp endpoint_reason?(_caller_side), do: false
+```
+
+`init_options.ex` `:circuit_breaker` doc: append the sentence "Only failures that say the endpoint is unhealthy count: `LLMError` types `:rate_limit`, `:overloaded`, `:server`, `:transport`, `:stream`, or any retryable error; a rejected request, unparseable output or a raise from your own code does not."
+
+- [ ] **Step 4: MIGRATING**
+
+§31, after the bullet about shared state, add:
+
+```
+- An agent's breaker counts only failures that say the endpoint is unhealthy: `LLMError`
+  types `:rate_limit`, `:overloaded`, `:server`, `:transport` and `:stream`, or any error
+  marked `retryable?: true`. A rejected request (`:invalid_request`, `:authentication`,
+  `:permission`, `:not_found`), output that did not parse (`:invalid_output`) or a raise
+  from your own code (a stream callback, a guardrail) no longer counts, so one caller's bad
+  requests cannot open the circuit for every agent that shares it. 1.x counted every failure.
+```
+
+`## New, non-breaking`: "- `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker."
+
+- [ ] **Step 5: Tests pass, gate, commit**
+
+Run: `mix format && mix test test/resilience/ test/agents/ test/options_coverage_test.exs` → PASS. If `options_coverage_test` fails naming `call/3` or `run/3`, add them to its table the way `key/3` is listed.
+Gate: `mix precommit 2>&1 | tee <log>` (" 0 failures", exit 0, credo clean, dialyzer 0 unnecessary) and `mix docs --warnings-as-errors` exit 0.
+
+```bash
+git add lib/normandy/resilience/circuit_breaker.ex lib/normandy/agents/base_agent.ex \
+  lib/normandy/agents/base_agent/init_options.ex MIGRATING-2.0.md \
+  test/resilience/circuit_breaker_test.exs test/agents/base_agent_shared_breaker_test.exs
+git commit -m "fix(agents): a shared breaker counts only endpoint-health failures"
+```
