@@ -84,12 +84,12 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   @type circuit_breaker_options :: [circuit_breaker_option()]
 
-  # An admission: the generation it was admitted in, and the probe's monitor (half-open
-  # only). A result whose generation is not the breaker's current one is ignored.
   # A keyed (shared) breaker that has been closed with no probes and received no
   # message for this long stops itself; the next use starts a fresh one.
   @idle_stop_ms 900_000
 
+  # An admission: the generation it was admitted in, and the probe's monitor (half-open
+  # only). A result whose generation is not the breaker's current one is ignored.
   @typep token :: {non_neg_integer(), reference() | nil}
 
   defmodule State do
@@ -286,8 +286,9 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   @doc """
   The running breaker for `key`, starting it under Normandy's supervisor when there is
-  none. The breaker is not linked to the caller, and a breaker that crashed is not
-  restarted: the next `ensure_started/1` starts a fresh, closed one.
+  none. The breaker is not linked to the caller, and a breaker that crashed, or that
+  stopped itself after being idle, is not running and is not restarted: the next
+  `ensure_started/1` starts a fresh, closed one.
   """
   @spec ensure_started(key()) :: {:ok, pid()}
   def ensure_started(key) do

@@ -22,7 +22,8 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
 
   Run one reaper per node (host supervision tree). Concurrent reapers on multiple
   survivors are safe: the registry's atomic `:via` registration means only one
-  start wins; the losers get `{:error, {:already_started, _}}`, treated as success.
+  start wins; a loser's `{:already_started, _}` is treated as a successful start (the shared
+  `Turn.Start.start_server/6` maps it to `{:ok, pid}`), so nothing is logged or retried.
   """
   use GenServer
   require Logger

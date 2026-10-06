@@ -264,6 +264,18 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       refute log =~ "failed to resume"
     end
 
+    test "an already-started loser is success: nothing logged, no retry" do
+      {log, calls} = race_reap([{:error, {:already_started, self()}}], [:none])
+      assert calls == 1
+      refute log =~ "failed to resume"
+      refute log =~ "unexpected start_server"
+
+      {log, calls} = race_reap([{:error, {{:already_started, self()}, :child}}], [:none])
+      assert calls == 1
+      refute log =~ "failed to resume"
+      refute log =~ "unexpected start_server"
+    end
+
     test "a genuine error is logged once and not retried" do
       {log, calls} = race_reap([{:error, :boom}], [:none])
 
