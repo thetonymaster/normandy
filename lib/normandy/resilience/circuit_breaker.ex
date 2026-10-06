@@ -33,6 +33,16 @@ defmodule Normandy.Resilience.CircuitBreaker do
   if its process dies before it returns, its slot is freed and it counts as a failed
   probe, which reopens the breaker.
 
+  ## Shared breakers
+
+  `BaseAgent` agents configured with `circuit_breaker:` use a breaker shared by every
+  agent with the same client module, endpoint, model and breaker options (`key/3`).
+  Normandy starts it on first use under its own supervisor (`ensure_started/1`), so it
+  does not depend on the process that built the agent. Breakers are per node. Set
+  `:scope` to give a tenant (or a test) its own breaker.
+
+  `start_link/1` and `call/2` remain for a breaker you start and supervise yourself.
+
   ## Example
 
       # Start a circuit breaker
@@ -137,10 +147,35 @@ defmodule Normandy.Resilience.CircuitBreaker do
                             ]
                           )
 
+  @key_opts_schema NimbleOptions.new!(
+                     Keyword.delete(@start_link_opts_schema.schema, :name) ++
+                       [
+                         scope: [
+                           type: :any,
+                           default: nil,
+                           doc:
+                             "Any plain term that separates breakers which would otherwise " <>
+                               "share one (one per tenant, one per test). It appears in " <>
+                               "telemetry and logs: never put a secret in it."
+                         ]
+                       ]
+                   )
+
+  @registry Normandy.Resilience.CircuitBreaker.Registry
+  @supervisor Normandy.Resilience.CircuitBreaker.Supervisor
+
+  @typedoc """
+  A shared breaker's identity: the client's module, its endpoint (scheme, host, port and
+  path of its `base_url`, or `nil`), the model, and the breaker options with their
+  defaults, sorted. Never a credential.
+  """
+  @type key :: {module(), String.t() | nil, String.t(), keyword()}
+
   @doc false
-  # BaseAgent.InitOptions builds :circuit_breaker's check from it (one list of keys).
-  @spec __opts_schema__(:start_link) :: NimbleOptions.t()
+  # BaseAgent.InitOptions builds :circuit_breaker's check from the :key schema.
+  @spec __opts_schema__(:start_link | :key) :: NimbleOptions.t()
   def __opts_schema__(:start_link), do: @start_link_opts_schema
+  def __opts_schema__(:key), do: @key_opts_schema
 
   @doc """
   Start a circuit breaker GenServer.
@@ -198,6 +233,109 @@ defmodule Normandy.Resilience.CircuitBreaker do
     case GenServer.call(server, :acquire) do
       {:ok, token} -> execute_and_record(server, token, fun)
       {:error, :open} -> {:error, :open}
+    end
+  end
+
+  @doc """
+  The key of the shared breaker for `client`, `model` and the breaker options `opts`.
+
+  Agents whose client module, endpoint, model and options are all equal share one
+  breaker. The endpoint is the client's `base_url` (its struct field, else
+  `client.options[:base_url]`) reduced to scheme, host, port and path; credentials,
+  query and fragment are dropped.
+
+  ## Options
+
+  #{Options.docs(@key_opts_schema)}
+  """
+  @spec key(struct(), String.t(), keyword()) :: key()
+  def key(%client_module{} = client, model, opts) when is_binary(model) do
+    opts = Options.validate!(opts, @key_opts_schema, {__MODULE__, :key, 3})
+    {client_module, endpoint(client), model, Enum.sort(opts)}
+  end
+
+  @doc """
+  The running breaker for `key`, starting it under Normandy's supervisor when there is
+  none. The breaker is not linked to the caller, and a breaker that crashed is not
+  restarted: the next `ensure_started/1` starts a fresh, closed one.
+  """
+  @spec ensure_started(key()) :: {:ok, pid()}
+  def ensure_started(key) do
+    case fetch(key) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      :error ->
+        spec = %{id: __MODULE__, start: {__MODULE__, :start_keyed, [key]}, restart: :temporary}
+
+        case DynamicSupervisor.start_child(@supervisor, spec) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+        end
+    end
+  end
+
+  @doc "The running breaker for `key`, or `:error` when none runs."
+  @spec fetch(key()) :: {:ok, pid()} | :error
+  def fetch(key) do
+    case Registry.lookup(@registry, key) do
+      [{pid, _value}] -> {:ok, pid}
+      [] -> :error
+    end
+  end
+
+  @doc """
+  `call/2` through the shared breaker for `key`, started if needed (`ensure_started/1`).
+  Returns what `call/2` returns.
+  """
+  @spec run(key(), (-> term())) :: {:ok, term()} | {:error, term()}
+  def run(key, fun) when is_function(fun, 0) do
+    case admit(key) do
+      {pid, {:ok, token}} -> execute_and_record(pid, token, fun)
+      {_pid, {:error, :open}} -> {:error, :open}
+    end
+  end
+
+  @doc false
+  # The DynamicSupervisor's start function for a keyed breaker.
+  @spec start_keyed(key()) :: GenServer.on_start()
+  def start_keyed({_module, _endpoint, _model, opts} = key) do
+    GenServer.start_link(__MODULE__, [{:key, key} | Keyword.delete(opts, :scope)],
+      name: {:via, Registry, {@registry, key}}
+    )
+  end
+
+  # A breaker that stopped between ensure_started/1 and the admission is started
+  # again, once.
+  defp admit(key, retries \\ 1) do
+    {:ok, pid} = ensure_started(key)
+    {pid, GenServer.call(pid, :acquire)}
+  catch
+    :exit, {reason, _call} when retries > 0 and reason in [:noproc, :normal, :shutdown] ->
+      admit(key, retries - 1)
+  end
+
+  defp endpoint(client) do
+    case Map.get(client, :base_url) || options_base_url(client) do
+      url when is_binary(url) -> sanitize_url(url)
+      _none -> nil
+    end
+  end
+
+  defp options_base_url(%{options: %{base_url: url}}), do: url
+  defp options_base_url(_client), do: nil
+
+  # Scheme, host, port and path only: userinfo, query and fragment can carry a token. A
+  # base_url with no scheme or host (a misconfiguration) gives nil rather than its text.
+  defp sanitize_url(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port, path: path}
+      when is_binary(scheme) and is_binary(host) and host != "" ->
+        port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
+        "#{scheme}://#{host}#{port}#{path}"
+
+      _no_scheme_or_host ->
+        nil
     end
   end
 
