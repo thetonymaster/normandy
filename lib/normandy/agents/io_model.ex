@@ -7,8 +7,8 @@ defmodule Normandy.Agents.BaseAgentInputSchema do
 
   use Normandy.Schema
 
-  io_schema "base input" do
-    field(:chat_message, :string, description: "an input chat message from user")
+  io_schema "A chat message from the user." do
+    field(:chat_message, :string, description: "The user's message.")
   end
 end
 
@@ -21,7 +21,9 @@ defmodule Normandy.Agents.BaseAgentOutputSchema do
 
   use Normandy.Schema
 
-  io_schema "base output" do
-    field(:chat_message, :string, description: "a result chat message")
+  io_schema "Your reply to the user." do
+    field(:chat_message, :string,
+      description: "Your reply to the user, in plain text or Markdown."
+    )
   end
 end

@@ -200,12 +200,8 @@ defmodule Normandy.Tools.Memory do
   def description(%__MODULE__{mounts: mounts}) do
     base = """
     Persistent memory that survives across conversations, stored as files under /memories.
-    IMPORTANT: ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE.
-    MEMORY PROTOCOL:
-    1. Use the `view` command to check for earlier progress.
-    2. As you make progress, record status, progress and thoughts in your memory.
-    ASSUME INTERRUPTION: your context window might be reset at any moment, so you risk losing any progress that is not recorded in your memory directory.
-    Keep the directory up to date, coherent and organized: rename or delete files that are no longer relevant, and do not create new files unless necessary. Never store secrets.
+    At the start of a task, view /memories to pick up earlier progress. Record durable progress and decisions as you go; your context may be reset.
+    Keep the directory organized: rename or delete files that are no longer relevant, and do not create new files unless necessary. Never store secrets.
     Commands: view (a directory listing or a file with line numbers), create (create or overwrite a file), str_replace, insert, delete (a file or a directory), rename (a file or a directory).\
     """
 

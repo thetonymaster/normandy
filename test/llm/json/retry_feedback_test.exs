@@ -105,4 +105,54 @@ defmodule Normandy.LLM.Json.RetryFeedbackTest do
       assert feedback =~ "Respond with"
     end
   end
+
+  test "any other failure gets the parse template and the schema, never an Elixir term" do
+    too_large =
+      RetryFeedback.build(
+        {:input_too_large, 2_048, 1_024},
+        ~s({"chat_message": "long"}),
+        %RequiredField{},
+        Normandy.JSON
+      )
+
+    assert too_large =~ "# RESPONSE FORMAT ERROR"
+    assert too_large =~ "Your previous response could not be used as the answer."
+
+    assert too_large =~
+             "The response is 2048 bytes; the limit is 1024 bytes. Give a shorter answer."
+
+    assert too_large =~ "## Required Schema"
+    assert too_large =~ "Respond with a single JSON object"
+    refute too_large =~ "input_too_large"
+
+    not_object =
+      RetryFeedback.build(
+        {:unexpected_parse_result, "[1, 2]"},
+        "[1, 2]",
+        %RequiredField{},
+        Normandy.JSON
+      )
+
+    assert not_object =~ "The response is valid JSON, but not a JSON object."
+    refute not_object =~ "unexpected_parse_result"
+
+    other = RetryFeedback.build({:some, :term}, "x", %RequiredField{}, Normandy.JSON)
+    assert other =~ "The response does not match the required format."
+    refute other =~ ":some"
+  end
+
+  test "a decode exception is shown as its message, never as a struct" do
+    {:error, %Jason.DecodeError{} = exception} = Jason.decode("oops")
+
+    feedback =
+      RetryFeedback.build(
+        {:json_parse_error, exception, "oops"},
+        "oops",
+        %RequiredField{},
+        Normandy.JSON
+      )
+
+    assert feedback =~ "Invalid JSON: " <> Exception.message(exception)
+    refute feedback =~ "Jason.DecodeError"
+  end
 end

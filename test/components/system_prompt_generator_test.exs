@@ -8,8 +8,8 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
 
   test "with empty specification" do
     prompt = """
-    # IDENTITY and PURPOSE
-    - This is a conversation with a helpful and friendly AI assistant.
+    # Role
+    - You are a helpful assistant.
     """
 
     spec = %PromptSpecification{}
@@ -27,14 +27,14 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
     }
 
     prompt = """
-    # IDENTITY and PURPOSE
+    # Role
     - you are a helpful assistant
     - you assist me in assisting
-    # INTERNAL ASSISTANT STEPS
+    # How to work
     - step 1
     - step 2
     - step 3
-    # OUTPUT INSTRUCTIONS
+    # Output
     - print the result
     - as a result
     """
@@ -58,17 +58,17 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
     }
 
     prompt = """
-    # IDENTITY and PURPOSE
+    # Role
     - you are a helpful assistant
     - you assist me in assisting
-    # INTERNAL ASSISTANT STEPS
+    # How to work
     - step 1
     - step 2
     - step 3
-    # OUTPUT INSTRUCTIONS
+    # Output
     - print the result
     - as a result
-    # EXTRA INFORMATION AND CONTEXT
+    # Context
     Use this information where it is relevant to the request.
     ## title a
     some stuff
@@ -89,7 +89,7 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
 
   test "no context line without context providers" do
     result = SystemPromptGenerator.generate_prompt(%PromptSpecification{})
-    refute result =~ "EXTRA INFORMATION"
+    refute result =~ "# Context"
     refute result =~ "Use this information"
   end
 end

@@ -60,10 +60,16 @@ defmodule Normandy.Tools.MemoryTest do
 
     assert enum == ~w(view create str_replace insert delete rename)
 
-    assert Tool.description(t) =~
-             "ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE"
+    assert Tool.description(t) == """
+           Persistent memory that survives across conversations, stored as files under /memories.
+           At the start of a task, view /memories to pick up earlier progress. Record durable progress and decisions as you go; your context may be reset.
+           Keep the directory organized: rename or delete files that are no longer relevant, and do not create new files unless necessary. Never store secrets.
+           Commands: view (a directory listing or a file with line numbers), create (create or overwrite a file), str_replace, insert, delete (a file or a directory), rename (a file or a directory).
+           Shared directories: /memories/org (read-only).\
+           """
 
-    assert Tool.description(t) =~ "/memories/org (read-only)"
+    # No shouted instructions (AX-16): no run of two all-caps words.
+    refute Tool.description(t) =~ ~r/\b[A-Z]{2,}\b[ :]+\b[A-Z]{2,}\b/
   end
 
   test "model input naming the store, mounts or limits is refused before the tool runs (Review Focus #5)" do

@@ -55,15 +55,40 @@ defmodule Normandy.LLM.Json.RetryFeedback do
         schema,
         adapter
       ) do
+    parse_feedback(
+      "JSON DESERIALIZATION ERROR",
+      "Your previous response could not be parsed as valid JSON.",
+      format_json_error(reason),
+      content,
+      schema,
+      adapter
+    )
+  end
+
+  # Any other failure (an answer over the size limit, JSON that is not an object) gets
+  # the parse-error template with a plain description. The reason is an Elixir term,
+  # never text for the model, so it is not shown.
+  def build(reason, content, schema, adapter) do
+    parse_feedback(
+      "RESPONSE FORMAT ERROR",
+      "Your previous response could not be used as the answer.",
+      describe_failure(reason),
+      content,
+      schema,
+      adapter
+    )
+  end
+
+  defp parse_feedback(heading, summary, details, content, schema, adapter) do
     schema_json = adapter.encode!(Normandy.Schema.json_schema(schema), pretty: true)
 
     """
-    # JSON DESERIALIZATION ERROR
+    # #{heading}
 
-    Your previous response could not be parsed as valid JSON.
+    #{summary}
 
     ## Error Details
-    #{format_json_error(reason)}
+    #{details}
 
     ## Your Previous Response
     ```
@@ -81,20 +106,13 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     """
   end
 
-  def build(reason, content, _schema, _adapter) do
-    """
-    # RESPONSE FORMAT ERROR
+  defp describe_failure({:input_too_large, size, limit}),
+    do: "The response is #{size} bytes; the limit is #{limit} bytes. Give a shorter answer."
 
-    Error: #{inspect(reason)}
+  defp describe_failure({:unexpected_parse_result, _content}),
+    do: "The response is valid JSON, but not a JSON object."
 
-    Your previous response:
-    ```
-    #{String.slice(content, 0, 500)}
-    ```
-
-    Please provide a valid JSON response.
-    """
-  end
+  defp describe_failure(_reason), do: "The response does not match the required format."
 
   @spec augment_messages([Message.t()], String.t()) :: [Message.t()]
   # The feedback quotes the model's own failed output, so it goes in a user
@@ -129,7 +147,8 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     "Invalid JSON: #{reason}"
   end
 
-  defp format_json_error(reason) do
-    "JSON parsing failed: #{inspect(reason)}"
-  end
+  defp format_json_error(%{__exception__: true} = exception),
+    do: "Invalid JSON: #{Exception.message(exception)}"
+
+  defp format_json_error(_reason), do: "The response is not valid JSON."
 end

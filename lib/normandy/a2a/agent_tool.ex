@@ -210,25 +210,47 @@ defmodule Normandy.A2A.AgentTool do
   def name(%__MODULE__{agent_card: card, skill_id: skill_id}),
     do: "a2a__#{sanitize_name(card.name)}__#{sanitize_name(skill_id)}"
 
+  # The card is the remote side's own text: it is quoted as the agent's self-description,
+  # cut to @max_card_text characters, never presented as an instruction of this agent's.
+  @max_card_text 1_000
+
   @impl Normandy.Tool
   def description(%__MODULE__{agent_card: card, skill_id: nil}),
-    do: "Remote A2A agent: #{card.description}"
+    do:
+      "Sends a message to the remote agent #{card.name} and returns its reply." <>
+        self_description(card.description)
 
   def description(%__MODULE__{agent_card: card, skill_id: skill_id}) do
+    lead =
+      "Sends a message to the remote agent #{card.name} (skill #{skill_id}) and returns its reply."
+
     case Enum.find(card.skills, fn s -> s.id == skill_id end) do
-      nil -> "Remote A2A agent: #{card.description} (skill: #{skill_id})"
-      skill -> "#{card.name} - #{skill.description}"
+      nil -> lead <> self_description(card.description)
+      skill -> lead <> self_description(skill.description)
     end
   end
 
+  defp self_description(text) when is_binary(text) and text != "" do
+    quoted =
+      if String.length(text) > @max_card_text,
+        do: String.slice(text, 0, @max_card_text) <> "...",
+        else: text
+
+    " It describes itself as: " <> quoted
+  end
+
+  defp self_description(_text), do: ""
+
   @impl Normandy.Tool
-  def input_schema(_tool) do
+  def input_schema(%__MODULE__{agent_card: card}) do
     %{
       "type" => "object",
       "properties" => %{
         "message" => %{
           "type" => "string",
-          "description" => "Message to send to the remote agent"
+          "description" =>
+            "Message to send to #{card.name}. It cannot see this conversation, " <>
+              "so include every detail it needs."
         }
       },
       "required" => ["message"]

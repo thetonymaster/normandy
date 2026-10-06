@@ -1151,6 +1151,29 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   replayed after a different history, which models that check replayed thinking can reject.
   This is a known limit of this release; a later 2.0 release stores compaction.
 
+## 36. Model-facing text and schemas
+
+- The system prompt's headings changed: `# IDENTITY and PURPOSE` is `# Role`,
+  `# INTERNAL ASSISTANT STEPS` is `# How to work`, `# OUTPUT INSTRUCTIONS` is `# Output`, and
+  `# EXTRA INFORMATION AND CONTEXT` is `# Context`. An empty `background` now gives
+  `- You are a helpful assistant.` instead of "This is a conversation with a helpful and
+  friendly AI assistant.". Update prompt snapshot tests; the first request after upgrading
+  misses the prompt cache.
+- The memory tool's description no longer says "IMPORTANT: ALWAYS VIEW YOUR MEMORY DIRECTORY
+  BEFORE DOING ANYTHING ELSE" or "ASSUME INTERRUPTION"; it asks the model to view `/memories`
+  at the start of a task. Expect fewer `view` calls at the start of each turn.
+- `BaseAgentInputSchema` and `BaseAgentOutputSchema` describe their field to the model:
+  "The user's message." and "Your reply to the user, in plain text or Markdown." (were
+  "an input chat message from user" and "a result chat message").
+- JSON retry feedback for a failure other than invalid JSON or a validation error (an
+  answer over `:max_input_bytes`, JSON that is not an object) now uses the parse-error
+  template with the required schema, and no longer shows the Elixir reason term. A decode
+  error reads `Invalid JSON: <decoder message>` instead of the inspected exception.
+- `Normandy.A2A.AgentTool`'s description reads "Sends a message to the remote agent <name>
+  and returns its reply. It describes itself as: <card or skill description>", with the
+  card's text cut to 1_000 characters; the `message` input says the remote agent cannot see
+  this conversation.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

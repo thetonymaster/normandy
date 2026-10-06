@@ -6,9 +6,9 @@ defmodule Normandy.Components.SystemPromptGenerator do
   alias Normandy.Components.ContextProvider
   alias Normandy.Components.PromptSpecification
 
-  @background "IDENTITY and PURPOSE"
-  @steps "INTERNAL ASSISTANT STEPS"
-  @output "OUTPUT INSTRUCTIONS"
+  @background "Role"
+  @steps "How to work"
+  @output "Output"
 
   @doc """
   Uses an instance of `Normandy.Components.PromptSpecification` to generate a
@@ -30,7 +30,7 @@ defmodule Normandy.Components.SystemPromptGenerator do
   def generate_prompt(%PromptSpecification{background: []} = prompt_specification) do
     generate_prompt(%{
       prompt_specification
-      | background: ["This is a conversation with a helpful and friendly AI assistant."]
+      | background: ["You are a helpful assistant."]
     })
   end
 
@@ -70,7 +70,7 @@ defmodule Normandy.Components.SystemPromptGenerator do
 
     prompt_parts ++
       [
-        "# EXTRA INFORMATION AND CONTEXT",
+        "# Context",
         "Use this information where it is relevant to the request."
       ] ++
       result

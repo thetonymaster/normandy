@@ -72,20 +72,34 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "tool_description without skill", %{tool: tool} do
-      desc = Tool.description(tool)
-      assert desc == "Remote A2A agent: Helps find information"
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent and returns its reply. " <>
+                 "It describes itself as: Helps find information"
     end
 
     test "tool_description with matching skill", %{card_with_skills: card} do
       tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
-      desc = Tool.description(tool)
-      assert desc == "Research Agent - Search the web"
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent (skill web_search) and " <>
+                 "returns its reply. It describes itself as: Search the web"
     end
 
     test "tool_description with non-matching skill", %{card: card} do
       tool = AgentTool.new("https://example.com/a2a", card, skill_id: "unknown")
-      desc = Tool.description(tool)
-      assert desc =~ "skill: unknown"
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent (skill unknown) and " <>
+                 "returns its reply. It describes itself as: Helps find information"
+    end
+
+    test "the card's text is cut to 1_000 characters" do
+      card = AgentCard.new("Chatty", String.duplicate("é", 1_200))
+      tool = AgentTool.new("https://example.com/a2a", card)
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Chatty and returns its reply. " <>
+                 "It describes itself as: " <> String.duplicate("é", 1_000) <> "..."
     end
 
     test "input_schema has message field", %{tool: tool} do
@@ -93,6 +107,10 @@ defmodule Normandy.A2A.AgentToolTest do
       assert schema["type"] == "object"
       assert schema["properties"]["message"]["type"] == "string"
       assert schema["required"] == ["message"]
+
+      assert schema["properties"]["message"]["description"] ==
+               "Message to send to Research Agent. It cannot see this conversation, " <>
+                 "so include every detail it needs."
     end
   end
 
