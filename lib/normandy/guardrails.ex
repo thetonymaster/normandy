@@ -43,19 +43,26 @@ defmodule Normandy.Guardrails do
   ## Error handling (`:on_error`)
 
   Each guard spec may carry an `:on_error` policy controlling what happens when
-  its `check` **raises**:
+  its `check` **crashes**: raises, exits (a `GenServer.call` or `Task.await` timeout
+  inside the guard) or throws:
 
-  - `:reraise` (default) — the exception propagates. A configuration bug stays a
+  - `:reraise` (default) — the crash propagates. A configuration bug stays a
     crash, not a silent admit.
-  - `:open` — the crash is rescued and treated as a pass. Use this for a guard
+  - `:open` — the crash is caught and treated as a pass. Use this for a guard
     that calls an external service so an outage admits instead of taking down
     the whole guard chain.
-  - `:closed` — the crash is rescued and turned into a `:guard_error` violation.
+  - `:closed` — the crash is caught and turned into a `:guard_error` violation
+    whose message names the guard and the exception's module, the exit's tag or
+    "threw", never the exception's message or the exit's terms.
 
-  Only the guard's `check` call is rescued; a malformed return value is a
+  Only the guard's `check` call is caught; a malformed return value is a
   contract violation and always raises regardless of `:on_error`. So does a
   built-in guard's configuration error (an `ArgumentError` or `KeyError`, such
-  as a `:field` the struct does not have or a missing option). A `:field` on a plain map cannot be checked: a map
+  as a `:field` the struct does not have or a missing option). Host code a built-in
+  guard calls (`SemanticScope`'s `:classifier` and `:fast_path`) is not configuration:
+  its crash reaches `:on_error` as a `Normandy.Guardrails.GuardError`. A guard has no
+  timeout of its own: one that blocks without failing blocks the turn, so give the
+  service call inside it a timeout. A `:field` on a plain map cannot be checked: a map
   has no fixed keys, so a missing key reads as `nil`.
 
   ## What an input guard receives
@@ -137,7 +144,9 @@ defmodule Normandy.Guardrails do
   `admit/2`); it is suppressed when no guardrails are configured.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Guardrails.Guard
+  alias Normandy.Guardrails.GuardError
 
   @type spec :: module() | {module(), keyword()}
 
@@ -184,8 +193,8 @@ defmodule Normandy.Guardrails do
 
   # Invokes the guard under its `:on_error` policy. `:reraise` (default) lets a
   # crashing guard propagate — a config bug stays a crash, not a silent admit.
-  # `:open` rescues and treats the crash as a pass; `:closed` rescues and turns
-  # it into a `:guard_error` violation. Only the `check` call is rescued: a
+  # `:open` catches a raise, exit or throw and treats it as a pass; `:closed` turns
+  # it into a `:guard_error` violation. Only the `check` call is caught: a
   # malformed return is a contract violation handled by the caller, not an
   # `:on_error` case.
   defp invoke(mod, value, opts, context) do
@@ -207,6 +216,9 @@ defmodule Normandy.Guardrails do
 
           exception ->
             on_error_result(policy, mod, exception)
+        catch
+          :exit, reason -> on_error_result(policy, mod, {:exit, reason})
+          :throw, value -> on_error_result(policy, mod, {:throw, value})
         end
 
       other ->
@@ -229,21 +241,26 @@ defmodule Normandy.Guardrails do
 
   defp builtin?(mod), do: String.starts_with?(inspect(mod), "Normandy.Guardrails.Builtins.")
 
-  defp on_error_result(:open, _mod, _exception), do: :ok
+  defp on_error_result(:open, _mod, _crash), do: :ok
 
-  defp on_error_result(:closed, mod, exception) do
+  defp on_error_result(:closed, mod, crash) do
     {:error,
      [
        %{
          guard: mod,
          path: [],
-         # The module only: the exception's message can inspect the guarded value,
-         # and this violation reaches the caller, telemetry and the store.
-         message: "guard #{inspect(mod)} crashed: #{inspect(exception.__struct__)}",
+         # The module or exit tag only: an exception's message can inspect the guarded
+         # value, and this violation reaches the caller, telemetry and the store.
+         message: "guard #{inspect(mod)} #{describe_crash(crash)}",
          constraint: :guard_error
        }
      ]}
   end
+
+  defp describe_crash(%GuardError{} = error), do: "crashed: " <> Exception.message(error)
+  defp describe_crash({:exit, reason}), do: "exited: " <> Describe.reason_tag(reason)
+  defp describe_crash({:throw, _value}), do: "threw"
+  defp describe_crash(exception), do: "crashed: " <> inspect(exception.__struct__)
 
   defp normalize(mod) when is_atom(mod), do: {mod, []}
   defp normalize({mod, opts}) when is_atom(mod) and is_list(opts), do: {mod, opts}

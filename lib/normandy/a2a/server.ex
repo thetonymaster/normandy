@@ -18,9 +18,24 @@ defmodule Normandy.A2A.Server do
         version: "1.0.0"
       )
 
-      # Handle incoming message (in your controller)
-      {:ok, task} = Normandy.A2A.Server.handle_message(agent_config, a2a_message)
+      # Handle incoming message (in your controller), scoped to the caller
+      {:ok, task} =
+        Normandy.A2A.Server.handle_message(agent_config, a2a_message, conn.req_headers,
+          tool_context: %{memory_namespace: "a2a/" <> caller_id}
+        )
 
+  ## What the host owns
+
+  This module never sees the HTTP request. Authentication, authorization and the request
+  body limit (`Plug.Parsers`' `:length`) belong to your Plug or controller: every caller
+  that gets past them reaches the agent and **every tool in `config.toolset`**, whatever
+  `build_agent_card/2`'s `:expose_tools` lists (the card only advertises). Expose an agent
+  whose tools are safe for every such caller.
+
+  Each call runs on the `config` you pass, so callers share its `tool_context` (and the
+  memory namespace in it) unless you pass `handle_message/4`'s `:tool_context` per caller.
+  A shared memory namespace lets one caller plant text that every other caller's turns
+  read. `:max_text_bytes` (default 100_000) bounds the text a caller can send.
   """
 
   alias Claudio.A2A.AgentCard
@@ -64,6 +79,26 @@ defmodule Normandy.A2A.Server do
                                         "tool is not advertised unless you choose to."
                                   ]
                                 )
+
+  @handle_message_opts_schema NimbleOptions.new!(
+                                max_text_bytes: [
+                                  type: {:or, [:pos_integer, {:in, [nil]}]},
+                                  default: 100_000,
+                                  doc:
+                                    "The most bytes of text the message's parts may hold in " <>
+                                      "total; more is `{:error, :too_large}` and the agent does " <>
+                                      "not run. `nil` sets no limit."
+                                ],
+                                tool_context: [
+                                  type: {:custom, Normandy.Options, :plain_map, []},
+                                  type_doc: "`t:map/0`",
+                                  doc:
+                                    "Replaces `config.tool_context` for this call, so each " <>
+                                      "caller gets its own (its memory namespace, say). Not " <>
+                                      "merged: a key you leave out is absent. Default: the " <>
+                                      "config's own."
+                                ]
+                              )
 
   @doc """
   Builds a `Claudio.A2A.AgentCard` from a Normandy agent configuration.
@@ -127,7 +162,7 @@ defmodule Normandy.A2A.Server do
   @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t()) ::
           {:ok, Claudio.A2A.Task.t()} | {:error, term()}
   def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message) do
-    handle_message(config, message, [])
+    handle_message(config, message, [], [])
   end
 
   @doc """
@@ -145,12 +180,45 @@ defmodule Normandy.A2A.Server do
   Emits a `[:normandy, :a2a, :request]` `Normandy.Telemetry.Span.span/3`. Start metadata:
   `:task_id` (the id of the returned task) and `:agent_name` (`config.name`).
   Stop metadata adds `:status` (`:ok` or `:error`) and, on error, `:error_type`
-  (`:no_text` or `:agent_failed`). No message content is included.
+  (`:no_text`, `:too_large` or `:agent_failed`). No message content is included.
+
+  Same as `handle_message/4` with no options.
   """
   @spec handle_message(BaseAgentConfig.t(), Claudio.A2A.Message.t(), [{String.t(), String.t()}]) ::
           {:ok, Claudio.A2A.Task.t()} | {:error, term()}
   def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message, carrier)
       when is_list(carrier) do
+    handle_message(config, message, carrier, [])
+  end
+
+  @doc """
+  Like `handle_message/3`, with options.
+
+  Returns `{:error, :too_large}` when the message's text parts hold more than
+  `:max_text_bytes` bytes in total: the agent does not run, nothing is logged, and the
+  request span's stop metadata has `error_type: :too_large`.
+
+  ## Options
+
+  #{Options.docs(@handle_message_opts_schema)}
+  """
+  @spec handle_message(
+          BaseAgentConfig.t(),
+          Claudio.A2A.Message.t(),
+          [{String.t(), String.t()}],
+          keyword()
+        ) :: {:ok, Claudio.A2A.Task.t()} | {:error, term()}
+  def handle_message(%BaseAgentConfig{} = config, %Claudio.A2A.Message{} = message, carrier, opts)
+      when is_list(carrier) do
+    opts =
+      Options.validate!(opts, @handle_message_opts_schema, {__MODULE__, :handle_message, 4})
+
+    config =
+      case Keyword.fetch(opts, :tool_context) do
+        {:ok, tool_context} -> %{config | tool_context: tool_context}
+        :error -> config
+      end
+
     token =
       carrier
       |> Enum.map(fn {name, value} -> {to_string(name), value} end)
@@ -158,7 +226,7 @@ defmodule Normandy.A2A.Server do
       |> OtelCtx.attach()
 
     try do
-      request_span(config, message)
+      request_span(config, message, Keyword.fetch!(opts, :max_text_bytes))
     after
       OtelCtx.detach(token)
     end
@@ -174,16 +242,15 @@ defmodule Normandy.A2A.Server do
     end
   end
 
-  defp request_span(config, message) do
+  defp request_span(config, message, max_text_bytes) do
     task_id = generate_task_id()
     metadata = %{task_id: task_id, agent_name: config.name}
 
     Span.span([:normandy, :a2a, :request], metadata, fn ->
       result =
-        case message_text(message) do
-          "" -> {:error, :no_text}
-          text -> run_agent(config, text, task_id)
-        end
+        if too_large?(message, max_text_bytes),
+          do: {:error, :too_large},
+          else: run_text(config, message_text(message), task_id)
 
       {result, Map.merge(metadata, stop_status(result))}
     end)
@@ -191,6 +258,23 @@ defmodule Normandy.A2A.Server do
 
   defp stop_status({:ok, _task}), do: %{status: :ok}
   defp stop_status({:error, reason}), do: %{status: :error, error_type: reason}
+
+  defp run_text(_config, "", _task_id), do: {:error, :no_text}
+  defp run_text(config, text, task_id), do: run_agent(config, text, task_id)
+
+  # Summed per part before anything is joined or copied.
+  defp too_large?(_message, nil), do: false
+
+  defp too_large?(message, max_bytes) do
+    message.parts
+    |> Enum.reduce(0, fn part, total ->
+      case Map.get(part, :text) do
+        text when is_binary(text) -> total + byte_size(text)
+        _ -> total
+      end
+    end)
+    |> Kernel.>(max_bytes)
+  end
 
   defp message_text(message) do
     message.parts

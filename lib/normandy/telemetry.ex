@@ -177,11 +177,11 @@ defmodule Normandy.Telemetry do
 
   ### `[:normandy, :a2a, :request, :start | :stop | :exception]`
 
-  `A2A.Server.handle_message/3` handling one agent-to-agent message.
+  `A2A.Server.handle_message/2,3,4` handling one agent-to-agent message.
 
     * Start metadata: `task_id`, `agent_name`.
-    * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type` (`:no_text` or
-      `:agent_failed`).
+    * Stop metadata adds `status` (`:ok | :error`) and, on error, `error_type` (`:no_text`,
+      `:too_large` or `:agent_failed`).
     * Parenting: when the carrier passed to `handle_message/3` has a valid W3C
       `traceparent`, the request span (and the agent run inside it) joins that trace.
 

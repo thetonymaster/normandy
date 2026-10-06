@@ -32,6 +32,13 @@ defmodule Normandy.Tools.Memory do
   Memory carries content across sessions, so it is a prompt-injection channel that
   persists: keep a namespace no wider than the trust boundary of the people whose input
   reaches the agent. Never store secrets in memory.
+
+  A mount's access holds only while no session can write its namespace directly, so a
+  session namespace equal to a mount's namespace raises (the call fails; the model sees
+  the mount path, not the namespace), and two mounts of one namespace with different
+  access raise in `new/1`. Never build a namespace from a user-controlled string (a
+  username, an org slug) without a fixed prefix that mount namespaces do not use, such as
+  `"users/" <> user_id` beside `"shared/org-kb"`.
   """
 
   use Normandy.Tool, name: "memory"
@@ -222,12 +229,26 @@ defmodule Normandy.Tools.Memory do
   defp namespace!(tool, ctx) do
     case Map.get(ctx.values, tool.namespace_key) do
       ns when is_binary(ns) and ns != "" ->
-        ns
+        not_a_mount!(tool, ns)
 
       _ ->
         raise ArgumentError,
               "memory tool needs tool_context[#{inspect(tool.namespace_key)}] to be a non-empty string; " <>
                 "got keys #{inspect(Map.keys(ctx.values))}"
+    end
+  end
+
+  # A session that could write a mount's namespace directly would bypass the mount's
+  # :read_only. Names the mount path only: this message reaches the model.
+  defp not_a_mount!(%__MODULE__{mounts: mounts, namespace_key: key}, ns) do
+    case Enum.find(Enum.sort(mounts), fn {_mount, {mount_ns, _access}} -> mount_ns == ns end) do
+      nil ->
+        ns
+
+      {mount, _} ->
+        raise ArgumentError,
+              "memory tool: tool_context[#{inspect(key)}] equals the namespace of mount " <>
+                "#{mount}; a session namespace must differ from every mount's"
     end
   end
 
@@ -281,9 +302,28 @@ defmodule Normandy.Tools.Memory do
       {mount, _} ->
         bad_mount!(mount)
     end)
+
+    mounts
+    |> Enum.group_by(fn {_mount, {ns, _access}} -> ns end)
+    |> Enum.each(fn {_ns, entries} -> same_access!(Enum.sort(entries)) end)
   end
 
   defp validate_mounts!(other), do: bad_mount!(other)
+
+  # Two mounts of one namespace with different access: the read-write one would write
+  # what the read-only one promises not to.
+  defp same_access!([{_, {_, access}} | _] = entries) do
+    case Enum.find(entries, fn {_mount, {_ns, a}} -> a != access end) do
+      nil ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              "Normandy.Tools.Memory.new/1: :mounts " <>
+                Enum.map_join(entries, " and ", &elem(&1, 0)) <>
+                " share a namespace with different access; give one namespace one access"
+    end
+  end
 
   @spec bad_mount!(term()) :: no_return()
   defp bad_mount!(what),

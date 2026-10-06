@@ -1267,6 +1267,28 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `{:error, {:invalid_tool_name, name}}`, as a dotted name already does.
 - MCP and A2A tool descriptions, schemas and results come from outside your trust boundary
   and reach the model unchanged. See "Trust" in the `ToolWrapper` and `AgentTool` docs.
+- A guard with `on_error: :open` or `:closed` now handles a guard that **exits or throws**
+  (a `GenServer.call` or `Task.await` timeout inside it), not only one that raises. Before,
+  the exit crashed the turn or `admit/2` whatever `:on_error` said. Under `:closed` the
+  violation names the exit's tag (`"guard MyGuard exited: :timeout"`) or says
+  `"guard MyGuard threw"`. `:reraise` (the default) is unchanged. A guard still has no
+  timeout of its own: put one on the call inside it.
+- `SemanticScope` under `:open`/`:closed`: a raise, exit or throw in your `:classifier` or
+  `:fast_path`, a `KeyError` or `ArgumentError` included, now goes to that policy as a
+  `Normandy.Guardrails.GuardError` (`"guard ...SemanticScope crashed: host code raised
+  KeyError"`). It was re-raised as if it were the guard's own configuration error.
+- The memory tool refuses a session whose `tool_context` namespace equals a mount's
+  namespace (the call fails with `ArgumentError`; it used to read and write the mount's
+  documents read-write), and `Memory.new/1` refuses two mounts of one namespace with
+  different access. Two read-only mounts of one namespace are still allowed. Build session
+  namespaces under a fixed prefix your mounts do not use.
+- `A2A.Server.handle_message/2,3` refuse a message whose text parts hold more than
+  100_000 bytes: `{:error, :too_large}`, the agent does not run. Pass
+  `handle_message(config, message, carrier, max_text_bytes: n)` (or `nil` for no limit)
+  to change it. `handle_message/4`'s `:tool_context` replaces the config's `tool_context`
+  for one call: give each caller its own memory namespace. Authentication and the HTTP body
+  limit stay with your Plug, and every caller that gets through can reach every tool in the
+  config's toolset.
 
 ## New, non-breaking
 
