@@ -2142,3 +2142,68 @@ git add lib/normandy/resilience/circuit_breaker.ex lib/normandy/agents/base_agen
   test/resilience/circuit_breaker_test.exs test/agents/base_agent_shared_breaker_test.exs
 git commit -m "fix(agents): a shared breaker counts only endpoint-health failures"
 ```
+
+---
+
+## Follow-up (decision 21, 2026-10-06): Q's "fix before Wave 5" list
+
+### Task 4.5: Idle shared breakers stop themselves (final-review M2)
+
+Keyed breakers (`CircuitBreaker.start_keyed/1`) never stop, so following §31's `scope: tenant_id` advice grows one idle process per tenant × model × options.
+
+**Files:** `lib/normandy/resilience/circuit_breaker.ex`; test `test/resilience/circuit_breaker_keyed_test.exs`; `MIGRATING-2.0.md` §31 (one bullet).
+
+**Behaviour:**
+- A keyed breaker (one with a `key`) stops (`{:stop, :normal, state}`) after `@idle_stop_ms 900_000` (15 minutes) with no message, but only while `:closed` with no probes. An `:open` or `:half_open` breaker never idle-stops (its state matters). A breaker started with `start_link/1` never idle-stops (its owner supervises it).
+- Mechanism: the GenServer timeout. `State` gains `:idle_timeout` (`@idle_stop_ms` for keyed breakers, `:infinity` otherwise, set in `init/1` from whether `:key` is non-nil). Every `handle_call`/`handle_info` return appends `state.idle_timeout` (one private helper, e.g. `reply(result, state)` / `noreply(state)`, so no clause forgets it); `init/1` returns `{:ok, state, state.idle_timeout}`. `handle_info(:timeout, state)` stops when `state.key != nil and state.state == :closed and state.probes == %{}`, else continues with the timeout.
+- A caller racing a stop is already covered: `admit/2` retries once on `:noproc`/`:normal`/`:shutdown`, and `record/3` never exits the caller.
+- `ensure_started/1` starts a fresh, closed breaker next time; the failure count of a closed breaker is lost after 15 idle minutes (stale counts carry no signal).
+
+**Tests** (in `circuit_breaker_keyed_test.exs`, deterministic: deliver the GenServer timeout by sending `:timeout` to the pid; monitor and `assert_receive {:DOWN, ...}` / `refute_receive`):
+- a closed keyed breaker receiving `:timeout` stops normally and `fetch(key) == :error` afterwards (use `wait_until` for the Registry cleanup); the next `run/3` starts a new, closed one;
+- an open keyed breaker (`trip/1`) receiving `:timeout` stays alive and open;
+- a half-open keyed breaker with a probe in flight receiving `:timeout` stays alive;
+- a `start_link/1` breaker receiving `:timeout` stays alive;
+- `:sys.get_state(pid)` shows `idle_timeout: 900_000` for keyed and `:infinity` for `start_link/1` breakers.
+
+**MIGRATING §31 bullet:** "- A shared breaker that has been closed and idle for 15 minutes stops; the next call starts a fresh one. Open and half-open breakers stay."
+
+Commit: `fix(circuit_breaker): an idle closed shared breaker stops itself`.
+
+### Task 4.6: Strings inside an option's container are redacted (Wave 3 residual)
+
+`Normandy.Options.redact_container/2` replaces every map, list and tuple inside a failing value with its type, but NimbleOptions' nested errors also echo a *string* found inside the container: `guardrails: [input: [{Foo, "sk-LEAK"}]]` gives `... expected keyword list, got: "sk-LEAK"`, and `guardrails: [input: ["sk-LEAK2"]]` gives `... expected tuple, got: "sk-LEAK2"`.
+
+**Files:** `lib/normandy/options.ex` (`redact_container/2` and `containers/2`); test: the existing options/redaction tests (find them with `grep -rn "redact_container\|is not shown\|sk-" test/options* test/options/`), plus a BaseAgent `init/1` case.
+
+**Behaviour:** every binary found *inside* a container value (at any depth, including map keys, tuple elements, improper-list tails, struct fields) is replaced in the message by `Describe.type_of/1` (`"a string (N bytes)"`), like containers. A top-level scalar value (a string that is itself the failing value, not inside a container) keeps NimbleOptions' message, as today. Replace longest inspected forms first (an inner string's `inspect` is part of its container's). Do not replace an empty string `""` (its inspect `"\"\""` would hit unrelated text); describe it only via its container.
+
+**Tests (exact):**
+- `BaseAgent.init(client: %StubClient{}, model: "m", guardrails: [input: [{Foo, "sk-LEAK"}]])` raises `ArgumentError` whose message does not contain `"sk-LEAK"` and contains `"a string (7 bytes)"`;
+- the same for `guardrails: [input: ["sk-LEAK2"]]` and `guardrails: [output: [{Normandy.Guardrails.Builtins.MaxLength, "sk-LEAK3"}]]`;
+- a unit test on `Normandy.Options.redact_container/2` with a message containing `inspect(%{a: ["sk-x", {1, "sk-y"}]})` fragments: no `sk-` left;
+- a top-level string value for a non-sensitive key is still shown (pick an existing option with a string-or-nil type, e.g. `init(name: 123)` shows `123`; a string example only if one exists).
+
+Commit: `fix(options): strings inside an option's container value are never echoed`.
+
+### Task 4.7: ResumeReaper tolerates Horde's via-registration race (Wave 6 item, pulled forward)
+
+`ResumeReaper.start_session/2` (`lib/normandy/agents/turn/resume_reaper.ex`) calls `supervisor_mod.start_server/2` once and logs `{:error, {:process_not_registered_via, _}}` as a failed resume; under Horde this registration race happens while the registry converges (seen once in the distributed suite: `ResumeReaperIntegrationTest`). `Turn.Session.start_with_retry/7` (`lib/normandy/agents/turn/session.ex` ~380-436) already handles both race shapes.
+
+**Files:** create `lib/normandy/agents/turn/start.ex` (`@moduledoc false`, one public function); modify `session.ex` (use it, delete its private copies: `start_with_retry/7`, `already_started_pid/1`, `via_race?/1`) and `resume_reaper.ex` (use it); tests in `test/agents/turn/resume_reaper_test.exs` (or the existing reaper unit test file — find it) and keep Session's existing race tests passing.
+
+**Interface:** `Normandy.Agents.Turn.Start.start_server(sup_mod, sup, server_opts, {reg_mod, reg_handle}, session_id, retries \\ 20) :: {:ok, pid} | {:error, term()} | other` — exactly Session's current logic moved: `{:ok, pid}`; `already_started` (bare or `{{:already_started, pid}, child}`) → `{:ok, pid}`; via race (bare or nested) with retries left → `whereis` the winner (`{:ok, pid}`), or `:none` → `Process.sleep(10)` and retry, or a lookup error → `{:error, lookup_error}`; anything else returned unchanged. Keep the explanatory comment block.
+
+**Reaper:** `start_session/2` calls `Start.start_server(state.supervisor_mod, state.supervisor, opts, state.registry, sid)`; `{:ok, _}` → `:ok`; `{:error, reason}` → the existing warning; any other result → the existing "unexpected" warning.
+
+**Tests (deterministic, no Horde):** a fake supervisor module (a test module whose `start_server/2` pops scripted replies from an `Agent`) and a fake registry module:
+- reaper: two `{:error, {:process_not_registered_via, Horde.Registry}}` then `{:ok, pid}` → the session is started (the fake saw 3 calls) and no "failed to resume" warning is logged (`capture_log`);
+- reaper: via race, then `whereis` returns `{:ok, winner}` → no further start call, no warning;
+- reaper: nested `{{:process_not_registered_via, _}, child}` shape is retried too;
+- reaper: a genuine `{:error, :boom}` is logged once as "failed to resume" (not retried).
+Drive the reaper through its public `reap/1` with a hand-built state map (the moduledoc says callers may build it) and a fake store whose `list_resumable/1` returns `{:ok, [sid]}` and `load_turn_state/2` returns a non-terminal `%Turn.State{}`.
+
+Commit: `fix(turn): the resume reaper tolerates the via-registration race`.
+
+### Then (controller)
+Gate on the last commit (precommit, docs, redis, postgres, distributed ×2), record in `decisions.md`, then stop the `normandy-test-pg` container (`docker stop normandy-test-pg`; Q asked; `docker start` brings it back) and stop before Wave 5.
