@@ -149,6 +149,16 @@ defmodule Normandy.Options.CoordinationOptionsTest do
       refute error.message =~ "sk-secret"
     end
 
+    test "a misspelled key inside :agent_config raises in the caller" do
+      error =
+        assert_raise ArgumentError, fn ->
+          AgentPool.start_link(agent_config: %{model: "m", client: %StubClient{}, modle: 1})
+        end
+
+      assert error.message =~
+               ~r/^Normandy\.Coordination\.AgentPool\.start_link\/1: invalid :agent_config: Normandy\.Agents\.BaseAgent\.init\/1: unknown option :modle/
+    end
+
     test "a struct where AgentPool expects an agent config map is an ArgumentError" do
       error = assert_raise ArgumentError, fn -> AgentPool.start_link(agent_config: %URI{}) end
       assert error.message =~ "Normandy.Coordination.AgentPool.start_link/1: "

@@ -44,6 +44,7 @@ defmodule Normandy.Coordination.AgentPool do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Coordination.AgentSupervisor
   alias Normandy.Options
 
@@ -153,6 +154,7 @@ defmodule Normandy.Coordination.AgentPool do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+    :ok = check_agent_config!(Keyword.fetch!(opts, :agent_config))
 
     case Keyword.get(opts, :name) do
       nil -> GenServer.start_link(__MODULE__, opts)
@@ -301,6 +303,22 @@ defmodule Normandy.Coordination.AgentPool do
   @spec stop(GenServer.server()) :: :ok
   def stop(pool) do
     GenServer.stop(pool, :normal)
+  end
+
+  # init/1 builds every pooled agent with BaseAgent.init/1; a bad config must raise here,
+  # in the caller, not crash init/1. Only the option check runs (no agent is built).
+  defp check_agent_config!(agent_config) do
+    _ = InitOptions.validate!(agent_config)
+    :ok
+  rescue
+    e in ArgumentError ->
+      reraise ArgumentError,
+              [
+                message:
+                  "#{inspect(__MODULE__)}.start_link/1: invalid :agent_config: " <>
+                    Exception.message(e)
+              ],
+              __STACKTRACE__
   end
 
   # Server Callbacks

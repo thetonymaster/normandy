@@ -859,3 +859,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   option: expected non-negative integer or :infinity, got: -1`.
 - A workflow's `execute/1` raises for a missing `:agents` or `:initial_input` (it raised
   `KeyError`) and for an unknown key.
+- Value types that are now checked: `AgentProcess.start_link/1`'s and
+  `AgentSupervisor.start_agent/2`'s `:agent_id` is a string (1.x took any term, such as
+  `:researcher`); their `:context_pid` and `AgentProcess.cast/3`'s `:reply_to` are a pid or a
+  registered name (`{name, node}` and `{:via, ...}` are rejected); `AgentPool.start_link/1`'s
+  `:size` is a positive integer, and a bad `:agent_config` (an unknown or misspelled
+  `BaseAgent.init/1` option) raises in the caller as `...AgentPool.start_link/1: invalid
+  :agent_config: ...` instead of crashing the pool's `init/1`; `HierarchicalCoordinator.execute/3`'s
+  `:manager_prompt` is a string; a workflow's `execute/1` `:context` is a plain map.
