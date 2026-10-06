@@ -6,6 +6,7 @@ defmodule Normandy.Coordination.Orchestration do
   alias Normandy.Agents.{BaseAgent, BaseAgentConfig}
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.OrchestrationError
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
 
   @type spec :: %{
@@ -88,6 +89,41 @@ defmodule Normandy.Coordination.Orchestration do
     e -> TurnError.log_raised("Agent #{inspect(id)}", e, __STACKTRACE__)
   catch
     kind, reason -> {:error, caught(kind, reason)}
+  end
+
+  # Tasks started under this supervisor are not linked to the caller: a crash in a
+  # process an agent linked to (which kills its task) arrives as an {:exit, reason}
+  # outcome, not as an exit of the caller. There is no application supervision tree to
+  # hang them on, so each call starts a Task.Supervisor and stops it however the call ends.
+  @spec with_task_supervisor((Supervisor.supervisor() -> result)) :: result when result: term()
+  def with_task_supervisor(fun) do
+    {:ok, supervisor} = Task.Supervisor.start_link()
+
+    try do
+      fun.(supervisor)
+    after
+      Supervisor.stop(supervisor)
+    end
+  end
+
+  # run_agent/3 in an unlinked task under `supervisor`, the caller's OTel context restored
+  # in it. A task that dies (a crash in a process the agent linked to) is that agent's
+  # :task_down TurnError, as in run_agent/3.
+  @spec run_agent_isolated(Supervisor.supervisor(), String.t(), BaseAgentConfig.t(), term()) ::
+          {:ok, term()} | {:error, Exception.t()}
+  def run_agent_isolated(supervisor, id, %BaseAgentConfig{} = agent, input) do
+    parent_otel_ctx = OtelCtx.capture()
+
+    task =
+      Task.Supervisor.async_nolink(supervisor, fn ->
+        OtelCtx.restore(parent_otel_ctx)
+        run_agent(id, agent, input)
+      end)
+
+    case Task.yield(task, :infinity) do
+      {:ok, outcome} -> outcome
+      {:exit, reason} -> {:error, TurnError.from_reason({:task_down, reason})}
+    end
   end
 
   # A spec's callback (:transform, :on_agent_complete) run where a crash would take the

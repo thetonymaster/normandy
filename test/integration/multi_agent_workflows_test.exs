@@ -38,7 +38,7 @@ defmodule Normandy.Integration.MultiAgentWorkflowsTest do
       agents = [agent1, agent2]
       input = %{chat_message: "Start with number 10"}
 
-      {:ok, final_result} = SequentialOrchestrator.execute(agents, input)
+      {:ok, %{"agent_1" => final_result}} = SequentialOrchestrator.execute(agents, input)
 
       # Should have processed through both agents
       assert is_map(final_result)

@@ -758,3 +758,15 @@ agents, one input and options, and return:
   agent (was `{id, {:exception, e, stacktrace}}` or `{id, {:exit, reason}}`).
 - `HierarchicalCoordinator` keeps its shapes; its aggregation prompt names a failed worker
   with the exception's message.
+- `SequentialOrchestrator.execute/3` has the same shape. 1.x returned
+  `{:ok, %{success: _, results: [...], errors: [...], context: ctx}}`, `{:error, %{...}}` on
+  `on_error: :stop`, and `{:ok, last_result}` for bare agents; 2.0 returns `{:ok, %{id =>
+  output}}` (the pipeline's output is the last agent's, `results["agent_<n-1>"]` for bare
+  agents) or `{:error, %OrchestrationError{}}`, also after `on_error: :continue` with a
+  failure. With `:stop` the agents after the failure are in neither map.
+- `on_agent_complete` takes `fn id, output -> ... end` (1.x: `fn id, result, ctx -> ... end`).
+  `:shared_context` and `:store_intermediate` are removed.
+- `SequentialOrchestrator.execute_with_messages/3` rejects options (it ignored
+  `:shared_context`) and checks its specs like `execute/3` (`:id` and `:agent` only; a bad
+  one raised a `KeyError` or `FunctionClauseError`); an error message's `payload.error` is the exception's message (was
+  `inspect/1` of `{:exception, e, stacktrace}`).

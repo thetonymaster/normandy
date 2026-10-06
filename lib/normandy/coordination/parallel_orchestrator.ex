@@ -153,7 +153,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       {spec.id, run_spec(spec, input, on_complete, on_run_done)}
     end
 
-    with_task_supervisor(fn supervisor ->
+    Orchestration.with_task_supervisor(fn supervisor ->
       supervisor
       |> Task.Supervisor.async_stream_nolink(Enum.with_index(specs), task,
         max_concurrency: Keyword.fetch!(opts, :max_concurrency),
@@ -164,20 +164,6 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
       )
       |> Enum.to_list()
     end)
-  end
-
-  # The tasks are not linked to the caller: a crash in a process an agent linked to
-  # (which kills its task) arrives as an {:exit, reason} outcome, not as an exit of the
-  # caller. There is no application supervision tree to hang them on, so each call
-  # starts a Task.Supervisor and stops it however the call ends.
-  defp with_task_supervisor(fun) do
-    {:ok, supervisor} = Task.Supervisor.start_link()
-
-    try do
-      fun.(supervisor)
-    after
-      Supervisor.stop(supervisor)
-    end
   end
 
   @doc """

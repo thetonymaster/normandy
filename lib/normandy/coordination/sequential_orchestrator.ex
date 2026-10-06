@@ -1,285 +1,153 @@
 defmodule Normandy.Coordination.SequentialOrchestrator do
-  @moduledoc """
-  Orchestrates sequential execution of multiple agents.
-
-  The Sequential Orchestrator runs agents one after another, passing the
-  output of one agent as input to the next. This creates a pipeline
-  where each agent builds upon the work of previous agents.
-
-  ## Example
-
-      # Define agents
-      agents = [
-        %{id: "research", agent: research_agent, transform: &extract_data/1},
-        %{id: "analyze", agent: analysis_agent, transform: &format_analysis/1},
-        %{id: "write", agent: writing_agent}
-      ]
-
-      # Execute pipeline
-      {:ok, result} = SequentialOrchestrator.execute(
-        agents,
-        initial_input,
-        shared_context: context
-      )
-  """
-
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{AgentMessage, SharedContext}
+  alias Normandy.Coordination.{AgentMessage, Orchestration}
   alias Normandy.Telemetry.WorkflowSpan
 
-  @type agent_spec :: %{
-          required(:id) => String.t(),
-          required(:agent) => struct(),
-          optional(:transform) => (term() -> term())
-        }
+  @opts_schema NimbleOptions.new!(
+                 on_agent_complete: [
+                   type: {:fun, 2},
+                   doc:
+                     "`fn agent_id, output -> any end`, called after each agent that " <>
+                       "succeeds (after `:transform`)."
+                 ],
+                 on_error: [
+                   type: {:in, [:stop, :continue]},
+                   default: :stop,
+                   doc:
+                     "`:stop` ends the pipeline at the first failure. `:continue` runs the " <>
+                       "remaining agents, the next one receiving the last successful output " <>
+                       "(or `input`). Either way a failure makes the result " <>
+                       "`{:error, %Normandy.OrchestrationError{}}`."
+                 ]
+               )
 
-  @type execution_result :: %{
-          success: boolean(),
-          results: [term()],
-          errors: [term()],
-          context: SharedContext.t()
-        }
+  @messages_opts_schema NimbleOptions.new!([])
+
+  @spec_keys [:id, :agent, :transform]
+
+  @moduledoc """
+  Runs agents one after another, each on the previous agent's output.
+
+      {:ok, results} =
+        SequentialOrchestrator.execute(
+          [
+            %{id: "research", agent: research_agent, transform: &extract_data/1},
+            %{id: "write", agent: writing_agent}
+          ],
+          "Summarize the 2026 Elixir survey"
+        )
+
+      results["write"]
+
+  `agents` holds `%Normandy.Agents.BaseAgentConfig{}` structs (keyed `"agent_0"`,
+  `"agent_1"`, ... in list order) or specs `%{id: id, agent: config}` with an optional
+  `:transform` (`fn output -> term end`): what it returns is the agent's result and the
+  next agent's input. The first agent receives `input`.
+
+  ## Results
+
+  `{:ok, %{id => output}}` when every agent succeeded; the pipeline's output is the last
+  agent's. Otherwise `{:error, %Normandy.OrchestrationError{}}` with the outputs of the
+  agents that succeeded and the exception of each that failed. With `on_error: :stop`
+  the agents after the failure did not run and are in neither map.
+  """
 
   @doc """
-  Executes agents sequentially in a pipeline.
-
-  Can be called in two ways:
-  1. With agent_specs and options: `execute(agent_specs, input, opts)`
-  2. With agents list and input: `execute(agents, input)` - returns `{:ok, last_result}`,
-     or the same `{:error, execution_result}` as the first form
+  Runs `agents` in order, the first on `input`; see "Results".
 
   ## Options
 
-  - `:shared_context` - SharedContext to use (default: new context)
-  - `:on_agent_complete` - Callback after each agent: `(agent_id, result, context -> any)`
-  - `:on_error` - Error handling: `:stop` (default) or `:continue`. With
-    `:continue`, a failed agent's entry in `results` is `{:error, reason}`, the
-    next agent receives the last successful output, and the `{:ok, result}` has
-    `success: false` with each failure in `errors`.
-  - `:store_intermediate` - Store each result in shared context (default: true)
-
-  ## Example
-
-      {:ok, result} = SequentialOrchestrator.execute(
-        agents,
-        initial_input,
-        shared_context: context,
-        on_agent_complete: fn agent_id, _result, _ctx ->
-          IO.puts("Agent \#{agent_id} completed")
-        end
-      )
+  #{Normandy.Options.docs(@opts_schema)}
   """
-  @spec execute([agent_spec()] | [struct()], term(), keyword()) ::
-          {:ok, execution_result()} | {:ok, term()} | {:error, term()}
-  def execute(agents, initial_input, opts \\ []) do
-    WorkflowSpan.span(:sequential, %{step_count: length(agents)}, fn ->
-      do_execute(agents, initial_input, opts)
+  @spec execute([Orchestration.agent()], term(), keyword()) :: Orchestration.result()
+  def execute(agents, input, opts \\ []) do
+    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute, 3})
+    specs = Orchestration.specs!(agents, @spec_keys, "#{inspect(__MODULE__)}.execute/3")
+
+    WorkflowSpan.span(:sequential, %{step_count: length(specs)}, fn ->
+      Orchestration.with_task_supervisor(&run_pipeline(&1, specs, input, opts))
     end)
   end
 
-  # Simple API: execute(agents, input) -> {:ok, final_result}
-  defp do_execute(agents, input, [])
-       when is_list(agents) and (is_map(input) or is_binary(input)) do
-    # Check if first element looks like an agent_spec (has :id key)
-    case List.first(agents) do
-      %{id: _id} ->
-        # Already agent_specs, use advanced API
-        execute_with_specs(agents, input, [])
+  defp run_pipeline(supervisor, specs, input, opts) do
+    {_last_input, results, errors} =
+      Enum.reduce_while(specs, {input, %{}, %{}}, &step(supervisor, &1, &2, opts))
 
-      _agent ->
-        # Plain agent list, convert to agent_specs
-        agent_specs =
-          agents
-          |> Enum.with_index()
-          |> Enum.map(fn {agent, idx} ->
-            %{
-              id: "agent_#{idx}",
-              agent: agent
-            }
-          end)
+    Orchestration.result(results, errors)
+  end
 
-        # Return just the final result
-        with {:ok, %{results: results}} <- execute_with_specs(agent_specs, input, []) do
-          {:ok, List.last(results)}
-        end
+  # One agent. Its output feeds the next agent; a failure ends the pipeline or, with
+  # on_error: :continue, leaves the next agent the last successful output.
+  # The agent runs in an unlinked task, so a crash in a process it linked to fails that
+  # agent, not the caller; :transform and :on_agent_complete run in the caller.
+  defp step(supervisor, spec, {input, results, errors}, opts) do
+    case Orchestration.run_agent_isolated(supervisor, spec.id, spec.agent, input) do
+      {:ok, output} ->
+        output = Map.get(spec, :transform, &Function.identity/1).(output)
+        on_complete = opts[:on_agent_complete]
+        if on_complete, do: on_complete.(spec.id, output)
+        {:cont, {output, Map.put(results, spec.id, output), errors}}
+
+      {:error, exception} ->
+        acc = {input, results, Map.put(errors, spec.id, exception)}
+        halt_or_continue(Keyword.fetch!(opts, :on_error), acc)
     end
   end
 
-  # Advanced API: execute(agent_specs, input, opts) -> {:ok, execution_result}
-  defp do_execute(agent_specs, initial_input, opts)
-       when is_list(agent_specs) and is_list(opts) do
-    execute_with_specs(agent_specs, initial_input, opts)
-  end
-
-  defp execute_with_specs(agent_specs, initial_input, opts) when is_list(agent_specs) do
-    context = Keyword.get(opts, :shared_context, SharedContext.new())
-    on_complete = Keyword.get(opts, :on_agent_complete)
-    on_error_strategy = Keyword.get(opts, :on_error, :stop)
-    store_intermediate = Keyword.get(opts, :store_intermediate, true)
-
-    # Execute pipeline
-    result =
-      Enum.reduce_while(agent_specs, {:ok, initial_input, context, [], []}, fn spec,
-                                                                               {:ok, input, ctx,
-                                                                                results, errors} ->
-        agent_id = Map.fetch!(spec, :id)
-        agent = Map.fetch!(spec, :agent)
-        transform_fn = Map.get(spec, :transform, & &1)
-
-        # Execute agent
-        case execute_agent(agent, input) do
-          {:ok, agent_result} ->
-            # Transform result if function provided
-            transformed_result = transform_fn.(agent_result)
-
-            # Store in context if enabled
-            updated_ctx =
-              if store_intermediate do
-                SharedContext.put(ctx, {"results", agent_id}, transformed_result)
-              else
-                ctx
-              end
-
-            # Call completion callback if provided
-            if on_complete do
-              on_complete.(agent_id, transformed_result, updated_ctx)
-            end
-
-            # Continue to next agent with transformed result
-            {:cont,
-             {:ok, transformed_result, updated_ctx, results ++ [transformed_result], errors}}
-
-          {:error, reason} ->
-            error_result = %{agent_id: agent_id, error: reason, input: input}
-
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case on_error_strategy do
-              :stop ->
-                {:halt, {:error, error_result, ctx, results}}
-
-              :continue ->
-                # The failure stays in results; the next agent gets the last
-                # successful output (or the initial input), not the error.
-                {:cont,
-                 {:ok, input, ctx, results ++ [{:error, reason}], errors ++ [error_result]}}
-            end
-        end
-      end)
-
-    case result do
-      # With on_error: :continue the pipeline ran to the end; success says whether
-      # every agent did.
-      {:ok, _final_input, context, results, errors} ->
-        {:ok,
-         %{
-           success: errors == [],
-           results: results,
-           errors: errors,
-           context: context
-         }}
-
-      {:error, error, context, results} ->
-        {:error,
-         %{
-           success: false,
-           results: results,
-           errors: [error],
-           context: context
-         }}
-    end
-  end
+  defp halt_or_continue(:stop, acc), do: {:halt, acc}
+  defp halt_or_continue(:continue, acc), do: {:cont, acc}
 
   @doc """
-  Executes agents with message-based communication.
-
-  Each agent receives an AgentMessage and returns an AgentMessage response.
+  Runs agent specs with message-based communication. Each agent receives the previous
+  `AgentMessage`'s payload and answers with a reply, or an error message whose payload
+  `:error` is the exception's message. Takes no options.
 
   ## Example
 
-      messages = SequentialOrchestrator.execute_with_messages(
-        agents,
-        initial_message,
-        shared_context: context
-      )
+      {:ok, messages} = SequentialOrchestrator.execute_with_messages(specs, initial_message)
   """
-  @spec execute_with_messages([agent_spec()], AgentMessage.t(), keyword()) ::
+  @spec execute_with_messages([Orchestration.spec()], AgentMessage.t(), keyword()) ::
           {:ok, [AgentMessage.t()]}
   def execute_with_messages(agent_specs, initial_message, opts \\ []) do
-    WorkflowSpan.span(:sequential, %{step_count: length(agent_specs)}, fn ->
-      run_with_messages(agent_specs, initial_message, opts)
+    Normandy.Options.validate!(
+      opts,
+      @messages_opts_schema,
+      {__MODULE__, :execute_with_messages, 3}
+    )
+
+    # The same spec check as execute/3: an unknown key or a bad agent raises ArgumentError
+    # here, not a FunctionClauseError mid-pipeline.
+    specs =
+      Orchestration.specs!(
+        agent_specs,
+        [:id, :agent],
+        "#{inspect(__MODULE__)}.execute_with_messages/3"
+      )
+
+    WorkflowSpan.span(:sequential, %{step_count: length(specs)}, fn ->
+      run_with_messages(specs, initial_message)
     end)
   end
 
-  defp run_with_messages(agent_specs, initial_message, opts) do
-    _context = Keyword.get(opts, :shared_context, SharedContext.new())
-
+  defp run_with_messages(agent_specs, initial_message) do
     messages =
       Enum.reduce(agent_specs, [initial_message], fn spec, [current_msg | _] = acc ->
         agent_id = Map.fetch!(spec, :id)
         agent = Map.fetch!(spec, :agent)
 
-        # Create request message for this agent
         # Pattern match to validate struct type
         %AgentMessage{} = current_msg
 
-        request_msg = %{
-          current_msg
-          | to: agent_id,
-            type: "request"
-        }
+        request_msg = %{current_msg | to: agent_id, type: "request"}
 
-        # Execute agent with message payload
-        case execute_agent(agent, request_msg.payload) do
+        case Orchestration.run_agent(agent_id, agent, request_msg.payload) do
           {:ok, result} ->
-            # Create response message
-            response_msg = AgentMessage.reply(request_msg, result)
-            [response_msg | acc]
+            [AgentMessage.reply(request_msg, result) | acc]
 
-          {:error, reason} ->
-            # Create error message
-            error_msg = AgentMessage.error(request_msg, inspect(reason))
-            [error_msg | acc]
+          {:error, exception} ->
+            [AgentMessage.error(request_msg, Exception.message(exception)) | acc]
         end
       end)
 
     {:ok, Enum.reverse(messages)}
-  end
-
-  # Private functions
-
-  defp execute_agent(agent, input) do
-    # Convert input to agent input format if needed
-    agent_input = prepare_input(input)
-
-    # Run agent
-    {_updated_agent, response} = BaseAgent.run!(agent, agent_input)
-
-    # Extract result from response
-    result = extract_result(response)
-
-    {:ok, result}
-  rescue
-    e ->
-      {:error, {:exception, e, __STACKTRACE__}}
-  catch
-    # An exit (a timed-out GenServer.call, say) is the step's error, as a raise is.
-    :exit, reason ->
-      {:error, {:exit, reason}}
-  end
-
-  defp prepare_input(input) when is_map(input) and not is_struct(input) do
-    # Try to extract chat_message if present
-    Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
-  end
-
-  defp prepare_input(input) when is_binary(input) do
-    %{chat_message: input}
-  end
-
-  defp prepare_input(input), do: input
-
-  defp extract_result(response) when is_map(response) do
-    # Return the full response map - don't extract just chat_message
-    response
   end
 end

@@ -7,14 +7,14 @@ defmodule Normandy.Coordination.OrchestratorContractTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema}
-  alias Normandy.Coordination.ParallelOrchestrator
+  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
   alias Normandy.OrchestrationError
   alias Normandy.Test.{StubClient, TaggingClient}
   alias Normandy.TurnError
 
   @moduletag :capture_log
 
-  @orchestrators [ParallelOrchestrator]
+  @orchestrators [SequentialOrchestrator, ParallelOrchestrator]
 
   defp agent(name, opts \\ []),
     do:

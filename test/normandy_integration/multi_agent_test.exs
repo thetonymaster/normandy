@@ -43,7 +43,7 @@ defmodule Normandy.Integration.MultiAgentTest do
       agents = [agent1, agent2]
       input = %{chat_message: "The answer is 21"}
 
-      {:ok, final_result} = SequentialOrchestrator.execute(agents, input)
+      {:ok, %{"agent_1" => final_result}} = SequentialOrchestrator.execute(agents, input)
 
       assert is_map(final_result)
       assert Map.has_key?(final_result, :chat_message)

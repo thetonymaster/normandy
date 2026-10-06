@@ -170,8 +170,8 @@ specs = [
   }
 ]
 
-{:ok, %{success: true, results: [first, second], errors: []}} =
-  SequentialOrchestrator.execute(specs, "The library opens at nine in the morning.", [])
+{:ok, %{"translate" => first, "count" => second}} =
+  SequentialOrchestrator.execute(specs, "The library opens at nine in the morning.")
 
 IO.puts("  step 1: #{inspect(first) |> String.slice(0, 200)}")
 IO.puts("  step 2: #{inspect(second) |> String.slice(0, 200)}")
