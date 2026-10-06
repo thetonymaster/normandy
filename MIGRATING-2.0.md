@@ -1129,6 +1129,27 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   default, for the summarizer's default above): the `:summarize` strategy's summary budget.
   `Context.WindowManager.new/1` takes the same option and the struct has the field. Before,
   compaction always summarized with 500.
+- The compactor `ctx` has `:mid_round`: `false` at the start of a turn, `true` at the
+  boundary after a tool batch, while the model's tool round is still open. The Turn core's
+  `{:maybe_compact, info}` effect carries the same key (a `Turn.Inline` `:compact` dep sees
+  it), and `[:normandy, :agent, :compaction]` has `mid_round` in its metadata. A custom
+  `Compactor` should leave memory unchanged at a mid-round boundary unless the conversation
+  no longer fits the window, and strip the thinking of every message it keeps when it
+  compacts there (see "Compacting mid-round" in `Normandy.Behaviours.Compactor`).
+  `Compactor.WindowManager` already does both.
+- A compaction after a tool batch still strips the open round's thinking, as it does for
+  every kept message: thinking replayed after a summary or a cut no longer matches the
+  history it was produced with, and models that check replayed thinking reject it. It happens
+  only when the conversation no longer fits the window.
+- `Turn.Server` does not store compaction. Compaction changes the server's in-memory
+  conversation only; the session store keeps every message. A session restored from the
+  store (after passivation, a restart or a handoff to another node) starts again from the
+  full history and compacts again once it exceeds the window, so a `:summarize` compactor
+  pays for a new summary, which can differ from the first. Texts injected by `after_compact`
+  hooks are not stored either. Requests after a restore therefore differ from the requests
+  before it: the prompt cache misses, and thinking produced after a compaction can be
+  replayed after a different history, which models that check replayed thinking can reject.
+  This is a known limit of this release; a later 2.0 release stores compaction.
 
 ## New, non-breaking
 

@@ -234,7 +234,9 @@ defmodule Normandy.Telemetry do
 
   Every run's compaction step, including a `Compactor.NoOp`. Measurements: whichever of
   `tokens_before`, `tokens_after`, `tokens_removed` the compactor reported. Metadata:
-  `agent_name`, `model`, `strategy`, `compacted` (boolean), `error`, `reason`.
+  `agent_name`, `model`, `strategy`, `compacted` (boolean), `mid_round` (boolean: `false`
+  at the start of a turn, `true` after a tool batch, while the tool round is open),
+  `error`, `reason`.
 
   ### `[:normandy, :agent, :guardrail, :violation]`
 

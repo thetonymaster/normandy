@@ -869,15 +869,18 @@ defmodule Normandy.Agents.BaseAgent do
   # and logs when it actually shrinks the conversation. Every run emits
   # [:normandy, :agent, :compaction] (measurements: whichever of :tokens_before,
   # :tokens_after, :tokens_removed the compactor reported; metadata: :agent_name,
-  # :model, :strategy, :compacted, and the compactor's :error / :reason when it
-  # failed or could not size a window), so a compactor that never fires is observable.
+  # :model, :strategy, :compacted, :mid_round, and the compactor's :error / :reason when
+  # it failed or could not size a window), so a compactor that never fires is observable.
+  # `info` is the core's %{iterations_left:, mid_round:}; mid_round reaches the compactor
+  # in ctx, so it can leave an open tool round alone while the conversation still fits.
   # The default config selects Compactor.NoOp, so this is observably a no-op
   # unless an agent opts into a real compactor.
   @doc false
   def compact_turn_memory(%BaseAgentConfig{} = config, %Turn.State{} = _state, info) do
     {mod, opts} = compactor_ref(config)
     {config, window} = resolve_context_window(config, mod, opts)
-    ctx = %{model: config.model, window: window}
+    mid_round = Map.fetch!(info, :mid_round)
+    ctx = %{model: config.model, window: window, mid_round: mid_round}
     {config2, meta} = mod.maybe_compact(config, ctx, opts)
 
     :telemetry.execute(
@@ -888,6 +891,7 @@ defmodule Normandy.Agents.BaseAgent do
         model: config.model,
         strategy: Map.get(meta, :strategy),
         compacted: Map.get(meta, :compacted) == true,
+        mid_round: mid_round,
         error: Map.get(meta, :error),
         reason: Map.get(meta, :reason)
       }
@@ -897,6 +901,7 @@ defmodule Normandy.Agents.BaseAgent do
       log_lifecycle(:debug, "normandy agent compaction",
         agent: log_agent_name(config),
         iterations_left: Map.get(info, :iterations_left),
+        mid_round: mid_round,
         tokens_before: Map.get(meta, :tokens_before),
         tokens_after: Map.get(meta, :tokens_after),
         strategy: Map.get(meta, :strategy)

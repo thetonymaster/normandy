@@ -14,6 +14,9 @@ defmodule Normandy.Behaviours.Compactor do
     * `:window` — the model's context window: the compactor opts' `:context_window`
       when pinned, otherwise resolved through the configured `ModelCatalog`
       (memoised on the agent). `nil` only for the `NoOp` compactor
+    * `:mid_round` — `false` at the start of a turn, `true` at the boundary after a
+      tool batch. There the model's tool round is still open: the next request
+      continues it, and its assistant turns go back with their thinking.
 
   Implementations return `{maybe_updated_acc, meta}`. `meta` always carries
   `:compacted` (a boolean); the WindowManager impl adds `:tokens_before`,
@@ -34,9 +37,21 @@ defmodule Normandy.Behaviours.Compactor do
   `:dropped` is absent on the error and skip paths (`%{compacted: false, error: reason}`,
   `%{compacted: false}`), so a consumer matches `%{dropped: [_ | _]}` rather than reading
   the key.
+
+  ## Compacting mid-round
+
+  A compactor must leave the memory unchanged at a mid-round boundary while the
+  conversation still fits the window. When it does compact there, it strips the
+  thinking blocks from every message it keeps
+  (`Normandy.Components.AgentMemory.drop_thinking/1`): they were produced with the
+  full history in place, and the API can reject them after a summary or a cut (it
+  validates replayed thinking against what came before it). The open round loses its
+  reasoning; it is the documented recovery for keep-tail compaction.
+  `Compactor.WindowManager` does both: it compacts only over the window, at any
+  boundary, and its strategies strip the kept messages' thinking.
   """
 
-  @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil}
+  @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil, mid_round: boolean()}
 
   @callback maybe_compact(acc :: term(), ctx(), opts :: keyword()) :: {term(), map()}
 

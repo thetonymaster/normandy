@@ -39,7 +39,10 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     }
 
     {config2, meta} =
-      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{
+        iterations_left: 3,
+        mid_round: false
+      })
 
     assert meta.compacted == false
     assert AgentMemory.history(config2.memory) == AgentMemory.history(config.memory)
@@ -63,7 +66,10 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     initial_history = AgentMemory.history(config.memory)
 
     {config2, meta} =
-      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Normandy.Agents.Turn.State{}, %{
+        iterations_left: 3,
+        mid_round: false
+      })
 
     assert meta.compacted == false
     assert AgentMemory.history(config2.memory) == initial_history

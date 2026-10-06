@@ -29,7 +29,8 @@ defmodule Normandy.Agents.Turn.Inline do
     * `:guard`    — `fn value -> any end` (optional, defaults to no-op: side-effecting, return
                     is ignored and the input `value` is fed forward via `{:output_guarded, value}`)
     * `:compact`  — `fn info -> any end` (optional, defaults to no-op). Invoked at the
-                    `:steering` boundary; the inline shell does not thread memory, so
+                    `:steering` boundary with `%{iterations_left: n, mid_round: boolean}`
+                    (see `Normandy.Agents.Turn`); the inline shell does not thread memory, so
                     a real impl must compact external state by side effect.
 
   ## Telemetry

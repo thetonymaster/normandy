@@ -16,7 +16,10 @@ defmodule Normandy.Agents.Turn do
   approval) is entered when a dispatched batch parks calls. `:steering` is a
   resting state entered when a turn starts and at every tool-batch boundary: the core emits a
   `{:maybe_compact, info}` effect there and resumes on `{:compaction_done, _}`,
-  which is where context-window compaction (Phase 5) runs in the shell.
+  which is where context-window compaction runs in the shell. `info` is
+  `%{iterations_left: n, mid_round: boolean}`: `mid_round` is `false` at the start
+  of a turn and `true` after a tool batch, while the model's tool round is still
+  open (see `Normandy.Behaviours.Compactor`).
 
   A response whose `stop_reason` is `:pause_turn` (the API paused a long server-tool
   or MCP-connector turn) and that has no tool calls is appended and sent back as it
@@ -139,7 +142,8 @@ defmodule Normandy.Agents.Turn do
   # a tool still gets compacted before each turn's first LLM call (the
   # {:compaction_done, _} clauses below then issue that call).
   def step(%State{status: :provisioning} = s, :start) do
-    {%{s | status: :steering}, [{:maybe_compact, %{iterations_left: s.iterations_left}}]}
+    {%{s | status: :steering},
+     [{:maybe_compact, %{iterations_left: s.iterations_left, mid_round: false}}]}
   end
 
   # The final call ran with tool_choice :none, so tool calls in its response are not
@@ -352,8 +356,9 @@ defmodule Normandy.Agents.Turn do
   itself with an `:awaiting_approval` event (`resumed: true`) and then waits for a decision. Terminal states yield no effects.
   """
   @spec resume(State.t()) :: {State.t(), [tuple()]}
+  # The core persists :steering only after a tool batch, so a resumed one is mid-round.
   def resume(%State{status: :steering, iterations_left: left} = s) do
-    {s, [{:maybe_compact, %{iterations_left: left}}]}
+    {s, [{:maybe_compact, %{iterations_left: left, mid_round: true}}]}
   end
 
   # A parked turn waits for a decision again; re-announce it so an observer that
@@ -426,7 +431,8 @@ defmodule Normandy.Agents.Turn do
 
     {s2,
      append_effects ++
-       notice ++ [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left}}]}
+       notice ++
+       [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left, mid_round: true}}]}
   end
 
   defp finalize(s, resp) do

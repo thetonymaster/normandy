@@ -5,7 +5,10 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
 
   Triggered at the turn's `:steering` boundary: builds a `WindowManager` sized to the
   model's context window (`ctx.window`, unless `opts` pins `:context_window`), then
-  delegates to `WindowManager.ensure_within_limit/2` — a no-op when already under budget.
+  delegates to `WindowManager.ensure_within_limit/2` — a no-op when already under budget,
+  so a mid-round boundary (`ctx.mid_round`) leaves the open tool round and its thinking
+  alone until the conversation no longer fits; a compaction strips the kept messages'
+  thinking (see "Compacting mid-round" in `Normandy.Behaviours.Compactor`).
 
   Options: `:context_window` pins the window (and skips the model catalog lookup);
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve

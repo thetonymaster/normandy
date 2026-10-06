@@ -22,7 +22,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
     }
 
     {config2, meta} =
-      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
 
     assert meta.compacted == false
     assert AgentMemory.history(config2.memory) == AgentMemory.history(config.memory)
@@ -38,7 +38,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
     }
 
     {config2, meta} =
-      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
 
     assert meta.compacted == true
     assert meta.tokens_after < meta.tokens_before
@@ -79,7 +79,9 @@ defmodule Normandy.Integration.CompactionTurnTest do
       }
     }
 
-    {_config2, meta} = BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+    {_config2, meta} =
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
+
     assert meta.compacted == true
     refute_received {:catalog_lookup, _, _}
   end
@@ -90,7 +92,9 @@ defmodule Normandy.Integration.CompactionTurnTest do
       | behaviours: %Config{model_catalog: {StubCatalog, [notify: self(), reply: {:error, :x}]}}
     }
 
-    {_config2, meta} = BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+    {_config2, meta} =
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
+
     assert meta.compacted == false
     refute_received {:catalog_lookup, _, _}
   end
@@ -98,12 +102,19 @@ defmodule Normandy.Integration.CompactionTurnTest do
   test "the window is looked up once per model and memoised on the config" do
     config = catalog_config("claude-opus-5-5", {:ok, 80})
 
-    {config2, meta} = BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+    {config2, meta} =
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
+
     assert meta.compacted == true
     assert config2.resolved_context_window == {"claude-opus-5-5", 80}
     assert_received {:catalog_lookup, "claude-opus-5-5", nil}
 
-    {_config3, _} = BaseAgent.compact_turn_memory(config2, %Turn.State{}, %{iterations_left: 2})
+    {_config3, _} =
+      BaseAgent.compact_turn_memory(config2, %Turn.State{}, %{
+        iterations_left: 2,
+        mid_round: false
+      })
+
     refute_received {:catalog_lookup, _, _}
   end
 
@@ -113,13 +124,18 @@ defmodule Normandy.Integration.CompactionTurnTest do
       | resolved_context_window: {"claude-sonnet-5-5", 80}
     }
 
-    {_config2, _} = BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+    {_config2, _} =
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
+
     assert_received {:catalog_lookup, "claude-opus-5-5", nil}
   end
 
   test "a config built under 1.x (no :resolved_context_window key) memoises without KeyError" do
     config = Map.delete(catalog_config("claude-opus-5-5", {:ok, 80}), :resolved_context_window)
-    {config2, _} = BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+
+    {config2, _} =
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
+
     assert config2.resolved_context_window == {"claude-opus-5-5", 80}
   end
 
@@ -129,7 +145,10 @@ defmodule Normandy.Integration.CompactionTurnTest do
     assert_raise Normandy.ModelCatalogError,
                  ~r/claude-opus-5-5.*\{:invalid_context_window, nil\}/s,
                  fn ->
-                   BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+                   BaseAgent.compact_turn_memory(config, %Turn.State{}, %{
+                     iterations_left: 3,
+                     mid_round: false
+                   })
                  end
   end
 
@@ -137,7 +156,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
     config = catalog_config("claude-opus-5-5", {:error, :boom})
 
     assert_raise Normandy.ModelCatalogError, ~r/claude-opus-5-5.*:boom/s, fn ->
-      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
     end
   end
 
@@ -146,7 +165,8 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
     {_config2, _} =
       BaseAgent.compact_turn_memory(catalog_config("m", {:ok, 80}, client), %Turn.State{}, %{
-        iterations_left: 3
+        iterations_left: 3,
+        mid_round: false
       })
 
     assert_received {:catalog_lookup, "m", %Req.Request{} = req}
@@ -162,7 +182,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
     }
 
     assert_raise Normandy.ModelCatalogError, ~r/:no_client.*:context_window/s, fn ->
-      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3})
+      BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})
     end
   end
 end

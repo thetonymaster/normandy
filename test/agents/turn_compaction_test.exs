@@ -29,7 +29,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
                {:append_message, "tool", Enum.at(results, 0)},
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 4}},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ]
     end
 

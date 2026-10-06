@@ -86,7 +86,8 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     }
 
     BaseAgent.compact_turn_memory(agent(meta), %Normandy.Agents.Turn.State{}, %{
-      iterations_left: 3
+      iterations_left: 3,
+      mid_round: false
     })
 
     assert_receive {:compaction, measurements, metadata}
@@ -97,6 +98,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
              model: "m",
              strategy: :summarize,
              compacted: true,
+             mid_round: false,
              error: nil,
              reason: nil
            }
@@ -106,7 +108,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     BaseAgent.compact_turn_memory(
       agent(%{compacted: false, error: {:summarize_failed, :timeout}}),
       %Normandy.Agents.Turn.State{},
-      %{iterations_left: 3}
+      %{iterations_left: 3, mid_round: false}
     )
 
     assert_receive {:compaction, _, %{error: {:summarize_failed, :timeout}}}
@@ -114,7 +116,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
     BaseAgent.compact_turn_memory(
       agent(%{compacted: false, reason: :no_window}),
       %Normandy.Agents.Turn.State{},
-      %{iterations_left: 3}
+      %{iterations_left: 3, mid_round: false}
     )
 
     assert_receive {:compaction, _, %{reason: :no_window}}
@@ -138,7 +140,8 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
 
   test "a compactor run that did not compact is still observable" do
     BaseAgent.compact_turn_memory(agent(%{compacted: false}), %Normandy.Agents.Turn.State{}, %{
-      iterations_left: 3
+      iterations_left: 3,
+      mid_round: false
     })
 
     assert_receive {:compaction, measurements, metadata}

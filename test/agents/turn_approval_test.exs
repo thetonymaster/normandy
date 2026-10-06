@@ -75,7 +75,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                 %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 4}},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -170,7 +170,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 4}},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -210,7 +210,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                {:append_message, "user", "You have used all available tool calls" <> _},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:maybe_compact, %{iterations_left: 0}}
+               {:maybe_compact, %{iterations_left: 0, mid_round: true}}
              ] = effects
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -317,7 +317,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
                 %ToolResult{tool_call_id: "p1", is_error: true, output: output}},
                {:persist, ^s2},
                {:emit_event, :steering, %{iterations_left: 4}},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
 
       assert output == %{

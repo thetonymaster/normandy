@@ -5,7 +5,7 @@ defmodule Normandy.Agents.Turn.ResumeTest do
 
   test "resume from :steering re-issues maybe_compact" do
     s = %State{status: :steering, iterations_left: 2, max_iterations: 5}
-    assert {^s, [{:maybe_compact, %{iterations_left: 2}}]} = Turn.resume(s)
+    assert {^s, [{:maybe_compact, %{iterations_left: 2, mid_round: true}}]} = Turn.resume(s)
   end
 
   test "resume from :awaiting_approval re-announces the park (resumed: true) and waits" do

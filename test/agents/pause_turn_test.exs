@@ -92,7 +92,7 @@ defmodule Normandy.Agents.PauseTurnTest do
                  {:append_message, "assistant", ^resp},
                  {:persist, ^s},
                  {:emit_event, :steering, %{iterations_left: 2}},
-                 {:maybe_compact, %{iterations_left: 2}}
+                 {:maybe_compact, %{iterations_left: 2, mid_round: true}}
                ] = effects
 
         assert {_s, [_iteration, {:call_llm, %{response_model: :rm, final: false}}]} =

@@ -64,7 +64,7 @@ defmodule Normandy.Agents.TurnTest do
 
       assert s2.status == :steering
       assert s2.iterations_left == 5
-      assert effects == [{:maybe_compact, %{iterations_left: 5}}]
+      assert effects == [{:maybe_compact, %{iterations_left: 5, mid_round: false}}]
     end
 
     test "compaction_done after :start emits iteration 1 + the first call_llm" do
@@ -219,7 +219,7 @@ defmodule Normandy.Agents.TurnTest do
                {:append_message, "tool", Enum.at(results, 1)},
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 4}},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ]
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -259,7 +259,7 @@ defmodule Normandy.Agents.TurnTest do
                {:append_message, "user", @cap_notice},
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:maybe_compact, %{iterations_left: 0}}
+               {:maybe_compact, %{iterations_left: 0, mid_round: true}}
              ]
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -333,7 +333,7 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:maybe_compact, %{iterations_left: 0}}
+               {:maybe_compact, %{iterations_left: 0, mid_round: true}}
              ]
     end
 
@@ -360,7 +360,7 @@ defmodule Normandy.Agents.TurnTest do
                {:append_message, "assistant", paused},
                {:persist, s2},
                {:emit_event, :steering, %{iterations_left: 0}},
-               {:maybe_compact, %{iterations_left: 0}}
+               {:maybe_compact, %{iterations_left: 0, mid_round: true}}
              ]
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
