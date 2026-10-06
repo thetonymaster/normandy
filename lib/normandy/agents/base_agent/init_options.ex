@@ -88,7 +88,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
           "(any plain term; agents with a different scope get different breakers). Agents with " <>
           "the same client module, endpoint, model and options share one breaker, started on " <>
           "the first call under Normandy's supervisor. `[]` uses the breaker's defaults; `nil` " <>
-          "uses none."
+          "uses none. Only failures that say the endpoint is unhealthy count: `LLMError` " <>
+          "types `:rate_limit`, `:overloaded`, `:server`, `:transport`, `:stream`, or any " <>
+          "retryable error; a rejected request, unparseable output or a raise from your own " <>
+          "code does not."
     ],
     enable_json_retry: [
       type: :boolean,

@@ -332,7 +332,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     case BaseAgentConfig.circuit_breaker_key(config) do
       nil -> retryable_call.()
-      key -> CircuitBreaker.run(key, retryable_call)
+      key -> CircuitBreaker.run(key, retryable_call, failure_if: &endpoint_failure?/1)
     end
   end
 
@@ -352,6 +352,29 @@ defmodule Normandy.Agents.BaseAgent do
   defp default_retry_if({:error, {:exception, _, _}}), do: true
   defp default_retry_if({:error, :open}), do: false
   defp default_retry_if(_), do: false
+
+  # Which failed LLM calls count against the shared circuit breaker: only those that say
+  # the endpoint is unhealthy. A request the provider rejected, output that did not parse,
+  # or a raise, exit or throw from the caller's own code (a stream callback, a guardrail)
+  # must not open a breaker every agent on that model shares (decision 20).
+  @endpoint_failure_types [:rate_limit, :overloaded, :server, :transport, :stream]
+
+  defp endpoint_failure?({:error, reason}), do: endpoint_reason?(reason)
+
+  # Retry gave up: {last_error, attempts, errors}.
+  defp endpoint_reason?({last_error, attempts, errors})
+       when is_integer(attempts) and is_list(errors),
+       do: endpoint_reason?(last_error)
+
+  defp endpoint_reason?(%LLMError{type: type, retryable?: retryable?}),
+    do: retryable? or type in @endpoint_failure_types
+
+  defp endpoint_reason?({:exception, %LLMError{} = error}), do: endpoint_reason?(error)
+
+  defp endpoint_reason?({:exception, %LLMError{} = error, _stacktrace}),
+    do: endpoint_reason?(error)
+
+  defp endpoint_reason?(_caller_side), do: false
 
   @doc """
   Runs one turn: validates `user_input` against the input schema, calls the model (and

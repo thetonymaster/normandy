@@ -105,4 +105,61 @@ defmodule Normandy.Agents.BaseAgentSharedBreakerTest do
     moved = %{a | model: "other", client: %StubClient{}}
     assert {:ok, _agent, _out} = BaseAgent.run(moved, "4")
   end
+
+  describe "which failures count (decision 20)" do
+    defp error_reply(type, retryable? \\ false) do
+      fn _response_model ->
+        {:error, LLMError.new(type: type, retryable?: retryable?, status: 400)}
+      end
+    end
+
+    for type <- [:invalid_request, :authentication, :permission, :not_found, :invalid_output] do
+      test "#{type} does not open a shared breaker" do
+        s = scope()
+        a = %{agent(s) | client: %StubClient{reply: error_reply(unquote(type))}}
+        b = agent(s)
+
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "1")
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "2")
+        assert {:error, %LLMError{type: unquote(type)}} = BaseAgent.run(a, "3")
+
+        assert {:ok, _agent, _out} = BaseAgent.run(b, "4")
+      end
+    end
+
+    test "a retryable error of any type counts" do
+      s = scope()
+      a = %{agent(s) | client: %StubClient{reply: error_reply(:unknown, true)}}
+
+      assert {:error, _} = BaseAgent.run(a, "1")
+      assert {:error, _} = BaseAgent.run(a, "2")
+      assert {:error, %LLMError{type: :circuit_open}} = BaseAgent.run(agent(s), "3")
+    end
+
+    test "a failure that exhausted Retry counts by its last error" do
+      s = scope()
+
+      a =
+        BaseAgent.init(
+          client: %StubClient{reply: &overloaded/1},
+          model: "m",
+          retry: [max_attempts: 2, base_delay: 0, max_delay: 0, jitter: false],
+          circuit_breaker: [failure_threshold: 2, timeout: 60_000, scope: s]
+        )
+
+      assert {:error, %LLMError{type: :overloaded}} = BaseAgent.run(a, "1")
+      assert {:error, %LLMError{type: :overloaded}} = BaseAgent.run(a, "2")
+      assert {:error, %LLMError{type: :circuit_open}} = BaseAgent.run(agent(s), "3")
+    end
+
+    test "a raise from the caller's own code does not count" do
+      s = scope()
+      a = %{agent(s) | client: %StubClient{reply: fn _ -> raise ArgumentError, "caller bug" end}}
+
+      assert_raise ArgumentError, fn -> BaseAgent.run(a, "1") end
+      assert_raise ArgumentError, fn -> BaseAgent.run(a, "2") end
+
+      assert {:ok, _agent, _out} = BaseAgent.run(agent(s), "3")
+    end
+  end
 end

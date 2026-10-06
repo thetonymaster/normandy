@@ -557,4 +557,79 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert result == {:ok, :done}
     end
   end
+
+  describe "failure_if" do
+    test "a failure the classifier rejects is not counted" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      not_counted = fn {:error, reason} -> reason != :caller_error end
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end, failure_if: not_counted) ==
+               {:error, :caller_error}
+
+      assert CircuitBreaker.state(cb) == :closed
+      assert CircuitBreaker.metrics(cb).failure_count == 0
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :down} end, failure_if: not_counted) ==
+               {:error, :down}
+
+      assert CircuitBreaker.state(cb) == :open
+
+      GenServer.stop(cb)
+    end
+
+    test "the classifier sees raises as {:error, {:exception, e}}" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      test_pid = self()
+
+      classifier = fn result ->
+        send(test_pid, {:classified, result})
+        false
+      end
+
+      assert {:error, {:exception, %RuntimeError{}}} =
+               CircuitBreaker.call(cb, fn -> raise "boom" end, failure_if: classifier)
+
+      assert_received {:classified, {:error, {:exception, %RuntimeError{message: "boom"}}}}
+      assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+
+    test "an ignored half-open probe frees its slot and leaves the breaker half-open" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      :ok = CircuitBreaker.trip(cb)
+      Process.sleep(2)
+      assert CircuitBreaker.state(cb) == :half_open
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end,
+               failure_if: fn _ -> false end
+             ) == {:error, :caller_error}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+
+      GenServer.stop(cb)
+    end
+
+    test "success is never classified" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_if: fn _ -> flunk("called") end) ==
+               {:ok, 1}
+
+      GenServer.stop(cb)
+    end
+
+    test "an unknown option raises in the house style" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy.Resilience.CircuitBreaker.call\/3: unknown option :failure_iff/,
+                   fn -> CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_iff: & &1) end
+
+      GenServer.stop(cb)
+    end
+  end
 end

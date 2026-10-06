@@ -931,6 +931,12 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 | An `AgentTemplate` supplement could carry the breaker | Not read; the template carries the options and each node uses its own shared breaker |
 | — | `BaseAgentConfig.circuit_breaker_key(config)` and `CircuitBreaker.fetch/1` find an agent's breaker; `CircuitBreaker.key/3`, `ensure_started/1` and `run/2` are the shared-breaker API |
 
+- An agent's breaker counts only failures that say the endpoint is unhealthy: `LLMError`
+  types `:rate_limit`, `:overloaded`, `:server`, `:transport` and `:stream`, or any error
+  marked `retryable?: true`. A rejected request (`:invalid_request`, `:authentication`,
+  `:permission`, `:not_found`), output that did not parse (`:invalid_output`) or a raise
+  from your own code (a stream callback, a guardrail) no longer counts, so one caller's bad
+  requests cannot open the circuit for every agent that shares it. 1.x counted every failure.
 - A breaker no longer dies with the process that built the agent (a request process, a
   LiveView, a `Task`), and `AgentPool` no longer starts (and leaks) one per agent.
 - Agents that share a breaker share its state: one agent's failures open the circuit for all
@@ -956,6 +962,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 
 ## New, non-breaking
 
+- `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker.
 - `[:normandy, :circuit_breaker, :state_change]` and `[:normandy, :retry, :attempt]` telemetry events (see the `Normandy.Telemetry` catalogue); breaker and Retry log lines carry structured metadata and name the breaker.
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
   (`:adaptive | :disabled`), `:thinking_display`, `:effort`, `:speed`, `:inference_geo`,

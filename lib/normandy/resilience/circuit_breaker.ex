@@ -41,7 +41,11 @@ defmodule Normandy.Resilience.CircuitBreaker do
   does not depend on the process that built the agent. Breakers are per node. Set
   `:scope` to give a tenant (or a test) its own breaker.
 
-  `start_link/1` and `call/2` remain for a breaker you start and supervise yourself.
+  `BaseAgent` counts only failures that say the endpoint is unhealthy (see
+  `BaseAgent.init/1`'s `:circuit_breaker`); `call/3` and `run/3` take the same choice as
+  `:failure_if`.
+
+  `start_link/1` and `call/3` remain for a breaker you start and supervise yourself.
 
   ## Example
 
@@ -171,6 +175,18 @@ defmodule Normandy.Resilience.CircuitBreaker do
   """
   @type key :: {module(), String.t() | nil, String.t(), keyword()}
 
+  @call_opts_schema NimbleOptions.new!(
+                      failure_if: [
+                        type: {:fun, 1},
+                        doc:
+                          "Decides whether a failed call counts against the breaker. It gets " <>
+                            "the `{:error, reason}` the call returns (a raise, exit or throw " <>
+                            "is `{:error, {:exception | :exit | :throw, _}}`); `false` leaves " <>
+                            "the counts unchanged and frees a half-open probe's slot. By " <>
+                            "default every failure counts."
+                      ]
+                    )
+
   @doc false
   # BaseAgent.InitOptions builds :circuit_breaker's check from the :key schema.
   @spec __opts_schema__(:start_link | :key) :: NimbleOptions.t()
@@ -227,11 +243,17 @@ defmodule Normandy.Resilience.CircuitBreaker do
           {:error, _} = error -> error
         end
       end)
+
+  ## Options
+
+  #{Options.docs(@call_opts_schema)}
   """
-  @spec call(GenServer.server(), function()) :: {:ok, term()} | {:error, term()}
-  def call(server, fun) when is_function(fun, 0) do
+  @spec call(GenServer.server(), (-> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  def call(server, fun, opts \\ []) when is_function(fun, 0) do
+    opts = Options.validate!(opts, @call_opts_schema, {__MODULE__, :call, 3})
+
     case GenServer.call(server, :acquire) do
-      {:ok, token} -> execute_and_record(server, token, fun)
+      {:ok, token} -> execute_and_record(server, token, fun, opts[:failure_if])
       {:error, :open} -> {:error, :open}
     end
   end
@@ -285,13 +307,15 @@ defmodule Normandy.Resilience.CircuitBreaker do
   end
 
   @doc """
-  `call/2` through the shared breaker for `key`, started if needed (`ensure_started/1`).
-  Returns what `call/2` returns.
+  `call/3` through the shared breaker for `key`, started if needed (`ensure_started/1`).
+  Returns what `call/3` returns. Takes `call/3`'s options.
   """
-  @spec run(key(), (-> term())) :: {:ok, term()} | {:error, term()}
-  def run(key, fun) when is_function(fun, 0) do
+  @spec run(key(), (-> term()), keyword()) :: {:ok, term()} | {:error, term()}
+  def run(key, fun, opts \\ []) when is_function(fun, 0) do
+    opts = Options.validate!(opts, @call_opts_schema, {__MODULE__, :run, 3})
+
     case admit(key) do
-      {pid, {:ok, token}} -> execute_and_record(pid, token, fun)
+      {pid, {:ok, token}} -> execute_and_record(pid, token, fun, opts[:failure_if])
       {_pid, {:error, :open}} -> {:error, :open}
     end
   end
@@ -466,6 +490,7 @@ defmodule Normandy.Resilience.CircuitBreaker do
     state =
       cond do
         generation != state.generation -> state
+        outcome == :ignore -> state
         outcome == :success -> handle_success(state)
         outcome == :failure -> handle_failure(state, :probe_failure)
       end
@@ -512,13 +537,25 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   ## Private Functions
 
-  @spec execute_and_record(GenServer.server(), token(), (-> term())) ::
+  @spec execute_and_record(
+          GenServer.server(),
+          token(),
+          (-> term()),
+          ({:error, term()} -> boolean()) | nil
+        ) ::
           {:ok, term()} | {:error, term()}
-  defp execute_and_record(server, token, fun) do
+  defp execute_and_record(server, token, fun, failure_if) do
     {outcome, result} = run_fun(fun)
-    :ok = record(server, token, outcome)
+    :ok = record(server, token, classify(outcome, result, failure_if))
     result
   end
+
+  # A failure the caller's classifier rejects is recorded as :ignore: its probe slot is
+  # freed and no count changes.
+  defp classify(:failure, result, failure_if) when is_function(failure_if, 1),
+    do: if(failure_if.(result), do: :failure, else: :ignore)
+
+  defp classify(outcome, _result, _failure_if), do: outcome
 
   defp run_fun(fun) do
     case fun.() do

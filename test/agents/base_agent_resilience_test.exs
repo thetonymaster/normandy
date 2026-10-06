@@ -34,8 +34,8 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         current_count = Agent.get_and_update(client.attempts, fn count -> {count, count + 1} end)
 
         if current_count < client.failure_count do
-          # Simulate transient error
-          raise "Temporary network error"
+          # Simulate a transient endpoint failure (counts against a breaker)
+          {:error, Normandy.LLMError.new(type: :server, retryable?: true, status: 503)}
         else
           # Success after retries
           {:ok,
@@ -64,7 +64,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
     defimpl Normandy.Agents.Model do
       def converse(client, request, _opts) do
         if client.should_fail do
-          raise "Service unavailable"
+          {:error, Normandy.LLMError.new(type: :server, retryable?: true, status: 503)}
         else
           {:ok,
            %Normandy.LLM.Response{content: %{request.response_model | chat_message: "Success"}}}
@@ -130,7 +130,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
             base_delay: 10,
             retry_on: [:network_error],
             retry_if: fn
-              {:error, {:exception, _, _}} -> true
+              {:error, %Normandy.LLMError{type: :server}} -> true
               _ -> false
             end
           ]
@@ -159,11 +159,11 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # First two calls should fail and open circuit
-      assert_raise RuntimeError, "Service unavailable", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "test1"})
       end
 
-      assert_raise RuntimeError, "Service unavailable", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "test2"})
       end
 
@@ -198,7 +198,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # Open circuit
-      assert_raise RuntimeError, "Service unavailable", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "fail"})
       end
 
@@ -285,15 +285,15 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
         })
 
       # First few calls will retry and fail
-      assert_raise RuntimeError, "Temporary network error", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "test1"})
       end
 
-      assert_raise RuntimeError, "Temporary network error", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "test2"})
       end
 
-      assert_raise RuntimeError, "Temporary network error", fn ->
+      assert_raise Normandy.LLMError, ~r/server/, fn ->
         BaseAgent.run!(agent, %{chat_message: "test3"})
       end
 
