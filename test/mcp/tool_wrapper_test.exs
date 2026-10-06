@@ -13,6 +13,9 @@ defmodule Normandy.MCP.ToolWrapperTest do
     def list_tools(_client, _opts), do: {:ok, []}
 
     @impl true
+    # A client of {:returns, result} answers every call with that CallToolResult.
+    def call_tool({:returns, result}, _name, _args, _opts), do: {:ok, result}
+
     def call_tool(_client, "search", %{"query" => query}, _opts) do
       {:ok, "Results for: #{query}"}
     end
@@ -108,6 +111,82 @@ defmodule Normandy.MCP.ToolWrapperTest do
 
       assert {:error, msg} = Tool.run(wrapper, %Context{tool_call_id: "t", input: %{}})
       assert msg =~ "MCP tool 'failing_tool' failed"
+    end
+  end
+
+  # The shapes MCP adapters hand back (see ToolWrapper's normalize_result/1).
+  defmodule ExMCPLikeResponse do
+    defstruct [:content, :meta, is_error: false]
+  end
+
+  defmodule HermesLikeResponse do
+    defstruct [:result, is_error: false]
+  end
+
+  describe "CallToolResult normalization (AX-14)" do
+    defp run_returning(result, tool) do
+      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool)
+      Tool.run(wrapper, %Context{tool_call_id: "t", input: %{}})
+    end
+
+    test "text blocks become the output text; isError: true becomes {:error, text}", %{
+      tool: tool
+    } do
+      text = fn t -> %{"type" => "text", "text" => t} end
+
+      assert run_returning(%{"content" => [text.("a"), text.("b")], "isError" => false}, tool) ==
+               {:ok, "a\nb"}
+
+      assert run_returning(%{"content" => [text.("rate limited")], "isError" => true}, tool) ==
+               {:error, "rate limited"}
+    end
+
+    test "an atom-keyed struct (ExMCP) and a wrapped result (Hermes)", %{tool: tool} do
+      ex_mcp = %ExMCPLikeResponse{
+        content: [
+          %{type: "text", text: "hi", data: nil, annotations: nil},
+          %{type: "image", text: nil, data: "iVBORw0KGgo=", annotations: nil}
+        ],
+        is_error: false
+      }
+
+      assert run_returning(ex_mcp, tool) == {:ok, "hi\n[image content omitted]"}
+
+      hermes = %HermesLikeResponse{
+        result: %{"content" => [%{"type" => "text", "text" => "no such city"}], "isError" => true},
+        is_error: true
+      }
+
+      assert run_returning(hermes, tool) == {:error, "no such city"}
+    end
+
+    test "an error with no text still says what happened", %{tool: tool} do
+      assert run_returning(%{"content" => [], "isError" => true}, tool) ==
+               {:error, "The MCP tool reported an error and sent no text."}
+    end
+
+    test "a string or a map without content passes through", %{tool: tool} do
+      assert run_returning("plain", tool) == {:ok, "plain"}
+      assert run_returning(%{"answer" => 42}, tool) == {:ok, %{"answer" => 42}}
+    end
+
+    test "through Dispatch an MCP error is an is_error result with the bare text", %{tool: tool} do
+      alias Normandy.Agents.Dispatch
+      alias Normandy.Components.{BaseIOSchema, ToolCall, ToolResult}
+
+      result = %{
+        "content" => [%{"type" => "text", "text" => "quota exceeded"}],
+        "isError" => true
+      }
+
+      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool)
+      config = %{name: "a", toolset: Toolset.new([wrapper])}
+      call = %ToolCall{id: "e1", name: "search", input: %{"query" => "x"}}
+
+      assert %ToolResult{is_error: true, output: "quota exceeded"} =
+               dispatched = Dispatch.dispatch_one(config, call, Dispatch.default_pipeline())
+
+      assert [%{content: "quota exceeded", is_error: true}] = BaseIOSchema.to_json(dispatched)
     end
   end
 

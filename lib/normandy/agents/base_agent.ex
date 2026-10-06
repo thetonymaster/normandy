@@ -801,15 +801,29 @@ defmodule Normandy.Agents.BaseAgent do
     do: convert_final_text(config, text_of.(raw), output_schema)
 
   # A final answer's text as the output schema (convert_final_output/4):
-  #   * a :chat_message schema gets the unwrapped text, "" for an empty answer;
+  #   * a :chat_message schema gets the unwrapped text; an empty or whitespace-only
+  #     answer (the model ended its turn with no text, AX-32) is the :invalid_output
+  #     LLMError, never a blank success;
   #   * a schema with a JSON Schema (the one the system prompt showed,
   #     prompt_output_schema/2) gets the text parsed into it under the client's
   #     :on_parse_failure policy (ParseFailure.parse_text_output/3), so an empty
   #     answer or one that does not parse raises the :invalid_output LLMError;
   #   * any other struct has nothing to parse the text into: the :invalid_output
   #     LLMError, never the raw response presented as success.
-  defp convert_final_text(_config, text, %{chat_message: _} = output_schema),
-    do: Map.put(output_schema, :chat_message, unwrap_llm_content(text))
+  defp convert_final_text(_config, text, %{chat_message: _} = output_schema) do
+    answer = unwrap_llm_content(text)
+
+    if is_binary(answer) and String.trim(answer) == "" do
+      raise LLMError.new(
+              type: :invalid_output,
+              retryable?: false,
+              detail:
+                "expected a final answer, got an empty one: the model ended its turn with no text"
+            )
+    end
+
+    Map.put(output_schema, :chat_message, answer)
+  end
 
   defp convert_final_text(config, text, %module{} = output_schema) do
     if Normandy.Schema.json_schema(output_schema) do

@@ -1523,6 +1523,32 @@ defmodule Normandy.Agents.Turn.ServerTest do
     do: send(test_pid, {:telemetry, ref, measurements, metadata})
 
   describe "failure replies and crashing callbacks (AGENTS-1)" do
+    test "an empty final answer after a tool round is :invalid_output (AX-32)" do
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      call_llm = fn _config, _state, _request ->
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+        if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0 do
+          %Normandy.Agents.ToolCallResponse{
+            content: nil,
+            tool_calls: [%ToolCall{id: "w1", name: "weather", input: %{}}]
+          }
+        else
+          %Normandy.Agents.ToolCallResponse{content: "", tool_calls: []}
+        end
+      end
+
+      config = %{
+        base_config_with_tools()
+        | output_schema: %Normandy.Agents.BaseAgentOutputSchema{}
+      }
+
+      {srv, _store} =
+        start_server("s-empty-answer", config, handlers: final_handlers(%{call_llm: call_llm}))
+
+      assert {:error, %Normandy.LLMError{type: :invalid_output}} = Turn.Server.run(srv, "go")
+    end
+
     defp final_handlers(overrides \\ %{}) do
       Map.merge(
         %{

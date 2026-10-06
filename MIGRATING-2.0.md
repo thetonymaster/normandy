@@ -1195,6 +1195,18 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   text with `is_error: true`, not as `{"error": "..."}`.
   `%ToolResult{}.output` is that binary. Code that matched `output: %{error: msg}` for these
   must match the binary. Other error terms keep `%{error: term}`.
+- `Normandy.MCP.ToolWrapper` honours the MCP `isError` flag: such a result is an error
+  result (`is_error: true`) whose text is the server's message. Any `CallToolResult` (a
+  string-keyed map, an `ExMCP.Response` struct, a Hermes response) reaches the model as its
+  text blocks joined by newlines, not as the JSON or `inspect/1` of the envelope. Image,
+  audio and resource blocks become a one-line `[<type> content omitted]` note; they are not
+  sent to the model yet.
+- A turn whose final answer is empty or only whitespace (the model ended its turn with no
+  text, usually right after tool results) now returns
+  `{:error, %Normandy.LLMError{type: :invalid_output}}` for a `chat_message` output schema,
+  on `run/3`, `stream/3` and `Turn.Server`, instead of `%BaseAgentOutputSchema{chat_message: ""}`.
+  It is not retried. A test model client that answers with an empty response model must
+  answer with text.
 
 ## New, non-breaking
 

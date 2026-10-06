@@ -51,7 +51,7 @@ defmodule Normandy.Tools.ToolInputIsolationTest do
 
         content =
           if answered?(request) do
-            request.response_model
+            %ToolCallResponse{content: "done", tool_calls: []}
           else
             %ToolCallResponse{
               content: nil,

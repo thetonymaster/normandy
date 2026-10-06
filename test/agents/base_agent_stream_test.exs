@@ -190,13 +190,21 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
       end
     end
 
-    test "an empty final answer is \"\" in a chat schema" do
-      a = tool_agent(%ToolThenText{text: ""})
+    test "an empty final answer is :invalid_output in a chat schema too (AX-32)" do
+      for text <- ["", "  \n"] do
+        a = tool_agent(%ToolThenText{text: text})
 
-      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} = BaseAgent.run(a, "q")
+        assert {:error, %LLMError{type: :invalid_output} = ran} = BaseAgent.run(a, "q")
 
-      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} =
-               BaseAgent.stream(a, "q", collect())
+        assert {:error, %LLMError{type: :invalid_output} = streamed} =
+                 BaseAgent.stream(a, "q", collect())
+
+        for error <- [ran, streamed] do
+          assert Exception.message(error) =~
+                   "expected a final answer, got an empty one: " <>
+                     "the model ended its turn with no text"
+        end
+      end
     end
 
     test "an empty final answer is :invalid_output for a non-chat schema" do
@@ -318,13 +326,11 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
                BaseAgent.stream(a, "q", collect())
     end
 
-    test "an empty answer after a tool loop is \"\", as with the default schema" do
+    test "an empty answer after a tool loop is :invalid_output, as with the default schema" do
       a = nil_schema(tool_agent(%ToolThenText{text: ""}))
 
-      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} = BaseAgent.run(a, "q")
-
-      assert {:ok, _, %BaseAgentOutputSchema{chat_message: ""}} =
-               BaseAgent.stream(a, "q", collect())
+      assert {:error, %LLMError{type: :invalid_output}} = BaseAgent.run(a, "q")
+      assert {:error, %LLMError{type: :invalid_output}} = BaseAgent.stream(a, "q", collect())
     end
   end
 end

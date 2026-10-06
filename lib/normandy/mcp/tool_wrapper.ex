@@ -27,6 +27,13 @@ defmodule Normandy.MCP.ToolWrapper do
       # Register in agent
       agent = BaseAgent.register_tool(agent, wrapper)
 
+  ## Results
+
+  The server's `CallToolResult` reaches the model as text: its text blocks joined by
+  newlines, and a one-line `[<type> content omitted]` note for each image, audio or
+  resource block. A result with `isError: true` is an error result (`is_error` on the
+  `tool_result`). A result in no known shape (no `content` list) is passed on as it is.
+
   ## Trace context
 
   Unlike `Normandy.A2A.AgentTool`, an MCP call does not carry the W3C trace
@@ -107,8 +114,64 @@ defmodule Normandy.MCP.ToolWrapper do
   @impl Normandy.Tool
   def run(%__MODULE__{adapter: adapter, client: client, tool: tool}, %Context{input: input}) do
     case adapter.call_tool(client, tool.name, input, []) do
-      {:ok, result} -> {:ok, result}
+      {:ok, result} -> normalize_result(result)
       {:error, reason} -> {:error, "MCP tool '#{tool.name}' failed: #{inspect(reason)}"}
     end
   end
+
+  # An MCP CallToolResult as the tool's return: its text blocks joined by newlines, a
+  # one-line note for each block of another type, and `isError: true` as {:error, text}
+  # (so the model gets is_error). Adapters hand it over as the JSON-RPC result map
+  # (string keys), an atom-keyed map or struct (ExMCP.Response: :content, :is_error), or
+  # a struct wrapping it under :result (Hermes). A binary, or any other term, is
+  # returned as it is.
+  defp normalize_result(result) when is_binary(result), do: {:ok, result}
+
+  defp normalize_result(%{} = result) do
+    inner = Map.get(result, :result)
+
+    cond do
+      is_list(content(result)) ->
+        content_result(content(result), error_flag?(result))
+
+      is_map(inner) and is_list(content(inner)) ->
+        content_result(content(inner), error_flag?(result) or error_flag?(inner))
+
+      true ->
+        {:ok, result}
+    end
+  end
+
+  defp normalize_result(result), do: {:ok, result}
+
+  defp content(map), do: Map.get(map, "content", Map.get(map, :content))
+
+  defp error_flag?(map),
+    do: Enum.any?(["isError", :isError, "is_error", :is_error], &(Map.get(map, &1) == true))
+
+  defp content_result(blocks, true) do
+    case blocks_text(blocks) do
+      "" -> {:error, "The MCP tool reported an error and sent no text."}
+      text -> {:error, text}
+    end
+  end
+
+  defp content_result(blocks, false), do: {:ok, blocks_text(blocks)}
+
+  defp blocks_text(blocks), do: Enum.map_join(blocks, "\n", &block_text/1)
+
+  defp block_text(%{} = block) do
+    case Map.get(block, "type", Map.get(block, :type)) do
+      type when type in ["text", :text] ->
+        Map.get(block, "text", Map.get(block, :text)) || ""
+
+      type when is_binary(type) or (is_atom(type) and not is_nil(type)) ->
+        "[#{type} content omitted]"
+
+      _other ->
+        "[content omitted]"
+    end
+  end
+
+  defp block_text(_block), do: "[content omitted]"
 end
