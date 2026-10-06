@@ -810,9 +810,13 @@ defmodule Normandy.Coordination.AgentPoolTest do
       agent_config = Map.put(create_agent_config(), :circuit_breaker, scope: scope)
 
       {:ok, pool} = AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 2)
+      {:links, links_before} = Process.info(pool, :links)
 
       agents = for _ <- 1..3, do: elem(AgentPool.checkout(pool), 1)
       Enum.each(agents, &AgentPool.checkin(pool, &1))
+
+      # Agents are values: neither the pool nor the caller gained a linked process.
+      assert Process.info(pool, :links) == {:links, links_before}
 
       key = BaseAgentConfig.circuit_breaker_key(BaseAgent.init(agent_config))
       assert CircuitBreaker.fetch(key) == :error

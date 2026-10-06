@@ -31,9 +31,11 @@ defmodule Normandy.Agents.BaseAgentSharedBreakerTest do
   defp failing(agent), do: %{agent | client: %StubClient{reply: &overloaded/1}}
 
   test "init/1 starts no process; the first LLM call starts the breaker" do
+    {:links, links_before} = Process.info(self(), :links)
     agent = agent(scope())
     key = BaseAgentConfig.circuit_breaker_key(agent)
 
+    assert Process.info(self(), :links) == {:links, links_before}
     assert CircuitBreaker.fetch(key) == :error
     assert {:ok, _agent, _out} = BaseAgent.run(agent, "hi")
     assert {:ok, pid} = CircuitBreaker.fetch(key)

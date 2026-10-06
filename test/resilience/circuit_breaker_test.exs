@@ -432,14 +432,37 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "a probe that returns normally releases its monitor" do
-      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 2)
       open_then_half_open(cb)
 
       assert CircuitBreaker.call(cb, fn -> {:ok, :fine} end) == {:ok, :fine}
-      assert CircuitBreaker.state(cb) == :closed
+
+      # One of two successes: still half-open, so only release_probe/2 can have freed the slot.
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.half_open_calls == 0
       assert {:monitors, []} = Process.info(cb, :monitors)
 
       GenServer.stop(cb)
+    end
+  end
+
+  describe "a breaker that dies while the function runs" do
+    test "the caller still gets the function's result and one warning is logged" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CircuitBreaker.call(cb, fn ->
+                   Process.unlink(cb)
+                   ref = Process.monitor(cb)
+                   Process.exit(cb, :kill)
+                   assert_receive {:DOWN, ^ref, :process, _, :killed}
+                   {:ok, :done}
+                 end) == {:ok, :done}
+        end)
+
+      assert log =~ "Circuit breaker did not record a call's outcome (exit: noproc)"
     end
   end
 

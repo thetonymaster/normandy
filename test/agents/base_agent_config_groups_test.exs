@@ -13,7 +13,7 @@ defmodule Normandy.Agents.BaseAgentConfigGroupsTest do
     @renamed [
       retry_options: {[max_attempts: 2], "was renamed to :retry"},
       enable_circuit_breaker:
-        {true, "was removed: circuit_breaker: [] (or the breaker's options) starts a breaker"},
+        {true, "was removed: circuit_breaker: [] (or the breaker's options) configures a breaker"},
       circuit_breaker_options: {[timeout: 10], "was renamed to :circuit_breaker"},
       input_guardrails: {[MaxLength], "moved to guardrails: [input: ...]"},
       output_guardrails: {[MaxLength], "moved to guardrails: [output: ...]"},
@@ -57,8 +57,10 @@ defmodule Normandy.Agents.BaseAgentConfigGroupsTest do
 
     test "a keyword list is kept as the breaker options; init/1 starts no process" do
       opts = [failure_threshold: 1, timeout: 60_000, scope: {__MODULE__, :kept}]
+      {:links, links_before} = Process.info(self(), :links)
       config = init(circuit_breaker: opts)
 
+      assert Process.info(self(), :links) == {:links, links_before}
       assert config.circuit_breaker == opts
       assert CircuitBreaker.fetch(BaseAgentConfig.circuit_breaker_key(config)) == :error
     end

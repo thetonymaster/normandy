@@ -370,9 +370,14 @@ defmodule Normandy.Resilience.CircuitBreaker do
       CircuitBreaker.metrics(breaker)
       #=> %{
         state: :closed,
+        generation: 0,
         failure_count: 2,
         success_count: 100,
-        opened_at: nil
+        failure_threshold: 5,
+        success_threshold: 2,
+        half_open_calls: 0,
+        opened_at: nil,
+        last_failure_time: nil
       }
   """
   @spec metrics(GenServer.server()) :: map()
@@ -536,13 +541,22 @@ defmodule Normandy.Resilience.CircuitBreaker do
     thrown -> {:failure, {:error, {:throw, thrown}}}
   end
 
-  # The function already ran; a breaker that has stopped since has nothing left to
-  # count, so the caller still gets its result. Any other exit (a timeout) propagates.
+  # The function already ran, so nothing that goes wrong recording its outcome (a breaker
+  # that stopped or was killed, a call timeout) may take the caller down with it: the caller
+  # still gets its result. The failure is logged by kind only, never the reason's payload.
   defp record(server, token, outcome) do
     GenServer.call(server, {:record, token, outcome})
   catch
-    :exit, {reason, _call} when reason in [:noproc, :normal, :shutdown] -> :ok
-    :exit, {{:shutdown, _}, _call} -> :ok
+    :exit, reason ->
+      kind =
+        case reason do
+          {kind, _call} when is_atom(kind) -> kind
+          kind when is_atom(kind) -> kind
+          _other -> :exit
+        end
+
+      Logger.warning("Circuit breaker did not record a call's outcome (exit: #{kind})")
+      :ok
   end
 
   defp release_probe(state, nil), do: state
