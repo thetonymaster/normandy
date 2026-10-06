@@ -8,8 +8,6 @@ defmodule NormandyTest.IOTest do
   end
 
   defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
-    def __str__(str), do: Normandy.JSON.encode!(str)
-    def __rich__(str), do: Normandy.JSON.encode!(str, pretty: true)
     def get_schema(_), do: NormandyTest.IOTest.__schema__(:specification)
     def to_json(str), do: Normandy.JSON.encode!(str)
   end

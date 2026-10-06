@@ -99,13 +99,6 @@ defmodule Normandy.Schema.RedactTest do
                "__meta__" => nil
              }
     end
-
-    test "__str__ and __rich__" do
-      login = %Login{name: "ana", password: @secret}
-
-      refute BaseIOSchema.__str__(login) =~ @secret
-      refute BaseIOSchema.__rich__(login) =~ @secret
-    end
   end
 
   test "an invalid changeset's exception message does not print the redacted value" do

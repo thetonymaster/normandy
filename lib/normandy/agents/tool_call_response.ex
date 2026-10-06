@@ -121,6 +121,4 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Agents.ToolCallResponse 
   end
 
   def get_schema(_), do: %{}
-  def __str__(_), do: "ToolCallResponse"
-  def __rich__(_), do: "ToolCallResponse"
 end

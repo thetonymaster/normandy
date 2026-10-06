@@ -107,13 +107,10 @@ defmodule NormandyTest.BaseAgentsTest do
     assert Map.get(agent, :current_user_input) == mock_input
   end
 
-  test "rich base agent io str and rich" do
+  test "an io_schema struct encodes to its JSON" do
     test_io = %Normandy.Agents.BaseAgentInputSchema{chat_message: "chat message"}
 
-    assert BaseIOSchema.__str__(test_io) ==
-             "{\"chat_message\":\"chat message\"}"
-
-    assert BaseIOSchema.__rich__(test_io) != nil
+    assert BaseIOSchema.to_json(test_io) == ~s({"chat_message":"chat message"})
   end
 
   describe "unwrap_llm_content/1" do

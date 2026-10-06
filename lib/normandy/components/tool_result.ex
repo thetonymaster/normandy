@@ -51,6 +51,4 @@ defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do
   defp format_tool_output(output), do: Normandy.JSON.encode!(output)
 
   def get_schema(_), do: %{}
-  def __str__(_), do: "ToolResult"
-  def __rich__(_), do: "ToolResult"
 end

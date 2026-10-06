@@ -62,8 +62,6 @@ defmodule Normandy.AppEnvConfigTest do
       value = %MultiField{}
 
       assert BaseIOSchema.to_json(value) == "tagged"
-      assert BaseIOSchema.__str__(value) == "tagged"
-      assert BaseIOSchema.__rich__(value) == "tagged-pretty"
     end
 
     defmodule TaggingDecoder do

@@ -17,9 +17,8 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
       assert BaseIOSchema.to_json([]) == []
     end
 
-    test "__str__/1 and __rich__/1 return strings" do
-      assert is_binary(BaseIOSchema.__str__([1, 2, 3]))
-      assert is_binary(BaseIOSchema.__rich__([1, 2, 3]))
+    test "the protocol is to_json/1 and get_schema/1" do
+      assert BaseIOSchema.__protocol__(:functions) |> Enum.sort() == [get_schema: 1, to_json: 1]
     end
 
     test "get_schema/1 returns an empty map" do

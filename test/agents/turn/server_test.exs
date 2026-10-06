@@ -28,8 +28,6 @@ defmodule Normandy.Agents.Turn.ServerTest do
   end
 
   defimpl Normandy.Components.BaseIOSchema, for: Resp do
-    def __str__(resp), do: resp.content
-    def __rich__(resp), do: resp.content
     def to_json(resp), do: resp.content
     def get_schema(_resp), do: %{}
   end

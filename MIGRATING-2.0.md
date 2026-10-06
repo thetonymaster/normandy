@@ -797,3 +797,11 @@ A lookup returns `{:ok, value}` or `:error`; its `!` variant returns the value o
 | `AgentSupervisor.find_agent(sup, id)` → `{:ok, pid} \| {:error, :not_found}` | `AgentSupervisor.fetch_agent(sup, id)` → `{:ok, pid} \| :error` |
 
 The renamed exceptions build their own message and take no `:message` option.
+
+## 29. `BaseIOSchema` drops `__str__/1` and `__rich__/1`
+
+`Normandy.Components.BaseIOSchema` is `to_json/1` and `get_schema/1`; nothing in Normandy
+called the other two. Delete `def __str__/1` and `def __rich__/1` from your own `defimpl
+Normandy.Components.BaseIOSchema` blocks (left in, they are dead code, not an error), and
+call `BaseIOSchema.to_json/1` where you called `__str__/1`: it leaves out `redact: true`
+fields, as `__str__/1` did.

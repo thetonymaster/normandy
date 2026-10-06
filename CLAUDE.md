@@ -136,7 +136,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.Components.BaseIOSchema`** - Protocol for agent I/O serialization
   - Auto-implemented for `io_schema` definitions
-  - Methods: `to_json/1`, `get_schema/1`, `__str__/1`, `__rich__/1`
+  - Methods: `to_json/1`, `get_schema/1`
   - Encodes through `Normandy.JSON` (adapter from `config :normandy, :adapter`, default Jason)
 
 ### Resilience & Error Handling

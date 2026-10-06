@@ -18,8 +18,8 @@ defmodule Normandy.Schema do
   - Automatic struct generation
   - Metadata tracking
   - Field redaction: a `redact: true` field is left out of `inspect/1`, of the
-    JSON an `io_schema` sends to the model (`to_json/1`, `__str__/1`,
-    `__rich__/1`) and of `Normandy.InvalidChangesetError` messages. Do not
+    JSON an `io_schema` sends to the model (`to_json/1`) and of
+    `Normandy.InvalidChangesetError` messages. Do not
     redact a value the model needs to see.
   - JSON Schema export for LLM tool calling
 
@@ -422,8 +422,6 @@ defmodule Normandy.Schema do
 
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
-            def __str__(str), do: Normandy.JSON.encode!(serializable(str))
-            def __rich__(str), do: Normandy.JSON.encode!(serializable(str), pretty: true)
             def to_json(str), do: Normandy.JSON.encode!(serializable(str))
 
             # Neither __meta__ nor a redact: true field goes to the model or out,
