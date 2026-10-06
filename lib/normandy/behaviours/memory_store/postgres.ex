@@ -181,10 +181,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     @impl true
     def delete_namespace(repo, ns) do
-      # The counter row goes first: its lock waits for the namespace's writers in flight.
+      # Lock (creating if absent) the counter row first: that waits for the namespace's
+      # writers in flight, and a writer arriving later waits for this transaction. Then
+      # the documents go, then the counter row.
       in_transaction(repo, fn ->
-        repo.query!("DELETE FROM #{@namespaces} WHERE namespace = $1", [ns])
+        _totals = lock_totals(repo, ns)
         repo.query!("DELETE FROM #{@table} WHERE namespace = $1", [ns])
+        repo.query!("DELETE FROM #{@namespaces} WHERE namespace = $1", [ns])
         :ok
       end)
     end
