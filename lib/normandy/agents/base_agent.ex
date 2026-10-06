@@ -255,10 +255,7 @@ defmodule Normandy.Agents.BaseAgent do
     request = %Normandy.LLM.Request{
       model: config.model,
       system: system_prompt_with_schema,
-      messages:
-        Enum.map(history, fn %{role: role, content: content} ->
-          %Message{role: role, content: content}
-        end),
+      messages: AgentMemory.request_messages(history),
       response_model: response_model,
       output_format: request_output_format(response_model, config),
       temperature: config.temperature,
@@ -1377,9 +1374,7 @@ defmodule Normandy.Agents.BaseAgent do
       config.memory
       |> AgentMemory.drop_stale_thinking(prefix_key)
       |> AgentMemory.history()
-      |> Enum.map(fn %{role: role, content: content} ->
-        %Message{role: role, content: content}
-      end)
+      |> AgentMemory.request_messages()
 
     request = %Normandy.LLM.Request{
       model: config.model,

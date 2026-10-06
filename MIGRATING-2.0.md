@@ -980,6 +980,21 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - `[:normandy, :agent, :llm_call, :start]` metadata `structured_output` is now `true` for these
   calls and streams.
 
+## 33. Tool calls and assistant turns are replayed as received
+
+- Parallel tool results go to the model as one user message, with one `tool_result` block per
+  call in call order. They used to go as one user message per result. Memory
+  (`AgentMemory.messages/1`), session stores and the turn still keep one `"tool"` entry per
+  result. `AgentMemory.request_messages/1` does the conversion: a custom request builder that
+  sends `AgentMemory.history/1` should pass it through that function.
+  `Normandy.Context.TokenCounter` counts the same shape.
+- `mcp_tool_use` (MCP connector) and `server_tool_use` blocks are no longer returned as tool
+  calls. The API ran them and put their results in the same response, so Normandy does not
+  dispatch them. Before, an `mcp_tool_use` was run as a local tool named
+  `"<server_name>__<tool>"` (or answered "not found"), and a second, client `tool_result` for
+  it was sent to the API. A local tool registered under such a name is no longer called for
+  connector calls.
+
 ## New, non-breaking
 
 - `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker.

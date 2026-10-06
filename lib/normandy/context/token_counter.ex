@@ -24,7 +24,6 @@ defmodule Normandy.Context.TokenCounter do
   alias Normandy.Components.ContentBlock.Document
   alias Normandy.Components.ContentBlock.Image
   alias Normandy.Components.ContentBlock.Text
-  alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
   alias Normandy.LLM.ClaudioAdapter
 
@@ -186,7 +185,7 @@ defmodule Normandy.Context.TokenCounter do
       memory
       |> AgentMemory.history()
       |> Enum.reject(&(&1.role == "system"))
-      |> Enum.map(&%Message{role: &1.role, content: &1.content})
+      |> AgentMemory.request_messages()
 
     Request.new("token-count")
     |> ClaudioModel.add_messages(messages, false)

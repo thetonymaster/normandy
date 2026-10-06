@@ -1008,36 +1008,20 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def extract_thinking(_response), do: []
 
   @doc false
+  # The client tool calls Normandy runs: `tool_use` blocks after the last fallback.
+  # `mcp_tool_use` and `server_tool_use` blocks were run by the API (an MCP connector,
+  # a server tool); their results are already in the response, so they are never
+  # dispatched here. They reach the next request in `ToolCallResponse.content_blocks`.
   def extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
     content_blocks
     |> content_after_last_fallback()
     |> Enum.filter(fn block ->
-      type = Map.get(block, :type) || Map.get(block, "type")
-      type in [:tool_use, :mcp_tool_use, "tool_use", "mcp_tool_use"]
+      (Map.get(block, :type) || Map.get(block, "type")) in [:tool_use, "tool_use"]
     end)
     |> Enum.map(fn tool_use ->
-      type = Map.get(tool_use, :type) || Map.get(tool_use, "type")
-
-      tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
-
-      name =
-        if type in [:mcp_tool_use, "mcp_tool_use"] do
-          server_name =
-            Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
-
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if server_name do
-            "#{server_name}__#{tool_name}"
-          else
-            tool_name
-          end
-        else
-          tool_name
-        end
-
       %Normandy.Components.ToolCall{
         id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
-        name: name,
+        name: Map.get(tool_use, :name) || Map.get(tool_use, "name"),
         input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
       }
     end)

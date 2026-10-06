@@ -261,6 +261,52 @@ defmodule Normandy.Context.TokenCounterTest do
     end
   end
 
+  describe "count_conversation/2 payload, parallel tool results" do
+    test "a batch of tool results is counted as one user message, as a request sends it" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.Batch, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 7})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.Batch}, retry: false]}
+      }
+
+      calls =
+        for id <- ["t1", "t2"],
+            do: %Normandy.Components.ToolCall{id: id, name: "weather", input: %{}}
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "weather?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          tool_calls: calls
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "sunny"
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t2",
+          output: "rainy"
+        })
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 7}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      assert Enum.map(payload["messages"], & &1["role"]) == ["user", "assistant", "user"]
+
+      assert [%{"tool_use_id" => "t1"}, %{"tool_use_id" => "t2"}] =
+               List.last(payload["messages"])["content"]
+    end
+  end
+
   describe "count_conversation/2 input checks" do
     test "an agent without a model raises instead of being counted against a default model",
          %{client: client, agent: agent} do

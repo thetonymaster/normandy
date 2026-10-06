@@ -122,6 +122,32 @@ defmodule Normandy.Components.AgentMemory do
     end)
   end
 
+  @doc """
+  The messages of a request, from `history/1`'s output.
+
+  Each run of consecutive `"tool"` messages whose content is a block list becomes one
+  `"tool"` message holding their blocks in order, so a batch of tool results reaches the
+  model as one user message, as the Messages API expects of parallel tool use. Memory,
+  the session store and the turn keep one entry per result; only the request merges
+  them. A `"tool"` message whose content is not a list stays a message of its own.
+  """
+  @spec request_messages([%{role: String.t(), content: term()}]) :: [Message.t()]
+  def request_messages(history) when is_list(history) do
+    history
+    |> Enum.reduce([], &add_request_message/2)
+    |> Enum.reverse()
+  end
+
+  defp add_request_message(
+         %{role: "tool", content: blocks},
+         [%Message{role: "tool", content: previous} = last | rest]
+       )
+       when is_list(blocks) and is_list(previous),
+       do: [%{last | content: previous ++ blocks} | rest]
+
+  defp add_request_message(%{role: role, content: content}, acc),
+    do: [%Message{role: role, content: content} | acc]
+
   # The default chat input goes to the model as the user's own words. Sent as
   # {"chat_message": ...} JSON, Haiku 4.5 read earlier turns as data rather than
   # conversation and denied remembering them.
