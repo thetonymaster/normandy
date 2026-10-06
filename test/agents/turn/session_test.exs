@@ -8,6 +8,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Test.TurnConfig
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
@@ -183,7 +184,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     {:ok, pid} =
       Turn.Supervisor.start_server(sup,
         session_id: "x",
-        config: nil,
+        config: TurnConfig.build(),
         store: {Normandy.Behaviours.SessionStore.InMemory, InMemory.new()},
         registry: {Normandy.Behaviours.SessionRegistry.Native, Native.new()}
       )

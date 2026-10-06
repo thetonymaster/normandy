@@ -29,9 +29,11 @@ defmodule Normandy.Agents.TurnTest do
     end
 
     test "rejects max_iterations below 1, mirroring the pos_integer() contract" do
-      assert_raise ArgumentError, ~r/:max_iterations must be an integer >= 1/, fn ->
-        Turn.new(max_iterations: 0)
-      end
+      assert_raise ArgumentError,
+                   ~r/^Normandy\.Agents\.Turn\.new\/1: invalid value for :max_iterations option: expected positive integer, got: 0/,
+                   fn ->
+                     Turn.new(max_iterations: 0)
+                   end
 
       assert_raise ArgumentError, ~r/got: -1/, fn ->
         Turn.new(max_iterations: -1)

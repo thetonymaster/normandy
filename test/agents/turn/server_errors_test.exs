@@ -11,6 +11,21 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
+  # Starts the server like Turn.Supervisor.start_server/2 but without its caller-side
+  # option check, so a raise in Turn.Server.start_link/1 comes back as the
+  # DynamicSupervisor's {:error, {exception, stacktrace}}.
+  defmodule UncheckedSupervisor do
+    @moduledoc false
+    def start_server(sup, server_opts) do
+      DynamicSupervisor.start_child(sup, %{
+        id: Normandy.Agents.Turn.Server,
+        start: {Normandy.Agents.Turn.Server, :start_link, [server_opts]},
+        restart: :transient,
+        type: :worker
+      })
+    end
+  end
+
   # A store whose history read fails: the server starts :unavailable.
   defmodule DownStore do
     @moduledoc false
@@ -170,9 +185,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
     refute contains_stacktrace?(error)
   end
 
-  test "a server whose start_link raises replies :session_unavailable with no stacktrace" do
-    # DynamicSupervisor.start_child turns a raise in the start function into
-    # {:error, {exception, stacktrace}}; Turn.Server.start_link/1 raises for a bad option.
+  test "a bad server option raises in the caller of Session.run/2 (Ruling 7)" do
     {:ok, sup} = Turn.Supervisor.start_link([])
 
     session =
@@ -184,7 +197,27 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
         config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
       )
 
-    # Bypasses new/1's check on purpose: this test is about a start_link that raises.
+    # Bypasses new/1's check on purpose: start_server/2 checks it again in the caller.
+    session = %{session | server_options: [on_approval_timeout: :sometimes]}
+
+    assert_raise ArgumentError,
+                 ~r/^Normandy\.Agents\.Turn\.Supervisor\.start_server\/2: invalid value for :on_approval_timeout/,
+                 fn -> Turn.Session.run(session, "hi") end
+  end
+
+  test "a server whose start_link raises replies :session_unavailable with no stacktrace" do
+    {:ok, sup} = Turn.Supervisor.start_link([])
+
+    session =
+      Turn.Session.new(
+        session_id: "s-bad-opt-#{System.unique_integer([:positive])}",
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        supervisor_mod: UncheckedSupervisor,
+        config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
+      )
+
     session = %{session | server_options: [on_approval_timeout: :sometimes]}
 
     assert {:error, %TurnError{type: :session_unavailable, reason: reason} = error} =

@@ -213,7 +213,9 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     # Start the Turn.Server somewhere in the cluster via HSup.start_server.
     # Horde decides which node; we don't control placement here.
     # The server reconstructs its config from Postgres (thin opts path).
-    {:ok, server_pid} = HSup.start_server(sup_name, session_opts)
+    # The session-only keys are Turn.Session.new/1's; Turn.Server.start_link/1 rejects them.
+    server_opts = Keyword.drop(session_opts, [:supervisor, :supervisor_mod, :template_id])
+    {:ok, server_pid} = HSup.start_server(sup_name, server_opts)
     assert is_pid(server_pid)
 
     # Allow the eager resume to complete on wherever the server is hosted.

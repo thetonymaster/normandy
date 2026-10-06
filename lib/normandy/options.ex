@@ -23,6 +23,7 @@ defmodule Normandy.Options do
     :api_key,
     :authorization,
     :client,
+    :config,
     :credential,
     :headers,
     :mcp_servers,

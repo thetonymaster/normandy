@@ -28,6 +28,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   require Logger
 
   alias Normandy.Agents.Turn
+  alias Normandy.Options
 
   @type opts :: [
           name: GenServer.name(),
@@ -37,11 +38,68 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           supervisor_mod: module(),
           template_provider: {module(), term()},
           subscriber: (atom(), map() -> any()) | nil,
-          handlers: map() | nil
+          handlers: Turn.Driver.Handlers.t() | nil
         ]
 
+  # The reaper passes :template_provider, :subscriber and :handlers to
+  # Turn.Server.start_link/1 on every reap, so it takes the types the server takes: a value
+  # the server would reject raises here, not later in the reaper process.
+  @server_types Map.new(Turn.Server.__opts_schema__(:start_link).schema, fn {key, spec} ->
+                  {key, Keyword.fetch!(spec, :type)}
+                end)
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the reaper."],
+                            store: [
+                              type: {:tuple, [:atom, :any]},
+                              required: true,
+                              doc:
+                                "The `SessionStore` as `{module, handle}`; its " <>
+                                  "`list_resumable/1` names the `:eager` sessions."
+                            ],
+                            registry: [
+                              type: {:tuple, [:atom, :any]},
+                              required: true,
+                              doc: "The `SessionRegistry` as `{module, handle}`."
+                            ],
+                            supervisor: [
+                              type: :any,
+                              required: true,
+                              doc: "The supervisor sessions restart under (its name, for Horde)."
+                            ],
+                            supervisor_mod: [
+                              type: :atom,
+                              default: Normandy.Agents.Turn.Supervisor.Horde,
+                              doc: "The module whose `start_server/2` restarts a session."
+                            ],
+                            template_provider: [
+                              type: @server_types.template_provider,
+                              type_doc: "`{module, handle}`",
+                              required: true,
+                              doc: "The `AgentTemplate` as `{module, handle}` (thin starts)."
+                            ],
+                            subscriber: [
+                              type: @server_types.subscriber,
+                              doc: "Passed to every session the reaper restarts."
+                            ],
+                            handlers: [
+                              type: @server_types.handlers,
+                              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
+                              doc: "Passed to every session the reaper restarts."
+                            ]
+                          )
+
+  @doc """
+  Starts the reaper.
+
+  ## Options
+
+  #{Options.docs(@start_link_opts_schema)}
+  """
   @spec start_link(opts()) :: GenServer.on_start()
   def start_link(opts) do
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+
     case Keyword.pop(opts, :name) do
       {nil, opts} -> GenServer.start_link(__MODULE__, opts)
       {name, opts} -> GenServer.start_link(__MODULE__, opts, name: name)
@@ -56,7 +114,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       store: Keyword.fetch!(opts, :store),
       registry: Keyword.fetch!(opts, :registry),
       supervisor: Keyword.fetch!(opts, :supervisor),
-      supervisor_mod: Keyword.get(opts, :supervisor_mod, Normandy.Agents.Turn.Supervisor.Horde),
+      supervisor_mod: Keyword.fetch!(opts, :supervisor_mod),
       template_provider: Keyword.fetch!(opts, :template_provider),
       # Functions and pids can't be saved with the session, so the host supplies
       # them here for every session this reaper restarts.

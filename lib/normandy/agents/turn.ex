@@ -23,6 +23,7 @@ defmodule Normandy.Agents.Turn do
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Options
 
   defmodule State do
     @moduledoc "Serializable data for one in-flight turn (the design's `%TurnState{}`). `tokens_compacted` is the estimated tokens of this turn's messages removed by in-turn compaction (feeds the task budget's `remaining`). `trace_carrier` is the W3C text-map carrier of the OpenTelemetry context the turn was started under (`[]` without OTel); the core never reads it, the durable shell persists it so a resumed turn keeps its trace."
@@ -72,24 +73,38 @@ defmodule Normandy.Agents.Turn do
               trace_carrier: []
   end
 
+  @new_opts_schema NimbleOptions.new!(
+                     max_iterations: [
+                       type: :pos_integer,
+                       default: 5,
+                       doc:
+                         "Tool-loop iterations before the forced final call. Enforces the " <>
+                           "`pos_integer()` contract on `State.max_iterations` (`BaseAgent.init/1` " <>
+                           "applies the same check at the shell boundary)."
+                     ],
+                     response_model: [
+                       type: :any,
+                       doc:
+                         "The response model for tool-loop LLM calls, e.g. `%ToolCallResponse{}`."
+                     ],
+                     output_schema: [
+                       type: :any,
+                       doc:
+                         "The response model for the forced final call when the iteration cap is hit."
+                     ]
+                   )
+
   @doc """
   Builds the initial `:provisioning` state for a turn.
 
-  Options: `:max_iterations` (default 5), `:response_model` (the response model
-  for normal tool-loop LLM calls, e.g. `%ToolCallResponse{}`), `:output_schema`
-  (the response model for the forced final call when the iteration cap is hit).
+  ## Options
 
-  Raises `ArgumentError` if `:max_iterations` is not an integer >= 1, enforcing
-  the `pos_integer()` contract on `State.max_iterations` (mirrors the check
-  `BaseAgent.init/1` applies at the shell boundary).
+  #{Options.docs(@new_opts_schema)}
   """
   @spec new(keyword()) :: State.t()
   def new(opts \\ []) do
-    max = Keyword.get(opts, :max_iterations, 5)
-
-    unless is_integer(max) and max >= 1 do
-      raise ArgumentError, ":max_iterations must be an integer >= 1, got: #{inspect(max)}"
-    end
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+    max = Keyword.fetch!(opts, :max_iterations)
 
     %State{
       status: :provisioning,

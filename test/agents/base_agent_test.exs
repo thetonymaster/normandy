@@ -195,7 +195,7 @@ defmodule NormandyTest.BaseAgentsTest do
     end
 
     test "BaseAgentConfig defaults temperature to nil" do
-      assert %Normandy.Agents.BaseAgentConfig{}.temperature == nil
+      assert %BaseAgentConfig{}.temperature == nil
     end
   end
 end

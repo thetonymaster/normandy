@@ -5,7 +5,7 @@ defmodule Normandy.Agents.LazyModuleTest do
   alias Normandy.Agents.{BaseAgentConfig, ValidationMiddleware}
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Test.{LazyInput, LazyTool, LazyViaRegistry}
+  alias Normandy.Test.{LazyInput, LazyTool, LazyViaRegistry, TurnConfig}
   alias Normandy.Tools.Input
 
   # A struct can reach a node before its module is loaded there (e.g. a schema
@@ -38,7 +38,7 @@ defmodule Normandy.Agents.LazyModuleTest do
     assert {:ok, pid} =
              Turn.Supervisor.start_server(sup,
                session_id: "lazy",
-               config: nil,
+               config: TurnConfig.build(),
                store: {InMemory, InMemory.new()},
                registry: {LazyViaRegistry, registry}
              )

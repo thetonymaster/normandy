@@ -108,7 +108,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     store = InMemory.new()
     reg = Native.new()
     {:ok, cat} = Catalog.start_link([])
-    handlers = %{call_llm: fn _, _, _ -> :stub end}
+    handlers = %Turn.Driver.Handlers{call_llm: fn _, _, _ -> :stub end}
     subscriber = fn _event, _meta -> :ok end
 
     :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})

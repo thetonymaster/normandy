@@ -2136,9 +2136,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert w > 0
     end
 
-    test "an invalid :on_approval_timeout raises ArgumentError naming the key and value" do
+    test "an invalid :on_approval_timeout raises ArgumentError naming the key, the allowed values and the value" do
       assert_raise ArgumentError,
-                   ~r/Turn\.Server\.start_link\/1: invalid :on_approval_timeout, expected :continue or :fail, got: :sometimes/,
+                   ~r/^Normandy\.Agents\.Turn\.Server\.start_link\/1: invalid value for :on_approval_timeout option: expected one of \[:continue, :fail\], got: :sometimes/,
                    fn ->
                      Turn.Server.start_link(
                        session_id: "s-bad-opt",

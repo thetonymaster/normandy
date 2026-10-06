@@ -7,25 +7,11 @@ defmodule Normandy.Agents.Turn.Server do
   truth). Blocking effects (`:call_llm`, `:dispatch_tools`, `:execute_approved`)
   run in a monitored Task; non-blocking effects run synchronously in the handler.
 
-  ## Options (besides `:session_id`, `:store`, `:registry`, `:config` / `:template_provider`)
+  ## Options
 
-    * `:handlers` — a `Turn.Driver.Handlers` set (default
-      `BaseAgent.non_streaming_handlers/0`). A `nil` `:emit` is skipped.
-      Hook modules' `before_llm` and `after_compact` run around whichever set is used
-      (`Normandy.Hooks.Handlers`).
-    * `:subscriber` — `fn event_name, meta -> any end`, called in the server process
-      for every event. A crash in it is logged, reported as
-      `[:normandy, :turn, :subscriber, :exception]` telemetry, and ignored.
-    * `:approval_timeout_ms` — how long a parked turn waits for `approve/2`
-      (default 300_000).
-    * `:on_approval_timeout` — `:continue` (default) or `:fail`. On expiry every
-      parked call gets an `expired: true` tool result. `:continue` hands it to the
-      model; `:fail` ends the turn with `{:error, %Normandy.TurnError{type:
-      :approval_timeout, reason: ids}}`.
-      Expiry emits `[:normandy, :turn, :approval, :expired]` for the batch and a
-      `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a
-      rejected call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
-    * `:idle_timeout_ms` — idle time before passivation (default 60_000).
+  See `start_link/1`. Approval expiry emits `[:normandy, :turn, :approval, :expired]` for the
+  batch and a `[:normandy, :tool, :denied]` (reason `:approval_expired`) per call; a rejected
+  call emits `[:normandy, :tool, :denied]` with `:approval_rejected`.
 
   Each park is wrapped in a `[:normandy, :turn, :approval, :start | :stop]` span
   (hand-emitted; both events carry the same `:telemetry_span_context`). `:start`
@@ -175,6 +161,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Components.ToolCall
   alias Normandy.Hooks.Runner
   alias Normandy.Hooks.ServerGlue
+  alias Normandy.Options
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Span
@@ -218,9 +205,114 @@ defmodule Normandy.Agents.Turn.Server do
 
   # ---- public API ----
 
+  # Turn.Session.new/1's schema is the single source of the types of the keys a session
+  # passes on (ruling P4): a value one accepts, the other accepts too.
+  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
+                   {key, Keyword.fetch!(spec, :type)}
+                 end)
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            session_id: [
+                              type: :string,
+                              required: true,
+                              doc: "The session this server runs."
+                            ],
+                            store: [
+                              type: {:tuple, [:atom, :any]},
+                              required: true,
+                              doc: "The `Normandy.Behaviours.SessionStore` as `{module, handle}`."
+                            ],
+                            registry: [
+                              type: {:tuple, [:atom, :any]},
+                              required: true,
+                              doc:
+                                "The `Normandy.Behaviours.SessionRegistry` as `{module, handle}`. " <>
+                                  "The server registers itself under `:session_id` unless it " <>
+                                  "was started under a `:via` name."
+                            ],
+                            config: [
+                              type: {:struct, Normandy.Agents.BaseAgentConfig},
+                              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
+                              doc:
+                                "The agent config. Without it the server rebuilds the config " <>
+                                  "from the template saved in `:store` (a thin start), which " <>
+                                  "needs `:template_provider`."
+                            ],
+                            template_provider: [
+                              type: @session_types.template_provider,
+                              type_doc: "`{module, handle}`",
+                              doc:
+                                "The `Normandy.Behaviours.AgentTemplate` as `{module, handle}`, " <>
+                                  "for a thin start."
+                            ],
+                            resume_policy: [
+                              type: {:in, [:lazy, :eager]},
+                              doc:
+                                "`:lazy` (the default) or `:eager`: `:eager` resumes an " <>
+                                  "in-flight turn as soon as the server starts. A saved " <>
+                                  "template's value wins over this option."
+                            ],
+                            subscriber: [
+                              type: {:or, [{:fun, 2}, nil]},
+                              doc:
+                                "`fn event_name, meta -> any end`, called in the server process " <>
+                                  "for every event. A crash in it is logged, reported as " <>
+                                  "`[:normandy, :turn, :subscriber, :exception]` telemetry, " <>
+                                  "and ignored. Never saved with the template."
+                            ],
+                            handlers: [
+                              type: @session_types.handlers,
+                              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
+                              doc:
+                                "A `Normandy.Agents.Turn.Driver.Handlers` set (default " <>
+                                  "`Normandy.Agents.BaseAgent`'s non-streaming handlers). A `nil` " <>
+                                  "`:emit` is skipped. Hook modules' `before_llm` and " <>
+                                  "`after_compact` run around whichever set is used. Never saved " <>
+                                  "with the template."
+                            ],
+                            approval_timeout_ms: [
+                              type: @session_types.approval_timeout_ms,
+                              doc:
+                                "How long a parked turn waits for `approve/2`, in ms (default " <>
+                                  "300_000). Wins over a saved template's value."
+                            ],
+                            on_approval_timeout: [
+                              type: {:in, [:continue, :fail]},
+                              doc:
+                                "`:continue` (the default) or `:fail`. On expiry every parked " <>
+                                  "call gets an `expired: true` tool result; `:continue` hands it " <>
+                                  "to the model, `:fail` ends the turn with `{:error, " <>
+                                  "%Normandy.TurnError{type: :approval_timeout}}`. Wins over a " <>
+                                  "saved template's value."
+                            ],
+                            idle_timeout_ms: [
+                              type: @session_types.idle_timeout_ms,
+                              doc:
+                                "Idle time before passivation, in ms (default 60_000). Wins " <>
+                                  "over a saved template's value."
+                            ],
+                            name: [
+                              type: :any,
+                              doc:
+                                "A `:gen_statem` server name. `Turn.Supervisor.start_server/2` " <>
+                                  "sets it from the registry's `child_name/2`."
+                            ]
+                          )
+
+  @doc false
+  def __opts_schema__(:start_link), do: @start_link_opts_schema
+
+  @doc """
+  Starts a session server. Options are checked here, in the caller, so a bad option raises
+  `ArgumentError` instead of failing `init/1`.
+
+  ## Options
+
+  #{Options.docs(@start_link_opts_schema)}
+  """
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts) do
-    validate_on_approval_timeout!(Keyword.get(opts, :on_approval_timeout, :continue))
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
     case Keyword.get(opts, :name) do
       nil -> :gen_statem.start_link(__MODULE__, opts, [])
@@ -788,8 +880,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp validate_on_approval_timeout!(other) do
     raise ArgumentError,
-          "Turn.Server.start_link/1: invalid :on_approval_timeout, expected :continue or :fail, " <>
-            "got: #{inspect(other)}"
+          "Normandy.Agents.Turn.Server: the saved template's :on_approval_timeout must be " <>
+            ":continue or :fail, got: #{inspect(other)}"
   end
 
   # Schema, input-guardrail and on_prompt-hook rejections are expected outcomes: reply

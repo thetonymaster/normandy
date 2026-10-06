@@ -5,6 +5,7 @@ defmodule Normandy.Agents.Turn.SupervisorTest do
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Test.TurnConfig
 
   @moduletag :capture_log
 
@@ -16,7 +17,7 @@ defmodule Normandy.Agents.Turn.SupervisorTest do
       {:ok, pid} =
         Turn.Supervisor.start_server(sup,
           session_id: "s#{n}",
-          config: nil,
+          config: TurnConfig.build(),
           store: {InMemory, store},
           registry: {Native, reg}
         )

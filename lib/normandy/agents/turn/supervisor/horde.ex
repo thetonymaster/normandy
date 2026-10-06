@@ -16,24 +16,67 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
     as a plain local child outside Horde's placement and supervision.
     """
     alias Normandy.Agents.Turn.Server
+    alias Normandy.Options
 
+    @start_link_opts_schema NimbleOptions.new!(
+                              name: [
+                                type: :any,
+                                default: __MODULE__,
+                                doc: "The Horde supervisor's name; pass it to `start_server/2`."
+                              ],
+                              max_restarts: [
+                                type: :non_neg_integer,
+                                default:
+                                  Normandy.Agents.Turn.Supervisor.default_restart_limit()[
+                                    :max_restarts
+                                  ],
+                                doc: "Restarts allowed within `:max_seconds`."
+                              ],
+                              max_seconds: [
+                                type: :pos_integer,
+                                default:
+                                  Normandy.Agents.Turn.Supervisor.default_restart_limit()[
+                                    :max_seconds
+                                  ],
+                                doc: "The window for `:max_restarts`, in seconds."
+                              ]
+                            )
+
+    @doc """
+    Starts the Horde supervisor (`members: :auto`).
+
+    ## Options
+
+    #{Options.docs(@start_link_opts_schema)}
+    """
     @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
     def start_link(opts) do
-      name = Keyword.get(opts, :name, __MODULE__)
-      limit = Normandy.Agents.Turn.Supervisor.default_restart_limit()
+      opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
       Horde.DynamicSupervisor.start_link(
-        name: name,
+        name: Keyword.fetch!(opts, :name),
         strategy: :one_for_one,
         members: :auto,
-        max_restarts: Keyword.get(opts, :max_restarts, limit[:max_restarts]),
-        max_seconds: Keyword.get(opts, :max_seconds, limit[:max_seconds])
+        max_restarts: Keyword.fetch!(opts, :max_restarts),
+        max_seconds: Keyword.fetch!(opts, :max_seconds)
       )
     end
 
+    @doc """
+    Starts a `Turn.Server` for a session under the Horde supervisor `sup` (its name).
+    `server_opts` are checked in the caller before Horde starts anything.
+
+    ## Options
+
+    The options of `Normandy.Agents.Turn.Server.start_link/1`.
+    """
     @spec start_server(term(), keyword()) :: {:ok, pid()} | {:error, term()}
     def start_server(sup, server_opts) do
-      server_opts = put_child_name(server_opts)
+      server_opts =
+        server_opts
+        |> Options.validate!(Server.__opts_schema__(:start_link), {__MODULE__, :start_server, 2})
+        |> put_child_name()
+
       restart = restart_for(Keyword.get(server_opts, :resume_policy, :lazy))
 
       spec = %{

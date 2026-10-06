@@ -220,7 +220,10 @@ defmodule Normandy.Agents.Turn.Session do
   Routes a turn to the session's server, starting it if needed, and returns what
   `Turn.Server.run/2` returns: `{:ok, output}` or `{:error, exception}`. A session that
   cannot be started (a registry or store fault, no saved template) returns
-  `{:error, %Normandy.TurnError{type: :session_unavailable, reason: reason}}`.
+  `{:error, %Normandy.TurnError{type: :session_unavailable, reason: reason}}`. A server
+  option `Turn.Server` rejects (only reachable by editing the struct, since `new/1` checks
+  them too) raises `ArgumentError` in the caller, from `Turn.Supervisor.start_server/2`
+  (Ruling 7).
   """
   @spec run(t(), term()) :: {:ok, term()} | {:error, Exception.t()}
   def run(%__MODULE__{} = session, user_input) do

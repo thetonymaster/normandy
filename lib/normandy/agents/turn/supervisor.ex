@@ -2,29 +2,50 @@ defmodule Normandy.Agents.Turn.Supervisor do
   @moduledoc """
   DynamicSupervisor for `Turn.Server` processes (one per live session).
 
-  ## Options
-
-    * `:name` - optional registered name
-    * `:max_restarts` / `:max_seconds` - restart limit (default 100 in 5 seconds).
-      The limit is shared by every session under this supervisor; exceeding it
-      stops the supervisor and all of its sessions. The OTP default (3 in 5
-      seconds) would let a few unrelated session crashes take every session down.
-
   A crashed session restarts (`restart: :transient`) and reloads its turn state
-  and memory from the store.
+  and memory from the store. See `start_link/1` for options.
   """
   use DynamicSupervisor
 
   alias Normandy.Agents.Turn.Server
+  alias Normandy.Options
 
   @default_max_restarts 100
   @default_max_seconds 5
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the supervisor."],
+                            max_restarts: [
+                              type: :non_neg_integer,
+                              default: @default_max_restarts,
+                              doc:
+                                "Restarts allowed within `:max_seconds`. The limit is shared by " <>
+                                  "every session under this supervisor; exceeding it stops the " <>
+                                  "supervisor and all of its sessions. The OTP default (3 in 5 " <>
+                                  "seconds) would let a few unrelated session crashes take every " <>
+                                  "session down."
+                            ],
+                            max_seconds: [
+                              type: :pos_integer,
+                              default: @default_max_seconds,
+                              doc: "The window for `:max_restarts`, in seconds."
+                            ]
+                          )
 
   @doc false
   def default_restart_limit,
     do: [max_restarts: @default_max_restarts, max_seconds: @default_max_seconds]
 
+  @doc """
+  Starts the supervisor.
+
+  ## Options
+
+  #{Options.docs(@start_link_opts_schema)}
+  """
+  @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
     name = Keyword.get(opts, :name)
     DynamicSupervisor.start_link(__MODULE__, opts, if(name, do: [name: name], else: []))
   end
@@ -33,15 +54,30 @@ defmodule Normandy.Agents.Turn.Supervisor do
   def init(opts) do
     DynamicSupervisor.init(
       strategy: :one_for_one,
-      max_restarts: Keyword.get(opts, :max_restarts, @default_max_restarts),
-      max_seconds: Keyword.get(opts, :max_seconds, @default_max_seconds)
+      max_restarts: Keyword.fetch!(opts, :max_restarts),
+      max_seconds: Keyword.fetch!(opts, :max_seconds)
     )
   end
 
+  @doc """
+  Starts a `Turn.Server` for a session under `sup`, named through the registry's
+  `child_name/2` when it has one.
+
+  `server_opts` are checked here, in the caller, before the supervisor starts anything:
+  a bad option raises `ArgumentError` instead of coming back as the supervisor's
+  `{:error, {exception, stacktrace}}`.
+
+  ## Options
+
+  The options of `Normandy.Agents.Turn.Server.start_link/1`.
+  """
   @spec start_server(:gen_statem.server_ref() | pid(), keyword()) ::
           DynamicSupervisor.on_start_child()
   def start_server(sup, server_opts) do
-    server_opts = put_child_name(server_opts)
+    server_opts =
+      server_opts
+      |> Options.validate!(Server.__opts_schema__(:start_link), {__MODULE__, :start_server, 2})
+      |> put_child_name()
 
     spec = %{
       id: Server,

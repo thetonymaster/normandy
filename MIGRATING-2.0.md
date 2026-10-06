@@ -805,3 +805,35 @@ called the other two. Delete `def __str__/1` and `def __rich__/1` from your own 
 Normandy.Components.BaseIOSchema` blocks (left in, they are dead code, not an error), and
 call `BaseIOSchema.to_json/1` where you called `__str__/1`: it leaves out `redact: true`
 fields, as `__str__/1` did.
+
+## 30. Every option is checked
+
+Every public function that takes a keyword list of options validates it. A misspelled or
+unsupported key, a missing required key or a value of the wrong type raises `ArgumentError`
+in the caller, naming the function and the key:
+
+    Normandy.Agents.Turn.Server.start_link/1: unknown option :approval_timout_ms; supported: :session_id, :store, ...
+
+In 1.x most of these keys were ignored, so a typo silently kept the default. Each function's
+`## Options` docs list its keys, types and defaults.
+
+- `Turn.Server.start_link/1`, `Turn.Supervisor.start_server/2` and
+  `Turn.Supervisor.Horde.start_server/2` raise in the caller. A missing `:store`, `:registry`
+  or `:session_id` used to crash `Turn.Server.init/1` with a `KeyError`, which came back as the
+  supervisor's `{:error, {%KeyError{}, stacktrace}}`. `Turn.ResumeReaper.start_link/1`
+  likewise raises for a missing `:store`, `:registry`, `:supervisor` or `:template_provider`.
+- The messages for a bad `:on_approval_timeout` and a bad `Turn.new/1` `:max_iterations`
+  changed: `...: invalid value for :on_approval_timeout option: expected one of
+  [:continue, :fail], got: :sometimes`.
+- `Turn.Server.start_link/1` takes the keys a session passes on with `Turn.Session.new/1`'s
+  types: `:handlers` must be a `Turn.Driver.Handlers` struct or `nil` (a plain map is
+  rejected), and `:template_provider` a `{module, handle}` tuple with a module (1.x took any
+  pair, or `nil`). `:approval_timeout_ms` and `:idle_timeout_ms` take ms or `:infinity`.
+  `Turn.ResumeReaper.start_link/1` forwards `:template_provider`, `:subscriber` and
+  `:handlers` to every session it restarts, so it takes them with the same types.
+- A server option `Turn.Server` rejects, reaching `Turn.Session.run/2` through a hand-edited
+  `%Turn.Session{}`, raises `ArgumentError` in the caller (it returned a `:session_unavailable`
+  `TurnError`).
+- A saved template's invalid `:on_approval_timeout` is reported as
+  `Normandy.Agents.Turn.Server: the saved template's :on_approval_timeout must be :continue
+  or :fail, got: ...`.

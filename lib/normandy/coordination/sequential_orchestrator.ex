@@ -108,11 +108,12 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   @spec execute_with_messages([Orchestration.spec()], AgentMessage.t(), keyword()) ::
           {:ok, [AgentMessage.t()]}
   def execute_with_messages(agent_specs, initial_message, opts \\ []) do
-    Normandy.Options.validate!(
-      opts,
-      @messages_opts_schema,
-      {__MODULE__, :execute_with_messages, 3}
-    )
+    _ =
+      Normandy.Options.validate!(
+        opts,
+        @messages_opts_schema,
+        {__MODULE__, :execute_with_messages, 3}
+      )
 
     # The same spec check as execute/3: an unknown key or a bad agent raises ArgumentError
     # here, not a FunctionClauseError mid-pipeline.
