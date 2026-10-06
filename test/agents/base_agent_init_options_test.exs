@@ -214,6 +214,8 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     end
 
     for {label, guardrails, bytes} <- [
+          {"a nested :chunk_size string", [chunk_size: "sk-LEAK"], 7},
+          {"a nested :streaming_mode string", [streaming_mode: "sk-LEAK"], 7},
           {"a string in a tuple", [input: [{Foo, "sk-LEAK"}]], 7},
           {"a bare string in a list", [input: ["sk-LEAK2"]], 8},
           {"a string in a builtin's opts",
@@ -235,8 +237,12 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     end
 
     test "a top-level scalar keeps NimbleOptions' message" do
-      error = assert_raise ArgumentError, fn -> BaseAgent.init(client: client(), model: 123) end
-      assert error.message =~ "123"
+      error =
+        assert_raise ArgumentError, fn ->
+          BaseAgent.init(client: client(), model: "m", max_tool_iterations: "abc")
+        end
+
+      assert error.message =~ ~s("abc")
     end
   end
 end

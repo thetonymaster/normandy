@@ -169,7 +169,13 @@ defmodule Normandy.Options do
       "invalid value for #{inspect(key)} option#{under(path)}: expected #{expected}; " <>
         "the value is not shown because #{inspect(key)} can hold a secret"
     else
-      redact_container(Exception.message(error), value)
+      message = redact_container(Exception.message(error), value)
+
+      # Under a nested option the failing value is the inner one, so a string there is
+      # echoed by NimbleOptions and must be described; only a top-level string is shown.
+      if path != [] and is_binary(value) and value != "",
+        do: String.replace(message, inspect(value), Describe.type_of(value)),
+        else: message
     end
   end
 
