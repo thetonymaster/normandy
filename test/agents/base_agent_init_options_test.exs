@@ -43,7 +43,7 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     assert_raise ArgumentError,
                  "Normandy.Agents.BaseAgent.init/1: unknown option :tools; tools go in " <>
                    ":toolset (Normandy.Tools.Toolset.new([tool, ...])) or are added " <>
-                   "after init with BaseAgent.register_tool/2; supported: " <> @supported,
+                   "after init with BaseAgent.register_tool/3; supported: " <> @supported,
                  fn -> BaseAgent.init(model: "m", client: client(), tools: []) end
   end
 
@@ -100,6 +100,13 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
                ":client can hold a secret"
   end
 
+  test "a struct that does not implement Normandy.Agents.Model is rejected as the client" do
+    error =
+      assert_raise ArgumentError, fn -> BaseAgent.init(model: "m", client: %URI{}) end
+
+    assert error.message =~ "Normandy.Agents.BaseAgent.init/1: invalid value for :client option"
+  end
+
   test ":session_id is an option" do
     assert BaseAgent.init(model: "m", client: client(), session_id: "s-1").session_id == "s-1"
   end
@@ -140,6 +147,19 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
                  end
   end
 
+  test "a duplicated circuit breaker option is reported as duplicated" do
+    assert_raise ArgumentError,
+                 "Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker option: " <>
+                   "option :timeout given more than once",
+                 fn ->
+                   BaseAgent.init(
+                     model: "m",
+                     client: client(),
+                     circuit_breaker: [timeout: 1, timeout: 2]
+                   )
+                 end
+  end
+
   test "init/1's docs list its options" do
     {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(BaseAgent)
 
@@ -149,5 +169,48 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     assert doc =~ "* `:model` (`t:String.t/0`) - Required."
     assert doc =~ "* `:session_id`"
     assert doc =~ "The default value is `16000`."
+  end
+
+  describe "a secret nested in a container value is never shown" do
+    test "under a guardrail's opts" do
+      error =
+        assert_raise ArgumentError, fn ->
+          BaseAgent.init(
+            model: "m",
+            client: client(),
+            guardrails: [input: [{Foo, %{api_key: "sk-LEAK"}}]]
+          )
+        end
+
+      assert error.message =~ ":guardrails"
+      refute error.message =~ "sk-"
+    end
+
+    test "under :retry's :retry_if" do
+      error =
+        assert_raise ArgumentError, fn ->
+          BaseAgent.init(model: "m", client: client(), retry: [retry_if: %{api_key: "sk-LEAK"}])
+        end
+
+      assert error.message =~ ":retry_if"
+      assert error.message =~ "got: a map"
+      refute error.message =~ "sk-"
+    end
+
+    test "under a compactor's opts" do
+      error =
+        assert_raise ArgumentError, fn ->
+          BaseAgent.init(
+            model: "m",
+            client: client(),
+            behaviours: %Normandy.Behaviours.Config{
+              compactor: {Normandy.Behaviours.Compactor.WindowManager, %{api_key: "sk-LEAK"}}
+            }
+          )
+        end
+
+      assert error.message =~ "must be a keyword list, got a map"
+      refute error.message =~ "sk-"
+    end
   end
 end

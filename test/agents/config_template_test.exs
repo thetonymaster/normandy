@@ -201,7 +201,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       error = assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, old, "TOKEN") end
 
       assert error.message ==
-               "ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
+               "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
                  ":toolset (a %Normandy.Tools.Toolset{} or nil); " <>
                  "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
     end
@@ -214,7 +214,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       error = assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, bad, "TOKEN") end
 
       assert error.message =~
-               "ConfigTemplate.rebuild/3: Normandy.Agents.ConfigTemplateTest.OldStyleTool " <>
+               "Normandy.Agents.ConfigTemplate.rebuild/3: Normandy.Agents.ConfigTemplateTest.OldStyleTool " <>
                  "does not implement the Normandy.Tool behaviour."
     end
 
@@ -228,7 +228,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         end
 
       assert error.message ==
-               "ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
+               "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
                  "%Normandy.Tools.Toolset{} or nil, got: a list"
     end
 

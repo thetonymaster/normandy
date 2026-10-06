@@ -87,7 +87,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
     tmpl = Map.put(v1_template(), :retry_options, max_attempts: 2)
 
     assert_raise ArgumentError,
-                 ~s(ConfigTemplate.rebuild/3: template "tmpl-v1" has the field :retry_options, ) <>
+                 ~s(Normandy.Agents.ConfigTemplate.rebuild/3: template "tmpl-v1" has the field :retry_options, ) <>
                    "which neither a Normandy 1.0 nor a 2.0 template has; it cannot be rebuilt " <>
                    "(MIGRATING-2.0.md §22)",
                  fn -> rebuild(tmpl) end
@@ -107,7 +107,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
     tmpl = put_in(v1_template().behaviours_refs[:sandbox], {SomeSandbox, []})
 
     assert_raise ArgumentError,
-                 ~s(ConfigTemplate.rebuild/3: template "tmpl-v1" has the behaviours_refs slot ) <>
+                 ~s(Normandy.Agents.ConfigTemplate.rebuild/3: template "tmpl-v1" has the behaviours_refs slot ) <>
                    ":sandbox, which neither a Normandy 1.0 nor a 2.0 template has; it cannot " <>
                    "be rebuilt (MIGRATING-2.0.md §22)",
                  fn -> rebuild(tmpl) end
@@ -115,7 +115,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
 
   test "a missing required field raises, naming it" do
     assert_raise ArgumentError,
-                 ~s(ConfigTemplate.rebuild/3: template "tmpl-v1" lacks the field :model, ) <>
+                 ~s(Normandy.Agents.ConfigTemplate.rebuild/3: template "tmpl-v1" lacks the field :model, ) <>
                    "which every Normandy 1.0 and 2.0 template has; it cannot be rebuilt " <>
                    "(MIGRATING-2.0.md §22)",
                  fn -> v1_template() |> Map.delete(:model) |> rebuild() end
@@ -140,7 +140,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
   test "a max_tokens that is neither nil nor a positive integer raises, naming it" do
     for bad <- [0, -1, false, "16000"] do
       assert_raise ArgumentError,
-                   ~s(ConfigTemplate.rebuild/3: template "tmpl-v1" has max_tokens ) <>
+                   ~s(Normandy.Agents.ConfigTemplate.rebuild/3: template "tmpl-v1" has max_tokens ) <>
                      "#{inspect(bad)}; expected a positive integer, or nil (a 1.0 template " <>
                      "that set none)",
                    fn -> v1_template() |> Map.put(:max_tokens, bad) |> rebuild() end

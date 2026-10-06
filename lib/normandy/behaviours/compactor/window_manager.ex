@@ -47,17 +47,11 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
                )
 
   @doc false
-  # Called by BaseAgent.validate_compaction_config!/1, i.e. at BaseAgent.init/1 and at
-  # template rebuild, so a typo surfaces where the config is made, not mid-turn. The
-  # prefix names that function, which both paths run (as Task 3.2a's messages do).
-  @spec validate_opts!(keyword()) :: keyword()
-  def validate_opts!(opts),
-    do:
-      Options.validate!(
-        opts,
-        @opts_schema,
-        {Normandy.Agents.BaseAgent, :validate_compaction_config!, 1}
-      )
+  # Called by BaseAgent.validate_compaction_config!/2, i.e. at BaseAgent.init/1 and at
+  # template rebuild, so a typo surfaces where the config is made, not mid-turn. `entry`
+  # is that public entry point (init/1 or ConfigTemplate.rebuild/3); it prefixes the message.
+  @spec validate_opts!(keyword(), {module(), atom(), arity()}) :: keyword()
+  def validate_opts!(opts, entry), do: Options.validate!(opts, @opts_schema, entry)
 
   @impl true
   def maybe_compact(acc, %{window: window}, opts) do

@@ -137,7 +137,7 @@ defmodule Normandy.Agents.ConfigTemplate do
     Enum.each(fields, fn {key, value} ->
       if unstorable?(value) do
         raise ArgumentError,
-              "ConfigTemplate.from_config/2: #{inspect(key)} contains a function or pid, " <>
+              "Normandy.Agents.ConfigTemplate.from_config/2: #{inspect(key)} contains a function or pid, " <>
                 "which a template cannot store. Keep it to plain data (modules, atoms, " <>
                 "numbers, strings, lists, maps)."
       end
@@ -168,7 +168,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   Translates a template saved by Normandy 1.0 (see the moduledoc). Raises
   `ArgumentError` naming the field for one it cannot translate, for a `max_tokens` that is
   neither `nil` (1.0) nor a positive integer, for a compaction setup that can't size its
-  window (see `BaseAgent.validate_compaction_config!/1`), and for a malformed hook entry in
+  window or whose compactor opts are malformed, and for a malformed hook entry in
   the template (shape, `:on_error` and plain-data opts; whether the hook module exists on
   this node is checked later, by `Turn.Server`). Raises `ArgumentError` for a supplement
   that still uses the 1.x key `:tool_registry`, whose `:toolset` is not a
@@ -210,7 +210,7 @@ defmodule Normandy.Agents.ConfigTemplate do
     }
     |> struct(Map.take(tmpl, @data_fields))
     |> struct(node_local_fields!(tmpl, supplement))
-    |> BaseAgent.validate_compaction_config!()
+    |> BaseAgent.validate_compaction_config!({__MODULE__, :rebuild, 3})
     |> validate_client_options!()
   end
 
@@ -247,7 +247,7 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   defp max_tokens!(other, id) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: template #{inspect(id)} has max_tokens " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: template #{inspect(id)} has max_tokens " <>
             "#{inspect(other)}; expected a positive integer, or nil (a 1.0 template that " <>
             "set none)"
   end
@@ -295,14 +295,14 @@ defmodule Normandy.Agents.ConfigTemplate do
   @spec untranslatable!(term(), String.t()) :: no_return()
   defp untranslatable!(id, what) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: template #{inspect(id)} #{what}, which neither a " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: template #{inspect(id)} #{what}, which neither a " <>
             "Normandy 1.0 nor a 2.0 template has; it cannot be rebuilt (MIGRATING-2.0.md §22)"
   end
 
   @spec missing!(term(), String.t()) :: no_return()
   defp missing!(id, what) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: template #{inspect(id)} lacks #{what}, which every " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: template #{inspect(id)} lacks #{what}, which every " <>
             "Normandy 1.0 and 2.0 template has; it cannot be rebuilt (MIGRATING-2.0.md §22)"
   end
 
@@ -312,26 +312,29 @@ defmodule Normandy.Agents.ConfigTemplate do
   # Ruling 5: the supplement is where a 1.x tool setup can reach a 2.0 node.
   defp supplement_toolset!(%{tool_registry: _}) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement has :tool_registry, which 2.0 calls " <>
             ":toolset (a %Normandy.Tools.Toolset{} or nil); #{@tools_section}"
   end
 
   defp supplement_toolset!(%{toolset: nil}), do: nil
 
   defp supplement_toolset!(%{toolset: %Toolset{} = toolset}) do
-    toolset |> Toolset.list() |> Enum.each(&Toolset.check_tool!(&1, "ConfigTemplate.rebuild/3"))
+    toolset
+    |> Toolset.list()
+    |> Enum.each(&Toolset.check_tool!(&1, "Normandy.Agents.ConfigTemplate.rebuild/3"))
+
     toolset
   end
 
   defp supplement_toolset!(%{toolset: other}) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement's :toolset must be a " <>
             "%Normandy.Tools.Toolset{} or nil, got: #{Describe.type_of(other)}"
   end
 
   defp supplement_toolset!(_supplement) do
     raise ArgumentError,
-          "ConfigTemplate.rebuild/3: the supplement has no :toolset (a " <>
+          "Normandy.Agents.ConfigTemplate.rebuild/3: the supplement has no :toolset (a " <>
             "%Normandy.Tools.Toolset{} or nil)"
   end
 
@@ -345,7 +348,7 @@ defmodule Normandy.Agents.ConfigTemplate do
 
         _ ->
           raise ArgumentError,
-                "ConfigTemplate.rebuild/3: template #{inspect(tmpl.template_id)} was saved " <>
+                "Normandy.Agents.ConfigTemplate.rebuild/3: template #{inspect(tmpl.template_id)} was saved " <>
                   "with #{inspect(key)} set, but the supplement has no #{inspect(key)}. " <>
                   "Add it to the supplement registered for this template on every node."
       end

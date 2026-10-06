@@ -70,17 +70,12 @@ defmodule Normandy.Agents.BaseAgent do
   """
   @spec init(keyword() | map()) :: BaseAgentConfig.t()
   def init(opts) do
-    opts = InitOptions.validate!(opts)
+    opts = check_init!(opts)
     client = Keyword.fetch!(opts, :client)
     behaviours = Keyword.fetch!(opts, :behaviours)
 
-    _ = validate_compaction_config!(%BaseAgentConfig{client: client, behaviours: behaviours})
-    _ = validate_client_options!(client)
-    :ok = validate_policy_opts!(behaviours)
-    :ok = validate_hooks!(behaviours)
-
-    # Every check is above: the breaker starts last, so a bad option never leaves a
-    # linked process behind.
+    # Every check is in check_init!/1: the breaker starts last, so a bad option never
+    # leaves a linked process behind.
     circuit_breaker_pid = start_circuit_breaker(opts)
     memory = Keyword.fetch!(opts, :memory) || AgentMemory.new_memory()
 
@@ -110,6 +105,29 @@ defmodule Normandy.Agents.BaseAgent do
       guardrails: Keyword.fetch!(opts, :guardrails),
       behaviours: behaviours
     }
+  end
+
+  @doc false
+  # Every check init/1 makes, with no side effect (no process started): the options schema,
+  # then the compaction, client-option, policy and hook checks. Returns the validated
+  # options. AgentPool.start_link/1 calls it in its caller so a bad :agent_config raises
+  # there, not inside the pool's init/1. Messages name init/1.
+  @spec check_init!(keyword() | map()) :: keyword()
+  def check_init!(opts) do
+    opts = InitOptions.validate!(opts)
+    client = Keyword.fetch!(opts, :client)
+    behaviours = Keyword.fetch!(opts, :behaviours)
+
+    _ =
+      validate_compaction_config!(
+        %BaseAgentConfig{client: client, behaviours: behaviours},
+        {__MODULE__, :init, 1}
+      )
+
+    _ = validate_client_options!(client)
+    :ok = validate_policy_opts!(behaviours)
+    :ok = validate_hooks!(behaviours)
+    opts
   end
 
   defp start_circuit_breaker(opts) do
@@ -397,8 +415,6 @@ defmodule Normandy.Agents.BaseAgent do
     end)
   end
 
-  # run/3 and run!/3 take no options yet; if one gains options it gets a
-  # Normandy.Options schema instead of this check.
   # run/3 and run!/3 take no options yet; if one gains options it gets a
   # Normandy.Options schema instead of this check.
   defp check_run_opts!([], _fun), do: :ok
@@ -906,29 +922,34 @@ defmodule Normandy.Agents.BaseAgent do
   # :context_window and the default catalog (the Anthropic Models API), that lookup
   # needs a ClaudioAdapter client; any other client makes every compaction raise
   # mid-turn, after tools ran. Called from init/1 and ConfigTemplate.rebuild/3 so
-  # the mistake surfaces where the config is made. Never inspects the client value
-  # (it may hold an API key), only its struct name.
+  # the mistake surfaces where the config is made; `entry` is that public function's
+  # {module, function, arity}, which prefixes every message. Never inspects the client
+  # value (it may hold an API key), only its struct name, nor the compactor's opts.
   # Takes any %BaseAgentConfig{}: init/1 validates a partial one (client + behaviours only).
-  @spec validate_compaction_config!(BaseAgentConfig.partial()) :: BaseAgentConfig.partial()
-  def validate_compaction_config!(%BaseAgentConfig{} = config) do
+  @spec validate_compaction_config!(BaseAgentConfig.partial(), {module(), atom(), arity()}) ::
+          BaseAgentConfig.partial()
+  def validate_compaction_config!(%BaseAgentConfig{} = config, {mod, fun, arity} = entry) do
+    prefix = "#{inspect(mod)}.#{fun}/#{arity}:"
     {compactor, compactor_opts} = compactor_ref(config)
     {catalog, _catalog_opts} = catalog_ref(config)
 
     unless Keyword.keyword?(compactor_opts) do
       raise ArgumentError,
-            "Normandy.Agents.BaseAgent.validate_compaction_config!/1: opts for compactor " <>
-              "#{inspect(compactor)} must be a keyword list, got #{inspect(compactor_opts)}"
+            "#{prefix} opts for compactor #{inspect(compactor)} must be a keyword list, got " <>
+              Describe.type_of(compactor_opts)
     end
 
     if compactor == Normandy.Behaviours.Compactor.WindowManager and
          Keyword.has_key?(compactor_opts, :max_tokens) do
       raise ArgumentError,
-            "Normandy.Agents.BaseAgent.validate_compaction_config!/1: the :max_tokens option " <>
+            "#{prefix} the :max_tokens option " <>
               "of Normandy.Behaviours.Compactor.WindowManager was renamed to :context_window " <>
               "in 2.0; see MIGRATING-2.0.md §22"
     end
 
-    _ = if compactor == WindowCompactor, do: WindowCompactor.validate_opts!(compactor_opts)
+    _ =
+      if compactor == WindowCompactor,
+        do: WindowCompactor.validate_opts!(compactor_opts, entry)
 
     needs_api_lookup? =
       compactor != Normandy.Behaviours.Compactor.NoOp and
@@ -940,7 +961,7 @@ defmodule Normandy.Agents.BaseAgent do
 
     if needs_api_lookup? and not match?(%Normandy.LLM.ClaudioAdapter{}, config.client) do
       raise ArgumentError,
-            "Normandy.Agents.BaseAgent: compactor #{inspect(compactor)} needs the model's " <>
+            "#{prefix} compactor #{inspect(compactor)} needs the model's " <>
               "context window, and the model catalog #{inspect(catalog)} reads it from the " <>
               "Anthropic Models API, which needs a Normandy.LLM.ClaudioAdapter client; got " <>
               "#{client_kind(config.client)}. Pin the window with the compactor's :context_window " <>

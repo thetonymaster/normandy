@@ -39,6 +39,7 @@ defmodule Normandy.Resilience.Retry do
 
   require Logger
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLMError
   alias Normandy.TurnError
 
@@ -179,9 +180,15 @@ defmodule Normandy.Resilience.Retry do
 
     unless valid?.(value) do
       raise ArgumentError,
-            "Retry.with_retry/2: #{inspect(key)} must be #{expected}, got: #{inspect(value)}"
+            "Retry.with_retry/2: #{inspect(key)} must be #{expected}, got: #{shown(value)}"
     end
   end
+
+  # A map, list or tuple can hold a secret, so only its type is shown.
+  defp shown(value) when is_map(value) or is_list(value) or is_tuple(value),
+    do: Describe.type_of(value)
+
+  defp shown(value), do: inspect(value)
 
   # Private retry loop (retry_or_fail/5 only re-enters below max_attempts)
   defp do_retry(fun, config, attempt, errors) do

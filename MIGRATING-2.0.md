@@ -493,9 +493,11 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `memory: AgentMemory.new_memory(n)`) used to be dropped silently.
 - A missing `:model` raises `"Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"` (1.x:
   `KeyError`); a missing `:client` raises `ArgumentError` (1.x: `KeyError`).
-- Values are checked: `:client` must be a struct, `:input_schema`/`:output_schema` a struct or
-  `nil`, `:memory` an `AgentMemory` or `nil`, `:prompt_specification`, `:toolset` and
-  `:behaviours` their structs or `nil`, `:tool_context` a map, `:name`/`:session_id` strings or
+- Values are checked: `:client` must be a struct whose module implements
+  `Normandy.Agents.Model` (one that does not used to fail at the first LLM call),
+  `:input_schema`/`:output_schema` a struct or `nil`, `:memory` an `AgentMemory` or `nil`,
+  `:prompt_specification`, `:toolset` and `:behaviours` their structs or `nil`,
+  `:tool_context` a plain map (not a struct), `:name`/`:session_id` strings or
   `nil`, `:json_retry_max_attempts` a positive integer, guard lists `module | {module, opts}`.
 - `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
   `:half_open_max_calls` only. `:name` is gone: a registered breaker name made a second
@@ -863,9 +865,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentSupervisor.start_agent/2`'s `:agent_id` is a string (1.x took any term, such as
   `:researcher`); their `:context_pid` and `AgentProcess.cast/3`'s `:reply_to` are a pid or a
   registered name (`{name, node}` and `{:via, ...}` are rejected); `AgentPool.start_link/1`'s
-  `:size` is a positive integer, and a bad `:agent_config` (an unknown or misspelled
-  `BaseAgent.init/1` option) raises in the caller as `...AgentPool.start_link/1: invalid
-  :agent_config: ...` instead of crashing the pool's `init/1`; `HierarchicalCoordinator.execute/3`'s
+  `:size` is a positive integer, and a bad `:agent_config` (anything `BaseAgent.init/1`
+  rejects: an unknown or misspelled option, a bad value, a compactor that cannot size its
+  window, bad client, policy or hook options) raises in the caller as
+  `...AgentPool.start_link/1: invalid :agent_config: ...` instead of crashing the pool's
+  `init/1`; `HierarchicalCoordinator.execute/3`'s
   `:manager_prompt` is a string; a workflow's `execute/1` `:context` is a plain map.
 - `Context.Summarizer.compress_conversation/3` documented `:max_summary_tokens` but never read
   it; the summary size is `:max_tokens`, as in `summarize_messages/4`, and
@@ -876,7 +880,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `:summarize`, and `:reserved_tokens` a non-negative integer. A
   `Compactor.WindowManager` compactor's opts (`:context_window`, `:reserved_tokens`,
   `:strategy`) are checked when the agent is built and when its template is rebuilt; the error
-  starts with `Normandy.Agents.BaseAgent.validate_compaction_config!/1: `.
+  starts with `Normandy.Agents.BaseAgent.init/1: ` or, during a rebuild,
+  `Normandy.Agents.ConfigTemplate.rebuild/3: ` (as do the other compactor checks there).
 - `AgentMessage.new/1` raises for a missing `:from` or `:to` with `ArgumentError` (was
   `KeyError`), for a `:from`/`:to` that is not a string or an atom, a `:type` that is not an
   atom or a string, and a `:metadata` that is not a plain map (each was stored as given).

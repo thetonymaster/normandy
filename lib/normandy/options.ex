@@ -174,14 +174,39 @@ defmodule Normandy.Options do
   end
 
   # A map, list or tuple can hold a secret under any key, so its inspected form is replaced by
-  # its type. Scalars keep NimbleOptions' own message.
+  # its type. NimbleOptions' nested errors ({:or}, {:list}, {:tuple}, keyword_list) echo the
+  # inner value that failed, not the top one, so every container inside `value` is replaced,
+  # longest inspected form first: an inner container's text is part of the outer one's.
+  # Scalars keep NimbleOptions' own message.
   @doc false
   @spec redact_container(String.t(), term()) :: String.t()
-  def redact_container(message, value)
-      when is_map(value) or is_list(value) or is_tuple(value),
-      do: String.replace(message, inspect(value), Describe.type_of(value))
+  def redact_container(message, value) do
+    value
+    |> containers([])
+    |> Enum.map(&{inspect(&1), Describe.type_of(&1)})
+    |> Enum.uniq()
+    |> Enum.sort_by(fn {inspected, _type} -> String.length(inspected) end, :desc)
+    |> Enum.reduce(message, fn {inspected, type}, acc ->
+      String.replace(acc, inspected, type)
+    end)
+  end
 
-  def redact_container(message, _value), do: message
+  defp containers(value, acc) when is_struct(value),
+    do: value |> Map.from_struct() |> Map.values() |> Enum.reduce([value | acc], &containers/2)
+
+  defp containers(value, acc) when is_map(value),
+    do: Enum.reduce(value, [value | acc], fn {k, v}, acc -> containers(v, containers(k, acc)) end)
+
+  defp containers(value, acc) when is_tuple(value),
+    do: value |> Tuple.to_list() |> Enum.reduce([value | acc], &containers/2)
+
+  defp containers(value, acc) when is_list(value), do: list_containers(value, [value | acc])
+  defp containers(_scalar, acc), do: acc
+
+  # Walks an improper list's tail too.
+  defp list_containers([head | tail], acc), do: list_containers(tail, containers(head, acc))
+  defp list_containers([], acc), do: acc
+  defp list_containers(tail, acc), do: containers(tail, acc)
 
   defp definition_at(definition, []), do: definition
 

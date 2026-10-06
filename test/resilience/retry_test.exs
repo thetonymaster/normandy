@@ -356,4 +356,18 @@ defmodule Normandy.Resilience.RetryTest do
                Retry.with_retry(fn -> :weird end, max_attempts: 3, base_delay: 1)
     end
   end
+
+  describe "option errors" do
+    test "a container value is shown by its type, never echoed" do
+      assert_raise ArgumentError,
+                   "Retry.with_retry/2: :retry_if must be a 1-arity function, got: a map",
+                   fn -> Retry.with_retry(fn -> {:ok, 1} end, retry_if: %{api_key: "sk-LEAK"}) end
+    end
+
+    test "a scalar value is shown as is" do
+      assert_raise ArgumentError,
+                   "Retry.with_retry/2: :max_attempts must be a positive integer, got: 0",
+                   fn -> Retry.with_retry(fn -> {:ok, 1} end, max_attempts: 0) end
+    end
+  end
 end

@@ -6,6 +6,15 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
 
   defmodule OtherClient do
     defstruct api_key: "sk-secret-do-not-print"
+
+    # init/1 takes only a client that implements the protocol; these tests never call it.
+    defimpl Normandy.Agents.Model do
+      def converse(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+    end
   end
 
   defmodule CustomCatalog do
@@ -24,6 +33,7 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
   test "a non-Claudio client with an unpinned compactor and the default catalog raises at init" do
     error = assert_raise ArgumentError, fn -> init(%OtherClient{}, @unpinned) end
 
+    assert error.message =~ ~r/^Normandy\.Agents\.BaseAgent\.init\/1: compactor /
     assert error.message =~ "Compactor.WindowManager"
     assert error.message =~ ":context_window"
     assert error.message =~ "OtherClient"
@@ -34,7 +44,7 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     behaviours = %Config{compactor: {Compactor.WindowManager, %{}}}
     error = assert_raise ArgumentError, fn -> init(%OtherClient{}, behaviours) end
 
-    assert error.message =~ "BaseAgent.validate_compaction_config!/1"
+    assert error.message =~ "Normandy.Agents.BaseAgent.init/1: "
     assert error.message =~ "Compactor.WindowManager"
     assert error.message =~ "keyword list"
     refute error.message =~ "sk-secret"
@@ -57,7 +67,7 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
     behaviours = %Config{compactor: {Compactor.WindowManager, [max_tokens: 50_000]}}
 
     assert_raise ArgumentError,
-                 "Normandy.Agents.BaseAgent.validate_compaction_config!/1: the :max_tokens " <>
+                 "Normandy.Agents.BaseAgent.init/1: the :max_tokens " <>
                    "option of Normandy.Behaviours.Compactor.WindowManager was renamed to " <>
                    ":context_window in 2.0; see MIGRATING-2.0.md §22",
                  fn -> init(%Normandy.LLM.ClaudioAdapter{api_key: "k"}, behaviours) end

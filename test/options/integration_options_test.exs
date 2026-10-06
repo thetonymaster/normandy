@@ -133,7 +133,7 @@ defmodule Normandy.Options.IntegrationOptionsTest do
           )
         end
 
-      assert error.message =~ "Normandy.Agents.BaseAgent.validate_compaction_config!/1: "
+      assert error.message =~ "Normandy.Agents.BaseAgent.init/1: "
       assert error.message =~ ":stratgy"
     end
 
@@ -152,7 +152,7 @@ defmodule Normandy.Options.IntegrationOptionsTest do
             )
           end
 
-        assert error.message =~ "Normandy.Agents.BaseAgent.validate_compaction_config!/1: "
+        assert error.message =~ "Normandy.Agents.BaseAgent.init/1: "
         assert error.message =~ ":context_window"
       end
     end
@@ -181,7 +181,7 @@ defmodule Normandy.Options.IntegrationOptionsTest do
       error =
         assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, supplement, "TOKEN") end
 
-      assert error.message =~ "Normandy.Agents.BaseAgent.validate_compaction_config!/1: "
+      assert error.message =~ "Normandy.Agents.ConfigTemplate.rebuild/3: "
       assert error.message =~ ":stratgy"
     end
 

@@ -44,7 +44,6 @@ defmodule Normandy.Coordination.AgentPool do
   require Logger
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Coordination.AgentSupervisor
   alias Normandy.Options
 
@@ -308,7 +307,7 @@ defmodule Normandy.Coordination.AgentPool do
   # init/1 builds every pooled agent with BaseAgent.init/1; a bad config must raise here,
   # in the caller, not crash init/1. Only the option check runs (no agent is built).
   defp check_agent_config!(agent_config) do
-    _ = InitOptions.validate!(agent_config)
+    _ = BaseAgent.check_init!(agent_config)
     :ok
   rescue
     e in ArgumentError ->

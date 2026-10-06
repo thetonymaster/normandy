@@ -74,7 +74,7 @@ defmodule Normandy.Components.AgentMemory do
 
     if Map.has_key?(memory.entries, id) do
       raise ArgumentError,
-            "AgentMemory.add_message/4: entry id #{inspect(id)} is already in the memory; " <>
+            "Normandy.Components.AgentMemory.add_message/4: entry id #{inspect(id)} is already in the memory; " <>
               "an :id must be new (it would overwrite the existing entry and corrupt the branch)"
     end
 

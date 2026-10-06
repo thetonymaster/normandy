@@ -150,7 +150,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       "the system prompt goes in :prompt_specification (a %Normandy.Components.PromptSpecification{})",
     tools:
       "tools go in :toolset (Normandy.Tools.Toolset.new([tool, ...])) or are added " <>
-        "after init with BaseAgent.register_tool/2",
+        "after init with BaseAgent.register_tool/3",
     max_messages:
       "cap the memory with memory: Normandy.Components.AgentMemory.new_memory(max_messages)"
   ]
@@ -268,7 +268,16 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   defp model_missing?(_opts), do: false
 
   @doc false
-  def client(%_{} = client), do: {:ok, client}
+  # A struct whose module has no Normandy.Agents.Model implementation would fail mid-turn,
+  # at the first LLM call; it is rejected here instead.
+  def client(%mod{} = client) do
+    if Normandy.Agents.Model.impl_for(client),
+      do: {:ok, client},
+      else:
+        {:error,
+         "expected a client struct, got a %#{inspect(mod)}{}, which does not implement Normandy.Agents.Model"}
+  end
+
   def client(other), do: {:error, "expected a client struct, got #{Describe.type_of(other)}"}
 
   @doc false
@@ -327,23 +336,30 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   def circuit_breaker(other),
     do: {:error, "expected a keyword list or nil, got #{Describe.type_of(other)}"}
 
-  # Unknown keys in the house style ("unknown option :x; supported: ..."), like
-  # Normandy.Options; any other error is NimbleOptions' message.
+  # Duplicated, then unknown keys in the house style ("unknown option :x; supported: ..."),
+  # like Normandy.Options; any other error is NimbleOptions' message. Duplicates come first:
+  # `keys -- schema_keys` removes one occurrence, so a duplicated known key would otherwise
+  # read as unknown.
   defp validate_breaker(opts) do
+    keys = Keyword.keys(opts)
     supported = Enum.map_join(Keyword.keys(@breaker_schema.schema), ", ", &inspect/1)
 
-    with [] <- Enum.uniq(Keyword.keys(opts) -- Keyword.keys(@breaker_schema.schema)),
+    with {:dups, []} <- {:dups, Enum.uniq(keys -- Enum.uniq(keys))},
+         {:unknown, []} <- {:unknown, Enum.uniq(keys -- Keyword.keys(@breaker_schema.schema))},
          {:ok, validated} <- NimbleOptions.validate(opts, @breaker_schema) do
       {:ok, validated}
     else
       {:error, %NimbleOptions.ValidationError{value: value} = error} ->
         {:error, Options.redact_container(Exception.message(error), value)}
 
-      [key] ->
-        {:error, "unknown option #{inspect(key)}; supported: #{supported}"}
+      {:dups, dups} ->
+        {:error, "#{option_names(dups)} given more than once"}
 
-      keys ->
-        {:error, "unknown options #{inspect(keys)}; supported: #{supported}"}
+      {:unknown, keys} ->
+        {:error, "unknown #{option_names(keys)}; supported: #{supported}"}
     end
   end
+
+  defp option_names([key]), do: "option #{inspect(key)}"
+  defp option_names(keys), do: "options #{inspect(keys)}"
 end
