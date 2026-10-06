@@ -31,6 +31,107 @@ defmodule Normandy.Coordination.ReactiveTest do
     })
   end
 
+  defp throwing_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{reply: fn _ -> throw(:oops) end},
+      model: "throwing-model"
+    })
+  end
+
+  # An agent whose model call links a process that then crashes: the signal kills the
+  # agent's task, and would kill a caller the task is linked to.
+  defp linked_crash_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{
+        reply: fn _ ->
+          spawn_link(fn -> exit(:linked_boom) end)
+          Process.sleep(500)
+        end
+      },
+      model: "linked-crash-model"
+    })
+  end
+
+  defp failing_agent(:exits), do: exiting_agent()
+  defp failing_agent(:throws), do: throwing_agent()
+  defp failing_agent(:linked_crash), do: linked_crash_agent()
+
+  defp bad_callback(:raise), do: fn _id, _result -> raise "callback boom" end
+  defp bad_callback(:throw), do: fn _id, _result -> throw(:callback) end
+
+  # Runs `fun` in its own process so a caller killed by a linked task fails the
+  # assertion instead of the test process.
+  defp run_caller(fun) do
+    {pid, mref} = spawn_monitor(fn -> exit({:returned, fun.()}) end)
+
+    receive do
+      {:DOWN, ^mref, :process, ^pid, {:returned, value}} -> {:returned, value}
+      {:DOWN, ^mref, :process, ^pid, reason} -> {:caller_died, reason}
+    after
+      5_000 -> :caller_hung
+    end
+  end
+
+  describe "agent failures never take down the caller" do
+    for kind <- [:exits, :throws, :linked_crash] do
+      test "race/3 with an agent that #{kind}" do
+        assert {:returned, {:error, :all_failed}} =
+                 run_caller(fn -> Reactive.race([failing_agent(unquote(kind))], "x") end)
+      end
+
+      test "some/3 with an agent that #{kind}" do
+        assert {:returned, {:error, :insufficient_successes}} =
+                 run_caller(fn ->
+                   Reactive.some([failing_agent(unquote(kind))], "x", count: 1)
+                 end)
+      end
+
+      test "all/3 with an agent that #{kind}" do
+        assert {:returned, {:ok, %{"agent_0" => {:error, %TurnError{type: :task_down}}}}} =
+                 run_caller(fn -> Reactive.all([failing_agent(unquote(kind))], "x") end)
+      end
+
+      test "all/3 fail_fast with an agent that #{kind}" do
+        assert {:returned, {:error, %TurnError{type: :task_down}}} =
+                 run_caller(fn ->
+                   Reactive.all([failing_agent(unquote(kind))], "x", fail_fast: true)
+                 end)
+      end
+    end
+
+    for raiser <- [:raise, :throw] do
+      test "race/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:error, :all_failed}} =
+                 run_caller(fn ->
+                   Reactive.race([create_test_agent()], "x",
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+      end
+
+      test "some/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:error, :insufficient_successes}} =
+                 run_caller(fn ->
+                   Reactive.some([create_test_agent()], "x",
+                     count: 1,
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+      end
+
+      test "all/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:ok, %{"agent_0" => {:error, error}}}} =
+                 run_caller(fn ->
+                   Reactive.all([create_test_agent()], "x",
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+
+        assert is_exception(error)
+      end
+    end
+  end
+
   describe "race/3" do
     test "an agent that exits is a failure, not an exit of the caller" do
       test_pid = self()

@@ -45,6 +45,7 @@ defmodule Normandy.Coordination.Reactive do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Coordination.Orchestration
   alias Normandy.Coordination.Reactive
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
@@ -96,43 +97,21 @@ defmodule Normandy.Coordination.Reactive do
     timeout = Keyword.get(opts, :timeout, 60_000)
     on_complete = Keyword.get(opts, :on_complete)
 
-    # Create parent task that manages agent tasks
-    parent = self()
-    ref = make_ref()
+    Orchestration.with_task_supervisor(fn supervisor ->
+      started_at = System.monotonic_time()
+      parent_otel_ctx = OtelCtx.capture()
+      ref = make_ref()
 
-    # Start all agent tasks
-    parent_otel_ctx = OtelCtx.capture()
-    started_at = System.monotonic_time()
-    run_marks = KilledRun.new_run_marks(length(agents))
+      {tasks, run_marks} = start_tasks(supervisor, agents, input, on_complete, ref)
 
-    tasks =
-      agents
-      |> Enum.with_index()
-      |> Enum.map(fn {agent, idx} ->
-        task =
-          Task.async(fn ->
-            OtelCtx.restore(parent_otel_ctx)
-            agent_id = "agent_#{idx}"
-            result = execute_agent(agent, input)
-            :ok = KilledRun.mark_run_done(run_marks, idx)
+      # Wait for first success or all failures
+      result = await_first_success(ref, monitors(tasks), length(agents), timeout)
 
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            if on_complete, do: on_complete.(agent_id, result)
+      # Cleanup: shutdown remaining tasks
+      shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
 
-            send(parent, {ref, agent_id, result})
-            result
-          end)
-
-        {task, agent, idx}
-      end)
-
-    # Wait for first success or all failures
-    result = await_first_success(ref, length(agents), timeout)
-
-    # Cleanup: shutdown remaining tasks
-    shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
-
-    result
+      result
+    end)
   end
 
   @doc """
@@ -188,15 +167,16 @@ defmodule Normandy.Coordination.Reactive do
     parent_otel_ctx = OtelCtx.capture()
     run_marks = KilledRun.new_run_marks(length(agent_specs))
 
-    results =
-      Task.async_stream(
+    # Unlinked tasks: a crash in a process an agent linked to is that agent's exit result.
+    Orchestration.with_task_supervisor(fn supervisor ->
+      supervisor
+      |> Task.Supervisor.async_stream_nolink(
         agent_specs,
         fn {agent, agent_id, idx} ->
           OtelCtx.restore(parent_otel_ctx)
           result = execute_agent(agent, input)
           :ok = KilledRun.mark_run_done(run_marks, idx)
-          if on_complete, do: on_complete.(agent_id, result)
-          {agent_id, result}
+          {agent_id, complete(on_complete, agent_id, result)}
         end,
         max_concurrency: max_concurrency,
         timeout: timeout,
@@ -225,8 +205,7 @@ defmodule Normandy.Coordination.Reactive do
             {:cont, {:ok, Map.put(acc, agent_id, {:error, error})}}
           end
       end)
-
-    results
+    end)
   end
 
   @doc """
@@ -274,42 +253,21 @@ defmodule Normandy.Coordination.Reactive do
             "Normandy.Coordination.Reactive.some/3: :count must be at most the number of " <>
               "agents (#{length(agents)}), got: #{inspect(count)}"
     else
-      parent = self()
-      ref = make_ref()
+      Orchestration.with_task_supervisor(fn supervisor ->
+        started_at = System.monotonic_time()
+        parent_otel_ctx = OtelCtx.capture()
+        ref = make_ref()
 
-      # Start all agent tasks
-      parent_otel_ctx = OtelCtx.capture()
-      started_at = System.monotonic_time()
-      run_marks = KilledRun.new_run_marks(length(agents))
+        {tasks, run_marks} = start_tasks(supervisor, agents, input, on_complete, ref)
 
-      tasks =
-        agents
-        |> Enum.with_index()
-        |> Enum.map(fn {agent, idx} ->
-          task =
-            Task.async(fn ->
-              OtelCtx.restore(parent_otel_ctx)
-              agent_id = "agent_#{idx}"
-              result = execute_agent(agent, input)
-              :ok = KilledRun.mark_run_done(run_marks, idx)
+        # Wait for N successes
+        result = await_n_successes(ref, monitors(tasks), count, length(agents), timeout)
 
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              if on_complete, do: on_complete.(agent_id, result)
+        # Cleanup
+        shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
 
-              send(parent, {ref, agent_id, result})
-              result
-            end)
-
-          {task, agent, idx}
-        end)
-
-      # Wait for N successes
-      result = await_n_successes(ref, count, length(agents), timeout)
-
-      # Cleanup
-      shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
-
-      result
+        result
+      end)
     end
   end
 
@@ -371,6 +329,65 @@ defmodule Normandy.Coordination.Reactive do
 
   # Private Functions
 
+  # One unlinked task per agent under `supervisor`. Each reports {ref, agent_id, result}
+  # to the caller; a task that dies first is seen through its monitor (see monitors/1).
+  defp start_tasks(supervisor, agents, input, on_complete, ref) do
+    parent = self()
+    parent_otel_ctx = OtelCtx.capture()
+    run_marks = KilledRun.new_run_marks(length(agents))
+
+    tasks =
+      agents
+      |> Enum.with_index()
+      |> Enum.map(fn {agent, idx} ->
+        task =
+          Task.Supervisor.async_nolink(supervisor, fn ->
+            OtelCtx.restore(parent_otel_ctx)
+            agent_id = "agent_#{idx}"
+            result = execute_agent(agent, input)
+            :ok = KilledRun.mark_run_done(run_marks, idx)
+            result = complete(on_complete, agent_id, result)
+
+            send(parent, {ref, agent_id, result})
+            result
+          end)
+
+        {task, agent, idx}
+      end)
+
+    {tasks, run_marks}
+  end
+
+  # on_complete runs where a crash would lose the agent's result: a raise or a throw in
+  # it is that agent's error.
+  defp complete(nil, _agent_id, result), do: result
+
+  defp complete(on_complete, agent_id, result) do
+    case Orchestration.guard(agent_id, fn -> on_complete.(agent_id, result) end) do
+      {:ok, _} -> result
+      {:error, exception} -> {:error, exception}
+    end
+  end
+
+  # monitor ref => agent id, for the tasks started by start_tasks/5.
+  defp monitors(tasks),
+    do: Map.new(tasks, fn {task, _agent, idx} -> {task.ref, "agent_#{idx}"} end)
+
+  # The next agent outcome, or :timeout. A task that died before reporting (a crash in a
+  # process its agent linked to) is that agent's :task_down TurnError.
+  defp next_outcome(ref, monitors, remaining) do
+    receive do
+      {^ref, agent_id, result} ->
+        {agent_id, result}
+
+      {:DOWN, mref, :process, _pid, reason}
+      when reason != :normal and is_map_key(monitors, mref) ->
+        {Map.fetch!(monitors, mref), {:error, TurnError.from_reason({:task_down, reason})}}
+    after
+      remaining -> :timeout
+    end
+  end
+
   # Kills the tasks still running. A task killed before its run returned left
   # its agent's run span open: report it.
   defp shutdown_tasks(tasks, run_marks, started_at, otel_ctx) do
@@ -405,6 +422,7 @@ defmodule Normandy.Coordination.Reactive do
     e -> TurnError.log_raised("Reactive agent", e, __STACKTRACE__)
   catch
     :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
+    :throw, value -> {:error, TurnError.from_reason({:task_down, {:nocatch, value}})}
   end
 
   defp run_one(pid, input) when is_pid(pid), do: AgentProcess.run(pid, input)
@@ -428,84 +446,69 @@ defmodule Normandy.Coordination.Reactive do
   defp remaining(timeout, start_time),
     do: timeout - (System.monotonic_time(:millisecond) - start_time)
 
-  defp await_first_success(ref, total_agents, timeout) do
+  defp await_first_success(ref, monitors, total_agents, timeout) do
     start_time = System.monotonic_time(:millisecond)
 
-    await_first_success_loop(ref, total_agents, 0, start_time, timeout)
+    await_first_success_loop(ref, monitors, total_agents, 0, start_time, timeout)
   end
 
-  defp await_first_success_loop(_ref, total_agents, failures, _start_time, _timeout)
+  defp await_first_success_loop(_ref, _monitors, total_agents, failures, _start_time, _timeout)
        when failures >= total_agents do
     {:error, :all_failed}
   end
 
-  defp await_first_success_loop(ref, total_agents, failures, start_time, timeout) do
+  defp await_first_success_loop(ref, monitors, total_agents, failures, start_time, timeout) do
     remaining_timeout = remaining(timeout, start_time)
 
     if remaining_timeout != :infinity and remaining_timeout <= 0 do
       {:error, :timeout}
     else
-      receive do
-        {^ref, _agent_id, {:ok, result}} ->
+      case next_outcome(ref, monitors, remaining_timeout) do
+        {_agent_id, {:ok, result}} ->
           {:ok, result}
 
-        {^ref, _agent_id, {:error, _reason}} ->
-          await_first_success_loop(ref, total_agents, failures + 1, start_time, timeout)
-      after
-        remaining_timeout ->
+        {_agent_id, {:error, _reason}} ->
+          await_first_success_loop(ref, monitors, total_agents, failures + 1, start_time, timeout)
+
+        :timeout ->
           {:error, :timeout}
       end
     end
   end
 
-  defp await_n_successes(ref, count, total_agents, timeout) do
+  defp await_n_successes(ref, monitors, count, total_agents, timeout) do
     start_time = System.monotonic_time(:millisecond)
-    await_n_successes_loop(ref, count, total_agents, %{}, 0, start_time, timeout)
+
+    await_n_successes_loop(ref, monitors, {count, total_agents}, {%{}, 0}, start_time, timeout)
   end
 
-  defp await_n_successes_loop(_ref, count, _total, successes, _failures, _start, _timeout)
+  defp await_n_successes_loop(_ref, _monitors, {count, _total}, {successes, _failures}, _s, _t)
        when map_size(successes) >= count do
     {:ok, successes}
   end
 
-  defp await_n_successes_loop(_ref, count, total, successes, failures, _start, _timeout)
+  defp await_n_successes_loop(_ref, _monitors, {count, total}, {successes, failures}, _s, _t)
        when map_size(successes) + (total - map_size(successes) - failures) < count do
     # Not enough agents left to reach count
     {:error, :insufficient_successes}
   end
 
-  defp await_n_successes_loop(ref, count, total, successes, failures, start_time, timeout) do
+  defp await_n_successes_loop(ref, monitors, goal, {successes, failures}, start_time, timeout) do
     remaining_timeout = remaining(timeout, start_time)
 
     if remaining_timeout != :infinity and remaining_timeout <= 0 do
       {:error, :timeout}
     else
-      receive do
-        {^ref, agent_id, {:ok, result}} ->
-          updated_successes = Map.put(successes, agent_id, result)
+      case next_outcome(ref, monitors, remaining_timeout) do
+        {agent_id, {:ok, result}} ->
+          tally = {Map.put(successes, agent_id, result), failures}
+          await_n_successes_loop(ref, monitors, goal, tally, start_time, timeout)
 
-          await_n_successes_loop(
-            ref,
-            count,
-            total,
-            updated_successes,
-            failures,
-            start_time,
-            timeout
-          )
+        {_agent_id, {:error, _reason}} ->
+          tally = {successes, failures + 1}
+          await_n_successes_loop(ref, monitors, goal, tally, start_time, timeout)
 
-        {^ref, _agent_id, {:error, _reason}} ->
-          await_n_successes_loop(
-            ref,
-            count,
-            total,
-            successes,
-            failures + 1,
-            start_time,
-            timeout
-          )
-      after
-        remaining_timeout ->
+        :timeout ->
           {:error, :timeout}
       end
     end
