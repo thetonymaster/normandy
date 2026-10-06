@@ -199,6 +199,7 @@ defmodule Normandy.Coordination.Reactive do
         {:exit, {agent_id, reason}}, {:ok, acc} ->
           error = TurnError.from_reason({:task_down, reason})
 
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if fail_fast do
             {:halt, {:error, error}}
           else
