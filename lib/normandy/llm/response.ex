@@ -35,4 +35,24 @@ defmodule Normandy.LLM.Response do
           usage: map() | nil,
           meta: map()
         }
+
+  @known_stop_reasons [
+    :end_turn,
+    :tool_use,
+    :max_tokens,
+    :stop_sequence,
+    :pause_turn,
+    :refusal,
+    :model_context_window_exceeded,
+    :compaction
+  ]
+
+  @doc false
+  # A stop reason in this struct's form: a streamed one (a string in message_delta)
+  # becomes its atom when Normandy knows it; an unknown one stays the provider's string.
+  @spec stop_reason(atom() | String.t()) :: stop_reason() | nil
+  def stop_reason(reason) when is_atom(reason), do: reason
+
+  def stop_reason(reason) when is_binary(reason),
+    do: Enum.find(@known_stop_reasons, reason, &(Atom.to_string(&1) == reason))
 end

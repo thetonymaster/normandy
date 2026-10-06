@@ -35,6 +35,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLM.OpenAICompatibleAdapter
   alias Normandy.LLM.ParseFailure
+  alias Normandy.LLM.Response
   alias Normandy.LLMError
   alias Normandy.Options
   alias Normandy.Resilience.CircuitBreaker
@@ -556,8 +557,11 @@ defmodule Normandy.Agents.BaseAgent do
   def with_default_output_schema(%BaseAgentConfig{} = config), do: config
 
   @doc false
+  # The tool-loop response model for an agent with tools or MCP servers: an MCP
+  # connector's turn (mcp_tool_use blocks, a pause_turn) needs the loop's response
+  # shape and replay even when the agent has no tools of its own.
   def turn_response_model(config) do
-    if has_tools?(config) do
+    if has_tools?(config) or Map.get(config, :mcp_servers) not in [nil, []] do
       %Normandy.Agents.ToolCallResponse{}
     else
       config.output_schema
@@ -1310,11 +1314,15 @@ defmodule Normandy.Agents.BaseAgent do
       tool_calls: calls,
       thinking: ToolCallResponse.thinking_blocks(content),
       prefix_key: Map.get(response, :prefix_key),
-      content_blocks: ToolCallResponse.api_blocks(content)
+      content_blocks: ToolCallResponse.api_blocks(content),
+      stop_reason: stream_stop_reason(Map.get(response, :stop_reason))
     }
   end
 
   defp build_streaming_assistant_response(other, _), do: other
+
+  defp stream_stop_reason(nil), do: nil
+  defp stream_stop_reason(reason), do: Response.stop_reason(reason)
 
   # The schema the system prompt shows. ToolCallResponse is the adapter's internal
   # shape for a tool-loop reply; tool calls travel through the API's `tools` parameter.

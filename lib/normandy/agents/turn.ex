@@ -17,6 +17,11 @@ defmodule Normandy.Agents.Turn do
   resting state entered when a turn starts and at every tool-batch boundary: the core emits a
   `{:maybe_compact, info}` effect there and resumes on `{:compaction_done, _}`,
   which is where context-window compaction (Phase 5) runs in the shell.
+
+  A response whose `stop_reason` is `:pause_turn` (the API paused a long server-tool
+  or MCP-connector turn) and that has no tool calls is appended and sent back as it
+  is, with no user message after it, for the model to continue; it spends one
+  iteration, like a tool batch.
   """
 
   alias Normandy.Agents.Turn.State
@@ -139,13 +144,7 @@ defmodule Normandy.Agents.Turn do
   def step(%State{status: :assistant_streaming} = s, {:llm_response, resp}) do
     case tool_calls(resp) do
       [] ->
-        s = %{s | status: :finalizing, last_response: resp, stop_reason: :completed}
-
-        if convert_needed?(s) do
-          {s, [{:convert_output, resp, s.output_schema}]}
-        else
-          {s, [{:validate_output, resp}]}
-        end
+        if paused?(resp), do: continue_paused(s, resp), else: finalize(s, resp)
 
       calls ->
         {%{s | status: :tool_dispatch, last_response: resp, pending_calls: calls},
@@ -401,6 +400,30 @@ defmodule Normandy.Agents.Turn do
     {s2,
      append_effects ++ [{:persist, s2}, steering, {:maybe_compact, %{iterations_left: new_left}}]}
   end
+
+  defp finalize(s, resp) do
+    s = %{s | status: :finalizing, last_response: resp, stop_reason: :completed}
+
+    if convert_needed?(s) do
+      {s, [{:convert_output, resp, s.output_schema}]}
+    else
+      {s, [{:validate_output, resp}]}
+    end
+  end
+
+  # The API paused a long server-tool turn (stop_reason pause_turn). The paused turn is
+  # appended as it is and sent back with no user message after it, for the model to
+  # continue: a batch with no results, so it spends one iteration (a model that keeps
+  # pausing reaches the forced final call) and passes the steering boundary.
+  defp continue_paused(s, resp) do
+    {s2, effects} = apply_tool_results(%{s | last_response: resp}, [])
+    {s2, [{:append_message, "assistant", resp} | effects]}
+  end
+
+  # Map.get: the response may be any term a call_llm handler returned, and a struct
+  # without :stop_reason (a test double, a pre-2.0 ToolCallResponse) is not paused.
+  defp paused?(%{} = resp), do: Map.get(resp, :stop_reason) in [:pause_turn, "pause_turn"]
+  defp paused?(_resp), do: false
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by
   # tool_call_id, so the next user turn presents tool_result blocks in API order.

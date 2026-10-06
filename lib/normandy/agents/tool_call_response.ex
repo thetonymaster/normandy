@@ -23,6 +23,10 @@ defmodule Normandy.Agents.ToolCallResponse do
   model produced; `:content`, `:tool_calls` and `:thinking` are what Normandy reads.
   A response built without it (by hand, or stored before it existed) is rebuilt from
   those three fields.
+
+  `:stop_reason` is why the model stopped (`t:Normandy.LLM.Response.stop_reason/0`), or
+  `nil` when the client did not say. The turn continues a `:pause_turn` response. It is
+  never sent to the API.
   """
 
   use Normandy.Schema
@@ -35,7 +39,8 @@ defmodule Normandy.Agents.ToolCallResponse do
           tool_calls: [ToolCall.t()],
           thinking: [map()],
           prefix_key: integer() | nil,
-          content_blocks: [map()]
+          content_blocks: [map()],
+          stop_reason: Normandy.LLM.Response.stop_reason() | nil
         }
 
   schema do
@@ -44,6 +49,7 @@ defmodule Normandy.Agents.ToolCallResponse do
     field(:thinking, {:array, :map}, default: [])
     field(:prefix_key, :integer, default: nil)
     field(:content_blocks, {:array, :map}, default: [])
+    field(:stop_reason, :any, default: nil)
   end
 
   @doc """

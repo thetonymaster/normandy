@@ -1014,6 +1014,19 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `Normandy.Behaviours.Compactor.WindowManager`), kept messages keep their stored content
   (`%ToolCallResponse{}`, `%ToolResult{}`, ...) minus thinking. They used to be replaced by
   their serialized blocks, which hid a kept tool batch from `Turn.unanswered_tool_calls/1`.
+- A `pause_turn` response (the API paused a long server-tool or MCP-connector turn) is appended
+  and sent back as it is, with no user message after it, and the model continues the turn. Each
+  continuation spends one of `max_tool_iterations`. The paused turn's partial text used to be
+  returned as the final answer. A pause on the forced final call (`max_tool_iterations` spent)
+  is not continued.
+- `%Normandy.Agents.ToolCallResponse{}` has a new field `stop_reason`
+  (`t:Normandy.LLM.Response.stop_reason/0` or `nil`), filled by `ClaudioAdapter` and the stream
+  path. It is never sent to the API. A custom `Model` that wants `pause_turn` continued sets it.
+- An agent with `mcp_servers` and no tools of its own now runs the tool loop's response model
+  (`%ToolCallResponse{}`), so its connector turns are replayed and continued like a tool-using
+  agent's. With the chat schema, its system prompt no longer shows an output schema and its
+  answer is plain text. It used to be `{"chat_message": ...}` JSON constrained by structured
+  outputs.
 
 ## New, non-breaking
 
