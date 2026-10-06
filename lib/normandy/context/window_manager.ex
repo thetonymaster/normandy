@@ -90,8 +90,8 @@ defmodule Normandy.Context.WindowManager do
 
       manager = WindowManager.new(max_tokens: 200_000, strategy: :sliding_window)
   """
-  @spec new(keyword()) :: t()
-  def new(opts \\ []) when is_list(opts) do
+  @spec new(keyword() | map()) :: t()
+  def new(opts \\ []) do
     opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
 
     unless Keyword.has_key?(opts, :max_tokens) do

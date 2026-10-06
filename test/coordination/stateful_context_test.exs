@@ -20,7 +20,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
     end
   end
 
-  describe "put/3 and get/2" do
+  describe "put/3 and fetch/2" do
     setup do
       {:ok, pid} = StatefulContext.start_link()
       %{context: pid}

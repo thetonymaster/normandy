@@ -84,9 +84,9 @@ defmodule Normandy.A2A.AgentTool do
   `BaseAgent.register_tool(agent, tool, timeout: ms)`. Passing `:timeout` here raises
   `ArgumentError`.
   """
-  @spec new(String.t(), Claudio.A2A.AgentCard.t(), keyword()) :: t()
+  @spec new(String.t(), Claudio.A2A.AgentCard.t(), keyword() | map()) :: t()
   def new(endpoint, agent_card, opts \\ []) do
-    if Keyword.has_key?(opts, :timeout) do
+    if timeout_given?(opts) do
       raise ArgumentError,
             "Normandy.A2A.AgentTool.new/3: :timeout is a registration option in 2.0; pass it " <>
               "to BaseAgent.register_tool/3 or Normandy.Tools.Toolset.register/3"
@@ -102,6 +102,12 @@ defmodule Normandy.A2A.AgentTool do
       transport_opts: Keyword.fetch!(opts, :transport_opts)
     }
   end
+
+  # Before Options.validate!/3, so :timeout gets its own message; opts that are neither a
+  # keyword list nor a map are left to Options.validate!/3 to reject.
+  defp timeout_given?(opts) when is_map(opts), do: Map.has_key?(opts, :timeout)
+  defp timeout_given?(opts) when is_list(opts), do: List.keymember?(opts, :timeout, 0)
+  defp timeout_given?(_opts), do: false
 
   @doc false
   # Adds the current OpenTelemetry context as W3C `traceparent`/`tracestate`

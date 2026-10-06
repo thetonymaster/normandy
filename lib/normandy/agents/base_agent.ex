@@ -2072,7 +2072,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @doc """
-  Discovers and registers client-side MCP tools in the agent's tool registry.
+  Discovers and registers client-side MCP tools in the agent's toolset.
 
   Connects to an MCP server via the specified adapter, discovers available tools,
   and registers them as Normandy tools that can be used in the agent's tool loop.

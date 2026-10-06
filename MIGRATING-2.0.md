@@ -600,9 +600,11 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 - Tool results: an atom, a boolean or `nil` output reaches the model as JSON (`"ok"`,
   `true`, `null`), not as `inspect/1` text (`:ok`, `nil`). An output JSON cannot express
   (a tuple, a pid) is now an `is_error: true` result, "the tool ran, but its output
-  cannot be sent as JSON: it contains a tuple", instead of its `inspect/1` text. An
+  cannot be sent as JSON: it contains a tuple", instead of its `inspect/1` text; that
+  includes a keyword list (`{:ok, [count: 3]}` is a list of tuples): return a map. An
   error reason JSON cannot express (`{:error, {:http, 503}}`) is still sent as its
-  `inspect/1` text.
+  `inspect/1` text; an exception as the reason (`{:error, %RuntimeError{}}`) is sent as its
+  `Exception.message/1`.
 - `get_json_adapter/0` (removed from `Normandy.LLM.JsonDeserializer`) is gone. The `:adapter` option
   of `parse_and_validate/3` and `deserialize_with_retry/5` defaults to `Normandy.JSON`.
 

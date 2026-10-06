@@ -3,7 +3,7 @@ defmodule Normandy.MCP.ToolWrapper do
   Wraps an MCP tool as a `Normandy.Tool`.
 
   This allows MCP tools discovered via any `Claudio.MCP.Client` adapter
-  to be registered in a Normandy tool registry and used in the agent's
+  to be registered in a `Normandy.Tools.Toolset` and used in the agent's
   tool execution loop.
 
   ## Example

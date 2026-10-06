@@ -42,7 +42,7 @@ defmodule Normandy.A2A.Registry do
                                      )
 
   @doc """
-  Discovers a remote A2A agent and registers it as tool(s) in the registry.
+  Discovers a remote A2A agent and registers it as tool(s) in the toolset.
 
   Creates one tool per skill if the agent has skills, or a single general
   tool if it has no skills.

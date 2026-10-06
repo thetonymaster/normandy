@@ -54,7 +54,7 @@ defmodule Normandy.Tool do
 
   @callback name(tool :: struct()) :: String.t()
   @callback description(tool :: struct()) :: String.t()
-  @callback input_schema(tool :: struct()) :: map()
+  @callback input_schema(tool :: struct()) :: map() | nil
   @callback run(tool :: struct(), Context.t()) :: {:ok, term()} | {:error, term()}
 
   @use_options [:name, :description, :input]
@@ -165,8 +165,11 @@ defmodule Normandy.Tool do
   @spec description(struct()) :: String.t()
   def description(%module{} = tool), do: module.description(tool)
 
-  @doc "The tool's input JSON Schema, from its module's `c:input_schema/1`."
-  @spec input_schema(struct()) :: map()
+  @doc """
+  The tool's input JSON Schema, from its module's `c:input_schema/1`. `nil` when the tool has
+  none (an MCP tool whose server sent no schema); such a tool's input is rejected.
+  """
+  @spec input_schema(struct()) :: map() | nil
   def input_schema(%module{} = tool), do: module.input_schema(tool)
 
   @doc "Runs the tool through its module's `c:run/2`."

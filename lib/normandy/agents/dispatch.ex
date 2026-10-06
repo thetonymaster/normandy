@@ -40,7 +40,7 @@ defmodule Normandy.Agents.Dispatch do
 
   `Pipeline.after_tool` (`fn config, call, result -> result end`, default `nil`) runs on
   every result the chokepoint returns: executed, budget-denied, every `classify/3` denial
-  (registry miss, invalid or schema-failing input, a before-hook halt, a policy deny) and
+  (toolset miss, invalid or schema-failing input, a before-hook halt, a policy deny) and
   `dispatch_one/3`'s interim approval denial. It runs before the function `after_hooks`,
   which see only results of tools that ran, and the result answers the call's id
   whatever it returns. `Normandy.Behaviours.Config.to_pipeline/1` sets it from the agent's
@@ -127,7 +127,7 @@ defmodule Normandy.Agents.Dispatch do
   def default_pipeline do
     %Pipeline{
       before_hooks: [],
-      policy_fn: fn _config, _call, _tool -> {:allow, %{}} end,
+      policy_fn: fn _config, _call, _invocation -> {:allow, %{}} end,
       budget_check_fn: fn _config, _call -> :ok end,
       budget_record_fn: fn _config, _call, _result -> :ok end,
       execute_fn: fn config, invocation, _name, call ->
@@ -387,8 +387,16 @@ defmodule Normandy.Agents.Dispatch do
     end
   end
 
-  # An error reason is a message for the model: one JSON cannot express (a tuple
-  # such as {:http, 500}) is sent as its inspect/1 text, the only form it has.
+  # An error reason is a message for the model: an exception is sent as its message
+  # (encoding it would send its fields and "__exception__"), and one JSON cannot express
+  # (a tuple such as {:http, 500}) as its inspect/1 text, the only form it has.
+  defp wrap_error(call, error) when is_exception(error),
+    do: %ToolResult{
+      tool_call_id: call.id,
+      output: %{error: Exception.message(error)},
+      is_error: true
+    }
+
   defp wrap_error(call, error) do
     output =
       case Normandy.JSON.encode(%{error: error}) do

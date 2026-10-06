@@ -4,7 +4,7 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
   alias Normandy.Tools.Examples.{Calculator, EnhancedCalculator, StringManipulator}
   alias Normandy.Tools.Toolset
 
-  describe "get_metadata/2" do
+  describe "fetch_metadata/2" do
     test "returns metadata for a registered tool" do
       calc = %Calculator{}
       registry = Toolset.new([calc])

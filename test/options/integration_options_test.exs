@@ -185,6 +185,17 @@ defmodule Normandy.Options.IntegrationOptionsTest do
       assert error.message =~ ":stratgy"
     end
 
+    test "AgentTool.new/3 and WindowManager.new/1 take their options as a map too" do
+      assert %AgentTool{skill_id: "s"} = AgentTool.new("http://a", nil, %{skill_id: "s"})
+      assert %WindowManager{max_tokens: 1000} = WindowManager.new(%{max_tokens: 1000})
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy\.A2A\.AgentTool\.new\/3: :timeout is a registration/,
+                   fn ->
+                     AgentTool.new("http://a", nil, %{timeout: 1})
+                   end
+    end
+
     test "WindowManager.new/1 keeps its explanation for a missing :max_tokens" do
       error = assert_raise ArgumentError, fn -> WindowManager.new(strategy: :oldest_first) end
 

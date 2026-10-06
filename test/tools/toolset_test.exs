@@ -5,7 +5,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
   alias Normandy.Tools.Toolset
 
   describe "Toolset.new/0" do
-    test "creates empty registry" do
+    test "creates an empty toolset" do
       registry = Toolset.new()
       assert %Toolset{tools: tools} = registry
       assert tools == %{}
@@ -14,7 +14,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
   end
 
   describe "Toolset.new/1" do
-    test "creates registry with tools" do
+    test "creates a toolset with tools" do
       tools = [
         %Calculator{},
         %StringManipulator{}
@@ -163,7 +163,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
   end
 
   describe "Toolset.unregister/2" do
-    test "removes tool from registry" do
+    test "removes a tool from the toolset" do
       tool = %Calculator{}
       registry = Toolset.new([tool])
 
@@ -195,7 +195,7 @@ defmodule NormandyTest.Tools.ToolsetTest do
       assert tool2 in tools
     end
 
-    test "returns empty list for empty registry" do
+    test "returns an empty list for an empty toolset" do
       registry = Toolset.new()
       assert [] = Toolset.list(registry)
     end

@@ -74,6 +74,18 @@ defmodule Normandy.JSONStructEncodingTest do
     assert Jason.decode!(model_content(result)) == %{"error" => "{:http, 503}"}
   end
 
+  test "an exception as the error reason is sent as its message" do
+    for reason <- [
+          %RuntimeError{message: "upstream down"},
+          %ArgumentError{message: "upstream down"}
+        ] do
+      result = execute({:error, reason})
+
+      assert %ToolResult{is_error: true, output: %{error: "upstream down"}} = result
+      assert Jason.decode!(model_content(result)) == %{"error" => "upstream down"}
+    end
+  end
+
   test "a memory dump encodes the struct as its map and loads it back as one" do
     memory =
       AgentMemory.new_memory()

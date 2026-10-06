@@ -38,12 +38,11 @@ defmodule Normandy.Tools.Input do
   @doc "Validates `input` against `tool`'s input schema; see the moduledoc."
   @spec validate(struct(), term()) :: {:ok, struct() | map()} | {:error, [error()]}
   def validate(%module{} = tool, input) when is_map(input) and not is_struct(input) do
-    # The callback's spec says map(), but input_schema/1 is the tool's code (an MCP tool
-    # returns its server's schema, nil when the server sent none), so its result is
-    # checked here, not trusted: hence the module call rather than Normandy.Tool's.
+    # input_schema/1 is the tool's code (an MCP tool returns its server's schema, nil when
+    # the server sent none), so its result is checked here, not trusted.
     if Code.ensure_loaded?(module) and function_exported?(module, :__tool_input__, 0),
       do: validate_schema(module.__tool_input__(), input),
-      else: validate_map(module.input_schema(tool), input)
+      else: validate_map(Normandy.Tool.input_schema(tool), input)
   end
 
   def validate(_tool, input) do

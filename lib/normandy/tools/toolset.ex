@@ -151,7 +151,7 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
       iex> Normandy.Tools.Toolset.unregister(toolset, "calculator")
-      %Normandy.Tools.Toolset{tools: %{}}
+      %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}}
 
   """
   @spec unregister(t(), String.t()) :: t()
@@ -310,7 +310,7 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
       iex> Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
-      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}}
+      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}, timeouts: %{}}
 
   """
   @spec filter_by_required_params(t(), boolean()) :: t()
@@ -338,7 +338,7 @@ defmodule Normandy.Tools.Toolset do
 
       iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
       iex> Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
-      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}}
+      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}, timeouts: %{}}
 
   """
   @spec filter_by_param_type(t(), String.t()) :: t()

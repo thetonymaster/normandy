@@ -1,16 +1,16 @@
 defmodule Normandy.MCP.Registry do
   @moduledoc """
-  Helpers for discovering and registering MCP tools in a Normandy tool registry.
+  Helpers for discovering and registering MCP tools in a `Normandy.Tools.Toolset`.
 
   ## Example
 
       alias Normandy.MCP.Registry, as: MCPRegistry
       alias Normandy.Tools.Toolset
 
-      registry = Toolset.new()
+      toolset = Toolset.new()
 
-      {:ok, registry} = MCPRegistry.discover_and_register(
-        registry,
+      {:ok, toolset} = MCPRegistry.discover_and_register(
+        toolset,
         Claudio.MCP.Adapters.ExMCP,
         mcp_client,
         prefix: "my_server"
@@ -31,7 +31,7 @@ defmodule Normandy.MCP.Registry do
   def __opts_schema__(:discover_and_register), do: @opts_schema
 
   @doc """
-  Discovers tools from an MCP server and registers them in a tool registry.
+  Discovers tools from an MCP server and registers them in a toolset.
 
   ## Options
 
