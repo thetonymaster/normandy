@@ -929,21 +929,21 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 | `init/1` with a breaker started a `CircuitBreaker` linked to the caller; the config held its pid (`config.circuit_breaker`) | `init/1` starts no process. The first LLM call starts the breaker under Normandy's own supervisor. The config holds only the options |
 | One breaker per `init/1` call | One breaker per client module, endpoint (`base_url` without credentials or query), model and breaker options, shared by every agent that matches |
 | An `AgentTemplate` supplement could carry the breaker | Not read; the template carries the options and each node uses its own shared breaker |
-| — | `BaseAgentConfig.circuit_breaker_key(config)` and `CircuitBreaker.fetch/1` find an agent's breaker; `CircuitBreaker.key/3`, `ensure_started/1` and `run/2` are the shared-breaker API |
+| — | `BaseAgentConfig.circuit_breaker_key(config)` and `CircuitBreaker.fetch/1` find an agent's breaker; `CircuitBreaker.key/3`, `ensure_started/1` and `run/3` are the shared-breaker API |
 
+- A breaker no longer dies with the process that built the agent (a request process, a
+  LiveView, a `Task`), and `AgentPool` no longer starts (and leaks) one per agent.
+- Agents that share a breaker share its state: one agent's endpoint failures (see the next bullet) open the circuit for all
+  of them. Give each tenant `circuit_breaker: [scope: tenant_id]` when tenants use their own
+  API keys and rate limits. The key, scope included, appears in telemetry and logs, so a scope
+  must not be a secret. Tests that run agents with a breaker concurrently should give each
+  test its own `:scope`.
 - An agent's breaker counts only failures that say the endpoint is unhealthy: `LLMError`
   types `:rate_limit`, `:overloaded`, `:server`, `:transport` and `:stream`, or any error
   marked `retryable?: true`. A rejected request (`:invalid_request`, `:authentication`,
   `:permission`, `:not_found`), output that did not parse (`:invalid_output`) or a raise
   from your own code (a stream callback, a guardrail) no longer counts, so one caller's bad
   requests cannot open the circuit for every agent that shares it. 1.x counted every failure.
-- A breaker no longer dies with the process that built the agent (a request process, a
-  LiveView, a `Task`), and `AgentPool` no longer starts (and leaks) one per agent.
-- Agents that share a breaker share its state: one agent's failures open the circuit for all
-  of them. Give each tenant `circuit_breaker: [scope: tenant_id]` when tenants use their own
-  API keys and rate limits. The key, scope included, appears in telemetry and logs, so a scope
-  must not be a secret. Tests that run agents with a breaker concurrently should give each
-  test its own `:scope`.
 - `:normandy` now has an application callback that supervises the
   breakers. It starts with your application as any dependency does; a script started with
   `mix run --no-start` calls `Application.ensure_all_started(:normandy)` first.
@@ -957,7 +957,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - A template saved by an earlier 2.0 build with a breaker (`node_local_fields` listing
   `:circuit_breaker_pid`) raises `ArgumentError` in `ConfigTemplate.rebuild/3`; recreate the
   session, as for the other unreleased 2.0 templates (§22).
-- `CircuitBreaker.start_link/1` and `call/2` remain for a breaker you start and supervise
+- `CircuitBreaker.start_link/1` and `call/3` remain for a breaker you start and supervise
   yourself.
 
 ## New, non-breaking

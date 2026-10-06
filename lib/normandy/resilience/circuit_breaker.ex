@@ -181,9 +181,11 @@ defmodule Normandy.Resilience.CircuitBreaker do
                         doc:
                           "Decides whether a failed call counts against the breaker. It gets " <>
                             "the `{:error, reason}` the call returns (a raise, exit or throw " <>
-                            "is `{:error, {:exception | :exit | :throw, _}}`); `false` leaves " <>
-                            "the counts unchanged and frees a half-open probe's slot. By " <>
-                            "default every failure counts."
+                            "is `{:error, {:exception | :exit | :throw, _}}`, a return that is neither " <>
+                            "`{:ok, _}` nor `{:error, _}` is `{:error, {:unexpected_return, value}}`); " <>
+                            "`false` leaves the counts unchanged and frees a half-open probe's " <>
+                            "slot. It must return a boolean; one that raises or returns anything " <>
+                            "else counts the failure. By default every failure counts."
                       ]
                     )
 
@@ -553,9 +555,20 @@ defmodule Normandy.Resilience.CircuitBreaker do
   # A failure the caller's classifier rejects is recorded as :ignore: its probe slot is
   # freed and no count changes.
   defp classify(:failure, result, failure_if) when is_function(failure_if, 1),
-    do: if(failure_if.(result), do: :failure, else: :ignore)
+    do: if(counts_failure?(failure_if, result), do: :failure, else: :ignore)
 
   defp classify(outcome, _result, _failure_if), do: outcome
+
+  # A classifier that raises, exits, throws or returns a non-boolean counts the failure:
+  # the caller still gets its result and a half-open probe's slot is always released.
+  defp counts_failure?(failure_if, result) do
+    case failure_if.(result) do
+      false -> false
+      _true_or_invalid -> true
+    end
+  catch
+    _kind, _reason -> true
+  end
 
   defp run_fun(fun) do
     case fun.() do

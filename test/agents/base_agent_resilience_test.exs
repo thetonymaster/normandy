@@ -154,7 +154,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           circuit_breaker:
             breaker_opts(
               failure_threshold: 2,
-              timeout: 100
+              timeout: 60_000
             )
         })
 
@@ -280,7 +280,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
           circuit_breaker:
             breaker_opts(
               failure_threshold: 3,
-              timeout: 100
+              timeout: 60_000
             )
         })
 

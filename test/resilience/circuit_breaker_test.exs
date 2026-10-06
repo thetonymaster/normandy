@@ -613,6 +613,24 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       GenServer.stop(cb)
     end
 
+    test "a classifier that raises counts the failure and frees the probe slot" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 100, half_open_max_calls: 1)
+      :ok = CircuitBreaker.trip(cb)
+      Process.sleep(110)
+      assert CircuitBreaker.state(cb) == :half_open
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :down} end,
+               failure_if: fn _ -> raise "classifier bug" end
+             ) == {:error, :down}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+      assert metrics.state == :open
+
+      GenServer.stop(cb)
+    end
+
     test "success is never classified" do
       {:ok, cb} = CircuitBreaker.start_link()
 
