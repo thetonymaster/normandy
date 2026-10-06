@@ -252,6 +252,51 @@ defmodule Normandy.DSL.AgentTest do
                    end
     end
 
+    test ":client under :override raises: it is a top-level option" do
+      assert_raise ArgumentError,
+                   "Normandy.DSL.AgentTest.TestAgent.new/1: :client goes at the top level, " <>
+                     "not under :override",
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       override: [client: %NormandyTest.Support.ModelMockup{}]
+                     )
+                   end
+    end
+
+    test "a :max_messages that is not a positive integer raises, at the top level or under :override" do
+      for opts <- [[max_messages: 0], [override: [max_messages: "10"]]] do
+        error =
+          assert_raise ArgumentError, fn ->
+            TestAgent.new([client: %NormandyTest.Support.ModelMockup{}] ++ opts)
+          end
+
+        assert error.message =~ ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: /
+        assert error.message =~ ":max_messages option"
+      end
+    end
+
+    test "a :memory_store that is not a {module, handle} tuple raises" do
+      error =
+        assert_raise ArgumentError, fn ->
+          TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, memory_store: :ets)
+        end
+
+      assert error.message =~
+               ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: invalid value for :memory_store option/
+    end
+
+    test ":memory_store under :override is unknown there" do
+      assert_raise ArgumentError,
+                   ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: unknown option :memory_store; supported: /,
+                   fn ->
+                     TestAgent.new(
+                       client: %NormandyTest.Support.ModelMockup{},
+                       override: [memory_store: {Normandy.Behaviours.MemoryStore.InMemory, nil}]
+                     )
+                   end
+    end
+
     test ":override must be a keyword list" do
       assert_raise ArgumentError,
                    "Normandy.DSL.AgentTest.TestAgent.new/1: invalid value for :override option: " <>

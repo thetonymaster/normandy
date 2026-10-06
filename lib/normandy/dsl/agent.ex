@@ -399,7 +399,9 @@ defmodule Normandy.DSL.Agent do
     override: [
       type: :keyword_list,
       default: [],
-      doc: "`BaseAgent.init/1` options (and `:max_messages`) that win over the top-level ones."
+      doc:
+        "`BaseAgent.init/1` options except `:client` (and `:max_messages`) that win over the " <>
+          "top-level ones."
     ],
     memory_store: [
       type: {:tuple, [:atom, :any]},
@@ -413,14 +415,14 @@ defmodule Normandy.DSL.Agent do
     ]
   ]
 
-  @override_definition InitOptions.without_defaults(InitOptions.definition()) ++
+  @init_definition InitOptions.without_defaults(InitOptions.definition())
+
+  # :client is a top-level option only (1.x rejected it under :override): one source for it.
+  @override_definition Keyword.delete(@init_definition, :client) ++
                          Keyword.take(@own_options, [:max_messages])
 
-  @new_definition Keyword.update!(
-                    @override_definition,
-                    :client,
-                    &Keyword.put(&1, :required, true)
-                  ) ++ Keyword.take(@own_options, [:override, :memory_store])
+  @new_definition Keyword.update!(@init_definition, :client, &Keyword.put(&1, :required, true)) ++
+                    Keyword.take(@own_options, [:max_messages, :override, :memory_store])
 
   @new_schema NimbleOptions.new!(@new_definition)
   @override_schema NimbleOptions.new!(@override_definition)
@@ -439,6 +441,12 @@ defmodule Normandy.DSL.Agent do
     :ok = InitOptions.check_misnamed!(opts, @new_schema, mfa)
     opts = Options.validate!(opts, @new_schema, mfa)
     {explicit, opts} = Keyword.pop!(opts, :override)
+
+    if Keyword.has_key?(explicit, :client) do
+      raise ArgumentError,
+            "#{inspect(agent_module)}.new/1: :client goes at the top level, not under :override"
+    end
+
     :ok = InitOptions.check_misnamed!(explicit, @override_schema, mfa)
     explicit = Options.validate!(explicit, @override_schema, mfa)
     {memory_store, implicit} = Keyword.pop(opts, :memory_store)

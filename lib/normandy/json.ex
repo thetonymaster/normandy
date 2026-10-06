@@ -42,15 +42,15 @@ defmodule Normandy.JSON do
 
   @doc """
   Encodes `term`, returning `{:error, exception}` with whatever the adapter raised
-  (for Jason, `Protocol.UndefinedError` or `Jason.EncodeError`).
+  (for Jason, `Protocol.UndefinedError` or `Jason.EncodeError`), or what walking `term`
+  raised (an improper list). A misconfigured `:adapter` raises.
   """
   @spec encode(term(), keyword()) :: {:ok, String.t()} | {:error, Exception.t()}
   def encode(term, opts \\ []) when is_list(opts) do
-    normalized = normalize(term)
     adapter = adapter()
 
     try do
-      {:ok, adapter.encode!(normalized, opts)}
+      {:ok, adapter.encode!(normalize(term), opts)}
     rescue
       exception -> {:error, exception}
     end

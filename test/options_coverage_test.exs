@@ -13,6 +13,10 @@ defmodule Normandy.OptionsCoverageTest do
   # file whose public entry points validate their options with Normandy.Options.validate!/3
   # (@validated) or a file whose reads are not entry-point options (@internal, with the
   # reason). A new file fails the first test until it joins one of the two lists.
+  # What this guarantees is narrow: it matches that text only (reads written as
+  # `Keyword.fetch!`, `Keyword.get_lazy` or `opts[:x]` are not seen), and the lists are per
+  # file, so a new entry point in a listed file is not checked. The tests below that call
+  # entry points are what check validation itself.
   @pattern "Keyword.get(opts"
 
   @validated [
@@ -139,9 +143,10 @@ defmodule Normandy.OptionsCoverageTest do
 
   # Deferred from Task 3.1a: Normandy.Options hides the value of a sensitive key and shows the
   # option's :type_doc instead, falling back to inspect(type) when it has none. This walks
-  # every option spec written in lib/ (any `key: [type: ...]` literal, so composed schemas are
-  # checked where their specs are written) and requires a :type_doc on every option whose key
-  # is in Normandy.Options.sensitive_keys/0, and on every option nested under one.
+  # every option spec written in lib/ as a `key: [type: ...]` literal (composed schemas are
+  # checked where such literals are written) and requires a :type_doc on every option whose
+  # key is in Normandy.Options.sensitive_keys/0, and on every option nested under one. A spec
+  # built at compile time (Keyword.merge/put, a computed list) is not a literal and is missed.
   describe "sensitive options" do
     test "every option whose key is sensitive has a :type_doc" do
       sensitive = Normandy.Options.sensitive_keys()

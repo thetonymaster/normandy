@@ -50,6 +50,10 @@ defmodule Normandy.JSONTest do
   end
 
   describe "encode/2" do
+    test "an improper list is an {:error, exception}, not a raise" do
+      assert {:error, %{__exception__: true}} = Normandy.JSON.encode([1 | 2])
+    end
+
     test "returns the JSON" do
       assert {:ok, ~s({"a":{"a":1,"nested":null}})} = Normandy.JSON.encode(%{a: %Plain{a: 1}})
     end
