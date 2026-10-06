@@ -28,7 +28,9 @@
   # options.ex supported/1 (same cause as the guard_fail above): with the is_list/1 clause of
   # describe/2 judged impossible, Dialyzer (OTP 28.4 / Elixir 1.19.5) also reports its only
   # caller-side helper supported/1 as never called. It is called from that clause.
-  {"lib/normandy/options.ex", :unused_fun},
+  # Pinned to supported/1 by its message (not file-wide), so other dead code in options.ex
+  # is still reported.
+  {"lib/normandy/options.ex", "Function supported/1 will never be called."},
 
   # --- CI-toolchain-specific ---
 

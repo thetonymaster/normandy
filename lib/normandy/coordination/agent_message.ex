@@ -19,6 +19,7 @@ defmodule Normandy.Coordination.AgentMessage do
 
   use Normandy.Schema
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
 
   @type t :: %__MODULE__{
@@ -78,7 +79,7 @@ defmodule Normandy.Coordination.AgentMessage do
     do: {:error, "expected a string or an atom other than nil, got: #{inspect_scalar(value)}"}
 
   defp inspect_scalar(value) when is_map(value) or is_list(value) or is_tuple(value),
-    do: Normandy.Components.ContentBlock.Describe.type_of(value)
+    do: Describe.type_of(value)
 
   defp inspect_scalar(value), do: inspect(value)
 

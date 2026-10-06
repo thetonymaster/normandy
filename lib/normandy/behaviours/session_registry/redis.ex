@@ -16,6 +16,7 @@ if Code.ensure_loaded?(Redix) do
     @behaviour Normandy.Behaviours.SessionRegistry
     use GenServer
 
+    alias Normandy.Components.ContentBlock.Describe
     alias Normandy.Options
 
     @default_ttl_ms 60_000
@@ -148,7 +149,7 @@ if Code.ensure_loaded?(Redix) do
       do:
         {:error,
          "expected a Redix connection (a pid or a registered name), got: " <>
-           Normandy.Components.ContentBlock.Describe.type_of(other)}
+           Describe.type_of(other)}
 
     @impl GenServer
     def init(opts) do

@@ -518,25 +518,6 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   in `new/1` raises `ArgumentError` `"MyAgent.new/1: requires :model (a string), got none"`
   (1.x: `RuntimeError` `"model is required in agent definition"`).
 
-## New, non-breaking
-
-- `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
-  (`:adaptive | :disabled`), `:thinking_display`, `:effort`, `:speed`, `:inference_geo`,
-  `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.
-- `:fallbacks` is rejected on streaming calls: partial output from a declining model would
-  already have reached the stream callback.
-- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` now raise on an invalid
-  `ClaudioAdapter` `client.options` combination instead of failing on the first call (after
-  any retries). `ClaudioAdapter.validate_options!/1` is the public check.
-- With `:task_budget`, Normandy sends the total and, after in-turn compaction, a fixed
-  `remaining` that subtracts the tokens compaction removed from the current turn.
-- `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
-- `served_by` appears in `[:normandy, :agent, :llm_call, :stop]` telemetry and the
-  `normandy llm call stop` log line after a server-side fallback (non-streaming calls;
-  streaming rejects `:fallbacks`, so the serving model is always the requested one).
-- Compaction keeps each message's turn id, so `AgentMemory.delete_turn/2` works after a
-  compaction.
-
 ## 22. Config groups, the compactor's window pin, and 1.0 session templates
 
 `BaseAgent.init/1` (and DSL `new/1`) group the resilience and guardrail options. Passing a
@@ -675,8 +656,12 @@ a struct field into the struct, including fields such as `:endpoint` or `:timeou
 - `Normandy.Tools.Executor`: `execute_tool/2` and `execute_tool_classified/2` take
   `context:` (required, carrying the input) and `timeout:`; any other option raises.
   `execute/3`, `execute_parallel/3`, `execute_sequential/3` and `:max_retries` are removed:
-  they ran tools whose input lived in the struct. Run a tool through an agent, or call
+  they ran tools whose input lived in the struct. Run a tool through an agent, or validate
+  the raw input with `Normandy.Tools.Input.validate(tool, raw)` and pass what it returns:
+  `{:ok, input} = Input.validate(tool, raw)`, then
   `Executor.execute_tool(tool, context: %Normandy.Tools.Context{tool_call_id: id, input: input})`.
+  The executor does not validate: a tool declared with `input: Schema` expects that
+  schema's struct, and a raw map fails in its `run/2`.
 - Custom pipelines: `Dispatch.classify/3` verdicts carry a `%Dispatch.Invocation{tool, input, timeout}`
   where they carried the input-merged struct; `execute/4`, `policy_fn` and `execute_fn`
   receive it. `Dispatch.prepare_tool/2` and `validate_input/2` are gone;
@@ -937,3 +922,22 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
   and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
   `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
+
+## New, non-breaking
+
+- `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
+  (`:adaptive | :disabled`), `:thinking_display`, `:effort`, `:speed`, `:inference_geo`,
+  `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.
+- `:fallbacks` is rejected on streaming calls: partial output from a declining model would
+  already have reached the stream callback.
+- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` now raise on an invalid
+  `ClaudioAdapter` `client.options` combination instead of failing on the first call (after
+  any retries). `ClaudioAdapter.validate_options!/1` is the public check.
+- With `:task_budget`, Normandy sends the total and, after in-turn compaction, a fixed
+  `remaining` that subtracts the tokens compaction removed from the current turn.
+- `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
+- `served_by` appears in `[:normandy, :agent, :llm_call, :stop]` telemetry and the
+  `normandy llm call stop` log line after a server-side fallback (non-streaming calls;
+  streaming rejects `:fallbacks`, so the serving model is always the requested one).
+- Compaction keeps each message's turn id, so `AgentMemory.delete_turn/2` works after a
+  compaction.

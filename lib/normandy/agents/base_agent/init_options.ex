@@ -6,6 +6,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Agents.Model
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
   alias Normandy.Resilience.Retry
@@ -271,7 +272,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   # A struct whose module has no Normandy.Agents.Model implementation would fail mid-turn,
   # at the first LLM call; it is rejected here instead.
   def client(%mod{} = client) do
-    if Normandy.Agents.Model.impl_for(client),
+    if Model.impl_for(client),
       do: {:ok, client},
       else:
         {:error,
