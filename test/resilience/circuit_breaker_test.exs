@@ -383,4 +383,155 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert %{failure_count: 1} = CircuitBreaker.metrics(cb)
     end
   end
+
+  # The open window is 1 ms; sleeping 2 ms only lets it elapse. Which result lands in
+  # which generation is decided by messages, not by timing.
+  defp open_then_half_open(cb) do
+    :ok = CircuitBreaker.trip(cb)
+    Process.sleep(2)
+    assert CircuitBreaker.state(cb) == :half_open
+  end
+
+  # A caller admitted now whose function blocks until it gets {:finish, result}.
+  defp blocked_caller(cb) do
+    test_pid = self()
+
+    task =
+      Task.async(fn ->
+        CircuitBreaker.call(cb, fn ->
+          send(test_pid, {:admitted, self()})
+          receive do: ({:finish, result} -> result)
+        end)
+      end)
+
+    assert_receive {:admitted, caller}
+    {task, caller}
+  end
+
+  describe "a killed half-open probe (PERF-1)" do
+    test "frees its slot and reopens the breaker" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      open_then_half_open(cb)
+
+      {task, probe} = blocked_caller(cb)
+      assert CircuitBreaker.metrics(cb).half_open_calls == 1
+
+      Process.unlink(task.pid)
+      Process.exit(probe, :kill)
+
+      assert wait_until(fn -> CircuitBreaker.metrics(cb).half_open_calls == 0 end)
+      assert CircuitBreaker.metrics(cb).state == :open
+
+      # The next window admits a new probe, and its success closes the breaker.
+      Process.sleep(2)
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end) == {:ok, 1}
+      assert CircuitBreaker.call(cb, fn -> {:ok, 2} end) == {:ok, 2}
+      assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+
+    test "a probe that returns normally releases its monitor" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+      open_then_half_open(cb)
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, :fine} end) == {:ok, :fine}
+      assert CircuitBreaker.state(cb) == :closed
+      assert {:monitors, []} = Process.info(cb, :monitors)
+
+      GenServer.stop(cb)
+    end
+  end
+
+  describe "stale results (PERF-9)" do
+    test "a success admitted while closed does not count as a probe success" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      open_then_half_open(cb)
+
+      send(caller, {:finish, {:ok, :late}})
+      assert Task.await(task) == {:ok, :late}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.success_count == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "a failure admitted while closed does not reopen a half-open breaker" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, failure_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      open_then_half_open(cb)
+
+      send(caller, {:finish, {:error, :late}})
+      assert Task.await(task) == {:error, :late}
+
+      assert CircuitBreaker.state(cb) == :half_open
+
+      GenServer.stop(cb)
+    end
+
+    test "a result admitted before reset/1 does not count after it" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      :ok = CircuitBreaker.reset(cb)
+
+      send(caller, {:finish, {:error, :late}})
+      assert Task.await(task) == {:error, :late}
+
+      assert CircuitBreaker.state(cb) == :closed
+      assert CircuitBreaker.metrics(cb).failure_count == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "every state change bumps the generation" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+      assert CircuitBreaker.metrics(cb).generation == 0
+
+      :ok = CircuitBreaker.trip(cb)
+      assert CircuitBreaker.metrics(cb).generation == 1
+
+      Process.sleep(2)
+      assert CircuitBreaker.state(cb) == :half_open
+      assert CircuitBreaker.metrics(cb).generation == 2
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end) == {:ok, 1}
+      assert CircuitBreaker.metrics(cb).generation == 3
+
+      :ok = CircuitBreaker.reset(cb)
+      assert CircuitBreaker.metrics(cb).generation == 4
+
+      GenServer.stop(cb)
+    end
+  end
+
+  describe "admission" do
+    test "an open breaker admits nothing, even with no probe running" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 60_000)
+      :ok = CircuitBreaker.trip(cb)
+
+      assert CircuitBreaker.call(cb, fn -> flunk("must not run") end) == {:error, :open}
+      assert CircuitBreaker.metrics(cb).half_open_calls == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "a result recorded after the breaker stopped is still returned" do
+      {:ok, cb} = CircuitBreaker.start_link()
+      Process.unlink(cb)
+
+      result =
+        CircuitBreaker.call(cb, fn ->
+          GenServer.stop(cb)
+          {:ok, :done}
+        end)
+
+      assert result == {:ok, :done}
+    end
+  end
 end
