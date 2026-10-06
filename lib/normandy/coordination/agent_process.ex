@@ -55,10 +55,12 @@ defmodule Normandy.Coordination.AgentProcess do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
@@ -340,19 +342,32 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @doc """
-  Updates the agent state.
+  Updates the agent config: `update_fn` gets the current
+  `%Normandy.Agents.BaseAgentConfig{}` and returns the new one.
 
-  Useful for modifying configuration or resetting state.
+  Raises `ArgumentError` when `update_fn` returns anything else; the process keeps its
+  config.
 
   ## Example
 
       :ok = AgentProcess.update_agent(pid, fn agent ->
-        %{agent | config: new_config}
+        %{agent | temperature: 0.2}
       end)
   """
-  @spec update_agent(GenServer.server(), (struct() -> struct())) :: :ok
-  def update_agent(server, update_fn) do
-    GenServer.call(server, {:update_agent, update_fn})
+  @spec update_agent(
+          GenServer.server(),
+          (BaseAgentConfig.t() -> BaseAgentConfig.t())
+        ) :: :ok
+  def update_agent(server, update_fn) when is_function(update_fn, 1) do
+    case GenServer.call(server, {:update_agent, update_fn}) do
+      :ok ->
+        :ok
+
+      {:not_a_config, type} ->
+        raise ArgumentError,
+              "Normandy.Coordination.AgentProcess.update_agent/2: the function must return a " <>
+                "%Normandy.Agents.BaseAgentConfig{}, got: #{type}"
+    end
   end
 
   @doc """
@@ -556,10 +571,30 @@ defmodule Normandy.Coordination.AgentProcess do
     {:reply, stats, state}
   end
 
+  # A result that is not a config is refused here, before it replaces the agent: the
+  # caller raises (update_agent/2), the process keeps running with its config. The
+  # reply names only its type (a config holds the client and its credentials).
   @impl true
-  def handle_call({:update_agent, update_fn}, _from, %{turn_engine: :server} = state) do
-    updated = update_fn.(state.agent)
+  def handle_call({:update_agent, update_fn}, _from, state) do
+    case update_fn.(state.agent) do
+      %BaseAgentConfig{} = updated -> put_agent(updated, state)
+      other -> {:reply, {:not_a_config, Describe.type_of(other)}, state}
+    end
+  end
 
+  @impl true
+  def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
+    {:reply, Turn.Session.approve(state.session, decisions), state}
+  end
+
+  @impl true
+  def handle_call({:approve, _decisions}, _from, state) do
+    {:reply, {:error, :inline_mode}, state}
+  end
+
+  # update_agent/2's new config. In :server mode the SessionStore owns the memory, so
+  # a changed memory is ignored; the session's next server start uses the new config.
+  defp put_agent(updated, %{turn_engine: :server} = state) do
     new_agent =
       if updated.memory != state.agent.memory do
         Logger.warning(
@@ -576,21 +611,7 @@ defmodule Normandy.Coordination.AgentProcess do
      %{state | agent: new_agent, session: Turn.Session.put_config(state.session, new_agent)}}
   end
 
-  @impl true
-  def handle_call({:update_agent, update_fn}, _from, state) do
-    updated_agent = update_fn.(state.agent)
-    {:reply, :ok, %{state | agent: updated_agent}}
-  end
-
-  @impl true
-  def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
-    {:reply, Turn.Session.approve(state.session, decisions), state}
-  end
-
-  @impl true
-  def handle_call({:approve, _decisions}, _from, state) do
-    {:reply, {:error, :inline_mode}, state}
-  end
+  defp put_agent(updated, state), do: {:reply, :ok, %{state | agent: updated}}
 
   @impl true
   def handle_cast({:run_async, input, reply_to}, state),

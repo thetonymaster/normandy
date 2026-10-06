@@ -491,7 +491,8 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `temprature:`, `system_prompt:` (use `prompt_specification:`), `tools:` (use
   `toolset:` or `register_tool/3`) and `max_messages:` (use
   `memory: AgentMemory.new_memory(n)`) used to be dropped silently.
-- A missing `:model` raises `"Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"` (1.x:
+- A missing `:model` raises
+  `"Normandy.Agents.BaseAgent.init/1: requires :model (a string), got none"` (1.x:
   `KeyError`); a missing `:client` raises `ArgumentError` (1.x: `KeyError`).
 - Values are checked: `:client` must be a struct whose module implements
   `Normandy.Agents.Model` (one that does not used to fail at the first LLM call),
@@ -499,9 +500,9 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `:prompt_specification`, `:toolset` and `:behaviours` their structs or `nil`,
   `:tool_context` a plain map (not a struct), `:name`/`:session_id` strings or
   `nil`, `:json_retry_max_attempts` a positive integer, guard lists `module | {module, opts}`.
-- `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
-  `:half_open_max_calls` only. `:name` is gone: a registered breaker name made a second
-  `init/1` with the same options crash.
+- `circuit_breaker:` (1.x `:circuit_breaker_options`, see §22) accepts `:failure_threshold`,
+  `:success_threshold`, `:timeout` and `:half_open_max_calls` only. `:name` is gone: a
+  registered breaker name made a second `init/1` with the same options crash.
 - A bad option raises before the circuit breaker starts, so it no longer leaves a linked
   breaker process behind.
 - The value of a credential-carrying option (`:client`, `:mcp_servers`) never appears in the
@@ -510,11 +511,12 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   keyword list raise `ArgumentError` instead of `FunctionClauseError`.
 - A DSL agent's `new/1` returns the agent (`agent = MyAgent.new(client: c)`); it returned
   `{:ok, agent}` and never `{:error, _}`. It takes the same options as `BaseAgent.init/1`
-  (top level or under `:override`) plus `:memory_store` and `:max_messages`, checks them the
-  same way, and its errors name `MyAgent.new/1`. A missing `:client` raises `ArgumentError`
-  (1.x: `KeyError`); an agent that declares no model and is given none in `new/1` raises `ArgumentError`
-  `"MyAgent.new/1: requires :model (a string), got none"` (1.x: `RuntimeError`
-  `"model is required in agent definition"`).
+  (top level or under `:override`, so `:session_id` too) plus `:memory_store` and
+  `:max_messages`, checks them the same way, and its errors name `MyAgent.new/1`. `:client`
+  goes at the top level only; under `:override` it raises, as in 1.x. A missing `:client`
+  raises `ArgumentError` (1.x: `KeyError`); an agent that declares no model and is given none
+  in `new/1` raises `ArgumentError` `"MyAgent.new/1: requires :model (a string), got none"`
+  (1.x: `RuntimeError` `"model is required in agent definition"`).
 
 ## New, non-breaking
 
@@ -728,6 +730,9 @@ session = Turn.Session.new(session_id: sid, config: config, store: store, regist
 - `AgentProcess` in `:server` mode builds its session in `start_link/1`: an invalid
   `:template_provider`, `:resume_policy`, `:approval_timeout_ms` ... stops the process at
   start instead of failing the first turn.
+- `AgentProcess.update_agent/2` raises `ArgumentError` in the caller when its function
+  returns anything but a `%BaseAgentConfig{}`; the process keeps its config (1.x stored the
+  value, and the next run failed).
 
 ## 27. Orchestrators: `execute(agents, input, opts)` and one result shape
 
@@ -830,6 +835,9 @@ in the caller, naming the function and the key:
 In 1.x most of these keys were ignored, so a typo silently kept the default. Each function's
 `## Options` docs list its keys, types and defaults.
 
+- `Turn.Supervisor.start_server/2` and `Turn.Supervisor.Horde.start_server/2` reject
+  `:name`: the supervisor names the server through the registry's `child_name/2` (a caller's
+  `:name` was replaced, or used as is with a registry without `child_name/2`).
 - `Turn.Server.start_link/1`, `Turn.Supervisor.start_server/2` and
   `Turn.Supervisor.Horde.start_server/2` raise in the caller. A missing `:store`, `:registry`
   or `:session_id` used to crash `Turn.Server.init/1` with a `KeyError`, which came back as the
@@ -894,8 +902,9 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   starts with `Normandy.Agents.BaseAgent.init/1: ` or, during a rebuild,
   `Normandy.Agents.ConfigTemplate.rebuild/3: ` (as do the other compactor checks there).
 - `AgentMessage.new/1` raises for a missing `:from` or `:to` with `ArgumentError` (was
-  `KeyError`), for a `:from`/`:to` that is not a string or an atom, a `:type` that is not an
-  atom or a string, and a `:metadata` that is not a plain map (each was stored as given).
+  `KeyError`), for a `:from`, `:to` or `:type` that is not a string or an atom, or is `nil`
+  (a `nil` `:type` was stored as `""`), and a `:metadata` that is not a plain map (each was
+  stored as given).
 - `AgentMemory.add_message/4`'s message for an unknown option now names the function.
 - `Coordination.Pattern.ok!/2` and `error!/2` check their options on every call, including
   when the result matches.
@@ -913,9 +922,10 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   string such as `"200000"` used to raise only mid-turn).
 - `SessionStore.InMemory.new/1` and `start_link/1`, `MemoryStore.InMemory.new/1` and
   `MemoryStore.ETS.new/1` take no options; a key raises (it was ignored).
-- `SessionRegistry.Redis.start_link/1` raises without `:conn` or `:url` (it crashed `init/1`
-  with a `KeyError`). `Cluster.child_specs/1` and `redis_child_specs/1` raise for a missing or
-  misspelled key; a `:redix` list without `:name` raises `ArgumentError` naming it.
+- `SessionRegistry.Redis.start_link/1` raises without `:conn` or `:url`, or with `conn: nil`
+  (it crashed `init/1` with a `KeyError`); `:conn` is a pid or a registered name.
+  `Cluster.child_specs/1` and `redis_child_specs/1` raise for a missing or misspelled key; a
+  `:redix` list without `:name` raises `ArgumentError` naming it.
 - The session and memory stores' Mnesia `create_tables/1`: `:copies` must be `:disc_copies` or
   `:ram_copies`.
 - `Normandy.Options`' docs list every timeout option and its default in one table.

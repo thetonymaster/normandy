@@ -44,17 +44,17 @@ defmodule Normandy.Coordination.AgentMessage do
 
   @new_opts_schema NimbleOptions.new!(
                      from: [
-                       type: {:or, [:string, :atom]},
+                       type: {:custom, __MODULE__, :string_or_atom, []},
                        required: true,
                        doc: "The sender's id."
                      ],
                      to: [
-                       type: {:or, [:string, :atom]},
+                       type: {:custom, __MODULE__, :string_or_atom, []},
                        required: true,
                        doc: "The recipient's id."
                      ],
                      type: [
-                       type: {:or, [:atom, :string]},
+                       type: {:custom, __MODULE__, :string_or_atom, []},
                        default: :request,
                        doc:
                          "`:request`, `:response`, `:broadcast` or `:error` (stored as a string)."
@@ -66,6 +66,21 @@ defmodule Normandy.Coordination.AgentMessage do
                        doc: "Extra data about the message."
                      ]
                    )
+
+  @doc false
+  # A NimbleOptions custom type: a string or an atom, but not nil (NimbleOptions' :atom
+  # admits nil, and a nil :from/:to/:type would be stored as given or as "").
+  @spec string_or_atom(term()) :: {:ok, String.t() | atom()} | {:error, String.t()}
+  def string_or_atom(value) when is_binary(value), do: {:ok, value}
+  def string_or_atom(value) when is_atom(value) and value != nil, do: {:ok, value}
+
+  def string_or_atom(value),
+    do: {:error, "expected a string or an atom other than nil, got: #{inspect_scalar(value)}"}
+
+  defp inspect_scalar(value) when is_map(value) or is_list(value) or is_tuple(value),
+    do: Normandy.Components.ContentBlock.Describe.type_of(value)
+
+  defp inspect_scalar(value), do: inspect(value)
 
   @doc """
   Creates a new agent message.

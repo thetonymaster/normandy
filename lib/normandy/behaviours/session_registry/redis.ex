@@ -39,7 +39,11 @@ if Code.ensure_loaded?(Redix) do
                                 required: true,
                                 doc: "The owner's registered name, which is also the handle."
                               ],
-                              conn: [type: :any, doc: "A started Redix connection (pid or name)."],
+                              conn: [
+                                type: {:custom, __MODULE__, :conn, []},
+                                type_doc: "`t:GenServer.server/0`",
+                                doc: "A started Redix connection (pid or name)."
+                              ],
                               url: [
                                 type: :string,
                                 type_doc: "`t:String.t/0`",
@@ -129,6 +133,22 @@ if Code.ensure_loaded?(Redix) do
 
       GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
     end
+
+    @doc false
+    # A NimbleOptions custom type: a pid or a registered name, never nil (a nil :conn
+    # would pass the :conn-or-:url check and then fail in init/1).
+    @spec conn(term()) :: {:ok, GenServer.server()} | {:error, String.t()}
+    def conn(conn) when is_pid(conn), do: {:ok, conn}
+    def conn(conn) when is_atom(conn) and conn != nil, do: {:ok, conn}
+    def conn({:global, _name} = conn), do: {:ok, conn}
+    def conn({:via, mod, _name} = conn) when is_atom(mod), do: {:ok, conn}
+    def conn({name, node} = conn) when is_atom(name) and is_atom(node), do: {:ok, conn}
+
+    def conn(other),
+      do:
+        {:error,
+         "expected a Redix connection (a pid or a registered name), got: " <>
+           Normandy.Components.ContentBlock.Describe.type_of(other)}
 
     @impl GenServer
     def init(opts) do

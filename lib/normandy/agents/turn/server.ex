@@ -295,7 +295,8 @@ defmodule Normandy.Agents.Turn.Server do
                               type: :any,
                               doc:
                                 "A `:gen_statem` server name. `Turn.Supervisor.start_server/2` " <>
-                                  "sets it from the registry's `child_name/2`."
+                                  "sets it from the registry's `child_name/2` and rejects one " <>
+                                  "passed to it."
                             ]
                           )
 

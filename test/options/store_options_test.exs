@@ -62,6 +62,17 @@ defmodule Normandy.Options.StoreOptionsTest do
                "connection) or :url"
   end
 
+  test "SessionRegistry.Redis.start_link/1 rejects conn: nil" do
+    error =
+      assert_raise ArgumentError, fn ->
+        RedisReg.start_link(name: :reg_x, namespace: "n", conn: nil)
+      end
+
+    assert error.message ==
+             "Normandy.Behaviours.SessionRegistry.Redis.start_link/1: invalid value for :conn " <>
+               "option: expected a Redix connection (a pid or a registered name), got: nil"
+  end
+
   test ":url, :redix and :templates are sensitive keys" do
     for key <- [:url, :redix, :templates], do: assert(key in Normandy.Options.sensitive_keys())
   end

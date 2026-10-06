@@ -24,6 +24,20 @@ defmodule Normandy.Coordination.AgentMessageTest do
                  fn -> AgentMessage.new(from: "a") end
   end
 
+  test "new/1 rejects nil for :from, :to and :type" do
+    for {key, opts} <- [
+          from: [from: nil, to: "b"],
+          to: [from: "a", to: nil],
+          type: [from: "a", to: "b", type: nil]
+        ] do
+      error = assert_raise ArgumentError, fn -> AgentMessage.new(opts) end
+
+      assert error.message =~
+               "Normandy.Coordination.AgentMessage.new/1: invalid value for #{inspect(key)} option: " <>
+                 "expected a string or an atom other than nil, got: nil"
+    end
+  end
+
   test "reply/2 swaps sender and recipient and marks a response" do
     original = AgentMessage.new(from: "a", to: "b")
 

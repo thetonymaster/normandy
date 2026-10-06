@@ -257,6 +257,20 @@ defmodule Normandy.Coordination.AgentProcessTest do
     end
   end
 
+  describe "update_agent/2 with a function that does not return an agent config" do
+    test "raises in the caller and keeps the process and its agent", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.AgentProcess.update_agent/2: the function must " <>
+                     "return a %Normandy.Agents.BaseAgentConfig{}, got: a map",
+                   fn -> AgentProcess.update_agent(pid, fn a -> Map.from_struct(a) end) end
+
+      assert Process.alive?(pid)
+      assert AgentProcess.get_agent(pid) == agent
+    end
+  end
+
   describe "stop/1" do
     test "stops agent process gracefully", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)

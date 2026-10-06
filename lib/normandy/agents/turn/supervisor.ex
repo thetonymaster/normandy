@@ -77,6 +77,7 @@ defmodule Normandy.Agents.Turn.Supervisor do
     server_opts =
       server_opts
       |> Options.validate!(Server.__opts_schema__(:start_link), {__MODULE__, :start_server, 2})
+      |> reject_name!()
       |> put_child_name()
 
     spec = %{
@@ -87,6 +88,18 @@ defmodule Normandy.Agents.Turn.Supervisor do
     }
 
     DynamicSupervisor.start_child(sup, spec)
+  end
+
+  # Turn.Server.start_link/1 takes :name, but here the registry names the server; a
+  # caller's :name would be replaced (or, with a self-registering registry, used instead).
+  defp reject_name!(opts) do
+    if Keyword.has_key?(opts, :name) do
+      raise ArgumentError,
+            "#{inspect(__MODULE__)}.start_server/2: :name is not an option here; the " <>
+              "supervisor names the server through the registry's child_name/2"
+    end
+
+    opts
   end
 
   defp put_child_name(opts) do

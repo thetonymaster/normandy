@@ -49,6 +49,24 @@ defmodule Normandy.Options.TurnOptionsTest do
       assert %{active: 0} = DynamicSupervisor.count_children(sup)
     end
 
+    for mod <- [Turn.Supervisor, Turn.Supervisor.Horde] do
+      test "#{inspect(mod)}.start_server/2 rejects :name: the supervisor names the server" do
+        opts = [
+          session_id: "s-named",
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          name: :my_server
+        ]
+
+        error =
+          assert_raise ArgumentError, fn -> unquote(mod).start_server(:no_supervisor, opts) end
+
+        assert error.message ==
+                 "#{inspect(unquote(mod))}.start_server/2: :name is not an option here; the " <>
+                   "supervisor names the server through the registry's child_name/2"
+      end
+    end
+
     test "a :config that is not a BaseAgentConfig is rejected without echoing it" do
       error =
         assert_raise ArgumentError, fn ->
