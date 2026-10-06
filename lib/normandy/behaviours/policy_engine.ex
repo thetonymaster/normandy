@@ -54,6 +54,11 @@ defmodule Normandy.Behaviours.PolicyEngine do
       * `:default_action` (required) — action when no rule matches. There is no
         implicit `:allow`: a policy states what an unmatched call gets.
 
+    A rule sees the tool's name only. An MCP server or a remote A2A agent chooses its own
+    tools' names, so match those on the prefix you gave them (`"srv__*"`, see
+    `Normandy.MCP.ToolWrapper`'s "Tool names and policy rules"), never on a name such as
+    `"read_*"` that a server can choose to match.
+
     A malformed ruleset raises `ArgumentError`: when the agent is built
     (`validate_opts!/1`), and again in `check/2`, which the dispatch chokepoint
     turns into a denial. It never fails open.

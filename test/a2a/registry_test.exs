@@ -18,6 +18,7 @@ defmodule Normandy.A2A.RegistryTest do
     test "an agent whose tool name the API would refuse is an error, not a raise" do
       assert {:error, {:invalid_tool_name, name}} =
                A2ARegistry.discover_and_register(Toolset.new(), "http://agent.test",
+                 prefix: "a2a",
                  transport_opts: [transport: LongNameTransport]
                )
 
@@ -25,7 +26,7 @@ defmodule Normandy.A2A.RegistryTest do
     end
 
     test ":timeout is each tool's registration timeout; 60 s when not given" do
-      opts = [transport_opts: [transport: OkTransport]]
+      opts = [prefix: "a2a", transport_opts: [transport: OkTransport]]
 
       assert {:ok, toolset} =
                A2ARegistry.discover_and_register(
@@ -46,7 +47,7 @@ defmodule Normandy.A2A.RegistryTest do
   describe "from_agent_card/3" do
     test "creates single tool for agent with no skills" do
       card = AgentCard.new("Agent", "A simple agent")
-      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
+      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a", prefix: "a2a")
 
       assert length(tools) == 1
       [tool] = tools
@@ -60,7 +61,7 @@ defmodule Normandy.A2A.RegistryTest do
         |> AgentCard.add_skill("search", "Search the web")
         |> AgentCard.add_skill("summarize", "Summarize text")
 
-      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
+      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a", prefix: "a2a")
 
       assert length(tools) == 2
       skill_ids = Enum.map(tools, & &1.skill_id)
@@ -71,7 +72,11 @@ defmodule Normandy.A2A.RegistryTest do
     test "passes options through" do
       card = AgentCard.new("Agent", "An agent")
 
-      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a", auth_token: "tok")
+      tools =
+        A2ARegistry.from_agent_card(card, "https://example.com/a2a",
+          prefix: "a2a",
+          auth_token: "tok"
+        )
 
       [tool] = tools
       assert tool.auth_token == "tok"
@@ -84,7 +89,7 @@ defmodule Normandy.A2A.RegistryTest do
         AgentCard.new("My Agent", "Does things")
         |> AgentCard.add_skill("search", "Search")
 
-      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a")
+      tools = A2ARegistry.from_agent_card(card, "https://example.com/a2a", prefix: "a2a")
       registry = Toolset.new(tools)
 
       assert Toolset.count(registry) == 1

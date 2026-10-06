@@ -17,14 +17,9 @@ defmodule Normandy.MCP.ToolWrapper do
         input_schema: %{"type" => "object", "properties" => %{"query" => %{"type" => "string"}}}
       }
 
-      wrapper = %ToolWrapper{
-        adapter: Claudio.MCP.Adapters.ExMCP,
-        client: mcp_client_pid,
-        tool: mcp_tool,
-        prefix: "my_server"
-      }
+      wrapper = ToolWrapper.new(Claudio.MCP.Adapters.ExMCP, mcp_client_pid, mcp_tool, prefix: "web")
 
-      # Register in agent
+      # The model sees the tool as "web__search".
       agent = BaseAgent.register_tool(agent, wrapper)
 
   ## Results
@@ -33,6 +28,32 @@ defmodule Normandy.MCP.ToolWrapper do
   newlines, and a one-line `[<type> content omitted]` note for each image, audio or
   resource block. A result with `isError: true` is an error result (`is_error` on the
   `tool_result`). A result in no known shape (no `content` list) is passed on as it is.
+
+  ## Tool names and policy rules
+
+  The server chooses its tools' names, so a name says nothing about what a tool does. A
+  `Normandy.Behaviours.PolicyEngine.Ruleset` rule matches the name only: a server that
+  names a destructive tool `read_and_purge` matches the rule `"read_*"`. That is why
+  `:prefix` is required. The model sees `prefix <> "__" <> name`, so the rule `"web__*"`
+  matches exactly the tools of the server you gave the prefix `"web"` (and any local tool
+  you chose to name `web__...`).
+
+  A prefix is letters, digits, `-` and single `_` (no `__`, no `_` at either end), at
+  most 61 bytes, so the first `__` in a name always ends the prefix. The whole name must
+  still be a valid tool name (`^[a-zA-Z0-9_-]{1,64}$`): with a prefix, a server's tool
+  name can be at most `62 - byte_size(prefix)` bytes, and a server with a longer or
+  dotted name fails registration (`{:error, {:invalid_tool_name, name}}`).
+
+  `prefix: false` keeps the server's own names. Use it only for a server you control, and
+  write no name-glob rule such a server could match.
+
+  ## Trust
+
+  An MCP server is outside your trust boundary. Its tool descriptions and input schemas
+  are sent to the model on every request, and its results become the model's input: each
+  is a prompt-injection channel that Normandy passes through unchanged. Connect servers
+  you trust as much as your own tools' code, and gate tools that change state with a
+  policy (`:require_approval`) rather than trusting a server's names or descriptions.
 
   ## Trace context
 
@@ -48,6 +69,7 @@ defmodule Normandy.MCP.ToolWrapper do
 
   use Normandy.Tool
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
   alias Normandy.Tools.Context
 
@@ -55,21 +77,49 @@ defmodule Normandy.MCP.ToolWrapper do
           adapter: module(),
           client: term(),
           tool: Claudio.MCP.Client.Tool.t(),
-          prefix: String.t() | nil
+          prefix: String.t() | false
         }
 
+  @enforce_keys [:adapter, :client, :tool, :prefix]
   defstruct [:adapter, :client, :tool, :prefix]
+
+  @prefix_format ~r/\A[a-zA-Z0-9-]+(?:_[a-zA-Z0-9-]+)*\z/
+  @max_prefix_bytes 61
 
   @new_opts_schema NimbleOptions.new!(
                      prefix: [
-                       type: :string,
-                       doc: "Namespaces the tool's name as `prefix__name`."
+                       type: {:custom, __MODULE__, :validate_prefix, []},
+                       type_doc: "`t:String.t/0` or `false`",
+                       required: true,
+                       doc:
+                         "The server's namespace: the model sees each tool as `prefix__name`. " <>
+                           "Letters, digits, `-` and single `_` (no `__`, no `_` at either " <>
+                           "end), at most 61 bytes. `false` keeps the server's own names " <>
+                           "(see \"Tool names and policy rules\")."
                      ]
                    )
 
   @doc false
   # Normandy.MCP.Registry takes its options from here (one source).
   def __opts_schema__(:new), do: @new_opts_schema
+
+  @doc false
+  # The NimbleOptions custom type of :prefix, here and on Normandy.A2A.AgentTool.
+  @spec validate_prefix(term()) :: {:ok, String.t() | false} | {:error, String.t()}
+  def validate_prefix(false), do: {:ok, false}
+
+  def validate_prefix(prefix) when is_binary(prefix) do
+    if byte_size(prefix) <= @max_prefix_bytes and Regex.match?(@prefix_format, prefix),
+      do: {:ok, prefix},
+      else: {:error, prefix_rule() <> ", got: #{inspect(prefix)}"}
+  end
+
+  def validate_prefix(other), do: {:error, prefix_rule() <> ", got: " <> Describe.type_of(other)}
+
+  defp prefix_rule do
+    "expected false or a prefix of letters, digits, - and single _ (no __, no _ at either " <>
+      "end), at most #{@max_prefix_bytes} bytes"
+  end
 
   @doc """
   Creates a new ToolWrapper for an MCP tool.
@@ -93,13 +143,15 @@ defmodule Normandy.MCP.ToolWrapper do
       adapter: adapter,
       client: client,
       tool: tool,
-      prefix: Keyword.get(opts, :prefix)
+      prefix: Keyword.fetch!(opts, :prefix)
     }
   end
 
   @impl Normandy.Tool
-  def name(%__MODULE__{tool: tool, prefix: nil}), do: tool.name
-  def name(%__MODULE__{tool: tool, prefix: prefix}), do: "#{prefix}__#{tool.name}"
+  def name(%__MODULE__{tool: tool, prefix: false}), do: tool.name
+
+  def name(%__MODULE__{tool: tool, prefix: prefix}) when is_binary(prefix),
+    do: prefix <> "__" <> tool.name
 
   @impl Normandy.Tool
   def description(%__MODULE__{tool: %{description: nil} = tool}), do: "MCP tool: #{tool.name}"

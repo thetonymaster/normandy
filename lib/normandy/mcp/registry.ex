@@ -16,6 +16,9 @@ defmodule Normandy.MCP.Registry do
         prefix: "my_server"
       )
 
+  `:prefix` is required (`false` keeps the server's names): see
+  `Normandy.MCP.ToolWrapper`'s "Tool names and policy rules" and "Trust". Every
+  description, input schema and result the server sends reaches the model unchanged.
   """
 
   alias Normandy.MCP.ToolWrapper

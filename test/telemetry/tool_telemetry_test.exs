@@ -134,7 +134,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
         input_schema: %{"type" => "object"}
       }
 
-      config = config([ToolWrapper.new(MockMCPAdapter, nil, mcp_tool)])
+      config = config([ToolWrapper.new(MockMCPAdapter, nil, mcp_tool, prefix: false)])
       attach(@span, config.name)
       call = %ToolCall{id: "c3", name: "search", input: %{}}
 

@@ -68,13 +68,23 @@ defmodule NormandyTest.Tools.ToolsetTest do
     end
 
     test "a name the API would reject raises at registration" do
-      dotted = %Normandy.MCP.ToolWrapper{tool: %{name: "web.search"}}
+      dotted = %Normandy.MCP.ToolWrapper{
+        adapter: nil,
+        client: nil,
+        tool: %{name: "web.search"},
+        prefix: false
+      }
 
       assert_raise ArgumentError, ~r/"web.search" is not a valid tool name/, fn ->
         Toolset.register(Toolset.new(), dotted)
       end
 
-      too_long = %Normandy.MCP.ToolWrapper{tool: %{name: String.duplicate("a", 65)}}
+      too_long = %Normandy.MCP.ToolWrapper{
+        adapter: nil,
+        client: nil,
+        tool: %{name: String.duplicate("a", 65)},
+        prefix: false
+      }
 
       assert_raise ArgumentError, ~r/is not a valid tool name/, fn ->
         Toolset.register(Toolset.new(), too_long)
@@ -83,7 +93,13 @@ defmodule NormandyTest.Tools.ToolsetTest do
 
     test "a 64-character name with dashes and underscores is accepted" do
       name = "a-b_" <> String.duplicate("c", 60)
-      tool = %Normandy.MCP.ToolWrapper{tool: %{name: name}}
+
+      tool = %Normandy.MCP.ToolWrapper{
+        adapter: nil,
+        client: nil,
+        tool: %{name: name},
+        prefix: false
+      }
 
       assert Toolset.has_tool?(Toolset.register(Toolset.new(), tool), name)
     end

@@ -12,9 +12,11 @@ defmodule Normandy.A2A.Registry do
       {:ok, registry} = A2ARegistry.discover_and_register(
         registry,
         "https://agent.example.com",
+        prefix: "research",
         auth_token: "bearer-token"
       )
 
+  `:prefix` is required: see `Normandy.A2A.AgentTool`'s "Tool names" and "Trust".
   """
 
   alias Claudio.A2A.Client

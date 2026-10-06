@@ -67,7 +67,7 @@ S.narrate("MCP: spawn the stdio city server and discover its tools.")
 
 S.assert!("MCP tool registered with its prefix", Normandy.Tools.Toolset.has_tool?(registry, "city__lookup_city"), inspect(registry))
 
-harbour = Normandy.A2A.AgentTool.new(base <> "/a2a", card, transport_opts: [receive_timeout: 60_000])
+harbour = Normandy.A2A.AgentTool.new(base <> "/a2a", card, prefix: "harbour", transport_opts: [receive_timeout: 60_000])
 
 agent =
   BaseAgent.init(%{client: S.client(), model: S.model(), max_tokens: 300, name: "s12", toolset: registry, max_tool_iterations: 4})

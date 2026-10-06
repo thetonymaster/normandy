@@ -65,7 +65,7 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
     AgentTool.new(
       "http://localhost:#{bypass.port}/a2a",
       AgentCard.new("remote", "a remote agent"),
-      opts
+      [prefix: "a2a"] ++ opts
     )
   end
 

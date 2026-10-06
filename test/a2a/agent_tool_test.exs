@@ -15,7 +15,7 @@ defmodule Normandy.A2A.AgentToolTest do
       |> AgentCard.add_skill("web_search", "Search the web", tags: ["search"])
       |> AgentCard.add_skill("summarize", "Summarize text", tags: ["nlp"])
 
-    tool = AgentTool.new("https://agent.example.com/a2a", card)
+    tool = AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a")
 
     {:ok, card: card, card_with_skills: card_with_skills, tool: tool}
   end
@@ -33,6 +33,7 @@ defmodule Normandy.A2A.AgentToolTest do
     test "creates tool with options", %{card: card} do
       tool =
         AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
           skill_id: "web_search",
           auth_token: "my-token"
         )
@@ -44,7 +45,7 @@ defmodule Normandy.A2A.AgentToolTest do
     test ":timeout is a registration option now", %{card: card} do
       error =
         assert_raise ArgumentError, fn ->
-          AgentTool.new("https://agent.example.com/a2a", card, timeout: 30_000)
+          AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a", timeout: 30_000)
         end
 
       assert error.message ==
@@ -67,7 +68,7 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "tool_name with skill", %{card: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "web_search")
       assert Tool.name(tool) == "a2a__research_agent__web_search"
     end
 
@@ -78,7 +79,7 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "tool_description with matching skill", %{card_with_skills: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "web_search")
 
       assert Tool.description(tool) ==
                "Sends a message to the remote agent Research Agent (skill web_search) and " <>
@@ -86,7 +87,7 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "tool_description with non-matching skill", %{card: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "unknown")
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "unknown")
 
       assert Tool.description(tool) ==
                "Sends a message to the remote agent Research Agent (skill unknown) and " <>
@@ -95,7 +96,7 @@ defmodule Normandy.A2A.AgentToolTest do
 
     test "the card's text is cut to 1_000 characters" do
       card = AgentCard.new("Chatty", String.duplicate("é", 1_200))
-      tool = AgentTool.new("https://example.com/a2a", card)
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a")
 
       assert Tool.description(tool) ==
                "Sends a message to the remote agent Chatty and returns its reply. " <>
@@ -222,6 +223,7 @@ defmodule Normandy.A2A.AgentToolTest do
     test "does not leak auth_token in inspect output", %{card: card} do
       tool =
         AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
           auth_token: "bearer-secret-leak-canary"
         )
 
@@ -232,7 +234,11 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "still allows direct auth_token access after redaction", %{card: card} do
-      tool = AgentTool.new("https://agent.example.com/a2a", card, auth_token: "bearer-x")
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
+          auth_token: "bearer-x"
+        )
 
       assert tool.auth_token == "bearer-x"
       assert Map.get(tool, :auth_token) == "bearer-x"

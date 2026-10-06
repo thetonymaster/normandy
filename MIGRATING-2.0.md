@@ -1236,6 +1236,38 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   property's description (for example "Postal code. Must match the regular expression
   ^[0-9]{5}$."). The answer is still validated against them.
 
+## 37. Security hardening
+
+| 1.x | 2.0 |
+|---|---|
+| `MCP.ToolWrapper.new/4`, `MCP.Registry.discover_and_register/4`, `MCP.Registry.wrap_tools/4`, `BaseAgent.register_mcp_tools/4`: `:prefix` optional; without it the model saw the server's own names | `:prefix` required: a string of letters, digits, `-` and single `_` (no `__`, no `_` at either end, at most 61 bytes), or `false` to keep the server's names. Tools are named `prefix__name` |
+| `A2A.AgentTool.new/3`, `A2A.Registry.from_agent_card/3`, `A2A.Registry.discover_and_register/3`: tools named `a2a__<card>[__<skill>]` | `:prefix` required, same rule. `prefix: "a2a"` gives the 1.x names; `false` gives `<card>[__<skill>]` |
+| `%MCP.ToolWrapper{...}` built without `:prefix` | Does not compile (`@enforce_keys`); use `ToolWrapper.new/4` |
+
+```elixir
+{:ok, agent} = BaseAgent.register_mcp_tools(agent, Claudio.MCP.Adapters.ExMCP, client, prefix: "docs")
+tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
+```
+
+- **Check your policy rules before you upgrade.** `PolicyEngine.Ruleset` matches tool names,
+  and rules are stored with each session's template. With a prefix, an MCP tool that was
+  `delete_file` is `docs__delete_file`: a rule `"delete_*"` no longer matches it. Under
+  `default_action: :allow` a `:deny` rule that stops matching **lets the call through**;
+  under a stricter default an `:allow` rule that stops matching makes calls need approval or
+  be denied. Rewrite such rules on the prefix (`"docs__*"`, `"docs__delete_*"`), or pass
+  `prefix: false` for that server (and `prefix: "a2a"` for A2A tools) to keep the old names.
+  A server chooses its own tool names, so a rule like `"read_*"` matches any server tool that
+  calls itself `read_...`, whatever it does: match remote tools on their prefix only.
+- Names are matched elsewhere too: `A2A.Server.build_agent_card/2`'s `:expose_tools`, your
+  hooks and budget code that read `call.name`, and approvals parked under an old name (they
+  are answered "not found" after the upgrade, so approve or reject parked calls before you
+  deploy).
+- A prefix plus `__` takes room from the 64-character tool name limit: a server whose tool
+  name is longer than `62 - byte_size(prefix)` bytes fails registration with
+  `{:error, {:invalid_tool_name, name}}`, as a dotted name already does.
+- MCP and A2A tool descriptions, schemas and results come from outside your trust boundary
+  and reach the model unchanged. See "Trust" in the `ToolWrapper` and `AgentTool` docs.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

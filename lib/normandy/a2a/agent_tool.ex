@@ -11,13 +11,35 @@ defmodule Normandy.A2A.AgentTool do
 
       {:ok, card} = Claudio.A2A.Client.discover("https://agent.example.com")
 
-      tool = AgentTool.new("https://agent.example.com/a2a", card, auth_token: "bearer-token")
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "research",
+          auth_token: "bearer-token"
+        )
 
+      # The model sees the tool as "research__<the card's name>".
       agent = BaseAgent.register_tool(agent, tool, timeout: 60_000)
 
   The tool polls a remote task until it ends; the registration `:timeout` (default
   `Normandy.Tools.Executor.default_timeout/0`, 30 s) bounds the whole call, so give a
   remote agent that works for minutes a longer one.
+
+  ## Tool names
+
+  The tool's name is `prefix <> "__" <> card name` (plus `"__" <> skill id` for a skill),
+  the card name and skill id lowercased with every run of other characters turned into one
+  `_`. The remote agent chooses its card, so `:prefix` is required, with the same rule as
+  `Normandy.MCP.ToolWrapper`'s (see "Tool names and policy rules" there): a policy rule
+  such as `"research__*"` then matches exactly this remote's tools. `prefix: "a2a"` gives
+  the names Normandy 1.x used; `prefix: false` gives the bare card name.
+
+  ## Trust
+
+  A remote agent is outside your trust boundary. Its card's name, description and skill
+  descriptions are sent to the model as this tool's name and description, and its replies
+  become the model's input: each is a prompt-injection channel that Normandy passes through
+  unchanged. Register remotes you trust, and gate this tool with a policy when its replies
+  can lead the model to act.
   """
 
   use Normandy.Tool
@@ -34,21 +56,33 @@ defmodule Normandy.A2A.AgentTool do
   @type t :: %__MODULE__{
           endpoint: String.t(),
           agent_card: Claudio.A2A.AgentCard.t(),
+          prefix: String.t() | false,
           skill_id: String.t() | nil,
           auth_token: String.t() | nil,
           transport_opts: keyword()
         }
 
   @derive {Inspect, except: [:auth_token]}
+  @enforce_keys [:endpoint, :agent_card, :prefix]
   defstruct [
     :endpoint,
     :agent_card,
+    :prefix,
     :skill_id,
     :auth_token,
     transport_opts: []
   ]
 
   @new_opts_schema NimbleOptions.new!(
+                     prefix: [
+                       type: {:custom, Normandy.MCP.ToolWrapper, :validate_prefix, []},
+                       type_doc: "`t:String.t/0` or `false`",
+                       required: true,
+                       doc:
+                         "The remote's namespace: the tool is named `prefix__card_name`. " <>
+                           "The rule of `Normandy.MCP.ToolWrapper.new/4`'s `:prefix`; " <>
+                           "`\"a2a\"` gives 1.x's names, `false` the bare card name."
+                     ],
                      skill_id: [
                        type: :string,
                        doc: "The skill to expose (default: general access to the agent)."
@@ -97,6 +131,7 @@ defmodule Normandy.A2A.AgentTool do
     %__MODULE__{
       endpoint: endpoint,
       agent_card: agent_card,
+      prefix: Keyword.fetch!(opts, :prefix),
       skill_id: Keyword.get(opts, :skill_id),
       auth_token: Keyword.get(opts, :auth_token),
       transport_opts: Keyword.fetch!(opts, :transport_opts)
@@ -204,11 +239,15 @@ defmodule Normandy.A2A.AgentTool do
   end
 
   @impl Normandy.Tool
-  def name(%__MODULE__{agent_card: card, skill_id: nil}),
-    do: "a2a__#{sanitize_name(card.name)}"
+  def name(%__MODULE__{prefix: prefix} = tool), do: prefixed(prefix, base_name(tool))
 
-  def name(%__MODULE__{agent_card: card, skill_id: skill_id}),
-    do: "a2a__#{sanitize_name(card.name)}__#{sanitize_name(skill_id)}"
+  defp base_name(%__MODULE__{agent_card: card, skill_id: nil}), do: sanitize_name(card.name)
+
+  defp base_name(%__MODULE__{agent_card: card, skill_id: skill_id}),
+    do: "#{sanitize_name(card.name)}__#{sanitize_name(skill_id)}"
+
+  defp prefixed(false, name), do: name
+  defp prefixed(prefix, name) when is_binary(prefix), do: prefix <> "__" <> name
 
   # The card is the remote side's own text: it is quoted as the agent's self-description,
   # cut to @max_card_text characters, never presented as an instruction of this agent's.

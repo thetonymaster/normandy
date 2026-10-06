@@ -186,7 +186,9 @@ defmodule Normandy.Options.IntegrationOptionsTest do
     end
 
     test "AgentTool.new/3 and WindowManager.new/1 take their options as a map too" do
-      assert %AgentTool{skill_id: "s"} = AgentTool.new("http://a", nil, %{skill_id: "s"})
+      assert %AgentTool{skill_id: "s"} =
+               AgentTool.new("http://a", nil, %{prefix: "a2a", skill_id: "s"})
+
       assert %WindowManager{max_tokens: 1000} = WindowManager.new(%{max_tokens: 1000})
 
       assert_raise ArgumentError,

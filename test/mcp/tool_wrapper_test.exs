@@ -49,7 +49,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
       }
     }
 
-    wrapper = ToolWrapper.new(MockAdapter, :mock_client, tool)
+    wrapper = ToolWrapper.new(MockAdapter, :mock_client, tool, prefix: false)
     {:ok, wrapper: wrapper, tool: tool}
   end
 
@@ -58,7 +58,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
       assert wrapper.adapter == MockAdapter
       assert wrapper.client == :mock_client
       assert wrapper.tool.name == "search"
-      assert wrapper.prefix == nil
+      assert wrapper.prefix == false
       refute Map.has_key?(wrapper, :input)
     end
 
@@ -70,7 +70,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
   end
 
   describe "Normandy.Tool callbacks" do
-    test "tool_name without prefix", %{wrapper: wrapper} do
+    test "tool_name with prefix: false", %{wrapper: wrapper} do
       assert Tool.name(wrapper) == "search"
     end
 
@@ -85,7 +85,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
     end
 
     test "tool_description falls back for nil", %{tool: tool} do
-      wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | description: nil})
+      wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | description: nil}, prefix: false)
       assert Tool.description(wrapper) == "MCP tool: search"
     end
 
@@ -107,7 +107,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
         input_schema: %{}
       }
 
-      wrapper = ToolWrapper.new(MockAdapter, :client, tool)
+      wrapper = ToolWrapper.new(MockAdapter, :client, tool, prefix: false)
 
       assert {:error, msg} = Tool.run(wrapper, %Context{tool_call_id: "t", input: %{}})
       assert msg =~ "MCP tool 'failing_tool' failed"
@@ -125,7 +125,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
 
   describe "CallToolResult normalization (AX-14)" do
     defp run_returning(result, tool) do
-      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool)
+      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool, prefix: false)
       Tool.run(wrapper, %Context{tool_call_id: "t", input: %{}})
     end
 
@@ -179,7 +179,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
         "isError" => true
       }
 
-      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool)
+      wrapper = ToolWrapper.new(MockAdapter, {:returns, result}, tool, prefix: false)
       config = %{name: "a", toolset: Toolset.new([wrapper])}
       call = %ToolCall{id: "e1", name: "search", input: %{"query" => "x"}}
 
@@ -206,7 +206,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
 
     # A Claudio %MCP.Client.Tool{} the server sent no schema for has input_schema nil.
     test "a tool with no input schema answers the call with an error result", %{tool: tool} do
-      wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | input_schema: nil})
+      wrapper = ToolWrapper.new(MockAdapter, :client, %{tool | input_schema: nil}, prefix: false)
       config = %{name: "a", toolset: Toolset.new([wrapper])}
       call = %ToolCall{id: "m2", name: "search", input: %{"query" => "x"}}
 
@@ -241,7 +241,7 @@ defmodule Normandy.MCP.ToolWrapperTest do
         input_schema: %{"type" => "object"}
       }
 
-      wrapper = ToolWrapper.new(MockAdapter, :client, tool)
+      wrapper = ToolWrapper.new(MockAdapter, :client, tool, prefix: false)
       registry = Toolset.new([wrapper])
       schemas = Toolset.to_tool_schemas(registry)
 

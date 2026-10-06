@@ -86,7 +86,7 @@ defmodule Normandy.A2A.ServerTest do
         input_schema: %{}
       }
 
-      wrapper = ToolWrapper.new(MockMCPAdapter, :client, tool)
+      wrapper = ToolWrapper.new(MockMCPAdapter, :client, tool, prefix: false)
       registry = Toolset.new([wrapper])
       config = %{build_minimal_config() | toolset: registry}
 
@@ -223,11 +223,16 @@ defmodule Normandy.A2A.ServerTest do
   defp two_tool_registry do
     tools =
       for {name, desc} <- [{"search", "Search"}, {"lookup", "Look up"}] do
-        ToolWrapper.new(MockMCPAdapter, :client, %Claudio.MCP.Client.Tool{
-          name: name,
-          description: desc,
-          input_schema: %{}
-        })
+        ToolWrapper.new(
+          MockMCPAdapter,
+          :client,
+          %Claudio.MCP.Client.Tool{
+            name: name,
+            description: desc,
+            input_schema: %{}
+          },
+          prefix: false
+        )
       end
 
     Toolset.new(tools)
