@@ -956,6 +956,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 
 ## New, non-breaking
 
+- `[:normandy, :circuit_breaker, :state_change]` and `[:normandy, :retry, :attempt]` telemetry events (see the `Normandy.Telemetry` catalogue); breaker and Retry log lines carry structured metadata and name the breaker.
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
   (`:adaptive | :disabled`), `:thinking_display`, `:effort`, `:speed`, `:inference_geo`,
   `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.

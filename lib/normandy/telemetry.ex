@@ -248,6 +248,27 @@ defmodule Normandy.Telemetry do
   A truncated string was repaired and the parse succeeded. Measurement `recovered: 1`.
   Metadata: `strategy`, `byte_size_before`, `byte_size_after`.
 
+  ### `[:normandy, :circuit_breaker, :state_change]`
+
+  A circuit breaker changed state. Measurements: `count: 1`, `failure_count` (failures
+  counted in the state it left). Metadata: `key` (a shared breaker's
+  `Normandy.Resilience.CircuitBreaker.key/3`: client module, endpoint without credentials
+  or query, model and breaker options; `nil` for a breaker started with `start_link/1`),
+  `name` (`start_link/1`'s `:name`, else `nil`), `from` and `to` (`:closed | :open |
+  :half_open`), `reason` (`:failure_threshold | :timeout | :probe_success | :probe_failure
+  | :probe_down | :reset | :trip`). Emitted in the breaker's process, so outside the
+  caller's trace context; the open-to-half-open change is emitted by the first admission
+  (or `state/1`, `metrics/1`) after the open window.
+
+  ### `[:normandy, :retry, :attempt]`
+
+  A failed attempt that `Normandy.Resilience.Retry` will retry, emitted in the caller's
+  process before the backoff sleep. Measurements: `attempt` (the attempt that failed,
+  from 1), `max_attempts`, `delay_ms`. Metadata: `error_type` (an `LLMError`'s `type`, an
+  exception's module, `:exit`, `:throw`, `:unexpected_return`, an atom error itself, else
+  `:error`). The last attempt, and an error that is not retried, emit nothing. LLM calls
+  also emit one `[:normandy, :llm, :request]` span per attempt.
+
   ## Turn.Server
 
   `Turn.Server` is a `:gen_statem` whose turn spans several callbacks, so it emits the

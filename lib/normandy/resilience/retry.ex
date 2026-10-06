@@ -214,17 +214,36 @@ defmodule Normandy.Resilience.Retry do
   defp retry_or_fail(fun, config, attempt, errors, error) do
     if attempt < config.max_attempts and retryable?(error, config) do
       delay = calculate_delay(attempt, config)
+      type = error_type(error)
+
+      :telemetry.execute(
+        [:normandy, :retry, :attempt],
+        %{attempt: attempt, max_attempts: config.max_attempts, delay_ms: delay},
+        %{error_type: type}
+      )
+
+      # Metadata for the host's log formatter, built apart from the call as BaseAgent's
+      # lifecycle logs do (Normandy configures no Logger metadata keys of its own).
+      metadata = [
+        attempt: attempt,
+        max_attempts: config.max_attempts,
+        delay_ms: delay,
+        error_type: type
+      ]
 
       Logger.warning(
         "Retry attempt #{attempt}/#{config.max_attempts} failed: #{describe(error)}. " <>
-          "Retrying in #{delay}ms..."
+          "Retrying in #{delay}ms...",
+        metadata
       )
 
       Process.sleep(delay)
       do_retry(fun, config, attempt + 1, [error | errors])
     else
-      if attempt < config.max_attempts,
-        do: Logger.warning("Non-retryable error: #{describe(error)}")
+      if attempt < config.max_attempts do
+        metadata = [error_type: error_type(error)]
+        Logger.warning("Non-retryable error: #{describe(error)}", metadata)
+      end
 
       {:error, {error, attempt, Enum.reverse([error | errors])}}
     end
@@ -247,6 +266,17 @@ defmodule Normandy.Resilience.Retry do
     do: "{#{inspect(elem(tuple, 0))}, ...}"
 
   defp describe(_error), do: "a returned error"
+
+  # A failure's type for telemetry and log metadata: never its message or payload.
+  defp error_type(%LLMError{type: type}), do: type
+
+  defp error_type({:exception, exception, _stacktrace}) when is_exception(exception),
+    do: exception.__struct__
+
+  defp error_type({kind, _payload}) when kind in [:exit, :throw, :unexpected_return], do: kind
+  defp error_type(%module{} = exception) when is_exception(exception), do: module
+  defp error_type(atom) when is_atom(atom), do: atom
+  defp error_type(_error), do: :error
 
   # Runs the function, turning a raise, exit or throw into an error value.
   defp execute_safely(fun) do

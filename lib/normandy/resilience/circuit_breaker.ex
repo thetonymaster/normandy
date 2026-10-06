@@ -598,6 +598,7 @@ defmodule Normandy.Resilience.CircuitBreaker do
   # results are stale; their monitors would otherwise free slots of the new window).
   defp transition(state, to, reason) do
     from = state.state
+    failures = state.failure_count
 
     Enum.each(state.probes, fn {ref, _pid} -> Process.demonitor(ref, [:flush]) end)
 
@@ -616,12 +617,24 @@ defmodule Normandy.Resilience.CircuitBreaker do
         :closed -> %{state | failure_count: 0, opened_at: nil}
       end
 
-    log_transition(state, from, to, reason)
+    report_transition(state, from, to, reason, failures)
     state
   end
 
-  defp log_transition(_state, from, to, reason) do
+  # The key (or name) is safe to show: key/3 keeps no credential in it.
+  defp report_transition(state, from, to, reason, failures) do
+    :telemetry.execute(
+      [:normandy, :circuit_breaker, :state_change],
+      %{count: 1, failure_count: failures},
+      %{key: state.key, name: state.name, from: from, to: to, reason: reason}
+    )
+
     level = if to == :open, do: :warning, else: :info
-    Logger.log(level, "Circuit breaker #{from} -> #{to} (#{reason})")
+    breaker = inspect(state.key || state.name)
+
+    # Metadata for the host's log formatter, built apart from the call as BaseAgent's
+    # lifecycle logs do (Normandy configures no Logger metadata keys of its own).
+    metadata = [circuit_breaker: breaker, from: from, to: to, reason: reason]
+    Logger.log(level, "Circuit breaker #{breaker} #{from} -> #{to} (#{reason})", metadata)
   end
 end
