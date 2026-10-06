@@ -71,11 +71,17 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - `run/2` replies `{:error, exception}` instead of crashing: Normandy's own exceptions bare (`LLMError`, `ValidationError`, `ViolationError`, `HookHaltError`, `ModelCatalogError`), anything else a `Normandy.TurnError` (`:handler_crashed`, `:task_down`, `:persist_failed`, `:approval_timeout`, `:session_unavailable`, ...); never a tagged tuple or a stacktrace. `TurnError.from_reason/1` is the one mapping
   - `on_approval_timeout: :continue | :fail` (default `:continue`) decides what an approval expiry does; expired calls get `expired: true` results
 
+- **`Normandy.Agents.Turn.Session`** - Session handle, options validated once
+  - `new/1` builds the handle (`:session_id`, `:store`, `:registry`, `:supervisor`, and `:config` or `:template_provider`)
+  - `run/2` → `{:ok, output} | {:error, exception}`; `approve/2` (`%{tool_call_id => :approve | :reject}`); `put_config/2` replaces the config
+
+- **Orchestrators** (`SequentialOrchestrator`, `ParallelOrchestrator`) - `execute(agents, input, opts \\ [])` → `{:ok, %{agent_id => output}}` | `{:error, %Normandy.OrchestrationError{results:, errors:}}`; each agent runs unlinked under a per-call `Task.Supervisor`, so a raise, exit or throw fails only that agent (`:task_down` `TurnError`)
+
 ### Memory & Messages
 
 - **`Normandy.Components.AgentMemory`** - Conversation history management
   - `new_memory/1` - Create memory with optional max_messages limit
-  - `add_message/3` - Add user/assistant message to history
+  - `add_message/4` - Add user/assistant message to history (`opts`: `:turn_id`, `:id`)
   - `initialize_turn/1` - Start new conversation turn (generates UUID)
   - `history/1` - Get formatted message history for LLM
   - `dump/1` and `load/1` - Serialize/deserialize memory state
@@ -190,10 +196,9 @@ end
 ### Agent Workflow
 
 1. Define input/output schemas using `io_schema`
-2. Create `BaseAgentConfig` with schemas, LLM client, and prompt specification
-3. Initialize agent with `BaseAgent.init/1`
-4. Run conversation turns with `BaseAgent.run/2`
-5. Agent manages memory automatically, serializing I/O schemas to JSON
+2. Build the `BaseAgentConfig` with `BaseAgent.init/1` (client, model, schemas, prompt specification)
+3. Run conversation turns with `BaseAgent.run/3` (`{:ok, config, output}` | `{:error, exception}`)
+4. Agent manages memory automatically, serializing I/O schemas to JSON
 
 ### Validation Flow
 
@@ -215,6 +220,7 @@ end
 
 - **Claudio** - LLM client library (Hex package `~> 0.7.0`)
 - **Jason** - JSON encoding/decoding (the default `:adapter`)
+- **NimbleOptions** - option schemas for every public entry point (through `Normandy.Options`)
 - **elixir_uuid** - UUID generation for conversation turns
 
 ## Notes
