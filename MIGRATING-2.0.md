@@ -961,6 +961,25 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   yourself.
 - A shared breaker that has been closed and idle for 15 minutes stops; the next call starts a fresh one. Open and half-open breakers stay.
 
+## 32. Tool loops return the output schema; stop reasons are errors
+
+- A tool-using agent whose `output_schema` is not the chat schema sends that schema as
+  `output_config.format` on every tool-loop call, beside its tools, on `run/3`, `stream/3` and
+  under `Turn.Server`, so the model's final answer is constrained to it. Structured outputs used
+  to be skipped on any call that carried tools. A chat agent sends none: its answer stays
+  plain text.
+- `stream/3` with a non-chat output schema sends it too, with or without tools. A 400 that
+  names the output format or schema re-sends the stream request without it, as `run/3` does.
+- A custom `Normandy.Agents.Model` receives the schema as the new `Normandy.LLM.Request` field
+  `output_format` (the output-schema struct). An implementation without constrained decoding
+  can ignore it.
+- A tool loop's final answer that does not decode is
+  `{:error, %Normandy.LLMError{type: :invalid_output}}`; one that decodes but breaks the schema
+  is `{:error, %Normandy.Schema.ValidationError{}}`. Neither is ever returned as a
+  `%ToolCallResponse{}`.
+- `[:normandy, :agent, :llm_call, :start]` metadata `structured_output` is now `true` for these
+  calls and streams.
+
 ## New, non-breaking
 
 - `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker.

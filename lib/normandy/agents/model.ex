@@ -21,6 +21,11 @@ defprotocol Normandy.Agents.Model do
   `:content`, `:tool_calls` and `:thinking`. When `response_model` is `nil`, return the
   answer text as a binary.
 
+  `request.output_format`, when set, is the output schema the final answer's text must
+  match on a tool-loop call (`response_model: %ToolCallResponse{}`) or a stream. An
+  implementation with constrained decoding may send it; the text still goes in
+  `:content` (or the stream), and Normandy parses it. Others ignore it.
+
   ## Options
 
   `opts` carries Normandy's call plumbing, never request content. An implementation may

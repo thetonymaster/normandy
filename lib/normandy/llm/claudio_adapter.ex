@@ -111,8 +111,12 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - The response schema is incompatible with constrained decoding: contains an open `:map` field,
     a non-JSON-Schema scalar type (e.g. `:date`, `:binary`, `:any`), or exceeds the nesting depth
     guard.
-  - The call carries tools — a `stop_reason: :tool_use` response requires the legacy tool-handling
-    loop.
+  - A tool-loop call (`response_model: %ToolCallResponse{}`) or a stream without
+    `request.output_format`. With it, the format (the agent's non-chat output schema) is sent
+    as `output_config.format` beside the tools: it constrains the final answer's text, and a
+    `tool_use` response is still a tool call. `stream/3` re-sends without the format on a 400
+    naming it, as `converse/3` does.
+  - Any other call that carries tools.
   - The model returns `refusal`, `max_tokens`, or context-exceeded — these route through the
     existing `:on_parse_failure` policy and legacy fallback.
   - The API answers 400 with a message naming the output format or schema. Any other 400 (such
@@ -173,11 +177,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
       do: converse_raw(client, request, opts)
 
     def converse(client, %Request{} = request, opts) do
-      case ClaudioAdapter.__structured_schema_for__(
-             client,
-             request.response_model,
-             request.tools
-           ) do
+      case ClaudioAdapter.__structured_schema_for__(client, request) do
         {:ok, json_schema} -> converse_structured(client, request, opts, json_schema)
         :skip -> converse_legacy(client, request, opts, nil)
       end
@@ -238,11 +238,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         {:ok, response} ->
           context = %{client: client, request: request}
 
-          case ClaudioAdapter.__handle_structured_response__(
-                 response,
-                 request.response_model,
-                 context
-               ) do
+          case handle_structured(response, request.response_model, context) do
             {:error, %LLMError{} = error} ->
               {:error, LLMError.with_usage(error, ClaudioAdapter.extract_usage(response))}
 
@@ -262,6 +258,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
           end
       end
     end
+
+    # A tool-loop call's text is the constrained final answer, or text beside tool
+    # calls: it stays the ToolCallResponse's content, and the turn parses the final
+    # answer into the output schema (BaseAgent.convert_turn_output/3), as on the
+    # legacy path.
+    defp handle_structured(response, %Normandy.Agents.ToolCallResponse{} = schema, _context),
+      do: populate_tool_call_response(schema, ClaudioAdapter.extract_content(response), response)
+
+    defp handle_structured(response, response_model, context),
+      do: ClaudioAdapter.__handle_structured_response__(response, response_model, context)
 
     # The answer as text, with no schema deserialization: response_model nil. Used by
     # JsonDeserializer's retry loop so it owns parsing and retrying.
@@ -317,6 +323,29 @@ defmodule Normandy.LLM.ClaudioAdapter do
         |> build_request(request, stream: true)
         |> Claudio.Messages.Request.enable_streaming()
 
+      # request.output_format constrains the streamed text as it does a tool-loop
+      # call's. A 400 naming the output format or its schema re-sends the request
+      # without it (the system prompt already shows the schema); any other error
+      # is returned.
+      result =
+        case ClaudioAdapter.__structured_schema_for__(client, request) do
+          {:ok, json_schema} ->
+            claudio_request
+            |> Claudio.Messages.Request.set_output_format(json_schema)
+            |> open_stream(claudio_client)
+            |> retry_stream_without_format(claudio_request, claudio_client)
+
+          :skip ->
+            open_stream(claudio_request, claudio_client)
+        end
+
+      case result do
+        {:ok, stream} -> {:ok, stream}
+        {:error, error} -> {:error, ClaudioAdapter.__to_llm_error__(error)}
+      end
+    end
+
+    defp open_stream(claudio_request, claudio_client) do
       case Claudio.Messages.create(claudio_client, claudio_request) do
         {:ok, %Req.Response{body: stream}} ->
           {:ok,
@@ -327,8 +356,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
              {:error, _} = error -> error
            end)}
 
-        {:error, error} ->
-          {:error, ClaudioAdapter.__to_llm_error__(error)}
+        {:error, _error} = error ->
+          error
+      end
+    end
+
+    defp retry_stream_without_format({:ok, _stream} = ok, _claudio_request, _claudio_client),
+      do: ok
+
+    defp retry_stream_without_format({:error, error}, claudio_request, claudio_client) do
+      case ClaudioAdapter.__structured_error_action__(error) do
+        :fallback -> open_stream(claudio_request, claudio_client)
+        :propagate -> {:error, error}
       end
     end
 
@@ -1395,15 +1434,25 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp schema_rejection?(_message), do: false
 
   @doc false
-  # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
-  # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
-  # mid-turn tool call the legacy path handles, not a structured-output result.
-  def __structured_schema_for__(client, response_model, tools) when is_list(tools) do
-    case tools do
-      [] -> StructuredOutputs.schema_for(client, response_model)
-      _ -> :skip
+  # Decides structured-vs-legacy for THIS call, returning the JSON Schema to send as
+  # output_config.format. A tool-loop call (response_model %ToolCallResponse{}) and a
+  # stream (response_model nil) are constrained by request.output_format alone: the
+  # format shapes the final answer's text while tool_use stays available. Any other
+  # call with tools takes the legacy path; without tools the response model is the
+  # format.
+  @spec __structured_schema_for__(t(), Request.t()) :: {:ok, map()} | :skip
+  def __structured_schema_for__(client, %Request{response_model: model} = request)
+      when model == nil or is_struct(model, ToolCallResponse) do
+    case request.output_format do
+      nil -> :skip
+      format -> StructuredOutputs.schema_for(client, format)
     end
   end
+
+  def __structured_schema_for__(client, %Request{tools: [], response_model: model}),
+    do: StructuredOutputs.schema_for(client, model)
+
+  def __structured_schema_for__(_client, %Request{}), do: :skip
 
   @doc false
   def __handle_structured_response__(response, response_model, context) do

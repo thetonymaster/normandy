@@ -260,6 +260,7 @@ defmodule Normandy.Agents.BaseAgent do
           %Message{role: role, content: content}
         end),
       response_model: response_model,
+      output_format: request_output_format(response_model, config),
       temperature: config.temperature,
       max_tokens: config.max_tokens,
       tools: tool_schemas,
@@ -674,6 +675,7 @@ defmodule Normandy.Agents.BaseAgent do
         Provider.request_metadata(config,
           stream: false,
           response_model: response_model || Map.get(config, :output_schema),
+          output_format: request_output_format(response_model, config),
           tools?: has_tools?(config)
         )
       )
@@ -1122,6 +1124,7 @@ defmodule Normandy.Agents.BaseAgent do
         Provider.request_metadata(config,
           stream: true,
           response_model: nil,
+          output_format: request_output_format(%ToolCallResponse{}, config),
           tools?: has_tools?(config)
         )
       )
@@ -1325,6 +1328,15 @@ defmodule Normandy.Agents.BaseAgent do
   defp prompt_output_schema(%ToolCallResponse{}, %{output_schema: schema}), do: schema
   defp prompt_output_schema(response_model, _config), do: response_model
 
+  # The output schema the final answer's text must match, for an adapter that can
+  # constrain it (Request.output_format): the schema the system prompt shows on a
+  # tool-loop call or a stream, never the chat schema (its answer is plain text). A
+  # call whose response model is the output schema itself needs none.
+  defp request_output_format(%ToolCallResponse{} = loop, config),
+    do: prompt_output_schema(loop, config)
+
+  defp request_output_format(_response_model, _config), do: nil
+
   # Appends the response schema's JSON Schema to the system prompt. A struct with
   # no schema adds nothing; an encoding failure raises rather than silently
   # sending the prompt without its schema.
@@ -1373,6 +1385,7 @@ defmodule Normandy.Agents.BaseAgent do
       model: config.model,
       system: system_prompt,
       messages: messages,
+      output_format: request_output_format(%ToolCallResponse{}, config),
       temperature: config.temperature,
       max_tokens: config.max_tokens,
       tools: tool_schemas,

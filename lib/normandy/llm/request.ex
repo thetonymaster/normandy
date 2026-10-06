@@ -8,6 +8,10 @@ defmodule Normandy.LLM.Request do
   - `:messages` - the conversation, oldest first, as `Normandy.Components.Message` structs
   - `:response_model` - an empty struct of the shape the caller expects back (see
     "Response content" in `Normandy.Agents.Model`), or `nil` for the answer as text
+  - `:output_format` - on a tool-loop call (`response_model: %ToolCallResponse{}`) or a
+    stream, the output-schema struct the final answer's text must match, or `nil`. An
+    adapter that supports constrained decoding sends it (`ClaudioAdapter`, as
+    `output_config.format`); others ignore it. Never set for the chat schema.
   - `:temperature` - `nil` leaves it unset (Opus 4.7+ reject sampling parameters)
   - `:max_tokens` - required by the Messages API
   - `:tools` - tool schemas, `%{name:, description:, input_schema:}` maps
@@ -22,6 +26,7 @@ defmodule Normandy.LLM.Request do
             system: nil,
             messages: [],
             response_model: nil,
+            output_format: nil,
             temperature: nil,
             max_tokens: nil,
             tools: [],
@@ -33,6 +38,7 @@ defmodule Normandy.LLM.Request do
           system: String.t() | nil,
           messages: [Message.t()],
           response_model: struct() | nil,
+          output_format: struct() | nil,
           temperature: float() | nil,
           max_tokens: pos_integer(),
           tools: [map()],

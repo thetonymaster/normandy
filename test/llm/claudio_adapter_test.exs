@@ -195,22 +195,53 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
     end
   end
 
-  describe "structured-vs-legacy routing decision (__structured_schema_for__/3)" do
+  describe "structured-vs-legacy routing decision (__structured_schema_for__/2)" do
+    alias Normandy.Agents.ToolCallResponse
     alias Normandy.LLM.Json.TestFixtures.MultiField
 
-    defp routing_client, do: %Normandy.LLM.ClaudioAdapter{api_key: "k", options: %{}}
+    defp routed(fields, options \\ %{}) do
+      request = struct!(%Normandy.LLM.Request{model: "m", messages: [], max_tokens: 1}, fields)
 
-    test "uses structured outputs for a compatible schema with no tools" do
-      assert {:ok, _schema} =
-               ClaudioAdapter.__structured_schema_for__(routing_client(), %MultiField{}, [])
+      ClaudioAdapter.__structured_schema_for__(
+        %ClaudioAdapter{api_key: "k", options: options},
+        request
+      )
     end
 
-    test "skips structured outputs when tools are present (tool_use needs the legacy loop)" do
+    test "uses structured outputs for a compatible schema with no tools" do
+      assert {:ok, schema} = routed(response_model: %MultiField{})
+      assert is_map(schema)
+    end
+
+    test "skips a call with tools whose response model is not the tool loop's" do
+      assert :skip = routed(response_model: %MultiField{}, tools: [%{name: "lookup"}])
+    end
+
+    test "a tool-loop call is constrained by output_format, beside its tools" do
+      assert {:ok, schema} =
+               routed(
+                 response_model: %ToolCallResponse{},
+                 output_format: %MultiField{},
+                 tools: [%{name: "lookup"}]
+               )
+
+      assert {:ok, ^schema} = routed(response_model: %MultiField{})
+    end
+
+    test "a tool-loop call without output_format takes the legacy path" do
+      assert :skip = routed(response_model: %ToolCallResponse{}, tools: [%{name: "lookup"}])
+    end
+
+    test "a stream (no response model) is constrained by output_format alone" do
+      assert {:ok, _schema} = routed(output_format: %MultiField{})
+      assert :skip = routed([])
+    end
+
+    test "the kill switch skips output_format too" do
       assert :skip =
-               ClaudioAdapter.__structured_schema_for__(
-                 routing_client(),
-                 %MultiField{},
-                 [%{name: "lookup"}]
+               routed(
+                 [response_model: %ToolCallResponse{}, output_format: %MultiField{}],
+                 %{structured_outputs: false}
                )
     end
   end

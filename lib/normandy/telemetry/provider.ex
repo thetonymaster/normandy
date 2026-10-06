@@ -70,11 +70,13 @@ defmodule Normandy.Telemetry.Provider do
   `stream` and `structured_output` are always present.
 
   Options: `:stream` (boolean), `:response_model` (the call's response schema
-  struct), `:tools?` (whether the call carries tools).
+  struct; `nil` for a stream), `:output_format` (the call's
+  `Normandy.LLM.Request` `output_format`), `:tools?` (whether the call carries tools).
 
   `structured_output` is whether native structured outputs are requested for this
-  call: true only for a Claudio client, a non-streaming call, no tools, and a
-  response schema the translator can express.
+  call: true only for a Claudio client that sends `output_config.format`, that is a
+  call without tools whose response schema the translator can express, or a tool-loop
+  call or stream whose `output_format` it can express.
 
   `config` is a `BaseAgentConfig`, or any map with the three keys read here.
   """
@@ -107,13 +109,16 @@ defmodule Normandy.Telemetry.Provider do
     |> Map.new()
   end
 
+  # The adapter's own routing decision, asked about a request of this call's shape.
   defp structured_output?(config, opts) do
-    not Keyword.get(opts, :stream, false) and
-      match?(%ClaudioAdapter{}, config.client) and
-      ClaudioAdapter.__structured_schema_for__(
-        config.client,
-        Keyword.get(opts, :response_model),
-        if(Keyword.get(opts, :tools?, false), do: [:tools], else: [])
-      ) != :skip
+    match?(%ClaudioAdapter{}, config.client) and
+      ClaudioAdapter.__structured_schema_for__(config.client, %Normandy.LLM.Request{
+        model: "",
+        messages: [],
+        max_tokens: 1,
+        response_model: Keyword.get(opts, :response_model),
+        output_format: Keyword.get(opts, :output_format),
+        tools: if(Keyword.get(opts, :tools?, false), do: [:tools], else: [])
+      }) != :skip
   end
 end
