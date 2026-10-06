@@ -20,7 +20,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
       # Store and retrieve data
       :ok = StatefulContext.put(pid, "key", "value")
-      {:ok, "value"} = StatefulContext.get(pid, "key")
+      {:ok, "value"} = StatefulContext.fetch(pid, "key")
 
       # Use namespaced keys
       :ok = StatefulContext.put(pid, {"agent_1", "status"}, "active")
@@ -77,23 +77,23 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @doc """
-  Retrieves a value from the context.
+  Looks up `key`: `{:ok, value}` or `:error`.
 
   Reads directly from ETS for maximum performance (no GenServer call).
 
   ## Example
 
-      {:ok, value} = StatefulContext.get(pid, "key")
-      {:error, :not_found} = StatefulContext.get(pid, "missing")
+      {:ok, value} = StatefulContext.fetch(pid, "key")
+      :error = StatefulContext.fetch(pid, "missing")
   """
-  @spec get(GenServer.server(), key()) :: {:ok, term()} | {:error, :not_found}
-  def get(server, key) do
+  @spec fetch(GenServer.server(), key()) :: {:ok, term()} | :error
+  def fetch(server, key) do
     table = get_table(server)
     normalized_key = normalize_key(key)
 
     case :ets.lookup(table, normalized_key) do
       [{^normalized_key, value}] -> {:ok, value}
-      [] -> {:error, :not_found}
+      [] -> :error
     end
   end
 
@@ -106,9 +106,9 @@ defmodule Normandy.Coordination.StatefulContext do
   """
   @spec get(GenServer.server(), key(), term()) :: term()
   def get(server, key, default) do
-    case get(server, key) do
+    case fetch(server, key) do
       {:ok, value} -> value
-      {:error, :not_found} -> default
+      :error -> default
     end
   end
 

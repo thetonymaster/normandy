@@ -15,7 +15,7 @@ defmodule Normandy.Coordination.SharedContext do
       context = SharedContext.put(context, "research_results", data)
 
       # Retrieve data
-      {:ok, data} = SharedContext.get(context, "research_results")
+      {:ok, data} = SharedContext.fetch(context, "research_results")
 
       # Store with namespace
       context = SharedContext.put(context, {"agent_1", "status"}, "processing")
@@ -74,24 +74,15 @@ defmodule Normandy.Coordination.SharedContext do
   end
 
   @doc """
-  Retrieves a value from the shared context.
-
-  Returns `{:ok, value}` if found, `{:error, :not_found}` otherwise.
+  Looks up `key`: `{:ok, value}` or `:error`.
 
   ## Examples
 
-      {:ok, value} = SharedContext.get(context, "key")
-      {:error, :not_found} = SharedContext.get(context, "missing")
+      {:ok, value} = SharedContext.fetch(context, "key")
+      :error = SharedContext.fetch(context, "missing")
   """
-  @spec get(t(), key()) :: {:ok, term()} | {:error, :not_found}
-  def get(%__MODULE__{data: data}, key) do
-    normalized_key = normalize_key(key)
-
-    case Map.fetch(data, normalized_key) do
-      {:ok, value} -> {:ok, value}
-      :error -> {:error, :not_found}
-    end
-  end
+  @spec fetch(t(), key()) :: {:ok, term()} | :error
+  def fetch(%__MODULE__{data: data}, key), do: Map.fetch(data, normalize_key(key))
 
   @doc """
   Retrieves a value with a default if not found.
@@ -102,9 +93,9 @@ defmodule Normandy.Coordination.SharedContext do
   """
   @spec get(t(), key(), term()) :: term()
   def get(%__MODULE__{} = context, key, default) do
-    case get(context, key) do
+    case fetch(context, key) do
       {:ok, value} -> value
-      {:error, :not_found} -> default
+      :error -> default
     end
   end
 

@@ -792,5 +792,8 @@ A lookup returns `{:ok, value}` or `:error`; its `!` variant returns the value o
 | `AgentMemory.get_entry(memory, id)` → the entry or `nil` | `AgentMemory.fetch_entry(memory, id)` → `{:ok, entry} \| :error`; `fetch_entry!/2` returns it or raises `KeyError` |
 | `rescue Normandy.NonExistentTurn` (`AgentMemory.delete_turn/2`) | `rescue Normandy.TurnNotFoundError`; field `:turn_id` (was `:value`) |
 | `rescue Normandy.NonExistentContextProvider` | `rescue Normandy.ContextProviderNotFoundError`; fields `:name` and `:registered` (was `:value`) |
+| `SharedContext.get(ctx, key)` → `{:ok, v} \| {:error, :not_found}` | `SharedContext.fetch(ctx, key)` → `{:ok, v} \| :error`; `get/3` with a default is unchanged |
+| `StatefulContext.get(pid, key)` → `{:ok, v} \| {:error, :not_found}` | `StatefulContext.fetch(pid, key)` → `{:ok, v} \| :error`; `get/3` is unchanged |
+| `AgentSupervisor.find_agent(sup, id)` → `{:ok, pid} \| {:error, :not_found}` | `AgentSupervisor.fetch_agent(sup, id)` → `{:ok, pid} \| :error` |
 
 The renamed exceptions build their own message and take no `:message` option.

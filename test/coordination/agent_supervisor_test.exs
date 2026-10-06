@@ -168,19 +168,19 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
     end
   end
 
-  describe "find_agent/2" do
+  describe "fetch_agent/2" do
     test "finds agent by agent_id", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
       {:ok, pid} = AgentSupervisor.start_agent(sup, agent: agent, agent_id: "findable")
 
-      assert {:ok, ^pid} = AgentSupervisor.find_agent(sup, "findable")
+      assert {:ok, ^pid} = AgentSupervisor.fetch_agent(sup, "findable")
     end
 
     test "returns error for non-existent agent_id", %{agent: agent} do
       {:ok, sup} = AgentSupervisor.start_link()
       AgentSupervisor.start_agent(sup, agent: agent, agent_id: "agent_1")
 
-      assert {:error, :not_found} = AgentSupervisor.find_agent(sup, "nonexistent")
+      assert :error = AgentSupervisor.fetch_agent(sup, "nonexistent")
     end
 
     test "finds an agent that is busy handling a call", %{agent: agent} do
@@ -189,7 +189,7 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
 
       # A suspended agent answers no calls, like one running a long LLM call.
       :sys.suspend(pid)
-      {elapsed_us, result} = :timer.tc(fn -> AgentSupervisor.find_agent(sup, "busy") end)
+      {elapsed_us, result} = :timer.tc(fn -> AgentSupervisor.fetch_agent(sup, "busy") end)
       listed = AgentSupervisor.list_agents(sup)
       :sys.resume(pid)
 
@@ -205,7 +205,7 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       {:ok, target_pid} = AgentSupervisor.start_agent(sup, agent: agent, agent_id: "agent_2")
       AgentSupervisor.start_agent(sup, agent: agent, agent_id: "agent_3")
 
-      assert {:ok, ^target_pid} = AgentSupervisor.find_agent(sup, "agent_2")
+      assert {:ok, ^target_pid} = AgentSupervisor.fetch_agent(sup, "agent_2")
     end
   end
 
@@ -248,10 +248,10 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       Process.exit(pid, :kill)
 
       assert wait_until(fn ->
-               match?({:ok, p} when p != pid, AgentSupervisor.find_agent(sup, "restartable"))
+               match?({:ok, p} when p != pid, AgentSupervisor.fetch_agent(sup, "restartable"))
              end)
 
-      {:ok, new_pid} = AgentSupervisor.find_agent(sup, "restartable")
+      {:ok, new_pid} = AgentSupervisor.fetch_agent(sup, "restartable")
       assert new_pid != pid
       assert Process.alive?(new_pid)
     end
@@ -273,7 +273,7 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
 
       # Should NOT have been restarted (the supervisor drops it once it sees the exit)
       assert wait_until(fn ->
-               AgentSupervisor.find_agent(sup, "temporary") == {:error, :not_found}
+               AgentSupervisor.fetch_agent(sup, "temporary") == :error
              end)
     end
 
@@ -291,10 +291,10 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       AgentProcess.stop(pid)
 
       assert wait_until(fn ->
-               match?({:ok, p} when p != pid, AgentSupervisor.find_agent(sup, "permanent"))
+               match?({:ok, p} when p != pid, AgentSupervisor.fetch_agent(sup, "permanent"))
              end)
 
-      {:ok, new_pid} = AgentSupervisor.find_agent(sup, "permanent")
+      {:ok, new_pid} = AgentSupervisor.fetch_agent(sup, "permanent")
       assert new_pid != pid
       assert Process.alive?(new_pid)
     end
@@ -360,9 +360,9 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
       AgentSupervisor.terminate_agent(sup, pid2)
 
       assert AgentSupervisor.count_agents(sup) == 2
-      assert {:error, :not_found} = AgentSupervisor.find_agent(sup, "agent_2")
-      assert {:ok, ^pid1} = AgentSupervisor.find_agent(sup, "agent_1")
-      assert {:ok, ^pid3} = AgentSupervisor.find_agent(sup, "agent_3")
+      assert :error = AgentSupervisor.fetch_agent(sup, "agent_2")
+      assert {:ok, ^pid1} = AgentSupervisor.fetch_agent(sup, "agent_1")
+      assert {:ok, ^pid3} = AgentSupervisor.fetch_agent(sup, "agent_3")
     end
   end
 end

@@ -3,11 +3,11 @@ defmodule Normandy.Coordination.SharedContextTest do
 
   alias Normandy.Coordination.SharedContext
 
-  test "put/get round-trips a value; a missing key is {:error, :not_found}" do
+  test "put/fetch round-trips a value; a missing key is :error" do
     ctx = SharedContext.put(SharedContext.new(), "k", 1)
 
-    assert {:ok, 1} = SharedContext.get(ctx, "k")
-    assert {:error, :not_found} = SharedContext.get(ctx, "missing")
+    assert {:ok, 1} = SharedContext.fetch(ctx, "k")
+    assert :error = SharedContext.fetch(ctx, "missing")
   end
 
   test "get/3 returns the default only when the key is missing" do
@@ -21,7 +21,7 @@ defmodule Normandy.Coordination.SharedContextTest do
     ctx = SharedContext.put(SharedContext.new(), {"agent_1", "status"}, "active")
 
     assert SharedContext.keys(ctx) == ["agent_1:status"]
-    assert {:ok, "active"} = SharedContext.get(ctx, "agent_1:status")
+    assert {:ok, "active"} = SharedContext.fetch(ctx, "agent_1:status")
     assert SharedContext.has_key?(ctx, {"agent_1", "status"})
   end
 
@@ -34,10 +34,10 @@ defmodule Normandy.Coordination.SharedContextTest do
   test "update starts from the initial value, then applies the function to the stored one" do
     inc = &(&1 + 1)
     ctx = SharedContext.update(SharedContext.new(), "n", 0, inc)
-    assert {:ok, 1} = SharedContext.get(ctx, "n")
+    assert {:ok, 1} = SharedContext.fetch(ctx, "n")
 
     ctx = SharedContext.update(ctx, "n", 0, inc)
-    assert {:ok, 2} = SharedContext.get(ctx, "n")
+    assert {:ok, 2} = SharedContext.fetch(ctx, "n")
   end
 
   test "merge takes the second context's value on a key conflict" do

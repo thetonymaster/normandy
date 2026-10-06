@@ -28,22 +28,22 @@ defmodule Normandy.Coordination.StatefulContextTest do
 
     test "stores and retrieves values", %{context: ctx} do
       assert :ok = StatefulContext.put(ctx, "key1", "value1")
-      assert {:ok, "value1"} = StatefulContext.get(ctx, "key1")
+      assert {:ok, "value1"} = StatefulContext.fetch(ctx, "key1")
     end
 
     test "supports complex values", %{context: ctx} do
       complex_value = %{data: [1, 2, 3], nested: %{foo: "bar"}}
       assert :ok = StatefulContext.put(ctx, "complex", complex_value)
-      assert {:ok, ^complex_value} = StatefulContext.get(ctx, "complex")
+      assert {:ok, ^complex_value} = StatefulContext.fetch(ctx, "complex")
     end
 
     test "supports namespaced keys", %{context: ctx} do
       assert :ok = StatefulContext.put(ctx, {"agent_1", "status"}, "active")
-      assert {:ok, "active"} = StatefulContext.get(ctx, {"agent_1", "status"})
+      assert {:ok, "active"} = StatefulContext.fetch(ctx, {"agent_1", "status"})
     end
 
     test "returns error for missing keys", %{context: ctx} do
-      assert {:error, :not_found} = StatefulContext.get(ctx, "missing")
+      assert :error = StatefulContext.fetch(ctx, "missing")
     end
 
     test "get/3 returns default for missing keys", %{context: ctx} do
@@ -53,7 +53,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
     test "overwrites existing values", %{context: ctx} do
       :ok = StatefulContext.put(ctx, "key", "value1")
       :ok = StatefulContext.put(ctx, "key", "value2")
-      assert {:ok, "value2"} = StatefulContext.get(ctx, "key")
+      assert {:ok, "value2"} = StatefulContext.fetch(ctx, "key")
     end
   end
 
@@ -75,7 +75,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
       # Verify all values are present
       for i <- 1..50 do
         expected_value = "value_#{i}"
-        assert {:ok, ^expected_value} = StatefulContext.get(ctx, "key_#{i}")
+        assert {:ok, ^expected_value} = StatefulContext.fetch(ctx, "key_#{i}")
       end
     end
 
@@ -87,7 +87,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
       tasks =
         for _ <- 1..100 do
           Task.async(fn ->
-            StatefulContext.get(ctx, "shared_key")
+            StatefulContext.fetch(ctx, "shared_key")
           end)
         end
 
@@ -126,7 +126,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
     test "removes keys", %{context: ctx} do
       StatefulContext.put(ctx, "key", "value")
       assert :ok = StatefulContext.delete(ctx, "key")
-      assert {:error, :not_found} = StatefulContext.get(ctx, "key")
+      assert :error = StatefulContext.fetch(ctx, "key")
     end
 
     test "returns ok even for missing keys", %{context: ctx} do
@@ -166,18 +166,18 @@ defmodule Normandy.Coordination.StatefulContextTest do
     test "updates existing values", %{context: ctx} do
       StatefulContext.put(ctx, "counter", 1)
       :ok = StatefulContext.update(ctx, "counter", 0, fn count -> count + 1 end)
-      assert {:ok, 2} = StatefulContext.get(ctx, "counter")
+      assert {:ok, 2} = StatefulContext.fetch(ctx, "counter")
     end
 
     test "uses initial value for missing keys", %{context: ctx} do
       :ok = StatefulContext.update(ctx, "new_counter", 10, fn count -> count + 5 end)
-      assert {:ok, 15} = StatefulContext.get(ctx, "new_counter")
+      assert {:ok, 15} = StatefulContext.fetch(ctx, "new_counter")
     end
 
     test "handles complex updates", %{context: ctx} do
       StatefulContext.put(ctx, "list", [1, 2, 3])
       :ok = StatefulContext.update(ctx, "list", [], fn list -> list ++ [4] end)
-      assert {:ok, [1, 2, 3, 4]} = StatefulContext.get(ctx, "list")
+      assert {:ok, [1, 2, 3, 4]} = StatefulContext.fetch(ctx, "list")
     end
   end
 

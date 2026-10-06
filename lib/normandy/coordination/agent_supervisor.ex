@@ -163,19 +163,17 @@ defmodule Normandy.Coordination.AgentSupervisor do
   end
 
   @doc """
-  Finds an agent by its agent_id.
-
-  Returns `{:ok, pid}` if found, `{:error, :not_found}` otherwise.
+  Looks up a running agent by its agent_id: `{:ok, pid}` or `:error`.
 
   ## Example
 
-      {:ok, pid} = AgentSupervisor.find_agent(supervisor, "agent_1")
+      {:ok, pid} = AgentSupervisor.fetch_agent(supervisor, "agent_1")
   """
-  @spec find_agent(Supervisor.supervisor(), String.t()) :: {:ok, pid()} | {:error, :not_found}
-  def find_agent(supervisor, agent_id) do
+  @spec fetch_agent(Supervisor.supervisor(), String.t()) :: {:ok, pid()} | :error
+  def fetch_agent(supervisor, agent_id) do
     case Enum.find(list_agents(supervisor), fn {_pid, id} -> id == agent_id end) do
       {pid, _id} -> {:ok, pid}
-      nil -> {:error, :not_found}
+      nil -> :error
     end
   end
 
