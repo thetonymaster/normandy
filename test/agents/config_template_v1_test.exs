@@ -52,7 +52,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
     assert config.prompt_specification.background == ["You answer billing questions."]
     assert config.retry == nil
     assert config.circuit_breaker == nil
-    assert config.circuit_breaker_pid == nil
+    refute Map.has_key?(config, :circuit_breaker_pid)
     assert config.guardrails == BaseAgentConfig.default_guardrails()
     assert config.tool_context == %{}
     assert config.behaviours.hooks == []

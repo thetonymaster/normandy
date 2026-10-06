@@ -81,11 +81,14 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       default: nil,
       type_doc: "`t:keyword/0` or `nil`",
       doc:
-        "Starts a `Normandy.Resilience.CircuitBreaker`, linked to the caller, with these " <>
-          "options: `:failure_threshold` (failures before it opens), `:success_threshold` " <>
+        "Options of the shared `Normandy.Resilience.CircuitBreaker` this agent's LLM calls " <>
+          "go through: `:failure_threshold` (failures before it opens), `:success_threshold` " <>
           "(successes that close it from half-open), `:timeout` (milliseconds open before " <>
-          "half-open), `:half_open_max_calls` (calls let through when half-open). `[]` uses " <>
-          "the breaker's defaults; `nil` starts none."
+          "half-open), `:half_open_max_calls` (calls let through when half-open), `:scope` " <>
+          "(any plain term; agents with a different scope get different breakers). Agents with " <>
+          "the same client module, endpoint, model and options share one breaker, started on " <>
+          "the first call under Normandy's supervisor. `[]` uses the breaker's defaults; `nil` " <>
+          "uses none."
     ],
     enable_json_retry: [
       type: :boolean,
@@ -169,8 +172,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     output_guardrails_on_violation: "moved to guardrails: [on_violation: ...]"
   ]
 
-  @breaker_schema Normandy.Resilience.CircuitBreaker.__opts_schema__(:start_link).schema
-                  |> Keyword.delete(:name)
+  @breaker_schema Normandy.Resilience.CircuitBreaker.__opts_schema__(:key).schema
                   |> Enum.map(fn {key, spec} -> {key, Keyword.delete(spec, :default)} end)
                   |> NimbleOptions.new!()
 

@@ -3,7 +3,10 @@ defmodule Normandy.Coordination.AgentPoolTest do
 
   import Normandy.Test.Eventually
 
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Coordination.AgentPool
+  alias Normandy.Resilience.CircuitBreaker
 
   # Helper to create agent config
   defp create_agent_config do
@@ -796,6 +799,23 @@ defmodule Normandy.Coordination.AgentPoolTest do
       stats = AgentPool.stats(pool)
       assert stats.available == 5
       assert stats.in_use == 0
+
+      AgentPool.stop(pool)
+    end
+  end
+
+  describe "circuit breakers (PERF-5)" do
+    test "starting, overflowing and stopping a pool starts no breaker" do
+      scope = {__MODULE__, System.unique_integer([:positive])}
+      agent_config = Map.put(create_agent_config(), :circuit_breaker, scope: scope)
+
+      {:ok, pool} = AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 2)
+
+      agents = for _ <- 1..3, do: elem(AgentPool.checkout(pool), 1)
+      Enum.each(agents, &AgentPool.checkin(pool, &1))
+
+      key = BaseAgentConfig.circuit_breaker_key(BaseAgent.init(agent_config))
+      assert CircuitBreaker.fetch(key) == :error
 
       AgentPool.stop(pool)
     end

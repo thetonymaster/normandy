@@ -316,9 +316,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
     end
 
-    test "the circuit breaker and MCP servers come from the supplement, not the template" do
-      cb = spawn(fn -> :ok end)
-
+    test "MCP servers come from the supplement, not the template" do
       servers = [
         %Normandy.MCP.ServerConfig{
           name: "docs",
@@ -327,8 +325,8 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         }
       ]
 
-      supp = round_trip_supplement(%{circuit_breaker_pid: cb, mcp_servers: servers})
-      config = %{full_config(supp) | circuit_breaker_pid: cb, mcp_servers: servers}
+      supp = round_trip_supplement(%{mcp_servers: servers})
+      config = %{full_config(supp) | mcp_servers: servers}
 
       tmpl = ConfigTemplate.from_config(config, "t")
       blob = :erlang.term_to_binary(tmpl)
@@ -338,11 +336,23 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
     end
 
-    test "rebuild raises when the template had a circuit breaker pid and the supplement has none" do
+    test "the breaker options travel in the template and need nothing from the supplement" do
       supp = round_trip_supplement()
-      tmpl = ConfigTemplate.from_config(%{full_config(supp) | circuit_breaker_pid: self()}, "t")
+      config = %{full_config(supp) | circuit_breaker: [failure_threshold: 3, scope: "tenant-a"]}
 
-      assert_raise ArgumentError, ~r/:circuit_breaker_pid/, fn ->
+      tmpl = ConfigTemplate.from_config(config, "t")
+      assert tmpl.node_local_fields == []
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").circuit_breaker ==
+               [failure_threshold: 3, scope: "tenant-a"]
+    end
+
+    test "a template that lists :circuit_breaker_pid (an earlier 2.0 build) raises naming it" do
+      supp = round_trip_supplement()
+      tmpl = ConfigTemplate.from_config(full_config(supp), "t")
+      tmpl = %{tmpl | node_local_fields: [:circuit_breaker_pid]}
+
+      assert_raise ArgumentError, ~r/lists :circuit_breaker_pid in :node_local_fields/, fn ->
         ConfigTemplate.rebuild(tmpl, supp, "TOKEN")
       end
     end

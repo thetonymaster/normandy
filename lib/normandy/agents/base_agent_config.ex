@@ -6,8 +6,9 @@ defmodule Normandy.Agents.BaseAgentConfig do
   memory, model configuration, and prompt specifications.
 
   Option groups: `retry` (`Normandy.Resilience.Retry` options or `nil`), `circuit_breaker`
-  (`Normandy.Resilience.CircuitBreaker` options or `nil`; `circuit_breaker_pid` is the
-  breaker `BaseAgent.init/1` started, node-local) and `guardrails`
+  (`Normandy.Resilience.CircuitBreaker` options or `nil`; the agent uses the breaker shared
+  by every agent with the same client module, endpoint, model and options, see
+  `circuit_breaker_key/1`) and `guardrails`
   (`[input:, output:, streaming_mode:, chunk_size:, on_violation:]`). A `guardrails` list
   built by hand may leave keys out: `guardrail/2` reads a missing key as its default.
   """
@@ -15,6 +16,7 @@ defmodule Normandy.Agents.BaseAgentConfig do
   use Normandy.Schema
 
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Tools.Toolset
 
   # The Messages API requires max_tokens; a nil here would drop the key and
@@ -58,7 +60,6 @@ defmodule Normandy.Agents.BaseAgentConfig do
           max_tool_concurrency: pos_integer(),
           retry: keyword() | nil,
           circuit_breaker: keyword() | nil,
-          circuit_breaker_pid: pid() | nil,
           enable_json_retry: boolean(),
           json_retry_max_attempts: pos_integer(),
           name: String.t() | nil,
@@ -90,7 +91,6 @@ defmodule Normandy.Agents.BaseAgentConfig do
     field(:max_tool_concurrency, :integer, default: 1)
     field(:retry, :any, default: nil)
     field(:circuit_breaker, :any, default: nil)
-    field(:circuit_breaker_pid, :any, default: nil)
     field(:enable_json_retry, :boolean, default: true)
     field(:json_retry_max_attempts, :integer, default: 2)
     field(:mcp_servers, :any, default: nil)
@@ -113,4 +113,16 @@ defmodule Normandy.Agents.BaseAgentConfig do
           term()
   def guardrail(%__MODULE__{guardrails: guardrails}, key) when is_list(guardrails),
     do: Keyword.get_lazy(guardrails, key, fn -> Keyword.fetch!(@default_guardrails, key) end)
+
+  @doc """
+  The key of the shared circuit breaker this config's LLM calls go through
+  (`Normandy.Resilience.CircuitBreaker.key/3` of its client, model and `circuit_breaker`
+  options), or `nil` when `circuit_breaker` is `nil`. Read at each call, so a changed
+  model uses that model's breaker. `CircuitBreaker.fetch/1` finds the running breaker.
+  """
+  @spec circuit_breaker_key(t()) :: CircuitBreaker.key() | nil
+  def circuit_breaker_key(%__MODULE__{circuit_breaker: nil}), do: nil
+
+  def circuit_breaker_key(%__MODULE__{circuit_breaker: opts, client: client, model: model}),
+    do: CircuitBreaker.key(client, model, opts)
 end

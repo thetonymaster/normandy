@@ -6,13 +6,14 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   Excluded from the template (resolved node-locally instead): `client` (built from
   the token), `toolset` and `before/after_hooks` (from the supplement), and
-  `circuit_breaker_pid` and `mcp_servers` (from the supplement; the template records
-  only that they were set, and `rebuild/3` raises if the supplement lacks one).
+  `mcp_servers` (from the supplement; the template records only that it was set, and
+  `rebuild/3` raises if the supplement lacks it).
   `current_user_input` and `resolved_context_window` are transient and not kept.
 
   Everything else travels in the template: model and sampling settings, tool
   limits, prompt, schemas, memory cap, `initial_memory`, the `retry` and
-  `circuit_breaker` options, JSON retry settings, `guardrails`, `tool_context`,
+  `circuit_breaker` options (the breaker itself is the node's shared breaker for that key,
+  `BaseAgentConfig.circuit_breaker_key/1`), JSON retry settings, `guardrails`, `tool_context`,
   behaviour module refs and hook entries (`Normandy.Behaviours.Hooks`; their opts must
   be plain data and hold no secrets). These must be plain data: `from_config/2` raises
   on a function or pid (e.g. a `:retry_if` fun). `tool_context` must hold no secrets:
@@ -57,10 +58,9 @@ defmodule Normandy.Agents.ConfigTemplate do
     :tool_context
   ]
 
-  # Fields a template cannot hold (a linked pid; MCP settings that may carry an
-  # authorization token). The template records which were set, and `rebuild/3`
-  # takes them from the supplement.
-  @node_local_fields [:circuit_breaker_pid, :mcp_servers]
+  # Fields a template cannot hold (MCP settings that may carry an authorization token).
+  # The template records whether it was set, and `rebuild/3` takes it from the supplement.
+  @node_local_fields [:mcp_servers]
 
   # Top-level fields rebuild/3 reads with no default: both 1.0 and 2.0 templates have them.
   @required_fields [

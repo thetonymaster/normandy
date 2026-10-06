@@ -47,27 +47,27 @@ defmodule Normandy.Agents.BaseAgentConfigGroupsTest do
   end
 
   describe "circuit_breaker" do
-    test "nil (the default) starts no breaker" do
+    test "nil (the default) configures no breaker" do
       config = init([])
 
       assert config.circuit_breaker == nil
-      assert config.circuit_breaker_pid == nil
+      assert BaseAgentConfig.circuit_breaker_key(config) == nil
+      refute Map.has_key?(config, :circuit_breaker_pid)
     end
 
-    test "a keyword list starts a breaker with those options" do
-      config = init(circuit_breaker: [failure_threshold: 1, timeout: 60_000])
+    test "a keyword list is kept as the breaker options; init/1 starts no process" do
+      opts = [failure_threshold: 1, timeout: 60_000, scope: {__MODULE__, :kept}]
+      config = init(circuit_breaker: opts)
 
-      assert config.circuit_breaker == [failure_threshold: 1, timeout: 60_000]
-      assert is_pid(config.circuit_breaker_pid)
-      assert CircuitBreaker.state(config.circuit_breaker_pid) == :closed
-      GenServer.stop(config.circuit_breaker_pid)
+      assert config.circuit_breaker == opts
+      assert CircuitBreaker.fetch(BaseAgentConfig.circuit_breaker_key(config)) == :error
     end
 
-    test "[] starts a breaker with its defaults" do
+    test "[] uses the breaker's defaults" do
       config = init(circuit_breaker: [])
 
-      assert is_pid(config.circuit_breaker_pid)
-      GenServer.stop(config.circuit_breaker_pid)
+      assert {StubClient, nil, "m", opts} = BaseAgentConfig.circuit_breaker_key(config)
+      assert opts[:failure_threshold] == 5
     end
 
     test "a bad nested value names the option and the expected type" do

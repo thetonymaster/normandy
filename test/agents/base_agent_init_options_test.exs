@@ -137,7 +137,7 @@ defmodule Normandy.Agents.BaseAgentInitOptionsTest do
     assert_raise ArgumentError,
                  "Normandy.Agents.BaseAgent.init/1: invalid value for :circuit_breaker option: " <>
                    "unknown option :error_threshold; supported: :failure_threshold, " <>
-                   ":success_threshold, :timeout, :half_open_max_calls",
+                   ":success_threshold, :timeout, :half_open_max_calls, :scope",
                  fn ->
                    BaseAgent.init(
                      model: "m",

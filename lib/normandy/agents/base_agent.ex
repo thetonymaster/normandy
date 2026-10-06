@@ -74,9 +74,6 @@ defmodule Normandy.Agents.BaseAgent do
     client = Keyword.fetch!(opts, :client)
     behaviours = Keyword.fetch!(opts, :behaviours)
 
-    # Every check is in check_init!/1: the breaker starts last, so a bad option never
-    # leaves a linked process behind.
-    circuit_breaker_pid = start_circuit_breaker(opts)
     memory = Keyword.fetch!(opts, :memory) || AgentMemory.new_memory()
 
     %BaseAgentConfig{
@@ -95,7 +92,6 @@ defmodule Normandy.Agents.BaseAgent do
       max_tool_concurrency: Keyword.fetch!(opts, :max_tool_concurrency),
       retry: Keyword.fetch!(opts, :retry),
       circuit_breaker: Keyword.fetch!(opts, :circuit_breaker),
-      circuit_breaker_pid: circuit_breaker_pid,
       enable_json_retry: Keyword.fetch!(opts, :enable_json_retry),
       json_retry_max_attempts: Keyword.fetch!(opts, :json_retry_max_attempts),
       mcp_servers: Keyword.fetch!(opts, :mcp_servers),
@@ -128,17 +124,6 @@ defmodule Normandy.Agents.BaseAgent do
     :ok = validate_policy_opts!(behaviours)
     :ok = validate_hooks!(behaviours)
     opts
-  end
-
-  defp start_circuit_breaker(opts) do
-    case Keyword.fetch!(opts, :circuit_breaker) do
-      nil ->
-        nil
-
-      breaker_opts ->
-        {:ok, pid} = CircuitBreaker.start_link(breaker_opts)
-        pid
-    end
   end
 
   @spec reset_memory(BaseAgentConfig.t()) :: BaseAgentConfig.t()
@@ -333,8 +318,8 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Retry (config.retry) inside the circuit breaker (circuit_breaker_pid), each only
-  # when configured. `may_retry?` is checked before each retry on top of the
+  # Retry (config.retry) inside the shared circuit breaker (BaseAgentConfig.circuit_breaker_key/1),
+  # each only when configured. `may_retry?` is checked before each retry on top of the
   # retry_if policy; streaming uses it to stop once output reached the caller.
   defp with_resilience(config, call, may_retry? \\ fn -> true end) do
     retryable_call =
@@ -345,10 +330,9 @@ defmodule Normandy.Agents.BaseAgent do
         call
       end
 
-    if config.circuit_breaker_pid do
-      CircuitBreaker.call(config.circuit_breaker_pid, retryable_call)
-    else
-      retryable_call.()
+    case BaseAgentConfig.circuit_breaker_key(config) do
+      nil -> retryable_call.()
+      key -> CircuitBreaker.run(key, retryable_call)
     end
   end
 

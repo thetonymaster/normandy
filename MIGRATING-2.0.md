@@ -527,7 +527,7 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 |---|---|
 | `retry_options: opts` | `retry: opts` |
 | `enable_circuit_breaker: true, circuit_breaker_options: opts` | `circuit_breaker: opts` (`[]` for the defaults; `nil`, the default, starts none) |
-| `config.circuit_breaker` (the pid) | `config.circuit_breaker_pid`; `config.circuit_breaker` is now the options |
+| `config.circuit_breaker` (the pid) | `config.circuit_breaker` is now the options; the breaker is shared, see §31 |
 | `input_guardrails: specs` | `guardrails: [input: specs]` |
 | `output_guardrails: specs` | `guardrails: [output: specs]` |
 | `output_guardrails_streaming_mode: m` | `guardrails: [streaming_mode: m]` |
@@ -538,11 +538,10 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `BaseAgentConfig.guardrail(config, :output)`. A `guardrails:` given to a DSL agent's `new/1`
   changes only the keys it gives.
 - The DSL's `config/0` returns `guardrails: [...]` in place of the five `*_guardrails*` keys.
-- `circuit_breaker:` accepts `:failure_threshold`, `:success_threshold`, `:timeout` and
-  `:half_open_max_calls`. What the breaker does at runtime is unchanged here.
-- An `AgentTemplate` supplement names the node-local breaker `:circuit_breaker_pid` (was
-  `:circuit_breaker`). Templates now store the `retry`, `circuit_breaker` and `guardrails`
-  options.
+- `circuit_breaker:` accepts `:failure_threshold`, `:success_threshold`, `:timeout`,
+  `:half_open_max_calls` and `:scope` (§31).
+- Templates now store the `retry`, `circuit_breaker` and `guardrails` options; a supplement
+  needs nothing for the breaker (§31).
 - The window pin of a compactor is `:context_window`; 1.x called it `:max_tokens`, the name
   the agent also uses for the answer's limit. `Compactor.WindowManager` with `:max_tokens`
   raises `ArgumentError` at `init/1` (and when it runs). `BaseAgent` reads `:context_window`
@@ -922,6 +921,38 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
   and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
   `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
+
+## 31. Circuit breakers are shared and supervised by Normandy
+
+| 1.x | 2.0 |
+|---|---|
+| `init/1` with a breaker started a `CircuitBreaker` linked to the caller; the config held its pid (`config.circuit_breaker`) | `init/1` starts no process. The first LLM call starts the breaker under Normandy's own supervisor. The config holds only the options |
+| One breaker per `init/1` call | One breaker per client module, endpoint (`base_url` without credentials or query), model and breaker options, shared by every agent that matches |
+| An `AgentTemplate` supplement could carry the breaker | Not read; the template carries the options and each node uses its own shared breaker |
+| — | `BaseAgentConfig.circuit_breaker_key(config)` and `CircuitBreaker.fetch/1` find an agent's breaker; `CircuitBreaker.key/3`, `ensure_started/1` and `run/2` are the shared-breaker API |
+
+- A breaker no longer dies with the process that built the agent (a request process, a
+  LiveView, a `Task`), and `AgentPool` no longer starts (and leaks) one per agent.
+- Agents that share a breaker share its state: one agent's failures open the circuit for all
+  of them. Give each tenant `circuit_breaker: [scope: tenant_id]` when tenants use their own
+  API keys and rate limits. The key, scope included, appears in telemetry and logs, so a scope
+  must not be a secret. Tests that run agents with a breaker concurrently should give each
+  test its own `:scope`.
+- `:normandy` now has an application callback that supervises the
+  breakers. It starts with your application as any dependency does; a script started with
+  `mix run --no-start` calls `Application.ensure_all_started(:normandy)` first.
+- A half-open probe whose process is killed (a `Task.shutdown(:brutal_kill)`, an
+  `on_timeout: :kill_task`) frees its slot and counts as a failed probe. The breaker used to
+  stay open until `reset/1`.
+- A result from a call admitted before a state change is ignored: a slow call started while
+  closed no longer closes (or reopens) a half-open breaker.
+- `CircuitBreaker.metrics/1` adds `:generation` and `:half_open_calls`.
+- Breakers are per node: a session rebuilt on another node uses that node's breaker.
+- A template saved by an earlier 2.0 build with a breaker (`node_local_fields` listing
+  `:circuit_breaker_pid`) raises `ArgumentError` in `ConfigTemplate.rebuild/3`; recreate the
+  session, as for the other unreleased 2.0 templates (§22).
+- `CircuitBreaker.start_link/1` and `call/2` remain for a breaker you start and supervise
+  yourself.
 
 ## New, non-breaking
 
