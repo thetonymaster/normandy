@@ -194,4 +194,82 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     refute_received {:reaper_started, "s-eager", _}
     assert log =~ "could not look up \"s-eager\" in the registry"
   end
+
+  # Scripted fakes for the via-registration race. One Agent holds the queued replies of
+  # start_server/2 and whereis/2 and counts the start calls.
+  defmodule ScriptedSup do
+    @moduledoc false
+    def start_server(agent, _opts) do
+      Agent.get_and_update(agent, fn %{starts: [reply | rest], calls: n} = st ->
+        {reply, %{st | starts: rest, calls: n + 1}}
+      end)
+    end
+  end
+
+  defmodule ScriptedRegistry do
+    @moduledoc false
+    def whereis(agent, _sid) do
+      Agent.get_and_update(agent, fn
+        %{whereis: [reply | rest]} = st -> {reply, %{st | whereis: rest}}
+        %{whereis: []} = st -> {:none, st}
+      end)
+    end
+  end
+
+  defmodule ResumableStore do
+    @moduledoc false
+    def list_resumable(_handle), do: {:ok, ["s-race"]}
+    def load_turn_state(_handle, _sid), do: {:ok, %Normandy.Agents.Turn.State{status: :steering}}
+  end
+
+  defp race_reap(starts, whereis) do
+    {:ok, agent} = Agent.start_link(fn -> %{starts: starts, whereis: whereis, calls: 0} end)
+
+    state = %{
+      store: {ResumableStore, nil},
+      registry: {ScriptedRegistry, agent},
+      supervisor: agent,
+      supervisor_mod: ScriptedSup,
+      template_provider: {Catalog, nil},
+      host_server_opts: []
+    }
+
+    log = ExUnit.CaptureLog.capture_log(fn -> assert :ok = ResumeReaper.reap(state) end)
+    {log, Agent.get(agent, & &1.calls)}
+  end
+
+  describe "the via-registration race" do
+    test "a bare race is retried until the start succeeds" do
+      race = {:error, {:process_not_registered_via, Horde.Registry}}
+      # whereis: the reaper's own not_running? check, then one lookup per race.
+      {log, calls} = race_reap([race, race, {:ok, self()}], [:none, :none, :none])
+
+      assert calls == 3
+      refute log =~ "failed to resume"
+    end
+
+    test "a race whose winner is now registered starts nothing further" do
+      race = {:error, {:process_not_registered_via, Horde.Registry}}
+      {log, calls} = race_reap([race], [:none, {:ok, self()}])
+
+      assert calls == 1
+      refute log =~ "failed to resume"
+    end
+
+    test "the supervisor-nested race shape is retried too" do
+      race = {:error, {{:process_not_registered_via, Horde.Registry}, :child}}
+      {log, calls} = race_reap([race, {:ok, self()}], [:none, :none])
+
+      assert calls == 2
+      refute log =~ "failed to resume"
+    end
+
+    test "a genuine error is logged once and not retried" do
+      {log, calls} = race_reap([{:error, :boom}], [:none])
+
+      assert calls == 1
+      assert length(String.split(log, "failed to resume s-race")) == 2
+      assert log =~ ":boom"
+    end
+  end
 end

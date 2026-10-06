@@ -28,6 +28,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   require Logger
 
   alias Normandy.Agents.Turn
+  alias Normandy.Agents.Turn.Start
   alias Normandy.Options
 
   @type opts :: [
@@ -215,14 +216,11 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
     # reap/1 is public and callers may build `state` by hand, so the key is optional.
     opts = opts ++ Map.get(state, :host_server_opts, [])
 
-    # Race-safe: a concurrent reaper on another survivor may start the same session;
-    # the registry's atomic registration makes the loser get {:error, {:already_started, _}}.
+    # Race-safe: a concurrent reaper on another survivor may start the same session, and
+    # Horde's via registration can lag; Turn.Start routes to the winner or retries.
     # Surface genuinely unexpected failures rather than swallowing them silently.
-    case state.supervisor_mod.start_server(state.supervisor, opts) do
+    case Start.start_server(state.supervisor_mod, state.supervisor, opts, state.registry, sid) do
       {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
         :ok
 
       {:error, reason} ->
