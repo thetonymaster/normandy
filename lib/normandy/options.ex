@@ -14,6 +14,32 @@ defmodule Normandy.Options do
   option a `:type_doc` in its schema. Whatever the option, a map, list or tuple value is
   never echoed either (it can hold a secret under any key): the message states its type, for
   example `got: a map`. Scalar values appear as NimbleOptions words them.
+
+  ## Timeouts
+
+  Every option a caller waits on is called `:timeout` and takes ms or `:infinity`, except the
+  durable server's two `_ms` options (not waits on a call; they also take ms or `:infinity`)
+  and the Mnesia stores' `:wait_timeout` (ms or `:infinity`, as `:mnesia.wait_for_tables/2`). A
+  `:timeout` that bounds one tool call takes positive ms only: a tool call is always bounded.
+  Defaults:
+
+  | Option | Where | Default |
+  |---|---|---|
+  | `:timeout` | `AgentProcess.run/3` | 60_000 |
+  | `:timeout` | `AgentPool.checkout/2`, `AgentPool.transaction/3` | 5_000 |
+  | `:timeout` | `Reactive.race/3`, `all/3`, `some/3` | 60_000 |
+  | `:timeout` | `ParallelOrchestrator.execute/3`, `execute_stream/2` | 300_000 per agent |
+  | `:timeout` | `Batch.Processor.process_batch/3` and its variants, `BaseAgent.process_batch/3` | 300_000 per item |
+  | `:timeout` (positive ms) | `Toolset.register/3`, `BaseAgent.register_tool/3`, DSL `tool Mod, timeout: ms` | the tool call's timeout; unset: 30_000 (`Tools.Executor.default_timeout/0`) |
+  | `:timeout` (positive ms) | `Tools.Executor.execute_tool/2`, `execute_tool_classified/2` | 30_000 (the dispatcher passes the registration timeout) |
+  | `:timeout` (positive ms) | `A2A.Registry.discover_and_register/3` | 60_000 (each registered tool's timeout) |
+  | `:approval_timeout_ms` | `Turn.Server.start_link/1` | 300_000 |
+  | `:idle_timeout_ms` | `Turn.Server.start_link/1` | 60_000 |
+  | `:wait_timeout` | `SessionStore.Mnesia.create_tables/1`, `MemoryStore.Mnesia.create_tables/1` | 30_000 |
+  | (none) | `Turn.Server.run/2` | `:infinity` |
+
+  `CircuitBreaker.start_link/1`'s `:timeout` (60_000) is how long an open breaker waits before
+  it lets probe calls through, not a call timeout.
   """
 
   alias NimbleOptions.ValidationError
@@ -33,10 +59,13 @@ defmodule Normandy.Options do
     :headers,
     :mcp_servers,
     :password,
+    :redix,
     :req_options,
     :secret,
+    :templates,
     :token,
     :transport_opts,
+    :url,
     :workers
   ]
 

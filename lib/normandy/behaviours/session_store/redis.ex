@@ -26,11 +26,39 @@ if Code.ensure_loaded?(Redix) do
 
     alias Normandy.Behaviours.SessionStore.Codec
     alias Normandy.Components.AgentMemory.Entry
+    alias Normandy.Options
 
-    @doc "Test/default handle: a Redix conn to the configured URL + a unique namespace."
+    @new_opts_schema NimbleOptions.new!(
+                       url: [
+                         type: :string,
+                         type_doc: "`t:String.t/0`",
+                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                       ],
+                       wait: [
+                         type: {:tuple, [:non_neg_integer, :non_neg_integer]},
+                         doc:
+                           "`{replicas, timeout_ms}` for `WAIT` after each write (default: " <>
+                             "`config :normandy, :redis_wait`). With replicas, `timeout_ms` " <>
+                             "must be positive."
+                       ],
+                       namespace: [
+                         type: :string,
+                         doc: "The key namespace (default: a unique one)."
+                       ]
+                     )
+
+    @doc """
+    Test/default handle: a Redix conn to the configured URL + a unique namespace.
+
+    ## Options
+
+    #{Options.docs(@new_opts_schema)}
+    """
     @spec new(keyword()) ::
             {pid(), binary()} | {pid(), binary(), {non_neg_integer(), non_neg_integer()}}
     def new(opts \\ []) do
+      opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
       url =
         Keyword.get(
           opts,

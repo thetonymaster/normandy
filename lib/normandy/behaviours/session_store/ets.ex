@@ -17,15 +17,41 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Options
+
+  @opts_schema NimbleOptions.new!(
+                 name: [
+                   type: :atom,
+                   default: :normandy_session_store,
+                   doc: "The ETS table's name (a label: the table is not a named table)."
+                 ]
+               )
 
   # ── client ───────────────────────────────────────────────────────────────────
 
-  @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts)
+  @doc """
+  Starts an ETS-backed store.
 
-  @doc "Start a fresh ETS-backed store; returns its handle (the owner pid)."
+  ## Options
+
+  #{Options.docs(@opts_schema)}
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    opts = Options.validate!(opts, @opts_schema, {__MODULE__, :start_link, 1})
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @doc """
+  Starts a fresh ETS-backed store; returns its handle (the owner pid).
+
+  ## Options
+
+  #{Options.docs(@opts_schema)}
+  """
   @spec new(keyword()) :: pid()
   def new(opts \\ []) do
+    opts = Options.validate!(opts, @opts_schema, {__MODULE__, :new, 1})
     {:ok, pid} = start_link(opts)
     pid
   end
@@ -70,7 +96,7 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
 
   @impl GenServer
   def init(opts) do
-    name = Keyword.get(opts, :name, :normandy_session_store)
+    name = Keyword.fetch!(opts, :name)
     {:ok, :ets.new(name, [:set, :private])}
   end
 

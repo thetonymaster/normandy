@@ -35,6 +35,7 @@ defmodule Normandy.Tools.Executor do
   @opts_schema NimbleOptions.new!(
                  context: [
                    type: :any,
+                   type_doc: "a `Normandy.Tools.Context`",
                    required: true,
                    doc: "The call's `%Normandy.Tools.Context{}`, carrying the validated input."
                  ],

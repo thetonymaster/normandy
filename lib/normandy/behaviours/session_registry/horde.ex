@@ -11,11 +11,30 @@ if Code.ensure_loaded?(Horde.Registry) do
     """
     @behaviour Normandy.Behaviours.SessionRegistry
 
-    @doc "Start a unique Horde.Registry. `:name` defaults to this module."
+    alias Normandy.Options
+
+    @start_link_opts_schema NimbleOptions.new!(
+                              name: [
+                                type: :atom,
+                                default: __MODULE__,
+                                doc: "The registry's name, which is also its handle."
+                              ]
+                            )
+    @new_opts_schema NimbleOptions.new!(
+                       name: [type: :atom, doc: "The registry's name (default: a unique one)."]
+                     )
+
+    @doc """
+    Starts a unique `Horde.Registry`.
+
+    ## Options
+
+    #{Options.docs(@start_link_opts_schema)}
+    """
     @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
     def start_link(opts \\ []) do
-      name = Keyword.get(opts, :name, __MODULE__)
-      Horde.Registry.start_link(name: name, keys: :unique, members: :auto)
+      opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+      Horde.Registry.start_link(name: Keyword.fetch!(opts, :name), keys: :unique, members: :auto)
     end
 
     @doc """
@@ -27,9 +46,14 @@ if Code.ensure_loaded?(Horde.Registry) do
     test setup from racing that window. Production starts the registry in a
     supervision tree (it is ready long before any session), so this gate is `new/1`
     only.
+
+    ## Options
+
+    #{Options.docs(@new_opts_schema)}
     """
     @spec new(keyword()) :: atom()
     def new(opts \\ []) do
+      opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
       name = Keyword.get_lazy(opts, :name, fn -> unique_name() end)
       {:ok, _pid} = start_link(name: name)
       :ok = await_ready(name)

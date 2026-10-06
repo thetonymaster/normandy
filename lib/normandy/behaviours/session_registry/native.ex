@@ -6,16 +6,42 @@ defmodule Normandy.Behaviours.SessionRegistry.Native do
   """
   @behaviour Normandy.Behaviours.SessionRegistry
 
-  @doc "Starts a unique Registry. `:name` defaults to this module."
+  alias Normandy.Options
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [
+                              type: :atom,
+                              default: __MODULE__,
+                              doc: "The registry's name, which is also its handle."
+                            ]
+                          )
+  @new_opts_schema NimbleOptions.new!(
+                     name: [type: :atom, doc: "The registry's name (default: a unique one)."]
+                   )
+
+  @doc """
+  Starts a unique `Registry`.
+
+  ## Options
+
+  #{Options.docs(@start_link_opts_schema)}
+  """
   @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts \\ []) do
-    name = Keyword.get(opts, :name, __MODULE__)
-    Registry.start_link(keys: :unique, name: name)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+    Registry.start_link(keys: :unique, name: Keyword.fetch!(opts, :name))
   end
 
-  @doc "Convenience: start a uniquely-named Registry and return its name as the handle."
+  @doc """
+  Starts a registry and returns its name as the handle.
+
+  ## Options
+
+  #{Options.docs(@new_opts_schema)}
+  """
   @spec new(keyword()) :: atom()
   def new(opts \\ []) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
     name = Keyword.get_lazy(opts, :name, fn -> unique_name() end)
     {:ok, _pid} = start_link(name: name)
     name

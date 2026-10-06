@@ -12,6 +12,16 @@ if Code.ensure_loaded?(Redix) do
     @behaviour Normandy.Behaviours.MemoryStore
 
     alias Normandy.Behaviours.MemoryStore
+    alias Normandy.Options
+
+    @new_opts_schema NimbleOptions.new!(
+                       url: [
+                         type: :string,
+                         type_doc: "`t:String.t/0`",
+                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                       ],
+                       prefix: [type: :string, doc: "The key prefix (default: a unique one)."]
+                     )
 
     @put """
     local cur = redis.call('HGET', KEYS[2], 'version')
@@ -98,9 +108,17 @@ if Code.ensure_loaded?(Redix) do
             {k, :crypto.hash(:sha, s) |> Base.encode16(case: :lower)}
           end)
 
-    @doc "Test/default handle: a Redix conn to the configured URL and a unique key prefix."
+    @doc """
+    Test/default handle: a Redix conn to the configured URL and a unique key prefix.
+
+    ## Options
+
+    #{Options.docs(@new_opts_schema)}
+    """
     @spec new(keyword()) :: {pid(), String.t()}
     def new(opts \\ []) do
+      opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
       url =
         Keyword.get(
           opts,

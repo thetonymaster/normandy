@@ -9,11 +9,21 @@ defmodule Normandy.Behaviours.MemoryStore.ETS do
   use GenServer
 
   alias Normandy.Behaviours.MemoryStore.Docs
+  alias Normandy.Options
 
-  @doc "Starts a fresh store; returns its handle `{owner_pid, table}`."
+  @no_opts_schema NimbleOptions.new!([])
+
+  @doc """
+  Starts a fresh store; returns its handle `{owner_pid, table}`.
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec new(keyword()) :: {pid(), :ets.tid()}
   def new(opts \\ []) do
-    {:ok, pid} = GenServer.start_link(__MODULE__, opts)
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :new, 1})
+    {:ok, pid} = GenServer.start_link(__MODULE__, [])
     {pid, GenServer.call(pid, :table)}
   end
 

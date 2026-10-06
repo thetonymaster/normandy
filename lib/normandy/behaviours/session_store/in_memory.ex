@@ -12,16 +12,34 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Options
 
+  @no_opts_schema NimbleOptions.new!([])
+
+  @doc """
+  Starts a store.
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec start_link(keyword()) :: Agent.on_start()
-  def start_link(_opts \\ []) do
+  def start_link(opts \\ []) do
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :start_link, 1})
     Agent.start_link(fn -> %{sessions: %{}, turn_states: %{}, config_templates: %{}} end)
   end
 
-  @doc "Start a fresh store and return its handle (pid)."
+  @doc """
+  Starts a fresh store and returns its handle (a pid).
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec new(keyword()) :: pid()
   def new(opts \\ []) do
-    {:ok, pid} = start_link(opts)
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :new, 1})
+    {:ok, pid} = start_link()
     pid
   end
 

@@ -38,14 +38,85 @@ defmodule Normandy.Cluster do
   alias Normandy.Behaviours.SessionRegistry.Redis, as: RedisReg
   alias Normandy.Behaviours.SessionStore.Mnesia, as: MnesiaStore
   alias Normandy.Behaviours.SessionStore.Redis, as: RedisStore
+  alias Normandy.Options
+
+  # :store and :template_provider go to Turn.ResumeReaper, which takes them with the types
+  # Turn.Session.new/1 gives them (ruling P4), so a bad value raises here, in the caller.
+  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn
+                   {key, spec} -> {key, Keyword.fetch!(spec, :type)}
+                 end)
+
+  @child_specs_opts_schema NimbleOptions.new!(
+                             registry: [
+                               type: :atom,
+                               required: true,
+                               doc: "The Horde registry's name."
+                             ],
+                             supervisor: [
+                               type: :atom,
+                               required: true,
+                               doc: "The Horde supervisor's name."
+                             ],
+                             store: [
+                               type: @session_types.store,
+                               type_doc: "`{module, handle}`",
+                               doc:
+                                 "The `SessionStore`; with `:template_provider`, starts the reaper."
+                             ],
+                             template_provider: [
+                               type: @session_types.template_provider,
+                               type_doc: "`{module, handle}`",
+                               doc: "The `AgentTemplate`; with `:store`, starts the reaper."
+                             ],
+                             topologies: [
+                               type: :keyword_list,
+                               default: [],
+                               doc:
+                                 "libcluster topologies; adds `Cluster.Supervisor` when libcluster " <>
+                                   "is loaded."
+                             ]
+                           )
+
+  @redis_child_specs_opts_schema NimbleOptions.new!(
+                                   redix: [
+                                     type: :keyword_list,
+                                     type_doc: "`t:keyword/0`",
+                                     required: true,
+                                     doc:
+                                       "Options for the Redix connection; must include `:name`."
+                                   ],
+                                   namespace: [
+                                     type: :string,
+                                     required: true,
+                                     doc: "The key namespace for the registry and the store."
+                                   ],
+                                   registry: [
+                                     type: :atom,
+                                     required: true,
+                                     doc: "The Redis registry owner's name."
+                                   ],
+                                   supervisor: [
+                                     type: :atom,
+                                     required: true,
+                                     doc: "The local `Turn.Supervisor`'s name."
+                                   ],
+                                   template_provider: [
+                                     type: @session_types.template_provider,
+                                     type_doc: "`{module, handle}`",
+                                     doc: "The `AgentTemplate`; starts the reaper."
+                                   ]
+                                 )
 
   @doc """
-  Build the distributed-session child specs. Required: `:registry`, `:supervisor`
-  (names/atoms). Optional: `:store` + `:template_provider` (enable the reaper),
-  `:topologies` (enable libcluster if loaded).
+  Build the distributed-session child specs.
+
+  ## Options
+
+  #{Options.docs(@child_specs_opts_schema)}
   """
   @spec child_specs(keyword()) :: [Supervisor.child_spec() | :supervisor.child_spec() | map()]
   def child_specs(opts) do
+    opts = Options.validate!(opts, @child_specs_opts_schema, {__MODULE__, :child_specs, 1})
     reg = Keyword.fetch!(opts, :registry)
     sup = Keyword.fetch!(opts, :supervisor)
 
@@ -60,22 +131,48 @@ defmodule Normandy.Cluster do
   @doc """
   Create the Mnesia store tables (host setup, not a child spec). Thin pass-through to
   `SessionStore.Mnesia.create_tables/1` — call once at boot before serving sessions.
-  See that function for opts (`:entries`, `:sessions`, `:copies`, `:nodes`).
+
+  ## Options
+
+  The options of `Normandy.Behaviours.SessionStore.Mnesia.create_tables/1`.
   """
   @spec setup_mnesia_store!(keyword()) :: :ok
-  def setup_mnesia_store!(opts), do: MnesiaStore.create_tables(opts)
+  def setup_mnesia_store!(opts) do
+    opts
+    |> Options.validate!(
+      MnesiaStore.__opts_schema__(:create_tables),
+      {__MODULE__, :setup_mnesia_store!, 1}
+    )
+    |> MnesiaStore.create_tables()
+  end
 
   @doc """
   Child specs for the **Redis combo** (Redis registry + Redis store + local supervisor +
-  reaper) — Redis as the single distributed dependency. Required: `:redix` (keyword for
-  the Redix connection, must include `:name`), `:namespace`, `:registry` (owner name),
-  `:supervisor` (local supervisor name). Optional: `:template_provider` (enables the
-  `ResumeReaper` for eager handoff). Cross-node routing still uses Erlang distribution.
+  reaper) — Redis as the single distributed dependency. `:template_provider` enables the
+  `ResumeReaper` for eager handoff. Cross-node routing still uses Erlang distribution.
+
+  ## Options
+
+  #{Options.docs(@redis_child_specs_opts_schema)}
   """
   @spec redis_child_specs(keyword()) :: [Supervisor.child_spec() | map()]
   def redis_child_specs(opts) do
+    opts =
+      Options.validate!(opts, @redis_child_specs_opts_schema, {__MODULE__, :redis_child_specs, 1})
+
     redix = Keyword.fetch!(opts, :redix)
-    conn_name = Keyword.fetch!(redix, :name)
+
+    conn_name =
+      case Keyword.fetch(redix, :name) do
+        {:ok, name} ->
+          name
+
+        :error ->
+          raise ArgumentError,
+                "Normandy.Cluster.redis_child_specs/1: :redix must include :name, the Redix " <>
+                  "connection's registered name"
+      end
+
     ns = Keyword.fetch!(opts, :namespace)
     registry = Keyword.fetch!(opts, :registry)
     supervisor = Keyword.fetch!(opts, :supervisor)
@@ -118,7 +215,7 @@ defmodule Normandy.Cluster do
   end
 
   defp libcluster_specs(opts, reg) do
-    topologies = Keyword.get(opts, :topologies, [])
+    topologies = Keyword.fetch!(opts, :topologies)
 
     if topologies != [] and Code.ensure_loaded?(Cluster.Supervisor) do
       [{Cluster.Supervisor, [topologies, [name: Module.concat(reg, ClusterSupervisor)]]}]

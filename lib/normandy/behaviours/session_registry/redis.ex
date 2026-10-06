@@ -16,7 +16,48 @@ if Code.ensure_loaded?(Redix) do
     @behaviour Normandy.Behaviours.SessionRegistry
     use GenServer
 
+    alias Normandy.Options
+
     @default_ttl_ms 60_000
+
+    @new_opts_schema NimbleOptions.new!(
+                       name: [type: :atom, doc: "The owner's name (default: a unique one)."],
+                       url: [
+                         type: :string,
+                         type_doc: "`t:String.t/0`",
+                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                       ],
+                       namespace: [
+                         type: :string,
+                         doc: "The key namespace (default: a unique one)."
+                       ]
+                     )
+
+    @start_link_opts_schema NimbleOptions.new!(
+                              name: [
+                                type: :atom,
+                                required: true,
+                                doc: "The owner's registered name, which is also the handle."
+                              ],
+                              conn: [type: :any, doc: "A started Redix connection (pid or name)."],
+                              url: [
+                                type: :string,
+                                type_doc: "`t:String.t/0`",
+                                doc: "A Redis URL to connect to when `:conn` is not given."
+                              ],
+                              namespace: [
+                                type: :string,
+                                required: true,
+                                doc: "The key namespace."
+                              ],
+                              ttl_ms: [
+                                type: :pos_integer,
+                                default: @default_ttl_ms,
+                                doc:
+                                  "Registration TTL in ms, refreshed every `ttl_ms / 2`; a dead " <>
+                                    "node's keys lapse after it."
+                              ]
+                            )
 
     # Compare-and-delete: remove the key only if it still holds OUR value, so a
     # node never evicts a key another node re-claimed after a TTL lapse.
@@ -41,9 +82,17 @@ if Code.ensure_loaded?(Redix) do
 
     # --- lifecycle ---
 
-    @doc "Test/default handle: start a Redix conn + owner GenServer; return the owner name."
+    @doc """
+    Test/default handle: start a Redix conn + owner GenServer; return the owner name.
+
+    ## Options
+
+    #{Options.docs(@new_opts_schema)}
+    """
     @spec new(keyword()) :: atom()
     def new(opts \\ []) do
+      opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
       name =
         Keyword.get_lazy(opts, :name, fn ->
           :"redis_registry_#{System.unique_integer([:positive])}"
@@ -61,10 +110,24 @@ if Code.ensure_loaded?(Redix) do
       name
     end
 
+    @doc """
+    Starts the per-node owner GenServer, which holds the Redix connection.
+
+    ## Options
+
+    #{Options.docs(@start_link_opts_schema)}
+    """
     @spec start_link(keyword()) :: GenServer.on_start()
     def start_link(opts) do
-      name = Keyword.fetch!(opts, :name)
-      GenServer.start_link(__MODULE__, opts, name: name)
+      opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+
+      unless Keyword.has_key?(opts, :conn) or Keyword.has_key?(opts, :url) do
+        raise ArgumentError,
+              "Normandy.Behaviours.SessionRegistry.Redis.start_link/1: requires :conn (a Redix " <>
+                "connection) or :url"
+      end
+
+      GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
     end
 
     @impl GenServer
@@ -79,7 +142,7 @@ if Code.ensure_loaded?(Redix) do
             supplied
         end
 
-      ttl = Keyword.get(opts, :ttl_ms, @default_ttl_ms)
+      ttl = Keyword.fetch!(opts, :ttl_ms)
       {:ok, _ref} = :timer.send_interval(div(ttl, 2), :refresh)
 
       {:ok, %{conn: conn, ns: Keyword.fetch!(opts, :namespace), ttl: ttl, mons: %{}, sids: %{}}}

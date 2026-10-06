@@ -7,10 +7,20 @@ defmodule Normandy.Behaviours.MemoryStore.InMemory do
   @behaviour Normandy.Behaviours.MemoryStore
 
   alias Normandy.Behaviours.MemoryStore.Docs
+  alias Normandy.Options
 
-  @doc "Starts a fresh store and returns its handle (a pid)."
+  @no_opts_schema NimbleOptions.new!([])
+
+  @doc """
+  Starts a fresh store and returns its handle (a pid).
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec new(keyword()) :: pid()
-  def new(_opts \\ []) do
+  def new(opts \\ []) do
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :new, 1})
     {:ok, pid} = Agent.start_link(fn -> %{} end)
     pid
   end

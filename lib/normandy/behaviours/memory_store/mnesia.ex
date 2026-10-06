@@ -17,24 +17,61 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
 
   alias Normandy.Behaviours.MemoryStore.Docs
   alias Normandy.Behaviours.MnesiaSetup
+  alias Normandy.Options
 
-  @doc "Test/default handle: a fresh uniquely named `ram_copies` table on this node."
+  @new_opts_schema NimbleOptions.new!(
+                     table: [type: :atom, doc: "The table (default: a unique name)."]
+                   )
+
+  @create_tables_opts_schema NimbleOptions.new!(
+                               table: [
+                                 type: :atom,
+                                 default: :normandy_memory_documents,
+                                 doc: "The table."
+                               ],
+                               copies: [
+                                 type: {:in, [:disc_copies, :ram_copies]},
+                                 default: :disc_copies,
+                                 doc: "Disc or RAM copies."
+                               ],
+                               nodes: [
+                                 type: {:list, :atom},
+                                 doc: "The nodes holding copies (default: `[node()]`)."
+                               ],
+                               wait_timeout: [
+                                 type: :timeout,
+                                 default: 30_000,
+                                 doc: "How long to wait for the table to load, in ms."
+                               ]
+                             )
+
+  @doc """
+  Test/default handle: a fresh uniquely named `ram_copies` table on this node.
+
+  ## Options
+
+  #{Options.docs(@new_opts_schema)}
+  """
   @spec new(keyword()) :: atom()
   def new(opts \\ []) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
     table = Keyword.get(opts, :table, :"normandy_memory_#{System.unique_integer([:positive])}")
     :ok = create_tables(table: table, copies: :ram_copies)
     table
   end
 
   @doc """
-  Creates the memory table. Opts: `:table` (default `:normandy_memory_documents`),
-  `:copies` (`:disc_copies` default | `:ram_copies`), `:nodes` (default `[node()]`),
-  `:wait_timeout` (ms, default 30_000).
+  Creates the memory table.
+
+  ## Options
+
+  #{Options.docs(@create_tables_opts_schema)}
   """
   @spec create_tables(keyword()) :: :ok
   def create_tables(opts \\ []) do
-    table = Keyword.get(opts, :table, :normandy_memory_documents)
-    copies = Keyword.get(opts, :copies, :disc_copies)
+    opts = Options.validate!(opts, @create_tables_opts_schema, {__MODULE__, :create_tables, 1})
+    table = Keyword.fetch!(opts, :table)
+    copies = Keyword.fetch!(opts, :copies)
     nodes = Keyword.get(opts, :nodes, [node()])
 
     :ok = MnesiaSetup.ensure_started!()
@@ -43,7 +80,7 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
 
     MnesiaSetup.wait_for_tables!(
       [table],
-      Keyword.get(opts, :wait_timeout, 30_000),
+      Keyword.fetch!(opts, :wait_timeout),
       "MemoryStore.Mnesia"
     )
   end

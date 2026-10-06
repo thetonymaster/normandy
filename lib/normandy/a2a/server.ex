@@ -43,7 +43,11 @@ defmodule Normandy.A2A.Server do
                                     required: true,
                                     doc: "What the agent does."
                                   ],
-                                  url: [type: :string, doc: "The A2A endpoint URL."],
+                                  url: [
+                                    type: :string,
+                                    type_doc: "`t:String.t/0`",
+                                    doc: "The A2A endpoint URL."
+                                  ],
                                   version: [type: :string, doc: "The agent's version."],
                                   provider_url: [type: :string, doc: "The provider's URL."],
                                   provider_org: [

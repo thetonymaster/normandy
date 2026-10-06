@@ -31,10 +31,30 @@ defmodule Normandy.Behaviours.AgentTemplate do
 
     use Agent
 
+    alias Normandy.Options
+
+    @start_link_opts_schema NimbleOptions.new!(
+                              name: [type: :any, doc: "A `t:GenServer.name/0` for the catalog."],
+                              templates: [
+                                type: {:custom, Normandy.Options, :plain_map, []},
+                                type_doc: "`t:map/0`",
+                                default: %{},
+                                doc: "The initial `template_id => supplement` map."
+                              ]
+                            )
+
+    @doc """
+    Starts the catalog.
+
+    ## Options
+
+    #{Options.docs(@start_link_opts_schema)}
+    """
     @spec start_link(keyword()) :: Agent.on_start()
     def start_link(opts) do
+      opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
       name = Keyword.get(opts, :name)
-      init = Keyword.get(opts, :templates, %{})
+      init = Keyword.fetch!(opts, :templates)
 
       if name,
         do: Agent.start_link(fn -> init end, name: name),

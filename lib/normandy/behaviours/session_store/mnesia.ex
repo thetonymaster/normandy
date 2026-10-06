@@ -23,6 +23,37 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
   alias Normandy.Behaviours.MnesiaSetup
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Options
+
+  @new_opts_schema NimbleOptions.new!(
+                     entries: [type: :atom, doc: "The entries table (default: a unique name)."],
+                     sessions: [type: :atom, doc: "The sessions table (default: a unique name)."]
+                   )
+
+  @create_tables_opts_schema NimbleOptions.new!(
+                               entries: [type: :atom, required: true, doc: "The entries table."],
+                               sessions: [type: :atom, required: true, doc: "The sessions table."],
+                               copies: [
+                                 type: {:in, [:disc_copies, :ram_copies]},
+                                 default: :disc_copies,
+                                 doc:
+                                   "`:disc_copies` converts this node's schema to disc first so " <>
+                                     "the tables survive a restart (needs a writable Mnesia dir)."
+                               ],
+                               nodes: [
+                                 type: {:list, :atom},
+                                 doc: "The nodes holding copies (default: `[node()]`)."
+                               ],
+                               wait_timeout: [
+                                 type: :timeout,
+                                 default: 30_000,
+                                 doc:
+                                   "How long to wait for the tables to load, in ms; raises on timeout."
+                               ]
+                             )
+
+  @doc false
+  def __opts_schema__(:create_tables), do: @create_tables_opts_schema
 
   @empty_session %{
     head_id: nil,
@@ -32,9 +63,16 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     resume_policy: nil
   }
 
-  @doc "Test/default handle: fresh uniquely-named `ram_copies` tables on this node."
+  @doc """
+  Test/default handle: fresh uniquely-named `ram_copies` tables on this node.
+
+  ## Options
+
+  #{Options.docs(@new_opts_schema)}
+  """
   @spec new(keyword()) :: %{entries: atom(), sessions: atom()}
   def new(opts \\ []) do
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
     uid = System.unique_integer([:positive])
     entries = Keyword.get(opts, :entries, :"normandy_entries_#{uid}")
     sessions = Keyword.get(opts, :sessions, :"normandy_sessions_#{uid}")
@@ -43,17 +81,19 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   end
 
   @doc """
-  Create the two Mnesia tables. Opts: `:entries`/`:sessions` (table-name atoms,
-  required), `:copies` (`:disc_copies` default | `:ram_copies`), `:nodes` (default
-  `[node()]`), `:wait_timeout` (ms to wait for the tables to load, default 30_000;
-  raises on timeout). `disc_copies` converts this node's schema to disc first so it survives
-  restart (requires a writable Mnesia dir; see `-mnesia dir` / `:mnesia` app env).
+  Creates the two Mnesia tables. A writable Mnesia dir is set with `-mnesia dir` or the
+  `:mnesia` app env.
+
+  ## Options
+
+  #{Options.docs(@create_tables_opts_schema)}
   """
   @spec create_tables(keyword()) :: :ok
   def create_tables(opts) do
+    opts = Options.validate!(opts, @create_tables_opts_schema, {__MODULE__, :create_tables, 1})
     entries = Keyword.fetch!(opts, :entries)
     sessions = Keyword.fetch!(opts, :sessions)
-    copies = Keyword.get(opts, :copies, :disc_copies)
+    copies = Keyword.fetch!(opts, :copies)
     nodes = Keyword.get(opts, :nodes, [node()])
 
     :ok = MnesiaSetup.ensure_started!()
@@ -64,7 +104,7 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
     MnesiaSetup.wait_for_tables!(
       [entries, sessions],
-      Keyword.get(opts, :wait_timeout, 30_000),
+      Keyword.fetch!(opts, :wait_timeout),
       "SessionStore.Mnesia"
     )
   end

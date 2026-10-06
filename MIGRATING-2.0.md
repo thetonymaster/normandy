@@ -895,3 +895,19 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentMemory.add_message/4`'s `:turn_id` and `:id` strings or `nil`; a
   `Compactor.WindowManager` compactor's `:context_window` a positive integer (a `nil` or a
   string such as `"200000"` used to raise only mid-turn).
+- `SessionStore.InMemory.new/1` and `start_link/1`, `MemoryStore.InMemory.new/1` and
+  `MemoryStore.ETS.new/1` take no options; a key raises (it was ignored).
+- `SessionRegistry.Redis.start_link/1` raises without `:conn` or `:url` (it crashed `init/1`
+  with a `KeyError`). `Cluster.child_specs/1` and `redis_child_specs/1` raise for a missing or
+  misspelled key; a `:redix` list without `:name` raises `ArgumentError` naming it.
+- The session and memory stores' Mnesia `create_tables/1`: `:copies` must be `:disc_copies` or
+  `:ram_copies`.
+- `Normandy.Options`' docs list every timeout option and its default in one table.
+- More value types that are now checked: the registries' and stores' `:name`, the Mnesia
+  table names (`:entries`, `:sessions`, `:table`) are atoms and `:nodes` a list of atoms;
+  `:wait_timeout` is ms or `:infinity`; the Redis `:url`, `:namespace` and `:prefix` are
+  strings, `SessionRegistry.Redis`'s `:ttl_ms` a positive integer and `SessionStore.Redis`'s
+  `:wait` a `{replicas, timeout_ms}` tuple of non-negative integers;
+  `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
+  and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
+  `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
