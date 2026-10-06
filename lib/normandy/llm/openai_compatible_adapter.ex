@@ -73,7 +73,6 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
           finch: atom() | nil
         }
 
-  @derive {Inspect, except: [:api_key]}
   schema do
     field(:api_key, :string, required: true)
     field(:base_url, :string, default: "https://api.openai.com/v1")
@@ -232,6 +231,13 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
     do: message
 
   defp error_detail(_body, status), do: "HTTP #{status}"
+
+  # Hides api_key and the credential-bearing options (Normandy.LLM.ClientInspect).
+  defimpl Inspect do
+    alias Normandy.LLM.ClientInspect
+
+    def inspect(client, opts), do: ClientInspect.inspect(client, opts)
+  end
 
   defimpl Normandy.Agents.Model do
     alias Normandy.LLM.OpenAICompatibleAdapter, as: A

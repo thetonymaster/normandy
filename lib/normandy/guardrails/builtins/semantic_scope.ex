@@ -53,6 +53,7 @@ defmodule Normandy.Guardrails.Builtins.SemanticScope do
 
   @behaviour Normandy.Guardrails.Guard
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Guardrails.Builtins.Field
   alias Normandy.Guardrails.GuardError
 
@@ -76,7 +77,7 @@ defmodule Normandy.Guardrails.Builtins.SemanticScope do
       other ->
         raise ArgumentError,
               "#{inspect(__MODULE__)} :fast_path must return :admit or :needs_classifier, " <>
-                "got: #{inspect(other)}"
+                "got: " <> Describe.type_of(other)
     end
   end
 
@@ -98,8 +99,8 @@ defmodule Normandy.Guardrails.Builtins.SemanticScope do
 
       other ->
         raise ArgumentError,
-              "#{inspect(__MODULE__)} :classifier must return :allow or {:block, reason}, " <>
-                "got: #{inspect(other)}"
+              "#{inspect(__MODULE__)} :classifier must return :allow or {:block, reason} " <>
+                "(reason an atom), got: " <> Describe.type_of(other)
     end
   end
 

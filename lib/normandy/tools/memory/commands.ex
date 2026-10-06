@@ -419,8 +419,23 @@ defmodule Normandy.Tools.Memory.Commands do
 
   defp text(cmd, key, loc) do
     case Map.get(cmd, key) do
-      s when is_binary(s) -> if String.valid?(s), do: {:ok, s}, else: bad_text(key, loc)
+      s when is_binary(s) -> valid_text(s, key, loc)
       _ -> bad_text(key, loc)
+    end
+  end
+
+  # NUL is valid UTF-8, but a Postgres text column refuses it: every backend refuses it here
+  # so the model gets the same answer from all of them, not a backend outage.
+  defp valid_text(s, key, loc) do
+    cond do
+      not String.valid?(s) ->
+        bad_text(key, loc)
+
+      String.contains?(s, <<0>>) ->
+        {:error, :invalid_input, "Error: `#{key}` must not contain NUL characters"}
+
+      true ->
+        {:ok, s}
     end
   end
 

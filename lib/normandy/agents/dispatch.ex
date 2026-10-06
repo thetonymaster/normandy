@@ -333,6 +333,11 @@ defmodule Normandy.Agents.Dispatch do
   deterministic), then runs `execute/4`. Policy is not consulted again: it would park the
   call again. A tool no longer registered, or input that no longer validates, answers the
   call with the same result `classify/3` would give, through the `after_tool` slot.
+
+  The approval covers the call's name and input, not the tool's code: after a redeploy, or
+  a supplement that registers another tool under that name, the approved call runs
+  whatever tool now holds the name. To bind an approval to one implementation, version
+  the tool's name (`"refund_v2"`) when its behaviour changes.
   """
   @spec execute_approved(map(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
   def execute_approved(config, %ToolCall{} = call, %Pipeline{} = pipeline) do

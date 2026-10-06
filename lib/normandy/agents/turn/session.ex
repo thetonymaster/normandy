@@ -12,9 +12,12 @@ defmodule Normandy.Agents.Turn.Session do
 
   @schema NimbleOptions.new!(
             session_id: [
-              type: :string,
+              type: {:custom, __MODULE__, :validate_session_id, []},
+              type_doc: "`t:String.t/0`",
               required: true,
-              doc: "The session's id: its key in the registry and in the store."
+              doc:
+                "The session's id: its key in the registry and in the store. A non-empty " <>
+                  "string without `{` or `}` (the Redis stores put it inside a cluster hash tag)."
             ],
             registry: [
               type: {:custom, __MODULE__, :validate_module_handle, []},
@@ -292,6 +295,19 @@ defmodule Normandy.Agents.Turn.Session do
 
   def validate_module_handle(other),
     do: {:error, "expected a {module, handle} tuple, got: " <> Describe.type_of(other)}
+
+  @doc false
+  # Redis keys put the id inside a cluster hash tag ("ns:{id}:stream"): a brace in it, or
+  # an empty id, would change which part of the key Redis hashes.
+  @spec validate_session_id(term()) :: {:ok, String.t()} | {:error, String.t()}
+  def validate_session_id(id) when is_binary(id) and id != "" do
+    if String.contains?(id, ["{", "}"]),
+      do: {:error, "expected a session id without { or }, got: " <> Describe.type_of(id)},
+      else: {:ok, id}
+  end
+
+  def validate_session_id(other),
+    do: {:error, "expected a non-empty string, got: " <> Describe.type_of(other)}
 
   @doc false
   def validate_config(%BaseAgentConfig{} = config), do: {:ok, config}

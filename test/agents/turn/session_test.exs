@@ -510,7 +510,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     reg = Horde.new()
     store = InMemory.new()
     {:ok, sup} = Normandy.Agents.Turn.Supervisor.start_link([])
-    sid = "race-\#{System.unique_integer([:positive])}"
+    sid = "race-#{System.unique_integer([:positive])}"
 
     opts = [
       session_id: sid,

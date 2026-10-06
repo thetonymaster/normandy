@@ -146,12 +146,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
           finch: atom() | nil
         }
 
-  @derive {Inspect, except: [:api_key]}
   schema do
     field(:api_key, :string, required: true)
     field(:base_url, :string, default: nil)
     field(:options, :map, default: %{})
     field(:finch, :any, default: nil)
+  end
+
+  # Hides api_key and the credential-bearing options (Normandy.LLM.ClientInspect).
+  defimpl Inspect do
+    alias Normandy.LLM.ClientInspect
+
+    def inspect(client, opts), do: ClientInspect.inspect(client, opts)
   end
 
   defimpl Normandy.Agents.Model do

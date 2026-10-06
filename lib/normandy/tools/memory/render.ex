@@ -42,11 +42,7 @@ defmodule Normandy.Tools.Memory.Render do
       shown = lines |> Enum.with_index(1) |> Enum.slice((first - 1)..(last - 1)//1)
       {body, cut_after} = cap(shown, max_chars)
 
-      note =
-        if cut_after,
-          do:
-            "\n[truncated at line #{cut_after} of #{n}; use view_range [#{cut_after + 1}, -1] to read on]",
-          else: ""
+      note = truncation_note(cut_after, n, max_chars)
 
       {:ok, "Here's the content of #{path} with line numbers:\n" <> body <> note}
     end
@@ -71,17 +67,37 @@ defmodule Normandy.Tools.Memory.Render do
 
   defp numbered(i, line), do: String.pad_leading(Integer.to_string(i), 6) <> "\t" <> line
 
+  # Whole lines while they fit; a first line longer than max_chars is cut on a grapheme
+  # boundary, so the view is never longer than max_chars plus the note.
   defp cap(shown, max_chars) do
     Enum.reduce_while(shown, {[], 0, nil}, fn {line, i}, {acc, used, _} ->
       text = numbered(i, line)
       used = used + String.length(text) + 1
 
-      if used > max_chars and acc != [],
-        do: {:halt, {acc, used, i - 1}},
-        else: {:cont, {[text | acc], used, nil}}
+      cond do
+        used <= max_chars -> {:cont, {[text | acc], used, nil}}
+        acc != [] -> {:halt, {acc, used, i - 1}}
+        true -> {:halt, {[String.slice(text, 0, max_chars)], used, {:inside, i}}}
+      end
     end)
     |> then(fn {acc, _used, cut} -> {acc |> Enum.reverse() |> Enum.join("\n"), cut} end)
   end
+
+  defp truncation_note(nil, _n, _max_chars), do: ""
+
+  defp truncation_note({:inside, line}, n, max_chars) when line < n,
+    do:
+      "\n[truncated inside line #{line} of #{n}: it is longer than the #{max_chars}-character " <>
+        "view limit; use view_range [#{line + 1}, -1] to read on]"
+
+  defp truncation_note({:inside, line}, n, max_chars),
+    do:
+      "\n[truncated inside line #{line} of #{n}: it is longer than the #{max_chars}-character " <>
+        "view limit]"
+
+  defp truncation_note(cut_after, n, _max_chars),
+    do:
+      "\n[truncated at line #{cut_after} of #{n}; use view_range [#{cut_after + 1}, -1] to read on]"
 
   defp range(nil, n), do: {:ok, 1, n}
 

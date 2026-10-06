@@ -1308,6 +1308,31 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
 - New supplement key `:pinned`: `pinned: [policy: ref, guardrails: g, credential: ref]`
   (also `:budget`, `:compactor`, `:model_catalog`, `:hooks`). A stored template whose value
   differs is refused, before its credential provider runs. Templates are not signed.
+- `Turn.Session.new/1` and `Turn.Server.start_link/1` refuse an empty `session_id` or one
+  containing `{` or `}` (the Redis stores put the id inside a cluster hash tag). Key formats
+  are unchanged.
+- Tool error text sent to the model no longer quotes remote data or exception terms: an MCP
+  or A2A transport error is named by its tag (`"MCP tool 'search' failed:
+  :unexpected_response"`), and a tool that raises `KeyError` gives `"Tool execution failed:
+  KeyError: key :x not found"` (no map), `MatchError`, `CaseClauseError`,
+  `Protocol.UndefinedError` and the other exceptions whose message shows a term give their
+  module only.
+- `inspect/1` of a `ClaudioAdapter` or `OpenAICompatibleAdapter` shows
+  `options[:req_options]` and `options[:headers]` as `"**redacted**"`, and its `base_url`
+  (and `options[:base_url]`) as scheme, host, port and path only, like the shared breaker's
+  key: `"https://user:pw@host/v1?key=k"` prints as `"https://host/v1"`, and a URL with no
+  scheme or host as `"**redacted**"`.
+- `SemanticScope`'s `ArgumentError` for a `:classifier` or `:fast_path` return of the wrong
+  shape, and `Turn.Session.new/1`'s error for a session id with `{` or `}`, name the value's
+  type (`got: a string (12 bytes)`, `got: a tuple`) instead of showing it.
+- The memory tool's `view` never returns more than `max_view_chars` characters plus a note:
+  a longer first line is cut, with `[truncated inside line L of N: ...]`. Text containing a
+  NUL character is refused (`` Error: `file_text` must not contain NUL characters ``) on every
+  backend; Postgres used to report it as "memory store unavailable".
+- `Tools.Executor.execute_tool/2` and `execute_tool_classified/2` run a tool with no policy,
+  approval, hooks, budget or input validation (now documented); the agent loop uses
+  `Normandy.Agents.Dispatch`. An approved call runs whatever tool holds its name when the
+  approval arrives: version a tool's name when its behaviour changes.
 
 ## New, non-breaking
 

@@ -166,8 +166,12 @@ defmodule Normandy.MCP.ToolWrapper do
   @impl Normandy.Tool
   def run(%__MODULE__{adapter: adapter, client: client, tool: tool}, %Context{input: input}) do
     case adapter.call_tool(client, tool.name, input, []) do
-      {:ok, result} -> normalize_result(result)
-      {:error, reason} -> {:error, "MCP tool '#{tool.name}' failed: #{inspect(reason)}"}
+      {:ok, result} ->
+        normalize_result(result)
+
+      # The reason's tag only: a transport error can carry the response body the server sent.
+      {:error, reason} ->
+        {:error, "MCP tool '#{tool.name}' failed: #{Describe.reason_tag(reason)}"}
     end
   end
 

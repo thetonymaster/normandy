@@ -47,6 +47,7 @@ defmodule Normandy.A2A.AgentTool do
   alias Claudio.A2A.Client
   alias Claudio.A2A.Message
   alias Claudio.A2A.Part
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Context
@@ -191,7 +192,7 @@ defmodule Normandy.A2A.AgentTool do
           end
 
         {:error, reason} ->
-          {:error, "Failed to get task status: #{inspect(reason)}"}
+          {:error, "Failed to get task status: #{Describe.reason_tag(reason)}"}
       end
     end
   end
@@ -315,7 +316,8 @@ defmodule Normandy.A2A.AgentTool do
         {:ok, Enum.map_join(response_msg.parts, "\n", fn part -> Map.get(part, :text, "") end)}
 
       {:error, reason} ->
-        {:error, "A2A request failed: #{inspect(reason)}"}
+        # The reason's tag only: a transport error can carry the body the remote sent.
+        {:error, "A2A request failed: #{Describe.reason_tag(reason)}"}
     end
   end
 end

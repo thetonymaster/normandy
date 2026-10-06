@@ -12,8 +12,17 @@ defmodule Normandy.Tools.Executor do
   - A result that is not `{:ok, value}` or `{:error, reason}` becomes an error.
 
   Error messages reach the model as tool results, so an exit or throw is named
-  by its tag only (its terms can carry call arguments), and an exception
-  message is cut to 500 characters.
+  by its tag only (its terms can carry call arguments), an exception whose message
+  shows the term it failed on (`KeyError`, `MatchError`, `CaseClauseError`,
+  `Protocol.UndefinedError`, ...) is named by its module (a `KeyError` also by its key),
+  and any other exception message is cut to 500 characters.
+
+  ## No controls
+
+  `execute_tool/2` and `execute_tool_classified/2` run the tool and nothing else: no
+  policy, no approval, no hooks, no budget and no input validation. The agent loop runs
+  tools through `Normandy.Agents.Dispatch`, which applies all of them; call these only for
+  a tool and an input you have already checked.
   """
 
   alias Normandy.Components.ContentBlock.Describe
@@ -102,8 +111,7 @@ defmodule Normandy.Tools.Executor do
           tool |> Tool.run(context) |> check_result()
         rescue
           error ->
-            {{:error, "Tool execution failed: #{error |> Exception.message() |> truncate()}"},
-             :exception}
+            {{:error, "Tool execution failed: #{describe_exception(error)}"}, :exception}
         catch
           :exit, reason ->
             {{:error, "Tool execution exited: #{describe_reason(reason)}"}, :exit}
@@ -131,12 +139,28 @@ defmodule Normandy.Tools.Executor do
         Describe.type_of(other)}, :invalid_result}
   end
 
-  defp describe_reason(reason)
-       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
-       do: inspect(elem(reason, 0))
+  defp describe_reason(reason), do: Describe.reason_tag(reason)
 
-  defp describe_reason(reason) when is_atom(reason), do: inspect(reason)
-  defp describe_reason(reason), do: Describe.type_of(reason)
+  # Exceptions whose message inspects the term they failed on, which can be a struct
+  # holding a token or the tool's whole input: named by module (and a KeyError's key).
+  @term_exceptions [
+    BadArityError,
+    BadBooleanError,
+    BadFunctionError,
+    BadMapError,
+    BadStructError,
+    CaseClauseError,
+    MatchError,
+    Protocol.UndefinedError,
+    TryClauseError,
+    WithClauseError
+  ]
+
+  defp describe_exception(%KeyError{key: key}),
+    do: "KeyError: key #{inspect(key, limit: 5, printable_limit: 50)} not found"
+
+  defp describe_exception(%mod{}) when mod in @term_exceptions, do: inspect(mod)
+  defp describe_exception(error), do: error |> Exception.message() |> truncate()
 
   # Characters, not bytes, so a multibyte character is never cut in half.
   @max_message 500
