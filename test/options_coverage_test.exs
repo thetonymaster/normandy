@@ -234,8 +234,14 @@ defmodule Normandy.OptionsCoverageTest do
       calls = [
         {"Normandy.Coordination.ParallelOrchestrator.execute/3",
          fn -> ParallelOrchestrator.execute([], "go", max_concurency: 2) end},
-        {"Normandy.Coordination.ParallelOrchestrator.execute_specs/2",
-         fn -> ParallelOrchestrator.execute_specs([], max_concurency: 2) end},
+        {"Normandy.Coordination.HierarchicalCoordinator.execute/3",
+         fn ->
+           ParallelOrchestrator.execute_specs(
+             [],
+             [max_concurency: 2],
+             {Normandy.Coordination.HierarchicalCoordinator, :execute, 3}
+           )
+         end},
         {"Normandy.Coordination.SequentialOrchestrator.execute/3",
          fn -> SequentialOrchestrator.execute([], "go", max_concurency: 2) end},
         {"Normandy.Coordination.SequentialOrchestrator.execute_with_messages/3",

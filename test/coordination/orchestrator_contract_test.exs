@@ -51,6 +51,36 @@ defmodule Normandy.Coordination.OrchestratorContractTest do
                  )
       end
 
+      test "a caller that traps exits finds its mailbox empty afterwards" do
+        Process.flag(:trap_exit, true)
+        assert {:ok, _} = @orchestrator.execute([agent("a"), agent("b")], "go")
+        assert Process.info(self(), :messages) == {:messages, []}
+      end
+
+      test "a :transform or :on_agent_complete that raises is that agent's error" do
+        boom = fn _ -> raise "transform boom" end
+
+        assert {:error, %OrchestrationError{errors: %{"a" => %RuntimeError{}}}} =
+                 @orchestrator.execute([%{id: "a", agent: agent("a"), transform: boom}], "go")
+
+        assert {:error, %OrchestrationError{errors: %{"a" => %RuntimeError{}}}} =
+                 @orchestrator.execute([%{id: "a", agent: agent("a")}], "go",
+                   on_agent_complete: fn _id, _output -> raise "callback boom" end
+                 )
+      end
+
+      test "a :transform that is not a 1-arity function raises before any agent runs" do
+        for bad <- [nil, fn a, b -> {a, b} end] do
+          error =
+            assert_raise ArgumentError, fn ->
+              @orchestrator.execute([%{id: "a", agent: agent("a"), transform: bad}], "go")
+            end
+
+          assert error.message =~ "#{inspect(@orchestrator)}.execute/3: :transform for \"a\""
+          assert error.message =~ "must be a 1-arity function"
+        end
+      end
+
       test "no agents: {:ok, %{}}" do
         assert {:ok, %{}} = @orchestrator.execute([], "go")
       end

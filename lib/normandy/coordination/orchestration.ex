@@ -64,6 +64,7 @@ defmodule Normandy.Coordination.Orchestration do
        when is_binary(id) and not is_struct(spec) do
     case spec |> Map.keys() |> Enum.reject(&(&1 in allowed)) do
       [] ->
+        :ok = check_transform!(spec, caller)
         spec
 
       unknown ->
@@ -79,6 +80,22 @@ defmodule Normandy.Coordination.Orchestration do
             "with keys #{inspect(allowed)} (:id a string, :agent a " <>
             "%Normandy.Agents.BaseAgentConfig{}), got: " <> Describe.type_of(other)
   end
+
+  # A :transform that is not a 1-arity function would fail every run of that agent
+  # (BadFunctionError, BadArityError); it raises here instead, before any agent runs.
+  defp check_transform!(%{transform: transform} = spec, caller)
+       when not is_function(transform, 1) do
+    raise ArgumentError,
+          "#{caller}: :transform for #{inspect(spec.id)} must be a 1-arity function, got: " <>
+            describe_fun(transform)
+  end
+
+  defp check_transform!(_spec, _caller), do: :ok
+
+  defp describe_fun(fun) when is_function(fun),
+    do: "a function of arity #{Function.info(fun, :arity) |> elem(1)}"
+
+  defp describe_fun(other), do: Describe.type_of(other)
 
   # One agent's run: {:ok, output} or {:error, exception}, never a stacktrace. Normandy's
   # own errors come back from BaseAgent.run/2; a raise (a bug) is logged with its
@@ -102,6 +119,8 @@ defmodule Normandy.Coordination.Orchestration do
   # process an agent linked to (which kills its task) arrives as an {:exit, reason}
   # outcome, not as an exit of the caller. There is no application supervision tree to
   # hang them on, so each call starts a Task.Supervisor and stops it however the call ends.
+  # It is unlinked before it stops, and an exit signal that arrived first is flushed, so a
+  # caller that traps exits finds no {:EXIT, supervisor, _} message after the call.
   @doc false
   @spec with_task_supervisor((Supervisor.supervisor() -> result)) :: result when result: term()
   def with_task_supervisor(fun) do
@@ -110,7 +129,14 @@ defmodule Normandy.Coordination.Orchestration do
     try do
       fun.(supervisor)
     after
-      Supervisor.stop(supervisor)
+      true = Process.unlink(supervisor)
+      :ok = Supervisor.stop(supervisor)
+
+      receive do
+        {:EXIT, ^supervisor, _reason} -> :ok
+      after
+        0 -> :ok
+      end
     end
   end
 

@@ -78,19 +78,26 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
   # One agent. Its output feeds the next agent; a failure ends the pipeline or, with
   # on_error: :continue, leaves the next agent the last successful output.
   # The agent runs in an unlinked task, so a crash in a process it linked to fails that
-  # agent, not the caller; :transform and :on_agent_complete run in the caller.
+  # agent, not the caller. :transform and :on_agent_complete run in the caller, guarded as
+  # in ParallelOrchestrator: a raise, exit or throw in either is that agent's error.
   defp step(supervisor, spec, {input, results, errors}, opts) do
-    case Orchestration.run_agent_isolated(supervisor, spec.id, spec.agent, input) do
-      {:ok, output} ->
-        output = Map.get(spec, :transform, &Function.identity/1).(output)
-        on_complete = opts[:on_agent_complete]
-        if on_complete, do: on_complete.(spec.id, output)
-        {:cont, {output, Map.put(results, spec.id, output), errors}}
-
+    with {:ok, output} <-
+           Orchestration.run_agent_isolated(supervisor, spec.id, spec.agent, input),
+         {:ok, output} <-
+           Orchestration.guard(spec.id, fn -> run_callbacks(spec, output, opts) end) do
+      {:cont, {output, Map.put(results, spec.id, output), errors}}
+    else
       {:error, exception} ->
         acc = {input, results, Map.put(errors, spec.id, exception)}
         halt_or_continue(Keyword.fetch!(opts, :on_error), acc)
     end
+  end
+
+  defp run_callbacks(spec, output, opts) do
+    output = Map.get(spec, :transform, &Function.identity/1).(output)
+    on_complete = opts[:on_agent_complete]
+    if on_complete, do: on_complete.(spec.id, output)
+    output
   end
 
   defp halt_or_continue(:stop, acc), do: {:halt, acc}

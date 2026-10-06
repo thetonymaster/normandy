@@ -132,6 +132,37 @@ defmodule Normandy.Coordination.ReactiveTest do
     end
   end
 
+  describe "a caller that traps exits" do
+    # Several agents finish before the outcome is decided, so race/3 and some/3 used to
+    # leave their reports behind; every call left the per-call supervisor's {:EXIT, _, _}.
+    setup do
+      Process.flag(:trap_exit, true)
+      agents = for _ <- 1..5, do: create_test_agent()
+      {:ok, agents: agents}
+    end
+
+    test "finds its mailbox empty after race/3", %{agents: agents} do
+      for _ <- 1..5, do: assert({:ok, _} = Reactive.race(agents, "go"))
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+
+    test "finds its mailbox empty after all/3", %{agents: agents} do
+      assert {:ok, _} = Reactive.all(agents, "go")
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+
+    test "finds its mailbox empty after some/3", %{agents: agents} do
+      for _ <- 1..5, do: assert({:ok, _} = Reactive.some(agents, "go", count: 2))
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+  end
+
+  describe "all/3 with no agents" do
+    test "returns an empty result" do
+      assert {:ok, %{}} = Reactive.all([], "go")
+    end
+  end
+
   describe "race/3" do
     test "an agent that exits is a failure, not an exit of the caller" do
       test_pid = self()

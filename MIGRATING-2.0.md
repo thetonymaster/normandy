@@ -753,6 +753,13 @@ agents, one input and options, and return:
   `ParallelOrchestrator`, `:input`, which replaces `input` for that agent. Any other spec key,
   a repeated id, or anything else in `agents` raises `ArgumentError`. An unknown option raises
   `ArgumentError`.
+- A spec's `:transform` must be a 1-arity function: `transform: nil` (accepted by 1.x, then a
+  `BadFunctionError` for that agent) or another arity raises `ArgumentError` before any agent
+  runs.
+- A `:transform` or `:on_agent_complete` that raises, exits or throws is that agent's error in
+  both orchestrators; `SequentialOrchestrator` used to let it raise in the caller.
+- `Reactive.race/3` and `some/3` no longer leave in the caller's mailbox the results of
+  agents that finished after the outcome was decided.
 - A struct input (`%BaseAgentInputSchema{}`) reaches every agent; 1.x dropped it, and with bare
   agents raised a `KeyError` in a linked task.
 - `ParallelOrchestrator.execute/3`'s `:timeout` also takes `:infinity`.
@@ -780,6 +787,8 @@ agents, one input and options, and return:
   or throws, no longer takes down the caller of `race/3`, `all/3` or `some/3` (they run the
   agents in unlinked tasks): it is that agent's `:task_down` `TurnError` (or exception).
 - `Reactive.race/3` and `some/3` accept `timeout: :infinity` (it raised `ArithmeticError`).
+- `Reactive.all([], input)` returns `{:ok, %{}}` (it raised `Task.async_stream`'s
+  `:max_concurrency` error).
 - `Reactive.some/3` with `count:` above the number of agents raises `ArgumentError` (was
   `{:error, :count_exceeds_agent_count}`).
 

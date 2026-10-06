@@ -165,6 +165,18 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       assert results =~ "other"
     end
 
+    test "a worker that is not an agent config is reported by the public function" do
+      coordinator = HierarchicalCoordinator.add_worker(coordinator([]), "w", :not_an_agent)
+
+      error =
+        assert_raise ArgumentError, fn ->
+          HierarchicalCoordinator.execute_with_tasks(coordinator, [%{worker_id: "w", task: "a"}])
+        end
+
+      assert error.message =~
+               ~r/^Normandy\.Coordination\.HierarchicalCoordinator\.execute_with_tasks\/3: /
+    end
+
     test "an unknown worker id raises a clear error" do
       assert_raise ArgumentError, ~r/no worker "nope"/, fn ->
         HierarchicalCoordinator.execute_with_tasks(coordinator([]), [

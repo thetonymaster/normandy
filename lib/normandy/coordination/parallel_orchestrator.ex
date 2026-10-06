@@ -112,14 +112,16 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   end
 
   # Runs specs without opening a workflow span, for HierarchicalCoordinator, which already
-  # holds one so a call yields exactly one span. Every spec carries its own :input.
+  # holds one so a call yields exactly one span. Every spec carries its own :input. `caller`
+  # is the public function that called it; its errors name that function.
   @doc false
-  @spec execute_specs([Orchestration.spec()], keyword()) :: Orchestration.result()
-  def execute_specs(specs, opts) do
-    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_specs, 2})
+  @spec execute_specs([Orchestration.spec()], keyword(), {module(), atom(), arity()}) ::
+          Orchestration.result()
+  def execute_specs(specs, opts, {mod, fun, arity} = caller) do
+    opts = Normandy.Options.validate!(opts, @opts_schema, caller)
 
     specs
-    |> Orchestration.specs!(@spec_keys, "#{inspect(__MODULE__)}.execute_specs/2")
+    |> Orchestration.specs!(@spec_keys, "#{inspect(mod)}.#{fun}/#{arity}")
     |> run_specs(nil, opts)
   end
 
@@ -177,6 +179,14 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   - `{:ok, {:error, {agent_id, exception}}}` - the agent failed (exceptions as in
     `Normandy.OrchestrationError`)
   - `{:exit, {agent_id, :timeout}}` - the agent ran past `:timeout` and was stopped
+
+  Each spec runs on its own `:input`; a spec without one, or a bare agent config, runs
+  with `nil` as its input.
+
+  Unlike `execute/3`, the tasks are linked to the process that consumes the stream: a
+  crash in a process an agent linked to (which kills its task) exits the consumer instead
+  of becoming that agent's error. Consume it from a process that may die with it, or use
+  `execute/3`.
 
   Emits no `[:normandy, :workflow, :run]` span: the stream is lazy, so it has no
   defined start and end (a current limitation).

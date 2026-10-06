@@ -159,7 +159,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         # Step 3: Execute workers; failed workers are reported to the manager.
         worker_results =
           worker_specs
-          |> ParallelOrchestrator.execute_specs(max_concurrency: max_concurrency)
+          |> ParallelOrchestrator.execute_specs(
+            [max_concurrency: max_concurrency],
+            {__MODULE__, :execute, 3}
+          )
           |> worker_outcome()
 
         # Step 4: Manager aggregates results
@@ -222,7 +225,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     # Execute workers
     worker_results =
       worker_specs
-      |> ParallelOrchestrator.execute_specs(max_concurrency: max_concurrency)
+      |> ParallelOrchestrator.execute_specs(
+        [max_concurrency: max_concurrency],
+        {__MODULE__, :execute_with_tasks, 3}
+      )
       |> worker_outcome()
 
     # Aggregate with manager
@@ -442,7 +448,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     Enum.join(["Aggregate these worker results:" | succeeded ++ failed], "\n\n")
   end
 
-  # The workers' outputs and failures, whichever way execute_specs/2 returned.
+  # The workers' outputs and failures, whichever way execute_specs/3 returned.
   defp worker_outcome({:ok, results}), do: %{results: results, errors: %{}}
 
   defp worker_outcome({:error, %OrchestrationError{results: results, errors: errors}}),

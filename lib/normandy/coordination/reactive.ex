@@ -139,8 +139,9 @@ defmodule Normandy.Coordination.Reactive do
       # Wait for first success or all failures
       result = await_first_success(ref, monitors(tasks), length(agents), timeout)
 
-      # Cleanup: shutdown remaining tasks
+      # Cleanup: shutdown remaining tasks, then drop the reports they left behind
       shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
+      :ok = drain_reports(ref)
 
       result
     end)
@@ -184,7 +185,8 @@ defmodule Normandy.Coordination.Reactive do
   def all(agents, input, opts \\ []) when is_list(agents) do
     opts = Options.validate!(opts, @all_opts_schema, {__MODULE__, :all, 3})
     timeout = Keyword.fetch!(opts, :timeout)
-    max_concurrency = Keyword.get(opts, :max_concurrency, length(agents))
+    # At least 1: Task.async_stream rejects 0, which [] would give.
+    max_concurrency = Keyword.get(opts, :max_concurrency, max(length(agents), 1))
     on_complete = Keyword.get(opts, :on_complete)
     fail_fast = Keyword.fetch!(opts, :fail_fast)
 
@@ -293,8 +295,9 @@ defmodule Normandy.Coordination.Reactive do
         # Wait for N successes
         result = await_n_successes(ref, monitors(tasks), count, length(agents), timeout)
 
-        # Cleanup
+        # Cleanup: shutdown remaining tasks, then drop the reports they left behind
         shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
+        :ok = drain_reports(ref)
 
         result
       end)
@@ -403,18 +406,32 @@ defmodule Normandy.Coordination.Reactive do
   defp monitors(tasks),
     do: Map.new(tasks, fn {task, _agent, idx} -> {task.ref, "agent_#{idx}"} end)
 
-  # The next agent outcome, or :timeout. A task that died before reporting (a crash in a
-  # process its agent linked to) is that agent's :task_down TurnError.
+  # The next agent outcome with the monitors still to watch, or :timeout. A task that died
+  # before reporting (a crash in a process its agent linked to) is that agent's :task_down
+  # TurnError. A task reports before it exits, so its report is received before its DOWN;
+  # dropping its monitor on the report means a task that reported and then died is
+  # counted once.
   defp next_outcome(ref, monitors, remaining) do
     receive do
       {^ref, agent_id, result} ->
-        {agent_id, result}
+        {agent_id, result, Map.reject(monitors, fn {_mref, id} -> id == agent_id end)}
 
       {:DOWN, mref, :process, _pid, reason}
       when reason != :normal and is_map_key(monitors, mref) ->
-        {Map.fetch!(monitors, mref), {:error, TurnError.from_reason({:task_down, reason})}}
+        {Map.fetch!(monitors, mref), {:error, TurnError.from_reason({:task_down, reason})},
+         Map.delete(monitors, mref)}
     after
       remaining -> :timeout
+    end
+  end
+
+  # Reports from tasks that finished after the outcome was decided; shutdown_tasks/4 has
+  # stopped every task, so all of them are already in the mailbox.
+  defp drain_reports(ref) do
+    receive do
+      {^ref, _agent_id, _result} -> drain_reports(ref)
+    after
+      0 -> :ok
     end
   end
 
@@ -445,7 +462,7 @@ defmodule Normandy.Coordination.Reactive do
   @doc false
   # One agent's result: {:ok, output} or {:error, exception}. A raise (a bug) is logged
   # and returned; an exit (a timed-out call, a client that exits) is a :task_down
-  # TurnError, so it never takes down the task and, through Task.async's link, the caller.
+  # TurnError, so it never takes down the task (whose result would then be lost).
   def execute_agent(agent, input) do
     run_one(agent, input)
   rescue
@@ -494,10 +511,10 @@ defmodule Normandy.Coordination.Reactive do
       {:error, :timeout}
     else
       case next_outcome(ref, monitors, remaining_timeout) do
-        {_agent_id, {:ok, result}} ->
+        {_agent_id, {:ok, result}, _monitors} ->
           {:ok, result}
 
-        {_agent_id, {:error, _reason}} ->
+        {_agent_id, {:error, _reason}, monitors} ->
           await_first_success_loop(ref, monitors, total_agents, failures + 1, start_time, timeout)
 
         :timeout ->
@@ -530,11 +547,11 @@ defmodule Normandy.Coordination.Reactive do
       {:error, :timeout}
     else
       case next_outcome(ref, monitors, remaining_timeout) do
-        {agent_id, {:ok, result}} ->
+        {agent_id, {:ok, result}, monitors} ->
           tally = {Map.put(successes, agent_id, result), failures}
           await_n_successes_loop(ref, monitors, goal, tally, start_time, timeout)
 
-        {_agent_id, {:error, _reason}} ->
+        {_agent_id, {:error, _reason}, monitors} ->
           tally = {successes, failures + 1}
           await_n_successes_loop(ref, monitors, goal, tally, start_time, timeout)
 
