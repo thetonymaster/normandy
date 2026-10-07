@@ -1,9 +1,9 @@
 defmodule Normandy.Behaviours.MemoryStore.Docs do
   @moduledoc false
   # Pure operations on one namespace's documents, `%{path => %{content, version,
-  # updated_at}}`. InMemory and Mnesia run these inside their single serialized writer
-  # (an Agent call, a Mnesia transaction), which makes each atomic. Every write returns
-  # `{reply, docs}`. ETS keeps a row per document and uses MemoryStore.Rows.
+  # updated_at}}`. InMemory runs these inside one Agent call, which makes each atomic.
+  # Every write returns `{reply, docs}`. ETS and Mnesia keep a row per document and use
+  # MemoryStore.Rows; they share `next_version/2`.
 
   alias Normandy.Behaviours.MemoryStore
 

@@ -26,16 +26,30 @@ defmodule Normandy.Behaviours.MnesiaSetup do
     end)
   end
 
-  def create_table!(name, attrs, copies, nodes) do
-    case :mnesia.create_table(name, [{:attributes, attrs}, {:type, :set}, {copies, nodes}]) do
+  def create_table!(name, attrs, type, copies, nodes) do
+    case :mnesia.create_table(name, [{:attributes, attrs}, {:type, type}, {copies, nodes}]) do
       {:atomic, :ok} ->
         :ok
 
       {:aborted, {:already_exists, ^name}} ->
-        :ok
+        check_layout!(name, attrs, type)
 
       {:aborted, reason} ->
         raise "Mnesia create_table #{inspect(name)} failed: #{inspect(reason)}"
+    end
+  end
+
+  # An existing table is used only when its layout is the one asked for: a table of
+  # another layout (an older Normandy's) would be read and written as if it matched.
+  defp check_layout!(name, attrs, type) do
+    case {:mnesia.table_info(name, :attributes), :mnesia.table_info(name, :type)} do
+      {^attrs, ^type} ->
+        :ok
+
+      {got_attrs, got_type} ->
+        raise "Mnesia table #{inspect(name)} exists with attributes #{inspect(got_attrs)} " <>
+                "and type #{inspect(got_type)}; expected #{inspect(attrs)} and " <>
+                "#{inspect(type)}. Delete the table or use another table name."
     end
   end
 

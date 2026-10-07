@@ -156,8 +156,11 @@ store = {MemoryStore.InMemory, MemoryStore.InMemory.new()}
 store = {MemoryStore.ETS, MemoryStore.ETS.new()}
 ```
 
-**Mnesia** (one row per namespace; see above): create the table once at boot (`:disc_copies` by default; the default table is
-`:normandy_memory_documents`), and use the table name as the handle.
+**Mnesia** (one row per document plus a totals row per namespace, in an `:ordered_set`
+table): create the table once at boot (`:disc_copies` by default; the default table is
+`:normandy_memory_documents`), and use the table name as the handle. A write locks its
+namespace's totals row, so one namespace's writers run one at a time. A listing, rename or
+tree delete selects the namespace's rows and locks the whole table while it runs.
 
 ```elixir
 MemoryStore.Mnesia.create_tables(table: :my_memory)

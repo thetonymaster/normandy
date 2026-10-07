@@ -100,8 +100,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     :ok = MnesiaSetup.ensure_started!()
     if copies == :disc_copies, do: MnesiaSetup.ensure_disc_schema!(nodes)
 
-    :ok = MnesiaSetup.create_table!(entries, [:id, :data], copies, nodes)
-    :ok = MnesiaSetup.create_table!(sessions, [:session_id, :data], copies, nodes)
+    :ok = MnesiaSetup.create_table!(entries, [:id, :data], :set, copies, nodes)
+    :ok = MnesiaSetup.create_table!(sessions, [:session_id, :data], :set, copies, nodes)
 
     MnesiaSetup.wait_for_tables!(
       [entries, sessions],

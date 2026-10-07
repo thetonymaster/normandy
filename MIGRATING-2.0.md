@@ -1574,6 +1574,12 @@ code you wrote against 1.x must follow the changes below.
   with `Cluster.redis_handles/1`, not by hand: the store's handle depends on these options and
   the app env. The guide's old advice to "pass a separate `:conn`" was not possible and is
   gone.
+- `MemoryStore.ETS` and `MemoryStore.Mnesia` (new in 2.0) keep one row per document plus one
+  totals row per namespace, so a `get` or `put` no longer copies the whole namespace. The
+  Mnesia table is an `:ordered_set` with attributes `[:key, :value]`. A Mnesia memory table
+  created by a 2.0 pre-release has the old layout: `MemoryStore.Mnesia.create_tables/1` now
+  raises, naming both layouts; delete it (`:mnesia.delete_table/1`) and create it again. The
+  same check applies to the session store's Mnesia tables, whose layout is unchanged.
 
 ## New, non-breaking
 

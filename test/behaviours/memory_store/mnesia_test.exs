@@ -32,7 +32,8 @@ defmodule Normandy.Behaviours.MemoryStore.MnesiaTest do
       assert :normandy_memory_documents in :mnesia.system_info(:tables)
       assert :mnesia.table_info(:normandy_memory_documents, :disc_copies) == [node()]
       assert :mnesia.table_info(:normandy_memory_documents, :ram_copies) == []
-      assert :mnesia.table_info(:normandy_memory_documents, :attributes) == [:namespace, :docs]
+      assert :mnesia.table_info(:normandy_memory_documents, :attributes) == [:key, :value]
+      assert :mnesia.table_info(:normandy_memory_documents, :type) == :ordered_set
 
       # usable as a store handle
       assert {:ok, 1} =
@@ -46,6 +47,40 @@ defmodule Normandy.Behaviours.MemoryStore.MnesiaTest do
       assert :mnesia.table_info(:normandy_memory_custom, :ram_copies) == [node()]
       assert :mnesia.table_info(:normandy_memory_custom, :disc_copies) == []
       refute :normandy_memory_documents in :mnesia.system_info(:tables)
+    end
+
+    test "refuses an existing table of another layout, naming both" do
+      {:atomic, :ok} =
+        :mnesia.create_table(:normandy_memory_old,
+          attributes: [:namespace, :docs],
+          ram_copies: [node()]
+        )
+
+      assert_raise RuntimeError,
+                   "Mnesia table :normandy_memory_old exists with attributes " <>
+                     "[:namespace, :docs] and type :set; expected [:key, :value] and " <>
+                     ":ordered_set. Delete the table or use another table name.",
+                   fn ->
+                     MnesiaStore.create_tables(table: :normandy_memory_old, copies: :ram_copies)
+                   end
+    end
+  end
+
+  describe "row layout (PERF-10)" do
+    test "one record per document plus one totals record per namespace" do
+      table = MnesiaStore.new()
+
+      for i <- 1..5, do: {:ok, 1} = MnesiaStore.put(table, "ns", "/memories/f#{i}", "abc", :new)
+
+      assert :mnesia.table_info(table, :size) == 6
+
+      assert [{^table, {"ns", "/memories/f3"}, %{content: "abc", version: 1}}] =
+               :mnesia.dirty_read(table, {"ns", "/memories/f3"})
+
+      assert :mnesia.dirty_read(table, {"ns", 0}) == [{table, {"ns", 0}, {15, 5}}]
+
+      assert {:ok, 5} = MnesiaStore.delete_tree(table, "ns", "/memories")
+      assert :mnesia.table_info(table, :size) == 0
     end
   end
 end
