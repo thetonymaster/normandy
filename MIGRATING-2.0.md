@@ -1697,7 +1697,9 @@ code you wrote against 1.x must follow the changes below.
   `get_agent/1` returns the config as of the last finished turn. The worker's `$callers`
   lead back to the `AgentProcess`, as a `Task`'s do, so a test's `Mox.allow/3` or
   `Req.Test.allow/3` to the agent pid still reaches the LLM call; `self()` inside the client
-  is the worker, not the agent pid.
+  is the worker, not the agent pid. In `:server` mode the LLM call runs in the
+  `Turn.Server`'s task, not under the `AgentProcess`, so a `Mox` or `Req.Test` allowance must
+  name the `Turn.Server` pid.
 - `AgentProcess.run/3` waits `:infinity` by default (was 60_000 ms), as `Turn.Server.run/2`
   does: a turn is bounded by its retries, tool timeouts and `max_tool_iterations`. Pass
   `timeout:` to bound the wait: the caller then exits with `{:timeout, _}`, but the run still
@@ -1821,10 +1823,11 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   window), and `SessionStore.history/2` returns all of them: a restore loads and decodes
   every snapshot to keep only the last. A session's storage and its load time therefore
   grow with the number of compactions, not only with its last window.
-- **Usage under `retry:` counts only the attempt that succeeded.** When BaseAgent's `retry:`
-  retries a failed LLM call, the `[:normandy, :agent, :llm_call, :stop]` usage and the run
-  totals report the final attempt's tokens; the failed attempts' are not added. (The
-  legacy JSON parse-retry's re-asks are summed.)
+- **A custom `retry_if` that retries a billed failure drops its usage.** The default `retry:`
+  policy retries only failures that bill nothing (rate limits, overload, server and transport
+  errors). A `retry_if` that also retries `:invalid_output`, `:max_tokens` or `:refusal`
+  reports only the final attempt's tokens in `[:normandy, :agent, :llm_call, :stop]` and the
+  run totals; the retried attempts' usage is dropped.
 
 ## New, non-breaking
 

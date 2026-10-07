@@ -7,12 +7,12 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   model's context window (`ctx.window`, unless `opts` pins `:context_window`) and estimates
   the conversation by summing each message's estimate cached on its entry
   (`Normandy.Components.AgentMemory.Entry`). Under budget that one estimate is all it
-  does; over budget the truncation strategy (`truncate_oldest_first` among them) and the
-  result's `tokens_after` sum the cached estimates again. Under budget it changes nothing, so a
-  mid-round boundary (`ctx.mid_round`) leaves the open tool round and its thinking alone
-  until the conversation no longer fits; over budget it delegates to
-  `WindowManager.truncate_conversation/2`, and a compaction strips the kept messages'
-  thinking (see "Compacting mid-round" in `Normandy.Behaviours.Compactor`).
+  does and nothing changes, so a mid-round boundary (`ctx.mid_round`) leaves the open tool
+  round and its thinking alone until the conversation no longer fits. Over budget it
+  delegates to `WindowManager.truncate_conversation/2`, whose strategy
+  (`truncate_oldest_first` among them) and the result's `tokens_after` sum the cached
+  estimates again, and a compaction strips the kept messages' thinking (see "Compacting
+  mid-round" in `Normandy.Behaviours.Compactor`).
 
   Options: `:context_window` pins the window (and skips the model catalog lookup);
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
