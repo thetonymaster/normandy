@@ -1035,13 +1035,16 @@ defmodule Normandy.Agents.Turn.Server do
   # What a crash report, :sys.get_status/1 and the observer show of this server: its ids
   # and state names, never the conversation (the config's memory, the start options'
   # second config, the turn state's responses) nor the user input in a queued or
-  # postponed turn request (decision 6). format_status/1 is OTP 25+; OTP 24 calls
-  # format_status/2.
+  # postponed turn request (decision 6). A crash's reason loses its stacktraces (a
+  # function_clause frame's args can hold the entry being written) and any exception
+  # but Normandy's becomes its module (TurnError.redact/1). format_status/1 is OTP 25+;
+  # OTP 24 calls format_status/2.
   if String.to_integer(List.to_string(:erlang.system_info(:otp_release))) >= 25 do
     @impl true
     def format_status(status) do
       status
       |> Map.update(:data, nil, &status_data/1)
+      |> Map.update(:reason, nil, &(&1 |> TurnError.drop_stacktraces() |> TurnError.redact()))
       |> Map.update(:queue, [], &length/1)
       |> Map.update(:postponed, [], &length/1)
       |> Map.update(:log, [], &length/1)

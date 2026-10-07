@@ -1424,7 +1424,9 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   reduces a store's template read or save error the same way. Match on the tags.
 - `Turn.Server` implements `format_status`: crash reports, `:sys.get_status/1` and the
   observer show the session id, turn status, task kind and resume policy, and the length of
-  each event queue, never the config, the conversation or a queued user input.
+  each event queue, never the config, the conversation or a queued user input. A crash's
+  reason is shown without its stacktraces, and an exception other than Normandy's as its
+  module only; other terms in the reason (a `{:badmatch, value}`'s value) are kept.
 - The Turn core fails a turn whose tool batch comes back without a result for every tool
   call, before the next LLM call. The results that arrived are appended, then the turn fails
   with `{:unexpected_event, status, {:incomplete_batch, tool_call_ids}}`: `Turn.Server` replies

@@ -423,6 +423,26 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
       refute status =~ @secret
       refute status =~ "BaseAgentConfig"
     end
+
+    # Final review M-a: a bug crash's reason can hold the entry being written, in a
+    # function_clause frame's args or in a raised exception's fields.
+    test "a crash reason keeps no stacktrace args and no foreign exception's fields" do
+      frames = [{Normandy.Agents.Turn.Server, :append, [%{content: @secret}], [line: 1]}]
+
+      for reason <- [
+            {:function_clause, frames},
+            {%RuntimeError{message: @secret}, frames},
+            {:shutdown, {%ArgumentError{message: @secret}, frames}}
+          ] do
+        status = Turn.Server.format_status(%{reason: reason, data: :x, queue: [], log: []})
+        refute inspect(status, limit: :infinity, printable_limit: :infinity) =~ @secret
+      end
+
+      assert %{reason: :function_clause} =
+               Turn.Server.format_status(%{reason: {:function_clause, frames}})
+
+      assert %{reason: :normal} = Turn.Server.format_status(%{reason: :normal})
+    end
   end
 
   # {start options, a predicate on the replied reason} for a thin start whose load fails.
