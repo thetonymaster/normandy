@@ -198,6 +198,18 @@ defmodule Normandy.Coordination.AgentProcess do
                      ]
                    )
 
+  @update_agent_opts_schema NimbleOptions.new!(
+                              timeout: [
+                                type: :timeout,
+                                default: :infinity,
+                                doc:
+                                  "How long the caller waits for the reply, in ms. In `:inline` " <>
+                                    "mode the update waits behind the turn in flight, so the " <>
+                                    "default waits for it, as `run/3` does. The bound is on the " <>
+                                    "wait: an update the caller stopped waiting for still applies."
+                              ]
+                            )
+
   @cast_opts_schema NimbleOptions.new!(
                       reply_to: [
                         type: {:or, [:pid, :atom]},
@@ -207,9 +219,10 @@ defmodule Normandy.Coordination.AgentProcess do
                     )
 
   @doc false
-  @spec __opts_schema__(:start_link | :run) :: NimbleOptions.t()
+  @spec __opts_schema__(:start_link | :run | :update_agent) :: NimbleOptions.t()
   def __opts_schema__(:start_link), do: @start_link_opts_schema
   def __opts_schema__(:run), do: @run_opts_schema
+  def __opts_schema__(:update_agent), do: @update_agent_opts_schema
 
   @doc """
   Starts an AgentProcess GenServer.
@@ -378,6 +391,13 @@ defmodule Normandy.Coordination.AgentProcess do
   Raises `ArgumentError` when `update_fn` returns anything else; the process keeps its
   config.
 
+  In `:inline` mode the update is queued behind the turn in flight and any runs before it
+  (see "Inline turns"), so it sees their memory; the call waits for it.
+
+  ## Options
+
+  #{Options.docs(@update_agent_opts_schema)}
+
   ## Example
 
       :ok = AgentProcess.update_agent(pid, fn agent ->
@@ -386,17 +406,22 @@ defmodule Normandy.Coordination.AgentProcess do
   """
   @spec update_agent(
           GenServer.server(),
-          (BaseAgentConfig.t() -> BaseAgentConfig.t())
+          (BaseAgentConfig.t() -> BaseAgentConfig.t()),
+          timeout: timeout()
         ) :: :ok
-  def update_agent(server, update_fn) when is_function(update_fn, 1) do
-    case GenServer.call(server, {:update_agent, update_fn}) do
+  def update_agent(server, update_fn, opts \\ [])
+
+  def update_agent(server, update_fn, opts) when is_function(update_fn, 1) do
+    opts = Options.validate!(opts, @update_agent_opts_schema, {__MODULE__, :update_agent, 3})
+
+    case GenServer.call(server, {:update_agent, update_fn}, Keyword.fetch!(opts, :timeout)) do
       :ok ->
         :ok
 
       {:not_a_config, type} ->
         raise ArgumentError,
-              "Normandy.Coordination.AgentProcess.update_agent/2: the function must return a " <>
-                "%Normandy.Agents.BaseAgentConfig{}, got: #{type}"
+              "Normandy.Coordination.AgentProcess.update_agent/2: the function must " <>
+                "return a %Normandy.Agents.BaseAgentConfig{}, got: #{type}"
     end
   end
 

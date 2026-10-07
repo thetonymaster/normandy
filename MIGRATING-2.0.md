@@ -1659,6 +1659,10 @@ code you wrote against 1.x must follow the changes below.
   `{:error, %Normandy.TurnError{type: :task_down}}` and logged; it used to crash the
   `AgentProcess`. A raised bug is still replied bare. `AgentProcess.stop/1` kills a turn in
   flight; a turn worker killed from outside is a `:task_down` `TurnError`.
+- `AgentProcess.update_agent/2` waits `:infinity` (was `GenServer.call`'s 5_000 ms): in inline
+  mode it is queued behind the turn in flight, so a turn longer than 5 s exited its caller while
+  the update still applied. New `update_agent/3` takes `timeout:`; the bound is on the wait, and
+  an update whose caller stopped waiting still applies.
 
 ## New, non-breaking
 

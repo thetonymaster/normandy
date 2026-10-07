@@ -189,4 +189,61 @@ defmodule Normandy.Coordination.AgentProcessQueueTest do
   test "run/3 waits without a timeout by default" do
     assert AgentProcess.__opts_schema__(:run).schema[:timeout][:default] == :infinity
   end
+
+  # Fix round 1 (I1): update_agent/2 is queued behind the turn in flight, so it must not
+  # use GenServer.call's 5 s default. The refute_receive outlasts that default: with it, the
+  # caller exits {:timeout, _} at 5 s, before the window ends. The run stays held by its gate
+  # for the whole window, so the result does not depend on timing.
+  @tag timeout: 30_000
+  test "update_agent/2 waits past 5 s for a turn in flight, then applies after its memory" do
+    parent = self()
+    {:ok, pid} = AgentProcess.start_link(agent: gated_agent())
+    first = run_in_task(pid, "one")
+    assert_receive {:llm_started, 1, worker1}, @wait
+
+    update =
+      Task.async(fn ->
+        AgentProcess.update_agent(pid, fn agent ->
+          send(parent, {:update_saw, AgentMemory.count_messages(agent.memory)})
+          %{agent | temperature: 0.7}
+        end)
+      end)
+
+    update_ref = Process.monitor(update.pid)
+    assert wait_until(fn -> queued(pid) == 1 end)
+    refute_receive {:DOWN, ^update_ref, :process, _, _}, 5_500
+    refute_received {:update_saw, _}
+
+    send(worker1, {:release, 1})
+    assert {:ok, "answer 1"} = Task.await(first)
+    assert :ok = Task.await(update)
+    assert_received {:update_saw, 2}
+
+    agent = AgentProcess.get_agent(pid)
+    assert agent.temperature == 0.7
+    assert AgentMemory.count_messages(agent.memory) == 2
+  end
+
+  test "update_agent/3 bounds the wait with :timeout; the queued update still applies" do
+    {:ok, pid} = AgentProcess.start_link(agent: gated_agent())
+    first = run_in_task(pid, "one")
+    assert_receive {:llm_started, 1, worker1}, @wait
+
+    assert {:timeout, _} =
+             catch_exit(AgentProcess.update_agent(pid, &%{&1 | temperature: 0.4}, timeout: 50))
+
+    send(worker1, {:release, 1})
+    assert {:ok, "answer 1"} = Task.await(first)
+    assert AgentProcess.get_agent(pid).temperature == 0.4
+  end
+
+  test "update_agent/3 waits without a timeout by default and validates its options" do
+    assert AgentProcess.__opts_schema__(:update_agent).schema[:timeout][:default] == :infinity
+
+    {:ok, pid} = AgentProcess.start_link(agent: gated_agent())
+
+    assert_raise ArgumentError, ~r/^Normandy.Coordination.AgentProcess.update_agent\/3: /, fn ->
+      AgentProcess.update_agent(pid, & &1, bogus: 1)
+    end
+  end
 end
