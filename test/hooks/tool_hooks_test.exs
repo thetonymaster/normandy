@@ -4,7 +4,7 @@ defmodule Normandy.Hooks.ToolHooksTest do
   alias Normandy.Agents.{BaseAgent, Dispatch}
   alias Normandy.Behaviours.Config
   alias Normandy.Components.{ToolCall, ToolResult}
-  alias Normandy.Test.{ContextProbe, ScriptedToolClient, TelemetryCapture}
+  alias Normandy.Test.{ContextProbe, FakeClient, TelemetryCapture}
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.{Probe, TurnEndOnly}
 
@@ -27,7 +27,8 @@ defmodule Normandy.Hooks.ToolHooksTest do
   defp call(name \\ "probe"), do: %ToolCall{id: "call_1", name: name, input: %{}}
 
   defp agent(behaviours, name \\ "tool-hooks-agent") do
-    %{client: %ScriptedToolClient{}, model: "test", name: name, behaviours: behaviours}
+    # These tests dispatch one call through the pipeline; the model is never asked.
+    %{client: FakeClient.new([]), model: "test", name: name, behaviours: behaviours}
     |> BaseAgent.init()
     |> BaseAgent.register_tool(%ContextProbe{notify: self()})
   end

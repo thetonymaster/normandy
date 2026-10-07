@@ -15,8 +15,8 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.ToolCall
+  alias Normandy.Test.FakeClient
   alias Normandy.Test.ReturnTool
-  alias Normandy.Test.ScriptedToolClient
   alias Normandy.Test.StubClient
   alias Normandy.Test.TurnConfig
   alias Normandy.TurnError
@@ -153,7 +153,11 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
 
   # One tool round: the turn persists its :steering state after the batch.
   defp start_config(true) do
-    client = %ScriptedToolClient{calls: [%ToolCall{id: "call_1", name: "big", input: %{}}]}
+    client =
+      FakeClient.new([
+        {:tool_calls, [%ToolCall{id: "call_1", name: "big", input: %{}}]},
+        {:text, "done"}
+      ])
 
     %{client: client, model: "m"}
     |> BaseAgent.init()

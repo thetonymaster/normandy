@@ -4,13 +4,16 @@ defmodule Normandy.Agents.ToolContextTest do
   alias Normandy.Agents.{BaseAgent, Dispatch, ToolCallResponse, Turn}
   alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.{ToolCall, ToolResult}
-  alias Normandy.Test.{ContextProbe, ScriptedToolClient, StreamingProbeClient}
+  alias Normandy.Test.{ContextProbe, FakeClient}
   alias Normandy.Tools.{Context, Toolset}
 
   defp probe_call, do: %ToolCall{id: "call_1", name: "probe", input: %{}}
 
+  # One tool round with probe_call/0, then the answer "done".
+  defp probe_client, do: FakeClient.new([{:tool_calls, [probe_call()]}, {:text, "done"}])
+
   defp agent(extra \\ %{}) do
-    %{client: %ScriptedToolClient{calls: [probe_call()]}, model: "test", name: "ctx-agent"}
+    %{client: probe_client(), model: "test", name: "ctx-agent"}
     |> Map.merge(extra)
     |> BaseAgent.init()
     |> BaseAgent.register_tool(%ContextProbe{notify: self()})
@@ -23,7 +26,7 @@ defmodule Normandy.Agents.ToolContextTest do
                  ~r/:tool_context option: expected a plain map \(not a struct\), got: a list/,
                  fn ->
                    BaseAgent.init(%{
-                     client: %ScriptedToolClient{},
+                     client: FakeClient.new([]),
                      model: "test",
                      tool_context: [a: 1]
                    })
@@ -47,7 +50,7 @@ defmodule Normandy.Agents.ToolContextTest do
 
   test "the BaseAgent streaming loop hands the contextual tool the session's context" do
     config =
-      agent(%{client: %StreamingProbeClient{}, tool_context: %{memory_namespace: "acme/stream"}})
+      agent(%{client: probe_client(), tool_context: %{memory_namespace: "acme/stream"}})
 
     {:ok, _config, _response} =
       BaseAgent.stream(config, %{chat_message: "go"}, fn _ -> :ok end)

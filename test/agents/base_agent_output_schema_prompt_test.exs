@@ -6,7 +6,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Test.ScriptedTextClient
+  alias Normandy.Test.FakeClient
   alias Normandy.Test.StubClient
 
   defmodule Answer do
@@ -89,12 +89,12 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
     assert {:ok, _agent, %Ordered{value: "v"}} = BaseAgent.run(agent, "hi")
     assert_receive {:converse, %Normandy.LLM.Request{system: synced}, _}
 
-    streaming = %ScriptedTextClient{text: ~s({"value":"v"}), notify: self()}
+    streaming = FakeClient.new([{:text, ~s({"value":"v"})}])
 
     assert {:ok, _agent, %Ordered{value: "v"}} =
              BaseAgent.stream(%{agent | client: streaming}, "hi", fn _ -> :ok end)
 
-    assert_receive {:stream_request, %Normandy.LLM.Request{system: streamed}}
+    assert [%Normandy.LLM.Request{system: streamed}] = FakeClient.requests(streaming)
 
     {:ok, srv} =
       Turn.Server.start_link(

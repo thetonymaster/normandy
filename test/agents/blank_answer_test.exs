@@ -14,14 +14,14 @@ defmodule Normandy.Agents.BlankAnswerTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.LLMError
+  alias Normandy.Test.FakeClient
   alias Normandy.Test.ReturnTool
-  alias Normandy.Test.ScriptedTextClient
   alias Normandy.Test.StubClient
 
   @message "expected a final answer, got an empty one: the model ended its turn with no text"
 
   defp chat_agent(text),
-    do: BaseAgent.init(%{client: %ScriptedTextClient{text: text}, model: "m", max_tokens: 64})
+    do: BaseAgent.init(%{client: FakeClient.new([{:text, text}]), model: "m", max_tokens: 64})
 
   for text <- ["", "  \n"] do
     @text text

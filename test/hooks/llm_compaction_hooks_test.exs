@@ -6,7 +6,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
   alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter
   alias Normandy.Behaviours.Config
   alias Normandy.Components.{AgentMemory, Message, ToolResult}
-  alias Normandy.Test.{ContextProbe, KeepLastCompactor, StreamingProbeClient, StubClient}
+  alias Normandy.Test.{ContextProbe, FakeClient, KeepLastCompactor, StubClient}
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
 
@@ -75,7 +75,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
     test "runs on the streaming path, once per LLM call" do
       config =
         %{
-          client: %StreamingProbeClient{},
+          client: FakeClient.new([{:tool_calls, [{"probe", %{}}]}, {:text, "done"}]),
           model: "test",
           name: "llm-hooks-stream",
           behaviours: %Config{hooks: [probe()]}
@@ -85,7 +85,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
 
       {:ok, _config, _response} = BaseAgent.stream(config, input("go"), fn _ -> :ok end)
 
-      # StreamingProbeClient makes two calls: the tool_use round, then the text answer.
+      # The client answers two calls: the tool_use round, then the text answer.
       assert_received {:hook, :p, :before_llm, _}
       assert_received {:hook, :p, :before_llm, _}
       refute_received {:hook, :p, :before_llm, _}
@@ -95,7 +95,7 @@ defmodule Normandy.Hooks.LlmCompactionHooksTest do
   test "a before_llm halt on the streaming path returns HookHaltError and fires on_turn_end once" do
     config =
       %{
-        client: %StreamingProbeClient{},
+        client: FakeClient.new([{:tool_calls, [{"probe", %{}}]}, {:text, "done"}]),
         model: "test",
         name: "llm-hooks-stream-halt",
         behaviours: %Config{hooks: [probe(returns: [before_llm: {:halt, "budget spent"}])]}

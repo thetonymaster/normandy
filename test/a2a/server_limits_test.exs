@@ -6,7 +6,7 @@ defmodule Normandy.A2A.ServerLimitsTest do
   alias Normandy.A2A.Server
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.ToolCall
-  alias Normandy.Test.{ContextProbe, OwnLog, ScriptedToolClient, StubClient, TelemetryCapture}
+  alias Normandy.Test.{ContextProbe, FakeClient, OwnLog, StubClient, TelemetryCapture}
   alias Normandy.Tools.Context
 
   @request_stop [:normandy, :a2a, :request, :stop]
@@ -84,7 +84,18 @@ defmodule Normandy.A2A.ServerLimitsTest do
   describe ":tool_context" do
     defp probe_agent do
       %{
-        client: %ScriptedToolClient{calls: [%ToolCall{id: "call_1", name: "probe", input: %{}}]},
+        # Three turns (one per handle_message/4 call), each a tool round then an answer.
+        client:
+          FakeClient.new(
+            List.duplicate(
+              [
+                {:tool_calls, [%ToolCall{id: "call_1", name: "probe", input: %{}}]},
+                {:text, "done"}
+              ],
+              3
+            )
+            |> List.flatten()
+          ),
         model: "test",
         name: "ctx-agent",
         tool_context: %{memory_namespace: "shared"}

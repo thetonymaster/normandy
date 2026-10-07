@@ -12,8 +12,8 @@ defmodule Normandy.Agents.MidRoundCompactionTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.ContextProbe
+  alias Normandy.Test.FakeClient
   alias Normandy.Test.FakeTool
-  alias Normandy.Test.StreamingProbeClient
   alias Normandy.Test.TelemetryCapture
 
   @thinking %{"type" => "thinking", "thinking" => "plan", "signature" => "sig"}
@@ -107,7 +107,7 @@ defmodule Normandy.Agents.MidRoundCompactionTest do
     test "BaseAgent.stream/3" do
       config =
         %{
-          client: %StreamingProbeClient{},
+          client: FakeClient.new([{:tool_calls, [{"probe", %{}}]}, {:text, "done"}]),
           model: "m",
           name: "mid-round-stream",
           behaviours: %Config{compactor: recording()}

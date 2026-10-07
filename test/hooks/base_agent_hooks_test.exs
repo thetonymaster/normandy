@@ -5,7 +5,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
   alias Normandy.Behaviours.Config
   alias Normandy.Components.AgentMemory
   alias Normandy.Hooks.Context
-  alias Normandy.Test.{ContextProbe, StreamingProbeClient, StubClient, TelemetryCapture}
+  alias Normandy.Test.{ContextProbe, FakeClient, StubClient, TelemetryCapture}
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
 
@@ -104,7 +104,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     test "runs on the streaming path" do
       config =
         %{
-          client: %StreamingProbeClient{},
+          client: FakeClient.new([{:tool_calls, [{"probe", %{}}]}, {:text, "done"}]),
           model: "test",
           name: "hooks-stream",
           behaviours: %Config{hooks: [probe()]}
@@ -211,7 +211,7 @@ defmodule Normandy.Hooks.BaseAgentHooksTest do
     test "fires once on the streaming path" do
       config =
         %{
-          client: %StreamingProbeClient{},
+          client: FakeClient.new([{:tool_calls, [{"probe", %{}}]}, {:text, "done"}]),
           model: "test",
           name: "hooks-stream",
           behaviours: %Config{hooks: [probe()]}
