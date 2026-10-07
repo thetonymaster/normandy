@@ -142,12 +142,12 @@ defmodule Normandy.LLM.JsonDeserializer do
 
   ## Examples
 
-      iex> schema = %BaseAgentOutputSchema{}
-      iex> JsonDeserializer.parse_and_validate(~s({"chat_message": "Hello"}), schema)
-      {:ok, %BaseAgentOutputSchema{chat_message: "Hello"}}
+      schema = %BaseAgentOutputSchema{}
+      JsonDeserializer.parse_and_validate(~s({"chat_message": "Hello"}), schema)
+      #=> {:ok, %BaseAgentOutputSchema{chat_message: "Hello"}}
 
-      iex> JsonDeserializer.parse_and_validate("invalid json", schema)
-      {:error, {:json_parse_error, reason, content}}
+      JsonDeserializer.parse_and_validate("invalid json", schema)
+      #=> {:error, {:json_parse_error, reason, content}}
 
   """
   @spec parse_and_validate(String.t(), struct(), keyword()) ::

@@ -48,8 +48,8 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.list_fields(User)
-      [:id, :name, :email, :age]
+      Introspection.list_fields(User)
+      #=> [:id, :name, :email, :age]
   """
   @spec list_fields(module()) :: [atom()]
   def list_fields(schema_module) when is_atom(schema_module) do
@@ -61,8 +61,8 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_required_fields(User)
-      [:id, :name]
+      Introspection.get_required_fields(User)
+      #=> [:id, :name]
   """
   @spec get_required_fields(module()) :: [atom()]
   def get_required_fields(schema_module) when is_atom(schema_module) do
@@ -81,11 +81,11 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_field_type(User, :name)
-      :string
+      Introspection.get_field_type(User, :name)
+      #=> :string
 
-      iex> Introspection.get_field_type(User, :nonexistent)
-      nil
+      Introspection.get_field_type(User, :nonexistent)
+      #=> nil
   """
   @spec get_field_type(module(), atom()) :: atom() | {atom(), any()} | nil
   def get_field_type(schema_module, field_name)
@@ -103,11 +103,11 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_field_constraints(User, :name)
-      %{required: true, min_length: 3}
+      Introspection.get_field_constraints(User, :name)
+      #=> %{required: true, min_length: 3}
 
-      iex> Introspection.get_field_constraints(User, :email)
-      %{format: "email"}
+      Introspection.get_field_constraints(User, :email)
+      #=> %{format: "email"}
   """
   @spec get_field_constraints(module(), atom()) :: map()
   def get_field_constraints(schema_module, field_name)
@@ -165,11 +165,11 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.virtual_field?(User, :computed_field)
-      true
+      Introspection.virtual_field?(User, :computed_field)
+      #=> true
 
-      iex> Introspection.virtual_field?(User, :name)
-      false
+      Introspection.virtual_field?(User, :name)
+      #=> false
   """
   @spec virtual_field?(module(), atom()) :: boolean()
   def virtual_field?(schema_module, field_name)
@@ -184,12 +184,12 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_specification(User)
-      %{
-        type: :object,
-        properties: %{...},
-        required: [:id, :name]
-      }
+      Introspection.get_specification(User)
+      #=> %{
+      #     type: :object,
+      #     properties: %{...},
+      #     required: [:id, :name]
+      #   }
   """
   @spec get_specification(module()) :: map()
   def get_specification(schema_module) when is_atom(schema_module) do
@@ -203,8 +203,8 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_description(User)
-      "User account information"
+      Introspection.get_description(User)
+      #=> "User account information"
   """
   @spec get_description(module()) :: String.t() | nil
   def get_description(schema_module) when is_atom(schema_module) do
@@ -220,14 +220,14 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.get_field_metadata(User, :name)
-      %{
-        type: :string,
-        required: true,
-        constraints: %{min_length: 3},
-        virtual: false,
-        description: "User's full name"
-      }
+      Introspection.get_field_metadata(User, :name)
+      #=> %{
+      #     type: :string,
+      #     required: true,
+      #     constraints: %{min_length: 3},
+      #     virtual: false,
+      #     description: "User's full name"
+      #   }
   """
   @spec get_field_metadata(module(), atom()) :: map() | nil
   def get_field_metadata(schema_module, field_name)
@@ -254,13 +254,13 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.list_all_metadata(User)
-      %{
-        id: %{type: :integer, required: true, ...},
-        name: %{type: :string, required: true, ...},
-        email: %{type: :string, required: false, ...},
-        age: %{type: :integer, required: false, ...}
-      }
+      Introspection.list_all_metadata(User)
+      #=> %{
+      #     id: %{type: :integer, required: true, ...},
+      #     name: %{type: :string, required: true, ...},
+      #     email: %{type: :string, required: false, ...},
+      #     age: %{type: :integer, required: false, ...}
+      #   }
   """
   @spec list_all_metadata(module()) :: %{atom() => map()}
   def list_all_metadata(schema_module) when is_atom(schema_module) do
@@ -279,11 +279,11 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.has_composition?(User)
-      false
+      Introspection.has_composition?(User)
+      #=> false
 
-      iex> Introspection.has_composition?(PolymorphicSchema)
-      true
+      Introspection.has_composition?(PolymorphicSchema)
+      #=> true
   """
   @spec has_composition?(module()) :: boolean()
   def has_composition?(schema_module) when is_atom(schema_module) do
@@ -314,11 +314,11 @@ defmodule Normandy.Schema.Introspection do
 
   ## Examples
 
-      iex> Introspection.has_conditionals?(User)
-      false
+      Introspection.has_conditionals?(User)
+      #=> false
 
-      iex> Introspection.has_conditionals?(ConditionalSchema)
-      true
+      Introspection.has_conditionals?(ConditionalSchema)
+      #=> true
   """
   @spec has_conditionals?(module()) :: boolean()
   def has_conditionals?(schema_module) when is_atom(schema_module) do

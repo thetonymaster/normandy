@@ -12,13 +12,13 @@ defmodule Normandy.Guardrails do
 
   ## Example
 
-      iex> alias Normandy.Guardrails
-      iex> alias Normandy.Guardrails.Builtins.MaxLength
-      iex> Guardrails.run([{MaxLength, limit: 5}], "too long")
-      {:error, [%{guard: MaxLength, path: [], message: _, constraint: :max_length}]}
+      alias Normandy.Guardrails
+      alias Normandy.Guardrails.Builtins.MaxLength
+      Guardrails.run([{MaxLength, limit: 5}], "too long")
+      #=> {:error, [%{guard: MaxLength, path: [], message: _, constraint: :max_length}]}
 
-      iex> Guardrails.run([{MaxLength, limit: 100}], "ok")
-      {:ok, "ok"}
+      Guardrails.run([{MaxLength, limit: 100}], "ok")
+      #=> {:ok, "ok"}
 
   Attach a guard list to an agent with `guardrails: [input: ..., output: ...]` in
   `Normandy.Agents.BaseAgent.init/1`, or with the `guardrails/2` macro in

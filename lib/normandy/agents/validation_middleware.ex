@@ -40,18 +40,18 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   ## Examples
 
-      iex> config = %BaseAgentConfig{input_schema: %MyInputSchema{}}
-      iex> ValidationMiddleware.validate_input(config, %{query: "test"})
-      {:ok, %MyInputSchema{query: "test"}}
+      config = %BaseAgentConfig{input_schema: %MyInputSchema{}}
+      ValidationMiddleware.validate_input(config, %{query: "test"})
+      #=> {:ok, %MyInputSchema{query: "test"}}
 
-      iex> ValidationMiddleware.validate_input(
-      ...>   %BaseAgentConfig{input_schema: %BaseAgentInputSchema{}},
-      ...>   "hello"
-      ...> )
-      {:ok, %BaseAgentInputSchema{chat_message: "hello"}}
+      ValidationMiddleware.validate_input(
+        %BaseAgentConfig{input_schema: %BaseAgentInputSchema{}},
+        "hello"
+      )
+      #=> {:ok, %BaseAgentInputSchema{chat_message: "hello"}}
 
-      iex> ValidationMiddleware.validate_input(config, %{invalid: "data"})
-      {:error, [%{path: [:query], message: "is required", constraint: :required}]}
+      ValidationMiddleware.validate_input(config, %{invalid: "data"})
+      #=> {:error, [%{path: [:query], message: "is required", constraint: :required}]}
   """
   @spec validate_input(BaseAgentConfig.t(), term()) ::
           {:ok, term()} | {:error, list()}
@@ -170,12 +170,12 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   ## Examples
 
-      iex> config = %BaseAgentConfig{output_schema: %MyOutputSchema{}}
-      iex> ValidationMiddleware.validate_output(config, %{result: "success"})
-      {:ok, %MyOutputSchema{result: "success"}}
+      config = %BaseAgentConfig{output_schema: %MyOutputSchema{}}
+      ValidationMiddleware.validate_output(config, %{result: "success"})
+      #=> {:ok, %MyOutputSchema{result: "success"}}
 
-      iex> ValidationMiddleware.validate_output(config, %{invalid: "data"})
-      {:error, [%{path: [:result], message: "is required", constraint: :required}]}
+      ValidationMiddleware.validate_output(config, %{invalid: "data"})
+      #=> {:error, [%{path: [:result], message: "is required", constraint: :required}]}
   """
   @spec validate_output(BaseAgentConfig.t(), struct() | map() | nil) ::
           {:ok, struct()} | {:error, list()} | {:ok, nil}
@@ -240,14 +240,14 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   ## Examples
 
-      iex> errors = [%{path: [:name], message: "is required", constraint: :required}]
-      iex> ValidationMiddleware.format_validation_errors("Input", errors)
-      [%{
-        type: "Input validation error",
-        path: [:name],
-        message: "is required",
-        constraint: :required
-      }]
+      errors = [%{path: [:name], message: "is required", constraint: :required}]
+      ValidationMiddleware.format_validation_errors("Input", errors)
+      #=> [%{
+      #     type: "Input validation error",
+      #     path: [:name],
+      #     message: "is required",
+      #     constraint: :required
+      #   }]
   """
   @spec format_validation_errors(String.t(), list()) :: list()
   def format_validation_errors(context, errors) when is_list(errors) do
@@ -263,9 +263,9 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   ## Examples
 
-      iex> config = %BaseAgentConfig{input_schema: %MySchema{}}
-      iex> ValidationMiddleware.validation_enabled?(config)
-      true
+      config = %BaseAgentConfig{input_schema: %MySchema{}}
+      ValidationMiddleware.validation_enabled?(config)
+      #=> true
   """
   @spec validation_enabled?(BaseAgentConfig.t()) :: boolean()
   def validation_enabled?(%BaseAgentConfig{input_schema: input, output_schema: output}),
@@ -318,12 +318,12 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   ## Examples
 
-      iex> errors = [
-      ...>   %{path: [:name], message: "is required", constraint: :required},
-      ...>   %{path: [:age], message: "must be at least 0", constraint: :minimum}
-      ...> ]
-      iex> ValidationMiddleware.error_message(errors)
-      "Validation failed:\\n  - name: is required\\n  - age: must be at least 0"
+      errors = [
+        %{path: [:name], message: "is required", constraint: :required},
+        %{path: [:age], message: "must be at least 0", constraint: :minimum}
+      ]
+      ValidationMiddleware.error_message(errors)
+      #=> "Validation failed:\\n  - name: is required\\n  - age: must be at least 0"
   """
   @spec error_message(list()) :: String.t()
   def error_message(errors) when is_list(errors) do

@@ -5,6 +5,9 @@ defmodule Normandy.Tools.Toolset do
   Each tool is a struct holding the tool's own configuration. `register/3` indexes it by its
   name and takes options that belong to the registration (see `register/3`).
   `to_tool_schemas/1` produces the tool definitions sent to the model.
+
+  In the examples, `calculator`, `string_tool`, `tool1` and `tool2` stand for structs of
+  modules that `use Normandy.Tool`, each named after its variable.
   """
 
   alias Normandy.Components.ContentBlock.Describe
@@ -175,9 +178,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Toolset.unregister(toolset, "calculator")
-      %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}, max_result_chars: %{}}
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.unregister(toolset, "calculator")
+      #=> %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec unregister(t(), String.t()) :: t()
@@ -195,9 +198,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Toolset.list(toolset)
-      [%Tool1{}, %Tool2{}]
+      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
+      Normandy.Tools.Toolset.list(toolset)
+      #=> [tool1, tool2]
 
   """
   @spec list(t()) :: [struct()]
@@ -210,9 +213,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Toolset.list_names(toolset)
-      ["calculator"]
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.list_names(toolset)
+      #=> ["calculator"]
 
   """
   @spec list_names(t()) :: [String.t()]
@@ -225,9 +228,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Toolset.count(toolset)
-      2
+      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
+      Normandy.Tools.Toolset.count(toolset)
+      #=> 2
 
   """
   @spec count(t()) :: non_neg_integer()
@@ -240,12 +243,12 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Toolset.has_tool?(toolset, "calculator")
-      true
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.has_tool?(toolset, "calculator")
+      #=> true
 
-      iex> Normandy.Tools.Toolset.has_tool?(toolset, "nonexistent")
-      false
+      Normandy.Tools.Toolset.has_tool?(toolset, "nonexistent")
+      #=> false
 
   """
   @spec has_tool?(t(), String.t()) :: boolean()
@@ -260,15 +263,15 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Toolset.to_tool_schemas(toolset)
-      [
-        %{
-          name: "calculator",
-          description: "Performs arithmetic operations",
-          input_schema: %{type: "object", ...}
-        }
-      ]
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.to_tool_schemas(toolset)
+      #=> [
+      #     %{
+      #       name: "calculator",
+      #       description: "Performs arithmetic operations",
+      #       input_schema: %{type: "object", ...}
+      #     }
+      #   ]
 
   """
   @spec to_tool_schemas(t()) :: [map()]
@@ -291,14 +294,14 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%CalculatorTool{}])
-      iex> Normandy.Tools.Toolset.fetch_metadata(toolset, "calculator")
-      {:ok, %{
-        name: "calculator",
-        description: "Performs arithmetic operations",
-        input_schema: %{...},
-        fields: [...]
-      }}
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.fetch_metadata(toolset, "calculator")
+      #=> {:ok, %{
+      #     name: "calculator",
+      #     description: "Performs arithmetic operations",
+      #     input_schema: %{...},
+      #     fields: [...]
+      #   }}
 
   """
   @spec fetch_metadata(t(), String.t()) :: {:ok, map()} | :error
@@ -320,9 +323,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Toolset.list_metadata(toolset)
-      [%{name: "tool1", ...}, %{name: "tool2", ...}]
+      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
+      Normandy.Tools.Toolset.list_metadata(toolset)
+      #=> [%{name: "tool1", ...}, %{name: "tool2", ...}]
 
   """
   @spec list_metadata(t()) :: [map()]
@@ -339,9 +342,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Tool1{}, %Tool2{}])
-      iex> Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
-      %Normandy.Tools.Toolset{tools: %{"tool1" => %Tool1{}}, timeouts: %{}, max_result_chars: %{}}
+      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
+      Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
+      #=> %Normandy.Tools.Toolset{tools: %{"tool1" => tool1}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec filter_by_required_params(t(), boolean()) :: t()
@@ -363,9 +366,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
-      iex> Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
-      %Normandy.Tools.Toolset{tools: %{"calculator" => %Calculator{}}, timeouts: %{}, max_result_chars: %{}}
+      toolset = Normandy.Tools.Toolset.new([calculator, string_tool])
+      Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
+      #=> %Normandy.Tools.Toolset{tools: %{"calculator" => calculator}, timeouts: %{}, max_result_chars: %{}}
 
   """
   @spec filter_by_param_type(t(), String.t()) :: t()
@@ -399,9 +402,9 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%Calculator{}, %StringTool{}])
-      iex> Normandy.Tools.Toolset.tools_with_constraint(toolset, :enum)
-      ["calculator", "string_tool"]
+      toolset = Normandy.Tools.Toolset.new([calculator, string_tool])
+      Normandy.Tools.Toolset.tools_with_constraint(toolset, :enum)
+      #=> ["calculator", "string_tool"]
 
   """
   @spec tools_with_constraint(t(), atom()) :: [String.t()]
@@ -420,12 +423,12 @@ defmodule Normandy.Tools.Toolset do
 
   ## Examples
 
-      iex> toolset = Normandy.Tools.Toolset.new([%EnhancedCalculator{}])
-      iex> Normandy.Tools.Toolset.introspect_schema(toolset, "enhanced_calculator")
-      {:ok, [
-        %{name: :operation, type: :string, required: true, ...},
-        ...
-      ]}
+      toolset = Normandy.Tools.Toolset.new([calculator])
+      Normandy.Tools.Toolset.introspect_schema(toolset, "calculator")
+      #=> {:ok, [
+      #     %{name: :operation, type: :string, required: true, ...},
+      #     ...
+      #   ]}
 
   """
   @spec introspect_schema(t(), String.t()) :: {:ok, [map()]} | {:ok, nil} | :error

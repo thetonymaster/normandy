@@ -2126,8 +2126,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Examples
 
-      iex> BaseAgent.list_tools(agent)
-      [%Calculator{}, %StringManipulator{}]
+      BaseAgent.list_tools(agent)
+      #=> [%Calculator{}, %StringManipulator{}]
 
   """
   @spec list_tools(BaseAgentConfig.t()) :: [struct()]
@@ -2142,8 +2142,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   ## Examples
 
-      iex> BaseAgent.has_tools?(agent)
-      true
+      BaseAgent.has_tools?(agent)
+      #=> true
 
   """
   @spec has_tools?(BaseAgentConfig.t()) :: boolean()

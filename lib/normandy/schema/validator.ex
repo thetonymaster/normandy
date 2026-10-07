@@ -97,11 +97,11 @@ defmodule Normandy.Schema.Validator do
 
   ## Examples
 
-      iex> validate(MySchema, %{name: "Alice"})
-      {:ok, %{name: "Alice"}}
+      validate(MySchema, %{name: "Alice"})
+      #=> {:ok, %{name: "Alice"}}
 
-      iex> validate(MySchema, %{age: -1})
-      {:error, [%{path: [:age], message: "must be >= 0", constraint: :minimum}]}
+      validate(MySchema, %{age: -1})
+      #=> {:error, [%{path: [:age], message: "must be >= 0", constraint: :minimum}]}
   """
   def validate(schema_module, data) when is_atom(schema_module) do
     spec = schema_module.__schema__(:specification)
@@ -116,11 +116,11 @@ defmodule Normandy.Schema.Validator do
 
   ## Examples
 
-      iex> validate!(MySchema, %{name: "Alice"})
-      %{name: "Alice"}
+      validate!(MySchema, %{name: "Alice"})
+      #=> %{name: "Alice"}
 
-      iex> validate!(MySchema, %{age: -1})
-      ** (Normandy.Schema.ValidationError) Validation failed: age must be >= 0
+      validate!(MySchema, %{age: -1})
+      #=> ** (Normandy.Schema.ValidationError) Validation failed: age must be >= 0
   """
   def validate!(schema_module, data) do
     case validate(schema_module, data) do

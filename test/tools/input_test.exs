@@ -3,6 +3,8 @@ defmodule Normandy.Tools.InputTest do
 
   alias Normandy.Tools.{Context, Input}
 
+  doctest Input
+
   # The SEC-1 shape: configuration on the struct, the model's input in a separate schema.
   defmodule EndpointTool do
     @moduledoc false
