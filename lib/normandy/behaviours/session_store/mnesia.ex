@@ -241,9 +241,10 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
   # --- private ---
 
-  # The ids on the chain from `head`, newest first, up to the first one another session
-  # reaches: another session's head, or an entry with a child off this chain. Every
-  # ancestor of a reached entry is reached too, so the walk stops there.
+  # The ids on the chain from `head` up to the first one another session reaches
+  # (another session's head, or an entry with a child off this chain), oldest first: the
+  # walk starts at `head` and prepends. Every ancestor of a reached entry is reached too,
+  # so the walk stops there.
   defp unshared_chain(et, st, session_id, head) do
     other_heads =
       :mnesia.foldl(

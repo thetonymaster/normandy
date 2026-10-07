@@ -322,8 +322,10 @@ defmodule Normandy.Agents.Turn.Session do
 
   Nothing stops a new turn from starting the session again: a `run/2` that starts after
   the server stopped (or a `ResumeReaper` restart between the stop and the delete) gets
-  a fresh server, which then finds the history deleted or, if it wrote first, keeps its
-  own writes. Stop routing turns to a session before deleting it.
+  a fresh server. One that loads after the delete starts empty. One that loaded just
+  before it holds the old history in memory and appends onto entries the delete removed,
+  so its writes partly bring the session back. Stop routing turns to a session before
+  deleting it, and call `delete/1` again once no server runs for it.
   """
   @spec delete(t()) :: :ok | {:error, TurnError.t()}
   def delete(%__MODULE__{} = session) do

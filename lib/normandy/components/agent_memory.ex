@@ -361,8 +361,10 @@ defmodule Normandy.Components.AgentMemory do
   produced with the deleted turn in its history). Raises `Normandy.TurnNotFoundError`
   when the memory has no entry of that turn.
 
-  Linear in the number of entries. A corrupt memory (a parent cycle, a `parent_id`
-  naming no entry) does not hang or raise.
+  Linear in the number of entries for a linear history. Each surviving entry whose
+  parent was deleted walks the deleted run above it once, so many branches off one long
+  deleted turn cost the number of such entries times that run's length. A corrupt memory
+  (a parent cycle, a `parent_id` naming no entry) does not hang or raise.
   """
   @spec delete_turn(t(), String.t()) :: t()
   def delete_turn(%__MODULE__{} = memory, turn_id) do

@@ -62,7 +62,8 @@ defmodule Normandy.Behaviours.SessionStore do
 
   Used by `Turn.ResumeReaper` on node-down to find the eager sessions to restart; the
   reaper still checks liveness (`whereis`) and the saved turn state, so a stale member
-  is skipped. The cost follows the number of sessions in flight, not the number stored.
+  is skipped. On the InMemory, ETS, Postgres and Redis stores the cost follows the number
+  of sessions in flight, not the number stored; the Mnesia store scans every session row.
   """
   @callback list_resumable(handle()) :: {:ok, [session_id()]} | {:error, term()}
 

@@ -65,8 +65,9 @@ defmodule Normandy.Hooks.Handlers do
 
   # Only a compaction that reports what it removed (meta.dropped, see
   # Normandy.Behaviours.Compactor) has anything to tell. Injected texts are appended to
-  # the compacted memory, before the next LLM call; Turn.Server never stores compacted
-  # memory, so they stay out of the session store.
+  # the compacted memory, before the next LLM call. They are not stored as messages of
+  # their own; Turn.Server stores them inside the "compaction" snapshot it writes after
+  # the compaction (AgentMemory.compaction_content/1), so a restored session keeps them.
   defp after_compact(config, %{dropped: [_ | _] = dropped} = meta) do
     case Runner.after_compact(config, dropped, Map.delete(meta, :dropped)) do
       [] ->

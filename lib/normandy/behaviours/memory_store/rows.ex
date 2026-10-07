@@ -11,7 +11,10 @@ defmodule Normandy.Behaviours.MemoryStore.Rows do
   # row access below. The caller makes each function here atomic: the ETS owner runs it
   # in its single process, Mnesia inside one transaction. Every write reads the totals
   # row first; on Mnesia that takes the namespace's write lock, so a namespace's writers
-  # run one at a time, as with the old one-row-per-namespace layout.
+  # run one at a time, as with the old one-row-per-namespace layout. The functions that
+  # read a range (list, rename, delete_tree, delete_namespace) are not per namespace on
+  # Mnesia: its range/2 is a select, which locks the whole table (see
+  # MemoryStore.Mnesia.Table.range/2).
 
   alias Normandy.Behaviours.MemoryStore
   alias Normandy.Behaviours.MemoryStore.Docs

@@ -67,6 +67,18 @@ defmodule Normandy.Agents.Turn.Supervisor do
   a bad option raises `ArgumentError` instead of coming back as the supervisor's
   `{:error, {exception, stacktrace}}`.
 
+  Returns `{:ok, pid}`, or:
+
+    * `{:error, {:already_started, pid}}`: a server for the session is already registered
+      (under a `:via` name, or found by a self-registering server); route to `pid`.
+    * `{:error, :registration_race}`: a self-registering server found the session taken,
+      but the holder died before its lookup; start again.
+    * `{:error, reason}`: the registry could not answer that lookup, or the supervisor
+      refused the child.
+
+  The session is loaded after the start returns, so a store or template failure is not a
+  start error (the server waits `:unavailable`).
+
   ## Options
 
   The options of `Normandy.Agents.Turn.Server.start_link/1`.

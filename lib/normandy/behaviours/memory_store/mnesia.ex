@@ -8,7 +8,8 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
   rename, delete_tree and the `put/6` limits are atomic across the cluster. `get/3` reads
   one row. `list/3`, `delete_tree/3`, `rename/4` and `delete_namespace/2` select the
   namespace's rows, which locks the whole table for the transaction (a read lock for
-  `list/3`): a rename or tree delete in one namespace briefly holds writes in the others.
+  `list/3`): a rename or tree delete in one namespace briefly holds writes in the others,
+  and a `list/3` waits for a write in progress in any namespace.
 
   The handle is the table name. Create it with `create_tables/1` (`copies: :disc_copies`
   by default, for durability; `:table` defaults to `:normandy_memory_documents`); `new/1`
@@ -152,7 +153,11 @@ defmodule Normandy.Behaviours.MemoryStore.Mnesia do
 
     # A select on the namespace's document keys (the binary paths; the totals row's key
     # is the integer 0), filtered to the prefix and sorted by path: a select inside a
-    # transaction does not promise key order.
+    # transaction does not promise key order. The select takes a table lock of the
+    # caller's kind, not a namespace's: under :write (rename, delete_tree,
+    # delete_namespace) it holds every namespace's writes until the transaction ends, and
+    # under :read (list) it waits for any row write in progress, in any namespace. That
+    # costs throughput across namespaces, not correctness.
     @impl true
     def range({table, lock}, {ns, prefix}) do
       spec = [{{table, {ns, :"$1"}, :"$2"}, [{:is_binary, :"$1"}], [{{:"$1", :"$2"}}]}]

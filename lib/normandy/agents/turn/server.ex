@@ -378,8 +378,9 @@ defmodule Normandy.Agents.Turn.Server do
     # The load runs as the first event, not here: Turn.Supervisor.start_server/2 waits for
     # init/1 inside the one supervisor process, so a load in init/1 would serialize every
     # session start behind every other session's store and provider IO. gen_statem runs
-    # an inserted event before it takes any message (a run/2, a system message), so
-    # nothing ever sees the :loading state.
+    # an inserted event before it takes any message (a run/2, a system message), so no
+    # message is handled in the :loading state. A crash report written while the load
+    # runs (a crash inside it) still shows :loading as the state.
     data = %Data{
       session_id: session_id,
       store: Keyword.fetch!(opts, :store),
@@ -713,7 +714,10 @@ defmodule Normandy.Agents.Turn.Server do
   # reason to the turn's caller, its persisted state, the log and telemetry: it is
   # reduced to its tags (Describe.reason_term/1), since a backend's reason can hold a
   # query, a response body or a connection's options. A {:store_exit, _} reason
-  # (store_call/1) keeps its shape: it is already atoms, integers and tuples.
+  # (store_call/1) is reduced the same way: its atoms, integers and tuples stay
+  # ({:store_exit, {:timeout, {GenServer, :call, 3}}}), while an exception nested in it,
+  # which store_call/1 already made %{exception: Module}, becomes "a map", and a pid
+  # "an unsupported term".
   defp store_reason(reason), do: Describe.reason_term(reason)
 
   # A thin start restores the server options saved with the template;
@@ -832,9 +836,9 @@ defmodule Normandy.Agents.Turn.Server do
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
 
     # Admission first: a rejected input changes nothing, and the interrupted results the
-    # repair builds belong to a turn that runs.
-    # begin_turn/2 encodes the input as it appends it, so an input that cannot be
-    # encoded fails here, as a crashed :append, before anything reaches the store.
+    # repair builds belong to a turn that runs. Then the append: begin_turn/2 encodes the
+    # input as it appends it, so an input that cannot be encoded fails here, as a crashed
+    # :append, before anything reaches the store.
     with {:ok, admitted} <- admit(data, user_input),
          {:ok, repairs} <- close_batch(data, missing),
          {:ok, config} <-
@@ -1836,7 +1840,8 @@ defmodule Normandy.Agents.Turn.Server do
   # stripped, after_compact injections added): store what it left as one "compaction"
   # entry, so a restart rebuilds this memory (AgentMemory.from_entries/1) instead of the
   # full history. A failed write is logged by its tag and the turn goes on: every message
-  # is still stored, and a restart then rebuilds the uncompacted conversation.
+  # is still stored, and a restart then rebuilds from the last compaction that was stored
+  # (the full history when there is none), followed by every message stored after it.
   defp persist_compaction(%Data{store: {mod, handle}, session_id: sid}, config, %{compacted: true}) do
     entry = %AgentMemory.Entry{
       turn_id: current_turn_id(config),
@@ -1851,7 +1856,7 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} ->
         Logger.warning(
           "Turn.Server could not store a compaction (session #{inspect(sid)}): " <>
-            "#{describe_reason(reason)}; a restart rebuilds the uncompacted conversation"
+            "#{describe_reason(reason)}; a restart rebuilds from the last stored compaction"
         )
     end
   end

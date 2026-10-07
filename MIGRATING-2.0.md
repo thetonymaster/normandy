@@ -1385,7 +1385,6 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `remaining` sent after a compaction moves with it.
 - Compaction keeps each kept message's encoding; only a message whose thinking it strips is
   encoded again.
-
 - Prompt caching is on by default: `Normandy.LLM.ClaudioAdapter`'s `options[:enable_caching]`
   defaults to `true` (it was `false`). Requests carry the breakpoints listed in §8 (system
   prompt, last tool, the API's automatic one), and the system prompt goes out as one text block
@@ -1393,7 +1392,6 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   times: an agent that makes one call per conversation pays more; a tool loop, which re-sends
   its whole prefix on every iteration, pays less. Set `enable_caching: false` to opt out, and
   on a `base_url` gateway that rejects top-level `cache_control`.
-
 - The JSON text Normandy writes for the model from a plain map (a tool's map or list output in
   its `tool_result`, a map given as message content) lists every map's keys sorted by their
   text, at any depth. On OTP 26+ a small atom-keyed map iterates its keys in atom-creation
@@ -1493,8 +1491,10 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   waits `:unavailable`). Forking a session at an entry before a compaction gives the
   uncompacted conversation up to that entry.
 - If the store refuses the compaction entry, the turn goes on and the failure is logged
-  (`Turn.Server could not store a compaction (session "sid"): <tag>; a restart rebuilds the
-  uncompacted conversation`); a restart then rebuilds the full conversation, as in 1.x.
+  (`Turn.Server could not store a compaction (session "sid"): <tag>; a restart rebuilds from
+  the last stored compaction`); a restart then rebuilds from the last compaction that was
+  stored, followed by every message stored after it, or the full conversation, as in 1.x,
+  when none was.
 
 ## 40. Session stores, registry and memory stores
 
@@ -1514,7 +1514,8 @@ code you wrote against 1.x must follow the changes below.
 - `SessionStore.Redis`: a pipelined write whose command fails inside Redis (a `WRONGTYPE`, an
   out-of-memory error) returns `{:error, %Redix.Error{}}`. 1.x returned `:ok` and dropped the error.
 - `SessionStore.Redis.fork/3` copies the history in pipelines of 1,000 entries instead of one round
-  trip per entry. If a pipeline fails, the partial copy is deleted and `fork/3` returns the error.
+  trip per entry. If a pipeline fails, `fork/3` returns the error after one best-effort `DEL`
+  of the partial copy, whose result is not checked: a copy can remain if that `DEL` fails too.
 - `SessionStore.Postgres.fork/3` checks that the fork point is on the session's chain by ids; it no
   longer reads and decodes every entry's content.
 - **Your own `SessionStore`.** Implement `save_turn_state/4` and write `inflight?` in the same write
@@ -1661,7 +1662,9 @@ code you wrote against 1.x must follow the changes below.
   message, a turn's append, a turn-state save) reaches the `:persist_failed` `TurnError` with
   `reason` reduced the same way (`{:sql, "SELECT ..."}` becomes `{:sql, "a string (N
   bytes)"}`; a `Postgrex.Error` becomes `{Postgrex.Error, sqlstate}`), in the reply, the
-  persisted turn state, the log and telemetry. `{:store_exit, exit_reason}` keeps its shape.
+  persisted turn state, the log and telemetry. `{:store_exit, exit_reason}` keeps its atoms,
+  integers and tuples (`{:store_exit, {:timeout, {GenServer, :call, 3}}}`); an exception
+  nested in the exit reason becomes `"a map"`, and a pid `"an unsupported term"`.
 - `A2A.Server.handle_message/3,4` reads only `traceparent` and `tracestate` from the carrier;
   an inbound `baggage` header is dropped, so a remote caller can no longer set baggage
   entries that your outbound calls would forward. Outbound A2A calls (`AgentTool`) still send
@@ -1673,8 +1676,9 @@ code you wrote against 1.x must follow the changes below.
 - `Normandy.Telemetry.OtelCtx` asks the code server once per node whether OpenTelemetry is
   loaded and caches the answer. OpenTelemetry loaded into a running node after Normandy first
   looked for it (a hot code load) is not seen until the node restarts.
-- `AgentMemory.delete_turn/2` is linear in the number of entries (it walked every surviving
-  entry to the root), and a corrupt memory (a parent cycle, a `parent_id` naming no entry) no
+- `AgentMemory.delete_turn/2` is linear in the number of entries for a linear history (it
+  walked every surviving entry to the root; now only an entry whose parent was deleted walks,
+  over the deleted run above it), and a corrupt memory (a parent cycle, a `parent_id` naming no entry) no
   longer hangs it or raises `BadMapError`. It now also drops the thinking of the entry right
   after the deleted turn, which was produced with that turn in its history and used to keep it.
 - An inline `AgentProcess` (the default `turn_engine`) no longer runs a turn inside its own
@@ -1687,8 +1691,10 @@ code you wrote against 1.x must follow the changes below.
   is the worker, not the agent pid.
 - `AgentProcess.run/3` waits `:infinity` by default (was 60_000 ms), as `Turn.Server.run/2`
   does: a turn is bounded by its retries, tool timeouts and `max_tool_iterations`. Pass
-  `timeout:` to keep a bound. A run whose caller died while it waited in the queue (a
-  `Reactive` contestant killed past the race's `:timeout`) is skipped.
+  `timeout:` to bound the wait: the caller then exits with `{:timeout, _}`, but the run still
+  executes and its turn is kept. In inline mode, a run whose caller died while it waited in
+  the queue (a `Reactive` contestant killed past the race's `:timeout`) is skipped; a
+  `:server`-mode run starts its worker at once and runs whether or not its caller lives.
 - An exit or a throw inside an inline turn is replied as
   `{:error, %Normandy.TurnError{type: :task_down}}` and logged; it used to crash the
   `AgentProcess`. A raised bug is still replied bare. `AgentProcess.stop/1` kills a turn in
@@ -1800,6 +1806,16 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   share an ancestor can both keep the shared entries. No other session's history is lost;
   the cost is entries left behind. If you must erase a user's data, check the store
   afterwards.
+
+- **Every compaction stores the whole compacted conversation.** `Turn.Server` appends one
+  `"compaction"` entry per compaction holding the conversation it left (up to a context
+  window), and `SessionStore.history/2` returns all of them: a restore loads and decodes
+  every snapshot to keep only the last. A session's storage and its load time therefore
+  grow with the number of compactions, not only with its last window.
+- **Usage under `retry:` counts only the attempt that succeeded.** When BaseAgent's `retry:`
+  retries a failed LLM call, the `[:normandy, :agent, :llm_call, :stop]` usage and the run
+  totals report the final attempt's tokens; the failed attempts' are not added. (The
+  legacy JSON parse-retry's re-asks are summed.)
 
 ## New, non-breaking
 

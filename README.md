@@ -51,11 +51,9 @@ mix deps.get
 Define structured data, then run an agent against Anthropic Claude:
 
 ```elixir
-# 1. Configure an LLM client (built-in Anthropic Claude adapter)
-client = %Normandy.LLM.ClaudioAdapter{
-  api_key: System.get_env("ANTHROPIC_API_KEY"),
-  options: %{enable_caching: true}
-}
+# 1. Configure an LLM client (built-in Anthropic Claude adapter; prompt caching is on
+#    by default)
+client = %Normandy.LLM.ClaudioAdapter{api_key: System.get_env("ANTHROPIC_API_KEY")}
 
 # 2. Initialize an agent
 agent =

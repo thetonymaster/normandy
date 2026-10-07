@@ -5,8 +5,10 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
 
   Triggered at the turn's `:steering` boundary: builds a `WindowManager` sized to the
   model's context window (`ctx.window`, unless `opts` pins `:context_window`) and estimates
-  the conversation once, summing each message's estimate cached on its entry
-  (`Normandy.Components.AgentMemory.Entry`). Under budget it changes nothing, so a
+  the conversation by summing each message's estimate cached on its entry
+  (`Normandy.Components.AgentMemory.Entry`). Under budget that one estimate is all it
+  does; over budget the truncation strategy (`truncate_oldest_first` among them) and the
+  result's `tokens_after` sum the cached estimates again. Under budget it changes nothing, so a
   mid-round boundary (`ctx.mid_round`) leaves the open tool round and its thinking alone
   until the conversation no longer fits; over budget it delegates to
   `WindowManager.truncate_conversation/2`, and a compaction strips the kept messages'
