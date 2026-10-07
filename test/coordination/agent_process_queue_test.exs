@@ -137,6 +137,9 @@ defmodule Normandy.Coordination.AgentProcessQueueTest do
 
     assert %{run_count: 2} = AgentProcess.get_stats(pid)
     assert messages(pid) == 4
+    # The skipped run gave back its admission: a leak here refuses every run :queue_full
+    # once :max_pending_runs callers have died.
+    assert %{pending: 0} = :sys.get_state(pid)
   end
 
   # Final review I1: a turn runs in a WatchedWorker grandchild. Its `$callers` chain must
