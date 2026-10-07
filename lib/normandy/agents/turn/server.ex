@@ -33,18 +33,20 @@ defmodule Normandy.Agents.Turn.Server do
 
   ## Store unavailable
 
-  Every start, supervisor restarts included, loads the session from the store. If
-  the store fails that load, or the load raises, exits or throws (a template or
-  credential provider, the template's rebuild), the start still succeeds: the server
-  waits in `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s)
-  and on every `run/2`, and replies `{:error, %Normandy.TurnError{type:
-  :session_unavailable, reason: reason}}` until a load succeeds. `reason` is the store's
-  reason reduced to its tags (atoms and integers kept, an exception as its module, any
-  other term as its type: `{:query_failed, "a map"}`), `{:store_exit, exit_reason}` for a
-  store call that exited, or the exception the load raised. It then carries on as
-  a normal start would, eager resume included. An approval that arrives while the load
-  fails is dropped with a warning. With no call for `:idle_timeout_ms`, the server stops
-  normally.
+  Every start, supervisor restarts included, loads the session from the store, in the
+  server's first event after `init/1` returns: `Turn.Supervisor.start_server/2` returns
+  as soon as the server is registered, and sessions load concurrently. A `run/2` sent
+  meanwhile waits for the load. If the store fails that load, or the load raises, exits
+  or throws (a template or credential provider, the template's rebuild), the start still
+  succeeds: the server waits in `:unavailable`, retries the load on a backoff timer
+  (200 ms doubling to 30 s) and on every `run/2`, and replies `{:error,
+  %Normandy.TurnError{type: :session_unavailable, reason: reason}}` until a load
+  succeeds. `reason` is the store's reason reduced to its tags (atoms and integers kept,
+  an exception as its module, any other term as its type: `{:query_failed, "a map"}`),
+  `{:store_exit, exit_reason}` for a store call that exited, or the exception the load
+  raised. It then carries on as a normal start would, eager resume included. An approval
+  that arrives while the load fails is dropped with a warning. With no call for
+  `:idle_timeout_ms`, the server stops normally.
 
   A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
   on this node, or invalid hook opts) is handled the same way: the server waits
@@ -57,8 +59,8 @@ defmodule Normandy.Agents.Turn.Server do
   ## Session start
 
   A session whose store holds no entries and no turn state is new. Its
-  `on_session_start` hooks (`Normandy.Behaviours.Hooks`) run as the first event after
-  `init/1` returns, so the supervisor starting the server is not blocked by them. What
+  `on_session_start` hooks (`Normandy.Behaviours.Hooks`) run as the event right after the
+  load, so the supervisor starting the server is not blocked by them. What
   they inject is stored as one user message. A hook crash or a store fault writing that
   message sends the server `:unavailable`, which retries both like a load; meanwhile
   `run/2` replies a `:session_unavailable` `TurnError` whose `:reason` is the
@@ -364,19 +366,20 @@ defmodule Normandy.Agents.Turn.Server do
 
     register_self(%Data{registry: Keyword.fetch!(opts, :registry), session_id: session_id})
 
-    # The store is the only source of durable state, on a first start and on a
-    # supervisor restart alike: the start arguments are captured once and would
-    # bring back the memory and turn state of the first start. Starting without
-    # the saved turn would drop it, and failing the start would make the
-    # supervisor retry at once, spending the restart limit every session shares.
-    # So a store fault starts the server :unavailable, retrying the load.
-    case safe_load(opts) do
-      {:ok, config, template, turn_state} ->
-        opts |> init_data(config, template, turn_state) |> with_session_start()
+    # The load runs as the first event, not here: Turn.Supervisor.start_server/2 waits for
+    # init/1 inside the one supervisor process, so a load in init/1 would serialize every
+    # session start behind every other session's store and provider IO. gen_statem runs
+    # an inserted event before it takes any message (a run/2, a system message), so
+    # nothing ever sees the :loading state.
+    data = %Data{
+      session_id: session_id,
+      store: Keyword.fetch!(opts, :store),
+      registry: Keyword.fetch!(opts, :registry),
+      idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 60_000),
+      start_opts: opts
+    }
 
-      {:error, reason} ->
-        unavailable(opts, reason)
-    end
+    {:ok, :loading, data, [{:next_event, :internal, :load}]}
   end
 
   # No :config AND no :template_provider: a Tier-2 thin start can't reconstruct. A
@@ -427,11 +430,6 @@ defmodule Normandy.Agents.Turn.Server do
       _ = timeout_options(opts, template)
       :ok
     end)
-  end
-
-  defp unavailable(opts, reason) do
-    {data, actions} = unavailable_data(opts, reason)
-    {:ok, :unavailable, data, actions}
   end
 
   defp unavailable_data(opts, reason) do
@@ -494,10 +492,10 @@ defmodule Normandy.Agents.Turn.Server do
   defp session_unavailable(reason),
     do: %TurnError{type: :session_unavailable, reason: TurnError.drop_stacktraces(reason)}
 
-  # Loads the session again. On success the transition is the one init/1 would have
-  # made, except that a new session's on_session_start hooks run here, inline: a caller
-  # or the retry timer triggered this, and a failure must reach that caller now. The
-  # retry timer is cancelled.
+  # Loads the session again. On success the transition is the one the first load (the
+  # :load event) would have made, except that a new session's on_session_start hooks run
+  # here, inline: a caller or the retry timer triggered this, and a failure must reach
+  # that caller now. The retry timer is cancelled.
   defp retry_load(%Data{start_opts: opts}) do
     with {:ok, config, template, turn_state} <- safe_load(opts),
          {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state),
@@ -567,13 +565,15 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # A new session's on_session_start hooks run as the first event after init/1 returns,
-  # so a slow hook does not block the supervisor starting this server and a crashing one
+  # A new session's on_session_start hooks run as the event right after the load, so a
+  # slow hook does not block the supervisor starting this server and a crashing one
   # sends it :unavailable instead of failing the start.
-  defp with_session_start({:ok, :idle, data, actions} = init) do
+  defp with_session_start({:ok, :idle, data, actions}) do
     if ServerGlue.session_start?(data.config, data.turn_state),
-      do: {:ok, :idle, data, [{:next_event, :internal, :session_start} | List.wrap(actions)]},
-      else: init
+      do:
+        {:next_state, :idle, data,
+         [{:next_event, :internal, :session_start} | List.wrap(actions)]},
+      else: {:next_state, :idle, data, actions}
   end
 
   defp start_session_if_new(data) do
@@ -728,6 +728,23 @@ defmodule Normandy.Agents.Turn.Server do
   @impl true
   def handle_event(:cast, {:approval, decisions}, state, data),
     do: handle_event(:cast, {:approval, decisions, nil}, state, data)
+
+  # :loading — the session's first load (init/1 inserted this event). The store is the
+  # only source of durable state, on a first start and on a supervisor restart alike: the
+  # start arguments are captured once and would bring back the memory and turn state of
+  # the first start. Starting without the saved turn would drop it, and crashing would
+  # make the supervisor restart the server at once, spending the restart limit every
+  # session shares. So a failed or crashed load sends the server :unavailable, retrying.
+  def handle_event(:internal, :load, :loading, %Data{start_opts: opts}) do
+    case safe_load(opts) do
+      {:ok, config, template, turn_state} ->
+        opts |> init_data(config, template, turn_state) |> with_session_start()
+
+      {:error, reason} ->
+        {data, actions} = unavailable_data(opts, reason)
+        {:next_state, :unavailable, data, actions}
+    end
+  end
 
   # :unavailable — the store failed the load at start. A turn request retries it:
   # on success the request is replayed in :idle, otherwise it gets the reason.

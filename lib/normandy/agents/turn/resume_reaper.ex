@@ -11,7 +11,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   A session is reaped when it is (1) `:eager` (`SessionStore.list_resumable/1`),
   (2) not currently registered anywhere (`SessionRegistry.whereis/2 == :none`), and
   (3) has a **non-terminal** persisted turn state. It is restarted as a thin spec
-  under the supervisor, where `Turn.Server.init/1` reconstructs config from the
+  under the supervisor; the started `Turn.Server` reconstructs config from the
   persisted template and `Turn.resume/1`s the in-flight turn — no inbound request.
 
   The restarted server restores the plain-data options saved with the template

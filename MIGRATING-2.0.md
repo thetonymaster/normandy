@@ -1439,6 +1439,13 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `{:error, reason, state}`. A custom `Turn.Driver.Handlers` `dispatch_tools` or a
   `Turn.Inline` `:dispatch` dep must return one result per call, carrying its
   `tool_call_id`.
+- `Turn.Server` loads its session after `init/1` returns, in its first event:
+  `Turn.Supervisor.start_server/2` and `Turn.Server.start_link/1` return before the store and
+  the template and credential providers are read, so session starts no longer wait for each
+  other in the supervisor. A `run/2` sent meanwhile waits for the load. Code that inspected
+  the load's effects right after a start (a log line, the server's state) must first make a
+  call to the server (`run/2`, or `:sys.get_state/1` in tests). A start with neither
+  `:config` nor `:template_provider` still raises `ArgumentError` in the start.
 
 ## New, non-breaking
 

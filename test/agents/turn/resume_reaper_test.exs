@@ -294,10 +294,14 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       host_server_opts: []
     }
 
-    log = ExUnit.CaptureLog.capture_log(fn -> assert :ok = ResumeReaper.reap(state) end)
-
-    assert {:ok, pid} = Native.whereis(reg, "s-creds")
-    :gen_statem.stop(pid)
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok = ResumeReaper.reap(state)
+        assert {:ok, pid} = Native.whereis(reg, "s-creds")
+        # The server loads after init/1 returns: get_state/1 answers once the load ran.
+        assert {:unavailable, _} = :sys.get_state(pid)
+        :gen_statem.stop(pid)
+      end)
 
     assert log =~ "could not start session \"s-creds\""
     assert log =~ inspect(FailingCreds)
