@@ -179,6 +179,29 @@ defmodule Normandy.Components.AgentMemory do
     |> fold_user_text()
   end
 
+  @doc false
+  # The messages of a request built from `memory` in one walk of the active branch:
+  # each entry's cached encoding, with the thinking drop_stale_thinking/2 would remove
+  # under `prefix_key` removed from that encoding (drop_thinking/1 on the encoded blocks
+  # gives what encoding the dropped content gives), then merged as request_messages/1
+  # merges. Equal to
+  # `memory |> drop_stale_thinking(prefix_key) |> history() |> request_messages()`,
+  # without encoding anything again.
+  @spec request_messages_for(t(), integer()) :: [Message.t()]
+  def request_messages_for(%__MODULE__{} = memory, prefix_key) do
+    {history, _state} =
+      memory
+      |> entry_chain()
+      |> Enum.map_reduce(:leading, fn %Entry{role: role, content: content} = entry, state ->
+        case thinking_verdict(content, prefix_key, state) do
+          {:keep, state} -> {%{role: role, content: entry_wire(entry)}, state}
+          {:drop, state} -> {%{role: role, content: drop_thinking(entry_wire(entry))}, state}
+        end
+      end)
+
+    request_messages(history)
+  end
+
   defp fold_user_text([
          %Message{role: "tool", content: blocks} = tool,
          %Message{role: "user", content: text} | rest

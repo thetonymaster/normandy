@@ -250,15 +250,10 @@ defmodule Normandy.Agents.BaseAgent do
     # response is stamped.
     prefix_key = &ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas, &1)
 
-    history =
-      config.memory
-      |> AgentMemory.drop_stale_thinking(prefix_key.(config.model))
-      |> AgentMemory.history()
-
     request = %Normandy.LLM.Request{
       model: config.model,
       system: system_prompt_with_schema,
-      messages: AgentMemory.request_messages(history),
+      messages: AgentMemory.request_messages_for(config.memory, prefix_key.(config.model)),
       response_model: response_model,
       output_format: request_output_format(response_model, config),
       temperature: config.temperature,
@@ -1430,16 +1425,10 @@ defmodule Normandy.Agents.BaseAgent do
     # Streaming calls cannot use :fallbacks, so the requested model produces it.
     prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas, config.model)
 
-    messages =
-      config.memory
-      |> AgentMemory.drop_stale_thinking(prefix_key)
-      |> AgentMemory.history()
-      |> AgentMemory.request_messages()
-
     request = %Normandy.LLM.Request{
       model: config.model,
       system: system_prompt,
-      messages: messages,
+      messages: AgentMemory.request_messages_for(config.memory, prefix_key),
       output_format: request_output_format(%ToolCallResponse{}, config),
       temperature: config.temperature,
       max_tokens: config.max_tokens,
