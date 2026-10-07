@@ -1324,7 +1324,8 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   :unexpected_response"`), and a tool that raises `KeyError` gives `"Tool execution failed:
   KeyError: key :x not found"` (no map), `MatchError`, `CaseClauseError`,
   `Protocol.UndefinedError` and the other exceptions whose message shows a term give their
-  module only.
+  module only. A tool that calls `:erlang.error({:boom, data})` gives
+  `"Tool execution failed: ErlangError: :boom"` (the tag only; it used to quote the term).
 - `inspect/1` of a `ClaudioAdapter` or `OpenAICompatibleAdapter` shows
   `options[:req_options]` and `options[:headers]` as `"**redacted**"`, and its `base_url`
   (and `options[:base_url]`) as scheme, host, port and path only, like the shared breaker's

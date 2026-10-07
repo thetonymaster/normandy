@@ -105,6 +105,11 @@ defmodule Normandy.Security.LowFindingsTest do
                {:error, "Tool execution failed: Protocol.UndefinedError"}
     end
 
+    test "an Erlang error is named by its reason's tag, never its terms" do
+      assert run_raising(fn -> :erlang.error(Function.identity({:boom, "SECRET"})) end) ==
+               {:error, "Tool execution failed: ErlangError: :boom"}
+    end
+
     test "other exceptions keep their message" do
       assert run_raising(fn -> raise ArgumentError, "bad level" end) ==
                {:error, "Tool execution failed: bad level"}

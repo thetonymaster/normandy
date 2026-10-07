@@ -159,6 +159,10 @@ defmodule Normandy.Tools.Executor do
   defp describe_exception(%KeyError{key: key}),
     do: "KeyError: key #{inspect(key, limit: 5, printable_limit: 50)} not found"
 
+  # An Erlang error's message inspects its whole original term: named by that term's tag.
+  defp describe_exception(%ErlangError{original: original}),
+    do: "ErlangError: #{Describe.reason_tag(original)}"
+
   defp describe_exception(%mod{}) when mod in @term_exceptions, do: inspect(mod)
   defp describe_exception(error), do: error |> Exception.message() |> truncate()
 
