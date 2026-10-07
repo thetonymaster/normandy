@@ -36,8 +36,9 @@ defmodule Normandy.Telemetry.KilledRun do
       `:exception` after the real one; that window is short. `Batch.Processor` runs no callbacks in the task and doesn't mark:
       its window, from the run's `:stop` to the task's reply, is the same short window.
     * Not emitted for agent processes (a pid in `Reactive.race/3`): killing
-      the task that waits on `AgentProcess.run/3` does not kill the run, which
-      ends normally in the agent process.
+      the task that waits on `AgentProcess.run/3` does not kill a run in flight,
+      which ends normally in the agent process's worker; a run still queued
+      behind another is skipped.
     * Not emitted for tasks `Task.async_stream` shuts down because the
       consumer halted the stream early (`Reactive.all/3` with `fail_fast`):
       the coordinator can't tell which tasks were still running.

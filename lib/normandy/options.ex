@@ -25,7 +25,7 @@ defmodule Normandy.Options do
 
   | Option | Where | Default |
   |---|---|---|
-  | `:timeout` | `AgentProcess.run/3` | 60_000 |
+  | `:timeout` | `AgentProcess.run/3` | `:infinity` |
   | `:timeout` | `AgentPool.checkout/2`, `AgentPool.transaction/3` | 5_000 |
   | `:timeout` | `Reactive.race/3`, `all/3`, `some/3` | 60_000 |
   | `:timeout` | `ParallelOrchestrator.execute/3`, `execute_stream/2` | 300_000 per agent |

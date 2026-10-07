@@ -1646,6 +1646,19 @@ code you wrote against 1.x must follow the changes below.
   entry to the root), and a corrupt memory (a parent cycle, a `parent_id` naming no entry) no
   longer hangs it or raises `BadMapError`. It now also drops the thinking of the entry right
   after the deleted turn, which was produced with that turn in its history and used to keep it.
+- An inline `AgentProcess` (the default `turn_engine`) no longer runs a turn inside its own
+  `handle_call/3`. Runs and `update_agent/2` calls queue in arrival order and execute one at
+  a time, each turn in a worker process. `get_agent/1`, `get_id/1`, `get_stats/1` and
+  `approve/2` answer while a turn runs (they used to wait for it and exit after 5 s);
+  `get_agent/1` returns the config as of the last finished turn.
+- `AgentProcess.run/3` waits `:infinity` by default (was 60_000 ms), as `Turn.Server.run/2`
+  does: a turn is bounded by its retries, tool timeouts and `max_tool_iterations`. Pass
+  `timeout:` to keep a bound. A run whose caller died while it waited in the queue (a
+  `Reactive` contestant killed past the race's `:timeout`) is skipped.
+- An exit or a throw inside an inline turn is replied as
+  `{:error, %Normandy.TurnError{type: :task_down}}` and logged; it used to crash the
+  `AgentProcess`. A raised bug is still replied bare. `AgentProcess.stop/1` kills a turn in
+  flight; a turn worker killed from outside is a `:task_down` `TurnError`.
 
 ## New, non-breaking
 

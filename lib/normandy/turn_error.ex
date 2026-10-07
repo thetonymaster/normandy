@@ -9,10 +9,11 @@ defmodule Normandy.TurnError do
   `TurnError` otherwise.
 
   `AgentProcess` differs by turn engine for any other raised exception (a bug, not a
-  Normandy error). With `turn_engine: :server` the turn runs in a worker, and its crash
-  is replied as a `:task_down` `TurnError`. In inline mode (the default) the turn runs in
-  the process itself, and `run/3` and `cast/3` reply that exception bare, as
-  `{:error, exception}`, rather than wrapping it.
+  Normandy error). With `turn_engine: :server` it is replied as a `:task_down`
+  `TurnError`. In inline mode (the default) `run/3` and `cast/3` reply that exception
+  bare, as `{:error, exception}`, rather than wrapping it. In both modes the turn runs
+  in a worker process: an exit or a throw in it, or the worker killed from outside, is a
+  `:task_down` `TurnError`.
 
   `:type` says which:
 
