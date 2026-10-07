@@ -123,6 +123,10 @@ defmodule Normandy.Test.FakeClient do
 
   @item_opts [:stop_reason, :usage, :stream_error_after]
 
+  @return_shape "expected {:text, text}, {:structured, map}, {:tool_calls, calls} (each with " <>
+                  "an optional keyword list of :stop_reason, :usage, :stream_error_after) " <>
+                  "or {:error, %Normandy.LLMError{}}"
+
   @doc """
   A client that answers its requests with `script`, in order.
 
@@ -158,8 +162,22 @@ defmodule Normandy.Test.FakeClient do
 
   @doc "Every request the client received, oldest first."
   @spec requests(t()) :: [Request.t()]
-  def requests(%__MODULE__{table: table}),
-    do: table |> :ets.tab2list() |> Enum.map(fn {_index, request} -> request end)
+  def requests(%__MODULE__{table: table}) do
+    check_owner!(table)
+    table |> :ets.tab2list() |> Enum.map(fn {_index, request} -> request end)
+  end
+
+  @spec check_owner!(:ets.tid()) :: :ok
+  defp check_owner!(table) do
+    if :ets.info(table, :id) == :undefined do
+      raise ArgumentError,
+            "Normandy.Test.FakeClient: the process that built this FakeClient with new/2 has " <>
+              "exited, and its request table with it; build the client in the test process " <>
+              "(not in setup_all or another task)"
+    end
+
+    :ok
+  end
 
   @doc "How many script items no request has taken yet."
   @spec remaining(t()) :: non_neg_integer()
@@ -170,6 +188,7 @@ defmodule Normandy.Test.FakeClient do
   # The item for the next request, which is recorded first. Called by the Model impl.
   @spec next!(t(), Request.t()) :: {non_neg_integer(), item()}
   def next!(%__MODULE__{} = client, %Request{} = request) do
+    check_owner!(client.table)
     index = :atomics.add_get(client.counter, 1, 1) - 1
     true = :ets.insert(client.table, {index, request})
 
@@ -180,6 +199,13 @@ defmodule Normandy.Test.FakeClient do
     case elem(client.script, index) do
       fun when is_function(fun, 1) ->
         item = fun.(request)
+        where = "Normandy.Test.FakeClient: the function at script item #{index}"
+
+        if is_function(item) do
+          raise ArgumentError,
+                "#{where} returned a function; a function item must return a reply item, " <>
+                  "not a function (#{@return_shape})"
+        end
 
         check_item!(
           item,
@@ -439,7 +465,19 @@ defmodule Normandy.Test.FakeClient do
   defp supported, do: Enum.map_join(@item_opts, ", ", &inspect/1)
 
   @spec bad!(String.t(), String.t()) :: no_return()
-  defp bad!(where, detail), do: raise(ArgumentError, "#{where} #{detail}")
+  defp bad!(where, detail) do
+    detail =
+      if String.contains?(where, "returned an item"),
+        do:
+          String.replace(
+            detail,
+            ", {:error, %Normandy.LLMError{}} or a 1-arity function",
+            " or {:error, %Normandy.LLMError{}}"
+          ),
+        else: detail
+
+    raise ArgumentError, "#{where} #{detail}"
+  end
 
   defimpl Normandy.Agents.Model do
     alias Normandy.Test.FakeClient

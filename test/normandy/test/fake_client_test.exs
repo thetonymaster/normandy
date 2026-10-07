@@ -369,9 +369,29 @@ defmodule Normandy.Test.FakeClientTest do
                    "Normandy.Test.FakeClient: the function at script item 0 returned an item " <>
                      "that is :oops; expected {:text, text}, {:structured, map}, " <>
                      "{:tool_calls, calls} (each with an optional keyword list of " <>
-                     ":stop_reason, :usage, :stream_error_after), " <>
-                     "{:error, %Normandy.LLMError{}} or a 1-arity function",
+                     ":stop_reason, :usage, :stream_error_after) " <>
+                     "or {:error, %Normandy.LLMError{}}",
                    fn -> BaseAgent.run(agent(client), "q") end
+    end
+
+    test "a function item that returns a function raises a named error" do
+      client = FakeClient.new([fn _request -> fn _inner -> {:text, "x"} end end])
+
+      assert_raise ArgumentError,
+                   "Normandy.Test.FakeClient: the function at script item 0 returned a " <>
+                     "function; a function item must return a reply item, not a function " <>
+                     "(expected {:text, text}, {:structured, map}, {:tool_calls, calls} " <>
+                     "(each with an optional keyword list of :stop_reason, :usage, " <>
+                     ":stream_error_after) or {:error, %Normandy.LLMError{}})",
+                   fn -> BaseAgent.run(agent(client), "q") end
+    end
+
+    test "a client whose building process has exited raises a named error" do
+      client = Task.async(fn -> FakeClient.new([{:text, "x"}]) end) |> Task.await()
+      message = ~r/the process that built this FakeClient with new\/2 has exited/
+
+      assert_raise ArgumentError, message, fn -> FakeClient.requests(client) end
+      assert_raise ArgumentError, message, fn -> BaseAgent.run(agent(client), "q") end
     end
 
     test "tool calls to an agent without tools raise on run/3 and stream/3" do
