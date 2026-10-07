@@ -2315,13 +2315,44 @@ defmodule Normandy.Agents.BaseAgent do
       violations: violations
   end
 
+  # The log names the guards, the paths and the count, never the messages: a message
+  # quotes the guard's configuration (ForbiddenSubstrings' term, RegexGuard's pattern),
+  # which can be the very secret the guard keeps out of the answer. The caller gets
+  # the messages in telemetry and, under :block, in the ViolationError.
   defp output_violation(:warn, violations) do
-    Logger.warning(
-      "Agent output guardrail violation: " <> ValidationMiddleware.error_message(violations)
-    )
-
+    Logger.warning("Agent output guardrail violation: " <> violation_summary(violations))
     :ok
   end
+
+  # "ForbiddenSubstrings at chat_message (1 violation)"
+  defp violation_summary(violations) do
+    guards =
+      violations
+      |> Enum.map(&(&1 |> Map.get(:guard) |> guard_name()))
+      |> Enum.uniq()
+      |> Enum.join(", ")
+
+    paths =
+      violations
+      |> Enum.map(&(&1 |> Map.get(:path, []) |> path_name()))
+      |> Enum.uniq()
+      |> Enum.join(", ")
+
+    count = length(violations)
+    "#{guards} at #{paths} (#{count} #{if count == 1, do: "violation", else: "violations"})"
+  end
+
+  defp guard_name(module) when is_atom(module) and not is_nil(module),
+    do: module |> inspect() |> String.split(".") |> List.last()
+
+  defp guard_name(_unknown), do: "a guard"
+
+  defp path_name([]), do: "the value"
+  defp path_name(path) when is_list(path), do: Enum.map_join(path, ".", &path_segment/1)
+  defp path_name(_other), do: "the value"
+
+  defp path_segment(segment) when is_atom(segment) or is_integer(segment), do: to_string(segment)
+  defp path_segment(segment), do: Describe.type_of(segment)
 
   defp emit_guardrail_violation(stage, config, guards, violations, extra_meta \\ %{}) do
     :telemetry.execute(

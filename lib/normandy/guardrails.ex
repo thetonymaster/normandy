@@ -90,7 +90,12 @@ defmodule Normandy.Guardrails do
     `{:error, %Normandy.Guardrails.ViolationError{}}` (`run!` raises it;
     `Turn.Server.run/2` replies the same `{:error, exception}`) and the
     answer is not saved.
-  - `:warn` — the violation is logged and the answer is returned and saved.
+  - `:warn` — the violation is logged and the answer is returned and saved. The
+    warning names the guards, the paths and the count
+    (`Agent output guardrail violation: ForbiddenSubstrings at chat_message (1 violation)`),
+    never the messages, which quote the guard's configuration (a forbidden term, a
+    pattern). The messages are in the `[:normandy, :agent, :guardrail, :violation]`
+    telemetry metadata.
 
   The option does not apply to streaming, where the content has already
   reached the caller (see below).

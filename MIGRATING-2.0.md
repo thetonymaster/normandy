@@ -1624,6 +1624,13 @@ code you wrote against 1.x must follow the changes below.
 - An output guardrail with `on_violation: :warn` now logs `Logger.warning("Agent output
   guardrail violation: ...")` instead of printing with `IO.warn` to stderr. Tests that
   captured it with `capture_io(:stderr, ...)` use `capture_log/1`.
+- That warning names the guards, the violation paths and the count only:
+  `Agent output guardrail violation: ForbiddenSubstrings at chat_message (1 violation)`. It
+  no longer holds the violation messages, which quote the guard's configuration
+  (`ForbiddenSubstrings`' forbidden term, `RegexGuard`'s pattern) and so could ship a secret
+  the guard protects to your log pipeline. Read the messages from the
+  `[:normandy, :agent, :guardrail, :violation]` telemetry event's `violations`, or run with
+  `on_violation: :block` to get them in the `ViolationError`.
 - A hook or guard that returns a value outside its contract still raises `ArgumentError`, but
   the message describes the value's shape instead of showing it: `got: {:inject, a string (10
   bytes)}` instead of `got: {:inject, "not a list"}`. Atoms are still shown (`got: :yes`).
