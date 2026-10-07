@@ -170,14 +170,33 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
       {:ok, first} = Redis.start_link(opts)
       handle = Redis.fetch_handle(name)
       old_conn = GenServer.whereis(handle.conn)
+      conn_ref = Process.monitor(old_conn)
       :ok = GenServer.stop(first)
+
+      # terminate/2 stopped it: a :normal owner exit alone does not end a linked process.
+      assert_receive {:DOWN, ^conn_ref, :process, ^old_conn, :shutdown}, 1_000
 
       start_supervised!(%{id: name, start: {Redis, :start_link, [opts]}})
 
-      refute Process.alive?(old_conn)
       pid = sleeper()
       :ok = Redis.register(handle, "s1", pid)
       assert Redis.whereis(handle, "s1") == {:ok, pid}
+    end
+
+    test "a process the owner did not start, holding the derived name, is left alone and the start fails" do
+      name = :"redis_registry_taken_#{System.unique_integer([:positive])}"
+      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+      conn_name = Module.concat(name, Redix)
+      holder = sleeper()
+      true = Process.register(holder, conn_name)
+      Process.flag(:trap_exit, true)
+
+      assert Redis.start_link(name: name, url: url, namespace: "ns_taken") ==
+               {:error, {:connection_name_taken, conn_name}}
+
+      assert Process.alive?(holder)
+      assert Process.whereis(conn_name) == holder
+      assert Process.whereis(name) == nil
     end
   end
 end

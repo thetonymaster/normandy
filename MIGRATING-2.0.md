@@ -1537,7 +1537,10 @@ code you wrote against 1.x must follow the changes below.
   gave `start_link/1`), or call `SessionRegistry.Redis.fetch_handle(MyApp.SessionRegistry)` once
   for an owner started with `:url`. Such an owner now registers its Redix connection as
   `Module.concat(name, Redix)` (1.x left it unnamed) and the handle names it, so a fetched handle
-  keeps working after the owner restarts; stopping the owner also stops that connection. Pass
+  keeps working after the owner restarts; stopping the owner also stops that connection. The
+  name is reserved: if another process holds it, the owner waits up to 5 s for it to exit,
+  then fails to start with `{:error, {:connection_name_taken, name}}` (pass `:conn` or rename
+  the owner); the other process is never stopped. Pass
   `{SessionRegistry.Redis, handle}` where you passed `{SessionRegistry.Redis,
   MyApp.SessionRegistry}`; the old form raises `ArgumentError` naming the struct. The `:via` name is `{handle, session_id}`. With the Redis combo,
   `Normandy.Cluster.redis_handles/1` (the options of `redis_child_specs/1`) returns the

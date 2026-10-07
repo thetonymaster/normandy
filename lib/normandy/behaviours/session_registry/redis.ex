@@ -16,9 +16,11 @@ if Code.ensure_loaded?(Redix) do
     `whereis/2` runs in the caller, on the handle's connection: a lookup never waits on
     the owner. `register/3` and `unregister/2` go through the owner, which monitors the
     pids. An owner started with `:url` registers its connection as
-    `Module.concat(name, Redix)`, so a handle keeps working across owner restarts. A handle
-    is meant for the node its owner runs on: on another node, a lookup reaches the
-    connection over distribution.
+    `Module.concat(name, Redix)`, so a handle keeps working across owner restarts; that
+    name is reserved for it, and an owner whose derived name another process holds fails
+    to start with `{:error, {:connection_name_taken, name}}` (pass `:conn` or rename the
+    owner). A handle is meant for the node its owner runs on: on another node, a lookup
+    reaches the connection over distribution.
 
     Registration is atomic via `SET … NX` (no read-modify-write), so a concurrent start
     cluster-wide yields one winner; the losers route to it. Use as a `:via` registry
@@ -47,6 +49,9 @@ if Code.ensure_loaded?(Redix) do
 
     @default_ttl_ms 60_000
     @refresh_chunk 1_000
+    # How long a :url owner waits for a previous incarnation's connection to release
+    # Module.concat(name, Redix) before refusing to start.
+    @conn_name_wait_ms 5_000
 
     defmodule Handle do
       @moduledoc """
@@ -109,7 +114,9 @@ if Code.ensure_loaded?(Redix) do
                                 doc:
                                   "A Redis URL to connect to when `:conn` is not given; the " <>
                                     "owner starts that connection linked, registered as " <>
-                                    "`Module.concat(name, Redix)`."
+                                    "`Module.concat(name, Redix)`, a name no other process " <>
+                                    "may hold (the start fails with " <>
+                                    "`{:error, {:connection_name_taken, name}}`)."
                               ],
                               namespace: [
                                 type: :string,
@@ -291,12 +298,20 @@ if Code.ensure_loaded?(Redix) do
     def init(opts) do
       name = Keyword.fetch!(opts, :name)
 
-      {conn, own_conn?} =
-        case Keyword.get(opts, :conn) do
-          nil -> {start_own_conn(Keyword.fetch!(opts, :url), conn_name(name)), true}
-          supplied -> {supplied, false}
-        end
+      case Keyword.get(opts, :conn) do
+        nil ->
+          case start_own_conn(Keyword.fetch!(opts, :url), conn_name(name)) do
+            {:ok, conn} -> init_state(opts, conn, true)
+            {:error, reason} -> {:stop, reason}
+          end
 
+        supplied ->
+          init_state(opts, supplied, false)
+      end
+    end
+
+    defp init_state(opts, conn, own_conn?) do
+      name = Keyword.fetch!(opts, :name)
       ttl = Keyword.fetch!(opts, :ttl_ms)
       {:ok, _ref} = :timer.send_interval(div(ttl, 2), :refresh)
 
@@ -317,26 +332,47 @@ if Code.ensure_loaded?(Redix) do
     # of every later incarnation of the owner.
     defp conn_name(owner), do: Module.concat(owner, Redix)
 
-    # A previous incarnation's connection may still hold the name: after a crash its
-    # exit signal can arrive after the supervisor restarted us, and an owner stopped with
-    # :normal leaves it running (Redix does not trap exits). It is ours by its name:
-    # stop it and start a fresh one.
-    defp start_own_conn(url, name) do
+    # The connection is linked to the owner and terminate/2 stops it on a callback stop,
+    # so a previous incarnation's connection is dead or still exiting (its exit signal can
+    # land after the supervisor restarted us): wait for it, bounded. A holder still alive
+    # after that is not ours (a host process under the same name) and is never touched.
+    defp start_own_conn(url, name, retry? \\ true) do
       case Redix.start_link(url, name: name) do
         {:ok, conn} ->
-          conn
+          {:ok, conn}
 
-        {:error, {:already_started, old}} ->
-          ref = Process.monitor(old)
-          Process.exit(old, :kill)
+        {:error, {:already_started, holder}} when retry? ->
+          if exited?(holder), do: start_own_conn(url, name, false), else: name_taken(name)
 
-          receive do
-            {:DOWN, ^ref, :process, ^old, _reason} -> :ok
-          end
+        {:error, {:already_started, _holder}} ->
+          name_taken(name)
 
-          {:ok, conn} = Redix.start_link(url, name: name)
-          conn
+        {:error, reason} ->
+          {:error, reason}
       end
+    end
+
+    defp exited?(pid) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> true
+      after
+        @conn_name_wait_ms ->
+          Process.demonitor(ref, [:flush])
+          false
+      end
+    end
+
+    defp name_taken(name) do
+      Logger.error(
+        "SessionRegistry.Redis could not start its Redis connection: the name " <>
+          "#{inspect(name)} is in use by another process. Pass the owner a started " <>
+          "connection with :conn, or give the owner a :name whose " <>
+          "Module.concat(name, Redix) is free"
+      )
+
+      {:error, {:connection_name_taken, name}}
     end
 
     @impl GenServer
