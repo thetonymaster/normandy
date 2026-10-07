@@ -19,6 +19,7 @@ defmodule Normandy.Telemetry.Metadata do
   `:tool_type` (`:extension` for an MCP-wrapped tool, `:function` otherwise).
   """
 
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
@@ -59,13 +60,22 @@ defmodule Normandy.Telemetry.Metadata do
     |> reject_nil()
   end
 
-  # A response map's stop reason as a string (the llm_call finish_reason form); a run
-  # without tools answers with its output schema struct, which has none.
-  defp finish_reason(%{stop_reason: reason}) when is_atom(reason) and not is_nil(reason),
+  # The provider's stop reason of the last response as a string (the llm_call
+  # finish_reason form), read only from a provider response: a %ToolCallResponse{} (the
+  # tool loop) or the streamed message map. Any other struct is an output schema, whose
+  # fields are model text even when one is named stop_reason (decision 6), so it has none.
+  defp finish_reason(%ToolCallResponse{stop_reason: reason}), do: stop_reason_string(reason)
+
+  defp finish_reason(%{stop_reason: reason} = message) when not is_struct(message),
+    do: stop_reason_string(reason)
+
+  defp finish_reason(_response), do: nil
+
+  defp stop_reason_string(reason) when is_atom(reason) and not is_nil(reason),
     do: Atom.to_string(reason)
 
-  defp finish_reason(%{stop_reason: reason}) when is_binary(reason), do: reason
-  defp finish_reason(_response), do: nil
+  defp stop_reason_string(reason) when is_binary(reason), do: reason
+  defp stop_reason_string(_reason), do: nil
 
   @doc """
   The ids an llm_call or tool span carries: `:turn_id`, `:session_id` and

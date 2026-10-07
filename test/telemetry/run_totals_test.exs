@@ -21,6 +21,16 @@ defmodule Normandy.Telemetry.RunTotalsTest do
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 
+  defmodule StopReasonOutput do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "An answer that explains why the agent stopped" do
+      field(:chat_message, :string, description: "The answer")
+      field(:stop_reason, :string, description: "Why the agent stopped")
+    end
+  end
+
   @weather %{"type" => "tool_use", "id" => "t1", "name" => "weather", "input" => %{}}
   @done %{"type" => "text", "text" => "Done."}
   @run_stop [:normandy, :agent, :run, :stop]
@@ -172,6 +182,47 @@ defmodule Normandy.Telemetry.RunTotalsTest do
     end
   end
 
+  describe "run :stop finish_reason and stop_reason" do
+    # An output schema's fields are model text, even one named stop_reason (decision 6).
+    test "an output schema's stop_reason field is never read as the finish reason" do
+      secret = "model-text-#{System.unique_integer([:positive])}"
+
+      {name, config} =
+        agent(
+          %StubClient{
+            reply: fn _rm -> %StopReasonOutput{chat_message: "hi", stop_reason: secret} end
+          },
+          %{toolset: nil, output_schema: %StopReasonOutput{}}
+        )
+
+      TelemetryCapture.attach_span([@run_stop], agent_name: name)
+
+      assert {:ok, _config, %StopReasonOutput{stop_reason: ^secret}} =
+               BaseAgent.run(config, "go")
+
+      assert_received {:span, @run_stop, meta}
+      assert %{llm_calls: 1, stop_reason: :completed} = meta
+      refute Map.has_key?(meta, :finish_reason)
+      refute inspect(meta) =~ secret
+    end
+
+    test "an answer from the final call after max_tool_iterations stops with :max_iterations" do
+      {name, config} = agent(json_tool_turn(), %{max_tool_iterations: 1})
+      TelemetryCapture.attach_span([@run_stop], agent_name: name)
+
+      assert {:ok, _config, %{chat_message: "Done."}} = BaseAgent.run(config, "go")
+
+      assert_received {:span, @run_stop, meta}
+
+      assert %{
+               llm_calls: 2,
+               iterations: 1,
+               stop_reason: :max_iterations,
+               finish_reason: "end_turn"
+             } = meta
+    end
+  end
+
   # The accumulator rides the call request; a before_llm hook is handed only the call's
   # info (Normandy.Hooks.Handlers), so it can neither see nor drop request[:run_usage].
   describe "before_llm hooks and the run accumulator" do
@@ -242,6 +293,7 @@ defmodule Normandy.Telemetry.RunTotalsTest do
         [
           [:normandy, :agent, :llm_call, :start],
           [:normandy, :agent, :llm_call, :stop],
+          [:normandy, :llm, :request, :start],
           @run_stop
         ],
         agent_name: name
@@ -255,6 +307,11 @@ defmodule Normandy.Telemetry.RunTotalsTest do
 
       assert_received {:span, [:normandy, :agent, :llm_call, :stop], stop}
       assert %{attempts: 1, input_tokens: 1, output_tokens: 1} = stop
+      assert %{has_tool_calls: false, tool_call_count: 0} = stop
+
+      assert_received {:span, [:normandy, :llm, :request, :start], request}
+      assert %{attempt: 1, request_kind: :initial} = request
+      refute_received {:span, [:normandy, :llm, :request, :start], _}
       refute_received {:span, @run_stop, _}
     end
   end

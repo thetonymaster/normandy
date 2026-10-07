@@ -206,7 +206,14 @@ defmodule Normandy.Agents.BaseAgent do
       {response, usage, meta} =
         get_response_with_usage(config, response_model, request_tracker: tracker)
 
-      {response, llm_stop_metadata(llm_metadata, usage, meta, tracker)}
+      tool_calls = Map.get(response, :tool_calls) || []
+
+      stop_metadata =
+        llm_metadata
+        |> Map.merge(%{has_tool_calls: tool_calls != [], tool_call_count: length(tool_calls)})
+        |> llm_stop_metadata(usage, meta, tracker)
+
+      {response, stop_metadata}
     end)
   end
 

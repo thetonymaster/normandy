@@ -77,13 +77,16 @@ defmodule Normandy.Telemetry do
       final call after `max_tool_iterations` rounds.
     * `finish_reason` - the provider's stop reason of the last response, as a string
       (`"end_turn"`); absent when that response carries none (a run without tools gets
-      its answer as the output schema, which has no stop reason).
+      its answer as the output schema, which is never read for one, even when it has a
+      `stop_reason` field).
 
   Not counted: a failed llm_call, compaction's summary calls (their own llm_call spans
   carry `purpose: :summary`; add them from those), and calls a custom `call_llm` handler
   (`Turn.Server`'s or `AgentProcess`'s `:handlers`) makes without an llm_call span, which
   gives `llm_calls: 0`. A resumed durable turn's run counts the calls made after the
-  resume. A run that ends in `:exception` carries no totals.
+  resume in `llm_calls` and the token totals, while `iterations`, `stop_reason` and
+  `finish_reason` describe the whole turn (do not divide one by the other). A run that
+  ends in `:exception` carries no totals.
 
   ### `[:normandy, :agent, :llm_call, :start | :stop | :exception]`
 
@@ -101,7 +104,7 @@ defmodule Normandy.Telemetry do
       `effort`, `server_address` (host of the client's base URL; absent when the
       client uses its library default).
     * Stop metadata adds:
-      `has_tool_calls` (boolean), `tool_call_count`;
+      `has_tool_calls` (boolean), `tool_call_count` (both absent on a summary call);
       `usage`, the raw provider usage map, exactly as reported (absent when the provider
       reported none, never `nil`);
       the normalized token counts `input_tokens` (for Anthropic it includes cache

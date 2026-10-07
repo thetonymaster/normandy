@@ -1601,6 +1601,9 @@ code you wrote against 1.x must follow the changes below.
   one-round tool turn logs `1`, not `2`.
 - `BaseAgent.get_response/2` now emits an `[:normandy, :agent, :llm_call]` span (no
   `iteration`, no run around it).
+- On a resumed durable turn, the run `:stop`'s `llm_calls` and token totals count only the
+  calls made after the resume, while `iterations`, `stop_reason` and `finish_reason` describe
+  the whole turn.
 
 ## New, non-breaking
 
