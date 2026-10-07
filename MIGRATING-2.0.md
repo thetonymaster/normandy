@@ -1407,6 +1407,39 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
   encode them in order, as Jason does.
 
+## 39. Turn.Server start, store failures and compaction persistence
+
+- A session store call that exits (a `GenServer` or `Agent` call timeout, a dead store
+  process or connection) no longer crashes `Turn.Server`. During a turn the write fails like
+  a store's `{:error, reason}`: `run/2` returns `{:error, %Normandy.TurnError{type:
+  :persist_failed, reason: {:store_exit, exit_reason}}}` and the same server takes the next
+  turn. The terminal-state save after a successful turn is best-effort, so its exit leaves the
+  reply `{:ok, _}`. `exit_reason` carries no stacktrace, and a call's arguments are replaced by
+  their count (`{:timeout, {GenServer, :call, 3}}`). A store that raises mid-turn is a bug and
+  still crashes the server.
+- Anything the session load raises, exits or throws (the store, the template or credential
+  provider, `ConfigTemplate.rebuild/3`, a supplement's `client_builder`) leaves the server
+  `:unavailable` and retrying, instead of crashing it into a supervisor restart. `run/2`
+  replies `:session_unavailable` with the exception as `:reason` (an exit's or a throw's
+  reason for those). A saved template whose `:on_approval_timeout` is not `:continue` or
+  `:fail` is refused as `{:invalid_template, message}`.
+- A session store's error reaches `run/2` reduced to its tags: atoms and integers are kept,
+  tuples are walked, an exception becomes its module (`{Postgrex.Error, code}` for a Postgres
+  error with a SQLSTATE), and any other term becomes a description of its type (`"a map"`,
+  `"a string (23 bytes)"`). `{:error, :store_down}` is replied unchanged;
+  `{:error, {:query_failed, %{...}}}` becomes `{:query_failed, "a map"}`. `Turn.Session.run/2`
+  reduces a store's template read or save error the same way. Match on the tags.
+- `Turn.Server` implements `format_status`: crash reports, `:sys.get_status/1` and the
+  observer show the session id, turn status, task kind and resume policy, and the length of
+  each event queue, never the config, the conversation or a queued user input.
+- The Turn core fails a turn whose tool batch comes back without a result for every tool
+  call, before the next LLM call. The results that arrived are appended, then the turn fails
+  with `{:unexpected_event, status, {:incomplete_batch, tool_call_ids}}`: `Turn.Server` replies
+  an `:unexpected_event` `TurnError`, `Turn.Driver` raises, `Turn.Inline` returns
+  `{:error, reason, state}`. A custom `Turn.Driver.Handlers` `dispatch_tools` or a
+  `Turn.Inline` `:dispatch` dep must return one result per call, carrying its
+  `tool_call_id`.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

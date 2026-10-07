@@ -21,14 +21,21 @@ defmodule Normandy.TurnError do
       `:before_llm`, `:after_compact`, `:on_session_start`); `:reason` is the exception,
       or the raw exit reason or thrown term (normalized by `Exception.normalize/3`, so
       the kind is not kept)
-    * `:persist_failed` - the session store rejected a write; `:reason` is its reason
+    * `:persist_failed` - the session store rejected a write; `:reason` is its reason, or
+      `{:store_exit, exit_reason}` when the store call exited (a call timeout, a dead store
+      process): the exit reason with no stacktrace and a call's arguments replaced by
+      their count, `{:timeout, {GenServer, :call, 3}}`
     * `:approval_timeout` - nobody approved in time and `on_approval_timeout: :fail`;
       `:reason` is the list of tool call ids
     * `:task_down` - the LLM call, the compactor or the tool dispatch raised an exception
       that is not one of the above, or its worker stopped; `:reason` is the exception or
       the exit reason
     * `:session_unavailable` - the session could not be loaded or started (store,
-      registry, template or credential failure); `:reason` is that failure.
+      registry, template or credential failure); `:reason` is that failure. A session
+      store's own reason is reduced to its tags: atoms and integers are kept, tuples are
+      walked, an exception becomes its module, and any other term becomes a description of
+      its type (`{:query_failed, "a map"}`). A load that raised, exited or threw gives the
+      exception (an exit's or a throw's reason).
       `Turn.Session.approve/2` returns it with `reason: :no_session` when no server is live
     * `:unexpected_event`, `:unresumable_state` - a persisted turn that can't continue, or
       a Normandy bug; `:reason` describes it
@@ -40,9 +47,10 @@ defmodule Normandy.TurnError do
   ## `:reason` in replies, in the store and in telemetry
 
   The `TurnError` replied to the caller holds the full `:reason`, a non-Normandy exception
-  included. The copy `Turn.Server` persists as a failed turn's `Turn.State.error`, and
-  every telemetry `:exception` `reason`, are redacted: a `:reason` that is an exception
-  other than Normandy's own (a `KeyError`, a `MatchError`) is `%{exception: KeyError}`,
+  included, except a session store's reason (see `:session_unavailable` above). The copy
+  `Turn.Server` persists as a failed turn's `Turn.State.error`, and every telemetry
+  `:exception` `reason`, are redacted: a `:reason` that is an exception other than
+  Normandy's own (a `KeyError`, a `MatchError`) is `%{exception: KeyError}`,
   because its fields and its message can hold the value it failed on, and a bare one is
   emitted as `%TurnError{type: :task_down, reason: %{exception: KeyError}}`. The same
   holds for such an exception at any depth of the tuples and lists in a reason. A call in

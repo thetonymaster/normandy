@@ -34,10 +34,14 @@ defmodule Normandy.Agents.Turn.Server do
   ## Store unavailable
 
   Every start, supervisor restarts included, loads the session from the store. If
-  the store fails that load, the start still succeeds: the server waits in
-  `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s) and
-  on every `run/2`, and replies `{:error, %Normandy.TurnError{type: :session_unavailable,
-  reason: reason}}` with the store's reason until a load succeeds. It then carries on as
+  the store fails that load, or the load raises, exits or throws (a template or
+  credential provider, the template's rebuild), the start still succeeds: the server
+  waits in `:unavailable`, retries the load on a backoff timer (200 ms doubling to 30 s)
+  and on every `run/2`, and replies `{:error, %Normandy.TurnError{type:
+  :session_unavailable, reason: reason}}` until a load succeeds. `reason` is the store's
+  reason reduced to its tags (atoms and integers kept, an exception as its module, any
+  other term as its type: `{:query_failed, "a map"}`), `{:store_exit, exit_reason}` for a
+  store call that exited, or the exception the load raised. It then carries on as
   a normal start would, eager resume included. An approval that arrives while the load
   fails is dropped with a warning. With no call for `:idle_timeout_ms`, the server stops
   normally.
@@ -121,7 +125,9 @@ defmodule Normandy.Agents.Turn.Server do
       `on_error: :reraise`, or a hook's return-contract violation), an `after_tool` hook
       on a result the server built itself (an approval rejected, expired or interrupted
       result), or a `before_llm` or `after_compact` hook.
-    * `:persist_failed` - the session store rejected a write; `:reason` is its reason.
+    * `:persist_failed` - the session store rejected a write; `:reason` is its reason, or
+      `{:store_exit, exit_reason}` when the store call exited. The write is not adopted
+      and the server stays up; a store that raises is a bug and crashes the server.
     * `:approval_timeout` - nobody approved in time and `on_approval_timeout: :fail`;
       `:reason` is the list of tool call ids.
     * `:task_down` - the LLM call, the compactor or the tool dispatch raised an
@@ -353,8 +359,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   @impl true
   def init(opts) do
-    store = Keyword.fetch!(opts, :store)
     session_id = Keyword.fetch!(opts, :session_id)
+    check_start_source!(opts, session_id)
 
     register_self(%Data{registry: Keyword.fetch!(opts, :registry), session_id: session_id})
 
@@ -364,7 +370,7 @@ defmodule Normandy.Agents.Turn.Server do
     # the saved turn would drop it, and failing the start would make the
     # supervisor retry at once, spending the restart limit every session shares.
     # So a store fault starts the server :unavailable, retrying the load.
-    case load_session(opts, store, session_id) do
+    case safe_load(opts) do
       {:ok, config, template, turn_state} ->
         opts |> init_data(config, template, turn_state) |> with_session_start()
 
@@ -373,13 +379,54 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # No :config AND no :template_provider: a Tier-2 thin start can't reconstruct. A
+  # misconfigured start, not a load fault, so it fails the start before any IO.
+  defp check_start_source!(opts, session_id) do
+    unless Keyword.has_key?(opts, :config) or Keyword.has_key?(opts, :template_provider) do
+      raise ArgumentError,
+            "Turn.Server: session #{inspect(session_id)} was started with neither :config " <>
+              "nor :template_provider. A Tier-2 (Horde) thin start requires :template_provider " <>
+              "so the server can reconstruct config from the persisted template."
+    end
+  end
+
+  # The whole load (store reads, the template and credential providers, the template's
+  # rebuild, the hook check) runs here. Anything it raises, exits or throws is logged by
+  # its type and becomes {:load_crashed, exception}: the server waits :unavailable and
+  # retries, instead of crashing into a supervisor restart (the restarted server would
+  # crash the same way, spending the restart limit every session shares).
+  defp safe_load(opts) do
+    load_session(opts, Keyword.fetch!(opts, :store), Keyword.fetch!(opts, :session_id))
+  catch
+    kind, reason ->
+      Logger.error(
+        "Turn.Server load crashed (session #{inspect(Keyword.fetch!(opts, :session_id))}): " <>
+          TurnError.format_raised(kind, reason, __STACKTRACE__)
+      )
+
+      normalized =
+        kind |> Exception.normalize(reason, __STACKTRACE__) |> TurnError.drop_stacktraces()
+
+      {:error, {:load_crashed, normalized}}
+  end
+
   defp load_session(opts, store, session_id) do
     with {:ok, config, template} <- start_config(opts, store, session_id),
+         :ok <- check_server_options(opts, template),
          :ok <- check_hooks(config),
          {:ok, config} <- with_stored_memory(config, store, session_id),
          {:ok, turn_state} <- load_turn_state(store, session_id) do
       {:ok, config, template, turn_state}
     end
+  end
+
+  # A saved template's server options are checked with the rest of the load, so
+  # init_data/4 never raises on them: a bad value is refused like a bad template.
+  defp check_server_options(opts, template) do
+    check_template(fn ->
+      _ = timeout_options(opts, template)
+      :ok
+    end)
   end
 
   defp unavailable(opts, reason) do
@@ -421,6 +468,13 @@ defmodule Normandy.Agents.Turn.Server do
   defp describe_reason({:credential_unavailable, mod, reason}),
     do: "credential provider #{inspect(mod)} failed: #{Describe.reason_tag(reason)}"
 
+  # Logged once, with its stacktrace, where safe_load/1 caught it.
+  defp describe_reason({:load_crashed, exception}),
+    do: "the load crashed: #{Describe.reason_tag(exception)}"
+
+  defp describe_reason({:store_exit, reason}),
+    do: "the session store exited: #{Describe.reason_tag(reason)}"
+
   defp describe_reason(reason), do: Describe.reason_tag(reason)
 
   # run/2's error while the session cannot be loaded or started. A hook crash or a store
@@ -432,6 +486,11 @@ defmodule Normandy.Agents.Turn.Server do
   defp session_unavailable({:persist_failed, _r} = reason),
     do: %TurnError{type: :session_unavailable, reason: TurnError.from_reason(reason)}
 
+  # A load that raised, exited or threw: the exception itself, as Exception.normalize/3
+  # made it (the log line says it crashed).
+  defp session_unavailable({:load_crashed, exception}),
+    do: %TurnError{type: :session_unavailable, reason: exception}
+
   defp session_unavailable(reason),
     do: %TurnError{type: :session_unavailable, reason: TurnError.drop_stacktraces(reason)}
 
@@ -440,10 +499,7 @@ defmodule Normandy.Agents.Turn.Server do
   # or the retry timer triggered this, and a failure must reach that caller now. The
   # retry timer is cancelled.
   defp retry_load(%Data{start_opts: opts}) do
-    store = Keyword.fetch!(opts, :store)
-    session_id = Keyword.fetch!(opts, :session_id)
-
-    with {:ok, config, template, turn_state} <- load_session(opts, store, session_id),
+    with {:ok, config, template, turn_state} <- safe_load(opts),
          {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state),
          {:ok, data} <- start_session_if_new(data) do
       {:ok, {:next_state, :idle, data, [{{:timeout, :retry}, :cancel} | List.wrap(actions)]}}
@@ -460,7 +516,7 @@ defmodule Normandy.Agents.Turn.Server do
       :error ->
         template_provider = Keyword.get(opts, :template_provider)
 
-        with {:ok, tmpl} <- load_config_template(store, template_provider, session_id),
+        with {:ok, tmpl} <- load_config_template(store, session_id),
              :ok <- check_loaded(tmpl),
              {:ok, config} <- reconstruct_config(tmpl, template_provider) do
           {:ok, config, tmpl}
@@ -546,19 +602,12 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # No :config AND no :template_provider — a Tier-2 thin start can't reconstruct.
-  defp load_config_template(_store, nil, session_id) do
-    raise ArgumentError,
-          "Turn.Server: session #{inspect(session_id)} was started with neither :config " <>
-            "nor :template_provider. A Tier-2 (Horde) thin start requires :template_provider " <>
-            "so the server can reconstruct config from the persisted template."
-  end
-
-  defp load_config_template({mod, handle}, _template_provider, session_id) do
-    case mod.load_config_template(handle, session_id) do
+  # check_start_source!/2 made sure a thin start has a :template_provider.
+  defp load_config_template({mod, handle}, session_id) do
+    case store_call(fn -> mod.load_config_template(handle, session_id) end) do
       {:ok, tmpl} -> {:ok, tmpl}
       :error -> {:error, {:no_config_template, session_id}}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, store_reason(reason)}
     end
   end
 
@@ -613,7 +662,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil}
 
   defp with_stored_memory(config, {mod, handle}, session_id) do
-    case mod.history(handle, session_id) do
+    case store_call(fn -> mod.history(handle, session_id) end) do
       {:ok, entries} ->
         max_messages = config.memory && config.memory.max_messages
 
@@ -621,17 +670,22 @@ defmodule Normandy.Agents.Turn.Server do
          %{config | memory: %{AgentMemory.from_entries(entries) | max_messages: max_messages}}}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, store_reason(reason)}
     end
   end
 
   defp load_turn_state({mod, handle}, sid) do
-    case mod.load_turn_state(handle, sid) do
+    case store_call(fn -> mod.load_turn_state(handle, sid) end) do
       {:ok, ts} -> {:ok, ts}
       :error -> {:ok, nil}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, store_reason(reason)}
     end
   end
+
+  # A session store's load reason is replied to every run/2 caller: it is reduced to its
+  # tags (Describe.reason_term/1), since a backend's reason can hold a query, a response
+  # body or a connection's options.
+  defp store_reason(reason), do: Describe.reason_term(reason)
 
   # A thin start restores the server options saved with the template;
   # explicit start options still win.
@@ -919,6 +973,37 @@ defmodule Normandy.Agents.Turn.Server do
 
     stop_run_span(data, :exception, Span.exception_metadata(:exit, reason, []))
   end
+
+  # What a crash report, :sys.get_status/1 and the observer show of this server: its ids
+  # and state names, never the conversation (the config's memory, the start options'
+  # second config, the turn state's responses) nor the user input in a queued or
+  # postponed turn request (decision 6). format_status/1 is OTP 25+; OTP 24 calls
+  # format_status/2.
+  if String.to_integer(List.to_string(:erlang.system_info(:otp_release))) >= 25 do
+    @impl true
+    def format_status(status) do
+      status
+      |> Map.update(:data, nil, &status_data/1)
+      |> Map.update(:queue, [], &length/1)
+      |> Map.update(:postponed, [], &length/1)
+      |> Map.update(:log, [], &length/1)
+    end
+  else
+    @impl true
+    def format_status(_opt, [_pdict, state, data]),
+      do: [data: [{~c"State", {state, status_data(data)}}]]
+  end
+
+  defp status_data(%Data{} = data) do
+    %{
+      session_id: data.session_id,
+      turn_status: data.turn_state && data.turn_state.status,
+      task_kind: data.task_kind,
+      resume_policy: data.resume_policy
+    }
+  end
+
+  defp status_data(_other), do: :redacted
 
   defp validate_on_approval_timeout!(mode) when mode in [:continue, :fail], do: :ok
 
@@ -1581,7 +1666,20 @@ defmodule Normandy.Agents.Turn.Server do
   # A failed turn's error is persisted as the exception the turn failed with, redacted
   # (TurnError.redact/1): a bug's fields and message never reach the store.
   defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
-    do: mod.save_turn_state(handle, sid, persistable(turn_state))
+    do: store_call(fn -> mod.save_turn_state(handle, sid, persistable(turn_state)) end)
+
+  # A store call that exits (a GenServer or Agent call timeout, a dead store process, a
+  # dead connection) fails like the store's own {:error, reason}: the write is not
+  # adopted and the turn fails :persist_failed, or the load leaves the server
+  # :unavailable. The exit reason loses its stacktraces and a call's arguments (they hold
+  # the entry being written). A raise is a bug in the store and still raises mid-turn
+  # (decision 15c); during the load safe_load/1 catches it.
+  defp store_call(fun) do
+    fun.()
+  catch
+    :exit, reason ->
+      {:error, {:store_exit, reason |> TurnError.drop_stacktraces() |> TurnError.redact()}}
+  end
 
   defp persistable(%Turn.State{error: nil} = turn_state), do: turn_state
 
@@ -1593,12 +1691,14 @@ defmodule Normandy.Agents.Turn.Server do
   # rehydrated memory has the ids the live one had (after_compact hooks deduplicate on
   # them).
   defp append_to_store(%Data{store: {mod, handle}, session_id: sid}, config, role, content, id) do
-    case mod.append_entry(handle, sid, %Normandy.Components.AgentMemory.Entry{
-           id: id,
-           turn_id: current_turn_id(config),
-           role: role,
-           content: content
-         }) do
+    entry = %AgentMemory.Entry{
+      id: id,
+      turn_id: current_turn_id(config),
+      role: role,
+      content: content
+    }
+
+    case store_call(fn -> mod.append_entry(handle, sid, entry) end) do
       {:ok, _id} -> :ok
       {:error, reason} -> {:error, reason}
     end

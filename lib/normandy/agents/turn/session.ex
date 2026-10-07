@@ -361,12 +361,17 @@ defmodule Normandy.Agents.Turn.Session do
     case load_template(session) do
       {:ok, _tmpl} -> {:ok, thin_server_opts(session)}
       :error -> {:error, {:no_config_template, session.session_id}}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, Describe.reason_term(reason)}
     end
   end
 
+  # A store's reason reaches every run/2 caller, so it is reduced to its tags like the
+  # load reasons Turn.Server replies (Describe.reason_term/1).
   defp server_opts(%__MODULE__{config: config} = session) do
-    with :ok <- save_template(session, config), do: {:ok, thin_server_opts(session)}
+    case save_template(session, config) do
+      :ok -> {:ok, thin_server_opts(session)}
+      {:error, reason} -> {:error, Describe.reason_term(reason)}
+    end
   end
 
   defp save_template(%__MODULE__{store: {store_mod, store_handle}} = session, config) do

@@ -25,4 +25,24 @@ defmodule Normandy.Components.ContentBlock.Describe do
 
   def reason_tag(reason) when is_atom(reason), do: inspect(reason)
   def reason_tag(reason), do: type_of(reason)
+
+  # An error reason reduced to a term that is safe to hand back to a caller: atoms and
+  # integers are kept, tuples are walked (so {:exit, :noproc} and {:store_exit, {:timeout,
+  # {GenServer, :call, 3}}} stay whole), an exception becomes its module (a
+  # Postgrex.Error with a SQLSTATE becomes {Postgrex.Error, code}), and any other term
+  # (a string, a map, a list, a pid) becomes type_of/1's description of it. A provider's
+  # or a store's reason can carry a response body, a query or a secret; its shape and
+  # tags are what a caller can act on.
+  @spec reason_term(term()) :: term()
+  def reason_term(%{__struct__: Postgrex.Error, __exception__: true, postgres: %{code: code}})
+      when is_atom(code) and code != nil,
+      do: {Postgrex.Error, code}
+
+  def reason_term(%mod{__exception__: true}), do: mod
+  def reason_term(reason) when is_atom(reason) or is_integer(reason), do: reason
+
+  def reason_term(reason) when is_tuple(reason),
+    do: reason |> Tuple.to_list() |> Enum.map(&reason_term/1) |> List.to_tuple()
+
+  def reason_term(reason), do: type_of(reason)
 end

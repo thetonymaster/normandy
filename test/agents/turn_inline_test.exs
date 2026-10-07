@@ -95,6 +95,33 @@ defmodule Normandy.Agents.Turn.InlineTest do
     end
   end
 
+  describe "run/2 with a dispatch that answers part of the batch" do
+    test "returns the incomplete-batch failure before the next LLM call" do
+      test_pid = self()
+      calls = [%ToolCall{id: "c1", name: "weather"}, %ToolCall{id: "c2", name: "weather"}]
+      answered = %ToolResult{tool_call_id: "c1", output: "ok", is_error: false}
+
+      deps = %{
+        call_llm: fn req ->
+          send(test_pid, {:called_llm, req})
+          {:ok, %ToolCallResponse{content: nil, tool_calls: calls}}
+        end,
+        dispatch: fn _calls -> [answered] end,
+        append: fn role, content -> send(test_pid, {:appended, role, content}) end,
+        emit: fn _name, _meta -> :ok end
+      }
+
+      reason = {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c2"]}}
+
+      assert {:error, ^reason, %Turn.State{status: :failed}} =
+               Inline.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
+
+      assert_received {:appended, "tool", ^answered}
+      assert_received {:called_llm, _}
+      refute_received {:called_llm, _}
+    end
+  end
+
   describe "run/2 hitting the iteration cap" do
     test "always-tool model stops at the cap with one forced final call" do
       test_pid = self()

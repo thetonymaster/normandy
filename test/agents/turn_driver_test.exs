@@ -45,6 +45,20 @@ defmodule Normandy.Agents.Turn.DriverTest do
     end
   end
 
+  test "drive/3 raises when a dispatch leaves a tool call unanswered" do
+    handlers = %{
+      recording_handlers(self())
+      | call_llm: fn _acc, _state, _req -> %{content: nil, tool_calls: [%{id: "c1"}]} end,
+        dispatch_tools: fn _acc, _calls -> [] end
+    }
+
+    state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :rm)
+
+    assert_raise RuntimeError,
+                 ~s(Turn FSM reached :failed unexpectedly: {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c1"]}}),
+                 fn -> Driver.drive(state, handlers, []) end
+  end
+
   test "drive/3 runs a tool loop: dispatches, converts, threads acc across iterations" do
     # Scripted call_llm: first response carries a tool call, second has none.
     {:ok, responses} =
@@ -63,7 +77,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
       end,
       dispatch_tools: fn _acc, calls ->
         send(pid, {:dispatched, length(calls)})
-        Enum.map(calls, fn _ -> %{result: :ok} end)
+        Enum.map(calls, fn call -> %{tool_call_id: call.id, result: :ok} end)
       end,
       convert: fn _acc, raw, output_schema ->
         send(pid, {:convert, output_schema})
@@ -109,7 +123,9 @@ defmodule Normandy.Agents.Turn.DriverTest do
       call_llm: fn _acc, _s, _r ->
         Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
       end,
-      dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{ok: true} end) end,
+      dispatch_tools: fn _acc, calls ->
+        Enum.map(calls, fn call -> %{tool_call_id: call.id, ok: true} end)
+      end,
       convert: fn _acc, raw, _os -> raw end,
       validate: fn _acc, v -> v end,
       guard: fn _acc, _v -> :ok end,

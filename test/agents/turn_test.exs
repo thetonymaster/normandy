@@ -233,6 +233,77 @@ defmodule Normandy.Agents.TurnTest do
     end
   end
 
+  describe "step/2 batch completeness (July LOW)" do
+    defp batch_state(calls) do
+      %State{
+        status: :tool_dispatch,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        pending_calls: calls
+      }
+    end
+
+    defp batch_call(id), do: %ToolCall{id: id, name: "weather", input: %{}}
+    defp batch_result(id), do: %ToolResult{tool_call_id: id, output: "ok", is_error: false}
+
+    test "a batch whose results leave a call unanswered fails the turn before the next LLM call" do
+      s = batch_state([batch_call("c1"), batch_call("c2"), batch_call("c3")])
+      results = [batch_result("c1"), batch_result("c3")]
+
+      {s2, effects} = Turn.step(s, {:tool_results, results})
+
+      reason = {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c2"]}}
+      assert s2.status == :failed
+      assert s2.error == reason
+      assert s2.pending_calls == []
+
+      assert effects == [
+               {:append_message, "tool", batch_result("c1")},
+               {:append_message, "tool", batch_result("c3")},
+               {:fail, reason}
+             ]
+    end
+
+    test "an approval that resolves a batch short fails it the same way" do
+      parked = %State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        pending_calls: [batch_call("c1"), batch_call("c2")],
+        parked_calls: [batch_call("c2")],
+        held_results: [batch_result("c1")]
+      }
+
+      # Complete: c1 held, c2 rejected.
+      {s2, effects} = Turn.step(parked, {:approval, %{"c2" => :reject}})
+      assert s2.status == :steering
+      refute Enum.any?(effects, &match?({:fail, _}, &1))
+
+      # Short: the approved c2 came back with no result.
+      {running, [{:execute_approved, [_c2]}]} =
+        Turn.step(parked, {:approval, %{"c2" => :approve}})
+
+      {s3, effects3} = Turn.step(running, {:approved_results, []})
+
+      assert s3.error == {:unexpected_event, :awaiting_approval, {:incomplete_batch, ["c2"]}}
+      assert effects3 == [{:append_message, "tool", batch_result("c1")}, {:fail, s3.error}]
+    end
+
+    test "a complete batch, in any order, and an empty continuation pass" do
+      {s2, _} =
+        Turn.step(
+          batch_state([batch_call("c1"), batch_call("c2")]),
+          {:tool_results, [batch_result("c2"), batch_result("c1")]}
+        )
+
+      assert s2.status == :steering
+
+      {s3, _} = Turn.step(batch_state([]), {:tool_results, []})
+      assert s3.status == :steering
+    end
+  end
+
   describe "step/2 iteration cap" do
     test "tool_dispatch results that exhaust the cap issue a forced final call" do
       s = %State{

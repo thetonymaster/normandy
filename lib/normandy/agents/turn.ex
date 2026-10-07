@@ -415,6 +415,32 @@ defmodule Normandy.Agents.Turn do
   # clauses below. Always clears the per-batch scratch fields (`pending_calls`,
   # `parked_calls`, `held_results`); on the normal path the latter two are empty.
   defp apply_tool_results(%State{} = s, results) do
+    case unanswered_ids(s.pending_calls, results) do
+      [] -> complete_batch(s, results)
+      missing -> incomplete_batch(s, results, missing)
+    end
+  end
+
+  # The ids of the batch's calls that no result answers. The Claude API rejects the
+  # next request while a tool_use has no tool_result, so a batch that comes back short
+  # (a shell or handler bug) fails the turn here, before the next LLM call, instead of
+  # as a 400 from the API.
+  defp unanswered_ids(pending_calls, results) do
+    answered = for %{tool_call_id: id} <- results, into: MapSet.new(), do: id
+    for call <- pending_calls, id = Map.get(call, :id), not MapSet.member?(answered, id), do: id
+  end
+
+  # The results that did arrive are appended (a tool that ran keeps its result); the
+  # turn then fails, and Turn.Server's next turn closes the rest with interrupted results.
+  defp incomplete_batch(s, results, missing) do
+    reason = {:unexpected_event, s.status, {:incomplete_batch, missing}}
+    appends = Enum.map(results, &{:append_message, "tool", &1})
+
+    {%{s | status: :failed, error: reason, pending_calls: [], parked_calls: [], held_results: []},
+     appends ++ [{:fail, reason}]}
+  end
+
+  defp complete_batch(%State{} = s, results) do
     # Never below 0: a paused final call's continuation passes here with 0 left.
     new_left = max(s.iterations_left - 1, 0)
     append_effects = Enum.map(results, fn r -> {:append_message, "tool", r} end)
