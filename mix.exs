@@ -396,7 +396,7 @@ defmodule Normandy.MixProject do
         "Changelog" => "https://github.com/thetonymaster/normandy/blob/main/CHANGELOG.md"
       },
       maintainers: ["Antonio Cabrera"],
-      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE CHANGELOG.md),
+      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE CHANGELOG.md MIGRATING-2.0.md),
       exclude_patterns: [
         "priv/plts",
         "priv/plts/*",

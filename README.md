@@ -59,14 +59,17 @@ client = %Normandy.LLM.ClaudioAdapter{api_key: System.get_env("ANTHROPIC_API_KEY
 agent =
   Normandy.Agents.BaseAgent.init(%{
     client: client,
-    model: "claude-sonnet-4-6"
+    model: "claude-opus-5-5"
   })
 
-# 3. Run a turn
-{:ok, agent, response} =
-  Normandy.Agents.BaseAgent.run(agent, %{
-    chat_message: "Explain Elixir's actor model in one sentence."
-  })
+# 3. Run a turn: {:ok, agent, response} with the updated agent (it holds the
+#    conversation), or {:error, exception}, e.g. a %Normandy.LLMError{}
+input = %{chat_message: "Explain Elixir's actor model in one sentence."}
+
+case Normandy.Agents.BaseAgent.run(agent, input) do
+  {:ok, _agent, response} -> IO.puts(response.chat_message)
+  {:error, error} -> IO.puts("Turn failed: " <> Exception.message(error))
+end
 ```
 
 Defining a typed schema is just as direct:
@@ -93,6 +96,8 @@ Full API reference and guides are published on HexDocs:
 
 - **📚 [API documentation](https://hexdocs.pm/normandy)** — every public module, grouped by area: Core, Agents, Durable turns, Session stores and registries, Memory, Hooks, Behaviours, DSL, Coordination, Components, Tools, Context Management, Resilience, Guardrails, Batch Processing, MCP, A2A, LLM Adapters, Testing, Errors and Telemetry.
 - **🌐 [Distributed sessions guide](docs/guides/distributed_sessions.md)** — Tiers 0/1/2, durable stores, and multi-node setup.
+- **🪝 [Hooks guide](docs/guides/hooks.md)** — lifecycle hooks: rewrite, halt, inject, audit.
+- **🧠 [Agent memory guide](docs/guides/agent-memory.md)** — the memory tool and its stores.
 - **🧪 [Testing guide](docs/guides/testing.md)** — offline tests with `Normandy.Test.FakeClient`, durable sessions, telemetry, and the store contracts for your own backends.
 - **📝 [CHANGELOG](CHANGELOG.md)** — release notes and migration guidance.
 - **🗺️ [ROADMAP](ROADMAP.md)** — phased development history and direction.

@@ -56,10 +56,45 @@ defmodule Normandy.Schema.FieldOptionsTest do
 
   test "Ecto options that did nothing are unknown options" do
     for opt <- ~w(defaults type where references) do
-      assert_raise ArgumentError, ~r{invalid option :#{opt} for field/3}, fn ->
+      assert_raise ArgumentError, ~r{^field/3: unknown option :#{opt} for field :name; }, fn ->
         compile(~s|field(:name, :string, #{opt}: :x)|)
       end
     end
+  end
+
+  test "an unknown option is named with its field and the options field/3 takes" do
+    message =
+      "field/3: unknown option :defaults for field :name; expected one of: :all_of, " <>
+        ":any_of, :compute, :default, :description, :else_schema, :enum, :examples, " <>
+        ":exclusive_maximum, :exclusive_minimum, :format, :if_schema, " <>
+        ":include_in_json_schema, :max_items, :max_length, :maximum, :min_items, " <>
+        ":min_length, :minimum, :one_of, :pattern, :redact, :required, " <>
+        ":skip_default_validation, :then_schema, :unique_items, :virtual"
+
+    assert_raise ArgumentError, message, fn ->
+      compile(~s|field(:name, :string, defaults: :x)|)
+    end
+  end
+
+  test "a second schema in one module is an ArgumentError naming the first" do
+    source = """
+    defmodule Normandy.Schema.FieldOptionsTest.Twice do
+      use Normandy.Schema
+
+      schema do
+        field(:a, :string)
+      end
+
+      io_schema "again" do
+        field(:b, :string)
+      end
+    end
+    """
+
+    assert_raise ArgumentError,
+                 "schema already defined for Normandy.Schema.FieldOptionsTest.Twice on line 4; " <>
+                   "a module defines one schema (schema/1 or io_schema/2)",
+                 fn -> Code.compile_string(source) end
   end
 
   test "valid options compile" do

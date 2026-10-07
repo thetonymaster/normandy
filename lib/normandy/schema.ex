@@ -475,7 +475,7 @@ defmodule Normandy.Schema do
     # better to raise unknown type first than unsupported option.
     type = check_field_type!(mod, name, type, opts)
 
-    check_options!(type, opts, @field_opts, "field/3")
+    check_options!(name, type, opts, @field_opts)
     check_option_values!(name, opts)
     Module.put_attribute(mod, :schema_specification_fields, {name, type})
     validate_default!(type, opts[:default], opts[:skip_default_validation])
@@ -485,7 +485,9 @@ defmodule Normandy.Schema do
   @doc false
   def __schema__(module, line) do
     if previous_line = Module.get_attribute(module, :schema_schema_defined) do
-      raise "schema already defined for #{inspect(module)} on line #{previous_line}"
+      raise ArgumentError,
+            "schema already defined for #{inspect(module)} on line #{previous_line}; " <>
+              "a module defines one schema (schema/1 or io_schema/2)"
     end
 
     Module.put_attribute(module, :schema_schema_defined, line)
@@ -905,13 +907,6 @@ defmodule Normandy.Schema do
 
   defp composite?(_type, _name), do: false
 
-  defp check_options!(opts, valid, fun_arity) do
-    case Enum.find(opts, fn {k, _} -> k not in valid end) do
-      {k, _} -> raise ArgumentError, "invalid option #{inspect(k)} for #{fun_arity}"
-      nil -> :ok
-    end
-  end
-
   # Value checks for the options Normandy reads, so a wrong type fails the
   # schema's compilation instead of making every validation fail (or pass).
   @option_kinds [
@@ -981,16 +976,20 @@ defmodule Normandy.Schema do
   defp option_kind_text(:boolean), do: "a boolean"
   defp option_kind_text(:regex), do: "a regex string (JSON Schema patterns are strings)"
 
-  defp check_options!({:parameterized, _}, _opts, _valid, _fun_arity) do
-    :ok
-  end
+  defp check_options!(_name, {:parameterized, _}, _opts, _valid), do: :ok
 
-  defp check_options!({_, type}, opts, valid, fun_arity) do
-    check_options!(type, opts, valid, fun_arity)
-  end
+  defp check_options!(name, {_, type}, opts, valid), do: check_options!(name, type, opts, valid)
 
-  defp check_options!(_type, opts, valid, fun_arity) do
-    check_options!(opts, valid, fun_arity)
+  defp check_options!(name, _type, opts, valid) do
+    case Enum.find(opts, fn {k, _} -> k not in valid end) do
+      {k, _} ->
+        raise ArgumentError,
+              "field/3: unknown option #{inspect(k)} for field #{inspect(name)}; " <>
+                "expected one of: #{valid |> Enum.sort() |> Enum.map_join(", ", &inspect/1)}"
+
+      nil ->
+        :ok
+    end
   end
 
   defp validate_default!(_type, _value, true), do: :ok

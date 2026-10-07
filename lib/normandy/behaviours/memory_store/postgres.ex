@@ -2,8 +2,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
   defmodule Normandy.Behaviours.MemoryStore.Postgres do
     @moduledoc """
     Durable, cluster-shared `MemoryStore` over Postgres. The handle is the host's Ecto
-    Repo module; run `Normandy.Behaviours.MemoryStore.Postgres.Migration` from a host
-    migration.
+    Repo module: pass `{Normandy.Behaviours.MemoryStore.Postgres, MyApp.Repo}`, for
+    example as `Normandy.Tools.Memory.new/1`'s `:store`. Its tables come from
+    `Normandy.Behaviours.MemoryStore.Postgres.Migration`: call its `up/0` and `down/0`
+    from a host migration.
 
     Every write (`put`, `delete`, `delete_tree`, `rename`, `delete_namespace`) is one
     transaction that first locks the namespace's row in `normandy_memory_namespaces`,
@@ -25,7 +27,11 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     @table "normandy_memory_documents"
     @namespaces "normandy_memory_namespaces"
 
-    @doc "Test/default handle: the Repo configured for :normandy."
+    @doc """
+    Returns the first Repo of `config :normandy, :ecto_repos`, the handle Normandy's own
+    tests use. An application passes its Repo module as the handle instead. Raises
+    `ArgumentError` when `:ecto_repos` is not set for `:normandy`.
+    """
     @spec new() :: module()
     def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))
 

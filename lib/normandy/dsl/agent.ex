@@ -297,7 +297,7 @@ defmodule Normandy.DSL.Agent do
   ## Example
 
       agent do
-        model "claude-sonnet-4-6"
+        model "claude-opus-5-5"
 
         guardrails :input, [
           {Normandy.Guardrails.Builtins.MaxLength, limit: 10_000},

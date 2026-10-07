@@ -24,7 +24,7 @@ alias Normandy.Behaviours.MemoryStore
 alias Normandy.Tools.Memory
 
 config =
-  BaseAgent.init(%{client: client, model: "claude-sonnet-4-5", tool_context: %{memory_namespace: "acme/user-42"}})
+  BaseAgent.init(%{client: client, model: "claude-opus-5-5", tool_context: %{memory_namespace: "acme/user-42"}})
   |> BaseAgent.register_tool(Memory.new(store: {MemoryStore.Postgres, MyApp.Repo}))
 ```
 
@@ -58,7 +58,7 @@ alias Normandy.Tools.Toolset
 session_config =
   BaseAgent.init(%{
     client: client,
-    model: "claude-sonnet-4-5",
+    model: "claude-opus-5-5",
     tool_context: %{memory_namespace: "acme/user-42"}
   })
 
@@ -90,7 +90,7 @@ defmodule MyAgent do
 
   agent do
     name "my_agent"
-    model "claude-sonnet-4-5"
+    model "claude-opus-5-5"
     memory namespace_key: :memory_namespace, mounts: %{"/memories/org" => {"acme/org-kb", :read_only}}
   end
 end

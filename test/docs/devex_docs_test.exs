@@ -26,4 +26,60 @@ defmodule Normandy.Docs.DevexDocsTest do
            "expected iex> examples only in doctested files, found them in: " <>
              inspect(undoctested)
   end
+
+  test "DX-34: the README and the guides name one model, claude-opus-5-5" do
+    ids =
+      for path <- ["README.md" | Path.wildcard("docs/guides/*.md")],
+          [id] <- Regex.scan(~r/claude-(?:opus|sonnet|haiku)-[0-9][\w-]*/, File.read!(path)),
+          id != "claude-opus-5-5",
+          do: {path, id}
+
+    assert ids == [], "expected only claude-opus-5-5, found: #{inspect(ids)}"
+  end
+
+  test "DX-35: the Hex package ships MIGRATING-2.0.md" do
+    files = Mix.Project.config() |> Keyword.fetch!(:package) |> Keyword.fetch!(:files)
+    assert "MIGRATING-2.0.md" in files
+  end
+
+  describe "DX-20: Postgres store setup" do
+    test "SessionStore.Postgres documents the Repo handle and its four migrations in order" do
+      doc = moduledoc(Normandy.Behaviours.SessionStore.Postgres)
+      assert doc =~ "`{Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}`"
+      refute doc =~ "repo: MyApp.Repo"
+
+      assert doc =~
+               "`Normandy.Behaviours.SessionStore.Postgres.Migration`, `MigrationAddTemplate`, " <>
+                 "`MigrationAddResumePolicy` and `MigrationAddInflight`, in that order"
+    end
+
+    test "MemoryStore.Postgres documents the Repo handle" do
+      assert moduledoc(Normandy.Behaviours.MemoryStore.Postgres) =~
+               "`{Normandy.Behaviours.MemoryStore.Postgres, MyApp.Repo}`"
+    end
+
+    test "both new/0 docs say an application passes its Repo instead" do
+      for mod <- [
+            Normandy.Behaviours.SessionStore.Postgres,
+            Normandy.Behaviours.MemoryStore.Postgres
+          ] do
+        assert function_doc(mod, :new, 0) =~
+                 "An application passes its Repo module as the handle instead."
+      end
+    end
+  end
+
+  defp moduledoc(mod) do
+    {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(mod)
+    String.replace(doc, ~r/\s+/, " ")
+  end
+
+  defp function_doc(mod, name, arity) do
+    {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(mod)
+
+    Enum.find_value(docs, fn
+      {{:function, ^name, ^arity}, _, _, %{"en" => doc}, _} -> String.replace(doc, ~r/\s+/, " ")
+      _ -> nil
+    end)
+  end
 end

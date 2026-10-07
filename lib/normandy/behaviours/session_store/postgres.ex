@@ -8,9 +8,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     as Erlang terms (`term_to_binary`). Entries are a global parent-linked forest, so
     `fork/3` shares ancestors instead of copying.
 
-    Configure via `{Normandy.Behaviours.SessionStore.Postgres, repo: MyApp.Repo}` and
-    run `Normandy.Behaviours.SessionStore.Postgres.Migration`, `MigrationAddTemplate`,
-    `MigrationAddResumePolicy` and `MigrationAddInflight` from a host migration.
+    Pass it as `{Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` (the handle is
+    the Repo module itself), for example as `Turn.Session.new/1`'s `:store`. Its tables
+    come from four migrations: call the `up/0` of
+    `Normandy.Behaviours.SessionStore.Postgres.Migration`, `MigrationAddTemplate`,
+    `MigrationAddResumePolicy` and `MigrationAddInflight`, in that order, from one host
+    migration, and their `down/0` in the reverse order (the distributed sessions guide
+    has the migration module).
     """
     @behaviour Normandy.Behaviours.SessionStore
 
@@ -20,7 +24,11 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     alias Normandy.Behaviours.SessionStore.Postgres.Schemas.{Entry, Session}
     alias Normandy.Components.AgentMemory
 
-    @doc "Test/default handle: the Repo configured for :normandy. Returns the Repo module."
+    @doc """
+    Returns the first Repo of `config :normandy, :ecto_repos`, the handle Normandy's own
+    tests use. An application passes its Repo module as the handle instead. Raises
+    `ArgumentError` when `:ecto_repos` is not set for `:normandy`.
+    """
     @spec new() :: module()
     def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))
 

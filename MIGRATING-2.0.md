@@ -1957,3 +1957,10 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   `ResumeReaper.reap/1`: sessions scanned, started, skipped, failed) and
   `[:normandy, :agent_pool, :checkout]` (one per answered `AgentPool.checkout/2`: `wait`,
   `outcome`, `overflow`).
+- An unknown `field/3` option raises
+  `ArgumentError` "field/3: unknown option :x for field :name; expected one of: …", naming
+  the field and listing the options (it named neither). A second `schema`/`io_schema` in
+  one module raises `ArgumentError` instead of a bare `RuntimeError`.
+- The Hex package includes MIGRATING-2.0.md.
+- The README quickstart and the guides use `claude-opus-5-5`; the quickstart reads
+  `response.chat_message` and handles `{:error, exception}`.

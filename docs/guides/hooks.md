@@ -23,7 +23,7 @@ alias Normandy.Behaviours.Config
 
 BaseAgent.init(%{
   client: client,
-  model: "claude-sonnet-4-5",
+  model: "claude-opus-5-5",
   behaviours: %Config{hooks: [{MyApp.Hooks.Redact, []}, {MyApp.Hooks.Audit, on_error: :open}]}
 })
 ```
@@ -32,7 +32,7 @@ or, in the DSL, once per agent:
 
 ```elixir
 agent do
-  model("claude-sonnet-4-5")
+  model("claude-opus-5-5")
   hooks([{MyApp.Hooks.Redact, []}, {MyApp.Hooks.Audit, on_error: :open}])
 end
 ```
