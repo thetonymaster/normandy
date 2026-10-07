@@ -446,6 +446,20 @@ defmodule Normandy.Schema do
     end
   end
 
+  @doc """
+  Defines a field `name` of `type` in a `schema` or `io_schema` block.
+
+  `type` is a base type, `{:array, type}`, `{:map, type}`, a module that implements
+  `Normandy.Type` or `Normandy.ParameterizedType`, or a schema module (a nested schema);
+  it defaults to `:string`. The options are in the moduledoc's "Field Options" and
+  "Virtual Fields", plus `:redact` (leave the value out of `inspect/1` and of the JSON sent
+  to the model) and `:skip_default_validation` (do not check `:default` against `type`).
+
+  Raises `ArgumentError` at compile time for an unknown type or option, an option value of
+  the wrong kind, a `:default` that is invalid for `type`, a field name already used, a
+  `virtual: true` field that is `required: true`, and a `compute:` on a field that is not
+  `virtual: true`.
+  """
   defmacro field(name, type \\ :string, opts \\ []) do
     quote do
       Normandy.Schema.__field__(__MODULE__, unquote(name), unquote(type), unquote(opts))

@@ -291,6 +291,10 @@ defmodule Normandy.Type do
   def primitive?(base) when base in @base, do: true
   def primitive?(_), do: false
 
+  @doc """
+  Returns `true` when `type` is the initialized parameterized type of `module`
+  (`{:parameterized, {module, params}}`), and `false` for any other type.
+  """
   @spec parameterized?(t, module) :: boolean
   def parameterized?({:parameterized, {module, _}}, module), do: true
   def parameterized?(_, _), do: false

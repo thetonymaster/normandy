@@ -10,28 +10,6 @@ defmodule Normandy.Docs.DocCoverageTest do
 
   # Gaps documented by Tasks 7.3f2-7.3f4, which remove their lines; 7.3f4 deletes the list.
   @not_yet_documented ~w(
-    Normandy.InvalidChangesetError:function:message/1
-    Normandy.Schema:macro:field/3
-    Normandy.Type:function:parameterized?/2
-    Normandy.Validate:function:apply_action/2
-    Normandy.Validate:function:apply_action!/2
-    Normandy.Validate:function:apply_changes/1
-    Normandy.Validate:function:cast/4
-    Normandy.Validate:function:empty_values/0
-    Normandy.Validate:function:field_missing?/2
-    Normandy.Validate:function:get_field/3
-    Normandy.Validate:function:traverse_errors/2
-    Normandy.Validate:function:validate_change/3
-    Normandy.Validate:function:validate_change/4
-    Normandy.Validate:function:validate_confirmation/3
-    Normandy.Validate:function:validate_exclusion/4
-    Normandy.Validate:function:validate_format/4
-    Normandy.Validate:function:validate_inclusion/4
-    Normandy.Validate:function:validate_length/3
-    Normandy.Validate:function:validate_number/3
-    Normandy.Validate:function:validate_required/3
-    Normandy.Validate:function:validate_subset/4
-    Normandy.Validate:function:validations/1
     Normandy.Behaviours.MemoryStore:callback:delete/4
     Normandy.Behaviours.MemoryStore:callback:delete_namespace/2
     Normandy.Behaviours.MemoryStore:callback:delete_tree/3

@@ -48,6 +48,7 @@ defmodule Normandy.InvalidChangesetError do
   """
   defexception [:action, :changeset]
 
+  @impl true
   def message(%{action: action, changeset: changeset}) do
     changeset = redact(changeset)
     changes = extract_changes(changeset)
