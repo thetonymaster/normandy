@@ -13,6 +13,7 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Test.StubClient
   alias Normandy.Test.TurnConfig
   alias Normandy.TurnError
@@ -254,6 +255,30 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
         refute_received {:DOWN, ^ref, :process, _, _}
         assert Process.alive?(sup)
       end
+    end
+
+    test "a stored entry that cannot be encoded leaves the server :unavailable, its log clean" do
+      sup = sup()
+      store = InMemory.new()
+      sid = sid("unencodable")
+      entry = %Entry{id: "e1", turn_id: "t1", role: "user", content: {:opaque, @secret, self()}}
+      {:ok, _} = InMemory.append_entry(store, sid, entry)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          srv = start(sup, sid, {InMemory, store}, Native.new())
+
+          assert {:error,
+                  %TurnError{type: :session_unavailable, reason: %Protocol.UndefinedError{}}} =
+                   Turn.Server.run(srv, %{chat_message: "hi"})
+
+          assert {:unavailable, _} = :sys.get_state(srv)
+          assert Process.alive?(srv)
+        end)
+
+      assert Process.alive?(sup)
+      refute log =~ @secret
+      assert InMemory.load_turn_state(store, sid) == :error
     end
 
     test "a saved template with a bad :on_approval_timeout is refused like a bad template" do
