@@ -65,10 +65,21 @@ defprotocol Normandy.Agents.Model do
   Normandy, not the implementation, delivers them to the caller's callback.
   """
 
+  @doc """
+  Makes one model call for `request` and returns `{:ok, %Normandy.LLM.Response{}}` with
+  `request.response_model` filled as "Response content" describes, or
+  `{:error, %Normandy.LLMError{}}`. Normandy decides whether to retry from the error's
+  `retryable?`. Any other return value raises `ArgumentError`.
+  """
   @spec converse(t(), Normandy.LLM.Request.t(), keyword()) ::
           {:ok, Normandy.LLM.Response.t()} | {:error, Normandy.LLMError.t()}
   def converse(client, request, opts)
 
+  @doc """
+  Starts one streaming model call for `request` and returns `{:ok, stream}`, an enumerable of
+  the events in "Stream events", or `{:error, %Normandy.LLMError{}}`. A client that cannot
+  stream returns `{:error, %Normandy.LLMError{type: :unsupported, retryable?: false}}`.
+  """
   @spec stream(t(), Normandy.LLM.Request.t(), keyword()) ::
           {:ok, Enumerable.t()} | {:error, Normandy.LLMError.t()}
   def stream(client, request, opts)

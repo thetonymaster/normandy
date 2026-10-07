@@ -58,16 +58,29 @@ defmodule Normandy.Components.AgentMemory do
                               ]
                             )
 
+  @doc """
+  Returns an empty memory with no current turn.
+
+  With `max_messages`, an append that takes the active branch past that many messages drops
+  the oldest, but keeps the window starting at a user message, so it can hold more than
+  `max_messages` until the turn ends. `0` keeps no message; `nil` keeps every message.
+  """
   @spec new_memory(pos_integer() | nil) :: t()
   def new_memory(max_messages \\ nil) do
     %__MODULE__{entries: %{}, head: nil, current_turn_id: nil, max_messages: max_messages}
   end
 
+  @doc """
+  Returns `memory` with a new random UUID as `current_turn_id`.
+
+  `add_message/4` stores a message under the current turn.
+  """
   @spec initialize_turn(t()) :: t()
   def initialize_turn(%__MODULE__{} = memory) do
     %{memory | current_turn_id: UUID.uuid4()}
   end
 
+  @doc "Returns the current turn id, or `nil` before `initialize_turn/1` or the first append."
   @spec get_current_turn_id(t()) :: String.t() | nil
   def get_current_turn_id(%__MODULE__{current_turn_id: id}), do: id
 
@@ -168,6 +181,11 @@ defmodule Normandy.Components.AgentMemory do
     end
   end
 
+  @doc """
+  Returns the active branch as `%{role: role, content: content}` maps, oldest first.
+
+  `content` is the entry's model-facing encoding: a string, or a list of blocks.
+  """
   @spec history(t()) :: [%{role: String.t(), content: String.t() | list()}]
   def history(%__MODULE__{} = memory) do
     memory
@@ -328,6 +346,11 @@ defmodule Normandy.Components.AgentMemory do
     end
   end
 
+  @doc """
+  Returns every entry of every branch, as a map of entry id to `Entry`.
+
+  Unlike `history/1`, it includes entries off the active branch.
+  """
   @spec entries(t()) :: %{String.t() => Entry.t()}
   def entries(%__MODULE__{entries: entries}), do: entries
 
@@ -602,6 +625,12 @@ defmodule Normandy.Components.AgentMemory do
               __STACKTRACE__
   end
 
+  @doc """
+  Returns `memory` as a JSON string (format version 1) for `load/1`.
+
+  It holds all entries, `head`, `current_turn_id` and `max_messages`. The per-entry
+  encodings are derived and not written.
+  """
   @spec dump(t()) :: String.t()
   def dump(%__MODULE__{} = memory) do
     encoded_entries =
@@ -624,6 +653,13 @@ defmodule Normandy.Components.AgentMemory do
     })
   end
 
+  @doc """
+  Rebuilds a memory from a string `dump/1` returned.
+
+  Raises `ArgumentError` for a dump whose version is not `1` and for an entry whose
+  content cannot be encoded for the model (the message names the entry). A string that is
+  not valid JSON raises the JSON adapter's error.
+  """
   @spec load(String.t()) :: t()
   def load(dump) do
     # Decode with string keys only. A dump can carry untrusted/raw content, and a

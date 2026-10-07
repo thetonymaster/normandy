@@ -63,6 +63,11 @@ defmodule Normandy.Behaviours.AgentTemplate do
         else: Agent.start_link(fn -> init end)
     end
 
+    @doc """
+    Registers `supplement` under `template_id` and returns `:ok`.
+
+    It replaces a supplement already registered under that id.
+    """
     @spec put(Agent.agent(), String.t(), Normandy.Behaviours.AgentTemplate.supplement()) :: :ok
     def put(cat, template_id, supplement),
       do: Agent.update(cat, &Map.put(&1, template_id, supplement))

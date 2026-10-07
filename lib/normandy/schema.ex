@@ -431,6 +431,7 @@ defmodule Normandy.Schema do
             def get_schema(str), do: str.__struct__.get_json_schema()
           end
 
+          @doc "Returns this schema's JSON Schema specification, as `__schema__(:specification)` does."
           def get_json_schema do
             __MODULE__.__schema__(:specification)
           end

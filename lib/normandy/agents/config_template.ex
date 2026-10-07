@@ -124,6 +124,15 @@ defmodule Normandy.Agents.ConfigTemplate do
   # 1.0's session slots: never read by 1.0's turn loop, so dropping them loses nothing.
   @dropped_v1_refs [:session_store, :session_registry]
 
+  @doc """
+  Builds the plain-data template of `config`, to store under `template_id`.
+
+  The template holds the fields the moduledoc lists and a `resume_policy` of `:lazy`; use
+  `from_config/3` for `:eager`. Fields that cannot be stored (the client, the toolset,
+  `mcp_servers`) are left out, and `node_local_fields` records that `mcp_servers` was set.
+  Raises `ArgumentError` when a stored field, or the opts of a hook entry, holds a function,
+  pid, reference or port, or when a hook entry is malformed.
+  """
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do
     b = c.behaviours || %Config{}
@@ -185,6 +194,13 @@ defmodule Normandy.Agents.ConfigTemplate do
   defp memory_cache(%AgentMemory{} = memory, :fill), do: AgentMemory.fill_cache(memory)
   defp memory_cache(other, _action), do: other
 
+  @doc """
+  Builds the template of `config` as `from_config/2` does, with `resume_policy` set to
+  `:lazy` or `:eager`.
+
+  `:eager` makes a `Turn.Server` that loads the template resume an in-flight turn as soon as
+  it starts; `:lazy` waits for the next call. Raises as `from_config/2` does.
+  """
   @spec from_config(BaseAgentConfig.t(), String.t(), :lazy | :eager) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id, resume_policy) do
     from_config(c, template_id) |> Map.put(:resume_policy, resume_policy)
