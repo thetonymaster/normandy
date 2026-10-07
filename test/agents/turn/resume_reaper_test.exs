@@ -355,4 +355,98 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       assert log =~ ":boom"
     end
   end
+
+  describe "a sweep's concurrency (Task 6.2f)" do
+    # A supervisor whose start_server/2 returns only once `n` starts have arrived: a
+    # sweep that started sessions one at a time would wait at the first start for good.
+    defmodule GatedSup do
+      @moduledoc false
+      use GenServer
+
+      def start_link({test_pid, n}), do: GenServer.start_link(__MODULE__, {test_pid, n})
+
+      def start_server(gate, opts),
+        do: GenServer.call(gate, {:arrive, Keyword.fetch!(opts, :session_id)}, :infinity)
+
+      @impl true
+      def init({test_pid, n}), do: {:ok, %{test_pid: test_pid, n: n, waiting: []}}
+
+      @impl true
+      def handle_call({:arrive, sid}, from, state) do
+        send(state.test_pid, {:reaper_started, sid})
+        waiting = [from | state.waiting]
+
+        if length(waiting) == state.n do
+          Enum.each(waiting, &GenServer.reply(&1, {:ok, self()}))
+          {:noreply, %{state | waiting: []}}
+        else
+          {:noreply, %{state | waiting: waiting}}
+        end
+      end
+    end
+
+    # start_server/2 raises for "s-raises" and records every other start. The
+    # "supervisor" handle is the test pid.
+    defmodule RaisingSup do
+      @moduledoc false
+      def start_server(test_pid, opts) do
+        case Keyword.fetch!(opts, :session_id) do
+          "s-raises" -> raise ArgumentError, "SECRET-START-BUG"
+          sid -> send(test_pid, {:started, sid})
+        end
+
+        {:ok, self()}
+      end
+    end
+
+    defp eager_sessions(sids) do
+      store = InMemory.new()
+
+      for sid <- sids do
+        :ok =
+          InMemory.save_config_template(store, sid, %{template_id: "k", resume_policy: :eager})
+
+        :ok = InMemory.save_turn_state(store, sid, %Turn.State{status: :steering})
+      end
+
+      store
+    end
+
+    defp sweep_state(store, sup, sup_mod) do
+      {:ok, cat} = Catalog.start_link([])
+
+      %{
+        store: {InMemory, store},
+        registry: {Native, Native.new()},
+        supervisor: sup,
+        supervisor_mod: sup_mod,
+        template_provider: {Catalog, cat},
+        host_server_opts: []
+      }
+    end
+
+    test "the sessions of a sweep start at once" do
+      sids = ["s-a", "s-b", "s-c"]
+      {:ok, gate} = GatedSup.start_link({self(), length(sids)})
+      state = sweep_state(eager_sessions(sids), gate, GatedSup)
+
+      sweep = Task.async(fn -> ResumeReaper.reap(state) end)
+      assert :ok = Task.await(sweep, 5_000)
+
+      for sid <- sids, do: assert_received({:reaper_started, ^sid})
+    end
+
+    test "a session whose start raises is logged by type and skipped; the others start" do
+      state = sweep_state(eager_sessions(["s-ok", "s-raises"]), self(), RaisingSup)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok = ResumeReaper.reap(state)
+        end)
+
+      assert_received {:started, "s-ok"}
+      assert log =~ ~s(ResumeReaper: resuming "s-raises" crashed: ArgumentError)
+      refute log =~ "SECRET-START-BUG"
+    end
+  end
 end

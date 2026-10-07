@@ -1473,6 +1473,10 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   engines and `before_hooks` still see the whole conversation. An after-hook that read
   messages from `config.memory` under `Turn.Server` must get them another way.
   `BaseAgent.run/3`, `stream/3`, `Turn.Driver` and `Turn.Inline` are unchanged.
+- `ResumeReaper.reap/1` checks and starts a sweep's sessions concurrently, 16 at a time, and
+  still returns after the sweep. A session whose check or start raises, exits or throws is
+  logged by the failure's type (`ResumeReaper: resuming "sid" crashed: ArgumentError`) and
+  skipped; it used to stop the sweep and crash the reaper.
 
 ## New, non-breaking
 

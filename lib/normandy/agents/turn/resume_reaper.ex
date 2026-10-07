@@ -32,6 +32,11 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   alias Normandy.Agents.Turn.Start
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
+  alias Normandy.TurnError
+
+  # Sessions a sweep checks and starts at once. Each one waits on the registry, the
+  # store and a start (Turn.Start retries a via race for up to ~200 ms).
+  @reap_concurrency 16
 
   @type opts :: [
           name: GenServer.name(),
@@ -145,21 +150,24 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   @doc """
   Restart every eager, unregistered, non-terminal session under the supervisor.
   Exposed (not private) so it can be unit-tested without orchestrating real nodes.
+
+  Sessions are checked and started concurrently, up to 16 at a time; `reap/1` returns
+  once every one of them is done. A session whose check or start raises, exits or
+  throws is logged by the failure's type and skipped; the others are still reaped.
   """
   @spec reap(map()) :: :ok
   def reap(state) do
     {store_mod, store_handle} = state.store
-    {reg_mod, reg_handle} = state.registry
 
     case store_mod.list_resumable(store_handle) do
       {:ok, sids} ->
-        Enum.each(sids, fn sid ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if not_running?(reg_mod, reg_handle, sid) and
-               non_terminal?(store_mod, store_handle, sid) do
-            start_session(state, sid)
-          end
-        end)
+        sids
+        |> Task.async_stream(&reap_session(state, &1),
+          max_concurrency: @reap_concurrency,
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Stream.run()
 
       {:error, reason} ->
         # Don't let a store failure silently suppress eager handoff on :nodedown —
@@ -167,6 +175,26 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
         Logger.warning("ResumeReaper: list_resumable failed: #{Describe.reason_tag(reason)}")
         :ok
     end
+  end
+
+  # One session of a sweep, in its own task (linked to the reaper): a crash here is
+  # caught, so it neither kills the reaper nor stops the sweep.
+  defp reap_session(state, sid) do
+    {store_mod, store_handle} = state.store
+    {reg_mod, reg_handle} = state.registry
+
+    if not_running?(reg_mod, reg_handle, sid) and non_terminal?(store_mod, store_handle, sid),
+      do: start_session(state, sid)
+
+    :ok
+  catch
+    kind, reason ->
+      Logger.warning(
+        "ResumeReaper: resuming #{inspect(sid)} crashed: " <>
+          TurnError.describe_raised(kind, reason, __STACKTRACE__)
+      )
+
+      :ok
   end
 
   # Only a registry that answers "no process" counts; a failed lookup skips the
