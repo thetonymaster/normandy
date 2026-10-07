@@ -36,6 +36,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - `io_schema "description" do ... end` - I/O schemas with BaseIOSchema protocol implementation
   - `field/3` - Define fields with types and options (`:description`, `:required`, `:default`)
   - Automatically generates JSON Schema specifications via `__specification__/0`
+- **`Normandy.Schema.Wire`** - `encodable/1` is what the model sees of a spec: properties in declaration order (the spec's `:property_order`, sent as `Jason.OrderedObject`), no `$schema`/`title`; used for tool `input_schema`, the `# OUTPUT SCHEMA` block and retry feedback. `SchemaTranslator` keeps the same order and states the constraints structured outputs drop in the property description. Declaration order is generation order
 
 - **`Normandy.Type`** - Type system with casting, dumping, and loading
   - Base types: `:integer`, `:float`, `:boolean`, `:string`, `:map`, `:date`, `:time`, `:binary`, `:any`, `:struct`
@@ -51,8 +52,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 ### Agent System
 
 - **`Normandy.Agents.BaseAgent`** - Core agent implementation
-  - `init/1` - Build a `BaseAgentConfig` from a keyword list or map (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters). The schema is `BaseAgent.InitOptions` (NimbleOptions, docs generated into `init/1`); every option is checked through `Normandy.Options.validate!/3` before any process starts, and an unknown one raises `ArgumentError` naming it
-  - `run/3` - Execute agent turn; returns `{:ok, config, response}` or `{:error, exception}` (Normandy errors only; bugs raise); `run!/3` returns `{config, response}` and raises; neither takes options yet (any raises `ArgumentError`)
+  - `init/1` - Build a `BaseAgentConfig` from a keyword list or map (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters). `:max_tool_iterations` defaults to 20; after the last round the turn stores a notice and makes one more call with `Request.tool_choice: :none`. `max_tool_result_chars` (default 100_000 graphemes, `nil` = off): `Dispatch.finish/3` cuts longer tool results (error results too) after every hook and appends `\n[truncated: N of M chars shown]`; emits `[:normandy, :tool, :result_truncated]`. The schema is `BaseAgent.InitOptions` (NimbleOptions, docs generated into `init/1`); every option is checked through `Normandy.Options.validate!/3` before any process starts, and an unknown one raises `ArgumentError` naming it
+  - `run/3` - Execute agent turn; returns `{:ok, config, response}` or `{:error, exception}` (Normandy errors only; bugs raise); `run!/3` returns `{config, response}` and raises; neither takes options yet (any raises `ArgumentError`); an answer cut off at `max_tokens` (or the context window) or refused is `{:error, %LLMError{type: :max_tokens | :refusal}}` on every path (`Normandy.LLM.Call.check_stop_reason/1`), and no tool from it runs; a final call still paused after 3 continuations is `:pause_turn`; a blank final answer is `{:error, %LLMError{type: :invalid_output}}` on every path
   - `stream/3` - like `run/3`, streaming `%Normandy.Components.StreamEvent{}` to a 1-arity callback; returns the output schema like `run/3`
   - `get_response/2` - Get LLM response using prompt specification
   - `reset_memory/1` - Reset conversation to initial state
@@ -64,12 +65,13 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Options`** - `validate!(opts, schema, {mod, fun, arity})` for every public entry point: NimbleOptions schema, map or keyword input, `ArgumentError` prefixed `Mod.fun/arity:`; values of `sensitive_keys/0` (`:client`, `:api_key`, ...) never appear in a message
 
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
-  - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}`; `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`
+  - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}` (`request.output_format`: the non-chat output schema on a tool-loop call or stream; `%ToolCallResponse{}` carries `content_blocks`, replayed verbatim, and `stop_reason`, `:pause_turn` continues the turn); `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
 - **`Normandy.Agents.Turn.Server`** - Durable `:gen_statem` turn shell
   - `run/2` replies `{:error, exception}` instead of crashing: Normandy's own exceptions bare (`LLMError`, `ValidationError`, `ViolationError`, `HookHaltError`, `ModelCatalogError`), anything else a `Normandy.TurnError` (`:handler_crashed`, `:task_down`, `:persist_failed`, `:approval_timeout`, `:session_unavailable`, ...); never a tagged tuple or a stacktrace. `TurnError.from_reason/1` is the one mapping
   - `on_approval_timeout: :continue | :fail` (default `:continue`) decides what an approval expiry does; expired calls get `expired: true` results
+  - A stored template is checked before use (`ConfigTemplate.check_loaded!/1`: plain data, behaviour modules declare their behaviour) and against the supplement's `:pinned` (`[policy:, guardrails:, credential:, ...]`); a refusal is `{:invalid_template, message}` in a `:session_unavailable` `TurnError`
 
 - **`Normandy.Agents.Turn.Session`** - Session handle, options validated once
   - `new/1` builds the handle (`:session_id`, `:store`, `:registry`, `:supervisor`, and `:config` or `:template_provider`)
@@ -84,6 +86,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - `add_message/4` - Add user/assistant message to history (`opts`: `:turn_id`, `:id`)
   - `initialize_turn/1` - Start new conversation turn (generates UUID)
   - `history/1` - Get formatted message history for LLM
+  - `request_messages/1` - History to request messages; each run of tool results becomes one message (one user turn on the wire), with a following user text as its last block. Memory keeps one entry per result
   - `dump/1` and `load/1` - Serialize/deserialize memory state
   - `delete_turn/2` - Remove specific conversation turn
 
@@ -92,18 +95,23 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 ### Long-term Memory & Tool Context
 
 - **`Normandy.Behaviours.MemoryStore`** - Namespaced, path-addressed document store with
-  compare-and-set versions; backends InMemory, ETS, Mnesia, Postgres, Redis; shared contract
-  in `test/support/memory_store_contract.ex`
+  compare-and-set versions; `put/6` takes `limits` (`[max_bytes:, max_documents:]`) checked
+  atomically with the write (`check_limits/3`, `{:error, {:namespace_full, :bytes | :documents, n}}`);
+  backends InMemory, ETS, Mnesia, Postgres (counter table `normandy_memory_namespaces`),
+  Redis (`:bytes` key); shared contract in `test/support/memory_store_contract.ex`
 - **`Normandy.Tools.Memory`** - The `memory` tool (Anthropic memory-tool commands); namespace
   from `tool_context[:memory_namespace]`, never from the struct; `Commands`/`Paths`/`Render`
   hold command logic, path rules and model-facing text; limits `max_document_bytes`,
-  `max_namespace_bytes` (default 1_000_000, `nil` = no cap), `max_view_chars`, `max_cas_retries`
+  `max_namespace_bytes` (default 1_000_000) and `max_namespace_documents` (default 1000), each
+  namespace cap `nil` = off and enforced by the store, `max_view_chars`, `max_cas_retries`;
+  a session namespace equal to a mount's raises; mounts sharing a namespace must share its access
 - **`Normandy.Tool`** - The one tool contract: `name/1`, `description/1`, `input_schema/1`,
   `run(tool, %Normandy.Tools.Context{})`; `use Normandy.Tool, name:, description:, input: Schema`
   generates the first three. The struct holds configuration only; the model's input is
   validated (`Normandy.Tools.Input`: unknown keys refused, except under a hand-written schema with no `properties`) and arrives as `context.input`
 - **`Normandy.Tools.Toolset`** - Tools by name (`BaseAgentConfig.toolset`); `register/3`
-  options `:timeout` (the call's timeout; a struct field is never read) and `:replace`;
+  options `:timeout` (the call's timeout; a struct field is never read), `:max_result_chars`
+  (this tool's result cap; `nil` = none) and `:replace`;
   `fetch/2`, `fetch!/2`. A struct whose module is not a `Normandy.Tool` raises at
   registration and in `ConfigTemplate.rebuild/3` (1.x tools)
 - **`Normandy.Tools.Context`** - Per-call context: `input`, plus `values` from
@@ -122,15 +130,16 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   (wraps any handler set with `before_llm`/`after_compact`) and `Config.to_pipeline/1`
   (tool hooks; `after_tool` sees every tool result once). No hook outcome terminates
   `Turn.Server`; no hook timeouts
+- **`Normandy.Guardrails`** - `:on_error` (`:reraise | :open | :closed`) covers raises, exits and throws; host code a builtin calls fails as `Normandy.Guardrails.GuardError`
 
 ### Prompt System
 
 - **`Normandy.Components.SystemPromptGenerator`** - Generates system prompts
   - Takes `PromptSpecification` and builds structured prompt with sections:
-    - "IDENTITY and PURPOSE" (background)
-    - "INTERNAL ASSISTANT STEPS" (steps)
-    - "OUTPUT INSTRUCTIONS" (output_instructions; BaseAgent appends the output schema)
-    - "EXTRA INFORMATION AND CONTEXT" (from context providers)
+    - "Role" (background; an empty one is "You are a helpful assistant.")
+    - "How to work" (steps)
+    - "Output" (output_instructions; BaseAgent appends the output schema)
+    - "Context" (from context providers)
 
 - **`Normandy.Components.PromptSpecification`** - Defines prompt structure
   - Fields: `:background`, `:steps`, `:output_instructions`, `:context_providers`
@@ -175,8 +184,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 ### Protocol Support
 
-- **`Normandy.MCP.ToolWrapper`** - Interoperate with Model Context Protocol servers
-- **`Normandy.A2A.Server`** - Expose agents for agent-to-agent collaboration via standardized protocols
+- **`Normandy.MCP.ToolWrapper`** - Interoperate with Model Context Protocol servers. `:prefix` is required on `ToolWrapper.new/4`, `MCP.Registry.discover_and_register/4`/`wrap_tools/4` and `BaseAgent.register_mcp_tools/4` (and on `A2A.AgentTool.new/3` and `A2A.Registry`): letters, digits, `-` and single `_`, at most 61 bytes, or `false`; tools are named `prefix__name`. Policy globs must match remote tools on the prefix
+- **`Normandy.A2A.Server`** - Expose agents for agent-to-agent collaboration; `handle_message/4` takes `:max_text_bytes` (default 100_000, `nil` off; over → `{:error, :too_large}`; a text part whose text is not a string → `{:error, :invalid_message}`) and `:tool_context` (replaces the config's for one call). Authentication and body limits are the host's
 
 ## Key Patterns
 
@@ -212,7 +221,7 @@ end
 - `config/config.exs` - Imports environment-specific config
 - `config/dev.exs` and `config/test.exs` - Environment configs
 - `:adapter` (optional, default `Jason`) - the JSON library `Normandy.JSON` calls; any module with `encode!/2` and `decode/1` (see the `Normandy.JSON` moduledoc)
-- `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — automatic fallback also applies for incompatible schemas, tool-bearing calls, refusal/max_tokens, and a 400 that names the output format or schema (other 400s are returned without a second request)
+- `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — a tool-loop call or stream sends a non-chat output schema as `output_config.format` beside its tools (`Normandy.LLM.Request.output_format`); automatic fallback also applies for incompatible schemas and a 400 that names the output format or schema (on `stream/3` too; other 400s are returned without a second request); a response that stops at `max_tokens`, `model_context_window_exceeded` or `refusal` is never parsed or re-asked
 - `client.options` request settings (`:thinking`, `:effort`, `:speed`, `:inference_geo`, `:fallbacks`, `:task_budget`, `:thinking_budget`, `:thinking_block_binding`, `:enable_caching`, `:req_options`) are documented on `Normandy.LLM.ClaudioAdapter`; nothing is sent unless set
 - `consolidate_protocols: false` in test environment for faster compilation
 
