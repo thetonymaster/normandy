@@ -385,9 +385,14 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
         ExUnit.CaptureLog.capture_log(fn ->
           srv = start(sup, sid, {InMemory, store}, Native.new())
 
+          # AgentMemory.from_entries/1 names the entry, not its content (final review M-d).
           assert {:error,
-                  %TurnError{type: :session_unavailable, reason: %Protocol.UndefinedError{}}} =
+                  %TurnError{type: :session_unavailable, reason: %ArgumentError{message: message}}} =
                    Turn.Server.run(srv, %{chat_message: "hi"})
+
+          assert message ==
+                   ~s|AgentMemory.from_entries/1: entry "e1" has content that cannot be | <>
+                     "encoded for the model (Protocol.UndefinedError)"
 
           assert {:unavailable, _} = :sys.get_state(srv)
           assert Process.alive?(srv)
