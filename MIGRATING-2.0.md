@@ -1675,3 +1675,9 @@ code you wrote against 1.x must follow the changes below.
   `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens` (each only when a
   call reported it), `iterations`, `stop_reason` and `finish_reason` (see "Run totals" in the
   `Normandy.Telemetry` catalogue). Compaction summary calls are not in the totals.
+- New telemetry events (see the `Normandy.Telemetry` catalogue):
+  `[:normandy, :turn, :unavailable]` (a `Turn.Server` whose session could not be loaded or
+  started; `phase` and the reduced reason), `[:normandy, :resume_reaper, :sweep]` (one per
+  `ResumeReaper.reap/1`: sessions scanned, started, skipped, failed) and
+  `[:normandy, :agent_pool, :checkout]` (one per answered `AgentPool.checkout/2`: `wait`,
+  `outcome`, `overflow`).

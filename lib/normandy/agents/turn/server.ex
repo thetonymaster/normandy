@@ -443,6 +443,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp unavailable_data(opts, reason) do
     session_id = Keyword.fetch!(opts, :session_id)
+    emit_unavailable(session_id, reason, :start)
 
     Logger.warning(
       "Turn.Server could not start session #{inspect(session_id)} " <>
@@ -459,6 +460,16 @@ defmodule Normandy.Agents.Turn.Server do
     }
 
     {data, [{{:timeout, :retry}, @retry_initial_ms, :retry}, idle_timeout(data)]}
+  end
+
+  # [:normandy, :turn, :unavailable]: a load or session start failed. The reason is its
+  # tag only (Describe.reason_term/1), as in the log.
+  defp emit_unavailable(session_id, reason, phase) do
+    :telemetry.execute(
+      [:normandy, :turn, :unavailable],
+      %{count: 1},
+      %{session_id: session_id, reason: Describe.reason_term(reason), phase: phase}
+    )
   end
 
   # A handler crash was logged where it happened, and its exception can carry hook data:
@@ -772,6 +783,8 @@ defmodule Normandy.Agents.Turn.Server do
         {:next_state, state, new_data, actions ++ [:postpone]}
 
       {:error, reason} ->
+        emit_unavailable(data.session_id, reason, :request)
+
         {:keep_state_and_data,
          [{:reply, from, {:error, session_unavailable(reason)}}, idle_timeout(data)]}
     end
@@ -785,6 +798,8 @@ defmodule Normandy.Agents.Turn.Server do
         {:next_state, state, new_data, actions ++ [:postpone]}
 
       {:error, reason} ->
+        emit_unavailable(data.session_id, reason, :request)
+
         Logger.warning(
           "Turn.Server dropped an approval for session #{inspect(data.session_id)}: " <>
             "the session could not be started (#{describe_reason(reason)})"
@@ -799,7 +814,8 @@ defmodule Normandy.Agents.Turn.Server do
       {:ok, transition} ->
         transition
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        emit_unavailable(data.session_id, reason, :retry)
         retry_ms = min(data.retry_ms * 2, @retry_max_ms)
         {:keep_state, %{data | retry_ms: retry_ms}, [{{:timeout, :retry}, retry_ms, :retry}]}
     end

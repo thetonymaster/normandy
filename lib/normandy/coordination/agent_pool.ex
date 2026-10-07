@@ -352,15 +352,18 @@ defmodule Normandy.Coordination.AgentPool do
   def handle_call({:checkout, block, timeout}, {client, _tag} = from, state) do
     case do_checkout(state) do
       {:ok, agent_pid, new_state} ->
+        emit_checkout(:ok, 0, new_state.overflow_count > state.overflow_count)
         {:reply, {:ok, agent_pid}, lend(agent_pid, client, new_state)}
 
       {:error, :no_agents} when block ->
         # Watch the waiter, so one that dies is dropped instead of being handed an agent.
         mref = Process.monitor(client)
         timer = start_checkout_timer(from, timeout)
-        {:noreply, %{state | waiting: :queue.in({from, timer, mref}, state.waiting)}}
+        waiter = {from, timer, mref, System.monotonic_time()}
+        {:noreply, %{state | waiting: :queue.in(waiter, state.waiting)}}
 
       {:error, reason} ->
+        emit_checkout(reason, 0, false)
         {:reply, {:error, reason}, state}
     end
   end
@@ -405,10 +408,11 @@ defmodule Normandy.Coordination.AgentPool do
   def handle_info({:checkout_timeout, from}, state) do
     # A waiter served just before its timer fired is no longer in the queue.
     {gone, waiting} =
-      split_waiters(state.waiting, fn {waiter, _timer, _mref} -> waiter == from end)
+      split_waiters(state.waiting, fn {waiter, _timer, _mref, _queued_at} -> waiter == from end)
 
-    Enum.each(gone, fn {_from, _timer, mref} ->
+    Enum.each(gone, fn {_from, _timer, mref, queued_at} ->
       Process.demonitor(mref, [:flush])
+      emit_checkout(:timeout, System.monotonic_time() - queued_at, false)
       GenServer.reply(from, {:error, :timeout})
     end)
 
@@ -502,8 +506,10 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   defp waiter_down(ref, state) do
-    {gone, waiting} = split_waiters(state.waiting, fn {_from, _timer, mref} -> mref == ref end)
-    Enum.each(gone, fn {_from, timer, _mref} -> cancel_checkout_timer(timer) end)
+    {gone, waiting} =
+      split_waiters(state.waiting, fn {_from, _timer, mref, _queued_at} -> mref == ref end)
+
+    Enum.each(gone, fn {_from, timer, _mref, _queued_at} -> cancel_checkout_timer(timer) end)
     %{state | waiting: waiting}
   end
 
@@ -559,7 +565,7 @@ defmodule Normandy.Coordination.AgentPool do
     cond do
       # There are waiting checkouts
       not :queue.is_empty(new_state.waiting) ->
-        hand_to_waiter(agent_pid, new_state)
+        hand_to_waiter(agent_pid, new_state, false)
 
       # Return to pool if not overflow
       not is_overflow ->
@@ -596,7 +602,7 @@ defmodule Normandy.Coordination.AgentPool do
           if :queue.is_empty(state.waiting) do
             %{state | available: [new_pid | state.available]}
           else
-            hand_to_waiter(new_pid, state)
+            hand_to_waiter(new_pid, state, false)
           end
       end
     else
@@ -608,11 +614,21 @@ defmodule Normandy.Coordination.AgentPool do
   # Hands the first waiter an agent if one can be had (a new overflow agent).
   defp serve_waiter(state) do
     with false <- :queue.is_empty(state.waiting),
-         {:ok, agent_pid, state} <- do_checkout(state) do
-      hand_to_waiter(agent_pid, state)
+         {:ok, agent_pid, new_state} <- do_checkout(state) do
+      hand_to_waiter(agent_pid, new_state, new_state.overflow_count > state.overflow_count)
     else
       _ -> state
     end
+  end
+
+  # [:normandy, :agent_pool, :checkout], emitted where the checkout's reply is sent. `wait`
+  # is the time the caller waited in the queue (0 when answered at once).
+  defp emit_checkout(outcome, wait, overflow?) do
+    :telemetry.execute(
+      [:normandy, :agent_pool, :checkout],
+      %{wait: wait},
+      %{pool: self(), outcome: outcome, overflow: overflow?}
+    )
   end
 
   # A waiter with timeout: :infinity has no timer.
@@ -628,10 +644,14 @@ defmodule Normandy.Coordination.AgentPool do
     :ok
   end
 
-  defp hand_to_waiter(agent_pid, state) do
-    {{:value, {{client, _tag} = from, timer, mref}}, waiting} = :queue.out(state.waiting)
+  # `overflow?`: the agent was started as an overflow agent for this waiter.
+  defp hand_to_waiter(agent_pid, state, overflow?) do
+    {{:value, {{client, _tag} = from, timer, mref, queued_at}}, waiting} =
+      :queue.out(state.waiting)
+
     cancel_checkout_timer(timer)
     Process.demonitor(mref, [:flush])
+    emit_checkout(:ok, System.monotonic_time() - queued_at, overflow?)
     GenServer.reply(from, {:ok, agent_pid})
 
     state = %{state | waiting: waiting, in_use: MapSet.put(state.in_use, agent_pid)}

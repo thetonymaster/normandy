@@ -287,6 +287,36 @@ defmodule Normandy.Telemetry do
   Measurement `count`. Metadata: `stage` (`:input`), `outcome` (`:admit | :block |
   :error`), `agent_name`, `guards`, `violations`.
 
+  ### `[:normandy, :turn, :unavailable]`
+
+  `Turn.Server` could not load or start its session and is (still) `:unavailable`.
+  Measurement `count: 1`. Metadata: `session_id`; `phase`: `:start` (the load after
+  `init/1`, or the new session's `on_session_start`), `:retry` (the backoff timer's load
+  failed again) or `:request` (a `run/2` or an approval retried the load and it failed);
+  `reason`, reduced as `run/2`'s `:session_unavailable` reason is: atoms and integers
+  kept, tuples walked, an exception its module (`{Postgrex.Error, code}` for one with a
+  SQLSTATE), any other term a description of its type (`"a map"`). Never the reason's
+  data.
+
+  ### `[:normandy, :resume_reaper, :sweep]`
+
+  One `Normandy.Agents.Turn.ResumeReaper.reap/1` (on every `:nodedown`). Measurements:
+  `duration` (native units), `scanned` (sessions `list_resumable/1` returned), `started`,
+  `skipped` (registered elsewhere, or their turn is no longer in flight) and `failed` (a
+  registry lookup, a turn-state load or the start failed; each is logged). `started +
+  skipped + failed == scanned`. Metadata: `store` (the `SessionStore` module), `status`
+  (`:ok`, or `:error` when the listing failed, with every count `0`) and, on `:error`,
+  `reason` (reduced as for `[:normandy, :turn, :unavailable]`).
+
+  ### `[:normandy, :agent_pool, :checkout]`
+
+  One `Normandy.Coordination.AgentPool.checkout/2` answered, emitted by the pool when it
+  replies. Measurement `wait`: native units the caller waited for an agent to come back
+  (`0` when answered at once). Metadata: `pool` (the pool's pid), `outcome` (`:ok |
+  :timeout | :no_agents | :failed_to_start_agent`), `overflow` (`true` when an overflow
+  agent was started for this checkout). A blocked caller that dies before it is served
+  emits nothing.
+
   ### `[:normandy, :json_deserializer, :fallback]`
 
   The JSON parse of a model response failed and a fallback ran. Measurement `count: 1`.

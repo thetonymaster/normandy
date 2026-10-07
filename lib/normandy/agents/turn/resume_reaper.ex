@@ -156,39 +156,52 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   Sessions are checked and started concurrently, up to 16 at a time; `reap/1` returns
   once every one of them is done. A session whose check or start raises, exits or
   throws is logged by the failure's type and skipped; the others are still reaped.
+
+  Emits one `[:normandy, :resume_reaper, :sweep]` event per call (see `Normandy.Telemetry`).
   """
   @spec reap(map()) :: :ok
   def reap(state) do
     {store_mod, store_handle} = state.store
+    started_at = System.monotonic_time()
 
     case store_mod.list_resumable(store_handle) do
       {:ok, sids} ->
-        sids
-        |> Task.async_stream(&reap_session(state, &1),
-          max_concurrency: @reap_concurrency,
-          ordered: false,
-          timeout: :infinity
-        )
-        |> Stream.run()
+        outcomes =
+          sids
+          |> Task.async_stream(&reap_session(state, &1),
+            max_concurrency: @reap_concurrency,
+            ordered: false,
+            timeout: :infinity
+          )
+          |> Enum.map(fn {:ok, outcome} -> outcome end)
+
+        emit_sweep(state, started_at, outcomes, %{status: :ok})
 
       {:error, reason} ->
         # Don't let a store failure silently suppress eager handoff on :nodedown —
         # surface it so operators can detect and triage missed reaps.
         Logger.warning("ResumeReaper: list_resumable failed: #{Describe.reason_tag(reason)}")
-        :ok
+        emit_sweep(state, started_at, [], %{status: :error, reason: Describe.reason_term(reason)})
     end
   end
 
   # One session of a sweep, in its own task (linked to the reaper): a crash here is
-  # caught, so it neither kills the reaper nor stops the sweep.
+  # caught, so it neither kills the reaper nor stops the sweep. Returns the session's
+  # outcome for the sweep event: :started, :skipped (registered, or its turn is terminal)
+  # or :failed (a lookup, a load or the start failed, or it crashed; each is logged where
+  # it happened).
   defp reap_session(state, sid) do
     {store_mod, store_handle} = state.store
     {reg_mod, reg_handle} = state.registry
 
-    if not_running?(reg_mod, reg_handle, sid) and non_terminal?(store_mod, store_handle, sid),
-      do: start_session(state, sid)
-
-    :ok
+    with :absent <- registry_check(reg_mod, reg_handle, sid),
+         :resumable <- turn_check(store_mod, store_handle, sid) do
+      start_session(state, sid)
+    else
+      :running -> :skipped
+      :terminal -> :skipped
+      :failed -> :failed
+    end
   catch
     kind, reason ->
       Logger.warning(
@@ -196,32 +209,51 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           TurnError.describe_raised(kind, reason, __STACKTRACE__)
       )
 
-      :ok
+      :failed
+  end
+
+  # [:normandy, :resume_reaper, :sweep]: counts from the outcomes the sweep's tasks
+  # returned, so they are exact however many sessions ran at once.
+  defp emit_sweep(state, started_at, outcomes, metadata) do
+    counts = Enum.frequencies(outcomes)
+    {store_mod, _handle} = state.store
+
+    :telemetry.execute(
+      [:normandy, :resume_reaper, :sweep],
+      %{
+        duration: System.monotonic_time() - started_at,
+        scanned: length(outcomes),
+        started: Map.get(counts, :started, 0),
+        skipped: Map.get(counts, :skipped, 0),
+        failed: Map.get(counts, :failed, 0)
+      },
+      Map.put(metadata, :store, store_mod)
+    )
   end
 
   # Only a registry that answers "no process" counts; a failed lookup skips the
   # session (starting it could make a second server) and logs the missed reap.
-  defp not_running?(reg_mod, reg_handle, sid) do
+  defp registry_check(reg_mod, reg_handle, sid) do
     case reg_mod.whereis(reg_handle, sid) do
       :none ->
-        true
+        :absent
 
       {:ok, _pid} ->
-        false
+        :running
 
       {:error, reason} ->
         Logger.warning(
           "ResumeReaper: could not look up #{inspect(sid)} in the registry: #{Describe.reason_tag(reason)}"
         )
 
-        false
+        :failed
     end
   end
 
-  defp non_terminal?(store_mod, store_handle, sid) do
+  defp turn_check(store_mod, store_handle, sid) do
     case store_mod.load_turn_state(store_handle, sid) do
-      {:ok, %Turn.State{status: status}} ->
-        status not in [:stopped, :failed]
+      {:ok, %Turn.State{status: status}} when status not in [:stopped, :failed] ->
+        :resumable
 
       {:error, reason} ->
         # A lazy caller can still rehydrate the session later; log the missed reap.
@@ -229,10 +261,10 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
           "ResumeReaper: could not load the turn state of #{inspect(sid)}: #{Describe.reason_tag(reason)}"
         )
 
-        false
+        :failed
 
-      _ ->
-        false
+      _terminal_or_none ->
+        :terminal
     end
   end
 
@@ -253,15 +285,18 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
     # Surface genuinely unexpected failures rather than swallowing them silently.
     case Start.start_server(state.supervisor_mod, state.supervisor, opts, state.registry, sid) do
       {:ok, _pid} ->
-        :ok
+        :started
 
       {:error, reason} ->
         Logger.warning("ResumeReaper: failed to resume #{sid}: #{Describe.reason_tag(reason)}")
+        :failed
 
       other ->
         Logger.warning(
           "ResumeReaper: unexpected start_server result for #{sid}: #{Describe.type_of(other)}"
         )
+
+        :failed
     end
   end
 end

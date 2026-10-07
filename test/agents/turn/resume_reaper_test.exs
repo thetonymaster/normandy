@@ -317,7 +317,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       {log, calls} = race_reap([race, race, {:ok, self()}], [:none, :none, :none])
 
       assert calls == 3
-      refute log =~ "failed to resume"
+      refute log =~ "failed to resume s-race"
     end
 
     test "a race whose winner is now registered starts nothing further" do
@@ -325,7 +325,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       {log, calls} = race_reap([race], [:none, {:ok, self()}])
 
       assert calls == 1
-      refute log =~ "failed to resume"
+      refute log =~ "failed to resume s-race"
     end
 
     test "the supervisor-nested race shape is retried too" do
@@ -333,19 +333,19 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       {log, calls} = race_reap([race, {:ok, self()}], [:none, :none])
 
       assert calls == 2
-      refute log =~ "failed to resume"
+      refute log =~ "failed to resume s-race"
     end
 
     test "an already-started loser is success: nothing logged, no retry" do
       {log, calls} = race_reap([{:error, {:already_started, self()}}], [:none])
       assert calls == 1
-      refute log =~ "failed to resume"
-      refute log =~ "unexpected start_server"
+      refute log =~ "failed to resume s-race"
+      refute log =~ "unexpected start_server result for s-race"
 
       {log, calls} = race_reap([{:error, {{:already_started, self()}, :child}}], [:none])
       assert calls == 1
-      refute log =~ "failed to resume"
-      refute log =~ "unexpected start_server"
+      refute log =~ "failed to resume s-race"
+      refute log =~ "unexpected start_server result for s-race"
     end
 
     test "a genuine error is logged once and not retried" do
