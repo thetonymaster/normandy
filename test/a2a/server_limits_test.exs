@@ -6,7 +6,7 @@ defmodule Normandy.A2A.ServerLimitsTest do
   alias Normandy.A2A.Server
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.ToolCall
-  alias Normandy.Test.{ContextProbe, ScriptedToolClient, StubClient, TelemetryCapture}
+  alias Normandy.Test.{ContextProbe, OwnLog, ScriptedToolClient, StubClient, TelemetryCapture}
   alias Normandy.Tools.Context
 
   @request_stop [:normandy, :a2a, :request, :stop]
@@ -28,8 +28,10 @@ defmodule Normandy.A2A.ServerLimitsTest do
 
       assert_received {:converse, _request, _opts}
 
+      # handle_message/4 logs in the caller; OwnLog keeps another async test's A2A log
+      # (ServerTest's failure-log test) out of this refute.
       log =
-        ExUnit.CaptureLog.capture_log(fn ->
+        OwnLog.capture(fn ->
           assert {:error, :too_large} = Server.handle_message(stub_agent(), text_message(100_001))
         end)
 
