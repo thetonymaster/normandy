@@ -117,6 +117,46 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       assert %{run_count: 2} = AgentProcess.get_stats(pid)
     end
 
+    # Final review I4: a raw {:run_async, ...} cast (an older node, or code bypassing
+    # cast/3) can carry a reply_to cast/3 refuses; notify/3 must not crash on it.
+    test "a raw cast whose reply_to is neither a pid nor an atom does not stop the process" do
+      {:ok, pid} =
+        AgentProcess.start_link(
+          agent: BaseAgent.init(%{client: %StubClient{}, model: "m"}),
+          agent_id: "raw"
+        )
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          GenServer.cast(pid, {:run_async, "go", {:normandy_remote_name, :nonode@nowhere}})
+          assert {:ok, _} = AgentProcess.run(pid, "after")
+        end)
+
+      assert Process.alive?(pid)
+      assert %{run_count: 2} = AgentProcess.get_stats(pid)
+      assert log =~ "AgentProcess raw: reply_to is a tuple, not a pid or a registered name"
+      refute log =~ "normandy_remote_name"
+    end
+
+    test "a raw cast refused :queue_full with an unusable reply_to does not stop the process" do
+      {:ok, pid} =
+        AgentProcess.start_link(agent: gated_agent(), agent_id: "raw_full", max_pending_runs: 1)
+
+      run = Task.async(fn -> AgentProcess.run(pid, "one") end)
+      assert_receive {:llm_started, 1, worker}, @wait
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          GenServer.cast(pid, {:run_async, "two", {:via, Registry, {:normandy_x, 1}}, nil})
+          assert %{pending: 1} = :sys.get_state(pid)
+        end)
+
+      assert log =~ "reply_to is a tuple"
+      send(worker, {:release, 1})
+      assert {:ok, "answer 1"} = Task.await(run)
+      assert Process.alive?(pid)
+    end
+
     test "stop/1 kills the cast in flight" do
       {:ok, pid} = AgentProcess.start_link(agent: gated_agent())
       :ok = AgentProcess.cast(pid, "go")
@@ -239,6 +279,70 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       assert error.message =~ "expected positive integer, got: 0"
 
       assert {:ok, _pid} = AgentProcess.start_link(agent: agent, max_pending_runs: :infinity)
+    end
+  end
+
+  # Final review I3: the state holds the agent (memory, client) and every queued input.
+  describe "format_status" do
+    @secret "a secret the user typed"
+
+    test "inline: :sys.get_status/1 shows counters, never memory or queued inputs" do
+      {:ok, pid} = AgentProcess.start_link(agent: gated_agent(), agent_id: "st")
+      first = Task.async(fn -> AgentProcess.run(pid, @secret) end)
+      assert_receive {:llm_started, 1, worker1}, @wait
+      send(worker1, {:release, 1})
+      assert {:ok, "answer 1"} = Task.await(first)
+
+      second = Task.async(fn -> AgentProcess.run(pid, "busy") end)
+      assert_receive {:llm_started, 2, worker2}, @wait
+      :ok = AgentProcess.cast(pid, @secret)
+      queued = Task.async(fn -> AgentProcess.run(pid, @secret) end)
+
+      assert Normandy.Test.Eventually.wait_until(fn ->
+               :queue.len(:sys.get_state(pid).queue) == 2
+             end)
+
+      status = inspect(:sys.get_status(pid), limit: :infinity, printable_limit: :infinity)
+      assert status =~ ~s(agent_id: "st")
+      assert status =~ "queued: 2"
+      refute status =~ @secret
+      refute status =~ "BaseAgentConfig"
+
+      send(worker2, {:release, 2})
+      assert {:ok, "answer 2"} = Task.await(second)
+
+      for n <- 3..4 do
+        assert_receive {:llm_started, ^n, worker}, @wait
+        send(worker, {:release, n})
+      end
+
+      assert {:ok, _} = Task.await(queued)
+    end
+
+    test ":server: :sys.get_status/1 never shows a pending run's input" do
+      {:ok, pid} = gated_server_start(agent_id: "st_srv")
+      :ok = AgentProcess.cast(pid, @secret)
+      assert_receive {:llm_started, 1, worker}, @wait
+
+      status = inspect(:sys.get_status(pid), limit: :infinity, printable_limit: :infinity)
+      assert status =~ "in_flight: 1"
+      refute status =~ @secret
+      refute status =~ "BaseAgentConfig"
+      send(worker, {:release, 1})
+    end
+
+    test "a crash's last message is its request tag only" do
+      status =
+        AgentProcess.format_status(%{
+          message: {:"$gen_call", {self(), make_ref()}, {:run, @secret, nil}}
+        })
+
+      assert status.message == {:"$gen_call", :run}
+
+      status =
+        AgentProcess.format_status(%{message: {:"$gen_cast", {:run_async, @secret, nil, nil}}})
+
+      assert status.message == {:"$gen_cast", :run_async}
     end
   end
 

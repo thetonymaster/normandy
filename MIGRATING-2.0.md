@@ -1695,7 +1695,17 @@ code you wrote against 1.x must follow the changes below.
   `reply_to` hears nothing.
 - `get_stats/1` counts a run or cast when it finishes, whatever its outcome (casts were
   counted when cast; failed inline runs were not counted).
-- A `reply_to` name that is not registered is logged and the result dropped.
+- A `reply_to` name that is not registered is logged and the result dropped. So is a
+  `reply_to` that is neither a pid nor an atom (`{name, node}`, a `:via` tuple) arriving in a
+  raw `{:run_async, ...}` cast that bypassed `cast/3` (a node running older code): the log
+  names its type only, and the `AgentProcess` keeps running (it used to crash with its queue).
+- `AgentProcess` implements `format_status`: crash reports, `:sys.get_status/1` and the
+  observer show the agent id, turn engine, `pending`, `run_count` and the number of queued
+  and in-flight ops, never the agent config (its memory, its client) or a queued input. The
+  last message is shown as its request tag (`{:"$gen_call", :run}`), and a crash's reason as
+  `Turn.Server` shows it (`## 39.`).
+- `update_agent/2,3`'s `ArgumentError` for a result that is not a config names
+  `update_agent/3` (it named `update_agent/2`), as its option errors do.
 - A `:server`-mode `AgentProcess` started without `:registry` no longer starts and owns a
   `Native` registry of its own (each one created about three atoms that were never freed).
   Its sessions register under a scope of its own in one registry that Normandy's application

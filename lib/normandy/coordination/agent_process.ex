@@ -441,7 +441,7 @@ defmodule Normandy.Coordination.AgentProcess do
 
       {:not_a_config, type} ->
         raise ArgumentError,
-              "Normandy.Coordination.AgentProcess.update_agent/2: the function must " <>
+              "Normandy.Coordination.AgentProcess.update_agent/3: the function must " <>
                 "return a %Normandy.Agents.BaseAgentConfig{}, got: #{type}"
     end
   end
@@ -568,6 +568,52 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  # What a crash report, :sys.get_status/1 and the observer show of this process: its
+  # id, engine and counters, never the agent (its memory, its client's credentials) nor
+  # the input of a queued run, cast or update (decision 6, as Turn.Server). The last
+  # message is reduced to its request tag, the sys debug log to its length, and a
+  # crash's reason as Turn.Server reduces it. format_status/1 is OTP 25+; OTP 24 calls
+  # format_status/2.
+  if String.to_integer(List.to_string(:erlang.system_info(:otp_release))) >= 25 do
+    @impl true
+    def format_status(status) do
+      status
+      |> Map.update(:state, nil, &status_state/1)
+      |> Map.update(:message, nil, &message_tag/1)
+      |> Map.update(:reason, nil, &(&1 |> TurnError.drop_stacktraces() |> TurnError.redact()))
+      |> Map.update(:log, [], &length/1)
+    end
+  else
+    @impl true
+    def format_status(_opt, [_pdict, state]),
+      do: [data: [{~c"State", status_state(state)}]]
+  end
+
+  defp status_state(%{agent_id: _} = state) do
+    %{
+      agent_id: state.agent_id,
+      turn_engine: state.turn_engine,
+      pending: state.pending,
+      run_count: state.run_count,
+      queued: :queue.len(state.queue),
+      in_flight: if(state.running, do: 1, else: 0) + map_size(state.pending_runs)
+    }
+  end
+
+  defp status_state(_other), do: :redacted
+
+  defp message_tag({:"$gen_call", _from, request}), do: {:"$gen_call", request_tag(request)}
+  defp message_tag({:"$gen_cast", request}), do: {:"$gen_cast", request_tag(request)}
+  defp message_tag(message), do: request_tag(message)
+
+  defp request_tag(request) when is_atom(request), do: request
+
+  defp request_tag(request)
+       when is_tuple(request) and tuple_size(request) > 0 and is_atom(elem(request, 0)),
+       do: elem(request, 0)
+
+  defp request_tag(request), do: Describe.type_of(request)
 
   @impl true
   def handle_call({:run, input}, from, state), do: handle_call({:run, input, nil}, from, state)
@@ -826,6 +872,17 @@ defmodule Normandy.Coordination.AgentProcess do
       pid ->
         send(pid, {:agent_result, agent_id, result})
     end
+  end
+
+  # cast/3 accepts only nil, a pid or an atom, but a raw {:run_async, ...} cast (a node
+  # running older code, or code that bypasses cast/3) can carry anything ({name, node},
+  # a :via tuple). It must not crash this process with its queue: logged by type only
+  # (it can hold a name or data), and the result dropped.
+  defp notify(reply_to, agent_id, _result) do
+    Logger.warning(
+      "AgentProcess #{agent_id}: reply_to is #{Describe.type_of(reply_to)}, not a pid or " <>
+        "a registered name; the result is dropped"
+    )
   end
 
   defp count_run(state, started) do

@@ -263,9 +263,18 @@ defmodule Normandy.Coordination.AgentProcessTest do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       assert_raise ArgumentError,
-                   "Normandy.Coordination.AgentProcess.update_agent/2: the function must " <>
+                   "Normandy.Coordination.AgentProcess.update_agent/3: the function must " <>
                      "return a %Normandy.Agents.BaseAgentConfig{}, got: a map",
                    fn -> AgentProcess.update_agent(pid, fn a -> Map.from_struct(a) end) end
+
+      # One name for both arities, the one option errors use (6.5c re-review).
+      assert_raise ArgumentError,
+                   ~r"^Normandy.Coordination.AgentProcess.update_agent/3: the",
+                   fn ->
+                     AgentProcess.update_agent(pid, fn a -> Map.from_struct(a) end,
+                       timeout: 1_000
+                     )
+                   end
 
       assert Process.alive?(pid)
       assert AgentProcess.get_agent(pid) == agent
