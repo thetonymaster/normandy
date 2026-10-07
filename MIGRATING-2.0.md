@@ -1388,6 +1388,14 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
 - Compaction keeps each kept message's encoding; only a message whose thinking it strips is
   encoded again.
 
+- Prompt caching is on by default: `Normandy.LLM.ClaudioAdapter`'s `options[:enable_caching]`
+  defaults to `true` (it was `false`). Requests carry the breakpoints listed in §8 (system
+  prompt, last tool, the API's automatic one), and the system prompt goes out as one text block
+  instead of a string. A cache write costs 1.25 times the input price and a cache read 0.1
+  times: an agent that makes one call per conversation pays more; a tool loop, which re-sends
+  its whole prefix on every iteration, pays less. Set `enable_caching: false` to opt out, and
+  on a `base_url` gateway that rejects top-level `cache_control`.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

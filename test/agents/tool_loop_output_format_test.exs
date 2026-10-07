@@ -236,7 +236,9 @@ defmodule Normandy.Agents.ToolLoopOutputFormatTest do
         answered = if @route == :off, do: 0, else: 1
         assert_received {:wire_body, ^answered, body}
         assert format(body) == nil
-        assert body["system"] =~ "# OUTPUT SCHEMA"
+        # Caching is on by default (MIGRATING-2.0.md §38): the system prompt is one block.
+        assert [%{"text" => system, "cache_control" => %{"type" => "ephemeral"}}] = body["system"]
+        assert system =~ "# OUTPUT SCHEMA"
       end
 
       test "stream/3, #{route}: #{outcome}" do

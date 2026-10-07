@@ -26,7 +26,8 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
       "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
     }
 
-    defp sent_body(name, enable_caching) do
+    # `caching`: the :enable_caching option to set, or :unset to leave it out.
+    defp sent_body(name, caching) do
       test_pid = self()
 
       Req.Test.stub(name, fn conn ->
@@ -37,10 +38,11 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
 
       client = %ClaudioAdapter{
         api_key: "k",
-        options: %{
-          enable_caching: enable_caching,
-          req_options: [plug: {Req.Test, name}, retry: false]
-        }
+        options:
+          Map.merge(
+            %{req_options: [plug: {Req.Test, name}, retry: false]},
+            if(caching == :unset, do: %{}, else: %{enable_caching: caching})
+          )
       }
 
       messages = [%Message{role: "user", content: [TextBlock.new("hi")]}]
@@ -78,6 +80,10 @@ defmodule Normandy.LLM.ClaudioAdapterCachingTest do
       for message <- body["messages"], is_list(message["content"]), block <- message["content"] do
         refute Map.has_key?(block, "cache_control"), "unexpected marker in #{inspect(message)}"
       end
+    end
+
+    test "caching is on when the option is left out (the 2.0 default)" do
+      assert sent_body(__MODULE__.Unset, :unset) == sent_body(__MODULE__.OnToo, true)
     end
 
     test "caching off: no breakpoints at all" do

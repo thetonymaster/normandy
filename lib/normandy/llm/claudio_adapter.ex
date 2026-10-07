@@ -35,17 +35,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   ## Configuration
 
-  The adapter reads these keys from `options` (a map). Nothing below is sent unless set:
+  The adapter reads these keys from `options` (a map). Nothing below is sent unless set,
+  except prompt caching, which is on unless `:enable_caching` is `false`:
 
   - `:timeout` - Connection timeout in milliseconds (Claudio's default: 60_000)
   - `:recv_timeout` - How long to wait for data once connected, in milliseconds
     (Claudio's default: 120_000); raise it for long thinking or streaming calls
-  - `:enable_caching` - Prompt caching (default: false): an explicit breakpoint on the
-    system prompt and the last tool, plus the API's automatic breakpoint for the
-    conversation. Keep context-provider output stable across calls, or the cache
-    stops at the system prompt. Normandy uses 3 of the API's 4 cache breakpoints (system,
-    last tool, automatic); callers who add their own `cache_control` markers can add at
-    most one more, or the API rejects the request
+  - `:enable_caching` - Prompt caching (default: `true`; `false` turns it off): an
+    explicit breakpoint on the system prompt and the last tool, plus the API's automatic
+    breakpoint for the conversation. Keep context-provider output stable across calls, or
+    the cache stops at the system prompt. Normandy uses 3 of the API's 4 cache breakpoints
+    (system, last tool, automatic); callers who add their own `cache_control` markers can
+    add at most one more, or the API rejects the request. A cache write costs 1.25 times
+    the input price and a cache read 0.1 times, so an agent that makes one call per
+    conversation pays more with it on; a tool loop, which re-sends its prefix on every
+    call, pays less
   - `:thinking` - `:adaptive` (Claude 4.6 and later) or `:disabled`
   - `:thinking_display` - `:summarized | :omitted | :updates`; requires `thinking: :adaptive`
   - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
@@ -776,7 +780,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # keeps ensure_single_leading_system!/1: a "system" message in `request.messages`
     # next to `:system` raises.
     defp build_request(client, %Request{} = request, call_opts \\ []) do
-      enable_caching = Map.get(client.options, :enable_caching, false)
+      # On unless the client opts out (MIGRATING-2.0.md §38).
+      enable_caching = Map.get(client.options, :enable_caching, true)
 
       Claudio.Messages.Request.new(request.model)
       |> add_temperature(request.temperature)
