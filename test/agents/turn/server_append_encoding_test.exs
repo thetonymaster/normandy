@@ -11,7 +11,7 @@ defmodule Normandy.Agents.Turn.ServerAppendEncodingTest do
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Test.TurnConfig
+  alias Normandy.Test.{TelemetryCapture, TurnConfig}
   alias Normandy.TurnError
 
   defmodule NoEncoding do
@@ -55,12 +55,34 @@ defmodule Normandy.Agents.Turn.ServerAppendEncodingTest do
   test "an input that cannot be encoded fails as a crashed :append before anything is stored" do
     {srv, store, sid} = start(%TurnConfig.Resp{content: "fine"})
 
+    TelemetryCapture.attach_span(
+      [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+      session_id: sid
+    )
+
     assert {:error,
             %TurnError{
               type: :handler_crashed,
               handler: :append,
               reason: %Protocol.UndefinedError{protocol: Normandy.Components.BaseIOSchema}
             }} = Turn.Server.run(srv, %NoEncoding{content: "x"})
+
+    # Task 6.4a (TEL-12): a turn that fails before it runs is reported as a run. The
+    # server emits before it replies, so the events are already in the mailbox. The
+    # exception's input-carrying value is redacted to its module.
+    assert_received {:span, [:normandy, :agent, :run, :start], start_meta}
+    refute Map.has_key?(start_meta, :turn_id)
+
+    assert_received {:span, [:normandy, :agent, :run, :exception],
+                     %{
+                       kind: :error,
+                       reason: %TurnError{
+                         type: :handler_crashed,
+                         handler: :append,
+                         reason: %{exception: Protocol.UndefinedError}
+                       },
+                       stacktrace: []
+                     }}
 
     assert {:ok, []} = InMemory.history(store, sid)
     assert {:ok, %TurnConfig.Resp{content: "fine"}} = Turn.Server.run(srv, "hello")

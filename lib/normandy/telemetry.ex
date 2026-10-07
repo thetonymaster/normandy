@@ -53,9 +53,10 @@ defmodule Normandy.Telemetry do
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
     * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
       replies, redacted as described above, and `stacktrace: []`. A turn that fails before
-      it runs emits a run `:start` and `:exception` too: rejected input and a crash in
-      admission (no `turn_id`), and a failed write of the turn's first messages (with the
-      begun turn's `turn_id`).
+      it runs emits a run `:start` and `:exception` too: rejected input, a crash in
+      admission and a crash in an `after_tool` hook while closing an interrupted batch (no
+      `turn_id`), and a failed write of the turn's first messages (with the begun turn's
+      `turn_id`).
 
   A run `:exception` may be synthetic: see "Killed runs".
 

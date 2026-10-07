@@ -381,6 +381,67 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       assert hook.parent_span_id == :undefined
     end
 
+    # Implements only after_tool, so the turn's one hook span is the interrupted result's.
+    defmodule AfterToolOnly do
+      @moduledoc false
+      use Normandy.Behaviours.Hooks
+
+      @impl true
+      def after_tool(_call, result, _ctx, _opts), do: {:cont, result}
+    end
+
+    test "an interrupted batch's after_tool hook span is a child of the caller, a sibling of run" do
+      sid = "span-dangling-#{System.unique_integer([:positive])}"
+      store = InMemory.new()
+
+      # The store ends in a tool_use with no result, as after a crash mid-batch.
+      for {role, content} <- [
+            {"user", "weather?"},
+            {"assistant",
+             %ToolCallResponse{
+               content: nil,
+               tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{city: "Lima"}}]
+             }}
+          ] do
+        {:ok, _} =
+          InMemory.append_entry(store, sid, %Normandy.Components.AgentMemory.Entry{
+            turn_id: "live",
+            role: role,
+            content: content
+          })
+      end
+
+      OtelSpanBridge.attach(prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :hook]])
+
+      config =
+        BaseAgent.init(%{
+          client: counted_client(false),
+          model: "test-model",
+          behaviours: %Normandy.Behaviours.Config{hooks: [{AfterToolOnly, []}]}
+        })
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: sid,
+          config: config,
+          store: {InMemory, store},
+          registry: {Native, Native.new()}
+        )
+
+      caller = start_caller_span()
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "hi"})
+      :otel_span.end_span(caller)
+
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.hook", "normandy.agent.run"])
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+
+      assert [hook] = Enum.filter(spans, &(&1.name == "normandy.hook"))
+      assert hook.parent_span_id == caller_span.span_id
+
+      assert OtelSpanBridge.fetch_span!(spans, "normandy.agent.run").parent_span_id ==
+               caller_span.span_id
+    end
+
     # X9: Task 6.2's exits (:loading, :unavailable, a load crash, passivation) attach no
     # turn context; a request that arrives in :unavailable is postponed and replayed in
     # :idle, where the :turn clause attaches and releases it like any other.

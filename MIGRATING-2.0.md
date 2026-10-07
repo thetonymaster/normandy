@@ -1588,10 +1588,11 @@ code you wrote against 1.x must follow the changes below.
   `after_tool` of an interrupted batch's results, `on_turn_end`) are now children of the
   caller's span, in its trace; they used to be roots of new traces. They are siblings of
   the run span, not its children (`BaseAgent` keeps `on_prompt` inside its run).
-- A `Turn.Server` turn whose admission crashes (`:handler_crashed`, `handler: :admit`, or
-  `handler: :append` for an input that cannot be encoded) or whose first messages cannot be
-  written (`:persist_failed`) now emits a run `:start` and `:exception` carrying the
-  replied error, as rejected input already did. Dashboards that count runs see these turns.
+- A `Turn.Server` turn that crashes before it begins (`:handler_crashed` with `handler:
+  :admit`; `handler: :after_tool` while closing an interrupted batch; `handler: :append`
+  for an input that cannot be encoded) or whose first messages cannot be written
+  (`:persist_failed`) now emits a run `:start` and `:exception` carrying the replied
+  error, as rejected input already did. Dashboards that count runs see these turns.
 
 ## New, non-breaking
 
