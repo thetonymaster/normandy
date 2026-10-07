@@ -131,6 +131,11 @@ defmodule Normandy.Agents.BaseAgent do
     opts
   end
 
+  @doc """
+  Returns `config` with its memory back to the memory it was built with (`init/1`'s
+  `:memory`, empty by default), dropping every turn since. Nothing else changes: tools,
+  context providers and the prompt specification stay as they are.
+  """
   @spec reset_memory(BaseAgentConfig.t()) :: BaseAgentConfig.t()
   def reset_memory(%BaseAgentConfig{initial_memory: memory} = config) do
     Map.put(config, :memory, memory)
@@ -2044,6 +2049,12 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  @doc """
+  Returns `config` with `provider` registered under `name`, replacing any provider already
+  registered under that name. `provider` is a struct implementing
+  `Normandy.Components.ContextProvider`; its `title/1` and `get_info/1` are read each time
+  the system prompt is built, into the prompt's "Context" section.
+  """
   @spec register_context_provider(BaseAgentConfig.t(), atom(), struct()) ::
           BaseAgentConfig.t()
   def register_context_provider(
@@ -2059,6 +2070,10 @@ defmodule Normandy.Agents.BaseAgent do
     Map.put(config, :prompt_specification, prompt_specification)
   end
 
+  @doc """
+  Returns `config` without the context provider registered under `name`. Deleting a name
+  with no provider returns `config` unchanged.
+  """
   @spec delete_context_provider(BaseAgentConfig.t(), atom()) :: BaseAgentConfig.t()
   def delete_context_provider(
         %BaseAgentConfig{prompt_specification: prompt_specification} = config,
