@@ -91,4 +91,30 @@ defmodule Normandy.Components.AgentMemoryCompactionTest do
                  ~s|AgentMemory.from_entries/1: compaction entry "c1" expected content %{version: 1, entries: [...]}, got: a string (6 bytes)|,
                  fn -> AgentMemory.from_entries([stored("c1", "compaction", "secret")]) end
   end
+
+  # Final review M-d: the doc and MIGRATING promise ArgumentError, not FunctionClauseError.
+  test "a snapshot element without the four keys raises ArgumentError, naming the snapshot" do
+    assert_raise ArgumentError,
+                 ~s|AgentMemory.from_entries/1: compaction entry "c1" holds an element that is not %{id:, turn_id:, role:, content:}, got: a map|,
+                 fn ->
+                   AgentMemory.from_entries([
+                     snapshot("c1", [%{id: "s1", role: "user", content: "secret"}])
+                   ])
+                 end
+  end
+
+  # Content that cannot be encoded is refused naming the entry, as load/1 does.
+  test "stored content that cannot be encoded raises ArgumentError naming the entry" do
+    for history <- [
+          [stored("u1", "user", %{"pid" => self()})],
+          [snapshot("c1", [%{id: "s1", turn_id: "t1", role: "user", content: {:a, "secret"}}])]
+        ] do
+      error = assert_raise ArgumentError, fn -> AgentMemory.from_entries(history) end
+
+      assert error.message =~
+               ~r/^AgentMemory.from_entries\/1: entry "(u1|s1)" has content that cannot be encoded for the model \(/
+
+      refute error.message =~ "secret"
+    end
+  end
 end

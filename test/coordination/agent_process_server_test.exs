@@ -480,4 +480,42 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert AgentMemory.entry_chain(agent.memory) == []
     end
   end
+
+  # Final review M-d: a stored history from_entries/1 refuses (here a snapshot version a
+  # newer node wrote during a rolling deploy) must not crash the AgentProcess.
+  describe ":server get_agent/1 on a history it cannot rebuild" do
+    test "logs, returns the template and keeps the process" do
+      infra = supplied_infra()
+      {InMemory, store} = Keyword.fetch!(infra, :store)
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(),
+            agent_id: "v2",
+            turn_engine: :server,
+            handlers: final_handlers()
+          ] ++
+            infra
+        )
+
+      entry = %AgentMemory.Entry{
+        id: "c1",
+        turn_id: "t1",
+        role: "compaction",
+        content: %{version: 2, entries: []}
+      }
+
+      {:ok, _} = InMemory.append_entry(store, "v2", entry)
+
+      log = capture_log(fn -> assert %{memory: %AgentMemory{}} = AgentProcess.get_agent(pid) end)
+
+      assert log =~
+               "AgentProcess v2: get_agent could not rebuild the stored history: " <>
+                 ~s|AgentMemory.from_entries/1: compaction entry "c1" has snapshot version 2|
+
+      assert Process.alive?(pid)
+      assert %{agent_id: "v2"} = AgentProcess.get_stats(pid)
+    end
+  end
 end

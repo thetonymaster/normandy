@@ -495,7 +495,9 @@ defmodule Normandy.Components.AgentMemory do
   content: _}]}`, is the whole conversation as that compaction left it. The memory is
   then the **last** snapshot's entries followed by the entries stored after it, linked
   in that order; the entries before that snapshot and the snapshot entry itself are not
-  in the memory. A `"compaction"` entry of any other shape raises `ArgumentError`.
+  in the memory. A `"compaction"` entry of any other shape, or one holding an element
+  without those four keys, raises `ArgumentError`, as does an entry whose content cannot be
+  encoded for the model (the message names the entry).
   """
   @spec from_entries([Entry.t()]) :: t()
   def from_entries([]), do: new_memory()
@@ -523,7 +525,7 @@ defmodule Normandy.Components.AgentMemory do
     last = List.last(entries)
 
     %__MODULE__{
-      entries: Map.new(entries, fn %Entry{id: id} = e -> {id, fill_entry(e)} end),
+      entries: Map.new(entries, fn %Entry{id: id} = e -> {id, fill_stored_entry(e)} end),
       head: last.id,
       current_turn_id: last.turn_id,
       max_messages: nil
@@ -538,7 +540,7 @@ defmodule Normandy.Components.AgentMemory do
       snapshot
       |> snapshot_entries()
       |> Enum.concat(later)
-      |> Enum.map(&fill_entry/1)
+      |> Enum.map(&fill_stored_entry/1)
       |> Enum.reduce({%{}, nil}, &link_entry/2)
 
     %__MODULE__{
@@ -556,11 +558,9 @@ defmodule Normandy.Components.AgentMemory do
     end
   end
 
-  defp snapshot_entries(%Entry{content: %{version: 1, entries: entries}}) when is_list(entries) do
-    Enum.map(entries, fn %{id: id, turn_id: turn_id, role: role, content: content} ->
-      %Entry{id: id, turn_id: turn_id, role: role, content: content}
-    end)
-  end
+  defp snapshot_entries(%Entry{id: snapshot_id, content: %{version: 1, entries: entries}})
+       when is_list(entries),
+       do: Enum.map(entries, &snapshot_entry(&1, snapshot_id))
 
   defp snapshot_entries(%Entry{id: id, content: %{version: version}}) when version != 1 do
     raise ArgumentError,
@@ -572,6 +572,32 @@ defmodule Normandy.Components.AgentMemory do
     raise ArgumentError,
           "AgentMemory.from_entries/1: compaction entry #{inspect(id)} expected content " <>
             "%{version: 1, entries: [...]}, got: " <> Describe.type_of(content)
+  end
+
+  defp snapshot_entry(%{id: id, turn_id: turn_id, role: role, content: content}, _snapshot_id),
+    do: %Entry{id: id, turn_id: turn_id, role: role, content: content}
+
+  defp snapshot_entry(other, snapshot_id) do
+    raise ArgumentError,
+          "AgentMemory.from_entries/1: compaction entry #{inspect(snapshot_id)} holds an " <>
+            "element that is not %{id:, turn_id:, role:, content:}, got: " <>
+            Describe.shape(other)
+  end
+
+  # A stored entry's cache, or an ArgumentError naming the entry, as load/1 does: a
+  # store holds data, and content that cannot be sent (a struct with no BaseIOSchema
+  # implementation, an entry written by a newer node) is refused here.
+  defp fill_stored_entry(entry) do
+    fill_entry(entry)
+  rescue
+    error ->
+      reraise ArgumentError,
+              [
+                message:
+                  "AgentMemory.from_entries/1: entry #{inspect(entry.id)} has content that " <>
+                    "cannot be encoded for the model (#{inspect(error.__struct__)})"
+              ],
+              __STACKTRACE__
   end
 
   @spec dump(t()) :: String.t()

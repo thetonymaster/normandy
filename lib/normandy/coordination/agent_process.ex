@@ -952,7 +952,9 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers
-  # see durable truth. On a store fault, log and return the template unchanged.
+  # see durable truth. On a store fault, or a history from_entries/1 refuses (a snapshot
+  # version a newer node wrote, content that cannot be encoded), log and return the
+  # template unchanged: a stored history must not crash this process and its queue.
   defp reconstruct_agent(%{
          session: %Turn.Session{store: {mod, handle}},
          agent: agent,
@@ -960,12 +962,7 @@ defmodule Normandy.Coordination.AgentProcess do
        }) do
     case mod.history(handle, sid) do
       {:ok, entries} ->
-        rebuilt = %{
-          AgentMemory.from_entries(entries)
-          | max_messages: agent.memory.max_messages
-        }
-
-        %{agent | memory: rebuilt}
+        rebuild_memory(agent, sid, entries)
 
       {:error, reason} ->
         Logger.warning(
@@ -974,5 +971,19 @@ defmodule Normandy.Coordination.AgentProcess do
 
         agent
     end
+  end
+
+  defp rebuild_memory(agent, sid, entries) do
+    rebuilt = %{AgentMemory.from_entries(entries) | max_messages: agent.memory.max_messages}
+    %{agent | memory: rebuilt}
+  rescue
+    # The message names entry ids and types only (from_entries/1), never content.
+    e in ArgumentError ->
+      Logger.warning(
+        "AgentProcess #{sid}: get_agent could not rebuild the stored history: " <>
+          Exception.message(e)
+      )
+
+      agent
   end
 end

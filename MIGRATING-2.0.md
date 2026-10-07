@@ -1369,7 +1369,12 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
 - `AgentMemory.load/1` raises `ArgumentError` naming the entry
   (`AgentMemory.load/1: entry "e1" has content that cannot be encoded for the model (KeyError)`)
   for a dump whose content cannot be sent, such as a 1.x dump whose tool calls were stored as
-  plain maps. Such a dump used to load and fail at the next request.
+  plain maps. Such a dump used to load and fail at the next request. A session rebuilt from
+  its store goes through `AgentMemory.from_entries/1`, which refuses such content the same
+  way (`AgentMemory.from_entries/1: entry "e1" has content that cannot be encoded ...`), and
+  raises `ArgumentError` for a `"compaction"` snapshot it cannot read (`## 39.`):
+  `Turn.Server` then waits `:unavailable`, and a `:server`-mode `AgentProcess.get_agent/1`
+  logs a warning and returns its config without the stored history instead of crashing.
 - A memory holds each message's encoding beside its content: histories heavy in JSON tool
   results take up to about twice the memory they did.
 - `Compactor.WindowManager`'s `tokens_removed` sums the dropped messages' cached estimates, the
