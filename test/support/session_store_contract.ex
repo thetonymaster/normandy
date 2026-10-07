@@ -53,6 +53,40 @@ defmodule Normandy.SessionStoreContract do
         assert Enum.map(fe2, & &1.content) == ["a", "b", "d"]
       end
 
+      # Turn.Server stores each compaction as a "compaction" entry whose content is the
+      # conversation after it (Task 6.2g); AgentMemory.from_entries/1 applies the last one.
+      test "a compaction snapshot round-trips in order, and a fork before it does not see it",
+           %{handle: h} do
+        alias Normandy.Components.AgentMemory
+
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry("user", "a"))
+        {:ok, before} = @store.append_entry(h, "s1", contract_entry("assistant", "b"))
+
+        snapshot = %{
+          version: 1,
+          entries: [%{id: "k1", turn_id: "t", role: "user", content: "summary of a and b"}]
+        }
+
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry("compaction", snapshot))
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry("user", "c"))
+
+        assert {:ok, entries} = @store.history(h, "s1")
+        assert Enum.map(entries, & &1.role) == ["user", "assistant", "compaction", "user"]
+        assert Enum.at(entries, 2).content == snapshot
+
+        restored = entries |> AgentMemory.from_entries() |> AgentMemory.messages()
+        assert Enum.map(restored, & &1.content) == ["summary of a and b", "c"]
+
+        {:ok, forked} = @store.fork(h, "s1", before)
+        assert {:ok, fe} = @store.history(h, forked)
+
+        assert fe
+               |> AgentMemory.from_entries()
+               |> AgentMemory.messages()
+               |> Enum.map(& &1.content) ==
+                 ["a", "b"]
+      end
+
       test "fork on an unknown entry errors", %{handle: h} do
         {:ok, _} = @store.append_entry(h, "s1", contract_entry("user", "a"))
         assert {:error, _} = @store.fork(h, "s1", "no-such-entry")

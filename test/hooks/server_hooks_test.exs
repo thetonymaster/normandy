@@ -454,7 +454,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert Process.alive?(srv)
     end
 
-    test "after a restart, after_compact reports the dropped messages again under the same ids" do
+    test "after a restart, the memory is the compacted one: nothing is dropped twice" do
       store = InMemory.new()
       session = sid()
       hooks = [probe()]
@@ -473,12 +473,17 @@ defmodule Normandy.Hooks.ServerHooksTest do
       ids = Enum.map(dropped, & &1.id)
       assert ids != []
 
+      {_state, live} = :sys.get_state(srv)
+      live_ids = live.config.memory |> AgentMemory.entry_chain() |> Enum.map(& &1.id)
+
       :ok = :gen_statem.stop(srv)
       {:ok, srv2} = start(session, hooks, opts)
 
       assert {:ok, _} = Turn.Server.run(srv2, "three")
       assert_receive {:hook, :p, :after_compact, [dropped_again, _meta, _ctx]}
-      assert Enum.take(Enum.map(dropped_again, & &1.id), length(ids)) == ids
+      dropped_again_ids = Enum.map(dropped_again, & &1.id)
+      assert dropped_again_ids == live_ids
+      assert MapSet.disjoint?(MapSet.new(dropped_again_ids), MapSet.new(ids))
     end
 
     test "a compactor crash is a :task_down TurnError, not a hook crash" do
@@ -500,7 +505,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert Process.alive?(srv)
     end
 
-    test "after_compact gets dropped entries under their store ids; injections stay out of the store" do
+    test "after_compact gets dropped entries under their store ids; injections are stored only in the compaction" do
       store = InMemory.new()
       session = sid()
       hooks = [probe(returns: [after_compact: {:inject, ["remember: metric"]}])]
@@ -522,6 +527,11 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
       {:ok, stored} = InMemory.history(store, session)
       refute Enum.any?(stored, &(&1.content == "remember: metric"))
+
+      assert [%{content: %{version: 1, entries: snapshot}}] =
+               Enum.filter(stored, &(&1.role == "compaction"))
+
+      assert Enum.any?(snapshot, &(&1.content == "remember: metric"))
 
       {_state, data} = :sys.get_state(srv)
 

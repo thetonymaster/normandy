@@ -20,6 +20,7 @@ defmodule Normandy.Components.AgentMemory do
 
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.BaseIOSchema
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.Message
   alias Normandy.Context.WindowManager
   alias Normandy.Options
@@ -475,11 +476,37 @@ defmodule Normandy.Components.AgentMemory do
   `SessionStore.history/2`). The `head` becomes the last entry's id and the
   `current_turn_id` the last entry's `turn_id`, so the active branch reconstructs.
   Each entry's encoding is computed here, once.
+
+  An entry whose role is `"compaction"` is the snapshot `Turn.Server` stores after a
+  compaction: its content, `%{version: 1, entries: [%{id: _, turn_id: _, role: _,
+  content: _}]}`, is the whole conversation as that compaction left it. The memory is
+  then the **last** snapshot's entries followed by the entries stored after it, linked
+  in that order; the entries before that snapshot and the snapshot entry itself are not
+  in the memory. A `"compaction"` entry of any other shape raises `ArgumentError`.
   """
   @spec from_entries([Entry.t()]) :: t()
   def from_entries([]), do: new_memory()
 
   def from_entries(entries) when is_list(entries) do
+    case split_at_last_compaction(entries) do
+      :none -> stored_chain(entries)
+      {snapshot, later} -> compacted_chain(snapshot, later)
+    end
+  end
+
+  @doc false
+  # The content of the "compaction" entry Turn.Server stores after a compaction (see
+  # from_entries/1): the active branch as plain maps.
+  @spec compaction_content(t()) :: %{version: 1, entries: [map()]}
+  def compaction_content(%__MODULE__{} = memory) do
+    %{
+      version: 1,
+      entries: Enum.map(entry_chain(memory), &Map.take(&1, [:id, :turn_id, :role, :content]))
+    }
+  end
+
+  # The store's own chain: each entry keeps the parent link the store gave it.
+  defp stored_chain(entries) do
     last = List.last(entries)
 
     %__MODULE__{
@@ -488,6 +515,50 @@ defmodule Normandy.Components.AgentMemory do
       current_turn_id: last.turn_id,
       max_messages: nil
     }
+  end
+
+  # The snapshot's conversation, then the entries stored after it, each linked to the one
+  # before it (a stored entry after the snapshot names the snapshot entry as its parent).
+  # current_turn_id is the last stored entry's, the snapshot's when nothing follows it.
+  defp compacted_chain(snapshot, later) do
+    {entries, head} =
+      snapshot
+      |> snapshot_entries()
+      |> Enum.concat(later)
+      |> Enum.map(&fill_entry/1)
+      |> Enum.reduce({%{}, nil}, &link_entry/2)
+
+    %__MODULE__{
+      entries: entries,
+      head: head,
+      current_turn_id: List.last([snapshot | later]).turn_id,
+      max_messages: nil
+    }
+  end
+
+  defp split_at_last_compaction(entries) do
+    case entries |> Enum.reverse() |> Enum.split_while(&(&1.role != "compaction")) do
+      {_later_newest_first, []} -> :none
+      {later_newest_first, [snapshot | _]} -> {snapshot, Enum.reverse(later_newest_first)}
+    end
+  end
+
+  defp snapshot_entries(%Entry{content: %{version: 1, entries: entries}}) when is_list(entries) do
+    Enum.map(entries, fn %{id: id, turn_id: turn_id, role: role, content: content} ->
+      %Entry{id: id, turn_id: turn_id, role: role, content: content}
+    end)
+  end
+
+  defp snapshot_entries(%Entry{id: id, content: %{version: version}}) when version != 1 do
+    raise ArgumentError,
+          "AgentMemory.from_entries/1: compaction entry #{inspect(id)} has snapshot version " <>
+            "#{inspect(version)}; this Normandy reads version 1"
+  end
+
+  defp snapshot_entries(%Entry{id: id, content: content}) do
+    raise ArgumentError,
+          "AgentMemory.from_entries/1: compaction entry #{inspect(id)} expected content " <>
+            "%{version: 1, entries: [...]}, got: " <> Describe.type_of(content)
   end
 
   @spec dump(t()) :: String.t()

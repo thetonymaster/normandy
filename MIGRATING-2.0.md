@@ -1145,15 +1145,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   every kept message: thinking replayed after a summary or a cut no longer matches the
   history it was produced with, and models that check replayed thinking reject it. It happens
   only when the conversation no longer fits the window.
-- `Turn.Server` does not store compaction. Compaction changes the server's in-memory
-  conversation only; the session store keeps every message. A session restored from the
-  store (after passivation, a restart or a handoff to another node) starts again from the
-  full history and compacts again once it exceeds the window, so a `:summarize` compactor
-  pays for a new summary, which can differ from the first. Texts injected by `after_compact`
-  hooks are not stored either. Requests after a restore therefore differ from the requests
-  before it: the prompt cache misses, and thinking produced after a compaction can be
-  replayed after a different history, which models that check replayed thinking can reject.
-  This is a known limit of this release; a later 2.0 release stores compaction.
+- `Turn.Server` stores each compaction, and a restored session starts from the compacted
+  conversation; see section 39.
 
 ## 36. Model-facing text and schemas
 
@@ -1477,6 +1470,24 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   still returns after the sweep. A session whose check or start raises, exits or throws is
   logged by the failure's type (`ResumeReaper: resuming "sid" crashed: ArgumentError`) and
   skipped; it used to stop the sweep and crash the reaper.
+- `Turn.Server` stores each compaction. After a compaction that changed memory it appends a
+  history entry with role `"compaction"` whose content is `%{version: 1, entries: [%{id:,
+  turn_id:, role:, content:}]}`: the whole conversation the compaction left (the summary, the
+  kept messages with their thinking stripped, `after_compact` injections). Every message stays
+  stored as before. `AgentMemory.from_entries/1`, which `Turn.Server` and `AgentProcess` in
+  `:server` mode use to rebuild memory, applies the last such entry: the memory is its
+  conversation followed by the entries stored after it. A session restored after
+  passivation, a restart or a handoff therefore continues from the compacted conversation: the
+  prompt cache keeps hitting, a `:summarize` compactor does not pay for a new summary, and
+  `after_compact` does not report the same messages twice.
+- Code that reads `SessionStore.history/2` itself sees these entries; pass the list to
+  `AgentMemory.from_entries/1`, or skip entries whose role is `"compaction"`. A `"compaction"`
+  entry of another version raises `ArgumentError` in `from_entries/1` (`Turn.Server` then
+  waits `:unavailable`). Forking a session at an entry before a compaction gives the
+  uncompacted conversation up to that entry.
+- If the store refuses the compaction entry, the turn goes on and the failure is logged
+  (`Turn.Server could not store a compaction (session "sid"): <tag>; a restart rebuilds the
+  uncompacted conversation`); a restart then rebuilds the full conversation, as in 1.x.
 
 ## New, non-breaking
 

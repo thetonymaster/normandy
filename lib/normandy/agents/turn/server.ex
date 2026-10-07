@@ -865,6 +865,7 @@ defmodule Normandy.Agents.Turn.Server do
       )
       when is_reference(task_ref) do
     Process.demonitor(task_ref, [:flush])
+    persist_compaction(data, config2, meta)
     {state, effects} = Turn.step(data.turn_state, {:compaction_done, meta})
     interpret(effects, %{data | turn_state: state, task_ref: nil, config: config2})
   end
@@ -1746,6 +1747,32 @@ defmodule Normandy.Agents.Turn.Server do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  # A compaction rewrote the conversation (messages dropped or summarized, thinking
+  # stripped, after_compact injections added): store what it left as one "compaction"
+  # entry, so a restart rebuilds this memory (AgentMemory.from_entries/1) instead of the
+  # full history. A failed write is logged by its tag and the turn goes on: every message
+  # is still stored, and a restart then rebuilds the uncompacted conversation.
+  defp persist_compaction(%Data{store: {mod, handle}, session_id: sid}, config, %{compacted: true}) do
+    entry = %AgentMemory.Entry{
+      turn_id: current_turn_id(config),
+      role: "compaction",
+      content: AgentMemory.compaction_content(config.memory)
+    }
+
+    case store_call(fn -> mod.append_entry(handle, sid, entry) end) do
+      {:ok, _id} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Turn.Server could not store a compaction (session #{inspect(sid)}): " <>
+            "#{describe_reason(reason)}; a restart rebuilds the uncompacted conversation"
+        )
+    end
+  end
+
+  defp persist_compaction(_data, _config, _meta), do: :ok
 
   # The id of the entry `after_config`'s memory gained over `before`'s; nil when the
   # append handler added none (the store then assigns one).
