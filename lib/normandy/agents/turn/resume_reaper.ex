@@ -30,6 +30,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
 
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Start
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
 
   @type opts :: [
@@ -163,7 +164,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       {:error, reason} ->
         # Don't let a store failure silently suppress eager handoff on :nodedown —
         # surface it so operators can detect and triage missed reaps.
-        Logger.warning("ResumeReaper: list_resumable failed: #{inspect(reason)}")
+        Logger.warning("ResumeReaper: list_resumable failed: #{Describe.reason_tag(reason)}")
         :ok
     end
   end
@@ -180,7 +181,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
 
       {:error, reason} ->
         Logger.warning(
-          "ResumeReaper: could not look up #{inspect(sid)} in the registry: #{inspect(reason)}"
+          "ResumeReaper: could not look up #{inspect(sid)} in the registry: #{Describe.reason_tag(reason)}"
         )
 
         false
@@ -195,7 +196,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
       {:error, reason} ->
         # A lazy caller can still rehydrate the session later; log the missed reap.
         Logger.warning(
-          "ResumeReaper: could not load the turn state of #{inspect(sid)}: #{inspect(reason)}"
+          "ResumeReaper: could not load the turn state of #{inspect(sid)}: #{Describe.reason_tag(reason)}"
         )
 
         false
@@ -225,11 +226,11 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
         :ok
 
       {:error, reason} ->
-        Logger.warning("ResumeReaper: failed to resume #{sid}: #{inspect(reason)}")
+        Logger.warning("ResumeReaper: failed to resume #{sid}: #{Describe.reason_tag(reason)}")
 
       other ->
         Logger.warning(
-          "ResumeReaper: unexpected start_server result for #{sid}: #{inspect(other)}"
+          "ResumeReaper: unexpected start_server result for #{sid}: #{Describe.type_of(other)}"
         )
     end
   end

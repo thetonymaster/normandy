@@ -1326,6 +1326,13 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `Protocol.UndefinedError` and the other exceptions whose message shows a term give their
   module only. A tool that calls `:erlang.error({:boom, data})` gives
   `"Tool execution failed: ErlangError: :boom"` (the tag only; it used to quote the term).
+- Log lines name an error reason by its tag (the atom, a tagged tuple's tag or an exception's
+  module), not its `inspect/1`: `Turn.Server`'s "could not start session" and "dropped an
+  approval" warnings (a credential provider failure reads `credential provider
+  MyCreds failed: :vault_denied`), `Turn.ResumeReaper`'s missed-reap warnings,
+  `AgentProcess.get_agent` store faults and `AgentPool` start failures. A refused template's
+  or hook list's message is still logged in full (it names fields and modules only). Log
+  matchers that looked for a reason's inner terms must match its tag.
 - `inspect/1` of a `ClaudioAdapter` or `OpenAICompatibleAdapter` shows
   `options[:req_options]` and `options[:headers]` as `"**redacted**"`, and its `base_url`
   (and `options[:base_url]`) as scheme, host, port and path only, like the shared breaker's

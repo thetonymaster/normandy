@@ -44,6 +44,7 @@ defmodule Normandy.Coordination.AgentPool do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Coordination.AgentSupervisor
   alias Normandy.Options
 
@@ -451,7 +452,7 @@ defmodule Normandy.Coordination.AgentPool do
         {:ok, pid, put_in(state.agents[pid], Process.monitor(pid))}
 
       {:error, reason} ->
-        Logger.error("Failed to start agent in pool: #{inspect(reason)}")
+        Logger.error("Failed to start agent in pool: #{Describe.reason_tag(reason)}")
         :error
     end
   end

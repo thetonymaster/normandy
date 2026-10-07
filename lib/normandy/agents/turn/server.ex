@@ -162,6 +162,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Hooks.Runner
   alias Normandy.Hooks.ServerGlue
@@ -407,11 +408,20 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # A handler crash was logged where it happened, and its exception can carry hook data:
-  # name the handler only. Store reasons are logged as before.
+  # name the handler only. A refused template's or hook list's message names fields and
+  # modules only. Anything else (a store or credential provider reason) is logged by its
+  # tag, never its terms (decision 6): a provider's reason can hold its opts or a secret.
   defp describe_reason({:handler_crashed, name, _exception}),
     do: "handler #{inspect(name)} crashed"
 
-  defp describe_reason(reason), do: inspect(reason)
+  defp describe_reason({tag, message})
+       when tag in [:invalid_template, :invalid_hooks] and is_binary(message),
+       do: "#{inspect(tag)}: #{message}"
+
+  defp describe_reason({:credential_unavailable, mod, reason}),
+    do: "credential provider #{inspect(mod)} failed: #{Describe.reason_tag(reason)}"
+
+  defp describe_reason(reason), do: Describe.reason_tag(reason)
 
   # run/2's error while the session cannot be loaded or started. A hook crash or a store
   # write fault while starting a new session is a turn-failure reason; it is nested as

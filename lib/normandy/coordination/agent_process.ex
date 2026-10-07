@@ -808,7 +808,10 @@ defmodule Normandy.Coordination.AgentProcess do
         %{agent | memory: rebuilt}
 
       {:error, reason} ->
-        Logger.warning("AgentProcess #{sid}: get_agent could not read store: #{inspect(reason)}")
+        Logger.warning(
+          "AgentProcess #{sid}: get_agent could not read store: #{Describe.reason_tag(reason)}"
+        )
+
         agent
     end
   end

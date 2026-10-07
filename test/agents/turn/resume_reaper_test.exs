@@ -238,6 +238,70 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     {log, Agent.get(agent, & &1.calls)}
   end
 
+  # A credential provider that fails with a reason holding a secret.
+  defmodule FailingCreds do
+    @moduledoc false
+    @behaviour Normandy.Behaviours.CredentialProvider
+    @impl true
+    def get_token(_provider, opts),
+      do: {:error, {:vault_denied, Keyword.fetch!(opts, :marker)}}
+  end
+
+  # Starts a real, unlinked Turn.Server, so its start-up log is the reaper's to capture.
+  defmodule ServerSup do
+    @moduledoc false
+    def start_server(_handle, opts) do
+      {:ok, pid} = :gen_statem.start(Turn.Server, opts, [])
+      {:ok, pid}
+    end
+  end
+
+  # Decision 6: a resumed session whose credential provider fails is logged by the
+  # provider's module and the reason's tag, never the reason's terms.
+  test "a resumed session whose credential lookup fails logs no provider reason terms" do
+    marker = "SECRET-REAPER-#{System.unique_integer([:positive])}"
+    store = InMemory.new()
+    reg = Native.new()
+    {:ok, cat} = Catalog.start_link([])
+
+    :ok =
+      Catalog.put(cat, "kind-a", %{
+        toolset: nil,
+        before_hooks: [],
+        after_hooks: [],
+        client_builder: fn token -> %{api_key: token} end
+      })
+
+    tmpl =
+      %{
+        Normandy.Test.TurnConfig.build()
+        | behaviours: %Normandy.Behaviours.Config{credential: {FailingCreds, [marker: marker]}}
+      }
+      |> Normandy.Agents.ConfigTemplate.from_config("kind-a", :eager)
+
+    :ok = InMemory.save_config_template(store, "s-creds", tmpl)
+    :ok = InMemory.save_turn_state(store, "s-creds", %Turn.State{status: :steering})
+
+    state = %{
+      store: {InMemory, store},
+      registry: {Native, reg},
+      supervisor: nil,
+      supervisor_mod: ServerSup,
+      template_provider: {Catalog, cat},
+      host_server_opts: []
+    }
+
+    log = ExUnit.CaptureLog.capture_log(fn -> assert :ok = ResumeReaper.reap(state) end)
+
+    assert {:ok, pid} = Native.whereis(reg, "s-creds")
+    :gen_statem.stop(pid)
+
+    assert log =~ "could not start session \"s-creds\""
+    assert log =~ inspect(FailingCreds)
+    assert log =~ ":vault_denied"
+    refute log =~ marker
+  end
+
   describe "the via-registration race" do
     test "a bare race is retried until the start succeeds" do
       race = {:error, {:process_not_registered_via, Horde.Registry}}
