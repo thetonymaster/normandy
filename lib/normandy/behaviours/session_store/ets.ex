@@ -1,21 +1,22 @@
 defmodule Normandy.Behaviours.SessionStore.ETS do
   @moduledoc """
   ETS-backed `SessionStore` — fast, in-node. A GenServer owns a private ETS table
-  and serializes every mutation through its mailbox, so concurrent appends/forks to
-  the same `session_id` cannot clobber each other (the read-modify-write of a
-  session's `%AgentMemory{}` is exclusive). The handle is the owner pid.
+  and serializes every mutation through its mailbox, so concurrent appends and forks
+  to the same `session_id` cannot clobber each other. The handle is the owner pid.
 
-  Each session's `AgentMemory` is stored under `{:session, session_id}` and its
-  opaque turn state under `{:turn_state, session_id}`. The table is private to the
-  owner; start one store per logical session space. Not yet consumed by the turn
-  loop (Phase 4 wires it as the writer).
+  One row per entry: `{{:entry, session_id, id}, %Entry{}}`, plus the session's head
+  `{{:head, session_id}, id}`, its opaque turn state `{{:turn_state, session_id}, term}`
+  and its config template `{{:config_template, session_id}, template}`. An append
+  writes two rows whatever the history's length; `history/2` walks `parent_id` from
+  the head (O(n), once per server start). `fork/3` copies the chain from the fork
+  point back to the root into the new session. The table is private to the owner;
+  start one store per logical session space.
   """
 
   @behaviour Normandy.Behaviours.SessionStore
 
   use GenServer
 
-  alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Options
 
@@ -97,39 +98,37 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   @impl GenServer
   def init(opts) do
     name = Keyword.fetch!(opts, :name)
-    {:ok, :ets.new(name, [:set, :private])}
+    # Ordered, so a session's entry rows ({:entry, sid, _}) are one key range.
+    {:ok, :ets.new(name, [:ordered_set, :private])}
   end
 
   @impl GenServer
   def handle_call({:append_entry, session_id, entry}, _from, table) do
-    memory = lookup_memory(table, session_id)
     id = entry.id || UUID.uuid4()
-    entry = %{entry | id: id, parent_id: entry.parent_id || memory.head}
-    memory = %{memory | entries: Map.put(memory.entries, id, entry), head: id}
-    :ets.insert(table, {{:session, session_id}, memory})
+    entry = %{entry | id: id, parent_id: entry.parent_id || head(table, session_id)}
+    :ets.insert(table, [{{:entry, session_id, id}, entry}, {{:head, session_id}, id}])
     {:reply, {:ok, id}, table}
   end
 
   def handle_call({:history, session_id}, _from, table) do
-    {:reply, {:ok, table |> lookup_memory(session_id) |> AgentMemory.entry_chain()}, table}
+    {:reply, {:ok, chain(table, session_id, head(table, session_id))}, table}
   end
 
   def handle_call({:fork, session_id, from_entry_id}, _from, table) do
     reply =
-      case :ets.lookup(table, {:session, session_id}) do
-        [] ->
+      cond do
+        head(table, session_id) == nil ->
           {:error, :no_such_session}
 
-        [{_, %AgentMemory{} = memory}] ->
-          case AgentMemory.fork(memory, from_entry_id) do
-            {:error, reason} ->
-              {:error, reason}
+        not :ets.member(table, {:entry, session_id, from_entry_id}) ->
+          {:error, :no_such_entry}
 
-            {:ok, forked} ->
-              new_id = UUID.uuid4()
-              :ets.insert(table, {{:session, new_id}, forked})
-              {:ok, new_id}
-          end
+        true ->
+          new_id = UUID.uuid4()
+          copied = chain(table, session_id, from_entry_id)
+          rows = for %Entry{id: id} = e <- copied, do: {{:entry, new_id, id}, e}
+          :ets.insert(table, [{{:head, new_id}, from_entry_id} | rows])
+          {:ok, new_id}
       end
 
     {:reply, reply, table}
@@ -177,10 +176,26 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
     {:reply, {:ok, ids}, table}
   end
 
-  defp lookup_memory(table, session_id) do
-    case :ets.lookup(table, {:session, session_id}) do
-      [{_, %AgentMemory{} = memory}] -> memory
-      [] -> AgentMemory.new_memory()
+  defp head(table, session_id) do
+    case :ets.lookup(table, {:head, session_id}) do
+      [{_, id}] -> id
+      [] -> nil
+    end
+  end
+
+  # The chain from `id` back to the root, chronological. Stops at a missing parent or
+  # an entry already seen, as AgentMemory.entry_chain/1 does (an append may name any
+  # parent_id).
+  defp chain(table, session_id, id), do: chain(table, session_id, id, %{}, [])
+
+  defp chain(_table, _sid, nil, _seen, acc), do: acc
+
+  defp chain(table, session_id, id, seen, acc) do
+    with false <- Map.has_key?(seen, id),
+         [{_, %Entry{parent_id: parent} = entry}] <- :ets.lookup(table, {:entry, session_id, id}) do
+      chain(table, session_id, parent, Map.put(seen, id, true), [entry | acc])
+    else
+      _stop -> acc
     end
   end
 end

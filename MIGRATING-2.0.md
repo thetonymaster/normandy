@@ -1528,3 +1528,6 @@ code you wrote against 1.x must follow the changes below.
   compaction.
 - `Normandy.Schema.Wire.encodable/1` turns a schema specification into what Normandy sends
   the model: properties in declaration order, no `"$schema"` or `"title"`.
+- `SessionStore.ETS` keeps one row per entry: an append writes two rows instead of copying the
+  session's whole history (B5), and a fork copies only the history up to the fork point. The
+  handle and every return value are unchanged.
