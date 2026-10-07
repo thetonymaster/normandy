@@ -5,6 +5,7 @@ defmodule Normandy.Resilience.TelemetryTest do
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
   alias Normandy.Resilience.Retry
+  alias Normandy.Test.OwnLog
   alias Normandy.Test.TelemetryCapture
 
   @state_change [:normandy, :circuit_breaker, :state_change]
@@ -146,8 +147,10 @@ defmodule Normandy.Resilience.TelemetryTest do
     test "a raise is typed by its module, and the log holds no message or stacktrace" do
       ref = attach_retry()
 
+      # Retry logs in the caller; only this process's events are kept, since an
+      # async capture also sees other tests' crash reports and their stack frames.
       log =
-        ExUnit.CaptureLog.capture_log([metadata: :all], fn ->
+        OwnLog.capture([metadata: :all], fn ->
           Retry.with_retry(fn -> raise ArgumentError, "SECRET-in-message" end,
             max_attempts: 2,
             base_delay: 0,
