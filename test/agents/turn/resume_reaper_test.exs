@@ -6,6 +6,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
   alias Normandy.Agents.Turn.ResumeReaper
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.SessionRegistry.Horde.Via, as: HordeVia
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Test.TurnConfig
@@ -312,7 +313,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
 
   describe "the via-registration race" do
     test "a bare race is retried until the start succeeds" do
-      race = {:error, {:process_not_registered_via, Horde.Registry}}
+      race = {:error, {:process_not_registered_via, HordeVia}}
       # whereis: the reaper's own not_running? check, then one lookup per race.
       {log, calls} = race_reap([race, race, {:ok, self()}], [:none, :none, :none])
 
@@ -321,7 +322,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     end
 
     test "a race whose winner is now registered starts nothing further" do
-      race = {:error, {:process_not_registered_via, Horde.Registry}}
+      race = {:error, {:process_not_registered_via, HordeVia}}
       {log, calls} = race_reap([race], [:none, {:ok, self()}])
 
       assert calls == 1
@@ -329,7 +330,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     end
 
     test "the supervisor-nested race shape is retried too" do
-      race = {:error, {{:process_not_registered_via, Horde.Registry}, :child}}
+      race = {:error, {{:process_not_registered_via, HordeVia}, :child}}
       {log, calls} = race_reap([race, {:ok, self()}], [:none, :none])
 
       assert calls == 2

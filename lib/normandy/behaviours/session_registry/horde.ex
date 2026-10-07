@@ -11,6 +11,7 @@ if Code.ensure_loaded?(Horde.Registry) do
     """
     @behaviour Normandy.Behaviours.SessionRegistry
 
+    alias Normandy.Behaviours.SessionRegistry.Horde.Via
     alias Normandy.Options
 
     @start_link_opts_schema NimbleOptions.new!(
@@ -122,9 +123,13 @@ if Code.ensure_loaded?(Horde.Registry) do
       :ok
     end
 
-    @doc "Via-name for an atomic, supervisor-driven start (see SessionRegistry.child_name/2)."
+    @doc """
+    Via-name for an atomic, supervisor-driven start (see SessionRegistry.child_name/2).
+    It names `SessionRegistry.Horde.Via`, whose registration is visible to
+    `whereis_name/1` as soon as it answers, as a `:gen_statem` start requires.
+    """
     @impl true
-    def child_name(handle, session_id), do: {:via, Horde.Registry, {handle, session_id}}
+    def child_name(handle, session_id), do: {:via, Via, {handle, session_id}}
 
     defp unique_name do
       String.to_atom(

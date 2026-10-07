@@ -1580,6 +1580,17 @@ code you wrote against 1.x must follow the changes below.
   created by a 2.0 pre-release has the old layout: `MemoryStore.Mnesia.create_tables/1` now
   raises, naming both layouts; delete it (`:mnesia.delete_table/1`) and create it again. The
   same check applies to the session store's Mnesia tables, whose layout is unchanged.
+- `Turn.Server` under a Horde registry no longer fails to start with
+  `{:process_not_registered_via, Horde.Registry}`. `Horde.Registry` answered a `:via`
+  registration before its lookup could see it, and a `:gen_statem` (which `Turn.Server` is)
+  checks that lookup right after registering: 0.5–1.4% of starts failed on one node, nearly
+  all under concurrent starts. `Turn.Session` and `ResumeReaper` retried them; a direct
+  `Turn.Supervisor.Horde.start_server/2` caller got the error. `SessionRegistry.Horde.child_name/2`
+  now returns `{:via, Normandy.Behaviours.SessionRegistry.Horde.Via, {registry, session_id}}`,
+  whose `register_name/2` returns once the registry has applied the registration. Code that
+  matched `{:via, Horde.Registry, _}` from `child_name/2` must match the new module; the name
+  term `{registry, session_id}`, the registry process and `Horde.Registry.lookup/2` are
+  unchanged.
 
 ## 41. Telemetry and logs
 
