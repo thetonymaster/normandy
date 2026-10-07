@@ -21,6 +21,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Batch.Processor
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.Hooks
+  alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.Message
@@ -77,6 +78,7 @@ defmodule Normandy.Agents.BaseAgent do
     opts = check_init!(opts)
     client = Keyword.fetch!(opts, :client)
     behaviours = Keyword.fetch!(opts, :behaviours)
+    :ok = warn_deprecated_catalog(behaviours)
 
     memory = Keyword.fetch!(opts, :memory) || AgentMemory.new_memory()
 
@@ -130,6 +132,15 @@ defmodule Normandy.Agents.BaseAgent do
     :ok = validate_hooks!(behaviours)
     opts
   end
+
+  @doc false
+  # init/1 and ConfigTemplate.rebuild/3: ModelCatalog.Static logs its deprecation once
+  # per VM. Only the module is checked, never the catalog's opts.
+  @spec warn_deprecated_catalog(Config.t() | nil) :: :ok
+  def warn_deprecated_catalog(%Config{model_catalog: {ModelCatalog.Static, _opts}}),
+    do: ModelCatalog.Static.warn_deprecated()
+
+  def warn_deprecated_catalog(_behaviours), do: :ok
 
   @doc """
   Returns `config` with its memory back to the memory it was built with (`init/1`'s

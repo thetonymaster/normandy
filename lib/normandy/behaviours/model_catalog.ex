@@ -59,10 +59,41 @@ defmodule Normandy.Behaviours.ModelCatalog do
     `{ModelCatalog.Static, []}`, still decode (`binary_to_term(_, [:safe])` raises
     on an atom that doesn't exist) and still work: `context_window/2` delegates to
     `ModelsAPI`. The old static model table is gone.
+
+    A config that names it logs one deprecation warning per VM, from
+    `Normandy.Agents.BaseAgent.init/1` or `Normandy.Agents.ConfigTemplate.rebuild/3`.
     """
     @behaviour Normandy.Behaviours.ModelCatalog
 
+    require Logger
+
+    @warned_key {__MODULE__, :deprecation_warned}
+
     @impl true
     defdelegate context_window(model, opts), to: Normandy.Behaviours.ModelCatalog.ModelsAPI
+
+    @doc false
+    # Logs the deprecation once per VM (a :persistent_term flag); `BaseAgent.init/1` and
+    # `ConfigTemplate.rebuild/3` call it for a config whose model_catalog is this module.
+    # Two first calls racing may both log; every later call logs nothing.
+    @spec warn_deprecated() :: :ok
+    def warn_deprecated do
+      unless :persistent_term.get(@warned_key, false) do
+        :persistent_term.put(@warned_key, true)
+
+        Logger.warning(
+          "Normandy.Behaviours.ModelCatalog.Static is deprecated and will be removed in 3.0; " <>
+            "set model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}, which " <>
+            "answers the same (this warning is logged once per VM)"
+        )
+      end
+
+      :ok
+    end
+
+    @doc false
+    # The flag warn_deprecated/0 sets, for tests that check the warning.
+    @spec warned_key() :: {__MODULE__, :deprecation_warned}
+    def warned_key, do: @warned_key
   end
 end

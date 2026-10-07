@@ -261,6 +261,7 @@ defmodule Normandy.Agents.ConfigTemplate do
     |> struct(node_local_fields!(tmpl, supplement))
     |> BaseAgent.validate_compaction_config!({__MODULE__, :rebuild, 3})
     |> validate_client_options!()
+    |> tap(&BaseAgent.warn_deprecated_catalog(&1.behaviours))
   end
 
   @refs_behaviours [

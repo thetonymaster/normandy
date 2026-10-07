@@ -97,6 +97,9 @@ error); in 1.x it was `type: :unknown`.
   Models API through the agent's `ClaudioAdapter`.
 - `ModelCatalog.Static` is deprecated. It delegates to `ModelsAPI` and will be removed in 3.0.
   Its static model table is gone. Templates persisted by 1.x name it, which is why it stays.
+  A config that names it logs one warning per VM (from `BaseAgent.init/1` or
+  `ConfigTemplate.rebuild/3`); set `model_catalog: {ModelCatalog.ModelsAPI, []}` and re-save
+  persisted templates to silence it.
 - **Compaction now runs on current models.** Before, the static table didn't know them, so
   a real compactor silently did nothing. Now memory gets truncated, and the `:summarize`
   strategy makes extra paid LLM calls.
