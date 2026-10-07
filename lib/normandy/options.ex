@@ -62,6 +62,7 @@ defmodule Normandy.Options do
     :redix,
     :req_options,
     :secret,
+    :store_redix,
     :templates,
     :token,
     :transport_opts,

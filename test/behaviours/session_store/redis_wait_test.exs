@@ -14,8 +14,15 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitTest do
     {:ok, store: Redis.new(wait: {1, 50})}
   end
 
-  test "new/1 keeps the wait setting in the handle", %{store: store} do
-    assert {_conn, _ns, {1, 50}} = store
+  test "new/1 keeps the wait setting and its wait connections in the handle", %{store: store} do
+    assert {conn, _ns, {1, 50}, wait_conns} = store
+    assert tuple_size(wait_conns) == 4
+    refute conn in Tuple.to_list(wait_conns)
+    assert {_conn, _ns, {1, 50}, {_one}} = Redis.new(wait: {1, 50}, wait_connections: 1)
+  end
+
+  test "a wait of 0 replicas opens no wait connections" do
+    assert {_conn, _ns, {0, 0}} = Redis.new(wait: {0, 0})
   end
 
   test "an entry append fails when the replica wait is unmet", %{store: store} do

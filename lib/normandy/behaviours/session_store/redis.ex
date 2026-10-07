@@ -9,8 +9,9 @@ if Code.ensure_loaded?(Redix) do
     (turn state, config template, resume policy) lives in a hash; the ids of the sessions
     with a turn in flight live in the SET `"<namespace>:inflight"` for `list_resumable/1`.
 
-    The `handle` is `{conn, namespace}` or `{conn, namespace, wait}` (the host owns the
-    Redix connection, Oban-style).
+    The `handle` is `{conn, namespace}`, `{conn, namespace, wait}` or
+    `{conn, namespace, wait, wait_conns}` (the host owns the Redix connections,
+    Oban-style; `new/1` opens its own).
     All of a session's keys share a `{sid}` hash-tag so multi-key reads/forks stay in one
     Redis Cluster slot. Opaque values use `term_to_binary` / `binary_to_term(_, [:safe])`.
 
@@ -20,16 +21,31 @@ if Code.ensure_loaded?(Redix) do
     blocks on replica acknowledgement and returns `{:error, {:wait_unmet, acked, n}}`
     if unmet. Without it, `config :normandy, :redis_wait, {n, timeout_ms}` applies;
     the default `{0, 0}` does not wait. With replicas, `timeout_ms` must be positive:
-    Redis treats 0 as wait forever, which would stall the shared connection.
+    Redis treats 0 as wait forever.
+
+    ## Waited writes and connections
+
+    `WAIT` blocks the connection it runs on until the replicas acknowledge that
+    connection's own earlier writes, so a write and its `WAIT` must share a connection,
+    and every command queued behind them on it waits too. `wait_conns` is a tuple of
+    Redix connections used for nothing else: a session's waited writes and their `WAIT`
+    run on `elem(wait_conns, :erlang.phash2(session_id, tuple_size(wait_conns)))`, so one
+    session's writes stay in order and other sessions, reads and a registry sharing
+    `conn` do not queue behind its `WAIT`. `new/1` with a replica `:wait` opens
+    `:wait_connections` of them. A handle without `wait_conns` runs waited writes on
+    `conn`.
     """
     @behaviour Normandy.Behaviours.SessionStore
 
     alias Normandy.Behaviours.SessionStore.Codec
     alias Normandy.Components.AgentMemory.Entry
+    alias Normandy.Components.ContentBlock.Describe
     alias Normandy.Options
 
     # Entries copied per pipeline by fork/3.
     @copy_chunk 1_000
+
+    @default_wait_connections 4
 
     @new_opts_schema NimbleOptions.new!(
                        url: [
@@ -43,6 +59,12 @@ if Code.ensure_loaded?(Redix) do
                            "`{replicas, timeout_ms}` for `WAIT` after each write (default: " <>
                              "`config :normandy, :redis_wait`). With replicas, `timeout_ms` " <>
                              "must be positive."
+                       ],
+                       wait_connections: [
+                         type: :pos_integer,
+                         doc:
+                           "How many connections waited writes run on (default `4`); only " <>
+                             "with a `:wait` of one replica or more."
                        ],
                        namespace: [
                          type: :string,
@@ -58,9 +80,12 @@ if Code.ensure_loaded?(Redix) do
     #{Options.docs(@new_opts_schema)}
     """
     @spec new(keyword()) ::
-            {pid(), binary()} | {pid(), binary(), {non_neg_integer(), non_neg_integer()}}
+            {pid(), binary()}
+            | {pid(), binary(), {non_neg_integer(), non_neg_integer()}}
+            | {pid(), binary(), {pos_integer(), pos_integer()}, tuple()}
     def new(opts \\ []) do
       opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+      check_wait_connections!(opts)
 
       url =
         Keyword.get(
@@ -78,15 +103,52 @@ if Code.ensure_loaded?(Redix) do
       ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")
 
       case Keyword.fetch(opts, :wait) do
-        {:ok, wait} -> {conn, ns, check_wait!(wait, "SessionStore.Redis.new/1: :wait")}
-        :error -> {conn, ns}
+        {:ok, {0, _timeout} = wait} ->
+          {conn, ns, wait}
+
+        {:ok, wait} ->
+          k = Keyword.get(opts, :wait_connections, @default_wait_connections)
+
+          wait_conns =
+            for _ <- 1..k do
+              {:ok, wait_conn} = Redix.start_link(url)
+              wait_conn
+            end
+
+          {conn, ns, wait, List.to_tuple(wait_conns)}
+
+        :error ->
+          {conn, ns}
       end
     end
 
+    defp check_wait_connections!(opts) do
+      case {Keyword.fetch(opts, :wait_connections), Keyword.get(opts, :wait, {0, 0})} do
+        {{:ok, _k}, {0, _timeout}} ->
+          raise ArgumentError,
+                "Normandy.Behaviours.SessionStore.Redis.new/1: :wait_connections needs a " <>
+                  ":wait of one replica or more, got: " <>
+                  if(Keyword.has_key?(opts, :wait), do: "a :wait of 0 replicas", else: "no :wait")
+
+        _ ->
+          :ok
+      end
+    end
+
+    @doc false
+    # The `config :normandy, :redis_wait` setting, checked: `Normandy.Cluster` reads it
+    # once when it builds the Redis combo's specs and handles.
+    @spec app_env_wait!() :: {non_neg_integer(), non_neg_integer()}
+    def app_env_wait!,
+      do:
+        check_wait!(
+          Application.get_env(:normandy, :redis_wait, {0, 0}),
+          "SessionStore.Redis: the :redis_wait app env"
+        )
+
     @impl true
     def append_entry(handle, session_id, %Entry{} = entry) do
-      {conn, ns} = conn_ns(handle)
-      wait = wait_setting!(handle)
+      {conn, ns, wait} = write_target!(handle, session_id)
       fields = encode_entry_fields(entry)
 
       with {:ok, stream_id} <-
@@ -131,8 +193,7 @@ if Code.ensure_loaded?(Redix) do
 
     @impl true
     def save_turn_state(handle, session_id, term, inflight?) when is_boolean(inflight?) do
-      {conn, ns} = conn_ns(handle)
-      wait = wait_setting!(handle)
+      {conn, ns, wait} = write_target!(handle, session_id)
       hset = ["HSET", meta_key(ns, session_id), "turn_state", encode(term)]
 
       # Not a MULTI: the index key is in another cluster slot. Ordered so a Redis crash
@@ -159,8 +220,7 @@ if Code.ensure_loaded?(Redix) do
 
     @impl true
     def save_config_template(handle, session_id, tmpl) do
-      {conn, ns} = conn_ns(handle)
-      wait = wait_setting!(handle)
+      {conn, ns, wait} = write_target!(handle, session_id)
 
       rp =
         case tmpl do
@@ -204,8 +264,7 @@ if Code.ensure_loaded?(Redix) do
 
     @impl true
     def delete_session(handle, session_id) do
-      {conn, ns} = conn_ns(handle)
-      wait = wait_setting!(handle)
+      {conn, ns, wait} = write_target!(handle, session_id)
 
       # A fork copies its prefix into its own stream, so the session's keys are all its
       # own. The index entry goes last: a crash in between leaves an extra member whose
@@ -224,17 +283,25 @@ if Code.ensure_loaded?(Redix) do
     # Default {0, 0} is a no-op (single Redis); >0 fails if the ack target is unmet.
     defp conn_ns({conn, ns}), do: {conn, ns}
     defp conn_ns({conn, ns, _wait}), do: {conn, ns}
+    defp conn_ns({conn, ns, _wait, _wait_conns}), do: {conn, ns}
 
-    # The handle's wait setting, else the :redis_wait app env, else no wait. Read
-    # before a write, so a bad setting fails the write instead of following it.
-    defp wait_setting!({_conn, _ns, wait}), do: wait
+    # The connection a session's write and its WAIT run on, the namespace and the wait.
+    # WAIT waits for the earlier writes of its own connection, so both share one; with
+    # wait_conns a session always gets the same one, so its writes stay in order. A
+    # handle with no wait of its own reads the :redis_wait app env before the write, so
+    # a bad setting fails the write instead of following it.
+    defp write_target!({conn, ns}, _session_id), do: {conn, ns, app_env_wait!()}
+    defp write_target!({conn, ns, wait}, _session_id), do: {conn, ns, wait}
 
-    defp wait_setting!({_conn, _ns}),
-      do:
-        check_wait!(
-          Application.get_env(:normandy, :redis_wait, {0, 0}),
-          "SessionStore.Redis: the :redis_wait app env"
-        )
+    defp write_target!({_conn, ns, wait, wait_conns}, session_id)
+         when is_tuple(wait_conns) and tuple_size(wait_conns) > 0,
+         do: {elem(wait_conns, :erlang.phash2(session_id, tuple_size(wait_conns))), ns, wait}
+
+    defp write_target!({_conn, _ns, _wait, wait_conns}, _session_id) do
+      raise ArgumentError,
+            "Normandy.Behaviours.SessionStore.Redis: the handle's wait_conns must be a " <>
+              "non-empty tuple of Redix connections, got: " <> Describe.type_of(wait_conns)
+    end
 
     # WAIT with a 0 timeout blocks until the replicas answer, possibly forever, and
     # the connection is shared, so every later command would queue behind it.

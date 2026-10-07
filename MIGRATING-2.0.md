@@ -1558,6 +1558,22 @@ code you wrote against 1.x must follow the changes below.
   that stops mid-turn (`Turn.Session.run/2` routes a turn again only after
   `{:shutdown, :passivated}` or `:noproc`, see `## 39.`); the session goes on where the key
   points.
+- `SessionStore.Redis.new/1` with a `:wait` of one replica or more opens `:wait_connections`
+  (default 4) more Redix connections and returns the four-element handle
+  `{conn, namespace, wait, wait_conns}`. Each session's waited writes and their `WAIT` run on
+  one of them (`:erlang.phash2(session_id, k)`), so a `WAIT` no longer stalls reads, other
+  sessions or a registry sharing `conn`. Handles you build as `{conn, namespace}` or
+  `{conn, namespace, wait}` still work and still wait on `conn`. `:wait_connections` without
+  such a `:wait` raises `ArgumentError`.
+- `Normandy.Cluster.redis_child_specs/1`: when `config :normandy, :redis_wait` asks for
+  replicas (read when the specs are built), it also starts `:wait_connections` (new option,
+  default 4) Redix connections named `:"<redix name>.wait.<i>"` (the `:redix` `:name` must then
+  be an atom) and gives the store that pool. The new option `:store_redix` (Redix options with
+  `:name`) gives the store a connection of its own for every command and every `WAIT` instead;
+  it cannot be combined with `:wait_connections`. Build the handles for `Turn.Session.new/1`
+  with `Cluster.redis_handles/1`, not by hand: the store's handle depends on these options and
+  the app env. The guide's old advice to "pass a separate `:conn`" was not possible and is
+  gone.
 
 ## New, non-breaking
 

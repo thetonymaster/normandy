@@ -256,6 +256,13 @@ The registry's handle is a `%Normandy.Behaviours.SessionRegistry.Redis.Handle{}`
 owner's name). Lookups (`whereis`) run in the caller on the Redix connection, so they never
 queue behind the registry owner; registrations go through the owner.
 
+The registry, the reaper and the store share the `:redix` connection. A replica wait
+(`config :normandy, :redis_wait`, read when the specs are built) would block that
+connection on every write, so the combo then also starts a pool of `:wait_connections`
+(default 4) Redix connections, and each session's waited writes and their `WAIT` run on
+one of them. To give the store a connection of its own instead (for every command and
+every `WAIT`), pass `store_redix: [name: MyApp.StoreRedix, ...]`; share it with nothing.
+
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
 Redis with AOF enabled + a replica wait to block every write (entries, turn state,
 template) on replica acks (fail-closed): per store with the handle

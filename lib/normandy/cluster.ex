@@ -38,6 +38,7 @@ defmodule Normandy.Cluster do
   alias Normandy.Behaviours.SessionRegistry.Redis, as: RedisReg
   alias Normandy.Behaviours.SessionStore.Mnesia, as: MnesiaStore
   alias Normandy.Behaviours.SessionStore.Redis, as: RedisStore
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Options
 
   # :store and :template_provider go to Turn.ResumeReaper, which takes them with the types
@@ -104,8 +105,27 @@ defmodule Normandy.Cluster do
                                      type: @session_types.template_provider,
                                      type_doc: "`{module, handle}`",
                                      doc: "The `AgentTemplate`; starts the reaper."
+                                   ],
+                                   store_redix: [
+                                     type: :keyword_list,
+                                     type_doc: "`t:keyword/0`",
+                                     doc:
+                                       "Options (with `:name`) for a Redix connection the " <>
+                                         "store uses alone, for every command and every " <>
+                                         "`WAIT`, instead of `:redix`'s and a `WAIT` pool. " <>
+                                         "Share it with nothing: a `WAIT` stalls it."
+                                   ],
+                                   wait_connections: [
+                                     type: :pos_integer,
+                                     doc:
+                                       "How many connections the store's `WAIT` pool opens " <>
+                                         "(default `4`); only when `config :normandy, " <>
+                                         ":redis_wait` asks for replicas and without " <>
+                                         "`:store_redix`."
                                    ]
                                  )
+
+  @default_wait_connections 4
 
   @doc """
   Build the distributed-session child specs.
@@ -150,6 +170,14 @@ defmodule Normandy.Cluster do
   Child specs for the **Redis combo** (Redis registry + Redis store + local supervisor +
   reaper) — Redis as the single distributed dependency. `:template_provider` enables the
   `ResumeReaper` for eager handoff. Cross-node routing still uses Erlang distribution.
+  `redis_handles/1` returns the registry and store to give `Turn.Session.new/1`.
+
+  The registry and the store share the `:redix` connection, except for the store's waited
+  writes. When `config :normandy, :redis_wait` asks for replicas (read here, once), the
+  specs also start `:wait_connections` Redix connections, named `:"<redix name>.wait.<i>"`,
+  and the store runs each waited write and its `WAIT` on one of them (see
+  `Normandy.Behaviours.SessionStore.Redis`). With `:store_redix`, the store uses that
+  connection for everything and no pool starts.
 
   ## Options
 
@@ -167,14 +195,15 @@ defmodule Normandy.Cluster do
     supervisor = Keyword.fetch!(opts, :supervisor)
     handles = build_redis_handles(opts, :redis_child_specs)
 
-    [
-      {Redix, redix},
-      %{
-        id: registry,
-        start: {RedisReg, :start_link, [[name: registry, conn: conn_name, namespace: ns]]}
-      },
-      %{id: supervisor, start: {LocalSup, :start_link, [[name: supervisor]]}}
-    ] ++ redis_reaper_specs(opts, handles, registry, supervisor)
+    [{Redix, redix}] ++
+      store_conn_specs(opts, :redis_child_specs) ++
+      [
+        %{
+          id: registry,
+          start: {RedisReg, :start_link, [[name: registry, conn: conn_name, namespace: ns]]}
+        },
+        %{id: supervisor, start: {LocalSup, :start_link, [[name: supervisor]]}}
+      ] ++ redis_reaper_specs(opts, handles, registry, supervisor)
   end
 
   @doc """
@@ -201,18 +230,77 @@ defmodule Normandy.Cluster do
       registry:
         {RedisReg,
          RedisReg.handle(owner: Keyword.fetch!(opts, :registry), conn: conn_name, namespace: ns)},
-      store: {RedisStore, {conn_name, ns}}
+      store: {RedisStore, store_handle(opts, fun)}
     }
   end
 
-  defp conn_name!(redix, fun) do
+  # The store's handle: on :store_redix's connection, or on :redix's with a WAIT pool
+  # when the app env asks for replicas. {conn, ns} otherwise, which reads the app env
+  # on every write, as any such handle does.
+  defp store_handle(opts, fun) do
+    ns = Keyword.fetch!(opts, :namespace)
+
+    case {store_plan(opts, fun), RedisStore.app_env_wait!()} do
+      {{:own, conn}, {0, _timeout}} -> {conn, ns}
+      {{:own, conn}, wait} -> {conn, ns, wait}
+      {{:shared, conn}, {0, _timeout}} -> {conn, ns}
+      {{:shared, conn}, wait} -> {conn, ns, wait, List.to_tuple(wait_conn_names(opts, fun))}
+    end
+  end
+
+  defp store_conn_specs(opts, fun) do
+    case {store_plan(opts, fun), RedisStore.app_env_wait!()} do
+      {{:own, _conn}, _wait} ->
+        [Supervisor.child_spec({Redix, Keyword.fetch!(opts, :store_redix)}, id: :store_redix)]
+
+      {{:shared, _conn}, {0, _timeout}} ->
+        []
+
+      {{:shared, _conn}, _wait} ->
+        redix = Keyword.fetch!(opts, :redix)
+
+        for name <- wait_conn_names(opts, fun),
+            do: Supervisor.child_spec({Redix, Keyword.put(redix, :name, name)}, id: name)
+    end
+  end
+
+  defp store_plan(opts, fun) do
+    case {Keyword.fetch(opts, :store_redix), Keyword.has_key?(opts, :wait_connections)} do
+      {{:ok, _store_redix}, true} ->
+        raise ArgumentError,
+              "Normandy.Cluster.#{fun}/1: :wait_connections and :store_redix exclude each " <>
+                "other (with :store_redix, waited writes run on that connection)"
+
+      {{:ok, store_redix}, false} ->
+        {:own, conn_name!(store_redix, fun, :store_redix)}
+
+      {:error, _} ->
+        {:shared, conn_name!(Keyword.fetch!(opts, :redix), fun)}
+    end
+  end
+
+  defp wait_conn_names(opts, fun) do
+    conn_name = conn_name!(Keyword.fetch!(opts, :redix), fun)
+
+    unless is_atom(conn_name) do
+      raise ArgumentError,
+            "Normandy.Cluster.#{fun}/1: with config :normandy, :redis_wait, the :redix " <>
+              ":name must be an atom (the WAIT pool is named after it), got: " <>
+              Describe.type_of(conn_name)
+    end
+
+    k = Keyword.get(opts, :wait_connections, @default_wait_connections)
+    for i <- 0..(k - 1), do: :"#{conn_name}.wait.#{i}"
+  end
+
+  defp conn_name!(redix, fun, key \\ :redix) do
     case Keyword.fetch(redix, :name) do
       {:ok, name} ->
         name
 
       :error ->
         raise ArgumentError,
-              "Normandy.Cluster.#{fun}/1: :redix must include :name, the Redix " <>
+              "Normandy.Cluster.#{fun}/1: #{inspect(key)} must include :name, the Redix " <>
                 "connection's registered name"
     end
   end

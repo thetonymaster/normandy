@@ -75,8 +75,9 @@ defmodule Normandy.Options.StoreOptionsTest do
                "option: expected a Redix connection (a pid or a registered name), got: nil"
   end
 
-  test ":url, :redix and :templates are sensitive keys" do
-    for key <- [:url, :redix, :templates], do: assert(key in Normandy.Options.sensitive_keys())
+  test ":url, :redix, :store_redix and :templates are sensitive keys" do
+    for key <- [:url, :redix, :store_redix, :templates],
+        do: assert(key in Normandy.Options.sensitive_keys())
   end
 
   # Each value is a wrong-type scalar whose text holds a secret: NimbleOptions would echo it,
@@ -86,6 +87,17 @@ defmodule Normandy.Options.StoreOptionsTest do
     {:redix, "`t:keyword/0`",
      {Cluster, :redis_child_specs,
       [[redix: :"sk-secret", namespace: "n", registry: :r, supervisor: :s]]}},
+    {:store_redix, "`t:keyword/0`",
+     {Cluster, :redis_child_specs,
+      [
+        [
+          store_redix: :"sk-secret",
+          redix: [name: :r],
+          namespace: "n",
+          registry: :r,
+          supervisor: :s
+        ]
+      ]}},
     {:templates, "`t:map/0`", {Catalog, :start_link, [[templates: :"sk-secret"]]}}
   ]
 

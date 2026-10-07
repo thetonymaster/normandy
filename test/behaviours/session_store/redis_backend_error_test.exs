@@ -38,6 +38,25 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitConfigTest do
     end
   end
 
+  test "new/1 refuses :wait_connections without a replica wait" do
+    assert_raise ArgumentError,
+                 "Normandy.Behaviours.SessionStore.Redis.new/1: :wait_connections needs a " <>
+                   ":wait of one replica or more, got: no :wait",
+                 fn -> Redis.new(wait_connections: 2) end
+
+    assert_raise ArgumentError,
+                 "Normandy.Behaviours.SessionStore.Redis.new/1: :wait_connections needs a " <>
+                   ":wait of one replica or more, got: a :wait of 0 replicas",
+                 fn -> Redis.new(wait: {0, 10}, wait_connections: 2) end
+  end
+
+  test "a handle whose wait connections are not a non-empty tuple raises on the write" do
+    assert_raise ArgumentError,
+                 "Normandy.Behaviours.SessionStore.Redis: the handle's wait_conns must be a " <>
+                   "non-empty tuple of Redix connections, got: a list",
+                 fn -> Redis.save_turn_state({:c, "ns", {1, 10}, [:c]}, "s1", :ts, false) end
+  end
+
   test "a :redis_wait app env with replicas and no timeout raises on the write" do
     previous = Application.fetch_env(:normandy, :redis_wait)
     Application.put_env(:normandy, :redis_wait, {1, 0})
