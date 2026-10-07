@@ -20,7 +20,7 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
     SequentialOrchestrator
   }
 
-  alias Normandy.Test.{FakeTool, OtelSpanBridge, StubClient}
+  alias Normandy.Test.{FakeTool, FlakyStore, OtelSpanBridge, StubClient}
   alias Normandy.Tools.Toolset
 
   setup do
@@ -266,6 +266,154 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
 
       assert run.parent_span_id == :undefined
       refute run.trace_id == caller_span.trace_id
+    end
+  end
+
+  # A Turn.Server whose config carries `hooks`, with the bridge also opening hook spans.
+  defp start_hooked_turn_server(client, hooks, store \\ {InMemory, InMemory.new()}) do
+    OtelSpanBridge.attach(prefixes: OtelSpanBridge.default_prefixes() ++ [[:normandy, :hook]])
+
+    config =
+      BaseAgent.init(%{
+        client: client,
+        model: "test-model",
+        behaviours: %Normandy.Behaviours.Config{hooks: hooks}
+      })
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "span-hook-#{System.unique_integer([:positive])}",
+        config: config,
+        store: store,
+        registry: {Native, Native.new()}
+      )
+
+    srv
+  end
+
+  describe "Turn.Server hooks outside the run (TEL-3)" do
+    test "an on_prompt hook span is a child of the caller, a sibling of run" do
+      srv =
+        start_hooked_turn_server(counted_client(false), [{Normandy.Test.Hooks.PromptOnly, []}])
+
+      caller = start_caller_span()
+
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "hi"})
+
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.hook", "normandy.agent.run"])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      hook = OtelSpanBridge.fetch_span!(spans, "normandy.hook")
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+
+      assert hook.parent_span_id == caller_span.span_id
+      assert run.parent_span_id == caller_span.span_id
+      assert spans |> Enum.map(& &1.trace_id) |> Enum.uniq() == [caller_span.trace_id]
+    end
+
+    test "an on_turn_end hook span is a child of the caller" do
+      srv =
+        start_hooked_turn_server(counted_client(false), [{Normandy.Test.Hooks.TurnEndOnly, []}])
+
+      caller = start_caller_span()
+
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "hi"})
+
+      :otel_span.end_span(caller)
+      # on_turn_end runs after the reply; await_spans blocks until its span ends.
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.agent.run", "normandy.hook"])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      hook = OtelSpanBridge.fetch_span!(spans, "normandy.hook")
+
+      assert hook.parent_span_id == caller_span.span_id
+      assert hook.trace_id == caller_span.trace_id
+    end
+
+    test "a rejected input's on_prompt and on_turn_end hook spans are children of the caller" do
+      srv =
+        start_hooked_turn_server(counted_client(false), [
+          {Normandy.Test.Hooks.PromptOnly, returns: {:halt, "no"}},
+          {Normandy.Test.Hooks.TurnEndOnly, []}
+        ])
+
+      caller = start_caller_span()
+
+      assert {:error, %Normandy.HookHaltError{}} = Turn.Server.run(srv, %{chat_message: "hi"})
+
+      :otel_span.end_span(caller)
+
+      spans =
+        OtelSpanBridge.await_spans([
+          "caller",
+          "normandy.hook",
+          "normandy.hook",
+          "normandy.agent.run"
+        ])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      hooks = Enum.filter(spans, &(&1.name == "normandy.hook"))
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+
+      assert [_, _] = hooks
+      assert Enum.all?(hooks, &(&1.parent_span_id == caller_span.span_id))
+      assert run.parent_span_id == caller_span.span_id
+    end
+
+    test "after a hooked turn the server holds no caller context" do
+      srv =
+        start_hooked_turn_server(counted_client(false), [{Normandy.Test.Hooks.TurnEndOnly, []}])
+
+      caller = start_caller_span()
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "hi"})
+      :otel_span.end_span(caller)
+      _ = OtelSpanBridge.await_spans(["caller", "normandy.agent.run", "normandy.hook"])
+
+      # The two-element request carries no context: its spans are roots.
+      assert {:ok, _} = :gen_statem.call(srv, {:turn, %{chat_message: "again"}}, :infinity)
+
+      spans = OtelSpanBridge.await_spans(["normandy.agent.run", "normandy.hook"])
+      run = OtelSpanBridge.fetch_span!(spans, "normandy.agent.run")
+      hook = OtelSpanBridge.fetch_span!(spans, "normandy.hook")
+
+      assert run.parent_span_id == :undefined
+      assert hook.parent_span_id == :undefined
+    end
+
+    # X9: Task 6.2's exits (:loading, :unavailable, a load crash, passivation) attach no
+    # turn context; a request that arrives in :unavailable is postponed and replayed in
+    # :idle, where the :turn clause attaches and releases it like any other.
+    @tag :capture_log
+    test "a turn replayed after an :unavailable load runs in the caller's context and releases it" do
+      store = FlakyStore.new()
+      FlakyStore.down(store)
+
+      srv =
+        start_hooked_turn_server(
+          counted_client(false),
+          [{Normandy.Test.Hooks.TurnEndOnly, []}],
+          {FlakyStore, store}
+        )
+
+      assert {:unavailable, _} = :sys.get_state(srv)
+      FlakyStore.up(store)
+
+      # run/2 in :unavailable retries the load and replays the request in :idle.
+      caller = start_caller_span()
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "hi"})
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.agent.run", "normandy.hook"])
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+
+      assert OtelSpanBridge.fetch_span!(spans, "normandy.hook").parent_span_id ==
+               caller_span.span_id
+
+      assert {:ok, _} = :gen_statem.call(srv, {:turn, %{chat_message: "again"}}, :infinity)
+
+      spans = OtelSpanBridge.await_spans(["normandy.agent.run", "normandy.hook"])
+      assert OtelSpanBridge.fetch_span!(spans, "normandy.agent.run").parent_span_id == :undefined
+      assert OtelSpanBridge.fetch_span!(spans, "normandy.hook").parent_span_id == :undefined
     end
   end
 

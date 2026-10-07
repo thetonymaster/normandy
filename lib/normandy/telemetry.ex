@@ -52,8 +52,10 @@ defmodule Normandy.Telemetry do
     * Turn.Server only: stop and exception measurements add `approval_wait` (see
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
     * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
-      replies (rejected input included), redacted as described above, and
-      `stacktrace: []`.
+      replies, redacted as described above, and `stacktrace: []`. A turn that fails before
+      it runs emits a run `:start` and `:exception` too: rejected input and a crash in
+      admission (no `turn_id`), and a failed write of the turn's first messages (with the
+      begun turn's `turn_id`).
 
   A run `:exception` may be synthetic: see "Killed runs".
 
@@ -296,8 +298,13 @@ defmodule Normandy.Telemetry do
   run events by hand instead of through `:telemetry.span/3`.
 
     * Parenting: `run/2` carries the caller's OTel context in the call, and the server
-      attaches it around the run `:start`, so the run nests under the caller's span.
-      llm_call and tool spans, which run in the server's tasks, nest under the run.
+      makes it current for the whole turn, from admission to `on_turn_end`, then puts back
+      the context it had before. The run nests under the caller's span; llm_call and tool
+      spans, which run in the server's tasks, nest under the run. The hook spans the
+      server runs outside the run (admission's `on_prompt`, the `after_tool` of an
+      interrupted batch's results, `on_turn_end`) are children of the caller, siblings of
+      the run. `BaseAgent` admits input inside its run span, so there `on_prompt` is the
+      run's child. A resumed durable turn uses the context saved with it the same way.
     * Terminate: a server that stops with a turn in flight through a callback stop or
       `:gen_statem.stop/3` emits a run `:exception` with `kind: :exit` in `terminate/3`.
       The server does not trap exits, so `:kill`, a supervisor's `Process.exit/2` or a

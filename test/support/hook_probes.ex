@@ -75,3 +75,18 @@ defmodule Normandy.Test.Hooks.TurnEndOnly do
     :ok
   end
 end
+
+defmodule Normandy.Test.Hooks.PromptOnly do
+  @moduledoc """
+  Implements only on_prompt, so a turn opens exactly one hook span for it. Sends
+  `{:prompt_only, input}` to `opts[:notify]` (a registered name) and returns
+  `opts[:returns]`, or passes (`{:cont, input}`).
+  """
+  use Normandy.Behaviours.Hooks
+
+  @impl true
+  def on_prompt(input, _ctx, opts) do
+    if dest = opts[:notify], do: send(dest, {:prompt_only, input})
+    Keyword.get(opts, :returns, {:cont, input})
+  end
+end

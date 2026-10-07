@@ -200,6 +200,7 @@ defmodule Normandy.Agents.Turn.Server do
               template_provider: nil,
               resume_policy: :lazy,
               run_span: nil,
+              turn_ctx_token: nil,
               approval_span: nil,
               approval_wait: 0,
               start_opts: nil,
@@ -797,6 +798,9 @@ defmodule Normandy.Agents.Turn.Server do
     do: handle_event({:call, from}, {:turn, user_input, nil}, :idle, data)
 
   def handle_event({:call, from}, {:turn, user_input, caller_ctx}, :idle, data) do
+    # The caller's OTel context is current for the whole turn, admission to on_turn_end;
+    # release_turn_ctx/1 puts back the context that was current before it.
+    data = %{data | turn_ctx_token: OtelCtx.attach(caller_ctx)}
     missing = data.config.memory |> AgentMemory.messages() |> Turn.unanswered_tool_calls()
 
     # Admission first: a rejected input changes nothing, and the interrupted results the
@@ -812,16 +816,17 @@ defmodule Normandy.Agents.Turn.Server do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->
-        emit_rejected_run(data, caller_ctx, exception)
+        emit_failed_run(data, data.config, nil, exception)
         :gen_statem.reply(from, {:error, exception})
         turn_end(data, data.config, {:rejected, exception}, turn_id: nil)
-        {:keep_state, data}
+        {:keep_state, release_turn_ctx(data)}
 
       {:crashed, reason} ->
         exception = TurnError.from_reason(reason)
+        emit_failed_run(data, data.config, nil, exception)
         :gen_statem.reply(from, {:error, exception})
         turn_end(data, data.config, {:error, exception}, turn_id: nil)
-        {:keep_state, data}
+        {:keep_state, release_turn_ctx(data)}
     end
   end
 
@@ -1076,7 +1081,7 @@ defmodule Normandy.Agents.Turn.Server do
       # restarted server can resume the turn in the caller's trace.
       state = %{state | trace_carrier: OtelCtx.inject(caller_ctx)}
 
-      run_span = start_run_span(data, config, caller_ctx, Metadata.turn_id(config))
+      run_span = start_run_span(data, config, Metadata.turn_id(config))
 
       data = %{
         data
@@ -1090,24 +1095,22 @@ defmodule Normandy.Agents.Turn.Server do
       interpret(effects, %{data | turn_state: state})
     else
       {:error, stored, reason} ->
-        :gen_statem.reply(from, persist_failed(reason))
-        turn_end(data, config, persist_failed(reason))
-        {:keep_state, %{data | config: stored}}
+        exception = %TurnError{type: :persist_failed, reason: reason}
+        emit_failed_run(data, config, Metadata.turn_id(config), exception)
+        :gen_statem.reply(from, {:error, exception})
+        turn_end(data, config, {:error, exception})
+        {:keep_state, release_turn_ctx(%{data | config: stored})}
     end
   end
-
-  defp persist_failed(reason), do: {:error, %TurnError{type: :persist_failed, reason: reason}}
 
   # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
   # several gen_statem events, so :start and :stop/:exception are emitted by
   # hand. A turn resumed by a restarted server gets its own :start (resumed: true).
   #
-  # The caller's OTel context is attached in this (long-lived) process before
-  # :start, so a bridged run span nests under the caller's span; stop_run_span/3
-  # detaches it again so it does not leak into the next turn.
-  defp start_run_span(data, config, caller_ctx, turn_id, extra_meta \\ %{}) do
-    caller_ctx_token = OtelCtx.attach(caller_ctx)
-
+  # The turn's context (the caller's, attached by the :turn clause or by
+  # start_resumed_run_span/1) is current at :start, so a bridged run span nests under
+  # the caller's span.
+  defp start_run_span(data, config, turn_id, extra_meta \\ %{}) do
     meta =
       %{session_id: data.session_id}
       |> Map.merge(Metadata.run(config, turn_id: turn_id))
@@ -1122,14 +1125,16 @@ defmodule Normandy.Agents.Turn.Server do
       meta
     )
 
-    %{start: start, meta: meta, caller_ctx_token: caller_ctx_token}
+    %{start: start, meta: meta}
   end
 
-  # Rejected input never starts a turn, but BaseAgent.run/2 reports it as a run span
-  # that ends in :exception with the exception as its reason; do the same here. The
-  # turn id is left out: admission raised before a turn was initialised.
-  defp emit_rejected_run(data, caller_ctx, exception) do
-    span = start_run_span(data, data.config, caller_ctx, nil)
+  # A turn that fails before its run starts (rejected or crashed admission, a failed
+  # write of its first messages) is reported as BaseAgent.run/2 reports a raised
+  # admission: a run span that ends in :exception with the replied exception. turn_id is
+  # nil for an admission failure (no turn was begun) and the begun turn's id for a
+  # failed write.
+  defp emit_failed_run(data, config, turn_id, exception) do
+    span = start_run_span(data, config, turn_id)
 
     stop_run_span(
       %{data | run_span: span, approval_wait: 0},
@@ -1144,13 +1149,14 @@ defmodule Normandy.Agents.Turn.Server do
   defp start_resumed_run_span(data) do
     caller_ctx = data.turn_state |> Map.get(:trace_carrier, []) |> OtelCtx.extract()
     turn_id = Metadata.turn_id(data.config)
-    run_span = start_run_span(data, data.config, caller_ctx, turn_id, %{resumed: true})
-    %{data | run_span: run_span, approval_wait: 0}
+    token = OtelCtx.attach(caller_ctx)
+    run_span = start_run_span(data, data.config, turn_id, %{resumed: true})
+    %{data | run_span: run_span, approval_wait: 0, turn_ctx_token: token}
   end
 
   defp stop_run_span(%Data{run_span: nil}, _event, _extra), do: :ok
 
-  defp stop_run_span(%Data{run_span: %{start: start, meta: meta} = span} = data, event, extra) do
+  defp stop_run_span(%Data{run_span: %{start: start, meta: meta}} = data, event, extra) do
     now = System.monotonic_time()
 
     :telemetry.execute(
@@ -1159,7 +1165,15 @@ defmodule Normandy.Agents.Turn.Server do
       Map.merge(meta, extra)
     )
 
-    OtelCtx.detach(span.caller_ctx_token)
+    :ok
+  end
+
+  # Puts back the context that was current before the turn attached its own
+  # (turn_ctx_token), after on_turn_end ran under the turn's, so one turn's context
+  # does not leak into the next.
+  defp release_turn_ctx(%Data{turn_ctx_token: token} = data) do
+    OtelCtx.detach(token)
+    %{data | turn_ctx_token: nil}
   end
 
   # The [:normandy, :turn, :approval, :start | :stop] span around one park. Hand-emitted
@@ -1438,6 +1452,7 @@ defmodule Normandy.Agents.Turn.Server do
         stop_run_span(data, :stop, %{})
         reply(data, {:ok, value})
         turn_end(data, data.config, {:ok, value})
+        data = release_turn_ctx(data)
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
 
       {:fail, reason} ->
@@ -1447,6 +1462,7 @@ defmodule Normandy.Agents.Turn.Server do
         stop_run_span(data, :exception, Span.exception_metadata(:error, exception, []))
         reply(data, {:error, exception})
         turn_end(data, data.config, ServerGlue.fail_outcome(reason))
+        data = release_turn_ctx(data)
         {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
     end
   end

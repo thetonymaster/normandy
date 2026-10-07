@@ -1581,6 +1581,18 @@ code you wrote against 1.x must follow the changes below.
   raises, naming both layouts; delete it (`:mnesia.delete_table/1`) and create it again. The
   same check applies to the session store's Mnesia tables, whose layout is unchanged.
 
+## 41. Telemetry and logs
+
+- `Turn.Server` keeps the caller's OpenTelemetry context current for the whole turn, from
+  admission to `on_turn_end`. Hook spans the server runs outside the run (`on_prompt`, the
+  `after_tool` of an interrupted batch's results, `on_turn_end`) are now children of the
+  caller's span, in its trace; they used to be roots of new traces. They are siblings of
+  the run span, not its children (`BaseAgent` keeps `on_prompt` inside its run).
+- A `Turn.Server` turn whose admission crashes (`:handler_crashed`, `handler: :admit`, or
+  `handler: :append` for an input that cannot be encoded) or whose first messages cannot be
+  written (`:persist_failed`) now emits a run `:start` and `:exception` carrying the
+  replied error, as rejected input already did. Dashboards that count runs see these turns.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

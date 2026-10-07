@@ -194,6 +194,85 @@ defmodule NormandyTest.Telemetry.MetadataTest do
                        %{session_id: "s-meta-llm", conversation_id: "s-meta-llm", turn_id: _}}
     end
 
+    # Fails every "user" append; everything else goes to InMemory.
+    defmodule UserAppendFailStore do
+      @moduledoc false
+      alias Normandy.Behaviours.SessionStore.InMemory
+      def new, do: InMemory.new()
+      def append_entry(_h, _sid, %{role: "user"}), do: {:error, :disk_full}
+      def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
+
+      def save_turn_state(h, sid, t, inflight?),
+        do: InMemory.save_turn_state(h, sid, t, inflight?)
+
+      def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
+      def history(h, sid), do: InMemory.history(h, sid)
+    end
+
+    @tag :capture_log
+    test "an admission crash emits run :start and :exception with the replied TurnError" do
+      TelemetryCapture.attach_span(
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+        session_id: "s-admit-crash"
+      )
+
+      hooks = [{Normandy.Test.Hooks.Probe, returns: [on_prompt: {:raise, "x"}]}]
+      config = server_config(%{behaviours: %Normandy.Behaviours.Config{hooks: hooks}})
+      srv = start_server("s-admit-crash", config)
+
+      assert {:error, %Normandy.TurnError{type: :handler_crashed, handler: :admit}} =
+               Turn.Server.run(srv, %{chat_message: "go"})
+
+      assert_received {:span, [:normandy, :agent, :run, :start],
+                       %{session_id: "s-admit-crash"} = start_meta}
+
+      refute Map.has_key?(start_meta, :turn_id)
+
+      assert_received {:span, [:normandy, :agent, :run, :exception],
+                       %{
+                         session_id: "s-admit-crash",
+                         kind: :error,
+                         reason: %Normandy.TurnError{
+                           type: :handler_crashed,
+                           handler: :admit,
+                           reason: %{exception: RuntimeError}
+                         },
+                         stacktrace: []
+                       }}
+    end
+
+    test "a failed write of the turn's first message emits run :start and :exception" do
+      TelemetryCapture.attach_span(
+        [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+        session_id: "s-persist-fail"
+      )
+
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: "s-persist-fail",
+          config: server_config(%{}),
+          store: {UserAppendFailStore, UserAppendFailStore.new()},
+          registry: {Native, Native.new()}
+        )
+
+      assert {:error, %Normandy.TurnError{type: :persist_failed, reason: :disk_full}} =
+               Turn.Server.run(srv, %{chat_message: "go"})
+
+      assert_received {:span, [:normandy, :agent, :run, :start],
+                       %{session_id: "s-persist-fail", turn_id: turn_id}}
+
+      assert is_binary(turn_id)
+
+      assert_received {:span, [:normandy, :agent, :run, :exception],
+                       %{
+                         session_id: "s-persist-fail",
+                         turn_id: ^turn_id,
+                         kind: :error,
+                         reason: %Normandy.TurnError{type: :persist_failed, reason: :disk_full},
+                         stacktrace: []
+                       }}
+    end
+
     @tag :capture_log
     test "rejected input emits run :start and :exception like BaseAgent, same reply" do
       TelemetryCapture.attach_span(
