@@ -59,10 +59,16 @@ defmodule Normandy.Behaviours.SessionRegistry.Horde.ViaTest do
     reg = HReg.new()
     name = {reg, "s-3", :value}
 
-    assert_raise FunctionClauseError, fn -> Via.register_name(name, self()) end
-    assert_raise FunctionClauseError, fn -> Via.whereis_name(name) end
-    assert_raise FunctionClauseError, fn -> Via.unregister_name(name) end
-    assert_raise FunctionClauseError, fn -> Via.send(name, :msg) end
+    # apply/3: the compiler's type check would reject the direct calls this test makes.
+    for {fun, args} <- [
+          register_name: [name, self()],
+          whereis_name: [name],
+          unregister_name: [name],
+          send: [name, :msg]
+        ] do
+      assert_raise FunctionClauseError, fn -> apply(Via, fun, args) end
+    end
+
     assert HReg.whereis(reg, "s-3") == :none
   end
 end
