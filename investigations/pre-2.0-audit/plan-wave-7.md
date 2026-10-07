@@ -517,7 +517,8 @@ now a `{result, rendering}` pair.
 ```
 
 Check: `grep -n "ensure_encodable\|JSON.encode(" lib/normandy/agents/dispatch.ex` → 0 hits;
-`grep -rn "render_output" lib` → `tool_result.ex` only (its definition and the BaseIOSchema impl).
+`grep -rn "render_output" lib` → `tool_result.ex` (its definition and the BaseIOSchema impl)
+and one comment in `lib/normandy/json.ex` ("Callers: ToolResult.render_output/1 ..."), still true.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -955,10 +956,17 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
       assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "one"})
       TerminalSaveStore.fail_terminal(ctx.store, false)
 
-      # The first retry fires 1_000 ms after the refusal.
-      assert wait_until(fn -> InMemory.list_resumable(ctx.mem) == {:ok, []} end, 300)
+      # The first retry fires 1_000 ms after the refusal. TerminalSaveStore records a
+      # save after the wrapped store wrote it, so wait for the record.
+      assert wait_until(
+               fn ->
+                 List.last(TerminalSaveStore.ops(ctx.store)) == {:save, :stopped, false, :ok}
+               end,
+               300
+             )
+
+      assert {:ok, []} = InMemory.list_resumable(ctx.mem)
       assert {:ok, %Turn.State{status: :stopped}} = InMemory.load_turn_state(ctx.mem, ctx.sid)
-      assert List.last(TerminalSaveStore.ops(ctx.store)) == {:save, :stopped, false, :ok}
       assert Process.alive?(srv)
     end
 
@@ -996,7 +1004,9 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
 
       _srv = start(ctx)
 
-      assert_receive {:converse, _request, _opts}
+      # The load, the resume and the call's task run before the message: under a full
+      # suite they can take longer than assert_receive's default 100 ms.
+      assert_receive {:converse, _request, _opts}, 5_000
     end
   end
 
@@ -1683,11 +1693,13 @@ end
 ```
 
 4. The test doubles fill a `nil` answer. In `test/support/stub_client.ex` replace the
-moduledoc sentence
+moduledoc lines
 
 ```elixir
   `{:error, %Normandy.LLMError{}}`; or the function raises. The default returns the
-  response model unchanged.
+  response model unchanged. Any other tuple (such as a 1.x `{response, usage}` left
+  unmigrated) raises `ArgumentError`; any other term is returned as is, for
+  `Normandy.LLM.Call` to reject.
 ```
 
 with
@@ -1695,7 +1707,9 @@ with
 ```elixir
   `{:error, %Normandy.LLMError{}}`; or the function raises. The default (`answer/1`)
   returns the response model, its `:chat_message` set to `"stub answer"` when it is
-  `nil` (a `nil` answer is an error, decision 27 A3).
+  `nil` (a `nil` answer is an error, decision 27 A3). Any other tuple (such as a 1.x
+  `{response, usage}` left unmigrated) raises `ArgumentError`; any other term is
+  returned as is, for `Normandy.LLM.Call` to reject.
 ```
 
 and `  defstruct reply: &Function.identity/1, notify: nil, options: %{}` with
@@ -1763,9 +1777,12 @@ Run: `mix format && mix test test/agents/blank_answer_test.exs test/context/summ
 Expected: FAIL, 5 tests: both "a nil chat_message" tests (`right: {:ok, ...}` from the chat
 agent); "a content block with no binary type..." with `** (CaseClauseError) no case clause
 matching`; "a summary that contains the closing tag..." on `=~ "facts <\\/conversation_summary>
-more"` (the content holds the raw tag); the moduledoc test with `** (Protocol.UndefinedError)
-protocol String.Chars not implemented for Normandy.Agents.BaseAgentOutputSchema` (the
-`:analyze_sources` transform interpolates the struct). The Step 1 item 5 edits pass against the
+more"` (the content holds the raw tag); the moduledoc test at `assert stderr == ""` (Elixir
+1.19: `warning: the following clause will never match: {:error, reason} ... which has type:
+dynamic(:approve or :needs_revision or {:ok, term()})` in `ResearchWorkflow.after_step/2`; on a
+compiler that does not warn it fails later, with `** (Protocol.UndefinedError) protocol
+String.Chars not implemented for Normandy.Agents.BaseAgentOutputSchema`, the `:analyze_sources`
+transform interpolating the struct). The Step 1 item 5 edits pass against the
 unchanged library (the doubles answer `"stub answer"` either way).
 
 Also run: `mix test --only w7_none 2>&1 | grep -c "test_load_filters"` → `1` (the warning naming
@@ -1872,7 +1889,7 @@ with
             agent ReviewAgent
             input from: :validate
             transform fn %{fact_check: {:ok, facts}, quality_check: {:ok, quality}} ->
-              "Facts: " <> facts.chat_message <> "\nQuality: " <> quality.chat_message
+              "Facts: " <> facts.chat_message <> "\\nQuality: " <> quality.chat_message
             end
             when_result do
 ```
@@ -1935,6 +1952,9 @@ with
 
 (`unquote(__MODULE__)`, not the literal module: `credo --strict` flags a nested module
 reference in the quote.)
+
+(The moduledoc is a plain heredoc, so its `\\n` renders as `\n` in the docs; a bare `\n`
+would break the example's string across two lines.)
 
 - [ ] **Step 6: `test_ignore_filters` (row 7)**
 
@@ -2661,7 +2681,8 @@ Expected: FAIL, 2 of 4.
   lists the 72 modules added to groups in Step 3 (a module there not in Step 3's list was
   added by a task before this one: group it by its moduledoc's area and say so in the task report).
 - The README test reports
-  `expected the README to name the docs groups [:"Durable turns", :"Session stores and registries", :Memory, :Hooks, :Behaviours, :Components, :"Batch Processing", :Testing, :Errors, :Telemetry]`.
+  `expected the README to name the docs groups [:Components, :"Batch Processing", :Errors, :Telemetry]`
+  (it reads today's `mix.exs` groups, before Step 3 adds the new ones).
 
 - [ ] **Step 3: The groups**
 
@@ -4311,8 +4332,9 @@ diff --git a/test/agents/base_agent_stream_test.exs b/test/agents/base_agent_str
 
 - [ ] **Step 4: The other nine files**
 
-Task 7.0c adds blank-answer tests to `blank_answer_test.exs`. The hunk below changes only the
-`chat_agent/1` helper and the alias, so it applies on top of that. Apply by content:
+Task 7.0c adds blank-answer tests and the `ReturnTool`/`StubClient` aliases to
+`blank_answer_test.exs`. The hunk below is written against the file as 7.0c leaves it and
+changes only the `chat_agent/1` helper and the alias. Apply by content:
 
 ```diff
 diff --git a/test/a2a/server_limits_test.exs b/test/a2a/server_limits_test.exs
@@ -4377,12 +4399,14 @@ diff --git a/test/agents/base_agent_output_schema_prompt_test.exs b/test/agents/
 diff --git a/test/agents/blank_answer_test.exs b/test/agents/blank_answer_test.exs
 --- a/test/agents/blank_answer_test.exs
 +++ b/test/agents/blank_answer_test.exs
-@@ -12,12 +12,12 @@ defmodule Normandy.Agents.BlankAnswerTest do
+@@ -14,14 +14,14 @@ defmodule Normandy.Agents.BlankAnswerTest do
    alias Normandy.Behaviours.SessionRegistry.Native
    alias Normandy.Behaviours.SessionStore.InMemory
    alias Normandy.LLMError
--  alias Normandy.Test.ScriptedTextClient
 +  alias Normandy.Test.FakeClient
+   alias Normandy.Test.ReturnTool
+-  alias Normandy.Test.ScriptedTextClient
+   alias Normandy.Test.StubClient
  
    @message "expected a final answer, got an empty one: the model ended its turn with no text"
  
@@ -4586,8 +4610,8 @@ mix format && mix test test/agents/base_agent_stream_test.exs test/agents/blank_
 grep -rnE "ScriptedToolClient|ScriptedTextClient|StreamingProbeClient" test lib
 ```
 
-Expected: PASS. The ten files gave 106 tests, 0 failures at `9131274`, plus any tests Task 7.0c
-added to `blank_answer_test.exs`. The grep prints nothing. Historical plan files under
+Expected: PASS, 108 tests, 0 failures (106 at `9131274`, plus the 2 tests Task 7.0c adds to
+`blank_answer_test.exs`; the suite total is unchanged by this task). The grep prints nothing. Historical plan files under
 `docs/superpowers/plans/` and `investigations/` still name the clients; leave them.
 
 - [ ] **Step 6: Gate**
@@ -5181,7 +5205,7 @@ Rewrite rule: `use Normandy.<X>Contract` → `use Normandy.Test.<X>Contract`:
 grep -rlE "use Normandy\.(SessionStore|MemoryStore|SessionRegistry)Contract" test \
   | xargs sed -i '' -E 's/use Normandy\.(SessionStore|MemoryStore|SessionRegistry)Contract/use Normandy.Test.\1Contract/'
 grep -rnE "use Normandy\.(SessionStore|MemoryStore|SessionRegistry)Contract" test | wc -l   # 0
-grep -rnE "use Normandy\.Test\.(SessionStore|MemoryStore|SessionRegistry)Contract" test | wc -l   # 13
+grep -rnE "use Normandy\.Test\.(SessionStore|MemoryStore|SessionRegistry)Contract" test | wc -l   # 15 (the 13 files + 2 in Step 1's contracts_test.exs)
 ```
 
 Rewrite rule: `stored_entry_ids: {__MODULE__, :stored_entry_ids}` → `stored_entry_ids: {__MODULE__, :stored_entry_ids, []}`.
@@ -5223,7 +5247,8 @@ are; they name the suite, not a module.
 - [ ] **Step 9: The docs group**
 
 In `mix.exs` `groups_for_modules`, add to the `Testing:` list that Task 7.2b created (it
-holds `Normandy.Test.FakeClient` after Task 7.3b):
+holds `Normandy.Test.FakeClient` and `Normandy.Test.FakeClient.ScriptExhaustedError` after
+Task 7.3b; add a comma after `ScriptExhaustedError` and append):
 
 ```elixir
             Normandy.Test.SessionStoreContract,
@@ -5255,7 +5280,7 @@ The move touches every backend's contract test file, so run:
 - `docker start normandy-test-pg`, then
   `MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix test.postgres 2>&1 | tee /tmp/w7-7.3d-pg.log` → ` 0 failures`
   (the controller stops the container afterwards; no database is created or dropped)
-- `mix test --only distributed --include postgres 2>&1 | tee /tmp/w7-7.3d-dist.log` → ` 0 failures`
+- `MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix test --only distributed --include postgres 2>&1 | tee /tmp/w7-7.3d-dist.log` → ` 0 failures`
 
 - [ ] **Step 13: MIGRATING-2.0.md**
 
@@ -5301,7 +5326,9 @@ git commit -m "feat(test): ship the store and registry contracts as Normandy.Tes
 (`git mv` in Step 3 already staged the removal of the old `test/support/*_contract.ex`
 paths; do not `git add` them: git refuses a path that is in neither the tree nor the index
 (`fatal: pathspec ... did not match any files`) and the whole `git add` fails. `git status`
-shows three `renamed:` entries before the commit.)
+shows two `renamed:` entries before the commit (session store, memory store); the rewritten
+registry contract shows as `deleted:` `test/support/session_registry_contract.ex` plus
+`new file:` `lib/normandy/test/session_registry_contract.ex`.)
 
 ---
 
@@ -5746,9 +5773,9 @@ test owns (here the agent's name), as `async: true` tests run side by side.
 
 ## Hooks
 
-A hook is a module of callbacks; call them directly, or through
-`Normandy.Hooks.Runner` for the library's rules. See "Testing a hook" in the
-[hooks guide](hooks.md).
+A hook is a module of callbacks; call them directly, or run the hook through an agent
+(`BaseAgent.run/3` on a config whose `behaviours` lists it) for the library's rules. See
+"Testing a hook" in the [hooks guide](hooks.md).
 
 ## A store or registry of your own
 
@@ -6599,8 +6626,9 @@ Then add before `  test "valid options compile" do`:
   end
 ```
 
-(`grep -rn "invalid option\|schema already defined" test` → only that one assertion uses the
-old text.)
+(`grep -rn "invalid option :\|schema already defined" test` → only that one assertion uses the
+old text. Without the `:` the grep also hits two test names that say "invalid options"
+(`config_template_test.exs`, `base_agent_compaction_config_test.exs`); they are unrelated.)
 
 Replace `test/readme_test.exs` with:
 
@@ -7123,7 +7151,7 @@ with
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `mix format && mix test test/dsl`
-Expected: PASS (108 tests on HEAD `9131274` plus the probe; the count changes with earlier Wave 7 tasks), 0 failures.
+Expected: PASS, 109 tests, 0 failures (after Tasks 7.0a-7.3g2: Task 7.0c adds one test under `test/dsl`; this task replaces two tests by two).
 
 - [ ] **Step 7: Gate**
 
@@ -7399,7 +7427,7 @@ the three `refute function_exported?` lines only.
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `mix format && mix test test/tools/toolset_metadata_test.exs test/tools/toolset_test.exs`
-Expected: FAIL, 1 failure: `"the 1.x schema filters are gone"` (`Expected truthy, got false` on the first `refute`).
+Expected: FAIL, 1 failure: `"the 1.x schema filters are gone"` (`Expected false or nil, got true` on the first `refute`).
 
 - [ ] **Step 3: Remove the functions**
 
@@ -7600,7 +7628,7 @@ with
 
     @doc false
     # The flag warn_deprecated/0 sets, for tests that check the warning.
-    @spec warned_key() :: term()
+    @spec warned_key() :: {__MODULE__, :deprecation_warned}
     def warned_key, do: @warned_key
   end
 ```
@@ -7785,8 +7813,8 @@ end
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `mix format && mix test test/docs/examples_readme_test.exs`
-Expected: FAIL, 2 failures: `"the 1.x example apps are gone"` (`Expected truthy, got false` on the
-first `refute`) and the README test (`refute text =~ "customer_support_app"`).
+Expected: FAIL, 2 failures: `"the 1.x example apps are gone"` (`Expected false or nil, got true` on
+the first `refute`) and the README test (`Refute with =~ failed` on `refute text =~ "customer_support_app"`).
 
 - [ ] **Step 3: Delete the apps**
 
@@ -8260,7 +8288,10 @@ defmodule NormandyTools.ApiDiffTest do
     # @moduledoc false since Task 7.2a.
     refute "Normandy.Hooks.Runner" in snapshot.modules
     # Protocol implementations are not listed (ExDoc does not list them either).
-    refute Enum.any?(snapshot.modules, &String.starts_with?(&1, "Normandy.Agents.Model.Normandy."))
+    refute Enum.any?(
+             snapshot.modules,
+             &String.starts_with?(&1, "Normandy.Agents.Model.Normandy.")
+           )
   end
 end
 ````
@@ -8670,15 +8701,16 @@ mix format
 tools/api_diff/run.sh main; echo "exit=$?"
 ```
 
-Expected: exit 1, and `## unmatched` lists exactly these 10 items (U1–U6 of the inventory), plus one
-`## removed_modules` line per module Task 7.2a hid that `main` documented (expected among
-`Normandy.Agents.Turn.Driver`, `Normandy.Agents.Turn.Inline`, `Normandy.Agents.ValidationMiddleware`,
-`Normandy.Behaviours.SessionRegistry.Redis.Via`, `Normandy.LLM.Json.{ContentCleaner, Decoder,
-RetryFeedback, Scanner, SchemaBinder, SchemaTranslator}`, `Normandy.Telemetry.OtelCtx`), also listed
-under `## unmatched`:
+Expected (verified on the stacked preflight branch after Tasks 7.0a-7.3h-v and 7.5a): exit 1; the
+report's sections read `## changed_specs (32)`, `## removed_fields (20)`, `## removed_functions (50)`,
+`## removed_modules (23)` (the prototype's 12 plus the 11 modules Task 7.2a hid that `main` documented),
+and `## unmatched (18)`: the 10 items of the inventory's U1–U6 plus the 8 hidden modules no section
+names yet (`Turn.Driver`, `Turn.Inline` and `SessionRegistry.Redis.Via` are hidden too, but an existing
+section already names them, so they are matched):
 
 ```
 Normandy.Agents.BaseAgent.process_batch/3
+Normandy.Agents.ValidationMiddleware
 Normandy.Batch.Processor.process_batch/3
 Normandy.Batch.Processor.process_batch_chunked/3
 Normandy.Behaviours.BudgetTracker.check/2 callback
@@ -8686,11 +8718,20 @@ Normandy.Behaviours.BudgetTracker.record/2 callback
 Normandy.Behaviours.ModelCatalog.Static.limits/0 function
 Normandy.Context.WindowManager.ensure_within_limit/2
 Normandy.Context.WindowManager.truncate_conversation/2
+Normandy.LLM.Json.ContentCleaner
+Normandy.LLM.Json.Decoder
+Normandy.LLM.Json.RetryFeedback
+Normandy.LLM.Json.Scanner
+Normandy.LLM.Json.SchemaBinder
+Normandy.LLM.Json.SchemaTranslator
+Normandy.Telemetry.OtelCtx
 Normandy.Type.autogenerate/0 callback
 Normandy.hello/0 function
 ```
 
-Any other unmatched item is a change an earlier Wave 7 task made without its MIGRATING bullet: stop
+Wave 7's own removals (Task 7.3h-iii's `Toolset` filters, 7.3h-ii's `:context` option) do not appear:
+`Toolset` is new since `main` (1.x had `Tools.Registry`, listed as a removed module) and an option is not
+an API item. Any other unmatched item is a change an earlier Wave 7 task made without its MIGRATING bullet: stop
 and report it to the controller (do not add it to `reviewed.txt` to make the list shorter). Task 7.1b
 closes these items.
 
@@ -8889,8 +8930,8 @@ Find the rows that describe you and read the sections they list. Every section i
 Limits that 2.0 still has are listed under "Known limits of 2.0" at the end.
 ```
 
-**(b) §5** (Model catalog and compaction): after the bullet that ends "Templates persisted by 1.x name
-it, which is why it stays.", add:
+**(b) §5** (Model catalog and compaction): after the `ModelCatalog.Static` is deprecated bullet (as Task
+7.3h-iv extended it, it ends "persisted templates to silence it."), add:
 
 ```markdown
 - `ModelCatalog.Static.limits/0` is gone with the static table. Ask `ModelCatalog.ModelsAPI` for a
@@ -9046,22 +9087,23 @@ it, which is why it stays.", add:
   ```
 - The `Normandy.Type` optional callback `autogenerate/0` is gone; nothing calls it. Delete it from a
   custom type (an `@impl true` on it warns at compile time).
-- `Normandy.hello/0` (the generated placeholder) is gone.
+- `Normandy`'s generated placeholder `hello/0` is gone.
 
 ````
 
-Append to `## 45. Testing support and docs` (Task 7.2a; ruling R8), as one sub-list under its first bullet headed "If you called one directly:", these pointers, each only for a module §45 lists:
+Append to `## 45. Testing support and docs` (Task 7.2a; ruling R8), as one sub-list under its first bullet (after its last line, "stay public."), these pointers, each only for a module §45 lists. The names are shortened on purpose: a code span with a hidden module's full name fails `mix docs --warnings-as-errors` ("references module ... but it is hidden", H7), and `tools/api_diff` needs a code span holding the last alias segment:
 
 ````markdown
 
-- `Normandy.Agents.Turn.Driver`, `Normandy.Agents.Turn.Inline`: run turns with `BaseAgent.run/3`,
-  `stream/3` or `Turn.Session`. `Turn.Driver.Handlers` stays public.
-- `Normandy.Agents.ValidationMiddleware`: input and output validation run inside every turn.
-- `Normandy.LLM.Json.ContentCleaner`, `Decoder`, `RetryFeedback`, `Scanner`, `SchemaBinder`,
-  `SchemaTranslator`: use `Normandy.LLM.JsonDeserializer`.
-- `Normandy.Telemetry.OtelCtx`: trace context is carried for you (see `Normandy.Telemetry`).
-- `Normandy.Behaviours.SessionRegistry.Redis.Via`: pass the registry handle
-  (`SessionRegistry.Redis.handle/1`).
+  If you called one directly:
+
+  - `Turn.Driver`, `Turn.Inline`: run turns with `BaseAgent.run/3`, `stream/3` or
+    `Turn.Session`. `Turn.Driver.Handlers` stays public.
+  - `ValidationMiddleware`: input and output validation run inside every turn.
+  - `Json.ContentCleaner`, `Decoder`, `RetryFeedback`, `Scanner`, `SchemaBinder`,
+    `SchemaTranslator`: use `Normandy.LLM.JsonDeserializer`.
+  - `OtelCtx`: trace context is carried for you (see `Normandy.Telemetry`).
+  - `Redis.Via`: pass the registry handle (`SessionRegistry.Redis.handle/1`).
 ````
 
 Every module Step 1 listed under `## removed_modules` (minus the 12 deleted 1.x modules) must be named in §45's first bullet; add any that Task 7.2a did not list there (unbackticked). Delete a pointer above whose module §45 does not list.
@@ -9194,6 +9236,12 @@ For each line, `git show --stat <hash>` and read the diff of `lib/`. Classify it
 - `gap → §N` — a user can observe the change and no section states it: write the bullet into the
   fitting section now (one sentence of what changed, one of what to do; a table or sample only when a
   signature, return shape or option changes).
+  A user-visible addition that breaks nothing (a new option) is `gap → New, non-breaking` and its bullet
+  goes at the end of `## New, non-breaking`. (Preflight on the stacked branch found 17 gaps: §18 92abfd2;
+  §19 ca08503, e22c4f6, 02906c8; §25 3beee8b, 72b8490; §27 930e62c; §30 0d01d04; §32 5e7bbe3; §33 fa7411c;
+  §37 b2a115f; §38 c9157ec; §40 448419f, 7b72fcc; §42 951077d; §44 f52dce7; New, non-breaking 641bd80.
+  Four of them — 0d01d04, 72b8490, fa7411c, 930e62c — are commits Task 7.1b's REL-4 mapping calls
+  covered; the existing bullets state only part of each change.)
 - `internal` — no public function, option, return value, raised error, log, telemetry or persisted shape
   changes (name what it changed, e.g. "private helper rename").
 - `pre-release` — it changes behaviour that only existed on this branch (never on `main`/1.3.0): name the
@@ -9566,16 +9614,31 @@ defmodule Normandy.LLM.ClaudioAdapterAddMessagesTest do
         %Message{role: if(rem(n, 2) == 1, do: "user", else: "assistant"), content: "m#{n}"}
       end
 
-    1 = :erlang.trace(self(), true, [:call])
+    # A process cannot trace its own calls (OTP 28 delivers nothing), so the build runs in
+    # a child traced by this test process.
+    test_pid = self()
 
-    request =
-      @impl_module.add_messages(
-        Request.new("m"),
-        [%Message{role: "system", content: "sys"} | history],
-        false
-      )
+    builder =
+      spawn(fn ->
+        receive do
+          :go ->
+            request =
+              @impl_module.add_messages(
+                Request.new("m"),
+                [%Message{role: "system", content: "sys"} | history],
+                false
+              )
 
-    1 = :erlang.trace(self(), false, [:call])
+            send(test_pid, {:built, request})
+        end
+      end)
+
+    1 = :erlang.trace(builder, true, [:call])
+    send(builder, :go)
+    assert_receive {:built, request}, 5_000
+    # Every trace message from the builder is in the mailbox once this arrives.
+    delivered = :erlang.trace_delivered(builder)
+    assert_receive {:trace_delivered, ^builder, ^delivered}, 5_000
 
     assert length(request.messages) == 2_000
     assert request.system == "sys"
@@ -9621,7 +9684,7 @@ mix test test/llm/claudio_adapter_add_messages_test.exs test/agents/assistant_tu
 ```
 
 Expected: 4 failures. The add_messages test fails at `assert_received {:trace, _, :call, {Request,
-:add_messages, ...}}` (0.7.0 has no `add_messages/2`; the mailbox holds 2_000 `add_message` traces). The
+:add_messages, ...}}` (0.7.0 has no `add_messages/2`; the mailbox holds 2_000 `add_message` traces: "Showing 10 of 2000 messages"). The
 three replay tests fail at `assert Enum.at(content, 1) == @cited`: the left side has no `"citations"`.
 
 - [ ] **Step 3: Move to Claudio 0.7.1**
@@ -11192,8 +11255,8 @@ Create `test/docs/changelog_layout_test.exs`:
 defmodule Normandy.Docs.ChangelogLayoutTest do
   @moduledoc """
   Task 7.4b (REL-5, decision 27 C6): cog inserts each release's section at the first
-  `- - -` line, so the hand-written 2.0 notes sit right after it (cog's `## [v2.0.0]` then
-  lands directly above them) and nothing but the preamble is above it.
+  `- - -` line, so the hand-written 2.0 notes sit after a separator with nothing but the
+  preamble and cog's own `## [vX.Y.Z]` sections above them (none before the 2.0 release).
   """
   use ExUnit.Case, async: true
 
@@ -11203,15 +11266,22 @@ defmodule Normandy.Docs.ChangelogLayoutTest do
     refute Enum.any?(@lines, &String.starts_with?(&1, "## [Unreleased]"))
   end
 
-  test "the 2.0 notes follow the first separator and precede v1.3.0" do
+  test "the 2.0 notes follow a separator, below only cog's release sections" do
     separator = Enum.find_index(@lines, &(&1 == "- - -"))
     notes = Enum.find_index(@lines, &(&1 == "## Normandy 2.0 release notes"))
     v1_3 = Enum.find_index(@lines, &String.starts_with?(&1, "## [v1.3.0]"))
+    # cog bump puts its `- - -` / `## [vX.Y.Z]` section above the notes (and a blank line
+    # before them), so the test holds before and after every release.
+    above = @lines |> Enum.take(notes) |> Enum.reject(&(&1 == ""))
 
-    assert notes == separator + 1
+    assert List.last(above) == "- - -"
     assert notes < v1_3
     assert Enum.at(@lines, v1_3 - 1) == "- - -"
     refute @lines |> Enum.take(separator) |> Enum.any?(&String.starts_with?(&1, "## "))
+
+    assert above
+           |> Enum.filter(&String.starts_with?(&1, "## "))
+           |> Enum.all?(&(&1 =~ ~r/^## \[v\d/))
   end
 
   test "the notes send upgraders to MIGRATING-2.0.md" do
@@ -11229,8 +11299,11 @@ mix format
 mix test test/docs/changelog_layout_test.exs
 ```
 
-Expected: `3 tests, 3 failures` (the `[Unreleased]` heading exists; `notes` is `nil`, so the arithmetic
-raises `ArithmeticError` in the second and `Enum.slice` raises in the third).
+Expected: `3 tests, 3 failures` (the `[Unreleased]` heading exists; `notes` is `nil`, so `Enum.take/2`
+raises `FunctionClauseError` in the second and building `notes..v1_3` raises `ArgumentError` in the third).
+The second test does not pin `notes == separator + 1`: after `cog bump` on `main` the first `- - -` is
+cog's, above `## [v2.0.0]`, and a blank line precedes the notes (Step 5 shows it), so that form would fail
+CI on `main` right after the release; this form holds before and after.
 
 - [ ] **Step 3: Write the notes**
 
@@ -11317,7 +11390,7 @@ git merge --squash -q origin/feat/claudio-0.7-migration 2>/dev/null || git merge
 git commit -q -m "feat!: Normandy 2.0 (#99)"
 PATH="$HOME/.local/bin:$PATH" cog bump --auto
 grep -c '^## \[v2\.0\.0\]' CHANGELOG.md
-grep -c 'Unreleased' CHANGELOG.md
+grep -c '^## \[Unreleased\]' CHANGELOG.md
 grep -n '^## \|^- - -$' CHANGELOG.md | head -6
 grep -n '@version' mix.exs
 cd /Users/antonio/personal/normandy
@@ -11325,8 +11398,8 @@ cd /Users/antonio/personal/normandy
 
 The clone has the local branch as `origin/feat/claudio-0.7-migration` (a clone of a local repository
 names its branches `origin/*`); the second form of the merge is a fallback for a detached setup. Expected:
-`cog bump` prints `Bumped version: v1.3.0 -> v2.0.0`; counts `1` and `0`; the first lines are `- - -`,
-`## [v2.0.0]…`, `- - -`, `## Normandy 2.0 release notes`; `@version "2.0.0"`. Leave the scratch directory.
+`cog bump` prints `Bumped version: v1.3.0 -> v2.0.0`; counts `1` and `0`; the first `## `/`- - -` lines are `- - -`,
+`## [v2.0.0]…`, `- - -`, `## Normandy 2.0 release notes` (a blank line before the notes heading); `@version "2.0.0"`. Leave the scratch directory.
 
 - [ ] **Step 6: Gate and commit**
 
@@ -11511,6 +11584,8 @@ Expected: ` 0 failures`, exit 0; docs exit 0.
 3. **Hiding `Hooks.Runner`** drops its documented "supported way to test a hook"; 7.2a moves the guide to an agent-level test (verified). **Recommend hide** (C1). Alternative: keep Runner public with a narrowed moduledoc.
 4. **`examples/` leftovers.** After `git rm -r` of both apps, untracked build output (`_build`, `deps`) remains under them; clearing it is an `rm -rf` of those two directories — **your command** (or approve mine at that step). `marketing/demo-1.0/agent-horde-script.md` points at the deleted app: **recommend keep** (a 1.0 demo script) — or delete it.
 5. **Scenario 16 if no live `pause_turn` can be provoked.** The rebuilt paused-turn shape checks "does the API accept the history", not a live pause. **Recommend:** accept the rebuilt shape and word the Known-limits bullet exactly as checked (7.6b Step 6). 7.6b's spend approval asks for the first run (~$1.92-2.24) plus up to $1 of reruns in one go.
+
+6. **A Horde flake found by the preflight.** `test/.../session_delete_test.exs:170` "through the Horde supervisor too" failed once (seed 606572, not reproducible with the same seed or 3 file reruns): `Horde.DynamicSupervisorImpl.handle_info/2` raised `FunctionClauseError` on `{:EXIT, pid, :normal}`. Theory (unverified): a process linked to the Horde supervisor but not its child — likely on Wave 6's `stop_server/2` path for `Session.delete/1` — exits `:normal`, and Horde 0.10 has no clause for it. **Recommend:** a new Task 7.0e before 7.2a: reproduce deterministically (link a non-child process to the supervisor and exit it `:normal`), then fix our side so no non-child is linked to the Horde supervisor; if it is Horde's own bug, report it to you with the evidence before any workaround.
 
 ## Appendix B — section writers' notes (verbatim)
 
