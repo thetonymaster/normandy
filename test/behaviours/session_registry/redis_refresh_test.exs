@@ -13,6 +13,8 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
   alias Normandy.Behaviours.SessionRegistry.Redis
   alias Normandy.Test.TelemetryCapture
 
+  import Normandy.Test.Eventually, only: [wait_until: 1]
+
   setup do
     handle = Redis.new()
 
@@ -118,5 +120,64 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
     state = :sys.get_state(h.owner)
     refute Map.has_key?(state.sids, "taken")
     assert Map.has_key?(state.sids, "kept")
+  end
+
+  describe "an owner started with :url" do
+    test "a handle fetched before the owner restarts still resolves a registered session" do
+      name = :"redis_registry_restart_#{System.unique_integer([:positive])}"
+      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+      ns = "normandy_reg_#{System.unique_integer([:positive])}"
+
+      start_supervised!(%{
+        id: name,
+        start: {Redis, :start_link, [[name: name, url: url, namespace: ns]]}
+      })
+
+      handle = Redis.fetch_handle(name)
+      assert handle.conn == Module.concat(name, Redix)
+
+      pid = sleeper()
+      :ok = Redis.register(handle, "s1", pid)
+
+      old_owner = Process.whereis(name)
+      old_conn = GenServer.whereis(handle.conn)
+      ref = Process.monitor(old_conn)
+      Process.exit(old_owner, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^old_conn, _}
+
+      assert wait_until(fn ->
+               new_owner = Process.whereis(name)
+               is_pid(new_owner) and new_owner != old_owner
+             end)
+
+      # init/1 has returned, so the new connection holds the name.
+      _ = :sys.get_state(name)
+      assert GenServer.whereis(handle.conn) not in [nil, old_conn]
+      assert Redis.whereis(handle, "s1") == {:ok, pid}
+      assert Redis.fetch_handle(name) == handle
+    end
+
+    test "an owner stopped normally and started again under its name takes the name back" do
+      name = :"redis_registry_again_#{System.unique_integer([:positive])}"
+      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+
+      opts = [
+        name: name,
+        url: url,
+        namespace: "normandy_reg_#{System.unique_integer([:positive])}"
+      ]
+
+      {:ok, first} = Redis.start_link(opts)
+      handle = Redis.fetch_handle(name)
+      old_conn = GenServer.whereis(handle.conn)
+      :ok = GenServer.stop(first)
+
+      start_supervised!(%{id: name, start: {Redis, :start_link, [opts]}})
+
+      refute Process.alive?(old_conn)
+      pid = sleeper()
+      :ok = Redis.register(handle, "s1", pid)
+      assert Redis.whereis(handle, "s1") == {:ok, pid}
+    end
   end
 end

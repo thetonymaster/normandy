@@ -15,7 +15,10 @@ if Code.ensure_loaded?(Redix) do
     `fetch_handle/1` for an owner that opened its own connection from `:url`.
     `whereis/2` runs in the caller, on the handle's connection: a lookup never waits on
     the owner. `register/3` and `unregister/2` go through the owner, which monitors the
-    pids.
+    pids. An owner started with `:url` registers its connection as
+    `Module.concat(name, Redix)`, so a handle keeps working across owner restarts. A handle
+    is meant for the node its owner runs on: on another node, a lookup reaches the
+    connection over distribution.
 
     Registration is atomic via `SET … NX` (no read-modify-write), so a concurrent start
     cluster-wide yields one winner; the losers route to it. Use as a `:via` registry
@@ -31,6 +34,8 @@ if Code.ensure_loaded?(Redix) do
     `{:shutdown, :registration_lost}`, logs a warning and emits
     `[:normandy, :session_registry, :ownership_lost]`. A `Turn.Server` stopped this way
     is not restarted (`restart: :transient`); its session goes on where the key points.
+    The stop is an exit signal: a registered process that traps exits receives it as a
+    message and must stop itself; the owner no longer monitors it either way.
     """
     @behaviour Normandy.Behaviours.SessionRegistry
     use GenServer
@@ -101,7 +106,10 @@ if Code.ensure_loaded?(Redix) do
                               url: [
                                 type: :string,
                                 type_doc: "`t:String.t/0`",
-                                doc: "A Redis URL to connect to when `:conn` is not given."
+                                doc:
+                                  "A Redis URL to connect to when `:conn` is not given; the " <>
+                                    "owner starts that connection linked, registered as " <>
+                                    "`Module.concat(name, Redix)`."
                               ],
                               namespace: [
                                 type: :string,
@@ -234,7 +242,9 @@ if Code.ensure_loaded?(Redix) do
     @doc """
     The handle of a running owner, asked of it once: for an owner started with `:url`,
     whose connection only the owner knows. Keep the result; a lookup with it never calls
-    the owner.
+    the owner. The handle names the owner's connection (`Module.concat(owner, Redix)`
+    for a `:url` owner, else the `:conn` given), so it stays valid when the owner
+    restarts under the same name, as long as a `:conn` given by name is restarted too.
     """
     @spec fetch_handle(atom()) :: Handle.t()
     def fetch_handle(owner) when is_atom(owner), do: GenServer.call(owner, :handle)
@@ -279,14 +289,12 @@ if Code.ensure_loaded?(Redix) do
 
     @impl GenServer
     def init(opts) do
-      conn =
-        case Keyword.get(opts, :conn) do
-          nil ->
-            {:ok, c} = Redix.start_link(Keyword.fetch!(opts, :url))
-            c
+      name = Keyword.fetch!(opts, :name)
 
-          supplied ->
-            supplied
+      {conn, own_conn?} =
+        case Keyword.get(opts, :conn) do
+          nil -> {start_own_conn(Keyword.fetch!(opts, :url), conn_name(name)), true}
+          supplied -> {supplied, false}
         end
 
       ttl = Keyword.fetch!(opts, :ttl_ms)
@@ -294,14 +302,52 @@ if Code.ensure_loaded?(Redix) do
 
       {:ok,
        %{
-         name: Keyword.fetch!(opts, :name),
+         name: name,
          conn: conn,
+         own_conn?: own_conn?,
          ns: Keyword.fetch!(opts, :namespace),
          ttl: ttl,
          mons: %{},
          sids: %{}
        }}
     end
+
+    # The name is derived from the owner's registered name (host configuration, one
+    # atom per owner), never from input, so a handle fetched once names the connection
+    # of every later incarnation of the owner.
+    defp conn_name(owner), do: Module.concat(owner, Redix)
+
+    # A previous incarnation's connection may still hold the name: after a crash its
+    # exit signal can arrive after the supervisor restarted us, and an owner stopped with
+    # :normal leaves it running (Redix does not trap exits). It is ours by its name:
+    # stop it and start a fresh one.
+    defp start_own_conn(url, name) do
+      case Redix.start_link(url, name: name) do
+        {:ok, conn} ->
+          conn
+
+        {:error, {:already_started, old}} ->
+          ref = Process.monitor(old)
+          Process.exit(old, :kill)
+
+          receive do
+            {:DOWN, ^ref, :process, ^old, _reason} -> :ok
+          end
+
+          {:ok, conn} = Redix.start_link(url, name: name)
+          conn
+      end
+    end
+
+    @impl GenServer
+    def terminate(_reason, %{own_conn?: true, conn: conn}) do
+      # Only callback-initiated stops get here (the owner does not trap exits); a
+      # linked connection would survive a :normal stop.
+      Process.exit(conn, :shutdown)
+      :ok
+    end
+
+    def terminate(_reason, _s), do: :ok
 
     @impl GenServer
     def handle_call({:register, sid, pid}, _from, s) do
@@ -324,7 +370,7 @@ if Code.ensure_loaded?(Redix) do
     end
 
     def handle_call(:handle, _from, s),
-      do: {:reply, %Handle{owner: s.name, conn: s.conn, namespace: s.ns}, s}
+      do: {:reply, %Handle{owner: s.name, conn: handle_conn(s), namespace: s.ns}, s}
 
     def handle_call({:unregister, sid}, _from, s) do
       s =
@@ -362,6 +408,11 @@ if Code.ensure_loaded?(Redix) do
     end
 
     def handle_info(_msg, s), do: {:noreply, s}
+
+    # An owned connection is named (see conn_name/1): the handle carries the name, which
+    # outlives this process; a supplied :conn is passed through as given.
+    defp handle_conn(%{own_conn?: true, name: name}), do: conn_name(name)
+    defp handle_conn(%{conn: conn}), do: conn
 
     # A pid is routable iff it lives on this node (and is alive) or on a connected node.
     # A pid on a node no longer in the cluster is treated as dead → triggers rehydrate.

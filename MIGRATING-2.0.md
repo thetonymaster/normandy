@@ -1535,9 +1535,11 @@ code you wrote against 1.x must follow the changes below.
   start yourself, build it with `SessionRegistry.Redis.handle(owner: MyApp.SessionRegistry,
   conn: MyApp.SessionRedix, namespace: "normandy")` (the `:name`, `:conn` and `:namespace` you
   gave `start_link/1`), or call `SessionRegistry.Redis.fetch_handle(MyApp.SessionRegistry)` once
-  for an owner started with `:url`. Pass `{SessionRegistry.Redis, handle}` where you passed
-  `{SessionRegistry.Redis, MyApp.SessionRegistry}`; the old form raises `ArgumentError` naming
-  the struct. The `:via` name is `{handle, session_id}`. With the Redis combo,
+  for an owner started with `:url`. Such an owner now registers its Redix connection as
+  `Module.concat(name, Redix)` (1.x left it unnamed) and the handle names it, so a fetched handle
+  keeps working after the owner restarts; stopping the owner also stops that connection. Pass
+  `{SessionRegistry.Redis, handle}` where you passed `{SessionRegistry.Redis,
+  MyApp.SessionRegistry}`; the old form raises `ArgumentError` naming the struct. The `:via` name is `{handle, session_id}`. With the Redis combo,
   `Normandy.Cluster.redis_handles/1` (the options of `redis_child_specs/1`) returns the
   registry and the store to give `Turn.Session.new/1`.
 - `SessionRegistry.Redis.whereis/2` runs in the caller on the handle's Redix connection
