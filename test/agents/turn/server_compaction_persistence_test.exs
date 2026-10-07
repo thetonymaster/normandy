@@ -94,6 +94,12 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
     assert chain(restored) == chain(live)
     assert restored.head == live.head
     assert restored.current_turn_id == live.current_turn_id
+
+    # The restore fills every entry's cache once (PERF-3): no request re-encodes it.
+    for entry <- AgentMemory.entry_chain(restored) do
+      assert is_binary(entry.wire) or is_list(entry.wire), "no wire on #{entry.id}"
+      assert is_integer(entry.tokens), "no token estimate on #{entry.id}"
+    end
   end
 
   test "a snapshot the store refuses is logged by its tag; the turn succeeds" do
@@ -110,7 +116,7 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
     {:ok, stored} = InMemory.history(store, sid)
     refute Enum.any?(stored, &(&1.role == "compaction"))
 
-    # A restart rebuilds the uncompacted conversation: every stored message.
+    # No compaction was stored, so a restart rebuilds every stored message.
     :ok = :gen_statem.stop(srv)
     restored = memory_of(start(sid, {NoSnapshotStore, store}))
     assert length(chain(restored)) == length(stored)
