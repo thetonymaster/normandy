@@ -791,7 +791,8 @@ defmodule Normandy.Agents.Turn.ServerTest do
     assert_receive {:tool_ran, "billing"}, 2_000
   end
 
-  test "passivates (stops :normal) after the idle timeout" do
+  test "passivates (stops {:shutdown, :passivated}) after the idle timeout" do
+    Process.flag(:trap_exit, true)
     store = InMemory.new()
     reg = Native.new()
 
@@ -810,7 +811,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     ref = Process.monitor(srv)
     {:ok, _} = Turn.Server.run(srv, "hi")
-    assert_receive {:DOWN, ^ref, :process, ^srv, :normal}, 1_000
+    assert_receive {:DOWN, ^ref, :process, ^srv, {:shutdown, :passivated}}, 1_000
   end
 
   test "a turn request received while :running is postponed and runs after idle" do
@@ -2584,13 +2585,13 @@ defmodule Normandy.Agents.Turn.ServerTest do
       assert wait_until(fn -> match?({:idle, _}, :sys.get_state(srv)) end)
     end
 
-    test "with no call for idle_timeout_ms, it stops normally" do
+    test "with no call for idle_timeout_ms, it passivates" do
       store = FlakyStore.new()
       FlakyStore.down(store)
       Process.flag(:trap_exit, true)
       {:ok, srv} = flaky_server(store, "s-unavail-idle", idle_timeout_ms: 50)
 
-      assert_receive {:EXIT, ^srv, :normal}, 1_000
+      assert_receive {:EXIT, ^srv, {:shutdown, :passivated}}, 1_000
     end
 
     test "a crash while the store is down does not take the supervisor or other sessions down" do

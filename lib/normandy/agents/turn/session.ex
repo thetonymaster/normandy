@@ -10,6 +10,9 @@ defmodule Normandy.Agents.Turn.Session do
   # :handlers) cannot be stored; the starter must pass those.
   @stored_server_options [:approval_timeout_ms, :on_approval_timeout, :idle_timeout_ms]
 
+  # How many servers run/2 tries when the one it found passivated under its call.
+  @passivation_attempts 3
+
   @schema NimbleOptions.new!(
             session_id: [
               type: {:custom, __MODULE__, :validate_session_id, []},
@@ -224,12 +227,37 @@ defmodule Normandy.Agents.Turn.Session do
   option `Turn.Server` rejects (only reachable by editing the struct, since `new/1` checks
   them too) raises `ArgumentError` in the caller, from `Turn.Supervisor.start_server/2`
   (Ruling 7).
+
+  A server that passivates while the call waits for it never runs the turn; `run/2`
+  routes the turn again, to a fresh server, up to three servers in all, then returns
+  `{:error, %Normandy.TurnError{type: :session_unavailable, reason: :passivated}}`. Only
+  a server that stopped with `{:shutdown, :passivated}` (`Turn.Server`'s passivation) or
+  was already gone is retried; any other exit of the server, `:normal` included,
+  propagates to the caller.
   """
   @spec run(t(), term()) :: {:ok, term()} | {:error, Exception.t()}
-  def run(%__MODULE__{} = session, user_input) do
+  def run(%__MODULE__{} = session, user_input),
+    do: run_on_server(session, user_input, @passivation_attempts)
+
+  def run(other, _user_input), do: raise(ArgumentError, not_a_session(:run, other))
+
+  # A server that passivates stops with {:shutdown, :passivated}, and a call queued
+  # behind its :passivate (or sent to it after it stopped) never ran: the call exits
+  # with that reason or :noproc. The turn is routed again, to a fresh server, at most
+  # @passivation_attempts times in all. Any other exit (a crash mid-turn, {:nodedown, _},
+  # a host's :normal stop) may come after the turn ran, and propagates (H8).
+  defp run_on_server(session, user_input, attempts_left) do
     case ensure_server(session) do
       {:ok, pid} ->
-        Server.run(pid, user_input)
+        try do
+          Server.run(pid, user_input)
+        catch
+          :exit, {reason, {:gen_statem, :call, _}}
+          when reason == :noproc or reason == {:shutdown, :passivated} ->
+            if attempts_left > 1,
+              do: run_on_server(session, user_input, attempts_left - 1),
+              else: {:error, %TurnError{type: :session_unavailable, reason: :passivated}}
+        end
 
       # A start function that raised comes back from the supervisor as
       # {exception, stacktrace}: the stacktrace is dropped (decision 6).
@@ -238,8 +266,6 @@ defmodule Normandy.Agents.Turn.Session do
          %TurnError{type: :session_unavailable, reason: TurnError.drop_stacktraces(reason)}}
     end
   end
-
-  def run(other, _user_input), do: raise(ArgumentError, not_a_session(:run, other))
 
   @doc """
   Delivers approval decisions (`tool_call_id => :approve | :reject`) to the session's

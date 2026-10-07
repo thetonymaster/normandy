@@ -691,7 +691,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
   end
 
   describe "on_passivate" do
-    test "runs when the idle server passivates; a crash still stops it normally" do
+    test "runs when the idle server passivates; a crash still passivates it" do
       # Linked by start_link and trapping exits, the test sees the stop reason however
       # soon passivation fires: no monitor to race.
       Process.flag(:trap_exit, true)
@@ -702,7 +702,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
       assert_receive {:hook, :p, :on_passivate, [%Normandy.Hooks.Context{event: :on_passivate}]},
                      1_000
 
-      assert_receive {:EXIT, ^srv, :normal}, 1_000
+      assert_receive {:EXIT, ^srv, {:shutdown, :passivated}}, 1_000
     end
   end
 end

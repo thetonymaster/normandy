@@ -46,7 +46,7 @@ defmodule Normandy.Agents.Turn.Server do
   `{:store_exit, exit_reason}` for a store call that exited, or the exception the load
   raised. It then carries on as a normal start would, eager resume included. An approval
   that arrives while the load fails is dropped with a warning. With no call for
-  `:idle_timeout_ms`, the server stops normally.
+  `:idle_timeout_ms`, the server passivates (stops with `{:shutdown, :passivated}`).
 
   A hook list this node cannot run (`{:invalid_hooks, message}`: a hook module missing
   on this node, or invalid hook opts) is handled the same way: the server waits
@@ -945,16 +945,18 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Idle long enough → passivate. Final turn state is already persisted; on_passivate
-  # hooks run (logged-only, through call_handler/3), then the server stops. An
-  # :unavailable server nobody calls stops too, with no hooks (it loaded no config); the
-  # next caller starts it again.
+  # hooks run (logged-only, through call_handler/3), then the server stops with
+  # {:shutdown, :passivated}: a normal exit for the supervisor (a :transient child is not
+  # restarted) and for crash reports, and the one reason Turn.Session.run/2 reads as "the
+  # turn never ran" and routes again (H8). An :unavailable server nobody calls stops too,
+  # with no hooks (it loaded no config); the next caller starts it again.
   def handle_event(:state_timeout, :passivate, state, data)
       when state in [:idle, :unavailable] do
     _ =
       if state == :idle and Runner.hooks?(data.config),
         do: call_handler(data, :on_passivate, fn -> Runner.passivate(data.config) end)
 
-    {:stop, :normal, data}
+    {:stop, {:shutdown, :passivated}, data}
   end
 
   # A turn request mid-turn is postponed and replayed when we re-enter :idle.

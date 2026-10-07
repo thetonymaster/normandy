@@ -115,7 +115,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     case Native.whereis(reg, "round-trip") do
       {:ok, p} ->
         ref = Process.monitor(p)
-        assert_receive {:DOWN, ^ref, _, _, :normal}, 1_000
+        assert_receive {:DOWN, ^ref, _, _, {:shutdown, :passivated}}, 1_000
 
       :none ->
         :ok

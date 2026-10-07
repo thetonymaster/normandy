@@ -1454,6 +1454,19 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   code that calls `start_server/2` directly and matched only `{:ok, pid}` must handle it. A
   start that found the session taken by a server that died before it could be looked up
   returns `{:error, :registration_race}`, which `Turn.Session` and `ResumeReaper` retry.
+- `Turn.Server` passivation (no call for `:idle_timeout_ms`) stops the server with reason
+  `{:shutdown, :passivated}` instead of `:normal`. Supervisors and crash reports treat it as a
+  normal exit (a `:transient` child is not restarted, nothing is logged); code that monitors a
+  session's server and matched `:normal` must match `{:shutdown, :passivated}`. Unlike
+  `:normal`, the exit reaches linked processes: a process that started a server with
+  `Turn.Server.start_link/1` outside a supervisor and does not trap exits now exits with it at
+  passivation. Start servers under `Turn.Supervisor` (as `Turn.Session` does) or trap exits.
+- `Turn.Session.run/2` routes a turn again when the server it found passivated before running
+  it (the call exits `{:shutdown, :passivated}` or `:noproc`), to a fresh server, up to three
+  servers in all; then it returns `{:error, %Normandy.TurnError{type: :session_unavailable,
+  reason: :passivated}}`. It used to exit the caller. `AgentProcess` in `:server` mode inherits
+  this. Any other exit of the server (a crash mid-turn, `{:nodedown, _}`, a host's `:normal`
+  stop) still propagates, since the turn may have run.
 
 ## New, non-breaking
 
