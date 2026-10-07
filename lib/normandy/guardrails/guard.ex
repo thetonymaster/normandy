@@ -45,6 +45,13 @@ defmodule Normandy.Guardrails.Guard do
           optional(atom()) => term()
         }
 
+  @doc """
+  Checks `value`, the agent's validated input or output, against the guard's `opts`.
+
+  Return `:ok` to let it through, or `{:error, violations}` to reject it, a list of
+  `t:violation/0`. A guard list stops at the first guard that rejects. Any other return
+  value raises, whatever the guard's `:on_error`.
+  """
   @callback check(value :: term(), opts :: keyword()) :: :ok | {:error, [violation()]}
 
   @doc """

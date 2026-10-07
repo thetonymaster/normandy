@@ -25,6 +25,15 @@ defmodule Normandy.Behaviours.AgentTemplate do
           optional(:pinned) => keyword()
         }
 
+  @doc """
+  Returns `{:ok, supplement}`, the node-local half of the config registered under
+  `template_id`, or `:error` when there is none.
+
+  `Turn.Server` calls it when it rebuilds a session's config from its stored template.
+  `:error` is reported like a store fault: the server waits `:unavailable` and retries, and
+  `run/2` replies with a `:session_unavailable` `Normandy.TurnError` whose reason is
+  `{:no_template_supplement, template_id}`.
+  """
   @callback fetch(handle :: term(), template_id :: String.t()) :: {:ok, supplement()} | :error
 
   defmodule Catalog do

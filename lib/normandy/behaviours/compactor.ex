@@ -53,6 +53,15 @@ defmodule Normandy.Behaviours.Compactor do
 
   @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil, mid_round: boolean()}
 
+  @doc """
+  Shrinks the conversation in `acc` when it needs to, and returns `{acc, meta}`.
+
+  The turn calls it at the start and after each tool batch, with the running agent config
+  as `acc` (the conversation is `acc.memory`), `ctx` (see the moduledoc) and the `opts` of
+  the `{module, opts}` ref. Return `acc` unchanged with `%{compacted: false}` to do nothing.
+  `meta` always has `:compacted`; the moduledoc lists the other keys. A failed compaction
+  returns `acc` and `%{compacted: false, error: reason}`.
+  """
   @callback maybe_compact(acc :: term(), ctx(), opts :: keyword()) :: {term(), map()}
 
   defmodule NoOp do

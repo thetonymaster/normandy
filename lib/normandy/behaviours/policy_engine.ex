@@ -22,6 +22,15 @@ defmodule Normandy.Behaviours.PolicyEngine do
   @type ctx :: map()
   @type decision :: {:allow, map()} | {:deny, map()} | {:needs_approval, map()}
 
+  @doc """
+  Decides whether a validated tool call may run. Return `{:allow, meta}`, `{:deny, info}` or
+  `{:needs_approval, info}`; the moduledoc says what `ctx` holds and what each does.
+
+  A denial becomes an error result for the model, with the `info` `:reason` in its text. A
+  `:needs_approval` call is parked for `Turn.Session.approve/2` under `Turn.Server`, and
+  denied in a shell that cannot ask. A raise, exit or throw is a denial: the call never runs
+  un-vetted.
+  """
   @callback check(call(), ctx()) :: decision()
 
   @doc """

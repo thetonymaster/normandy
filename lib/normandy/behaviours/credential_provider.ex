@@ -9,6 +9,15 @@ defmodule Normandy.Behaviours.CredentialProvider do
   stays decoupled from `Normandy.LLM`.
   """
 
+  @doc """
+  Returns `{:ok, token}`, the provider token as a string, or `{:error, reason}`.
+
+  `Turn.Server` calls it when it rebuilds a session's config from its stored template, with
+  `%{model: model}` as `provider` and the `opts` of the template's credential ref; the token
+  goes to the supplement's `client_builder`. An `{:error, reason}` makes the server wait
+  `:unavailable` and retry; the reason is reduced to its tags before it is replied or
+  logged.
+  """
   @callback get_token(provider :: term(), opts :: keyword()) ::
               {:ok, String.t()} | {:error, term()}
 

@@ -61,19 +61,83 @@ defmodule Normandy.Behaviours.Hooks do
   @type outcome ::
           {:ok, response :: term()} | {:error, Exception.t()} | {:rejected, Exception.t()}
 
+  @doc """
+  Runs when `Turn.Server` starts a session whose store holds no history, once per start.
+
+  Return `{:inject, [text]}` to add each text to the conversation as a user message; the
+  texts are stored and survive a restart. Any other return value is ignored. A crash is
+  handled by the entry's `:on_error`; under `:reraise` the session waits `:unavailable` and
+  retries the start.
+  """
   @callback on_session_start(Context.t(), opts()) :: {:inject, [String.t()]} | term()
+  @doc """
+  Runs in `Turn.Server` before an idle session stops.
+
+  The return value is ignored. A crash is logged, whatever `:on_error` says.
+  """
   @callback on_passivate(Context.t(), opts()) :: term()
+  @doc """
+  Runs on a turn's validated input, before input guardrails.
+
+  Return `{:cont, input}` to pass on the input, changed or not; a changed input is validated
+  again. Return `{:halt, reason}` to end the turn with a `Normandy.HookHaltError` before any
+  model call. Any other return value raises `ArgumentError`.
+  """
   @callback on_prompt(input :: term(), Context.t(), opts()) ::
               {:cont, term()} | {:halt, reason :: String.t()}
+  @doc """
+  Runs before each model call, with `%{final: boolean, iterations_left: integer}`.
+
+  Return `:cont` to make the call, or `{:halt, reason}` to end the turn with a
+  `Normandy.HookHaltError` without making it. A halt is not retried. Any other return value
+  raises `ArgumentError`.
+  """
   @callback before_llm(%{final: boolean(), iterations_left: integer()}, Context.t(), opts()) ::
               :cont | {:halt, reason :: String.t()}
+  @doc """
+  Runs before each tool call, with the model's `Normandy.Components.ToolCall`.
+
+  Return `{:cont, call}` to run the tool with the call, changed or not. Return
+  `{:halt, reason}` or `{:halt, %Normandy.Components.ToolResult{}}` to skip the tool: the
+  result, or an error result carrying `reason`, answers the call. A halt ends only this
+  call, not the turn. Any other return value raises `ArgumentError`.
+  """
   @callback before_tool(ToolCall.t(), Context.t(), opts()) ::
               {:cont, ToolCall.t()} | {:halt, String.t() | ToolResult.t()}
+  @doc """
+  Runs on every tool result the model will see, once, with the call and its
+  `Normandy.Components.ToolResult`.
+
+  Return `{:cont, result}` with the result to send, changed or not. That includes the error
+  results of a denied, halted or failed call. Any other return value raises `ArgumentError`.
+  """
   @callback after_tool(ToolCall.t(), ToolResult.t(), Context.t(), opts()) ::
               {:cont, ToolResult.t()}
+  @doc """
+  Runs after a compaction that removed messages, with `dropped`, the removed
+  `Normandy.Components.AgentMemory.Entry` structs (oldest first), and `meta`, the
+  compactor's metadata without `:dropped`.
+
+  Return `{:inject, [text]}` to append each text to the conversation as a user message
+  before the next model call. Any other return value is ignored. After a restart the same
+  messages are reported again under the same entry ids, so deduplicate on `entry.id`.
+  """
   @callback after_compact(dropped :: [Entry.t()], meta :: map(), Context.t(), opts()) ::
               {:inject, [String.t()]} | term()
+  @doc """
+  Runs after a turn's outcome is delivered, with `{:ok, response}`, `{:rejected, exception}`
+  or `{:error, exception}`.
+
+  The return value is ignored. A crash is logged, whatever `:on_error` says.
+  """
   @callback on_turn_end(outcome(), Context.t(), opts()) :: term()
+  @doc """
+  Optional: checks the entry's `opts` (without `:on_error`) when hook entries are validated,
+  in `BaseAgent.init/1` and when `Turn.Server` loads a session.
+
+  Raise on a bad option; any exception is re-raised as an `ArgumentError` that names the
+  hook module. The return value is ignored.
+  """
   @callback validate_opts!(opts()) :: term()
 
   @optional_callbacks @events ++ [validate_opts!: 1]

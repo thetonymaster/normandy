@@ -11,6 +11,14 @@ defmodule Normandy.Behaviours.ModelCatalog do
   from the agent's `Normandy.LLM.ClaudioAdapter`) when the reference sets none.
   """
 
+  @doc """
+  Returns `{:ok, window}`, the model's context window in tokens (a positive integer), or
+  `{:error, reason}`.
+
+  The turn calls it when the agent's compactor needs a window and the compactor's opts pin
+  none, then keeps the answer on the config per model. Any other `{:ok, value}`, and
+  `{:error, reason}`, fail the turn with a `Normandy.ModelCatalogError`.
+  """
   @callback context_window(model :: String.t(), opts :: keyword()) ::
               {:ok, pos_integer()} | {:error, term()}
 

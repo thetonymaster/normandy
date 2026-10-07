@@ -14,7 +14,21 @@ defmodule Normandy.Behaviours.BudgetTracker do
 
   @type scope :: term()
 
+  @doc """
+  Decides before a tool call whether it may run. Return `:ok` to run it, or
+  `{:error, reason}` to refuse it.
+
+  A refused call is not run and not recorded; the model receives an error result that says
+  the tool budget is used up, with `reason` appended when it is a non-empty string. `scope`
+  is `%{agent: name, model: model}`, `call` the `Normandy.Components.ToolCall`.
+  """
   @callback check(scope(), call :: term(), opts :: keyword()) :: :ok | {:error, term()}
+  @doc """
+  Accounts for a tool call after it ran, with its `Normandy.Components.ToolResult`.
+
+  Return `:ok`. It is called for each call that passed `check/3` and ran, including one that
+  returned an error result, and not for a refused call.
+  """
   @callback record(scope(), call :: term(), result :: term(), opts :: keyword()) :: :ok
 
   defmodule NoOp do

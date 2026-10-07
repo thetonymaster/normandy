@@ -52,9 +52,35 @@ defmodule Normandy.Tool do
   alias Normandy.Tools.Context
   alias Normandy.Tools.Toolset
 
+  @doc """
+  Returns the name the model calls the tool by, 1 to 64 letters, digits, `_` or `-`.
+
+  `Toolset.register/3` registers the tool under it. `use Normandy.Tool, name: "..."`
+  generates it.
+  """
   @callback name(tool :: struct()) :: String.t()
+  @doc """
+  Returns what the tool does, as a string for the model.
+
+  `use Normandy.Tool, description: "..."` generates it.
+  """
   @callback description(tool :: struct()) :: String.t()
+  @doc """
+  Returns the JSON Schema object that describes the tool's input, or `nil` for none.
+
+  The dispatcher validates the model's input against it before `c:run/2`; a tool that
+  returns `nil` has its input rejected. `use Normandy.Tool, input: Schema` generates it from
+  the schema module.
+  """
   @callback input_schema(tool :: struct()) :: map() | nil
+  @doc """
+  Runs the tool for one call, with the validated input in `context.input`, and returns
+  `{:ok, result}` or `{:error, reason}`.
+
+  Either reaches the model as the tool result; an error is marked as an error. A return
+  value of any other shape, a raise, an exit or a throw becomes an error result as well,
+  and so does running past the tool's timeout.
+  """
   @callback run(tool :: struct(), Context.t()) :: {:ok, term()} | {:error, term()}
 
   @use_options [:name, :description, :input]

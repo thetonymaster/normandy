@@ -8,31 +8,6 @@ defmodule Normandy.Docs.DocCoverageTest do
 
   @kinds [:function, :macro, :callback, :macrocallback]
 
-  # Gaps documented by Tasks 7.3f2-7.3f4, which remove their lines; 7.3f4 deletes the list.
-  @not_yet_documented ~w(
-    Normandy.Behaviours.AgentTemplate:callback:fetch/2
-    Normandy.Behaviours.BudgetTracker:callback:check/3
-    Normandy.Behaviours.BudgetTracker:callback:record/4
-    Normandy.Behaviours.Compactor:callback:maybe_compact/3
-    Normandy.Behaviours.CredentialProvider:callback:get_token/2
-    Normandy.Behaviours.Hooks:callback:after_compact/4
-    Normandy.Behaviours.Hooks:callback:after_tool/4
-    Normandy.Behaviours.Hooks:callback:before_llm/3
-    Normandy.Behaviours.Hooks:callback:before_tool/3
-    Normandy.Behaviours.Hooks:callback:on_passivate/2
-    Normandy.Behaviours.Hooks:callback:on_prompt/3
-    Normandy.Behaviours.Hooks:callback:on_session_start/2
-    Normandy.Behaviours.Hooks:callback:on_turn_end/3
-    Normandy.Behaviours.Hooks:callback:validate_opts!/1
-    Normandy.Behaviours.ModelCatalog:callback:context_window/2
-    Normandy.Behaviours.PolicyEngine:callback:check/2
-    Normandy.Guardrails.Guard:callback:check/2
-    Normandy.Tool:callback:description/1
-    Normandy.Tool:callback:input_schema/1
-    Normandy.Tool:callback:name/1
-    Normandy.Tool:callback:run/2
-  )
-
   test "every visible module documents its functions, macros and callbacks" do
     {:ok, modules} = :application.get_key(:normandy, :modules)
 
@@ -44,12 +19,7 @@ defmodule Normandy.Docs.DocCoverageTest do
           item <- undocumented(mod),
           do: item
 
-    assert missing -- @not_yet_documented == [],
-           "expected @doc on: #{inspect(missing -- @not_yet_documented)}"
-
-    assert @not_yet_documented -- missing == [],
-           "documented now, remove from @not_yet_documented: " <>
-             inspect(@not_yet_documented -- missing)
+    assert missing == [], "expected @doc on: #{inspect(missing)}"
   end
 
   test "the Normandy moduledoc says which entry point to use" do
