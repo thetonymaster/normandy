@@ -1642,6 +1642,10 @@ code you wrote against 1.x must follow the changes below.
 - `Normandy.Telemetry.OtelCtx` asks the code server once per node whether OpenTelemetry is
   loaded and caches the answer. OpenTelemetry loaded into a running node after Normandy first
   looked for it (a hot code load) is not seen until the node restarts.
+- `AgentMemory.delete_turn/2` is linear in the number of entries (it walked every surviving
+  entry to the root), and a corrupt memory (a parent cycle, a `parent_id` naming no entry) no
+  longer hangs it or raises `BadMapError`. It now also drops the thinking of the entry right
+  after the deleted turn, which was produced with that turn in its history and used to keep it.
 
 ## New, non-breaking
 

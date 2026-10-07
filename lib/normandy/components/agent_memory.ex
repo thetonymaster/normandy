@@ -356,8 +356,13 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   @doc """
-  Removes every entry of turn `turn_id`, re-linking the survivors around it. Raises
-  `Normandy.TurnNotFoundError` when the memory has no entry of that turn.
+  Removes every entry of turn `turn_id`, re-linking the survivors around it. Every
+  surviving entry that had a deleted entry among its ancestors loses its thinking (it was
+  produced with the deleted turn in its history). Raises `Normandy.TurnNotFoundError`
+  when the memory has no entry of that turn.
+
+  Linear in the number of entries. A corrupt memory (a parent cycle, a `parent_id`
+  naming no entry) does not hang or raise.
   """
   @spec delete_turn(t(), String.t()) :: t()
   def delete_turn(%__MODULE__{} = memory, turn_id) do
@@ -368,30 +373,38 @@ defmodule Normandy.Components.AgentMemory do
       raise Normandy.TurnNotFoundError, turn_id: turn_id
     end
 
-    entries =
-      memory.entries
-      |> Enum.reject(fn {id, _entry} -> MapSet.member?(deleted, id) end)
-      |> Map.new(fn {id, entry} ->
-        {id, %{entry | parent_id: surviving_ancestor(entry.parent_id, memory.entries, deleted)}}
-      end)
+    after_deleted = descendants(memory.entries, deleted)
 
-    head = surviving_ancestor(memory.head, memory.entries, deleted)
-
-    # Messages after the deleted turn were produced with it in their history.
     entries =
-      Map.new(entries, fn {id, entry} ->
-        if after_deleted?(entry.parent_id, memory.entries, deleted),
+      for {id, entry} <- memory.entries, not MapSet.member?(deleted, id), into: %{} do
+        entry = %{entry | parent_id: surviving_ancestor(entry.parent_id, memory.entries, deleted)}
+
+        if MapSet.member?(after_deleted, id),
           do: {id, strip_thinking(entry)},
           else: {id, entry}
-      end)
+      end
 
-    %{memory | entries: entries, head: head}
+    %{memory | entries: entries, head: surviving_ancestor(memory.head, memory.entries, deleted)}
   end
 
-  defp after_deleted?(nil, _entries, _deleted), do: false
+  # The ids of the entries below `roots` (not `roots` themselves), through one
+  # parent => children index: O(entries). The visited set stops a parent cycle; a
+  # parent_id that names no entry is a key nobody reaches.
+  defp descendants(entries, roots) do
+    children = Enum.group_by(entries, fn {_id, entry} -> entry.parent_id end, &elem(&1, 0))
 
-  defp after_deleted?(id, entries, deleted) do
-    MapSet.member?(deleted, id) or after_deleted?(entries[id].parent_id, entries, deleted)
+    roots
+    |> Enum.flat_map(&Map.get(children, &1, []))
+    |> collect_descendants(children, roots)
+    |> MapSet.difference(roots)
+  end
+
+  defp collect_descendants([], _children, seen), do: seen
+
+  defp collect_descendants([id | rest], children, seen) do
+    if MapSet.member?(seen, id),
+      do: collect_descendants(rest, children, seen),
+      else: collect_descendants(Map.get(children, id, []) ++ rest, children, MapSet.put(seen, id))
   end
 
   @doc """

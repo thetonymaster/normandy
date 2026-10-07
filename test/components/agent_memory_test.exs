@@ -8,6 +8,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Test.CountingContent
   alias NormandyTest.IOTest
   doctest Normandy.Components.AgentMemory
 
@@ -347,6 +348,84 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     assert result.head == "c"
   end
 
+  describe "delete_turn/2 on large and corrupt memories (PERF-15)" do
+    # One entry per turn, in a chain: e1 <- e2 <- ... <- en.
+    defp chain(n) do
+      entries =
+        Map.new(1..n, fn i ->
+          parent = if i == 1, do: nil, else: "e#{i - 1}"
+
+          {"e#{i}",
+           %Entry{
+             id: "e#{i}",
+             parent_id: parent,
+             turn_id: "t#{i}",
+             role: "user",
+             content: "m#{i}"
+           }}
+        end)
+
+      %AgentMemory{entries: entries, head: "e#{n}", current_turn_id: "t#{n}"}
+    end
+
+    test "deleting the first turn of a 20_000-entry chain is linear" do
+      # The walk-to-root version takes ~12 s here (quadratic); a linear one, milliseconds.
+      task = Task.async(fn -> AgentMemory.delete_turn(chain(20_000), "t1") end)
+      memory = Task.await(task, 5_000)
+
+      assert AgentMemory.count_messages(memory) == 19_999
+      assert AgentMemory.fetch_entry!(memory, "e2").parent_id == nil
+      assert memory.head == "e20000"
+    end
+
+    test "survivors without thinking keep their cached term (nothing re-encoded)" do
+      ref = CountingContent.counter()
+
+      memory =
+        Enum.reduce(1..3, AgentMemory.new_memory(), fn i, m ->
+          m
+          |> AgentMemory.initialize_turn()
+          |> AgentMemory.add_message("user", CountingContent.new(ref, "m#{i}"))
+        end)
+
+      [first | _] = AgentMemory.entry_chain(memory)
+      deleted = AgentMemory.delete_turn(memory, first.turn_id)
+
+      assert CountingContent.count(ref) == 3
+      assert Enum.map(AgentMemory.entry_chain(deleted), & &1.wire) == ["m2", "m3"]
+    end
+
+    test "a parent cycle among the survivors does not hang" do
+      # x is deleted; y <-> z is a corrupt cycle that never reaches x.
+      x = %Entry{id: "x", parent_id: nil, turn_id: "T", role: "user", content: "x"}
+      y = %Entry{id: "y", parent_id: "z", turn_id: "U", role: "user", content: "y"}
+      z = %Entry{id: "z", parent_id: "y", turn_id: "U", role: "assistant", content: "z"}
+
+      memory = %AgentMemory{
+        entries: %{"x" => x, "y" => y, "z" => z},
+        head: "y",
+        current_turn_id: "U"
+      }
+
+      result = Task.await(Task.async(fn -> AgentMemory.delete_turn(memory, "T") end), 2_000)
+
+      assert Map.keys(result.entries) |> Enum.sort() == ["y", "z"]
+      assert AgentMemory.fetch_entry!(result, "y").parent_id == "z"
+      assert AgentMemory.fetch_entry!(result, "z").parent_id == "y"
+    end
+
+    test "a parent_id that names no entry does not raise" do
+      x = %Entry{id: "x", parent_id: nil, turn_id: "T", role: "user", content: "x"}
+      y = %Entry{id: "y", parent_id: "missing", turn_id: "U", role: "user", content: "y"}
+
+      memory = %AgentMemory{entries: %{"x" => x, "y" => y}, head: "y", current_turn_id: "U"}
+      result = AgentMemory.delete_turn(memory, "T")
+
+      assert Map.keys(result.entries) == ["y"]
+      assert AgentMemory.fetch_entry!(result, "y").parent_id == "missing"
+    end
+  end
+
   describe "history edits drop the thinking they invalidate" do
     # A thinking block is valid only after the exact history that produced it, so
     # an edit that removes earlier messages must drop the thinking it invalidated.
@@ -390,6 +469,32 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       memory = AgentMemory.delete_turn(memory, second_turn)
 
       assert thinking_by_call(memory) == [{"a", @thinking}, {"c", []}]
+    end
+
+    test "delete_turn drops the thinking of the entry right after the deleted turn" do
+      # u (turn 1) <- a2 (turn 2, deleted) <- a3 (turn 3, directly after it).
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "go")
+        |> AgentMemory.initialize_turn()
+
+      deleted_turn = memory.current_turn_id
+
+      memory =
+        memory
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @thinking,
+          tool_calls: [%ToolCall{id: "a", name: "weather", input: %{}}]
+        })
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @thinking,
+          tool_calls: [%ToolCall{id: "b", name: "weather", input: %{}}]
+        })
+
+      memory = AgentMemory.delete_turn(memory, deleted_turn)
+
+      assert thinking_by_call(memory) == [{"b", []}]
     end
 
     test "drop_thinking/1 removes thinking blocks from a block list and a ToolCallResponse" do
