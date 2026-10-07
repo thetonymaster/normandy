@@ -1306,6 +1306,11 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `%TurnError{type: :session_unavailable, reason: {:invalid_template, message}}`. **Add the
   `@behaviour` line to your own policy, budget, credential, compactor, catalog and guard
   modules** if they lack it. `from_config/2` now refuses references and ports too.
+- A stored template that lacks `:template_id` or the `behaviours_refs` `:credential` slot,
+  or whose `behaviours_refs` is not a map, is refused the same way (`{:invalid_template,
+  message}`, the message naming the field or slot). It used to crash the server's start into
+  a supervisor restart loop whose crash report showed the stored refs, credential provider
+  opts included.
 - New supplement key `:pinned`: `pinned: [policy: ref, guardrails: g, credential: ref]`
   (also `:budget`, `:compactor`, `:model_catalog`, `:hooks`). A stored template whose value
   differs is refused, before its credential provider runs. Templates are not signed.

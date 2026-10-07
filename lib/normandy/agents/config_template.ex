@@ -362,6 +362,16 @@ defmodule Normandy.Agents.ConfigTemplate do
   end
 
   @doc false
+  # The template's shape as rebuild/3 reads it (required fields and behaviours_refs slots,
+  # a map of refs), checked by Turn.Server right after check_loaded!/1 and before it reads
+  # :template_id or the credential ref. Raises ArgumentError naming the field or slot.
+  @spec check_translatable!(map()) :: :ok
+  def check_translatable!(tmpl) do
+    _ = translate!(tmpl)
+    :ok
+  end
+
+  @doc false
   # The supplement's :pinned against a template as stored: Turn.Server checks it before it
   # calls the template's credential provider, rebuild/3 again after translation.
   @spec check_pinned!(map(), map()) :: :ok

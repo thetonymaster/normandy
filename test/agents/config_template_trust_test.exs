@@ -176,27 +176,33 @@ defmodule Normandy.Agents.ConfigTemplateTrustTest do
       name = :"creds_#{System.unique_integer([:positive])}"
       Process.register(self(), name)
       tmpl = put_in(tmpl.behaviours_refs[:credential], {NotifyingCreds, [notify: name]})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(self(), {:started, thin_start_as_is(tmpl, supp)})
+      end)
+
+      assert_received {:started, srv}
+      srv
+    end
+
+    # Stores the template unchanged (no notifying credential provider put in); logs are
+    # the caller's to capture.
+    defp thin_start_as_is(tmpl, supp) do
       store = InMemory.new()
       sid = "trust-#{System.unique_integer([:positive])}"
       :ok = InMemory.save_config_template(store, sid, tmpl)
       {:ok, cat} = Catalog.start_link([])
       :ok = Catalog.put(cat, "kind-a", supp)
 
-      ExUnit.CaptureLog.capture_log(fn ->
-        send(
-          self(),
-          {:started,
-           Turn.Server.start_link(
-             session_id: sid,
-             store: {InMemory, store},
-             registry: {Native, Native.new()},
-             template_provider: {Catalog, cat},
-             handlers: handlers()
-           )}
+      {:ok, srv} =
+        Turn.Server.start_link(
+          session_id: sid,
+          store: {InMemory, store},
+          registry: {Native, Native.new()},
+          template_provider: {Catalog, cat},
+          handlers: handlers()
         )
-      end)
 
-      assert_received {:started, {:ok, srv}}
       srv
     end
 
@@ -221,6 +227,41 @@ defmodule Normandy.Agents.ConfigTemplateTrustTest do
 
       assert message =~ "has a :policy that differs from the one this node's supplement pins"
       refute_received :token_requested
+    end
+
+    # A template missing what reconstruction reads first is refused like any other, not
+    # a KeyError in init/1 (a restart loop whose crash log inspected the credential opts).
+    test "a template with no template_id, a non-map behaviours_refs or no credential waits :unavailable" do
+      creds = {NotifyingCreds, [notify: :nobody, api_key: "SECRET-CRED"]}
+      with_creds = put_in(template().behaviours_refs[:credential], creds)
+
+      cases = [
+        {Map.delete(with_creds, :template_id), "lacks the field :template_id"},
+        {%{with_creds | behaviours_refs: Map.to_list(with_creds.behaviours_refs)},
+         "has a behaviours_refs that is not a map"},
+        {update_in(with_creds.behaviours_refs, fn refs ->
+           refs
+           |> Map.delete(:credential)
+           |> Map.put(:budget, {Normandy.Behaviours.BudgetTracker.NoOp, [token: "SECRET-CRED"]})
+         end), "lacks the behaviours_refs slot :credential"}
+      ]
+
+      for {tmpl, expected} <- cases do
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            srv = thin_start_as_is(tmpl, supplement())
+
+            assert {:error,
+                    %TurnError{type: :session_unavailable, reason: {:invalid_template, message}}} =
+                     Turn.Server.run(srv, "hello")
+
+            assert message =~ expected
+            refute message =~ "SECRET"
+            assert Process.alive?(srv)
+          end)
+
+        refute log =~ "SECRET"
+      end
     end
 
     test "a template that passes runs as before" do

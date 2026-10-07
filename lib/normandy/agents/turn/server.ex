@@ -577,7 +577,14 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  defp check_loaded(tmpl), do: check_template(fn -> ConfigTemplate.check_loaded!(tmpl) end)
+  # check_translatable!/1 makes reconstruct_config/2's reads of :template_id and the
+  # credential ref safe: a template missing them is refused here, naming the field or slot.
+  defp check_loaded(tmpl) do
+    check_template(fn ->
+      :ok = ConfigTemplate.check_loaded!(tmpl)
+      ConfigTemplate.check_translatable!(tmpl)
+    end)
+  end
 
   defp check_pinned(tmpl, supplement),
     do: check_template(fn -> ConfigTemplate.check_pinned!(tmpl, supplement) end)
