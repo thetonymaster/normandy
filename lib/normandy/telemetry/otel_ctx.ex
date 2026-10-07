@@ -9,6 +9,11 @@ defmodule Normandy.Telemetry.OtelCtx do
   becoming root spans in their own trace. When OTel is not loaded, every
   function here is a cheap no-op.
 
+  Whether each OTel module is loaded is asked of the code server once per node, then
+  cached in `:persistent_term`: an absent module would otherwise cost a code-server
+  round trip on every call, from every process. So OTel loaded after the first call
+  that looked for it (a hot code load) is not seen until the node restarts.
+
   Two ways to install a captured context:
 
     * `restore/1` attaches it and never undoes that. Use it only at the top of
@@ -38,9 +43,27 @@ defmodule Normandy.Telemetry.OtelCtx do
       Normandy.Telemetry.OtelCtx.detach(token)
   """
 
+  @doc false
+  # Code.ensure_loaded?/1, asked once per node and module (see the moduledoc). Public
+  # for its test only.
+  @spec __loaded__?(module()) :: boolean()
+  def __loaded__?(module) do
+    key = {__MODULE__, module}
+
+    case :persistent_term.get(key, :unknown) do
+      :unknown ->
+        loaded = Code.ensure_loaded?(module)
+        :persistent_term.put(key, loaded)
+        loaded
+
+      loaded ->
+        loaded
+    end
+  end
+
   @spec capture() :: term() | nil
   def capture do
-    if Code.ensure_loaded?(OpenTelemetry.Ctx) and
+    if __loaded__?(OpenTelemetry.Ctx) and
          function_exported?(OpenTelemetry.Ctx, :get_current, 0) do
       # OpenTelemetry is a soft dependency: a direct call would emit an
       # undefined-module compile warning when it is absent.
@@ -66,7 +89,7 @@ defmodule Normandy.Telemetry.OtelCtx do
   def attach(nil), do: nil
 
   def attach(ctx) do
-    if Code.ensure_loaded?(OpenTelemetry.Ctx) and
+    if __loaded__?(OpenTelemetry.Ctx) and
          function_exported?(OpenTelemetry.Ctx, :attach, 1) do
       # Soft dependency, see capture/0.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
@@ -86,7 +109,7 @@ defmodule Normandy.Telemetry.OtelCtx do
   def inject(nil), do: []
 
   def inject(ctx) do
-    if Code.ensure_loaded?(:otel_propagator_text_map) do
+    if __loaded__?(:otel_propagator_text_map) do
       # Soft dependency, see capture/0.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(:otel_propagator_text_map, :inject_from, [ctx, []])
@@ -106,7 +129,7 @@ defmodule Normandy.Telemetry.OtelCtx do
   def extract([]), do: nil
 
   def extract(carrier) when is_list(carrier) do
-    if Code.ensure_loaded?(:otel_propagator_text_map) and Code.ensure_loaded?(:otel_ctx) do
+    if __loaded__?(:otel_propagator_text_map) and __loaded__?(:otel_ctx) do
       # Soft dependency, see capture/0.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
       empty = apply(:otel_ctx, :new, [])
@@ -132,7 +155,7 @@ defmodule Normandy.Telemetry.OtelCtx do
   def detach(nil), do: :ok
 
   def detach(token) do
-    if Code.ensure_loaded?(OpenTelemetry.Ctx) and
+    if __loaded__?(OpenTelemetry.Ctx) and
          function_exported?(OpenTelemetry.Ctx, :detach, 1) do
       # Soft dependency, see capture/0.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply

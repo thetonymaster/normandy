@@ -1637,6 +1637,12 @@ code you wrote against 1.x must follow the changes below.
   your own baggage. If you relied on inbound baggage, extract it yourself from the request
   headers.
 
+## 42. AgentProcess and coordination
+
+- `Normandy.Telemetry.OtelCtx` asks the code server once per node whether OpenTelemetry is
+  loaded and caches the answer. OpenTelemetry loaded into a running node after Normandy first
+  looked for it (a hot code load) is not seen until the node restarts.
+
 ## New, non-breaking
 
 - `[:normandy, :workflow, :run, :stop]` carries `status: :ok | :error` (`:error` when the
