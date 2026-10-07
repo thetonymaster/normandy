@@ -1727,12 +1727,13 @@ code you wrote against 1.x must follow the changes below.
 
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.
 
-- **The context budget undercounts the prompt** (AX-12). `Normandy.Context.WindowManager`
-  estimates the history only, at about four characters per token. The system prompt and the
-  tool definitions are not counted, and `reserved_tokens` is a fixed 4096 whatever
-  `max_tokens` or thinking needs. Compaction can therefore start late, and an API "prompt is
-  too long" error is still possible near the window. Leave headroom: raise
-  `reserved_tokens` when `max_tokens` is large or thinking is on.
+- **The context budget undercounts the prompt** (AX-12). The compactor's estimate
+  (`Normandy.Context.WindowManager`) counts the history only, at about four characters per
+  token; the system prompt and the tool definitions are not counted. Compaction can
+  therefore start late, and an API "prompt is too long" error is still possible near the
+  window. With a long system prompt or many tools, leave headroom: pin a smaller
+  `:context_window` or pass a larger `:reserved_tokens` in the compactor opts (the reserve
+  defaults to the agent's `max_tokens`).
 - **The structured-output path has no corrective retry** (AX-18). Constraints the API drops
   (`pattern`, lengths, ranges, item counts) are stated in the property description, but an
   answer that breaks one is not re-asked. The legacy parse-retry path still re-asks with
