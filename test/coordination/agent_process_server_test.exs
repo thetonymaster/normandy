@@ -10,6 +10,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Coordination.AgentProcess.ScopedRegistry
   alias Normandy.Test.FakeTool
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
@@ -114,16 +115,18 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       %{
         session: %Normandy.Agents.Turn.Session{
           store: {_sm, store_h},
-          registry: {_rm, reg_name},
+          registry: {ScopedRegistry, {reg_name, scope}},
           supervisor: sup
         },
         owned: owned
       } = :sys.get_state(pid)
 
       assert is_pid(store_h)
-      assert is_atom(reg_name)
+      # A scope in Normandy's shared registry: nothing to start or own.
+      assert reg_name == ScopedRegistry.registry_name()
+      assert is_reference(scope)
       assert is_pid(sup)
-      assert owned != []
+      assert Enum.sort(owned) == Enum.sort([store_h, sup])
       assert Enum.all?(owned, &Process.alive?/1)
 
       :ok = AgentProcess.stop(pid)

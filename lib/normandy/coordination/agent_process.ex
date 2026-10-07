@@ -62,8 +62,10 @@ defmodule Normandy.Coordination.AgentProcess do
     from the store, and `update_agent/2` updates only the config template
     (model/temperature/behaviours/tools) — memory mutations are ignored.
   - Session infra (`:store`, `:registry`, `:supervisor`) may be supplied via
-    `start_link`; if omitted, the process starts and owns in-memory defaults
-    that terminate with it. `start_link` builds one `Turn.Session` from them and from
+    `start_link`; if omitted, the process starts and owns an in-memory store and a
+    `Turn.Supervisor` that terminate with it, and registers its sessions under a scope
+    of its own in a registry Normandy starts (no atom per process). `start_link` builds
+    one `Turn.Session` from them and from
     `:supervisor_mod`, `:template_provider`, `:template_id`, `:resume_policy`,
     `:subscriber`, `:handlers`, `:approval_timeout_ms`, `:on_approval_timeout` and
     `:idle_timeout_ms` (see `Turn.Session.new/1`; `start_link/1` checks them with its types);
@@ -76,10 +78,10 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.Coordination.AgentProcess.ScopedRegistry
   alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
@@ -144,7 +146,8 @@ defmodule Normandy.Coordination.AgentProcess do
                               type_doc: "`{module, handle}`",
                               doc:
                                 "`:server` mode: the `SessionRegistry` as `{module, handle}`. " <>
-                                  "Without it the process starts and owns a `Native` registry."
+                                  "Without it the process uses a scope of its own in a " <>
+                                  "registry Normandy starts."
                             ],
                             supervisor: [
                               type: @session_types.supervisor,
@@ -529,16 +532,8 @@ defmodule Normandy.Coordination.AgentProcess do
           {supplied, []}
       end
 
-    {registry, owned_reg} =
-      case Keyword.get(opts, :registry) do
-        nil ->
-          name = :"agentprocess_reg_#{System.unique_integer([:positive])}"
-          {:ok, reg_pid} = Native.start_link(name: name)
-          {{Normandy.Behaviours.SessionRegistry.Native, name}, [reg_pid]}
-
-        supplied ->
-          {supplied, []}
-      end
+    # Without a :registry, a scope in Normandy's shared registry: nothing to start or own.
+    registry = Keyword.get_lazy(opts, :registry, fn -> {ScopedRegistry, ScopedRegistry.new()} end)
 
     {supervisor, owned_sup} =
       case Keyword.get(opts, :supervisor) do
@@ -550,7 +545,7 @@ defmodule Normandy.Coordination.AgentProcess do
           {supplied, []}
       end
 
-    {:ok, store, registry, supervisor, owned_store ++ owned_reg ++ owned_sup}
+    {:ok, store, registry, supervisor, owned_store ++ owned_sup}
   rescue
     e -> {:error, e}
   end

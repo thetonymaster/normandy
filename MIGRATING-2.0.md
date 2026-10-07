@@ -1680,6 +1680,11 @@ code you wrote against 1.x must follow the changes below.
 - `get_stats/1` counts a run or cast when it finishes, whatever its outcome (casts were
   counted when cast; failed inline runs were not counted).
 - A `reply_to` name that is not registered is logged and the result dropped.
+- A `:server`-mode `AgentProcess` started without `:registry` no longer starts and owns a
+  `Native` registry of its own (each one created about three atoms that were never freed).
+  Its sessions register under a scope of its own in one registry that Normandy's application
+  starts; two processes with the same `agent_id` still never see each other's servers. A
+  supplied `:registry` is used as before.
 
 ## New, non-breaking
 
