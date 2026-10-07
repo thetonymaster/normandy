@@ -9,6 +9,7 @@ defmodule Normandy.Hooks.RunnerTest do
   alias Normandy.Hooks.{Context, Runner}
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.{Probe, TurnEndOnly}
+  alias Normandy.Test.OwnLog
   alias Normandy.Test.TelemetryCapture
 
   defmodule EchoOpts do
@@ -218,17 +219,19 @@ defmodule Normandy.Hooks.RunnerTest do
              ) == :t
     end
 
+    # The Runner logs in the caller, so these refutes read only this process's events:
+    # an async capture_log also sees other tests' lines (ResumeReaperTest logs `:boom`).
     test ":open logs the hook, event and exception module, not the message, and passes the value on" do
       config =
         config([probe(:a, on_error: :open, returns: [on_prompt: {:raise, "boom"}]), probe(:b)])
 
-      log = capture_log(fn -> assert Runner.prompt(config, "hi") == {:cont, "hi"} end)
+      log = OwnLog.capture(fn -> assert Runner.prompt(config, "hi") == {:cont, "hi"} end)
       assert log =~ "hook Normandy.Test.Hooks.Probe on_prompt crashed: RuntimeError"
       refute log =~ "boom"
       assert_received {:hook, :b, :on_prompt, ["hi", _]}
 
       exit_log =
-        capture_log(fn ->
+        OwnLog.capture(fn ->
           assert Runner.after_compact(
                    config([
                      probe(:a, on_error: :open, returns: [after_compact: {:exit, {:secret, 1}}])
@@ -278,7 +281,7 @@ defmodule Normandy.Hooks.RunnerTest do
       tool =
         config([probe(:a, on_error: :open, returns: [before_tool: {:raise, "boom"}]), probe(:b)])
 
-      log = capture_log(fn -> assert Runner.before_tool(tool, call()) == {:cont, call()} end)
+      log = OwnLog.capture(fn -> assert Runner.before_tool(tool, call()) == {:cont, call()} end)
       assert log =~ "before_tool crashed: RuntimeError"
       refute log =~ "boom"
       assert_received {:hook, :b, :before_tool, [_call, _ctx]}
@@ -287,7 +290,7 @@ defmodule Normandy.Hooks.RunnerTest do
         config([probe(:a, on_error: :open, returns: [after_tool: {:raise, "boom"}]), probe(:b)])
 
       log =
-        capture_log(fn ->
+        OwnLog.capture(fn ->
           assert Runner.after_tool(after_tool, call(), result()) == result()
         end)
 
