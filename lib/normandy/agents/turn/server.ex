@@ -1266,6 +1266,7 @@ defmodule Normandy.Agents.Turn.Server do
           :validate,
           fn -> validate_output(data, value) end,
           fn
+            {:output_unparsed, e} -> fail(data, e)
             {:output_invalid, e} -> fail(data, {:rejected, e})
             validated -> advance(rest, data, {:output_validated, validated})
           end
@@ -1520,10 +1521,12 @@ defmodule Normandy.Agents.Turn.Server do
     e in Normandy.LLMError -> {:output_unparsed, e}
   end
 
+  # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22).
   defp validate_output(data, value) do
     data.handlers.validate.(data.config, value)
   rescue
     e in Normandy.Schema.ValidationError -> {:output_invalid, e}
+    e in Normandy.LLMError -> {:output_unparsed, e}
   end
 
   defp guarded(data, name, fun, continue) do

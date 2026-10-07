@@ -813,16 +813,7 @@ defmodule Normandy.Agents.BaseAgent do
   #     LLMError, never the raw response presented as success.
   defp convert_final_text(_config, text, %{chat_message: _} = output_schema) do
     answer = unwrap_llm_content(text)
-
-    if is_binary(answer) and String.trim(answer) == "" do
-      raise LLMError.new(
-              type: :invalid_output,
-              retryable?: false,
-              detail:
-                "expected a final answer, got an empty one: the model ended its turn with no text"
-            )
-    end
-
+    ensure_answer!(answer)
     Map.put(output_schema, :chat_message, answer)
   end
 
@@ -848,9 +839,32 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  # An empty or whitespace-only answer (the model ended its turn with no text, AX-32) is
+  # the :invalid_output LLMError, never a blank success (decision 22). The one check, for
+  # the converted answer (convert_final_text/3) and the validated one
+  # (validate_turn_output/2).
+  defp ensure_answer!(answer) do
+    if is_binary(answer) and String.trim(answer) == "" do
+      raise LLMError.new(
+              type: :invalid_output,
+              retryable?: false,
+              detail:
+                "expected a final answer, got an empty one: the model ended its turn with no text"
+            )
+    end
+
+    :ok
+  end
+
   # An output that breaks its schema is an error (SEC-5): run/2 returns the
   # ValidationError. Neither the value nor the errors are logged: they can hold user data.
+  # A chat answer is checked for blankness first: a chat agent with no tools answers the
+  # output schema itself, so its answer is validated here and never converted.
   defp validate_turn_output(config, value) do
+    with %{chat_message: _} <- config.output_schema,
+         %{chat_message: answer} <- value,
+         do: ensure_answer!(answer)
+
     case ValidationMiddleware.validate_output(config, value) do
       {:ok, validated} ->
         validated || value

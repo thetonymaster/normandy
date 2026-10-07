@@ -1205,7 +1205,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   text, usually right after tool results) now returns
   `{:error, %Normandy.LLMError{type: :invalid_output}}` for a `chat_message` output schema,
   on `run/3`, `stream/3` and `Turn.Server`, instead of `%BaseAgentOutputSchema{chat_message: ""}`.
-  It is not retried. A test model client that answers with an empty response model must
+  This holds for a chat agent with no tools too, and for a structured-output answer whose
+  `chat_message` is blank. It is not retried. A test model client that answers with an empty response model must
   answer with text.
 
 - Schema properties reach the model in declaration order, in tool `input_schema`, the
