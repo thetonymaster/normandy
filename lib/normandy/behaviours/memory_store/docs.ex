@@ -1,9 +1,9 @@
 defmodule Normandy.Behaviours.MemoryStore.Docs do
   @moduledoc false
   # Pure operations on one namespace's documents, `%{path => %{content, version,
-  # updated_at}}`. InMemory, ETS and Mnesia run these inside their single serialized
-  # writer (an Agent call, the ETS owner, a Mnesia transaction), which makes each atomic.
-  # Every write returns `{reply, docs}`.
+  # updated_at}}`. InMemory and Mnesia run these inside their single serialized writer
+  # (an Agent call, a Mnesia transaction), which makes each atomic. Every write returns
+  # `{reply, docs}`. ETS keeps a row per document and uses MemoryStore.Rows.
 
   alias Normandy.Behaviours.MemoryStore
 
@@ -40,7 +40,7 @@ defmodule Normandy.Behaviours.MemoryStore.Docs do
 
   @doc false
   # Compare-and-set on a document's current version (`nil` when it is missing). Shared
-  # with the Postgres backend.
+  # with MemoryStore.Rows and the Postgres backend.
   @spec next_version(pos_integer() | nil, pos_integer() | :new | :any) ::
           {:ok, pos_integer()} | {:error, :conflict}
   def next_version(nil, expected) when expected in [:new, :any], do: {:ok, 1}

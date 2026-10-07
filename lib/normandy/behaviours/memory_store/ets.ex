@@ -1,15 +1,18 @@
 defmodule Normandy.Behaviours.MemoryStore.ETS do
   @moduledoc """
-  ETS-backed `MemoryStore`, in-node. One row per namespace, `{namespace, docs}`. A
-  GenServer owns the `:protected` table and serializes every write, so compare-and-set
-  and rename are atomic; reads go to the table directly. The handle is `{pid, table}`.
+  ETS-backed `MemoryStore`, in-node. One row per document, `{{namespace, path}, doc}`,
+  plus one totals row per namespace, `{{namespace, 0}, {bytes, documents}}`, in an
+  `:ordered_set`, so an operation costs what it touches, not the namespace's size. A
+  GenServer owns the `:protected` table and runs every write and every `list/3`, so
+  compare-and-set, rename and the `put/6` limits are atomic and a listing never sees half
+  of a rename. `get/3` reads the table directly. The handle is `{pid, table}`.
   """
   @behaviour Normandy.Behaviours.MemoryStore
 
   use GenServer
 
   alias Normandy.Behaviours.MemoryStore
-  alias Normandy.Behaviours.MemoryStore.Docs
+  alias Normandy.Behaviours.MemoryStore.Rows
   alias Normandy.Options
 
   @no_opts_schema NimbleOptions.new!([])
@@ -29,53 +32,92 @@ defmodule Normandy.Behaviours.MemoryStore.ETS do
   end
 
   @impl Normandy.Behaviours.MemoryStore
-  def list({_pid, table}, ns, prefix), do: {:ok, Docs.list(docs(table, ns), prefix)}
+  def list({pid, _table}, ns, prefix), do: GenServer.call(pid, {:rows, :list, [ns, prefix]})
 
   @impl Normandy.Behaviours.MemoryStore
-  def get({_pid, table}, ns, path), do: Docs.get(docs(table, ns), path)
+  def get({_pid, table}, ns, path), do: Rows.get({__MODULE__.Table, table}, ns, path)
 
   @impl Normandy.Behaviours.MemoryStore
-  def put({pid, _}, ns, path, content, expected, limits \\ []) do
+  def put({pid, _table}, ns, path, content, expected, limits \\ []) do
     limits = MemoryStore.validate_limits!(limits, __MODULE__)
-    GenServer.call(pid, {:apply, ns, :put, [path, content, expected, limits]})
+    GenServer.call(pid, {:rows, :put, [ns, path, content, expected, limits]})
   end
 
   @impl Normandy.Behaviours.MemoryStore
-  def delete({pid, _}, ns, path, expected),
-    do: GenServer.call(pid, {:apply, ns, :delete, [path, expected]})
+  def delete({pid, _table}, ns, path, expected),
+    do: GenServer.call(pid, {:rows, :delete, [ns, path, expected]})
 
   @impl Normandy.Behaviours.MemoryStore
-  def delete_tree({pid, _}, ns, prefix),
-    do: GenServer.call(pid, {:apply, ns, :delete_tree, [prefix]})
+  def delete_tree({pid, _table}, ns, prefix),
+    do: GenServer.call(pid, {:rows, :delete_tree, [ns, prefix]})
 
   @impl Normandy.Behaviours.MemoryStore
-  def rename({pid, _}, ns, from, to), do: GenServer.call(pid, {:apply, ns, :rename, [from, to]})
+  def rename({pid, _table}, ns, from, to),
+    do: GenServer.call(pid, {:rows, :rename, [ns, from, to]})
 
   @impl Normandy.Behaviours.MemoryStore
-  def delete_namespace({pid, _}, ns), do: GenServer.call(pid, {:delete_namespace, ns})
+  def delete_namespace({pid, _table}, ns),
+    do: GenServer.call(pid, {:rows, :delete_namespace, [ns]})
 
   @impl GenServer
   def init(_opts),
-    do: {:ok, :ets.new(:normandy_memory_store, [:set, :protected, read_concurrency: true])}
+    do:
+      {:ok, :ets.new(:normandy_memory_store, [:ordered_set, :protected, read_concurrency: true])}
 
   @impl GenServer
   def handle_call(:table, _from, table), do: {:reply, table, table}
 
-  def handle_call({:apply, ns, fun, args}, _from, table) do
-    {reply, docs} = apply(Docs, fun, [docs(table, ns) | args])
-    if docs == %{}, do: :ets.delete(table, ns), else: :ets.insert(table, {ns, docs})
-    {:reply, reply, table}
-  end
+  def handle_call({:rows, fun, args}, _from, table),
+    do: {:reply, apply(Rows, fun, [{__MODULE__.Table, table} | args]), table}
 
-  def handle_call({:delete_namespace, ns}, _from, table) do
-    :ets.delete(table, ns)
-    {:reply, :ok, table}
-  end
+  defmodule Table do
+    @moduledoc false
+    # MemoryStore.Rows' row access over the store's ordered_set: `{key, value}` rows.
+    @behaviour Normandy.Behaviours.MemoryStore.Rows
 
-  defp docs(table, ns) do
-    case :ets.lookup(table, ns) do
-      [{^ns, docs}] -> docs
-      [] -> %{}
+    @impl true
+    def fetch(table, key) do
+      case :ets.lookup(table, key) do
+        [{^key, value}] -> {:ok, value}
+        [] -> :error
+      end
     end
+
+    @impl true
+    def put(table, key, value) do
+      true = :ets.insert(table, {key, value})
+      :ok
+    end
+
+    @impl true
+    def delete(table, key) do
+      true = :ets.delete(table, key)
+      :ok
+    end
+
+    # Walks the ordered keys from `{ns, prefix}` and stops at the first key that is not
+    # a path of `ns` starting with `prefix`: the cost is the rows in range, not the
+    # namespace. `{ns, 0}` sorts before `{ns, prefix}`, so the totals row is never seen.
+    @impl true
+    def range(table, {ns, prefix} = first) do
+      acc =
+        case :ets.lookup(table, first) do
+          [{^first, doc}] -> [{prefix, doc}]
+          [] -> []
+        end
+
+      walk(table, :ets.next(table, first), ns, prefix, acc)
+    end
+
+    defp walk(table, {ns, path} = key, ns, prefix, acc) when is_binary(path) do
+      if String.starts_with?(path, prefix) do
+        [{^key, doc}] = :ets.lookup(table, key)
+        walk(table, :ets.next(table, key), ns, prefix, [{path, doc} | acc])
+      else
+        Enum.reverse(acc)
+      end
+    end
+
+    defp walk(_table, _end_or_other_namespace, _ns, _prefix, acc), do: Enum.reverse(acc)
   end
 end

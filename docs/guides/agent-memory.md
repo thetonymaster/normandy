@@ -145,10 +145,11 @@ Memory.new(
 Every backend implements `Normandy.Behaviours.MemoryStore`: path-addressed documents with
 compare-and-set versions and atomic `rename` / `delete_tree`.
 
-**InMemory and ETS** (node-local, lost on restart; for tests and single-node use). Like
-Mnesia, they keep a whole namespace as one value (one row per namespace), so every
-operation's cost grows with the namespace's size. Use these three for small namespaces and
-prefer Postgres or Redis for large or busy ones:
+**InMemory and ETS** (node-local, lost on restart; for tests and single-node use).
+InMemory keeps a whole namespace as one value in one process, so every operation's cost
+grows with the namespace's size: use it for tests and small namespaces. ETS keeps one row
+per document plus a totals row per namespace, so a `get` or `put` costs the same at any
+namespace size; its owner process serializes every write and every listing:
 
 ```elixir
 store = {MemoryStore.InMemory, MemoryStore.InMemory.new()}
