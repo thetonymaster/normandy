@@ -450,6 +450,9 @@ if Code.ensure_loaded?(Redix) do
     defp handle_conn(%{own_conn?: true, name: name}), do: conn_name(name)
     defp handle_conn(%{conn: conn}), do: conn
 
+    # How long whereis/2 waits for a remote node to say whether a pid lives (see alive?/1).
+    @remote_alive_timeout 5_000
+
     # A pid is routable iff it is alive, on this node or on a connected node.
     # A pid on a node no longer in the cluster is treated as dead → triggers rehydrate.
     # The keyspace is shared, so another client may have written the value.
@@ -473,14 +476,18 @@ if Code.ensure_loaded?(Redix) do
     # A remote pid is asked on its own node, as Horde's lookup does: a server that just
     # stopped (passivated) on a connected node is stale at once, not only after that
     # node's owner sees its :DOWN and deletes the key. A node that is not connected, or
-    # that disconnects during the call, holds no live session.
+    # that disconnects during the call, holds no live session. A node that does not
+    # answer within @remote_alive_timeout counts as alive: the conservative answer, since
+    # "dead" would delete the key and start a second server for the session while the
+    # first may still run.
     defp alive?(pid) when node(pid) == node(), do: Process.alive?(pid)
 
     defp alive?(pid) do
       node = node(pid)
-      node in Node.list() and :erpc.call(node, Process, :alive?, [pid])
+      node in Node.list() and :erpc.call(node, Process, :alive?, [pid], @remote_alive_timeout)
     catch
       :error, {:erpc, :noconnection} -> false
+      :error, {:erpc, :timeout} -> true
     end
 
     defp reg_key(ns, sid), do: "#{ns}:reg:{#{sid}}"
