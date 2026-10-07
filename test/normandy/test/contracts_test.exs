@@ -23,11 +23,14 @@ defmodule Normandy.Test.ContractsTest do
 
   test "a contract used with impl: alone defines every contract test" do
     names = Enum.map(DefaultsOnly.__ex_unit__().tests, & &1.name)
+
+    # Pinned to today's count so a dropped test is noticed; adding a contract test means updating it.
     assert length(names) == 16
     assert :"test deleting a fork keeps its parent's history" in names
   end
 
   test "a contract used with new: defines every contract test" do
+    # Pinned to today's count so a dropped test is noticed; adding a contract test means updating it.
     assert length(ExplicitNew.__ex_unit__().tests) == 33
   end
 

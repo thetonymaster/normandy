@@ -381,10 +381,17 @@ defmodule Normandy.Test.MemoryStoreContract do
           assert {:ok, 1} = @store.put(h, ns, "/memories/y", "", :new, lim)
         end
 
-        test "an unknown limit raises, naming put/6", %{handle: h, ns: ns} do
-          assert_raise ArgumentError,
-                       "#{inspect(@store)}.put/6: unknown option :max_byte; supported: :max_bytes, :max_documents",
-                       fn -> @store.put(h, ns, "/memories/a", "x", :new, max_byte: 1) end
+        # The exact wording is the library's own; a store only has to refuse the key with an
+        # ArgumentError that names put/6 and the key.
+        test "an unknown limit is refused with an ArgumentError naming put/6 and the key",
+             %{handle: h, ns: ns} do
+          error =
+            assert_raise ArgumentError, fn ->
+              @store.put(h, ns, "/memories/a", "x", :new, max_byte: 1)
+            end
+
+          assert error.message =~ "put/6"
+          assert error.message =~ ":max_byte"
         end
       end
 
