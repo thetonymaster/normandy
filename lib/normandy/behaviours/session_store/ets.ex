@@ -94,6 +94,9 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   @impl Normandy.Behaviours.SessionStore
   def list_resumable(pid), do: GenServer.call(pid, :list_resumable)
 
+  @impl Normandy.Behaviours.SessionStore
+  def delete_session(pid, session_id), do: GenServer.call(pid, {:delete_session, session_id})
+
   # ── server ───────────────────────────────────────────────────────────────────
 
   @impl GenServer
@@ -172,6 +175,16 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
 
   def handle_call(:list_resumable, _from, table) do
     {:reply, {:ok, List.flatten(:ets.match(table, {{:inflight, :"$1"}}))}, table}
+  end
+
+  def handle_call({:delete_session, session_id}, _from, table) do
+    # A fork copies its entries, so every {:entry, session_id, _} row is this session's.
+    :ets.match_delete(table, {{:entry, session_id, :_}, :_})
+
+    for key <- [:head, :turn_state, :config_template, :inflight],
+        do: :ets.delete(table, {key, session_id})
+
+    {:reply, :ok, table}
   end
 
   defp head(table, session_id) do

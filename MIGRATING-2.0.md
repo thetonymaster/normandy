@@ -1501,6 +1501,8 @@ code you wrote against 1.x must follow the changes below.
 | `list_resumable/1`: every session whose config template is `:eager`, whatever its turn state | The sessions whose last `save_turn_state/4` had `inflight?: true`. A template alone no longer lists a session |
 | `SessionStore.Redis`: the eager set `"<namespace>:resumable"`, filled by `save_config_template/3` and never emptied | `"<namespace>:inflight"`, kept by `save_turn_state/4`. `"<namespace>:resumable"` is no longer read; delete it after the upgrade |
 | `SessionStore.Postgres`: `Migration`, `MigrationAddTemplate`, `MigrationAddResumePolicy` | Also run `MigrationAddInflight` (column `inflight`, a partial index on it, an index on `head_id`) before 2.0 serves traffic |
+| No store could delete a session | `@callback delete_session(handle, session_id) :: :ok \| {:error, term}`: removes the turn state, the template, the in-flight index membership and the history no other session reaches; `:ok` for a missing session. Every built-in store implements it; implement it in your own store |
+| `SessionStore.InMemory.fork/3` and `SessionStore.ETS.fork/3` kept every entry of the parent in the fork | Only the history up to the fork point (what the fork's `history/2` returned anyway) |
 
 - `SessionStore.Redis`: a pipelined write whose command fails inside Redis (a `WRONGTYPE`, an
   out-of-memory error) returns `{:error, %Redix.Error{}}`. 1.x returned `:ok` and dropped the error.
@@ -1522,6 +1524,12 @@ code you wrote against 1.x must follow the changes below.
   store at the same time), upgrade all session-hosting nodes at once after the drain.
 - `SessionStore.Mnesia`: a session row written by 1.x has no `:inflight` key and is not listed until
   its next turn-state save. ETS and InMemory stores do not outlive the node.
+- Forks and deletes: on Postgres and Mnesia a fork shares the parent's entries up to the fork point,
+  so `delete_session/2` keeps every entry another session's history still reaches; on InMemory, ETS
+  and Redis a fork has its own copy. `SessionStore.Postgres.fork/3` now takes the source session's
+  row `FOR SHARE`, so a fork and a delete of the same session do not interleave.
+- `SessionStore.Mnesia.delete_session/2` scans both tables under a write lock on both
+  (O(entries + sessions)); writes to the store wait for it.
 
 ## New, non-breaking
 

@@ -65,4 +65,16 @@ defmodule Normandy.Behaviours.SessionStore do
   is skipped. The cost follows the number of sessions in flight, not the number stored.
   """
   @callback list_resumable(handle()) :: {:ok, [session_id()]} | {:error, term()}
+
+  @doc """
+  Deletes a session: its turn state, its config template, its membership of the
+  in-flight index and the entries of its history that no other session reaches.
+
+  Idempotent: deleting a missing session is `:ok`. A fork keeps its history: on the
+  backends that copy a fork's entries (InMemory, ETS, Redis) the session's own copy goes;
+  on those that share ancestor entries between forks (Postgres, Mnesia) an entry stays
+  while another session's history still reaches it. Deleting does not stop a live
+  `Turn.Server`: stop it first.
+  """
+  @callback delete_session(handle(), session_id()) :: :ok | {:error, term()}
 end

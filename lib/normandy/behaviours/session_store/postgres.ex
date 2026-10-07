@@ -95,7 +95,9 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     defp do_fork(repo, session_id, from_entry_id) do
       repo.transaction(fn ->
         cond do
-          repo.get(Session, session_id) == nil ->
+          # FOR SHARE: a concurrent delete_session/2 of this session waits for the fork
+          # (and then keeps the entries the fork reaches), or the fork sees no session.
+          share_lock_session(repo, session_id) == nil ->
             repo.rollback(:no_such_session)
 
           not ancestor_of_head?(repo, session_id, from_entry_id) ->
@@ -203,6 +205,80 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       end
     end
 
+    @impl true
+    def delete_session(repo, session_id),
+      do: backend(fn -> do_delete_session(repo, session_id) end)
+
+    # One transaction holding the session row: a concurrent fork of this session (which
+    # takes the row FOR SHARE) runs wholly before or after it. Entries another session
+    # reaches stay: forks share ancestors here.
+    defp do_delete_session(repo, session_id) do
+      repo.transaction(fn ->
+        case lock_session(repo, session_id) do
+          nil ->
+            :ok
+
+          %Session{head_id: head_id} ->
+            _ = delete_unshared_chain(repo, session_id, head_id)
+            {_count, _} = repo.delete_all(where(Session, [s], s.session_id == ^session_id))
+            :ok
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    defp delete_unshared_chain(_repo, _session_id, nil), do: :ok
+
+    defp delete_unshared_chain(repo, session_id, head_id) do
+      chain = chain_ids(repo, head_id)
+      ids = Enum.map(chain, fn {id, _parent} -> id end)
+
+      %{rows: head_rows} =
+        SQL.query!(
+          repo,
+          "SELECT head_id FROM normandy_sessions WHERE head_id = ANY($1::uuid[]) AND session_id <> $2",
+          [ids, session_id]
+        )
+
+      %{rows: child_rows} =
+        SQL.query!(
+          repo,
+          "SELECT parent_id, id FROM normandy_session_entries WHERE parent_id = ANY($1::uuid[])",
+          [ids]
+        )
+
+      other_heads = MapSet.new(head_rows, fn [id] -> id end)
+      children = Enum.group_by(child_rows, fn [parent, _id] -> parent end, fn [_p, id] -> id end)
+
+      case unshared_prefix(chain, other_heads, children) do
+        [] ->
+          :ok
+
+        doomed ->
+          SQL.query!(repo, "DELETE FROM normandy_session_entries WHERE id = ANY($1::uuid[])", [
+            doomed
+          ])
+      end
+    end
+
+    # The ids from the head down to the first entry another session reaches: another
+    # session's head, or an entry with a child off this chain. Every ancestor of a reached
+    # entry is reached too.
+    defp unshared_prefix(chain, other_heads, children) do
+      chain
+      |> Enum.reduce_while({nil, []}, fn {id, _parent}, {child, acc} ->
+        shared? =
+          MapSet.member?(other_heads, id) or
+            Enum.any?(Map.get(children, id, []), &(&1 != child))
+
+        if shared?, do: {:halt, {child, acc}}, else: {:cont, {id, [id | acc]}}
+      end)
+      |> elem(1)
+    end
+
     # --- Private helpers ---
 
     # An unreachable or failing database raises out of Ecto; the store contract
@@ -227,6 +303,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       Session
       |> where([s], s.session_id == ^session_id)
       |> lock("FOR UPDATE")
+      |> repo.one()
+    end
+
+    defp share_lock_session(repo, session_id) do
+      Session
+      |> where([s], s.session_id == ^session_id)
+      |> lock("FOR SHARE")
       |> repo.one()
     end
 

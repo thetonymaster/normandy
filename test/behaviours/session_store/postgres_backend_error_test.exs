@@ -29,6 +29,7 @@ defmodule Normandy.Behaviours.SessionStore.PostgresBackendErrorTest do
           load_turn_state: fn -> Postgres.load_turn_state(DownRepo, "s1") end,
           save_config_template: fn -> Postgres.save_config_template(DownRepo, "s1", %{}) end,
           list_resumable: fn -> Postgres.list_resumable(DownRepo) end,
+          delete_session: fn -> Postgres.delete_session(DownRepo, "s1") end,
           load_config_template: fn -> Postgres.load_config_template(DownRepo, "s1") end
         ] do
       assert {:error, %DBConnection.ConnectionError{}} = call.(), "#{name} did not return it"

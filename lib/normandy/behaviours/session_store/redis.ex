@@ -202,6 +202,22 @@ if Code.ensure_loaded?(Redix) do
       end
     end
 
+    @impl true
+    def delete_session(handle, session_id) do
+      {conn, ns} = conn_ns(handle)
+      wait = wait_setting!(handle)
+
+      # A fork copies its prefix into its own stream, so the session's keys are all its
+      # own. The index entry goes last: a crash in between leaves an extra member whose
+      # turn state is gone, which the reaper skips.
+      cmds = [
+        ["DEL", stream_key(ns, session_id), meta_key(ns, session_id)],
+        ["SREM", inflight_key(ns), session_id]
+      ]
+
+      with {:ok, _} <- pipeline_ok(Redix.pipeline(conn, cmds)), do: wait(conn, wait)
+    end
+
     # --- private ---
 
     # Fail-closed: block on replica ack at boundary writes when `wait:` is configured.

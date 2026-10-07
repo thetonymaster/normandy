@@ -212,7 +212,75 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     txn(fn -> :mnesia.select(st, [{{st, :"$1", %{inflight: true}}, [], [:"$1"]}]) end)
   end
 
+  @doc """
+  Deletes the session's row and the entries of its chain that no other session reaches
+  (`c:Normandy.Behaviours.SessionStore.delete_session/2`).
+
+  Forks share ancestor entries here, and an entry's parent link sits inside its data, so
+  finding the entries another session still uses scans both tables: O(entries + sessions)
+  under a write lock on both, which blocks every other write to the store meanwhile.
+  """
+  @impl true
+  def delete_session(%{entries: et, sessions: st}, session_id) do
+    to_ok(
+      txn(fn ->
+        :mnesia.write_lock_table(st)
+        :mnesia.write_lock_table(et)
+
+        case :mnesia.read({st, session_id}) do
+          [] ->
+            :ok
+
+          [{_, ^session_id, %{head_id: head}}] ->
+            et |> unshared_chain(st, session_id, head) |> Enum.each(&:mnesia.delete({et, &1}))
+            :mnesia.delete({st, session_id})
+        end
+      end)
+    )
+  end
+
   # --- private ---
+
+  # The ids on the chain from `head`, newest first, up to the first one another session
+  # reaches: another session's head, or an entry with a child off this chain. Every
+  # ancestor of a reached entry is reached too, so the walk stops there.
+  defp unshared_chain(et, st, session_id, head) do
+    other_heads =
+      :mnesia.foldl(
+        fn
+          {_, sid, %{head_id: h}}, acc when sid != session_id and h != nil -> MapSet.put(acc, h)
+          _, acc -> acc
+        end,
+        MapSet.new(),
+        st
+      )
+
+    children =
+      :mnesia.foldl(
+        fn
+          {_, id, %{parent_id: p}}, acc when p != nil -> Map.update(acc, p, [id], &[id | &1])
+          _, acc -> acc
+        end,
+        %{},
+        et
+      )
+
+    walk_unshared(et, head, nil, other_heads, children, [])
+  end
+
+  defp walk_unshared(_et, nil, _child, _heads, _children, acc), do: acc
+
+  defp walk_unshared(et, id, child, heads, children, acc) do
+    shared? =
+      MapSet.member?(heads, id) or Enum.any?(Map.get(children, id, []), &(&1 != child))
+
+    with false <- shared?,
+         [{_, ^id, %{parent_id: parent}}] <- :mnesia.read({et, id}) do
+      walk_unshared(et, parent, id, heads, children, [id | acc])
+    else
+      _stop -> acc
+    end
+  end
 
   defp read_session(st, session_id) do
     case :mnesia.read({st, session_id}) do

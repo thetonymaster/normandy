@@ -80,6 +80,10 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
             {:ok, forked} ->
               new_id = UUID.uuid4()
+              # Only the chain the fork's head reaches: the parent's later entries stay
+              # the parent's, so deleting it removes them.
+              chain = AgentMemory.entry_chain(forked)
+              forked = %{forked | entries: Map.new(chain, &{&1.id, &1})}
               {{:ok, new_id}, put_in(state.sessions[new_id], forked)}
           end
       end
@@ -126,6 +130,19 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @impl true
   def list_resumable(pid) do
     Agent.get(pid, fn state -> {:ok, MapSet.to_list(state.inflight)} end)
+  end
+
+  @impl true
+  def delete_session(pid, session_id) do
+    Agent.update(pid, fn state ->
+      %{
+        state
+        | sessions: Map.delete(state.sessions, session_id),
+          turn_states: Map.delete(state.turn_states, session_id),
+          config_templates: Map.delete(state.config_templates, session_id),
+          inflight: MapSet.delete(state.inflight, session_id)
+      }
+    end)
   end
 
   # Append an entry, minting an id and linking to the current head when absent.

@@ -26,4 +26,12 @@ defmodule Normandy.Behaviours.SessionStore.RedisPipelineErrorTest do
 
     {:ok, _} = Redix.command(conn, ["DEL", "#{ns}:inflight", "#{ns}:{s1}:meta"])
   end
+
+  test "delete_session returns the index command's in-band error" do
+    {h, conn, ns} = broken_index()
+
+    assert {:error, %Redix.Error{message: "WRONGTYPE" <> _}} = Redis.delete_session(h, "s1")
+
+    {:ok, _} = Redix.command(conn, ["DEL", "#{ns}:inflight"])
+  end
 end

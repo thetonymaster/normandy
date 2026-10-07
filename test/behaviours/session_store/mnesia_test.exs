@@ -24,7 +24,11 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaTest do
     on_exit(fn -> :mnesia.stop() end)
   end
 
-  use Normandy.SessionStoreContract, impl: Normandy.Behaviours.SessionStore.Mnesia
+  use Normandy.SessionStoreContract,
+    impl: Normandy.Behaviours.SessionStore.Mnesia,
+    stored_entry_ids: {__MODULE__, :stored_entry_ids}
+
+  def stored_entry_ids(%{entries: entries}), do: :mnesia.dirty_all_keys(entries)
 end
 
 defmodule Normandy.Behaviours.SessionStore.MnesiaBackendErrorTest do
@@ -52,6 +56,11 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaBackendErrorTest do
   test "load_config_template reports an aborted transaction as {:error, reason}" do
     assert {:error, {:no_exists, :normandy_missing_table}} =
              Mnesia.load_config_template(missing_table_handle(), "s1")
+  end
+
+  test "delete_session reports an aborted transaction as {:error, reason}" do
+    assert {:error, {:no_exists, :normandy_missing_table}} =
+             Mnesia.delete_session(missing_table_handle(), "s1")
   end
 
   test "history reports a broken chain instead of returning a truncated one" do
