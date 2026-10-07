@@ -82,6 +82,34 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
     assert Enum.sort([a, elem_tag(b)]) == [:ok, :taken]
   end
 
+  # Final review M-b: a key naming a dead pid on a connected node is stale. Before, any
+  # remote pid whose node was connected counted as alive, so a caller could route to a
+  # just-passivated server until that node's owner deleted the key.
+  test "whereis on node A treats a dead pid on connected node B as stale", %{url: url, ns: ns} do
+    {:ok, peer, peer_node} =
+      :peer.start(%{name: :reg_peer3, host: ~c"127.0.0.1", longnames: true})
+
+    on_exit(fn -> :peer.stop(peer) end)
+    :rpc.call(peer_node, :code, :add_paths, [:code.get_path()])
+
+    {:ok, _} = Reg.start_link(name: :reg_a, url: url, namespace: ns)
+    reg_a = Reg.fetch_handle(:reg_a)
+
+    # A pid on the peer that has already exited; the peer stays connected.
+    dead = :rpc.call(peer_node, :erlang, :spawn, [:erlang, :node, []])
+    assert wait_until(fn -> :rpc.call(peer_node, Process, :alive?, [dead]) == false end)
+    assert peer_node in Node.list()
+
+    # Written straight to Redis, as a key left behind before its owner's cleanup.
+    {:ok, redix} = Redix.start_link(url)
+    on_exit(fn -> if Process.alive?(redix), do: Redix.stop(redix) end)
+    key = "#{ns}:reg:{dead}"
+    {:ok, "OK"} = Redix.command(redix, ["SET", key, :erlang.term_to_binary(dead)])
+
+    assert Reg.whereis(reg_a, "dead") == :none
+    assert {:ok, nil} = Redix.command(redix, ["GET", key])
+  end
+
   defp elem_tag(:ok), do: :ok
   defp elem_tag({:error, :taken}), do: :taken
 end

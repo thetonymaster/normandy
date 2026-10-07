@@ -1550,7 +1550,10 @@ code you wrote against 1.x must follow the changes below.
 - `SessionRegistry.Redis.whereis/2` runs in the caller on the handle's Redix connection
   instead of calling the owner, so a lookup no longer queues behind registrations and the TTL
   refresh. A connection that is not running returns `{:error, :noproc}`, one that dies during
-  the call `{:error, {:exit, tag}}`; 1.x exited the caller when the owner was down.
+  the call `{:error, {:exit, tag}}`; 1.x exited the caller when the owner was down. A pid
+  on another node is checked on that node (one `:erpc` call, as `Horde.Registry` does), so a
+  server that just stopped there is no longer returned while its node stays connected; 1.x
+  treated any pid on a connected node as alive.
 - The registry's TTL refresh sends one pipeline of `EVALSHA` per 1,000 sessions instead of one
   `EVAL` per session. A key that lapsed is claimed again. A key another process now holds (two
   servers for one session, after a partition or a Redis failover) stops the local process with

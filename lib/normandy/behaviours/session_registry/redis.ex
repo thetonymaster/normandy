@@ -450,7 +450,7 @@ if Code.ensure_loaded?(Redix) do
     defp handle_conn(%{own_conn?: true, name: name}), do: conn_name(name)
     defp handle_conn(%{conn: conn}), do: conn
 
-    # A pid is routable iff it lives on this node (and is alive) or on a connected node.
+    # A pid is routable iff it is alive, on this node or on a connected node.
     # A pid on a node no longer in the cluster is treated as dead → triggers rehydrate.
     # The keyspace is shared, so another client may have written the value.
     # `[:safe]` creates no atoms; it refuses a pid only when its node atom is
@@ -470,12 +470,17 @@ if Code.ensure_loaded?(Redix) do
       :none
     end
 
+    # A remote pid is asked on its own node, as Horde's lookup does: a server that just
+    # stopped (passivated) on a connected node is stale at once, not only after that
+    # node's owner sees its :DOWN and deletes the key. A node that is not connected, or
+    # that disconnects during the call, holds no live session.
+    defp alive?(pid) when node(pid) == node(), do: Process.alive?(pid)
+
     defp alive?(pid) do
-      cond do
-        node(pid) == node() -> Process.alive?(pid)
-        node(pid) in Node.list() -> true
-        true -> false
-      end
+      node = node(pid)
+      node in Node.list() and :erpc.call(node, Process, :alive?, [pid])
+    catch
+      :error, {:erpc, :noconnection} -> false
     end
 
     defp reg_key(ns, sid), do: "#{ns}:reg:{#{sid}}"
