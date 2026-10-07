@@ -6,6 +6,8 @@ defmodule Normandy.Behaviours.SessionStore.RedisTest do
     impl: Normandy.Behaviours.SessionStore.Redis,
     stored_entry_ids: {__MODULE__, :stored_entry_ids}
 
+  use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Redis
+
   # Every stream in the handle's namespace; an entry's id is its `id` field, else its
   # stream id (as history/2 returns it).
   def stored_entry_ids({conn, ns}) do

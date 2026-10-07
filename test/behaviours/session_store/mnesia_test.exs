@@ -28,6 +28,8 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaTest do
     impl: Normandy.Behaviours.SessionStore.Mnesia,
     stored_entry_ids: {__MODULE__, :stored_entry_ids}
 
+  use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Mnesia
+
   def stored_entry_ids(%{entries: entries}), do: :mnesia.dirty_all_keys(entries)
 end
 

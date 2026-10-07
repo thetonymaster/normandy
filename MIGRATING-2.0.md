@@ -1414,8 +1414,8 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   process or connection) no longer crashes `Turn.Server`. During a turn the write fails like
   a store's `{:error, reason}`: `run/2` returns `{:error, %Normandy.TurnError{type:
   :persist_failed, reason: {:store_exit, exit_reason}}}` and the same server takes the next
-  turn. The terminal-state save after a successful turn is best-effort, so its exit leaves the
-  reply `{:ok, _}`. `exit_reason` carries no stacktrace, and a call's arguments are replaced by
+  turn. The terminal-state save after a successful turn does not fail it, so its exit leaves
+  the reply `{:ok, _}`; the save is retried (§43). `exit_reason` carries no stacktrace, and a call's arguments are replaced by
   their count (`{:timeout, {GenServer, :call, 3}}`). A store that raises mid-turn is a bug and
   still crashes the server.
 - Anything the session load raises, exits or throws (the store, the template or credential
@@ -1779,6 +1779,25 @@ code you wrote against 1.x must follow the changes below.
   bytes, so their cost grows with the square of the answer's length (now documented in
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
 
+## 43. Turn.Server terminal saves and blank answers
+
+- A terminal turn-state save (`:stopped` or `:failed`) that the session store refuses is no
+  longer dropped silently. The turn's reply is unchanged (`{:ok, _}` for a turn that
+  succeeded); the server logs a warning by the reason's tag (`Turn.Server session "sid":
+  turn state not saved; retrying (<tag>)`, metadata `session_id` and `reason`), keeps the
+  state and saves it again on a timer (1 s, doubling to 30 s), before the next `run/2` and
+  before passivating. No telemetry event is added.
+- While that save fails, `Turn.Server.run/2` (and `Turn.Session.run/2`) returns
+  `{:error, %Normandy.TurnError{type: :persist_failed, reason: {:terminal_unsaved,
+  reason}}}` without running the turn or storing its input, and the server does not
+  passivate (it stays registered, so `ResumeReaper` and `Turn.Session` reach it). Retry the
+  call once the store is back. It used to run the turn while the store still listed the
+  previous one in flight.
+- An eager start that resumes a saved `:steering` turn whose answer is already the last
+  stored message (the server stopped between storing the answer and saving the turn as
+  `:stopped`) saves the turn as finished and calls no model. It used to call the model
+  again and store a second answer. `Normandy.Agents.Turn.answered?/1` is the check.
+
 ## Known limits of 2.0
 
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.
@@ -1814,9 +1833,11 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - **A paused server-tool turn after a crash is unverified.** If `Turn.Server` stops while a
   turn is paused on a `server_tool_use` (`pause_turn`) and the session then takes new input,
   whether the API accepts the resulting history has not been checked live.
-- **A failed final turn-state save can leave a session in the in-flight index** (H10). If
-  the store fails while saving a turn's terminal state, the session stays marked in flight,
-  and `ResumeReaper` may later resume a turn that had already finished.
+- **A failed turn can run again after a store outage** (H10). `Turn.Server` retries a
+  terminal turn-state save the store refused (§43), but if the server process dies first (a
+  node crash, a supervisor shutdown) the session stays in the in-flight index and the next
+  eager start resumes the turn: a turn whose answer was stored is only marked finished, a
+  turn that failed calls the model again, with no caller waiting.
 - **Session deletion is conservative on Postgres and Mnesia.** `delete_session/2` removes the
   session's current chain only: entries on a branch its head no longer reaches (appended
   with an explicit `parent_id`) stay, and on Postgres two concurrent deletes of sessions that

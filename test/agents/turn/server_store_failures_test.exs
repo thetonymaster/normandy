@@ -241,7 +241,7 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
 
     # Every in-turn write site: the user message before the turn starts, an append
     # inside the turn, and the turn-state save after a tool batch (the one a turn fails
-    # on; a terminal save is best-effort).
+    # on; a refused terminal save is retried instead, terminal_save_test.exs).
     for {label, op, tools?, persisted?} <- [
           {"the user-message append", {:append_entry, "user"}, false, false},
           {"an in-turn append", {:append_entry, "assistant"}, false, true},

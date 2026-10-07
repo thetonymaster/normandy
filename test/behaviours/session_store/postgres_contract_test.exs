@@ -22,6 +22,8 @@ defmodule Normandy.Behaviours.SessionStore.PostgresContractTest do
     impl: Normandy.Behaviours.SessionStore.Postgres,
     stored_entry_ids: {__MODULE__, :stored_entry_ids}
 
+  use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Postgres
+
   def stored_entry_ids(repo) do
     %{rows: rows} = repo.query!("SELECT id FROM normandy_session_entries")
     Enum.map(rows, fn [id] -> Ecto.UUID.load!(id) end)

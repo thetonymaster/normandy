@@ -377,6 +377,28 @@ defmodule Normandy.Agents.Turn do
   end
 
   @doc """
+  Whether `messages` end with a turn's answer: an assistant message that makes no tool
+  call and is not a paused turn (`stop_reason` `pause_turn`, sent back for the model to
+  continue). A turn's history ends this way only once the answer is appended (the
+  `:output_guarded` step); after a tool batch it ends with the results, or the
+  iteration-cap notice.
+
+  `Turn.Server` reads it before it resumes a saved `:steering` turn: a server that
+  stopped after the answer's append and before its `:stopped` save must not ask the
+  model again.
+  """
+  @spec answered?([Message.t()]) :: boolean()
+  def answered?(messages) when is_list(messages) do
+    case List.last(messages) do
+      %Message{role: "assistant", content: content} ->
+        tool_calls(content) == [] and not paused?(content)
+
+      _other ->
+        false
+    end
+  end
+
+  @doc """
   The tool calls of the latest assistant message that have no `%ToolResult{}` in a
   later `"tool"` message, in `tool_use` order; `[]` when the latest assistant message
   made no tool calls.

@@ -56,6 +56,24 @@ defmodule Normandy.Agents.Turn.Server do
   (`{:invalid_template, message}`): nothing in it is used, and its credential provider is
   not called.
 
+  ## Terminal saves
+
+  A turn ends by saving its terminal turn state (`:stopped` or `:failed`), which also
+  takes an eager session out of the store's in-flight index (`list_resumable/1`). The
+  reply does not wait on that save: if the store refuses it, the turn's reply stands
+  (`{:ok, _}` for a turn that succeeded), the server logs a warning by the reason's tag
+  (`Turn.Server session "sid": turn state not saved; retrying (:store_down)`), keeps the
+  state and saves it again on a timer (1 s, doubling to 30 s), before the next `run/2`
+  and before passivating. Until a save lands, `run/2` replies `{:error,
+  %Normandy.TurnError{type: :persist_failed, reason: {:terminal_unsaved, reason}}}`
+  without running the turn or appending its input, and the server does not passivate.
+
+  If the server dies before a save lands, the store still lists the session in flight,
+  and the next eager start (a restart, `Turn.Session.run/2`, `ResumeReaper`) resumes the
+  turn. A resumed `:steering` turn whose answer is already the last stored message
+  (`Normandy.Agents.Turn.answered?/1`) is saved as finished with no model call; any
+  other turn runs again.
+
   ## Session start
 
   A session whose store holds no entries and no turn state is new. Its
@@ -207,7 +225,8 @@ defmodule Normandy.Agents.Turn.Server do
               approval_span: nil,
               approval_wait: 0,
               start_opts: nil,
-              retry_ms: nil
+              retry_ms: nil,
+              unsaved_terminal: nil
   end
 
   # A turn request: {:turn, input, caller_otel_ctx}. The two-element {:turn, input}
@@ -219,6 +238,10 @@ defmodule Normandy.Agents.Turn.Server do
   # Backoff between load retries while the store is unavailable.
   @retry_initial_ms 200
   @retry_max_ms 30_000
+
+  # Backoff between saves of a terminal turn state the store refused (save_terminal/2).
+  @terminal_retry_initial_ms 1_000
+  @terminal_retry_max_ms 30_000
 
   # ---- public API ----
 
@@ -825,6 +848,22 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
+  # :idle with a terminal turn state the store refused (save_terminal/2): it is saved
+  # before the request runs, so no turn starts while the store still lists the last one
+  # in flight. Saved, the request is handled again as a plain :idle request; still
+  # refused, it gets a :persist_failed TurnError and nothing is appended.
+  def handle_event({:call, from}, msg, :idle, %Data{unsaved_terminal: %Turn.State{}} = data)
+      when is_turn_request(msg) do
+    case retry_terminal_save(data) do
+      {:ok, data} ->
+        {:keep_state, data,
+         [{{:timeout, :retry_terminal_save}, :cancel}, {:next_event, {:call, from}, msg}]}
+
+      {:error, data, reason} ->
+        refuse_unsaved_terminal(from, msg, data, reason)
+    end
+  end
+
   # :idle — accept a new turn request (mid-turn requests are postponed; Task 7).
   def handle_event({:call, from}, {:turn, user_input}, :idle, data),
     do: handle_event({:call, from}, {:turn, user_input, nil}, :idle, data)
@@ -878,17 +917,13 @@ defmodule Normandy.Agents.Turn.Server do
 
   # Eager auto-resume: drive the persisted in-flight turn to completion. No caller
   # is waiting (pending_reply is nil → reply/2 is a no-op), so the turn finalizes
-  # silently while persisting at each boundary.
+  # silently while persisting at each boundary. A turn whose answer is already stored
+  # is only saved as finished (finish_answered/1).
   def handle_event(:internal, :resume, :idle, data) do
-    data = start_resumed_run_span(data)
-
-    case close_resumed_batch(data) do
-      {:ok, data} ->
-        {state, effects} = Turn.resume(data.turn_state)
-        interpret(effects, %{data | turn_state: state})
-
-      {:error, data, reason} ->
-        fail(data, reason)
+    if answered?(data) do
+      finish_answered(data)
+    else
+      resume_turn(start_resumed_run_span(data))
     end
   end
 
@@ -982,7 +1017,47 @@ defmodule Normandy.Agents.Turn.Server do
     interpret_built(data, parked, step)
   end
 
-  # Idle long enough → passivate. Final turn state is already persisted; on_passivate
+  # The backoff retry of a terminal save the store refused (save_terminal/2). The timer's
+  # content is its own delay, doubled after each refusal up to @terminal_retry_max_ms.
+  # A save that lands on a turn request or at passivation cancels it.
+  def handle_event(
+        {:timeout, :retry_terminal_save},
+        delay_ms,
+        :idle,
+        %Data{unsaved_terminal: %Turn.State{}} = data
+      ) do
+    case retry_terminal_save(data) do
+      {:ok, data} ->
+        {:keep_state, data}
+
+      {:error, data, _reason} ->
+        next_ms = min(delay_ms * 2, @terminal_retry_max_ms)
+        {:keep_state, data, [{{:timeout, :retry_terminal_save}, next_ms, next_ms}]}
+    end
+  end
+
+  # Passivation waits for an unsaved terminal turn state: a stopped server would leave
+  # the session in the store's in-flight index, and the next eager start would resume a
+  # turn that already ended. Saved, the passivation runs as usual (the clause below);
+  # still refused, the server stays up and tries again after another idle timeout.
+  def handle_event(
+        :state_timeout,
+        :passivate,
+        :idle,
+        %Data{unsaved_terminal: %Turn.State{}} = data
+      ) do
+    case retry_terminal_save(data) do
+      {:ok, data} ->
+        {:keep_state, data,
+         [{{:timeout, :retry_terminal_save}, :cancel}, {:next_event, :state_timeout, :passivate}]}
+
+      {:error, data, _reason} ->
+        {:keep_state, data, idle_timeout(data)}
+    end
+  end
+
+  # Idle long enough → passivate. Final turn state is persisted (the clause above waits
+  # for one the store refused); on_passivate
   # hooks run (logged-only, through call_handler/3), then the server stops with
   # {:shutdown, :passivated}: a normal exit for the supervisor (a :transient child is not
   # restarted) and for crash reports, and the one reason Turn.Session.run/2 reads as "the
@@ -1347,6 +1422,40 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp close_resumed_batch(data), do: {:ok, data}
 
+  defp resume_turn(data) do
+    case close_resumed_batch(data) do
+      {:ok, data} ->
+        {state, effects} = Turn.resume(data.turn_state)
+        interpret(effects, %{data | turn_state: state})
+
+      {:error, data, reason} ->
+        fail(data, reason)
+    end
+  end
+
+  # A saved :steering turn whose answer is the last message in the stored history
+  # (Turn.answered?/1) ended: the server stopped after the answer's append and before
+  # its :stopped save landed (a crash, or a store that refused that save). Only an
+  # answer ends a turn's history, so the same turn run again would ask the model a
+  # second time and append a second answer.
+  defp answered?(%Data{turn_state: %Turn.State{status: :steering}, config: %{memory: memory}}),
+    do: memory |> AgentMemory.messages() |> Turn.answered?()
+
+  defp answered?(_data), do: false
+
+  # Saves the answered turn as :stopped, with no model call, run span or hook: no turn
+  # runs in this process. A refused save is kept and retried like any terminal save.
+  defp finish_answered(data) do
+    Logger.info(
+      "Turn.Server session #{inspect(data.session_id)}: the resumed turn's answer is " <>
+        "already stored; saved the turn as finished without a model call"
+    )
+
+    turn_state = %{data.turn_state | status: :stopped}
+    {data, retry} = save_terminal(data, turn_state)
+    {:keep_state, %{data | turn_state: turn_state}, [idle_timeout(data) | retry]}
+  end
+
   defp interrupted_result(call) do
     Dispatch.error_result(
       Map.get(call, :id),
@@ -1492,25 +1601,30 @@ defmodule Normandy.Agents.Turn.Server do
         spawn_task(data, :compact, &compact_event(&1, &2, info))
 
       {:finalize, value} ->
-        # Persist the terminal (:stopped) turn state so the resume reaper can tell a
-        # completed session from a mid-turn one. Best-effort: the turn already
-        # succeeded, so a failed marker-persist must not fail it.
-        _ = persist_turn_state(data, data.turn_state)
+        # Persist the terminal (:stopped) turn state so the resume reaper and an eager
+        # start can tell a completed session from a mid-turn one. The turn already
+        # succeeded, so a refused save does not fail it: save_terminal/2 keeps the
+        # state and retries it.
+        {data, retry} = save_terminal(data, data.turn_state)
         stop_run_span(data, :stop, run_stop_metadata(data))
         reply(data, {:ok, value})
         turn_end(data, data.config, {:ok, value})
         data = release_turn_ctx(data)
-        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
+
+        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil},
+         [idle_timeout(data) | retry]}
 
       {:fail, reason} ->
-        # Persist the terminal (:failed) turn state (best-effort) for the same reason.
-        _ = persist_turn_state(data, data.turn_state)
+        # Persist the terminal (:failed) turn state the same way.
+        {data, retry} = save_terminal(data, data.turn_state)
         exception = TurnError.from_reason(reason)
         stop_run_span(data, :exception, Span.exception_metadata(:error, exception, []))
         reply(data, {:error, exception})
         turn_end(data, data.config, ServerGlue.fail_outcome(reason))
         data = release_turn_ctx(data)
-        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil}, idle_timeout(data)}
+
+        {:next_state, :idle, %{data | pending_reply: nil, run_span: nil},
+         [idle_timeout(data) | retry]}
     end
   end
 
@@ -1779,6 +1893,67 @@ defmodule Normandy.Agents.Turn.Server do
       do: mod.child_name(handle, sid),
       else: :self_register
   end
+
+  # Saves a terminal (:stopped, :failed) turn state. A store that refuses it leaves the
+  # turn's last in-flight save in place (the session stays in list_resumable/1), so the
+  # state is kept in unsaved_terminal and saved again: before the next turn request
+  # (which is refused while the save fails), before passivation (which waits) and on the
+  # :retry_terminal_save timer. Returns the data and the timer action to add, if any.
+  defp save_terminal(data, turn_state) do
+    case persist_turn_state(data, turn_state) do
+      :ok ->
+        {data, []}
+
+      {:error, reason} ->
+        log_unsaved_terminal(data, reason)
+
+        {%{data | unsaved_terminal: turn_state},
+         [
+           {{:timeout, :retry_terminal_save}, @terminal_retry_initial_ms,
+            @terminal_retry_initial_ms}
+         ]}
+    end
+  end
+
+  defp retry_terminal_save(%Data{unsaved_terminal: turn_state} = data) do
+    case persist_turn_state(data, turn_state) do
+      :ok ->
+        {:ok, %{data | unsaved_terminal: nil}}
+
+      {:error, reason} ->
+        log_unsaved_terminal(data, reason)
+        {:error, data, reason}
+    end
+  end
+
+  # reason is already reduced to its tags (persist_turn_state/2); no telemetry event
+  # (decision 27 A2). The text names the session and the tag too: Logger's default
+  # formatter drops a tuple metadata value.
+  defp log_unsaved_terminal(data, reason) do
+    metadata = [session_id: data.session_id, reason: reason]
+
+    Logger.log(
+      :warning,
+      "Turn.Server session #{inspect(data.session_id)}: turn state not saved; retrying " <>
+        "(#{describe_reason(reason)})",
+      metadata
+    )
+  end
+
+  # The reply to a turn request while the last turn's terminal state is unsaved: a
+  # :persist_failed TurnError, reported like a refused admission (a run :start and
+  # :exception, on_turn_end with no turn id). Nothing is appended.
+  defp refuse_unsaved_terminal(from, msg, data, reason) do
+    data = %{data | turn_ctx_token: OtelCtx.attach(turn_caller_ctx(msg))}
+    exception = %TurnError{type: :persist_failed, reason: {:terminal_unsaved, reason}}
+    emit_failed_run(data, data.config, nil, exception)
+    :gen_statem.reply(from, {:error, exception})
+    turn_end(data, data.config, {:error, exception}, turn_id: nil)
+    {:keep_state, release_turn_ctx(data)}
+  end
+
+  defp turn_caller_ctx({:turn, _user_input, caller_ctx}), do: caller_ctx
+  defp turn_caller_ctx({:turn, _user_input}), do: nil
 
   # A failed turn's error is persisted as the exception the turn failed with, redacted
   # (TurnError.redact/1): a bug's fields and message never reach the store. A failed

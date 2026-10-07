@@ -5,6 +5,8 @@ defmodule Normandy.Behaviours.SessionStore.ETSTest do
     impl: Normandy.Behaviours.SessionStore.ETS,
     stored_entry_ids: {__MODULE__, :stored_entry_ids}
 
+  use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.ETS
+
   # The table is private to its owner: read it there. :sys.replace_state/2 runs the
   # function in the owner and replies after it, so the message is already here.
   def stored_entry_ids(pid) do
