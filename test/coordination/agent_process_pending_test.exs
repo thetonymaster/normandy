@@ -15,6 +15,8 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
   # has taken over ExUnit's default 100 ms; the events always come, so wait for them.
   @wait 5_000
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
@@ -298,7 +300,7 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       :ok = AgentProcess.cast(pid, @secret)
       queued = Task.async(fn -> AgentProcess.run(pid, @secret) end)
 
-      assert Normandy.Test.Eventually.wait_until(fn ->
+      assert wait_until(fn ->
                :queue.len(:sys.get_state(pid).queue) == 2
              end)
 
