@@ -42,6 +42,9 @@ defmodule Normandy.TurnError do
       `Turn.Session.approve/2` returns it with `reason: :no_session` when no server is live;
       `Turn.Session.delete/1` returns it when the registry cannot answer or the live server
       is not the supervisor's (`reason: {:not_stopped, :not_found}`)
+    * `:queue_full` - `Normandy.Coordination.AgentProcess` refused a run or cast because
+      `:max_pending_runs` runs and casts were already queued or in flight; `:reason` is
+      that limit. Nothing ran
     * `:unexpected_event`, `:unresumable_state` - a persisted turn that can't continue, or
       a Normandy bug; `:reason` describes it
 
@@ -74,6 +77,7 @@ defmodule Normandy.TurnError do
     :approval_timeout,
     :task_down,
     :session_unavailable,
+    :queue_full,
     :unexpected_event,
     :unresumable_state
   ]
@@ -96,6 +100,7 @@ defmodule Normandy.TurnError do
           | :approval_timeout
           | :task_down
           | :session_unavailable
+          | :queue_full
           | :unexpected_event
           | :unresumable_state
 
@@ -128,6 +133,9 @@ defmodule Normandy.TurnError do
 
   def message(%__MODULE__{type: :session_unavailable, reason: reason}),
     do: "session unavailable: the session could not be started (#{describe(reason)})"
+
+  def message(%__MODULE__{type: :queue_full, reason: limit}),
+    do: "turn refused: queue full: #{inspect(limit)} run(s) already pending"
 
   def message(%__MODULE__{type: type, reason: reason}),
     do:
@@ -216,6 +224,8 @@ defmodule Normandy.TurnError do
         error
     end
   end
+
+  def from_reason({:queue_full, limit}), do: %__MODULE__{type: :queue_full, reason: limit}
 
   def from_reason({:unexpected_event, _state, _event} = reason),
     do: %__MODULE__{type: :unexpected_event, reason: reason}

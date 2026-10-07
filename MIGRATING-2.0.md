@@ -1663,6 +1663,23 @@ code you wrote against 1.x must follow the changes below.
   mode it is queued behind the turn in flight, so a turn longer than 5 s exited its caller while
   the update still applied. New `update_agent/3` takes `timeout:`; the bound is on the wait, and
   an update whose caller stopped waiting still applies.
+- An inline `AgentProcess.cast/3` joins the run queue: casts run one at a time, in order with
+  runs, and each cast's turn is kept in the agent's memory. Inline casts used to run
+  concurrently from one memory snapshot and discard what they added. For parallel fan-out
+  use `Reactive.all/3` or `ParallelOrchestrator`. `reply_to` now hears back for every
+  outcome, an exit or a throw included (an inline cast sent nothing for those).
+- `AgentProcess.start_link/1` (and `AgentSupervisor.start_agent/2`) take
+  `:max_pending_runs` (default 100): runs and casts queued or in flight, in either
+  `turn_engine`. One more is refused at once with
+  `{:error, %Normandy.TurnError{type: :queue_full, reason: limit}}` (returned by `run/3`, sent
+  to a cast's `reply_to`). `max_pending_runs: :infinity` keeps 1.x's unbounded behaviour.
+  `Normandy.TurnError` has the new type `:queue_full`.
+- Run and cast workers are no longer unsupervised `Task`s that outlive the process: they die
+  with the `AgentProcess`. A cast in flight when the process stops is killed and its
+  `reply_to` hears nothing.
+- `get_stats/1` counts a run or cast when it finishes, whatever its outcome (casts were
+  counted when cast; failed inline runs were not counted).
+- A `reply_to` name that is not registered is logged and the result dropped.
 
 ## New, non-breaking
 

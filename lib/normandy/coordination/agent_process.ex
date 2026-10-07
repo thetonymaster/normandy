@@ -29,11 +29,20 @@ defmodule Normandy.Coordination.AgentProcess do
 
   With `turn_engine: :inline`, runs, casts and `update_agent/2` calls go through one FIFO
   queue and execute one at a time, each turn in a worker process started from the config
-  the previous one left. The process itself never waits on a turn: `get_agent/1` (the
-  config as of the last finished turn), `get_id/1`, `get_stats/1` and `approve/2` answer
-  at once while a turn runs. A run whose caller died while it waited in the queue is
-  skipped. The worker dies with the process (`stop/1` kills a turn in flight); a worker
-  killed from outside replies a `:task_down` `Normandy.TurnError`.
+  the previous one left, so a cast's turn is kept in memory like a run's. The process
+  itself never waits on a turn: `get_agent/1` (the config as of the last finished turn),
+  `get_id/1`, `get_stats/1` and `approve/2` answer at once while a turn runs. A run whose
+  caller died while it waited in the queue is skipped. The worker dies with the process
+  (`stop/1` kills a turn in flight); a worker killed from outside replies a `:task_down`
+  `Normandy.TurnError`.
+
+  ## Pending runs
+
+  Runs and casts that were admitted and have not finished (queued or in flight, in
+  either mode) are bounded by `:max_pending_runs` (default 100). One more is refused at
+  once: `run/3` returns, and `cast/3` sends to `:reply_to`,
+  `{:error, %Normandy.TurnError{type: :queue_full, reason: limit}}`. `get_stats/1`'s
+  `run_count` counts runs and casts that finished, failed ones included.
 
   ## Durable turn engine (`:server` mode)
 
@@ -184,6 +193,15 @@ defmodule Normandy.Coordination.AgentProcess do
                             idle_timeout_ms: [
                               type: @session_types.idle_timeout_ms,
                               doc: "`:server` mode: passed to `Turn.Server.start_link/1`."
+                            ],
+                            max_pending_runs: [
+                              type: {:or, [:pos_integer, {:in, [:infinity]}]},
+                              default: 100,
+                              type_doc: "a positive integer or `:infinity`",
+                              doc:
+                                "Runs and casts admitted and not finished (queued or in " <>
+                                  "flight). One more is refused with a `:queue_full` " <>
+                                  "`Normandy.TurnError`."
                             ]
                           )
 
@@ -457,6 +475,7 @@ defmodule Normandy.Coordination.AgentProcess do
       # writer of :agent in :server mode, and it refreshes the session's config.
       session: nil,
       owned: [],
+      # :server mode: worker pid => %{ref, op, started}, one per admitted run or cast.
       pending_runs: %{},
       # :inline mode: the turn in flight (%{pid, ref, op, started} or nil) and the ops
       # waiting behind it, oldest first (see enqueue/2).
@@ -465,7 +484,10 @@ defmodule Normandy.Coordination.AgentProcess do
       run_count: 0,
       last_run: nil,
       total_runtime_ms: 0,
-      created_at: DateTime.utc_now()
+      created_at: DateTime.utc_now(),
+      max_pending_runs: Keyword.fetch!(opts, :max_pending_runs),
+      # Runs and casts admitted and not finished, both modes (see admit/2).
+      pending: 0
     }
 
     case turn_engine do
@@ -557,16 +579,11 @@ defmodule Normandy.Coordination.AgentProcess do
 
   # The caller's OTel context rides in the call so the run nests under the
   # caller's span. The two-element shape (no context) is still accepted.
-  def handle_call({:run, input, otel_ctx}, from, %{turn_engine: :server} = state) do
-    start_time = System.monotonic_time(:millisecond)
-    ref = spawn_run(state, prepare_input(input), otel_ctx)
-    {:noreply, %{state | pending_runs: Map.put(state.pending_runs, ref, {from, start_time})}}
-  end
-
-  # :inline: queued behind the turn in flight; the reply comes from handle_info/2.
-  @impl true
   def handle_call({:run, input, otel_ctx}, from, state) do
-    {:noreply, enqueue({:run, from, input, otel_ctx}, state)}
+    case admit({:run, from, input, otel_ctx}, state) do
+      {:ok, state} -> {:noreply, state}
+      {:error, _} = full -> {:reply, full, state}
+    end
   end
 
   @impl true
@@ -653,90 +670,15 @@ defmodule Normandy.Coordination.AgentProcess do
   def handle_cast({:run_async, input, reply_to}, state),
     do: handle_cast({:run_async, input, reply_to, nil}, state)
 
-  def handle_cast({:run_async, input, reply_to, otel_ctx}, %{turn_engine: :server} = state) do
-    session = state.session
-    agent_id = state.agent_id
-    user_input = prepare_input(input)
-
-    _ =
-      Task.start(fn ->
-        OtelCtx.restore(otel_ctx)
-        # Guarantee reply_to always hears back with {:error, exception}, the same one
-        # run/3 replies when its worker dies of the same failure (the :DOWN clause): a
-        # domain exception bare, any other raise, exit or throw a :task_down TurnError.
-        # Stacktraces are logged (arities only), never replied.
-        result =
-          try do
-            case Turn.Session.run(session, user_input) do
-              {:ok, value} -> {:ok, extract_result(value)}
-              {:error, _} = err -> err
-            end
-          catch
-            kind, reason ->
-              Logger.error(
-                "Async agent #{agent_id} raised " <>
-                  TurnError.format_raised(kind, reason, __STACKTRACE__)
-              )
-
-              {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
-          end
-
-        if reply_to, do: send(reply_to, {:agent_result, agent_id, result})
-      end)
-
-    {:noreply, %{state | run_count: state.run_count + 1, last_run: DateTime.utc_now()}}
-  end
-
-  @impl true
   def handle_cast({:run_async, input, reply_to, otel_ctx}, state) do
-    # Spawn task to run agent without blocking GenServer
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        OtelCtx.restore(otel_ctx)
-        result = handle_async_run(state.agent, input, state.agent_id)
+    case admit({:cast, reply_to, input, otel_ctx}, state) do
+      {:ok, state} ->
+        {:noreply, state}
 
-        if reply_to do
-          send(reply_to, {:agent_result, state.agent_id, result})
-        end
-      end)
-
-    # Update run count
-    updated_state = %{
-      state
-      | run_count: state.run_count + 1,
-        last_run: DateTime.utc_now()
-    }
-
-    {:noreply, updated_state}
-  end
-
-  # Spawn a monitored, UNLINKED worker that runs the turn and tags its reply
-  # with the monitor ref (so {:run_result, ref, …} and {:DOWN, ref, …} correlate).
-  defp spawn_run(state, user_input, otel_ctx) do
-    server = self()
-    session = state.session
-
-    worker =
-      spawn(fn ->
-        OtelCtx.restore(otel_ctx)
-
-        ref =
-          receive do
-            {:monitor_ref, r} -> r
-          end
-
-        result =
-          case Turn.Session.run(session, user_input) do
-            {:ok, value} -> {:ok, extract_result(value)}
-            {:error, _} = err -> err
-          end
-
-        send(server, {:run_result, ref, result})
-      end)
-
-    ref = Process.monitor(worker)
-    send(worker, {:monitor_ref, ref})
-    ref
+      {:error, _} = full ->
+        notify(reply_to, state.agent_id, full)
+        {:noreply, state}
+    end
   end
 
   # :inline: the turn in flight finished (or its worker died); start the next op.
@@ -751,36 +693,26 @@ defmodule Normandy.Coordination.AgentProcess do
     {:noreply, state |> finish_op(running, error) |> dispatch()}
   end
 
-  def handle_info({:run_result, ref, result}, state) do
-    case Map.pop(state.pending_runs, ref) do
-      {nil, _} ->
+  # :server: a turn finished (or its worker died).
+  def handle_info({:server_result, pid, result}, %{turn_engine: :server} = state) do
+    case Map.pop(state.pending_runs, pid) do
+      {nil, _pending} ->
         {:noreply, state}
 
-      {{from, start_time}, rest} ->
-        Process.demonitor(ref, [:flush])
-        runtime = System.monotonic_time(:millisecond) - start_time
-        GenServer.reply(from, result)
-
-        {:noreply,
-         %{
-           state
-           | pending_runs: rest,
-             run_count: state.run_count + 1,
-             last_run: DateTime.utc_now(),
-             total_runtime_ms: state.total_runtime_ms + runtime
-         }}
+      {running, pending_runs} ->
+        Process.demonitor(running.ref, [:flush])
+        {:noreply, finish_op(%{state | pending_runs: pending_runs}, running, result)}
     end
   end
 
-  @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    case Map.pop(state.pending_runs, ref) do
-      {nil, _} ->
-        {:noreply, state}
+  def handle_info({:DOWN, ref, :process, pid, reason}, %{turn_engine: :server} = state) do
+    case Map.pop(state.pending_runs, pid) do
+      {%{ref: ^ref} = running, pending_runs} ->
+        error = {:error, TurnError.from_reason({:task_down, reason})}
+        {:noreply, finish_op(%{state | pending_runs: pending_runs}, running, error)}
 
-      {{from, _start}, rest} ->
-        GenServer.reply(from, {:error, TurnError.from_reason({:task_down, reason})})
-        {:noreply, %{state | pending_runs: rest}}
+      _not_a_worker ->
+        {:noreply, state}
     end
   end
 
@@ -792,8 +724,23 @@ defmodule Normandy.Coordination.AgentProcess do
 
   # Private Functions
 
-  # :inline ops run one at a time, oldest first: {:run, from, input, otel_ctx} and
-  # {:update, from, update_fn}.
+  # A run ({:run, from, input, otel_ctx}) or cast ({:cast, reply_to, input, otel_ctx}) is
+  # admitted while fewer than :max_pending_runs are pending: :server starts its worker at
+  # once (Turn.Server serializes the turns), :inline queues it.
+  defp admit(_op, %{max_pending_runs: max, pending: pending})
+       when max != :infinity and pending >= max,
+       do: {:error, TurnError.from_reason({:queue_full, max})}
+
+  defp admit(op, state) do
+    state = %{state | pending: state.pending + 1}
+
+    case state.turn_engine do
+      :server -> {:ok, start_server_turn(op, state)}
+      :inline -> {:ok, enqueue(op, state)}
+    end
+  end
+
+  # :inline ops run one at a time, oldest first: runs, casts and {:update, from, update_fn}.
   defp enqueue(op, state), do: dispatch(%{state | queue: :queue.in(op, state.queue)})
 
   # Starts queued ops while no turn is in flight: an update applies at once, a run
@@ -816,8 +763,11 @@ defmodule Normandy.Coordination.AgentProcess do
   defp start_op({:run, from, input, otel_ctx} = op, state) do
     if caller_alive?(from),
       do: start_turn(op, "Agent #{state.agent_id}", input, otel_ctx, state),
-      else: state
+      else: %{state | pending: state.pending - 1}
   end
+
+  defp start_op({:cast, _reply_to, input, otel_ctx} = op, state),
+    do: start_turn(op, "Async agent #{state.agent_id}", input, otel_ctx, state)
 
   # The worker gets the committed config, the input and the caller's OTel context, not
   # the process state.
@@ -834,17 +784,52 @@ defmodule Normandy.Coordination.AgentProcess do
     %{state | running: running}
   end
 
-  defp finish_op(state, %{op: {:run, from, _input, _ctx}} = running, result) do
-    state = %{state | running: nil}
+  defp start_server_turn({_kind, _to, input, otel_ctx} = op, state) do
+    session = state.session
 
-    case result do
-      {:ok, agent, value} ->
-        GenServer.reply(from, {:ok, value})
-        count_run(%{state | agent: agent}, running.started)
+    who =
+      if elem(op, 0) == :run, do: "Agent #{state.agent_id}", else: "Async agent #{state.agent_id}"
 
-      {:error, _exception} = error ->
-        GenServer.reply(from, error)
-        state
+    {pid, ref} =
+      WatchedWorker.start(:server_result, fn ->
+        OtelCtx.restore(otel_ctx)
+        server_turn(session, prepare_input(input), who)
+      end)
+
+    running = %{ref: ref, op: op, started: System.monotonic_time(:millisecond)}
+    %{state | pending_runs: Map.put(state.pending_runs, pid, running)}
+  end
+
+  # A finished run or cast: an inline turn's config is committed, the result goes to the
+  # caller or reply_to, and the turn is counted whatever its outcome.
+  defp finish_op(state, running, {:ok, agent, value}),
+    do: finish_op(%{state | agent: agent}, running, {:ok, value})
+
+  defp finish_op(state, %{op: op, started: started}, result) do
+    case op do
+      {:run, from, _input, _ctx} -> GenServer.reply(from, result)
+      {:cast, reply_to, _input, _ctx} -> notify(reply_to, state.agent_id, result)
+    end
+
+    count_run(%{state | running: nil, pending: state.pending - 1}, started)
+  end
+
+  defp notify(nil, _agent_id, _result), do: :ok
+
+  defp notify(reply_to, agent_id, result) when is_pid(reply_to),
+    do: send(reply_to, {:agent_result, agent_id, result})
+
+  # A name that is not registered must not crash this process (send/2 raises for it).
+  defp notify(reply_to, agent_id, result) when is_atom(reply_to) do
+    case Process.whereis(reply_to) do
+      nil ->
+        Logger.warning(
+          "AgentProcess #{agent_id}: reply_to #{inspect(reply_to)} is not a registered " <>
+            "process; the result is dropped"
+        )
+
+      pid ->
+        send(pid, {:agent_result, agent_id, result})
     end
   end
 
@@ -878,8 +863,22 @@ defmodule Normandy.Coordination.AgentProcess do
       {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
   end
 
+  # One :server turn, in the worker: the Turn.Session reply, or any raise, exit or throw
+  # logged (arities only) and turned into the reply a worker dying of it would give (a
+  # domain exception bare, anything else a :task_down TurnError).
+  defp server_turn(session, user_input, who) do
+    case Turn.Session.run(session, user_input) do
+      {:ok, value} -> {:ok, extract_result(value)}
+      {:error, _} = error -> error
+    end
+  catch
+    kind, reason ->
+      Logger.error("#{who} raised " <> TurnError.format_raised(kind, reason, __STACKTRACE__))
+      {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
+  end
+
   # The exit reason a process dies with for a caught kind and reason, so a failure caught
-  # in run_async maps like the same failure arriving as run/3's worker :DOWN.
+  # in a worker maps like the same failure arriving as its :DOWN.
   defp exit_reason(:error, reason), do: Exception.normalize(:error, reason)
   defp exit_reason(:throw, value), do: {:nocatch, value}
   defp exit_reason(:exit, reason), do: reason
@@ -898,15 +897,6 @@ defmodule Normandy.Coordination.AgentProcess do
     Map.get(response, :chat_message) ||
       Map.get(response, "chat_message") ||
       response
-  end
-
-  defp handle_async_run(agent, input, agent_id) do
-    case BaseAgent.run(agent, prepare_input(input)) do
-      {:ok, _updated_agent, response} -> {:ok, extract_result(response)}
-      {:error, exception} -> {:error, exception}
-    end
-  rescue
-    e -> TurnError.log_raised("Async agent #{agent_id}", e, __STACKTRACE__)
   end
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers
