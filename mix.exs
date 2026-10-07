@@ -48,7 +48,8 @@ defmodule Normandy.MixProject do
           "ROADMAP.md",
           "docs/guides/distributed_sessions.md",
           "docs/guides/agent-memory.md",
-          "docs/guides/hooks.md"
+          "docs/guides/hooks.md",
+          "docs/guides/testing.md"
           # TODO: Add guides
           # "guides/getting_started.md",
           # "guides/multi_agent_coordination.md",

@@ -1852,6 +1852,9 @@ code you wrote against 1.x must follow the changes below.
   package) switch to the `Normandy.Test.*` names. `stored_entry_ids:` is now
   `{module, function, args}` (`{__MODULE__, :stored_entry_ids, []}` for the old
   `{__MODULE__, :stored_entry_ids}`) and may be left out.
+- A new guide, `docs/guides/testing.md` ("Testing agents" on HexDocs), shows offline tests
+  with `FakeClient` on `run/3`, `stream/3` and `Turn.Session`, telemetry assertions, and the
+  contract suites for a custom store or registry. Its examples run in Normandy's own suite.
 
 ## Known limits of 2.0
 
