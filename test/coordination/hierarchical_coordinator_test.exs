@@ -23,7 +23,9 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       def converse(client, request, _opts) do
         send(client.test_pid, {:llm_call, client.name, request.messages})
         if client.fail, do: raise("worker down")
-        {:ok, %Normandy.LLM.Response{content: struct(request.response_model, client.reply)}}
+        # A reply without :chat_message answers "<name> done" (a nil answer is an error).
+        reply = Map.put_new(client.reply, :chat_message, "#{client.name} done")
+        {:ok, %Normandy.LLM.Response{content: struct(request.response_model, reply)}}
       end
 
       def stream(_client, _request, _opts),
@@ -303,7 +305,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
         :counters.add(calls, 1, 1)
 
         if :counters.get(calls, 1) == 1,
-          do: %{response_model | delegation_plan: ["t1"]},
+          do: %{response_model | chat_message: "plan", delegation_plan: ["t1"]},
           else: exit(:boom)
       end
 

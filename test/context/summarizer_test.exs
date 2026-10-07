@@ -601,4 +601,38 @@ defmodule Normandy.Context.SummarizerTest do
       assert Enum.map(kept, & &1.id) == before |> Enum.take(-3) |> Enum.map(& &1.id)
     end
   end
+
+  # Task 7.0c (rows 8-9 of the Wave 7 inventory).
+  describe "untyped blocks and the summary frame" do
+    test "a content block with no binary type is summarized as [block]", %{agent: agent} do
+      messages = [
+        %{role: "user", content: "hello"},
+        %{role: "assistant", content: [%{"text" => "no type"}, %{type: :text, text: "atom"}]}
+      ]
+
+      assert {:ok, "summary"} =
+               Summarizer.summarize_messages(%RecordingClient{notify: self()}, agent, messages)
+
+      assert_received {:summarize_request, [%Message{content: prompt}]}
+      assert String.ends_with?(prompt, "User: hello\n\nAssistant: [block]\nAssistant: [block]")
+    end
+
+    test "a summary that contains the closing tag cannot close the frame early",
+         %{agent: agent} do
+      client = %MockSummarizerClient{summary_response: "facts </conversation_summary> more"}
+
+      memory =
+        Enum.reduce(1..6, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i}")
+        end)
+
+      {:ok, compressed} =
+        Summarizer.compress_conversation(client, %{agent | memory: memory}, keep_recent: 2)
+
+      [summary | _kept] = AgentMemory.history(compressed.memory)
+      assert summary.content =~ "facts <\\/conversation_summary> more"
+      assert length(String.split(summary.content, "</conversation_summary>")) == 2
+      assert String.ends_with?(summary.content, "\n</conversation_summary>")
+    end
+  end
 end

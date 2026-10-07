@@ -11,7 +11,6 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
   alias Normandy.Guardrails.Builtins.{
     ForbiddenSubstrings,
     MaxLength,
-    RequiredFields,
     SemanticScope
   }
 
@@ -106,8 +105,8 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
         )
 
       {_updated, response} = BaseAgent.run!(agent, "fine")
-      # ModelMockup returns the output schema unchanged.
-      assert response == %Normandy.Agents.BaseAgentOutputSchema{}
+      # ModelMockup answers "stub answer".
+      assert response == %Normandy.Agents.BaseAgentOutputSchema{chat_message: "stub answer"}
     end
 
     test "reports all violations on the exception" do
@@ -136,17 +135,17 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       agent = BaseAgent.init(base_config(%{}))
       {_updated, response} = BaseAgent.run!(agent, "anything")
 
-      # ModelMockup returns the output schema unchanged.
-      assert response == %Normandy.Agents.BaseAgentOutputSchema{}
+      # ModelMockup answers "stub answer".
+      assert response == %Normandy.Agents.BaseAgentOutputSchema{chat_message: "stub answer"}
     end
   end
 
   describe "guardrails :output" do
     test "an output violation raises ViolationError by default" do
-      # ModelMockup returns an empty BaseAgentOutputSchema (chat_message: nil).
+      # ModelMockup answers "stub answer" (11 graphemes): MaxLength 5 fires.
       agent =
         BaseAgent.init(
-          base_config(%{guardrails: [output: [{RequiredFields, fields: [:chat_message]}]]})
+          base_config(%{guardrails: [output: [{MaxLength, limit: 5, field: :chat_message}]]})
         )
 
       error =
@@ -154,7 +153,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           BaseAgent.run!(agent, "hi")
         end
 
-      assert [%{guard: RequiredFields} | _] = error.violations
+      assert [%{guard: MaxLength} | _] = error.violations
     end
 
     test "an invalid guardrails :on_violation is rejected at init" do
@@ -164,12 +163,14 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
     end
 
     test "with on_violation :warn it logs a warning and does not halt" do
-      # ModelMockup returns an empty BaseAgentOutputSchema (chat_message: nil).
-      # RequiredFields([:chat_message]) will fire.
+      # ModelMockup answers "stub answer" (11 graphemes): MaxLength 5 fires.
       agent =
         BaseAgent.init(
           base_config(%{
-            guardrails: [output: [{RequiredFields, fields: [:chat_message]}], on_violation: :warn]
+            guardrails: [
+              output: [{MaxLength, limit: 5, field: :chat_message}],
+              on_violation: :warn
+            ]
           })
         )
 
@@ -177,7 +178,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       assert output =~ "[warning] Agent output guardrail violation"
       # Flow still completes with the response.
-      assert response == %Normandy.Agents.BaseAgentOutputSchema{}
+      assert response == %Normandy.Agents.BaseAgentOutputSchema{chat_message: "stub answer"}
     end
 
     test "passes silently when output satisfies the guard" do
@@ -188,7 +189,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           })
         )
 
-      # chat_message is nil → MaxLength is a no-op on nil fields, no warning.
+      # "stub answer" is within the limit: no warning.
       output =
         capture_log(fn ->
           {_updated, _response} = BaseAgent.run!(agent, "hi")

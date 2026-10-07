@@ -20,7 +20,7 @@ defmodule Normandy.DSL.Workflow do
           step :analyze_sources do
             agent AnalysisAgent
             input from: :gather_sources
-            transform fn sources -> "Analyze these: \#{sources}" end
+            transform fn %{chat_message: sources} -> "Analyze these: " <> sources end
           end
 
           # Parallel execution
@@ -28,12 +28,18 @@ defmodule Normandy.DSL.Workflow do
             agent FactCheckAgent, name: :fact_check
             agent QualityAgent, name: :quality_check
             input from: :analyze_sources
+            transform fn %{chat_message: analysis} -> analysis end
           end
 
-          # Conditional execution: the clause's value becomes the step result
+          # Conditional execution: the clause's value becomes the step result. A
+          # parallel step's result maps each agent's name to its {:ok, answer} or
+          # {:error, exception}.
           step :final_review do
             agent ReviewAgent
             input from: :validate
+            transform fn %{fact_check: {:ok, facts}, quality_check: {:ok, quality}} ->
+              "Facts: " <> facts.chat_message <> "\\nQuality: " <> quality.chat_message
+            end
             when_result do
               {:ok, %{quality: q}} when q > 0.8 -> :approve
               {:ok, _} -> :needs_revision
@@ -180,6 +186,25 @@ defmodule Normandy.DSL.Workflow do
   @spec __validate_execute_opts__(keyword(), module()) :: keyword()
   def __validate_execute_opts__(opts, workflow),
     do: Options.validate!(opts, @execute_opts_schema, {workflow, :execute, 1})
+
+  @doc false
+  # A step's when_result value, applied to the workflow's state (see "Conditional
+  # Execution"). Here and not in the generated module: there the compiler sees which
+  # values that workflow's clauses return, and warns in the user's module about the
+  # branches they never reach (a workflow whose clauses never return {:error, _}).
+  @spec __after_condition__(atom(), map(), term()) ::
+          {:cont, {:ok, map()}} | {:halt, {:error, {atom(), term()}}}
+  def __after_condition__(step_name, _state, {:error, reason}),
+    do: {:halt, {:error, {step_name, reason}}}
+
+  def __after_condition__(step_name, state, {:ok, value}),
+    do: {:cont, {:ok, put_step_result(state, step_name, value)}}
+
+  def __after_condition__(step_name, state, value),
+    do: {:cont, {:ok, put_step_result(state, step_name, value)}}
+
+  defp put_step_result(state, name, value),
+    do: %{state | results: Map.put(state.results, name, value), current_input: value}
 
   defmacro __using__(_opts) do
     quote do
@@ -425,15 +450,11 @@ defmodule Normandy.DSL.Workflow do
           defp after_step(step, state) do
             result = Map.fetch!(state.results, step.name)
 
-            case __workflow_condition__(step.name, {:ok, result}) do
-              {:error, reason} -> {:halt, {:error, {step.name, reason}}}
-              {:ok, value} -> {:cont, {:ok, put_step_result(state, step.name, value)}}
-              value -> {:cont, {:ok, put_step_result(state, step.name, value)}}
-            end
-          end
-
-          defp put_step_result(state, name, value) do
-            %{state | results: Map.put(state.results, name, value), current_input: value}
+            unquote(__MODULE__).__after_condition__(
+              step.name,
+              state,
+              __workflow_condition__(step.name, {:ok, result})
+            )
           end
         end
       end

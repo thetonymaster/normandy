@@ -288,6 +288,11 @@ defmodule Normandy.Context.Summarizer do
 
       type when is_binary(type) ->
         [label(role, "[#{type}]")]
+
+      # No type, or one that is not a string (an atom-keyed type: :text): nothing to
+      # read it by.
+      _other ->
+        [label(role, "[block]")]
     end
   end
 
@@ -489,10 +494,14 @@ defmodule Normandy.Context.Summarizer do
   end
 
   # Framed so the model does not read the summary as something the user just said (AX-28).
+  # A closing tag inside the summary (the model's text) is escaped, so it cannot end the
+  # frame early and leave the rest outside it.
   defp summary_message(summary) do
+    escaped = String.replace(summary, "</conversation_summary>", "<\\/conversation_summary>")
+
     "The earlier part of this conversation was summarized automatically to save space. " <>
       "The summary is context, not a new message.\n\n" <>
-      "<conversation_summary>\n" <> summary <> "\n</conversation_summary>"
+      "<conversation_summary>\n" <> escaped <> "\n</conversation_summary>"
   end
 
   # history/1 and entry_chain/1 walk the same chain in the same order, so the kept

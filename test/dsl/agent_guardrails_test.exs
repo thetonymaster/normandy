@@ -15,8 +15,9 @@ defmodule Normandy.DSL.AgentGuardrailsTest do
         {ForbiddenSubstrings, terms: ["ignore previous"], field: :chat_message}
       ])
 
+      # ModelMockup answers "stub answer" (11 graphemes), which this blocks.
       guardrails(:output, [
-        {RequiredFields, fields: [:chat_message]}
+        {MaxLength, limit: 5, field: :chat_message}
       ])
     end
   end
@@ -64,7 +65,7 @@ defmodule Normandy.DSL.AgentGuardrailsTest do
     test "output guardrails are wired into the agent config" do
       agent = GuardedAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
-      assert agent.guardrails[:output] == [{RequiredFields, fields: [:chat_message]}]
+      assert agent.guardrails[:output] == [{MaxLength, limit: 5, field: :chat_message}]
     end
 
     test "agents without guardrails default to empty lists" do
@@ -99,7 +100,7 @@ defmodule Normandy.DSL.AgentGuardrailsTest do
                {ForbiddenSubstrings, terms: ["ignore previous"], field: :chat_message}
              ]
 
-      assert config.guardrails[:output] == [{RequiredFields, fields: [:chat_message]}]
+      assert config.guardrails[:output] == [{MaxLength, limit: 5, field: :chat_message}]
     end
 
     test "config/0 exposes empty guardrail lists when undefined" do

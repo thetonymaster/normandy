@@ -8,11 +8,15 @@ defmodule Normandy.Agents.BlankAnswerTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.LLMError
+  alias Normandy.Test.ReturnTool
   alias Normandy.Test.ScriptedTextClient
+  alias Normandy.Test.StubClient
 
   @message "expected a final answer, got an empty one: the model ended its turn with no text"
 
@@ -66,5 +70,49 @@ defmodule Normandy.Agents.BlankAnswerTest do
       )
 
     assert {:ok, %{chat_message: "Hello"}} = Server.run(srv, %{chat_message: "hi"})
+  end
+
+  # Decision 27 A3: a client that returns the answer struct itself can leave
+  # chat_message nil, and a tool loop's final response can carry no text at all. Neither
+  # is an answer. (A stream builds its answer from text deltas, so it never holds nil.)
+  describe "a nil chat_message" do
+    defp nil_answer_agents do
+      chat =
+        BaseAgent.init(%{
+          client: %StubClient{reply: fn _ -> %BaseAgentOutputSchema{chat_message: nil} end},
+          model: "m"
+        })
+
+      tools =
+        %{client: %StubClient{reply: fn _ -> %ToolCallResponse{content: nil} end}, model: "m"}
+        |> BaseAgent.init()
+        |> BaseAgent.register_tool(%ReturnTool{})
+
+      [chat: chat, tools: tools]
+    end
+
+    test "run/3 returns :invalid_output for a chat agent and a tool loop" do
+      for {_kind, agent} <- nil_answer_agents() do
+        assert {:error, %LLMError{type: :invalid_output} = error} = BaseAgent.run(agent, "hi")
+        assert Exception.message(error) =~ @message
+      end
+    end
+
+    test "Turn.Server replies :invalid_output for a chat agent and a tool loop" do
+      for {kind, agent} <- nil_answer_agents() do
+        {:ok, srv} =
+          Server.start_link(
+            session_id: "s-nil-#{kind}-#{System.unique_integer([:positive])}",
+            config: agent,
+            store: {InMemory, InMemory.new()},
+            registry: {Native, Native.new()}
+          )
+
+        assert {:error, %LLMError{type: :invalid_output} = error} =
+                 Server.run(srv, %{chat_message: "hi"})
+
+        assert Exception.message(error) =~ @message
+      end
+    end
   end
 end

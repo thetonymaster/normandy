@@ -882,12 +882,13 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # An empty or whitespace-only answer (the model ended its turn with no text, AX-32) is
-  # the :invalid_output LLMError, never a blank success (decision 22). The one check, for
-  # the converted answer (convert_final_text/3) and the validated one
+  # An empty or whitespace-only answer (the model ended its turn with no text, AX-32), or
+  # none (a client that returns the output struct with chat_message: nil, decision 27 A3),
+  # is the :invalid_output LLMError, never a blank success (decision 22). The one check,
+  # for the converted answer (convert_final_text/3) and the validated one
   # (validate_turn_output/2).
   defp ensure_answer!(answer) do
-    if is_binary(answer) and String.trim(answer) == "" do
+    if is_nil(answer) or (is_binary(answer) and String.trim(answer) == "") do
       raise LLMError.new(
               type: :invalid_output,
               retryable?: false,

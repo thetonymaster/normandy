@@ -190,8 +190,8 @@ defmodule Normandy.Coordination.ReactiveTest do
     test "returns first successful result from agent processes" do
       pids = [create_agent_process(), create_agent_process(), create_agent_process()]
 
-      assert {:ok, result} = Reactive.race(pids, "test")
-      assert is_map(result)
+      # An agent process returns a chat answer as its text.
+      assert {:ok, "stub answer"} = Reactive.race(pids, "test")
 
       # Cleanup
       Enum.each(pids, &AgentProcess.stop/1)

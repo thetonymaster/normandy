@@ -310,9 +310,8 @@ defmodule Normandy.Coordination.AgentSupervisorTest do
           agent_id: "worker"
         )
 
-      # Agent should work normally
-      assert {:ok, result} = AgentProcess.run(pid, "Test input")
-      assert is_map(result)
+      # Agent should work normally; a chat answer is returned as its text.
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, "Test input")
     end
 
     test "supervised agents maintain state across runs", %{agent: agent} do

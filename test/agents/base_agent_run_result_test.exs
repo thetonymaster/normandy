@@ -51,7 +51,7 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
 
   test "run!/2 returns {config, output} and raises the same exception" do
     assert {_config, %BaseAgentOutputSchema{}} =
-             BaseAgent.run!(agent(& &1), %{chat_message: "x"})
+             BaseAgent.run!(agent(&StubClient.answer/1), %{chat_message: "x"})
 
     assert_raise LLMError, ~r/rate_limit/, fn ->
       BaseAgent.run!(agent(&rate_limited/1), %{chat_message: "hello"})

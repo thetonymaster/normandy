@@ -28,6 +28,9 @@ defmodule Normandy.MixProject do
         ]
       ],
       test_coverage: [summary: [threshold: 60]],
+      # test/fixtures holds data and the script that generates it, not tests: without this,
+      # `mix test` warns that they match no :test_load_filters.
+      test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")],
 
       # Hex.pm metadata
       description: description(),

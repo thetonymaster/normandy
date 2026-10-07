@@ -51,20 +51,18 @@ defmodule Normandy.Coordination.AgentProcessTest do
     test "executes agent synchronously", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
-      assert {:ok, result} = AgentProcess.run(pid, "Test input")
-      assert is_map(result)
+      # A chat answer is returned as its text.
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, "Test input")
     end
 
     test "handles different input formats", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       # String input
-      assert {:ok, result1} = AgentProcess.run(pid, "text")
-      assert is_map(result1)
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, "text")
 
       # Map input
-      assert {:ok, result2} = AgentProcess.run(pid, %{chat_message: "text"})
-      assert is_map(result2)
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, %{chat_message: "text"})
     end
 
     test "updates run statistics", %{agent: agent} do
@@ -154,8 +152,7 @@ defmodule Normandy.Coordination.AgentProcessTest do
 
       assert :ok = AgentProcess.cast(pid, "Test input", reply_to: self())
 
-      assert_receive {:agent_result, "async_agent", {:ok, result}}, 1000
-      assert is_map(result)
+      assert_receive {:agent_result, "async_agent", {:ok, "stub answer"}}, 1000
     end
 
     test "does not send message if no reply_to", %{agent: agent} do

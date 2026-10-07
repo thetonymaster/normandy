@@ -49,7 +49,7 @@ defmodule NormandyTest.BaseAgentsTest do
 
     response = BaseAgent.get_response(agent)
 
-    assert response == %Normandy.Agents.BaseAgentOutputSchema{}
+    assert response == %Normandy.Agents.BaseAgentOutputSchema{chat_message: "stub answer"}
   end
 
   test "fetch_context_provider/2 and fetch_context_provider!/2", %{agent: agent} do
@@ -100,7 +100,7 @@ defmodule NormandyTest.BaseAgentsTest do
 
   test "run", %{agent: agent} do
     mock_input = %BaseAgentInputSchema{chat_message: "hello"}
-    mock_output = %BaseAgentOutputSchema{}
+    mock_output = %BaseAgentOutputSchema{chat_message: "stub answer"}
 
     {agent, response} = BaseAgent.run!(agent, mock_input)
     assert response == mock_output

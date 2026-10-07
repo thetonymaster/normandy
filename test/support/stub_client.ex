@@ -9,14 +9,22 @@ defmodule Normandy.Test.StubClient do
 
   where `reply` is the response content (a struct or a binary, wrapped as
   `{:ok, %Normandy.LLM.Response{}}`), an `{:ok, %Normandy.LLM.Response{}}`, or
-  `{:error, %Normandy.LLMError{}}`; or the function raises. The default returns the
-  response model unchanged. Any other tuple (such as a 1.x `{response, usage}` left
-  unmigrated) raises `ArgumentError`; any other term is returned as is, for
-  `Normandy.LLM.Call` to reject.
+  `{:error, %Normandy.LLMError{}}`; or the function raises. The default (`answer/1`)
+  returns the response model, its `:chat_message` set to `"stub answer"` when it is
+  `nil` (a `nil` answer is an error, decision 27 A3). Any other tuple (such as a 1.x
+  `{response, usage}` left unmigrated) raises `ArgumentError`; any other term is
+  returned as is, for `Normandy.LLM.Call` to reject.
 
   `stream/3` returns `{:error, %Normandy.LLMError{type: :unsupported}}`.
   """
-  defstruct reply: &Function.identity/1, notify: nil, options: %{}
+  defstruct reply: &__MODULE__.answer/1, notify: nil, options: %{}
+
+  @doc "The default reply: the response model, a `nil` `:chat_message` filled in."
+  @spec answer(term()) :: term()
+  def answer(%{chat_message: nil} = response_model),
+    do: %{response_model | chat_message: "stub answer"}
+
+  def answer(response_model), do: response_model
 
   defimpl Normandy.Agents.Model do
     alias Normandy.LLM.Response

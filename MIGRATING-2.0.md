@@ -1797,6 +1797,12 @@ code you wrote against 1.x must follow the changes below.
   stored message (the server stopped between storing the answer and saving the turn as
   `:stopped`) saves the turn as finished and calls no model. It used to call the model
   again and store a second answer. `Normandy.Agents.Turn.answered?/1` is the check.
+- A final answer whose `chat_message` is `nil` is now `{:error, %Normandy.LLMError{type:
+  :invalid_output}}` on `run/3`, `run!/3` (raises), `Turn.Server` and `Turn.Session`, like an
+  empty one (§32). It reaches only an output schema with a `:chat_message` field, from a
+  client that returns the output struct itself (a test double that returns the response
+  model unchanged, or a structured-output answer that leaves the field out). A stream builds
+  its answer from text, so it never holds `nil`. Make test doubles fill `chat_message`.
 
 ## Known limits of 2.0
 
@@ -1844,7 +1850,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   share an ancestor can both keep the shared entries. No other session's history is lost;
   the cost is entries left behind. If you must erase a user's data, check the store
   afterwards.
-
 - **Every compaction stores the whole compacted conversation.** `Turn.Server` appends one
   `"compaction"` entry per compaction holding the conversation it left (up to a context
   window), and `SessionStore.history/2` returns all of them: a restore loads and decodes
