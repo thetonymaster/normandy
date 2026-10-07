@@ -9,9 +9,10 @@ defmodule Normandy.Agents.LinearHistoryTest do
   `Compactor.WindowManager`).
 
   Counted: `BaseIOSchema.to_json/1` of `Normandy.Test.CountingContent` (memory content)
-  and `Jason.Encoder.encode/2` of `CountingOutput` (a tool's output: Dispatch encodes it
-  four times, in `execute/4`'s and `finish/3`'s encodability checks, `wrap_output/2` and
-  the result cap, and memory once, when the result is appended).
+  and `Jason.Encoder.encode/2` of `CountingOutput` (a tool's output: Dispatch renders it
+  once and reuses the text for its encodability checks and the result cap, Task 7.0a, and
+  memory encodes it once, when the result is appended). `Turn.Inline` over
+  `Dispatch.dispatch_one/3` costs the same.
   """
   use ExUnit.Case, async: true
   @moduletag :capture_log
@@ -19,12 +20,16 @@ defmodule Normandy.Agents.LinearHistoryTest do
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
+  alias Normandy.Agents.Turn.Inline
   alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Components.ToolCall
   alias Normandy.Test.CountingContent
   alias Normandy.Test.ReturnTool
   alias Normandy.Test.WireScript
@@ -42,8 +47,9 @@ defmodule Normandy.Agents.LinearHistoryTest do
     end
   end
 
-  # Encodings per tool result: Dispatch's four, memory's one. Constant in N.
-  @per_result 5
+  # Encodings per tool result: Dispatch's one, memory's one. Constant in N, with the
+  # result cap on or off.
+  @per_result 2
   @seeded 6
   @no_compaction {Compactor.WindowManager, context_window: 1_000_000, reserved_tokens: 1_000}
 
@@ -202,5 +208,49 @@ defmodule Normandy.Agents.LinearHistoryTest do
       # turns results rehydrated once each, plus the new turn's result.
       assert CountingContent.count(out) == @per_result * turns + turns + @per_result
     end
+  end
+
+  test "run with the result cap off: each tool result is encoded twice" do
+    {seeded, out} = counters()
+
+    config =
+      WireScript.client(json_replies(1..3))
+      |> agent(out, seeded_memory(seeded), {Compactor.NoOp, []})
+      |> Map.put(:max_tool_result_chars, nil)
+
+    Enum.reduce(1..3, config, fn t, config ->
+      {:ok, config, _} = BaseAgent.run(config, "question #{t}")
+      config
+    end)
+
+    assert CountingContent.count(out) == @per_result * 3
+  end
+
+  test "Turn.Inline over dispatch_one/3: each tool result is encoded twice" do
+    {seeded, out} = counters()
+    config = agent(WireScript.client([]), out, seeded_memory(seeded), {Compactor.NoOp, []})
+    {:ok, memory} = Agent.start_link(fn -> config.memory end)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+    call = %ToolCall{id: "t1", name: "rows", input: %{}}
+
+    deps = %{
+      call_llm: fn _request ->
+        case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+          0 -> {:ok, %ToolCallResponse{tool_calls: [call]}}
+          _ -> {:ok, %ToolCallResponse{content: "done", tool_calls: []}}
+        end
+      end,
+      dispatch: fn calls ->
+        Enum.map(calls, &Dispatch.dispatch_one(config, &1, BaseAgent.base_agent_pipeline(config)))
+      end,
+      append: fn role, content ->
+        Agent.update(memory, &AgentMemory.add_message(&1, role, content))
+      end
+    }
+
+    assert {:ok, %Turn.State{status: :stopped}} =
+             Inline.run(Turn.new(response_model: %ToolCallResponse{}), deps)
+
+    assert CountingContent.count(out) == @per_result
   end
 end

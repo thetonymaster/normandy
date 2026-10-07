@@ -274,32 +274,47 @@ defmodule Normandy.Agents.Dispatch do
   @doc false
   # The last step of every result that leaves Dispatch, and of the results
   # Normandy.Hooks.ServerGlue rewrites through after_tool (interrupted, rejected and
-  # expired results, which skip Dispatch): ensure_encodable/1, then the cap (see the
+  # expired results, which skip Dispatch): encodable/2, then the cap (see the
   # moduledoc's "Result cap"). Runs once per result: the cap's note is not idempotent.
   @spec finish(map(), ToolCall.t(), ToolResult.t()) :: ToolResult.t()
   def finish(config, %ToolCall{} = call, %ToolResult{} = result),
-    do: result |> ensure_encodable() |> cap(config, call)
+    do: finish(config, call, result, nil)
 
+  defp finish(config, call, result, rendering) do
+    {result, {_output, text}} = encodable(result, rendering)
+    cap(result, text, config, call)
+  end
+
+  # A rendering is {output, text}: the output a result held when ToolResult.render/1
+  # turned it into text, so later steps reuse the text while the result still holds that
+  # output (=== on the same term returns at once) and render again only when a hook
+  # replaced it. nil when nothing was rendered yet.
+  #
   # Hooks (before-hook halts, after_tool, after_hooks) may build any %ToolResult{},
   # and memory keeps it for every later request. So the encodability check runs on
-  # the final result, the last point before it can reach memory.
-  @doc false
-  @spec ensure_encodable(ToolResult.t()) :: ToolResult.t()
-  def ensure_encodable(%ToolResult{output: output} = result) when is_binary(output) do
-    if String.valid?(output),
-      do: result,
-      else: %{result | output: invalid_utf8_output(), is_error: true}
-  end
+  # the final result, the last point before it can reach memory. Returns the result,
+  # replaced by an error result when the model could not read it, and its rendering.
+  defp encodable(%ToolResult{output: output} = result, {rendered, _text} = rendering)
+       when output === rendered,
+       do: {result, rendering}
 
-  def ensure_encodable(%ToolResult{output: output} = result) when is_number(output),
-    do: result
+  defp encodable(%ToolResult{output: output} = result, _stale_or_nil) do
+    case ToolResult.render(output) do
+      {:ok, text} when is_binary(output) ->
+        if String.valid?(text),
+          do: {result, {output, text}},
+          else: unreadable(result, invalid_utf8_output())
 
-  def ensure_encodable(%ToolResult{output: output} = result) do
-    case Normandy.JSON.encode(output) do
-      {:ok, _json} -> result
-      {:error, exception} -> %{result | output: unencodable_output(exception), is_error: true}
+      {:ok, text} ->
+        {result, {output, text}}
+
+      {:error, exception} ->
+        unreadable(result, unencodable_output(exception))
     end
   end
+
+  defp unreadable(result, message),
+    do: {%{result | output: message, is_error: true}, {message, message}}
 
   @doc """
   Executes a classified (`{:execute, invocation, call}`) tool call: budget pre-check →
@@ -312,14 +327,16 @@ defmodule Normandy.Agents.Dispatch do
   def execute(config, %Invocation{} = invocation, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case pipeline.budget_check_fn.(config, call) do
       :ok ->
-        result = execute_and_wrap(config, call, invocation, pipeline.execute_fn)
+        {result, rendering} = execute_and_wrap(config, call, invocation, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
-        result = config |> after_tool_slot(call, result, pipeline) |> ensure_encodable()
+
+        {result, rendering} =
+          config |> after_tool_slot(call, result, pipeline) |> encodable(rendering)
 
         config
         |> run_after_hooks(call, result, pipeline.after_hooks)
         |> Map.put(:tool_call_id, call.id)
-        |> then(&finish(config, call, &1))
+        |> then(&finish(config, call, &1, rendering))
 
       {:error, reason} ->
         emit_denied(config, call, :budget)
@@ -403,23 +420,13 @@ defmodule Normandy.Agents.Dispatch do
   # The model reads a tool result as JSON (ToolResult's BaseIOSchema impl), and
   # memory keeps the result for every later request. So an output JSON cannot
   # express (a tuple, a pid) is replaced here by an error result that says so,
-  # before it reaches memory.
+  # before it reaches memory. Returns the result and its rendering (encodable/2); a
+  # binary is checked after the after_tool slot, which may still replace it.
   defp wrap_output(call, output) when is_binary(output) or is_number(output),
-    do: %ToolResult{tool_call_id: call.id, output: output, is_error: false}
+    do: {%ToolResult{tool_call_id: call.id, output: output, is_error: false}, nil}
 
-  defp wrap_output(call, output) do
-    case Normandy.JSON.encode(output) do
-      {:ok, _json} ->
-        %ToolResult{tool_call_id: call.id, output: output, is_error: false}
-
-      {:error, exception} ->
-        %ToolResult{
-          tool_call_id: call.id,
-          output: unencodable_output(exception),
-          is_error: true
-        }
-    end
-  end
+  defp wrap_output(call, output),
+    do: encodable(%ToolResult{tool_call_id: call.id, output: output, is_error: false}, nil)
 
   # An error reason is a message for the model. A binary is sent as it is (AX-15: the
   # memory tool's reference strings, an Executor timeout), with is_error carrying the
@@ -427,19 +434,23 @@ defmodule Normandy.Agents.Dispatch do
   # "__exception__"). Any other term keeps the %{error: term} shape, as its inspect/1
   # text when JSON cannot express it (a tuple such as {:http, 500}).
   defp wrap_error(call, error) when is_binary(error),
-    do: %ToolResult{tool_call_id: call.id, output: error, is_error: true}
+    do: {%ToolResult{tool_call_id: call.id, output: error, is_error: true}, nil}
 
   defp wrap_error(call, error) when is_exception(error),
-    do: %ToolResult{tool_call_id: call.id, output: Exception.message(error), is_error: true}
+    do:
+      {%ToolResult{tool_call_id: call.id, output: Exception.message(error), is_error: true}, nil}
 
   defp wrap_error(call, error) do
-    output =
-      case Normandy.JSON.encode(%{error: error}) do
-        {:ok, _json} -> %{error: error}
-        {:error, _exception} -> %{error: inspect(error)}
-      end
+    output = %{error: error}
 
-    %ToolResult{tool_call_id: call.id, output: output, is_error: true}
+    case ToolResult.render(output) do
+      {:ok, text} ->
+        {%ToolResult{tool_call_id: call.id, output: output, is_error: true}, {output, text}}
+
+      {:error, _exception} ->
+        {%ToolResult{tool_call_id: call.id, output: %{error: inspect(error)}, is_error: true},
+         nil}
+    end
   end
 
   # Sent bare, like a tool's own {:error, binary} (AX-15).
@@ -448,14 +459,11 @@ defmodule Normandy.Agents.Dispatch do
   # The tool's registration :max_result_chars wins over the agent's
   # :max_tool_result_chars, including a registered nil. Dispatch's callers pass partial
   # configs (bare maps in tests), so a config without the key has the default cap.
-  defp cap(result, config, call) do
+  # text is the result's rendering (encodable/2), what the model reads.
+  defp cap(result, text, config, call) do
     case result_limit(config, call.name) do
-      {nil, _source} ->
-        result
-
-      {limit, source} ->
-        text = ToolResult.render_output(result.output)
-        cap_text(result, text, %{limit: limit, source: source}, config, call)
+      {nil, _source} -> result
+      {limit, source} -> cap_text(result, text, %{limit: limit, source: source}, config, call)
     end
   end
 
@@ -503,7 +511,9 @@ defmodule Normandy.Agents.Dispatch do
   defp unencodable(%Protocol.UndefinedError{value: value}),
     do: "it contains #{Describe.type_of(value)}"
 
-  defp unencodable(exception), do: Exception.message(exception)
+  # By the exception's module only: a message (Jason.EncodeError's "invalid byte ... in
+  # <<...>>") can quote the output's bytes into the model's text.
+  defp unencodable(%module{}), do: "encoding it raised #{inspect(module)}"
 
   defp call_execute_fn(execute_fn, config, invocation, call) when is_function(execute_fn, 4),
     do: execute_fn.(config, invocation, call.name, call)

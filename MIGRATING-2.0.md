@@ -1192,6 +1192,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   text with `is_error: true`, not as `{"error": "..."}`.
   `%ToolResult{}.output` is that binary. Code that matched `output: %{error: msg}` for these
   must match the binary. Other error terms keep `%{error: term}`.
+- An output whose encoding raised (a map holding a string that is not valid UTF-8, which
+  makes Jason raise `Jason.EncodeError`) reaches the model as "the tool ran, but its output
+  cannot be sent as JSON: encoding it raised Jason.EncodeError", the exception's module,
+  instead of the exception's message, which quoted the output's bytes. A value JSON cannot
+  express is still named by its type ("... it contains a tuple").
 - `Normandy.MCP.ToolWrapper` honours the MCP `isError` flag: such a result is an error
   result (`is_error: true`) whose text is the server's message. Any `CallToolResult` (a
   string-keyed map, an `ExMCP.Response` struct, a Hermes response) reaches the model as its
