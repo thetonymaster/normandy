@@ -1602,7 +1602,8 @@ code you wrote against 1.x must follow the changes below.
   whose `register_name/2` returns once the registry has applied the registration. Code that
   matched `{:via, Horde.Registry, _}` from `child_name/2` must match the new module; the name
   term `{registry, session_id}`, the registry process and `Horde.Registry.lookup/2` are
-  unchanged.
+  unchanged. The new module takes only that 2-tuple name, not Horde's
+  `{registry, key, value}`.
 
 ## 41. Telemetry and logs
 

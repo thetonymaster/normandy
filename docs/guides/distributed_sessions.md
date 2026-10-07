@@ -95,7 +95,10 @@ Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-age
 - **Discovery + routing.** `Turn.Session` resolves `session_id → pid` via
   `SessionRegistry.Horde` from any node; calls to a session on another node are
   transparent cross-node `:gen_statem` messages.
-- **Atomic placement.** Servers start under a `{:via, Horde.Registry, …}` name, so
+- **Atomic placement.** Servers start under a
+  `{:via, Normandy.Behaviours.SessionRegistry.Horde.Via, {registry, session_id}}` name
+  (`SessionRegistry.Horde.child_name/2`; the module wraps `Horde.Registry` so a
+  `:gen_statem` start always sees its own registration), so
   two concurrent starts for one `session_id` cannot both win — the loser gets
   `{:error, {:already_started, pid}}` and routes to the winner.
 - **Node loss, lazy (default).** The session's process dies with its node; the next

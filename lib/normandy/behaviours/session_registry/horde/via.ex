@@ -2,9 +2,11 @@
 if Code.ensure_loaded?(Horde.Registry) do
   defmodule Normandy.Behaviours.SessionRegistry.Horde.Via do
     @moduledoc """
-    `:via` callbacks for `SessionRegistry.Horde`; the name is `{registry, session_id}`,
-    as for `Horde.Registry`. `SessionRegistry.Horde.child_name/2` names a `Turn.Server`
-    with it.
+    `:via` callbacks for `SessionRegistry.Horde`. The name is the 2-tuple
+    `{registry, session_id}` that `SessionRegistry.Horde.child_name/2` builds to name a
+    `Turn.Server`; Horde's 3-tuple `{registry, key, value}` is not accepted (every
+    callback raises `FunctionClauseError` for it). Use `Horde.Registry` itself for a name
+    with a value.
 
     It exists because `Turn.Server` is a `:gen_statem`. After a `:via` registration,
     OTP's `gen_statem` checks `whereis_name(name) == self()` before calling `init/1`
@@ -38,12 +40,12 @@ if Code.ensure_loaded?(Horde.Registry) do
     end
 
     @spec whereis_name({atom(), term()}) :: pid() | :undefined
-    def whereis_name(name), do: Horde.Registry.whereis_name(name)
+    def whereis_name({_registry, _key} = name), do: Horde.Registry.whereis_name(name)
 
     @spec unregister_name({atom(), term()}) :: :ok
-    def unregister_name(name), do: Horde.Registry.unregister_name(name)
+    def unregister_name({_registry, _key} = name), do: Horde.Registry.unregister_name(name)
 
     @spec send({atom(), term()}, term()) :: term()
-    def send(name, msg), do: Horde.Registry.send(name, msg)
+    def send({_registry, _key} = name, msg), do: Horde.Registry.send(name, msg)
   end
 end

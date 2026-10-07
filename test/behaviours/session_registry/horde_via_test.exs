@@ -52,4 +52,17 @@ defmodule Normandy.Behaviours.SessionRegistry.Horde.ViaTest do
 
     :ok = :gen_statem.stop(pid)
   end
+
+  # 6.6a review: the via accepts only the 2-tuple child_name/2 builds, as its moduledoc
+  # says; Horde's {registry, key, value} is refused by every callback.
+  test "a 3-tuple name is refused by every callback" do
+    reg = HReg.new()
+    name = {reg, "s-3", :value}
+
+    assert_raise FunctionClauseError, fn -> Via.register_name(name, self()) end
+    assert_raise FunctionClauseError, fn -> Via.whereis_name(name) end
+    assert_raise FunctionClauseError, fn -> Via.unregister_name(name) end
+    assert_raise FunctionClauseError, fn -> Via.send(name, :msg) end
+    assert HReg.whereis(reg, "s-3") == :none
+  end
 end
