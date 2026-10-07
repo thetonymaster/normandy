@@ -146,16 +146,13 @@ defmodule Normandy.Agents.Turn.Session do
 
   ## Start-time race
 
-  For `:self_register` (Native) registries the race between `whereis` returning
-  `:none` and the new child finishing `register/3` is best-effort: a concurrent
-  caller may start a second child, which then loses the race and keeps running
-  unregistered. This was acceptable for single-router usage.
-
-  For via-based registries (Horde) the race is **closed**: the supervisor supplies
-  a `:name` computed by `child_name/2`, so the OTP supervisor performs atomic
-  registration at start. Any concurrent caller that loses the start race gets
-  `{:error, {:already_started, pid}}`, which `run/2` treats as `{:ok, pid}` so all
-  callers converge on the single winner.
+  Two callers that both find no server may both start one; one start wins and the
+  other gets `{:error, {:already_started, pid}}`, which `run/2` treats as `{:ok, pid}`,
+  so all callers converge on the single winner. For via-based registries (Horde,
+  Redis) the supervisor supplies a `:name` computed by `child_name/2`, so the OTP
+  supervisor registers atomically at start. For `:self_register` (Native) registries
+  the losing server finds the session taken in `init/1` and stops before loading
+  anything, with the same `{:already_started, pid}`.
   """
 
   @type t :: %__MODULE__{

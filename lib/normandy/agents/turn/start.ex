@@ -6,8 +6,9 @@ defmodule Normandy.Agents.Turn.Start do
   #   * `{:already_started, pid}` — a concurrent caller won; route to that pid.
   #   * `{:process_not_registered_via, _}` — the via registration was not resolvable
   #     at start time (a concurrent winner mid-registration, OR a registry that has
-  #     not converged yet). Route to the winner if one is now visible, else retry the
-  #     start briefly. Genuine errors propagate unchanged.
+  #     not converged yet), or `:registration_race` — a self-registering server found
+  #     the session taken by a server that then died. Route to the winner if one is
+  #     now visible, else retry the start briefly. Genuine errors propagate unchanged.
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def start_server(
         sup_mod,
@@ -54,8 +55,12 @@ defmodule Normandy.Agents.Turn.Start do
   defp already_started_pid({{:already_started, pid}, _child}), do: pid
   defp already_started_pid(_), do: nil
 
-  # Recognize the via-not-registered race in either the bare or nested shape.
+  # Recognize the via-not-registered race in either the bare or nested shape, and a
+  # self-registering server's :registration_race (the session's registered server died
+  # between that start's register/3 and its whereis/2).
   defp via_race?({:process_not_registered_via, _}), do: true
   defp via_race?({{:process_not_registered_via, _}, _child}), do: true
+  defp via_race?(:registration_race), do: true
+  defp via_race?({:registration_race, _child}), do: true
   defp via_race?(_), do: false
 end

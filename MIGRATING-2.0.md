@@ -1446,6 +1446,14 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   the load's effects right after a start (a log line, the server's state) must first make a
   call to the server (`run/2`, or `:sys.get_state/1` in tests). A start with neither
   `:config` nor `:template_provider` still raises `ArgumentError` in the start.
+- A second `Turn.Supervisor.start_server/2` (or `Turn.Server.start_link/1`) for a session that
+  a self-registering registry (`SessionRegistry.Native`) already holds returns
+  `{:error, {:already_started, pid}}` and stops before loading anything. It used to start a
+  second server that ran unregistered next to the first and wrote to the same session.
+  `Turn.Session`, `ResumeReaper` and `AgentProcess` already treat it as a successful start;
+  code that calls `start_server/2` directly and matched only `{:ok, pid}` must handle it. A
+  start that found the session taken by a server that died before it could be looked up
+  returns `{:error, :registration_race}`, which `Turn.Session` and `ResumeReaper` retry.
 
 ## New, non-breaking
 

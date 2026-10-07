@@ -364,8 +364,13 @@ defmodule Normandy.Agents.Turn.Server do
     session_id = Keyword.fetch!(opts, :session_id)
     check_start_source!(opts, session_id)
 
-    register_self(%Data{registry: Keyword.fetch!(opts, :registry), session_id: session_id})
+    case register_self(%Data{registry: Keyword.fetch!(opts, :registry), session_id: session_id}) do
+      :ok -> start_loading(opts, session_id)
+      {:stop, _reason} = stop -> stop
+    end
+  end
 
+  defp start_loading(opts, session_id) do
     # The load runs as the first event, not here: Turn.Supervisor.start_server/2 waits for
     # init/1 inside the one supervisor process, so a load in init/1 would serialize every
     # session start behind every other session's store and provider IO. gen_statem runs
@@ -1666,11 +1671,26 @@ defmodule Normandy.Agents.Turn.Server do
   defp idle_timeout(%Data{idle_timeout_ms: ms}), do: {:state_timeout, ms, :passivate}
 
   # When the server was started under a `{:via, _, _}` name, the via callback
-  # already registered it; only self-register otherwise.
+  # already registered it; only self-register otherwise. A session already registered
+  # stops this start before it loads anything, the way a via-named start fails: with
+  # {:already_started, winner}, which Turn.Start (Turn.Session, ResumeReaper) routes to
+  # the winner. A winner that died between our register and our lookup is
+  # :registration_race, which Turn.Start retries. A registry that cannot answer the
+  # lookup stops the start with its reason, as Turn.Session does on a failed lookup.
   defp register_self(%Data{registry: {mod, handle}, session_id: sid}) do
     case child_name_for(mod, handle, sid) do
-      :self_register -> mod.register(handle, sid, self())
+      :self_register -> self_register(mod, handle, sid)
       {:via, _via_mod, _term} -> :ok
+    end
+  end
+
+  defp self_register(mod, handle, sid) do
+    with {:error, :taken} <- mod.register(handle, sid, self()) do
+      case mod.whereis(handle, sid) do
+        {:ok, winner} -> {:stop, {:already_started, winner}}
+        :none -> {:stop, :registration_race}
+        {:error, reason} -> {:stop, reason}
+      end
     end
   end
 
