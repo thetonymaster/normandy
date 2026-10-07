@@ -1593,6 +1593,14 @@ code you wrote against 1.x must follow the changes below.
   for an input that cannot be encoded) or whose first messages cannot be written
   (`:persist_failed`) now emits a run `:start` and `:exception` carrying the replied
   error, as rejected input already did. Dashboards that count runs see these turns.
+- `[:normandy, :agent, :llm_call, :stop]` no longer carries `usage: nil` when the provider
+  reported no usage (non-streaming and summary calls); the key is absent, as it already was
+  for streams. Read it with `Map.get(meta, :usage)`.
+- The `normandy agent run stop` log line's `iterations` now counts the tool rounds the turn
+  completed (the run `:stop`'s `iterations`), not the assistant messages of the last turn: a
+  one-round tool turn logs `1`, not `2`.
+- `BaseAgent.get_response/2` now emits an `[:normandy, :agent, :llm_call]` span (no
+  `iteration`, no run around it).
 
 ## New, non-breaking
 
@@ -1626,3 +1634,7 @@ code you wrote against 1.x must follow the changes below.
   `:supervisor_mod` needs `stop_server/2` only for `delete/1`. A store that refuses the
   delete, or whose call exits, is `{:error, %TurnError{type: :persist_failed}}` (an exit as
   `reason: {:store_exit, tag}`); a store that raises raises.
+- `[:normandy, :agent, :run, :stop]` carries the run's totals: `llm_calls`, `input_tokens`,
+  `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens` (each only when a
+  call reported it), `iterations`, `stop_reason` and `finish_reason` (see "Run totals" in the
+  `Normandy.Telemetry` catalogue). Compaction summary calls are not in the totals.

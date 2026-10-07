@@ -177,6 +177,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Options
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Telemetry.RunUsage
   alias Normandy.Telemetry.Span
   alias Normandy.TurnError
 
@@ -1125,7 +1126,7 @@ defmodule Normandy.Agents.Turn.Server do
       meta
     )
 
-    %{start: start, meta: meta}
+    %{start: start, meta: meta, usage: RunUsage.new()}
   end
 
   # A turn that fails before its run starts (rejected or crashed admission, a failed
@@ -1167,6 +1168,17 @@ defmodule Normandy.Agents.Turn.Server do
 
     :ok
   end
+
+  # The run's usage accumulator (Normandy.Telemetry.RunUsage), put on each call request.
+  # run_span is nil only outside a turn, where no call is made; nil adds nothing.
+  defp run_usage(%Data{run_span: %{usage: usage}}), do: usage
+  defp run_usage(%Data{run_span: nil}), do: nil
+
+  # The run totals a finished turn's run :stop adds (Metadata.run_stop/2).
+  defp run_stop_metadata(%Data{run_span: %{usage: usage}, turn_state: state}),
+    do: Metadata.run_stop(state, usage)
+
+  defp run_stop_metadata(%Data{run_span: nil}), do: %{}
 
   # Puts back the context that was current before the turn attached its own
   # (turn_ctx_token), after on_turn_end ran under the turn's, so one turn's context
@@ -1431,6 +1443,7 @@ defmodule Normandy.Agents.Turn.Server do
         )
 
       {:call_llm, request} ->
+        request = Map.put(request, :run_usage, run_usage(data))
         spawn_task(data, :llm, &call_llm_event(&1, &2, request))
 
       {:dispatch_tools, calls} ->
@@ -1449,7 +1462,7 @@ defmodule Normandy.Agents.Turn.Server do
         # completed session from a mid-turn one. Best-effort: the turn already
         # succeeded, so a failed marker-persist must not fail it.
         _ = persist_turn_state(data, data.turn_state)
-        stop_run_span(data, :stop, %{})
+        stop_run_span(data, :stop, run_stop_metadata(data))
         reply(data, {:ok, value})
         turn_end(data, data.config, {:ok, value})
         data = release_turn_ctx(data)

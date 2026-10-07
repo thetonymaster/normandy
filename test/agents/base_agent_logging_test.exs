@@ -117,6 +117,10 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
     assert Enum.count(messages, &(&1 == "normandy llm call start")) == 2
     assert Enum.count(messages, &(&1 == "normandy llm call stop")) == 2
 
+    # One tool round: the run stop line counts rounds, as the run :stop telemetry does.
+    run_stop = Enum.find(events, &(logger_message(&1) == "normandy agent run stop"))
+    assert run_stop.meta.iterations == 1
+
     llm_stop_entries =
       Enum.filter(events, &(logger_message(&1) == "normandy llm call stop"))
 

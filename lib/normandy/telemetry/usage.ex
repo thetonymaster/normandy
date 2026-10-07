@@ -70,6 +70,25 @@ defmodule Normandy.Telemetry.Usage do
     |> total_input()
   end
 
+  @doc """
+  Puts the raw provider `usage` under `:usage` in `metadata` when it is a non-empty map,
+  and returns `metadata` unchanged otherwise, so a call whose provider reported no usage
+  has no `:usage` key (never `usage: nil`).
+
+  ## Examples
+
+      iex> Normandy.Telemetry.Usage.put_raw(%{}, %{input_tokens: 3})
+      %{usage: %{input_tokens: 3}}
+
+      iex> Normandy.Telemetry.Usage.put_raw(%{}, nil)
+      %{}
+  """
+  @spec put_raw(map(), term()) :: map()
+  def put_raw(metadata, usage) when is_map(usage) and map_size(usage) > 0,
+    do: Map.put(metadata, :usage, usage)
+
+  def put_raw(metadata, _usage), do: metadata
+
   defp sources(usage) do
     usage = to_map(usage)
 

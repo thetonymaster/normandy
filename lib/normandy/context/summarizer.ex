@@ -449,7 +449,7 @@ defmodule Normandy.Context.Summarizer do
 
         stop_metadata =
           metadata
-          |> Map.put(:usage, usage)
+          |> Usage.put_raw(usage)
           |> Map.merge(Usage.normalize(usage))
           |> Map.merge(response_metadata(meta))
           |> Map.merge(Request.summary(tracker))

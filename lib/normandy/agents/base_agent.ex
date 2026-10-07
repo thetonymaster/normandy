@@ -50,6 +50,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
+  alias Normandy.Telemetry.RunUsage
   alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Executor
@@ -180,10 +181,33 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
+  @doc """
+  Makes one LLM request with the agent's prompt, tools and memory, outside any run, and
+  returns the response parsed into `response_model` (default: the output schema). It is
+  an `[:normandy, :agent, :llm_call]` span with no `iteration` and no run around it.
+  """
   @spec get_response(BaseAgentConfig.t(), struct() | nil) :: struct()
   def get_response(%BaseAgentConfig{} = config, response_model \\ nil) do
-    {response, _usage, _meta} = get_response_with_usage(config, response_model)
-    response
+    llm_metadata =
+      %{model: config.model, agent_name: config.name}
+      |> Map.merge(Metadata.ids(config))
+      |> Map.merge(
+        Provider.request_metadata(config,
+          stream: false,
+          response_model: response_model || Map.get(config, :output_schema),
+          output_format: request_output_format(response_model, config),
+          tools?: has_tools?(config)
+        )
+      )
+
+    with_llm_call_span(config, llm_metadata, nil, fn ->
+      tracker = request_tracker(config)
+
+      {response, usage, meta} =
+        get_response_with_usage(config, response_model, request_tracker: tracker)
+
+      {response, llm_stop_metadata(llm_metadata, usage, meta, tracker)}
+    end)
   end
 
   # Coerce inbound `:max_tool_concurrency` into the `pos_integer()` shape the
@@ -225,7 +249,7 @@ defmodule Normandy.Agents.BaseAgent do
   defp get_response_with_usage(
          %BaseAgentConfig{prompt_specification: prompt_specification} = config,
          response_model,
-         extra_opts \\ []
+         extra_opts
        ) do
     response_model =
       if response_model != nil do
@@ -267,9 +291,9 @@ defmodule Normandy.Agents.BaseAgent do
     # How many times the adapter re-asks after a response that does not parse.
     json_retries = if config.enable_json_retry, do: config.json_retry_max_attempts, else: 0
 
-    # Numbers the provider requests of this call (get_response/2 has no llm_call
-    # span to create one).
-    tracker = Keyword.get_lazy(extra_opts, :request_tracker, fn -> request_tracker(config) end)
+    # Numbers the provider requests of this call; every caller passes the tracker of
+    # its llm_call span.
+    tracker = Keyword.fetch!(extra_opts, :request_tracker)
 
     {response, usage, meta} =
       call_llm_with_resilience(config, request,
@@ -413,9 +437,11 @@ defmodule Normandy.Agents.BaseAgent do
     :ok = check_run_opts!(opts, :run!)
     metadata = Metadata.run(config)
 
-    # run_turn/2 runs the tool loop when the agent has tools (turn_response_model/1).
+    # run_turn/3 runs the tool loop when the agent has tools (turn_response_model/1).
     with_agent_run_span(config, metadata, fn ->
-      {run_turn(config, user_input), metadata}
+      run_usage = RunUsage.new()
+      {result, final_state} = run_turn(config, user_input, run_usage)
+      {result, Map.merge(metadata, Metadata.run_stop(final_state, run_usage))}
     end)
   end
 
@@ -494,7 +520,9 @@ defmodule Normandy.Agents.BaseAgent do
 
     {config, output} =
       with_agent_run_span(config, metadata, fn ->
-        {run_stream_turn(config, user_input, callback), metadata}
+        run_usage = RunUsage.new()
+        {result, final_state} = run_stream_turn(config, user_input, callback, run_usage)
+        {result, Map.merge(metadata, Metadata.run_stop(final_state, run_usage))}
       end)
 
     {:ok, config, output}
@@ -533,9 +561,9 @@ defmodule Normandy.Agents.BaseAgent do
   # (parity: exceptions propagate out of run!/3; run/3 returns the domain ones), so the
   # FSM's :failed path is only reached on an unexpected event-sequencing bug.
 
-  @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil) ::
-          {BaseAgentConfig.t(), struct()}
-  defp run_turn(config, user_input) do
+  @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil, RunUsage.t()) ::
+          {{BaseAgentConfig.t(), struct()}, Turn.State.t()}
+  defp run_turn(config, user_input, run_usage) do
     config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
     state =
@@ -545,8 +573,8 @@ defmodule Normandy.Agents.BaseAgent do
         output_schema: config.output_schema
       )
 
-    {config, final_state} = drive_turn(config, state)
-    {config, final_state.final_response}
+    {config, final_state} = drive_turn(config, state, run_usage)
+    {{config, final_state.final_response}, final_state}
   end
 
   @doc false
@@ -631,8 +659,20 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state) do
-    Driver.drive(state, HookHandlers.wrap(non_streaming_handlers(), config), config)
+  defp drive_turn(%BaseAgentConfig{} = config, %Turn.State{} = state, run_usage) do
+    handlers = non_streaming_handlers() |> with_run_usage(run_usage) |> HookHandlers.wrap(config)
+    Driver.drive(state, handlers, config)
+  end
+
+  # Puts the run's usage accumulator on every call request, where with_llm_call_span/4
+  # finds it (Normandy.Telemetry.RunUsage).
+  defp with_run_usage(%Driver.Handlers{call_llm: call_llm} = handlers, run_usage) do
+    %{
+      handlers
+      | call_llm: fn config, state, request ->
+          call_llm.(config, state, Map.put(request, :run_usage, run_usage))
+        end
+    }
   end
 
   @doc false
@@ -689,7 +729,7 @@ defmodule Normandy.Agents.BaseAgent do
         )
       )
 
-    with_llm_call_span(config, llm_metadata, fn ->
+    with_llm_call_span(config, llm_metadata, Map.get(request, :run_usage), fn ->
       tracker = request_tracker(config)
 
       {r, usage, response_meta} =
@@ -714,24 +754,24 @@ defmodule Normandy.Agents.BaseAgent do
 
       meta =
         llm_metadata
-        |> Map.merge(%{
-          has_tool_calls: tool_calls != [],
-          tool_call_count: length(tool_calls),
-          usage: usage
-        })
-        |> Map.merge(
-          Map.take(response_meta, [
-            :served_by,
-            :input_transformations,
-            :response_id,
-            :finish_reason
-          ])
-          |> normalize_finish_reason()
-        )
-        |> Map.merge(Request.summary(tracker))
+        |> Map.merge(%{has_tool_calls: tool_calls != [], tool_call_count: length(tool_calls)})
+        |> llm_stop_metadata(usage, response_meta, tracker)
 
       {r, meta}
     end)
+  end
+
+  # The stop keys a non-streaming llm_call adds from its response: the raw usage when
+  # the provider reported some, the response meta Normandy reports, the request summary.
+  defp llm_stop_metadata(metadata, usage, response_meta, tracker) do
+    metadata
+    |> Usage.put_raw(usage)
+    |> Map.merge(
+      response_meta
+      |> Map.take([:served_by, :input_transformations, :response_id, :finish_reason])
+      |> normalize_finish_reason()
+    )
+    |> Map.merge(Request.summary(tracker))
   end
 
   # The [:normandy, :llm, :request] counter for one llm_call; its request spans
@@ -1093,7 +1133,7 @@ defmodule Normandy.Agents.BaseAgent do
   # streaming handler set. Returns {config, output}, the output converted to the output
   # schema (streaming_handlers/2). A failed stream raises its Normandy.LLMError from
   # inside the llm_call span (stream_llm_attempt/5); stream/3 returns it.
-  defp run_stream_turn(config, user_input, callback) when is_function(callback, 1) do
+  defp run_stream_turn(config, user_input, callback, run_usage) when is_function(callback, 1) do
     config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
     state =
@@ -1103,10 +1143,11 @@ defmodule Normandy.Agents.BaseAgent do
         output_schema: config.output_schema
       )
 
-    {config, final_state} =
-      Driver.drive(state, HookHandlers.wrap(streaming_handlers(callback), config), config)
+    handlers =
+      callback |> streaming_handlers() |> with_run_usage(run_usage) |> HookHandlers.wrap(config)
 
-    {config, final_state.final_response}
+    {config, final_state} = Driver.drive(state, handlers, config)
+    {{config, final_state.final_response}, final_state}
   end
 
   # ── Streaming Turn FSM handlers (Phase 1d) ───────────────────────────────────
@@ -1165,7 +1206,7 @@ defmodule Normandy.Agents.BaseAgent do
       )
 
     final_message =
-      with_llm_call_span(config, llm_metadata, fn ->
+      with_llm_call_span(config, llm_metadata, Map.get(turn_request, :run_usage), fn ->
         stream_llm_attempt(config, state, callback, llm_metadata, turn_request)
       end)
 
@@ -1211,7 +1252,7 @@ defmodule Normandy.Agents.BaseAgent do
          |> Map.merge(stream_meta(final_message))
          |> Map.merge(first_chunk_meta(first_chunk))
          |> Map.merge(Request.summary(tracker))
-         |> put_usage(Map.get(final_message, :usage))}
+         |> Usage.put_raw(Map.get(final_message, :usage))}
 
       {:error, error} ->
         # Only the error: the span's telemetry carries the raised term, and the
@@ -1735,7 +1776,7 @@ defmodule Normandy.Agents.BaseAgent do
 
       log_lifecycle(:info, "normandy agent run stop",
         agent: log_agent_name(config),
-        iterations: completed_iterations(result),
+        iterations: Map.get(stop_metadata, :iterations, 0),
         status: :ok,
         duration_ms: duration_ms
       )
@@ -1753,12 +1794,14 @@ defmodule Normandy.Agents.BaseAgent do
       result
   end
 
-  defp with_llm_call_span(config, telemetry_metadata, fun) do
+  # `run_usage` is the run's Normandy.Telemetry.RunUsage (nil outside a run, as for
+  # get_response/2): a call that reaches :stop adds its counts to it.
+  defp with_llm_call_span(config, telemetry_metadata, run_usage, fun) do
     Span.span([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
       log_lifecycle(:info, "normandy llm call start",
         agent: log_agent_name(config),
         model: config.model,
-        iteration: telemetry_metadata.iteration
+        iteration: Map.get(telemetry_metadata, :iteration)
       )
 
       started_at = System.monotonic_time()
@@ -1766,13 +1809,14 @@ defmodule Normandy.Agents.BaseAgent do
       {result, stop_metadata} = fun.()
       duration_ms = elapsed_ms(started_at)
       stop_metadata = merge_normalized_usage(stop_metadata, result)
+      :ok = RunUsage.add(run_usage, stop_metadata)
       input_tokens = Map.get(stop_metadata, :input_tokens)
       output_tokens = Map.get(stop_metadata, :output_tokens)
 
       log_metadata = [
         agent: log_agent_name(config),
         model: config.model,
-        iteration: telemetry_metadata.iteration,
+        iteration: Map.get(telemetry_metadata, :iteration),
         duration_ms: duration_ms,
         input_tokens: input_tokens,
         output_tokens: output_tokens,
@@ -1885,13 +1929,6 @@ defmodule Normandy.Agents.BaseAgent do
     |> System.convert_time_unit(:native, :millisecond)
   end
 
-  # Adds the raw usage (only when the provider reported some) to llm_call stop
-  # metadata; normalized counts are added later by merge_normalized_usage/2.
-  defp put_usage(metadata, usage) when is_map(usage) and map_size(usage) > 0,
-    do: Map.put(metadata, :usage, usage)
-
-  defp put_usage(metadata, _usage), do: metadata
-
   # Normalized token counts (Normandy.Telemetry.Usage) beside the raw `usage`,
   # from the stop metadata's usage or, failing that, the result itself (a usage
   # map or a response carrying one). Absent counts stay absent.
@@ -1948,27 +1985,6 @@ defmodule Normandy.Agents.BaseAgent do
         0
     end
   end
-
-  defp completed_iterations({%BaseAgentConfig{memory: memory}, _response}) do
-    messages = AgentMemory.messages(memory)
-
-    # messages/1 is chronological (oldest-first); re-reverse to scan newest-first
-    # so Enum.find_value returns the *most recent* assistant turn_id.
-    assistant_turn_id =
-      messages
-      |> Enum.reverse()
-      |> Enum.find_value(fn
-        %Message{role: "assistant", turn_id: turn_id} -> turn_id
-        _ -> nil
-      end)
-
-    Enum.count(messages, fn
-      %Message{role: "assistant", turn_id: ^assistant_turn_id} -> true
-      _ -> false
-    end)
-  end
-
-  defp completed_iterations(_), do: 0
 
   defp max_run_iterations(config) do
     if has_tools?(config) do

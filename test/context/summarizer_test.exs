@@ -226,6 +226,20 @@ defmodule Normandy.Context.SummarizerTest do
       assert %{input_tokens: 40, output_tokens: 9, attempts: 1, purpose: :summary} = stop
     end
 
+    test "a summary call whose provider reports no usage has no :usage key", %{name: name} do
+      agent =
+        named_agent(name, fn rm ->
+          {:ok, %Normandy.LLM.Response{content: %{rm | chat_message: "summary"}}}
+        end)
+
+      messages = [%{role: "user", content: "hello"}, %{role: "assistant", content: "hi"}]
+
+      assert {:ok, "summary"} = Summarizer.summarize_messages(agent.client, agent, messages)
+
+      assert_received {:span, [:normandy, :agent, :llm_call, :stop], stop}
+      refute Map.has_key?(stop, :usage)
+    end
+
     test "a failed summary call ends the span with the LLMError", %{name: name} do
       error = Normandy.LLMError.new(type: :rate_limit, status: 429, retryable?: true)
       agent = named_agent(name, fn _ -> {:error, error} end)

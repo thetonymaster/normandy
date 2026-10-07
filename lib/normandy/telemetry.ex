@@ -48,7 +48,10 @@ defmodule Normandy.Telemetry do
       (`:anthropic`, `:openai_compatible`, or `client.options[:provider]`; omitted when
       unknown), `turn_id` (only when known at start: `Turn.Server` knows it, `BaseAgent`
       admits input inside the span), `session_id`, `conversation_id`.
-    * Stop metadata: the start keys, plus `turn_id` from the finished run.
+    * Stop metadata: the start keys, plus `turn_id` from the finished run and the run
+      totals (see "Run totals" below): `llm_calls`, `input_tokens`, `output_tokens`,
+      `cache_read_input_tokens`, `cache_write_input_tokens` (each token total only when
+      some call reported it), `iterations`, `stop_reason` and `finish_reason`.
     * Turn.Server only: stop and exception measurements add `approval_wait` (see
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
     * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
@@ -60,14 +63,38 @@ defmodule Normandy.Telemetry do
 
   A run `:exception` may be synthetic: see "Killed runs".
 
+  #### Run totals
+
+  A run's `:stop` sums the llm_call spans of that run that reached `:stop`:
+
+    * `llm_calls` - how many there were (always present).
+    * `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+      `cache_write_input_tokens` - the sums of those calls' normalized counts, each only
+      when some call reported it.
+    * `iterations` - the tool rounds the turn completed (a `pause_turn` continuation
+      counts as one); `0` for an answer with no tool call.
+    * `stop_reason` - `:completed`, or `:max_iterations` when the answer came from the
+      final call after `max_tool_iterations` rounds.
+    * `finish_reason` - the provider's stop reason of the last response, as a string
+      (`"end_turn"`); absent when that response carries none (a run without tools gets
+      its answer as the output schema, which has no stop reason).
+
+  Not counted: a failed llm_call, compaction's summary calls (their own llm_call spans
+  carry `purpose: :summary`; add them from those), and calls a custom `call_llm` handler
+  (`Turn.Server`'s or `AgentProcess`'s `:handlers`) makes without an llm_call span, which
+  gives `llm_calls: 0`. A resumed durable turn's run counts the calls made after the
+  resume. A run that ends in `:exception` carries no totals.
+
   ### `[:normandy, :agent, :llm_call, :start | :stop | :exception]`
 
   One LLM call of a run (an iteration of the tool loop), covering all the provider
   requests behind it (retries, JSON parse retries, the structured-outputs fallback).
   `Normandy.Context.Summarizer` emits one per summary request too (compaction runs it
-  inside the run), so a run's token totals include its summaries.
+  inside the run); the run's own totals leave summaries out (see "Run totals").
+  `BaseAgent.get_response/2` emits one, outside any run.
 
-    * Start metadata: `model`, `iteration` (1-based; absent on a summary call),
+    * Start metadata: `model`, `iteration` (1-based; absent on a summary call and on
+      `get_response/2`),
       `purpose` (`:summary`, only on a summary call), `agent_name`, the ids, `stream`
       (boolean, always present), `structured_output` (boolean, always present),
       `provider`, `max_tokens`, `temperature` (only when set; Opus 4.7+ rejects it),
@@ -75,7 +102,8 @@ defmodule Normandy.Telemetry do
       client uses its library default).
     * Stop metadata adds:
       `has_tool_calls` (boolean), `tool_call_count`;
-      `usage`, the raw provider usage map, exactly as reported;
+      `usage`, the raw provider usage map, exactly as reported (absent when the provider
+      reported none, never `nil`);
       the normalized token counts `input_tokens` (for Anthropic it includes cache
       reads and writes; for OpenAI-shaped usage it equals `prompt_tokens`),
       `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens`, each
@@ -374,11 +402,11 @@ defmodule Normandy.Telemetry do
   | `gen_ai.request.temperature` | llm_call start `temperature` |
   | `gen_ai.response.id` | stop `response_id` |
   | `gen_ai.response.model` | stop `served_by` |
-  | `gen_ai.response.finish_reasons` | stop `finish_reason`, as a one-element list |
-  | `gen_ai.usage.input_tokens` | stop `input_tokens` |
-  | `gen_ai.usage.output_tokens` | stop `output_tokens` |
-  | `gen_ai.usage.cache_read.input_tokens` | stop `cache_read_input_tokens` |
-  | `gen_ai.usage.cache_write.input_tokens` | stop `cache_write_input_tokens` |
+  | `gen_ai.response.finish_reasons` | llm_call, request and run stop `finish_reason`, as a one-element list |
+  | `gen_ai.usage.input_tokens` | llm_call, request and run stop `input_tokens` (on run, the run total) |
+  | `gen_ai.usage.output_tokens` | llm_call, request and run stop `output_tokens` |
+  | `gen_ai.usage.cache_read.input_tokens` | llm_call, request and run stop `cache_read_input_tokens` |
+  | `gen_ai.usage.cache_write.input_tokens` | llm_call, request and run stop `cache_write_input_tokens` |
   | `gen_ai.tool.name` | tool `tool_name` |
   | `gen_ai.tool.call.id` | tool `tool_call_id` |
   | `gen_ai.tool.description` | tool `tool_description` |

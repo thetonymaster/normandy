@@ -19,10 +19,12 @@ defmodule Normandy.Telemetry.Metadata do
   `:tool_type` (`:extension` for an MCP-wrapped tool, `:function` otherwise).
   """
 
+  alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Telemetry.Provider
+  alias Normandy.Telemetry.RunUsage
   alias Normandy.Tool
 
   @doc """
@@ -37,6 +39,33 @@ defmodule Normandy.Telemetry.Metadata do
 
     Map.merge(%{model: config.model, agent_name: config.name}, optional)
   end
+
+  @doc """
+  The keys a finished run's `:stop` adds (see "Run totals" in `Normandy.Telemetry`), from
+  the turn's final state and the run's usage accumulator (internal):
+  `llm_calls` and the token totals some call reported, `iterations` (tool rounds and
+  pause continuations completed), `stop_reason` (`:completed | :max_iterations`) and
+  `finish_reason` (the last response's stop reason as a string, when it has one).
+  """
+  @spec run_stop(Turn.State.t(), :counters.counters_ref()) :: map()
+  def run_stop(%Turn.State{} = state, run_usage) do
+    run_usage
+    |> RunUsage.stop_metadata()
+    |> Map.merge(%{
+      iterations: state.max_iterations - state.iterations_left,
+      stop_reason: state.stop_reason,
+      finish_reason: finish_reason(state.last_response)
+    })
+    |> reject_nil()
+  end
+
+  # A response map's stop reason as a string (the llm_call finish_reason form); a run
+  # without tools answers with its output schema struct, which has none.
+  defp finish_reason(%{stop_reason: reason}) when is_atom(reason) and not is_nil(reason),
+    do: Atom.to_string(reason)
+
+  defp finish_reason(%{stop_reason: reason}) when is_binary(reason), do: reason
+  defp finish_reason(_response), do: nil
 
   @doc """
   The ids an llm_call or tool span carries: `:turn_id`, `:session_id` and
