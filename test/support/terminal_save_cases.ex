@@ -76,6 +76,9 @@ defmodule Normandy.Test.TerminalSaveCases do
       @terminal_save_backend store
 
       describe "a refused terminal save (#{inspect(store)})" do
+        # The refusals log the expected warning; keep it out of the backend's test output.
+        @describetag :capture_log
+
         setup do
           inner = {@terminal_save_backend, @terminal_save_backend.new()}
 

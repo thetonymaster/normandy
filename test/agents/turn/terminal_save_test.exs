@@ -12,11 +12,13 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.{BaseAgentInputSchema, BaseAgentOutputSchema, ToolCallResponse, Turn}
+  alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.{Message, ToolCall}
-  alias Normandy.Test.{TerminalSaveCases, TerminalSaveStore}
+  alias Normandy.Test.{Hooks, TerminalSaveCases, TerminalSaveStore}
+  alias Normandy.Test.Hooks.TurnEndOnly
   alias Normandy.TurnError
 
   setup do
@@ -82,6 +84,32 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
       assert {:ok, []} = InMemory.list_resumable(ctx.mem)
     end
 
+    test "fires on_turn_end with {:error, exception} for the refused turn request", ctx do
+      config = TerminalSaveCases.config(self())
+      hooks = [{TurnEndOnly, notify: Hooks.sink()}]
+      config = %{config | behaviours: %Config{hooks: hooks}}
+
+      {:ok, srv} =
+        Turn.Supervisor.start_server(ctx.sup,
+          session_id: ctx.sid,
+          config: config,
+          store: {TerminalSaveStore, ctx.store},
+          registry: {Native, ctx.registry},
+          resume_policy: :eager
+        )
+
+      TerminalSaveStore.fail_terminal(ctx.store, true)
+      assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "one"})
+      assert_receive {:turn_end_only, {:ok, _}}
+
+      assert {:error, %TurnError{type: :persist_failed, reason: {:terminal_unsaved, _}}} =
+               Turn.Server.run(srv, %{chat_message: "two"})
+
+      # on_turn_end runs after the reply, in the server.
+      assert_receive {:turn_end_only,
+                      {:error, %TurnError{type: :persist_failed, reason: {:terminal_unsaved, _}}}}
+    end
+
     test "is saved by the retry timer with no turn request", ctx do
       srv = start(ctx)
       TerminalSaveStore.fail_terminal(ctx.store, true)
@@ -139,6 +167,12 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
       # The load, the resume and the call's task run before the message: under a full
       # suite they can take longer than assert_receive's default 100 ms.
       assert_receive {:converse, _request, _opts}, 5_000
+
+      # Let the resumed turn end here: its terminal save must not reach the store (whose
+      # process is linked to this test) after the test has exited.
+      assert wait_until(fn ->
+               List.last(TerminalSaveStore.ops(ctx.store)) == {:save, :stopped, false, :ok}
+             end)
     end
   end
 
