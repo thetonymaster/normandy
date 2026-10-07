@@ -303,29 +303,22 @@ defmodule Normandy.Context.WindowManager do
     if current_tokens <= target_tokens do
       {:ok, agent}
     else
-      # Remove oldest messages until under limit. history/1 and entry_chain/1 are
-      # the same chain in the same order: the kept suffix's entries give each kept
-      # message its turn and its entry id.
-      history = AgentMemory.history(agent.memory)
-      {fitting, _removed} = split_to_fit(history, target_tokens)
+      # Remove oldest messages until under limit, reading each message's cached
+      # estimate (AgentMemory.Entry's `tokens`).
+      entries = AgentMemory.entry_chain(agent.memory)
 
       # Start the kept window at a user message (see AgentMemory.keep_count/2);
       # a newest message larger than the target keeps its turn rather than
       # emptying the memory.
       keep =
-        history
+        entries
         |> Enum.reverse()
         |> Enum.map(& &1.role)
-        |> AgentMemory.keep_count(max(length(fitting), 1))
+        |> AgentMemory.keep_count(max(newest_fitting(entries, target_tokens), 1))
 
-      keep_messages = Enum.take(history, -keep)
-
-      kept_entries =
-        agent.memory
-        |> AgentMemory.entry_chain()
-        |> Enum.take(-length(keep_messages))
-
-      new_memory = rebuild_memory(Enum.zip(keep_messages, kept_entries), agent.memory)
+      # Each kept message stays under its entry id (a compactor reports what it dropped
+      # by entry id) and turn, with its stored content.
+      new_memory = AgentMemory.keep_entries(agent.memory, Enum.take(entries, -keep))
       {:ok, %{agent | memory: new_memory}}
     end
   end
@@ -367,63 +360,23 @@ defmodule Normandy.Context.WindowManager do
   defp summary_budget(%__MODULE__{summary_max_tokens: nil}), do: []
   defp summary_budget(%__MODULE__{summary_max_tokens: n}), do: [max_tokens: n]
 
-  defp estimate_messages_for_tokens(memory, target_tokens) do
-    history = AgentMemory.history(memory)
+  # Keep at least 5 messages.
+  defp estimate_messages_for_tokens(memory, target_tokens),
+    do: memory |> AgentMemory.entry_chain() |> newest_fitting(target_tokens) |> max(5)
 
-    # Count from newest to oldest
-    history
+  # How many of the newest entries fit in `target_tokens` together (cached estimates).
+  defp newest_fitting(entries, target_tokens) do
+    entries
     |> Enum.reverse()
-    |> Enum.reduce_while({0, 0}, fn msg, {count, tokens} ->
-      msg_tokens = estimate_message_content_tokens(msg.content) + 10
+    |> Enum.reduce_while({0, 0}, fn entry, {count, tokens} ->
+      entry_tokens = AgentMemory.entry_tokens(entry)
 
-      if tokens + msg_tokens <= target_tokens do
-        {:cont, {count + 1, tokens + msg_tokens}}
+      if tokens + entry_tokens <= target_tokens do
+        {:cont, {count + 1, tokens + entry_tokens}}
       else
         {:halt, {count, tokens}}
       end
     end)
     |> elem(0)
-    # Keep at least 5 messages
-    |> max(5)
-  end
-
-  defp split_to_fit(messages, target_tokens) do
-    # Reverse to process from newest to oldest
-    messages
-    |> Enum.reverse()
-    |> Enum.reduce_while({[], 0}, fn msg, {keep, tokens} ->
-      msg_tokens = estimate_message_content_tokens(msg.content) + 10
-
-      if tokens + msg_tokens <= target_tokens do
-        {:cont, {[msg | keep], tokens + msg_tokens}}
-      else
-        {:halt, {keep, tokens}}
-      end
-    end)
-    |> then(fn {keep, _tokens} ->
-      removed_count = length(messages) - length(keep)
-      {keep, removed_count}
-    end)
-  end
-
-  defp rebuild_memory(kept, original_memory) do
-    max_messages = Map.get(original_memory, :max_messages)
-    turn_id = Map.get(original_memory, :current_turn_id)
-
-    # Start from a fresh entry-graph memory, preserving the active turn id so the
-    # rebuilt entries stay grouped exactly as before.
-    memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
-
-    # Add messages in chronological order, each under its original turn and entry id
-    # (a compactor reports what it dropped by entry id), with their stored content (a
-    # %ToolCallResponse{} or %ToolResult{} stays one, so the turn still sees the kept
-    # batch). Their thinking was produced after the removed messages, so it no longer
-    # applies.
-    Enum.reduce(kept, memory, fn {msg, entry}, mem ->
-      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(entry.content),
-        turn_id: entry.turn_id,
-        id: entry.id
-      )
-    end)
   end
 end

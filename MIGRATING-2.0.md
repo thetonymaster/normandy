@@ -1379,6 +1379,14 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   plain maps. Such a dump used to load and fail at the next request.
 - A memory holds each message's encoding beside its content: histories heavy in JSON tool
   results take up to about twice the memory they did.
+- `Compactor.WindowManager`'s `tokens_removed` sums the dropped messages' cached estimates, the
+  same estimate `tokens_before` and `tokens_after` sum, instead of estimating each message's
+  `BaseIOSchema.to_json/1`. For the default chat schemas the model is sent the text, not
+  `{"chat_message": ...}` JSON, so `tokens_removed` is a few tokens lower per such message and,
+  when no summary is added, equals `tokens_before - tokens_after`. With `:task_budget`, the
+  `remaining` sent after a compaction moves with it.
+- Compaction keeps each kept message's encoding; only a message whose thinking it strips is
+  encoded again.
 
 ## New, non-breaking
 

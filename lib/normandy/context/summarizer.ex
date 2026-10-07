@@ -488,29 +488,6 @@ defmodule Normandy.Context.Summarizer do
     |> Map.new()
   end
 
-  defp rebuild_memory_with_summary(original_memory, summary, summary_role, recent_messages) do
-    max_messages = Map.get(original_memory, :max_messages)
-    turn_id = Map.get(original_memory, :current_turn_id)
-
-    # Start from a fresh entry-graph memory, preserving the active turn id.
-    memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
-
-    # The summary goes first, as plain text: wrapped in a schema it reached the model
-    # as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not conversation.
-    memory = AgentMemory.add_message(memory, summary_role, summary_message(summary))
-
-    # Add recent messages in chronological order, each under its original turn and
-    # entry id, with its stored content (not the serialized history). The summary
-    # (added above) takes current_turn_id and a new id. Their thinking was produced
-    # before the summary existed, so it no longer applies.
-    Enum.reduce(recent_messages, memory, fn {msg, entry}, mem ->
-      AgentMemory.add_message(mem, msg.role, AgentMemory.drop_thinking(entry.content),
-        turn_id: entry.turn_id,
-        id: entry.id
-      )
-    end)
-  end
-
   # Framed so the model does not read the summary as something the user just said (AX-28).
   defp summary_message(summary) do
     "The earlier part of this conversation was summarized automatically to save space. " <>
@@ -560,13 +537,14 @@ defmodule Normandy.Context.Summarizer do
            Keyword.take(opts, [:prompt, :model, :max_tokens])
          ) do
       {:ok, summary} ->
-        # Create new memory with summary + recent messages
+        # The summary goes first, as plain text: wrapped in a schema it reached the
+        # model as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not
+        # conversation. The recent messages follow under their own ids and turns.
         new_memory =
-          rebuild_memory_with_summary(
+          AgentMemory.keep_entries(
             agent.memory,
-            summary,
-            summary_role,
-            Enum.zip(recent_messages, recent_entries(agent.memory, length(recent_messages)))
+            recent_entries(agent.memory, length(recent_messages)),
+            summary: {summary_role, summary_message(summary)}
           )
 
         {:ok, %{agent | memory: new_memory}}

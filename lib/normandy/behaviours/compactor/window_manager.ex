@@ -4,10 +4,12 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   strategies (`:oldest_first | :sliding_window | :summarize`).
 
   Triggered at the turn's `:steering` boundary: builds a `WindowManager` sized to the
-  model's context window (`ctx.window`, unless `opts` pins `:context_window`), then
-  delegates to `WindowManager.ensure_within_limit/2` — a no-op when already under budget,
-  so a mid-round boundary (`ctx.mid_round`) leaves the open tool round and its thinking
-  alone until the conversation no longer fits; a compaction strips the kept messages'
+  model's context window (`ctx.window`, unless `opts` pins `:context_window`) and estimates
+  the conversation once, summing each message's estimate cached on its entry
+  (`Normandy.Components.AgentMemory.Entry`). Under budget it changes nothing, so a
+  mid-round boundary (`ctx.mid_round`) leaves the open tool round and its thinking alone
+  until the conversation no longer fits; over budget it delegates to
+  `WindowManager.truncate_conversation/2`, and a compaction strips the kept messages'
   thinking (see "Compacting mid-round" in `Normandy.Behaviours.Compactor`).
 
   Options: `:context_window` pins the window (and skips the model catalog lookup);
@@ -25,7 +27,6 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   @behaviour Normandy.Behaviours.Compactor
 
   alias Normandy.Components.AgentMemory
-  alias Normandy.Components.BaseIOSchema
   alias Normandy.Context.WindowManager, as: WM
   alias Normandy.Options
 
@@ -147,10 +148,28 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
             "answer; pass :reserved_tokens in the compactor opts"
   end
 
+  # One estimate (a sum of the entries' cached estimates). Within budget nothing else
+  # runs: the meta is the no-op one, with no dropped entries, so after_compact does not run.
   defp run(acc, manager) do
     before = WM.estimate_conversation_tokens(acc.memory)
 
-    case WM.ensure_within_limit(acc, manager) do
+    if before <= manager.max_tokens - manager.reserved_tokens do
+      {acc,
+       %{
+         compacted: false,
+         tokens_before: before,
+         tokens_after: before,
+         tokens_removed: 0,
+         strategy: manager.strategy,
+         dropped: []
+       }}
+    else
+      compact(acc, manager, before)
+    end
+  end
+
+  defp compact(acc, manager, before) do
+    case WM.truncate_conversation(acc, manager) do
       {:ok, acc2} ->
         after_tokens = WM.estimate_conversation_tokens(acc2.memory)
         dropped = dropped_entries(acc.memory, acc2.memory)
@@ -181,15 +200,16 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   # Gross estimated tokens of the dropped messages that belong to the current turn:
   # what the task budget's `remaining` must subtract (Anthropic task-budgets doc,
   # "Carrying a budget across compaction"). Earlier turns were never this task's
-  # spend, and a summary is new, so it is never dropped. Each message's content is
-  # serialized with `BaseIOSchema.to_json/1` for the estimate, plus 10 tokens of
-  # per-message overhead; this approximates, it is not the exact request payload.
+  # spend, and a summary is new, so it is never dropped. Each message counts its
+  # cached estimate (what the model is sent for it, plus 10 tokens of per-message
+  # overhead), the same estimate `tokens_before` sums; it approximates, it is not the
+  # exact request payload.
   defp tokens_removed_this_turn(before_memory, dropped) do
     turn_id = AgentMemory.get_current_turn_id(before_memory)
 
     dropped
     |> Enum.filter(&(&1.turn_id == turn_id))
-    |> Enum.map(&(WM.estimate_message_content_tokens(BaseIOSchema.to_json(&1.content)) + 10))
+    |> Enum.map(&AgentMemory.entry_tokens/1)
     |> Enum.sum()
   end
 end

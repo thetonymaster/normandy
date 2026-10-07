@@ -47,6 +47,16 @@ defmodule Normandy.Components.AgentMemory do
                              ]
                            )
 
+  @keep_entries_opts_schema NimbleOptions.new!(
+                              summary: [
+                                type: {:or, [{:tuple, [:string, :any]}, nil]},
+                                default: nil,
+                                doc:
+                                  "`{role, content}` of a message stored first, as a new " <>
+                                    "entry of the current turn (a compaction summary)."
+                              ]
+                            )
+
   @spec new_memory(pos_integer() | nil) :: t()
   def new_memory(max_messages \\ nil) do
     %__MODULE__{entries: %{}, head: nil, current_turn_id: nil, max_messages: max_messages}
@@ -98,6 +108,40 @@ defmodule Normandy.Components.AgentMemory do
 
     %{memory | entries: Map.put(memory.entries, id, entry), head: id}
     |> enforce_max_messages()
+  end
+
+  @doc false
+  # The memory compaction leaves: `memory`'s cap and current turn, holding the
+  # `:summary` message (if any) and then `kept` (entries of `memory`'s active branch,
+  # oldest first) under their own ids and turns, re-linked into one chain. Kept entries
+  # lose their thinking: it was produced with the removed messages in place. Built in
+  # one pass; an entry whose content is unchanged keeps its cached encoding, and the
+  # cap is enforced once, at the end.
+  @spec keep_entries(t(), [Entry.t()], keyword()) :: t()
+  def keep_entries(%__MODULE__{} = memory, kept, opts \\ []) when is_list(kept) do
+    opts = Options.validate!(opts, @keep_entries_opts_schema, {__MODULE__, :keep_entries, 3})
+    summary = Keyword.fetch!(opts, :summary)
+    # A memory with no current turn gets one once it holds a message, as add_message/4 does.
+    turn_id = memory.current_turn_id || if(summary || kept != [], do: UUID.uuid4())
+
+    lead =
+      case summary do
+        nil ->
+          []
+
+        {role, content} ->
+          [put_content(%Entry{id: UUID.uuid4(), turn_id: turn_id, role: role}, content)]
+      end
+
+    {entries, head} =
+      Enum.reduce(lead ++ Enum.map(kept, &strip_thinking/1), {%{}, nil}, &link_entry/2)
+
+    enforce_max_messages(%__MODULE__{
+      entries: entries,
+      head: head,
+      current_turn_id: turn_id,
+      max_messages: memory.max_messages
+    })
   end
 
   @doc "The active branch `head -> root`, returned chronological (oldest -> newest)."
@@ -255,6 +299,9 @@ defmodule Normandy.Components.AgentMemory do
     bare = bare_entry(entry)
     put_content(bare, bare.content)
   end
+
+  defp link_entry(%Entry{id: id} = entry, {entries, parent_id}),
+    do: {Map.put(entries, id, %Entry{entry | parent_id: parent_id}), id}
 
   # Thinking is dropped by re-setting the content, so the cache follows; an entry with
   # none is returned as it is (nothing to re-encode).
