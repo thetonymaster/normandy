@@ -229,6 +229,15 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
+  defp hand_off_retry_usage(opts, %LLMError{} = error) do
+    if is_function(Keyword.get(opts, :on_retry_usage), 1) do
+      report_retry_usage(opts, error.usage)
+      %{error | usage: nil, usage_counts: nil}
+    else
+      error
+    end
+  end
+
   defp report_retry_usage(opts, usage) do
     case Keyword.get(opts, :on_retry_usage) do
       fun when is_function(fun, 1) and not is_nil(usage) -> fun.(usage)
@@ -264,10 +273,10 @@ defmodule Normandy.LLM.JsonDeserializer do
     case Call.converse(client, retry_request, llm_opts) do
       # An LLM failure is not a parse failure: stop and hand it back. A billed failure
       # (a retry cut off at max_tokens) reports its usage like a successful retry, so the
-      # adapter attaches the call's total instead of this retry's alone.
+      # adapter attaches the call's total instead of this retry's alone. Without that
+      # callback the error keeps its usage: a direct caller still sees what it billed.
       {:error, %LLMError{} = error} ->
-        report_retry_usage(opts, error.usage)
-        {:error, %{error | usage: nil, usage_counts: nil}}
+        {:error, hand_off_retry_usage(opts, error)}
 
       {:ok, %Response{content: response, usage: usage}} ->
         report_retry_usage(opts, usage)

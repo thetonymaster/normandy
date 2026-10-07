@@ -995,6 +995,10 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `:on_parse_failure` to an incomplete answer: `Model.converse/3` returns
   `{:ok, %Response{content: <the empty response model>, stop_reason: ...}}`, and Normandy
   makes the error. A custom `Normandy.Agents.Model` only reports `Response.stop_reason`.
+- `JsonDeserializer.deserialize_with_retry/5`: a retry call that fails (a `:max_tokens`
+  cut-off included) is returned as its `LLMError`, with the usage that call billed. Given an
+  `:on_retry_usage` callback, the usage goes to the callback instead and the returned error
+  has `usage: nil`, so an adapter that sums retry usage does not count it twice.
 - `Normandy.Context.Summarizer` returns `{:error, %LLMError{type: :max_tokens}}` for a
   summary cut off at its `max_tokens`, instead of the fragment.
 - New `Normandy.LLMError` types `:max_tokens` and `:refusal`; telemetry `error.type` reports

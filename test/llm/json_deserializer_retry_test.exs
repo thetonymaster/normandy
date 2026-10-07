@@ -37,6 +37,50 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
     refute_received {:converse, _, _}
   end
 
+  describe "a billed LLM error during a parse retry" do
+    defp billed_error,
+      do:
+        [type: :max_tokens, retryable?: false]
+        |> Normandy.LLMError.new()
+        |> Normandy.LLMError.with_usage(%{"input_tokens" => 3, "output_tokens" => 4})
+
+    test "keeps its usage when no :on_retry_usage callback takes it" do
+      error = billed_error()
+      client = %StubClient{reply: fn _ -> {:error, error} end}
+
+      assert {:error, %Normandy.LLMError{} = returned} =
+               JsonDeserializer.deserialize_with_retry(
+                 "not json",
+                 %MultiField{},
+                 client,
+                 @request,
+                 max_retries: 1
+               )
+
+      assert returned.usage == %{"input_tokens" => 3, "output_tokens" => 4}
+      assert returned.usage_counts == error.usage_counts
+      refute is_nil(returned.usage_counts)
+    end
+
+    test "hands its usage to :on_retry_usage and returns the error without it" do
+      error = billed_error()
+      client = %StubClient{reply: fn _ -> {:error, error} end}
+      test_pid = self()
+
+      assert {:error, %Normandy.LLMError{usage: nil, usage_counts: nil}} =
+               JsonDeserializer.deserialize_with_retry(
+                 "not json",
+                 %MultiField{},
+                 client,
+                 @request,
+                 max_retries: 1,
+                 on_retry_usage: &send(test_pid, {:retry_usage, &1})
+               )
+
+      assert_received {:retry_usage, %{"input_tokens" => 3, "output_tokens" => 4}}
+    end
+  end
+
   test "a retry asks for text with response_model: nil" do
     # Valid JSON comes back as text only when the retry asks for text.
     client = %StubClient{
