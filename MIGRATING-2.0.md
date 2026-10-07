@@ -1661,7 +1661,10 @@ code you wrote against 1.x must follow the changes below.
   `handle_call/3`. Runs and `update_agent/2` calls queue in arrival order and execute one at
   a time, each turn in a worker process. `get_agent/1`, `get_id/1`, `get_stats/1` and
   `approve/2` answer while a turn runs (they used to wait for it and exit after 5 s);
-  `get_agent/1` returns the config as of the last finished turn.
+  `get_agent/1` returns the config as of the last finished turn. The worker's `$callers`
+  lead back to the `AgentProcess`, as a `Task`'s do, so a test's `Mox.allow/3` or
+  `Req.Test.allow/3` to the agent pid still reaches the LLM call; `self()` inside the client
+  is the worker, not the agent pid.
 - `AgentProcess.run/3` waits `:infinity` by default (was 60_000 ms), as `Turn.Server.run/2`
   does: a turn is bounded by its retries, tool timeouts and `max_tool_iterations`. Pass
   `timeout:` to keep a bound. A run whose caller died while it waited in the queue (a

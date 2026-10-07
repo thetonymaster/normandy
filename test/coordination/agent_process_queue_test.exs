@@ -139,6 +139,28 @@ defmodule Normandy.Coordination.AgentProcessQueueTest do
     assert messages(pid) == 4
   end
 
+  # Final review I1: a turn runs in a WatchedWorker grandchild. Its `$callers` chain must
+  # lead back to the AgentProcess, as a Task's does, or a host's `Mox.allow/3` or
+  # `Req.Test.allow/3` to the agent pid no longer reaches the LLM call.
+  test "a run's and a cast's LLM call see the AgentProcess in their $callers" do
+    parent = self()
+
+    reply = fn response_model ->
+      send(parent, {:callers, Process.get(:"$callers")})
+      %{response_model | chat_message: "ok"}
+    end
+
+    agent = BaseAgent.init(%{client: %StubClient{reply: reply}, model: "m"})
+    {:ok, pid} = AgentProcess.start_link(agent: agent)
+
+    assert {:ok, "ok"} = AgentProcess.run(pid, "go")
+    assert_receive {:callers, [_watcher, ^pid | _]}, @wait
+
+    :ok = AgentProcess.cast(pid, "go", reply_to: self())
+    assert_receive {:callers, [_watcher, ^pid | _]}, @wait
+    assert_receive {:agent_result, _id, {:ok, "ok"}}, @wait
+  end
+
   test "stop/1 kills the turn in flight" do
     {:ok, pid} = AgentProcess.start_link(agent: gated_agent())
     _caller = spawn(fn -> AgentProcess.run(pid, "go") end)

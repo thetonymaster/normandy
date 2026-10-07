@@ -1571,9 +1571,12 @@ defmodule Normandy.Agents.Turn.Server do
     handlers = data.handlers
     current = %Data{config: data.config, turn_state: data.turn_state, session_id: data.session_id}
     otel_ctx = OtelCtx.capture()
+    callers = [server | Process.get(:"$callers", [])]
 
     pid =
       spawn(fn ->
+        Process.put(:"$callers", callers)
+
         ref =
           receive do
             {:monitor_ref, r} -> r
@@ -1615,11 +1618,18 @@ defmodule Normandy.Agents.Turn.Server do
   # the server dies, the worker is killed, so an LLM call or tool does not run
   # on unseen (and run again by the restarted server). A worker crash exits
   # this process with the same reason, which the server sees as {:DOWN, ...}.
+  # Both processes carry `$callers` (server first), as a Task would.
   defp run_while_server_alive(server, ref, work) do
     server_ref = Process.monitor(server)
     Process.flag(:trap_exit, true)
     watcher = self()
-    worker = spawn_link(fn -> send(watcher, {:task_result, work.()}) end)
+    callers = [watcher | Process.get(:"$callers", [])]
+
+    worker =
+      spawn_link(fn ->
+        Process.put(:"$callers", callers)
+        send(watcher, {:task_result, work.()})
+      end)
 
     receive do
       {:task_result, result} -> send(server, {ref, result})

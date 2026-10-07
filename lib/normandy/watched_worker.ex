@@ -12,19 +12,30 @@ defmodule Normandy.WatchedWorker do
   #   * the owner dies: the worker is killed, so no turn runs on unseen.
   #
   # The owner keys the work by the watcher pid, so there is no monitor-ref handshake.
+  #
+  # Both processes get `$callers` as `Task` sets it (the watcher `[owner | owner's
+  # callers]`, the worker `[watcher | ...]`), so ownership-based test tools (Mox,
+  # `Req.Test`, Ecto's sandbox) find the owner's allowances from inside `work`.
   # Turn.Server's run_while_server_alive/3 has the same shape; it is meant to move here.
 
   @spec start(term(), (-> term())) :: {pid(), reference()}
   def start(tag, work) when is_function(work, 0) do
     owner = self()
-    spawn_monitor(fn -> watch(owner, tag, work) end)
+    callers = [owner | Process.get(:"$callers", [])]
+    spawn_monitor(fn -> watch(owner, callers, tag, work) end)
   end
 
-  defp watch(owner, tag, work) do
+  defp watch(owner, callers, tag, work) do
+    Process.put(:"$callers", callers)
     owner_ref = Process.monitor(owner)
     Process.flag(:trap_exit, true)
     watcher = self()
-    worker = spawn_link(fn -> send(watcher, {__MODULE__, work.()}) end)
+
+    worker =
+      spawn_link(fn ->
+        Process.put(:"$callers", [watcher | callers])
+        send(watcher, {__MODULE__, work.()})
+      end)
 
     receive do
       {__MODULE__, result} -> send(owner, {tag, watcher, result})

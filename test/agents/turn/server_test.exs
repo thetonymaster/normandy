@@ -170,6 +170,32 @@ defmodule Normandy.Agents.Turn.ServerTest do
              Turn.Server.run(srv, "hello")
   end
 
+  # Final review I1 (in passing): the LLM call runs in a grandchild of the server; its
+  # `$callers` chain leads back to the server, as a Task's does, so a host's
+  # `Mox.allow/3` or `Req.Test.allow/3` to the server pid reaches the call.
+  test "the turn's LLM call sees the server in its $callers" do
+    parent = self()
+
+    reply = fn schema ->
+      send(parent, {:callers, Process.get(:"$callers")})
+      %{schema | chat_message: "ok"}
+    end
+
+    config = BaseAgent.init(%{client: %Normandy.Test.StubClient{reply: reply}, model: "m"})
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: "s-callers-#{System.unique_integer([:positive])}",
+        config: config,
+        store: {InMemory, InMemory.new()},
+        registry: {Native, Native.new()},
+        subscriber: nil
+      )
+
+    assert {:ok, _output} = Turn.Server.run(srv, "hello")
+    assert_receive {:callers, [_watcher, ^srv | _]}
+  end
+
   test "a turn compacts memory before its first LLM call" do
     test_pid = self()
 
