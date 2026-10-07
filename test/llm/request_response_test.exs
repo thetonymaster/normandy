@@ -38,4 +38,36 @@ defmodule Normandy.LLM.RequestResponseTest do
     assert %Response{content: "x", stop_reason: "some_new_reason"} =
              %Response{content: "x", stop_reason: "some_new_reason"}
   end
+
+  describe "stop_reason/1" do
+    @known [
+      :end_turn,
+      :tool_use,
+      :max_tokens,
+      :stop_sequence,
+      :pause_turn,
+      :refusal,
+      :model_context_window_exceeded,
+      :compaction
+    ]
+
+    test "pause_turn maps to its atom" do
+      assert Response.stop_reason("pause_turn") == :pause_turn
+    end
+
+    test "every known reason's string maps to its atom; an atom passes through" do
+      for reason <- @known do
+        assert Response.stop_reason(Atom.to_string(reason)) == reason
+        assert Response.stop_reason(reason) == reason
+      end
+    end
+
+    test "an unknown string is returned unchanged and creates no atom" do
+      fresh = "normandy_unknown_stop_#{System.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(fresh) end
+      assert Response.stop_reason(fresh) == fresh
+      assert_raise ArgumentError, fn -> String.to_existing_atom(fresh) end
+    end
+  end
 end
