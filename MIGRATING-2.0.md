@@ -1631,9 +1631,16 @@ code you wrote against 1.x must follow the changes below.
   `reason` reduced the same way (`{:sql, "SELECT ..."}` becomes `{:sql, "a string (N
   bytes)"}`; a `Postgrex.Error` becomes `{Postgrex.Error, sqlstate}`), in the reply, the
   persisted turn state, the log and telemetry. `{:store_exit, exit_reason}` keeps its shape.
+- `A2A.Server.handle_message/3,4` reads only `traceparent` and `tracestate` from the carrier;
+  an inbound `baggage` header is dropped, so a remote caller can no longer set baggage
+  entries that your outbound calls would forward. Outbound A2A calls (`AgentTool`) still send
+  your own baggage. If you relied on inbound baggage, extract it yourself from the request
+  headers.
 
 ## New, non-breaking
 
+- `[:normandy, :workflow, :run, :stop]` carries `status: :ok | :error` (`:error` when the
+  orchestrator or workflow returned `{:error, _}`).
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.
 - `CircuitBreaker.call/3` and `run/3` take `failure_if:`, a function that decides whether a failed call counts against the breaker.
 - `[:normandy, :circuit_breaker, :state_change]` and `[:normandy, :retry, :attempt]` telemetry events (see the `Normandy.Telemetry` catalogue); breaker and Retry log lines carry structured metadata and name the breaker.

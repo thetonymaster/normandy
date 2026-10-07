@@ -85,6 +85,41 @@ defmodule NormandyTest.Telemetry.WorkflowSpanTest do
     assert_one_span(spans, :sequential, 2)
   end
 
+  describe "stop status (TEL-13)" do
+    defp stop_status(spans, orchestrator) do
+      assert [{[_, _, _, :stop], stop}] =
+               Enum.filter(spans, fn {event, meta} ->
+                 List.last(event) == :stop and meta.orchestrator == orchestrator
+               end)
+
+      stop.status
+    end
+
+    test "is :ok for a run that returns {:ok, _}" do
+      spans = workflow_spans(fn -> {:ok, _} = ParallelOrchestrator.execute(specs(), "x") end)
+      assert stop_status(spans, :parallel) == :ok
+    end
+
+    test "is :error for a run that returns {:error, _}" do
+      failing = %{
+        id: "bad",
+        agent:
+          BaseAgent.init(%{
+            client: %TaggingClient{name: "bad", fail_on: "x"},
+            model: "test-model"
+          })
+      }
+
+      spans =
+        workflow_spans(fn ->
+          assert {:error, %Normandy.OrchestrationError{}} =
+                   ParallelOrchestrator.execute([failing], "x")
+        end)
+
+      assert stop_status(spans, :parallel) == :error
+    end
+  end
+
   test "ParallelOrchestrator.execute/3 with spec inputs" do
     input = %{chat_message: "x"}
     ps = Enum.map(specs(), &Map.put(&1, :input, input))

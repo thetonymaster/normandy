@@ -69,6 +69,14 @@ defmodule Normandy.TelemetryCatalogueTest do
       assert [:normandy, :tool, :denied] in events
       assert [:normandy, :agent, :run, :exception] in events
     end
+
+    test "the memory command span's semconv operation names are documented (TEL-14)" do
+      {:docs_v1, _, _, _, %{"en" => moduledoc}, _, _} = Code.fetch_docs(Normandy.Telemetry)
+
+      for name <- ~w(search_memory upsert_memory update_memory delete_memory) do
+        assert moduledoc =~ "`#{name}`", "missing gen_ai.operation.name #{name}"
+      end
+    end
   end
 
   # {file, [{kind, {:literal, event} | {:dynamic, source}}]}, comments excluded.

@@ -205,6 +205,8 @@ defmodule Normandy.Telemetry do
 
     * Metadata: `orchestrator` (`:workflow | :sequential | :parallel | :hierarchical`),
       `step_count`, and for DSL workflows `workflow_name` (the module).
+    * Stop metadata adds `status`: `:error` when the entry point returned
+      `{:error, _}`, `:ok` otherwise. A raise ends the span in `:exception`.
     * Not wrapped: `ParallelOrchestrator.execute_stream/2` (a lazy stream has no single
       extent) and the `Reactive` combinators. Their agent runs still nest under the
       caller's current span.
@@ -218,6 +220,7 @@ defmodule Normandy.Telemetry do
       `:too_large`, `:invalid_message` or `:agent_failed`).
     * Parenting: when the carrier passed to `handle_message/3` has a valid W3C
       `traceparent`, the request span (and the agent run inside it) joins that trace.
+      Only `traceparent` and `tracestate` are read; inbound `baggage` is dropped.
 
   ### `[:normandy, :turn, :approval, :start | :stop]`
 
@@ -389,12 +392,12 @@ defmodule Normandy.Telemetry do
   Normandy depends on no OTel library (the packages are test-only). A bridge in your
   application turns these events into spans. The table says which Normandy key feeds
   which GenAI semantic-convention attribute. Checked against semantic-conventions-genai
-  `main` on 2026-10-03. All GenAI attributes are **Development** stability, so names and
+  `main` on 2026-10-03 (memory operations on 2026-10-06). All GenAI attributes are **Development** stability, so names and
   allowed values can still change.
 
   | Semconv attribute | Source |
   |---|---|
-  | `gen_ai.operation.name` | derived from the event: `invoke_agent` for run, `chat` for llm_call and request, `execute_tool` for tool execute, `invoke_workflow` for workflow run |
+  | `gen_ai.operation.name` | derived from the event: `invoke_agent` for run, `chat` for llm_call and request, `execute_tool` for tool execute, `invoke_workflow` for workflow run; for memory command, from `command`: `search_memory` for `"view"`, `upsert_memory` for `"create"` (it writes the file whether or not it exists), `update_memory` for `"str_replace"`, `"insert"` and `"rename"`, `delete_memory` for `"delete"` |
   | `gen_ai.provider.name` | `provider`, mapped by the bridge: `:anthropic` is `"anthropic"`; `:openai_compatible` is `"openai"` only for OpenAI itself, otherwise a custom value (the spec allows one when no well-known value applies) |
   | `gen_ai.workflow.name` | workflow run `workflow_name` (the module, as a string) |
   | `gen_ai.request.stream` | llm_call start `stream` |
@@ -517,6 +520,9 @@ defmodule Normandy.Telemetry do
   ## Known limits
 
     * Killed runs: see "Killed runs". Inner spans of a killed run stay open.
+    * Tool timeouts: a tool that runs past its timeout is shut down. Spans opened inside
+      it (a memory command, a sub-agent's run, its llm_calls) never end; the tool span
+      ends with `status: :error, error_type: :timeout`.
     * Cross-process bridging: a process-keyed bridge ends a span only in the process that
       started it. Normandy carries the OTel context into the tasks it spawns (fan-out,
       `Turn.Server` tasks, `AgentProcess`), so parenting works across processes, but a
@@ -526,7 +532,8 @@ defmodule Normandy.Telemetry do
       while parked emits no run `:exception`, so that span is never exported.
     * W3C propagation: `A2A.AgentTool` injects `traceparent` and `tracestate` into the
       A2A request, and `A2A.Server.handle_message/3` extracts them from the carrier it is
-      given. The injection needs Claudio's A2A transport `:headers` option (Claudio 0.7.0).
+      given. The server drops inbound `baggage`; `AgentTool` sends the host's own baggage
+      when its propagator is configured to. The injection needs Claudio's A2A transport `:headers` option (Claudio 0.7.0).
       MCP calls carry no trace context: `c:Claudio.MCP.Client.call_tool/4` has no metadata
       or header field, so an MCP server's spans start a new trace.
     * Semantic conventions for GenAI are in Development status and may rename attributes.

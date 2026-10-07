@@ -5,8 +5,10 @@ defmodule Normandy.Telemetry.WorkflowSpan do
 
   Metadata: `:orchestrator` (`:workflow | :sequential | :parallel | :hierarchical`)
   plus whatever identity/size keys the caller passes (`:workflow_name`,
-  `:step_count`). It never carries input, output or message content. Agent runs
-  started inside `fun` nest under this span (the coordinators propagate the OTel
+  `:step_count`). The `:stop` adds `:status`: `:error` when `fun` returned
+  `{:error, _}`, `:ok` otherwise (every caller returns `{:ok, _} | {:error, _}`).
+  It never carries input, output or message content. Agent runs started inside `fun`
+  nest under this span (the coordinators propagate the OTel
   context into the tasks they spawn).
   """
 
@@ -20,7 +22,11 @@ defmodule Normandy.Telemetry.WorkflowSpan do
     metadata = Map.put(metadata, :orchestrator, orchestrator)
 
     Span.span([:normandy, :workflow, :run], metadata, fn ->
-      {fun.(), metadata}
+      result = fun.()
+      {result, Map.put(metadata, :status, status(result))}
     end)
   end
+
+  defp status({:error, _reason}), do: :error
+  defp status(_result), do: :ok
 end

@@ -174,8 +174,10 @@ defmodule Normandy.A2A.Server do
   `conn.req_headers` works as is). When it has a valid W3C `traceparent` and
   OpenTelemetry is loaded, the extracted context is attached for the duration
   of the call (and the previous one put back after), so the agent's spans join
-  the remote caller's trace. Without one (absent or malformed) the current
-  context is left alone. If your HTTP instrumentation already extracted the trace into a
+  the remote caller's trace. Only `traceparent` and `tracestate` are read: an inbound
+  `baggage` header is dropped, so a remote caller cannot set baggage entries in this
+  process's context (they would reach every outbound call that propagates it). Without
+  a `traceparent` (absent or malformed) the current context is left alone. If your HTTP instrumentation already extracted the trace into a
   server span, call `handle_message/2` instead so the agent nests under that
   span.
 
@@ -234,13 +236,19 @@ defmodule Normandy.A2A.Server do
     end
   end
 
+  # Only the W3C trace-context headers are extracted: inbound baggage is dropped.
   # Only a carrier that names a valid parent replaces the current context:
   # extracting from headers without one would detach the request from any span
   # the caller (e.g. HTTP instrumentation) already made current. `extract/1` is
   # nil for a malformed `traceparent`, and `attach(nil)` is a no-op.
   defp trace_ctx(carrier) do
-    if Enum.any?(carrier, fn {name, _} -> String.downcase(name) == "traceparent" end) do
-      OtelCtx.extract(carrier)
+    trace_headers =
+      Enum.filter(carrier, fn {name, _} ->
+        String.downcase(name) in ["traceparent", "tracestate"]
+      end)
+
+    if Enum.any?(trace_headers, fn {name, _} -> String.downcase(name) == "traceparent" end) do
+      OtelCtx.extract(trace_headers)
     end
   end
 

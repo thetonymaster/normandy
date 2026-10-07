@@ -189,6 +189,37 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       assert request.parent_span_id == caller.span_id
     end
 
+    test "drops inbound baggage; the request still joins the carrier's trace" do
+      test_pid = self()
+      id = {__MODULE__, :baggage, make_ref()}
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:normandy, :agent, :run, :start],
+          &__MODULE__.forward_baggage/4,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+      message = Message.new(:user, [Part.text("hi")])
+
+      assert {:ok, _task} =
+               Server.handle_message(remote_agent(), message, [
+                 {"traceparent", @traceparent},
+                 {"Baggage", "user_id=secret42"},
+                 {"baggage", "tenant=t1"}
+               ])
+
+      assert_received {:baggage_at_run_start, baggage}
+      assert baggage == %{}
+
+      spans = OtelSpanBridge.await_spans(["normandy.a2a.request"])
+      request = OtelSpanBridge.fetch_span!(spans, "normandy.a2a.request")
+      assert request.trace_id == @trace_id
+      assert request.parent_span_id == @parent_span_id
+    end
+
     test "accepts atom header names" do
       message = Message.new(:user, [Part.text("hi")])
 
@@ -204,6 +235,12 @@ defmodule NormandyTest.Telemetry.A2APropagationTest do
       assert request.parent_span_id == @parent_span_id
     end
   end
+
+  # The baggage current where the run starts (the process handle_message/3 runs in).
+  def forward_baggage(_event, _measurements, %{agent_name: "remote-agent"}, test_pid),
+    do: send(test_pid, {:baggage_at_run_start, :otel_baggage.get_all()})
+
+  def forward_baggage(_event, _measurements, _metadata, _test_pid), do: :ok
 
   def handle_request(event, _measurements, metadata, test_pid),
     do: send(test_pid, {event, metadata})

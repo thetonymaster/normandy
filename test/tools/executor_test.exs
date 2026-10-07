@@ -1,6 +1,7 @@
 defmodule NormandyTest.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Test.TelemetryCapture
   alias Normandy.Tools.{Context, Executor}
   alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
 
@@ -68,6 +69,56 @@ defmodule NormandyTest.Tools.ExecutorTest do
     test "without :timeout the default applies, not the struct's :timeout field" do
       assert {:ok, "completed"} =
                Executor.execute_tool(%SlowTool{timeout: 10}, context: ctx(%{"delay" => 50}))
+    end
+
+    # A tool whose run opens a span and never returns: the span stays open.
+    defmodule SpanThenHangTool do
+      @moduledoc false
+      use Normandy.Tool, name: "span_then_hang", description: "opens a span, then waits"
+
+      alias Normandy.Telemetry.Span
+
+      defstruct marker: nil
+
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object", properties: %{}}
+
+      @impl Normandy.Tool
+      def run(%__MODULE__{marker: marker}, %Context{}) do
+        Span.span([:normandy, :memory, :command], %{command: marker}, fn ->
+          receive do
+            :never_sent -> {{:ok, "done"}, %{}}
+          end
+        end)
+      end
+    end
+
+    # TEL-9, a documented limit ("Known limits" in Normandy.Telemetry): the timed-out
+    # tool's process is shut down, so a span open inside it emits no :stop or :exception.
+    test "a span open inside a tool past its :timeout never ends" do
+      marker = "tel9-#{System.unique_integer([:positive])}"
+
+      TelemetryCapture.attach_span(
+        [
+          [:normandy, :memory, :command, :start],
+          [:normandy, :memory, :command, :stop],
+          [:normandy, :memory, :command, :exception]
+        ],
+        command: marker
+      )
+
+      assert {:error, "Tool execution timeout after 50ms"} =
+               Executor.execute_tool(%SpanThenHangTool{marker: marker},
+                 context: ctx(%{}),
+                 timeout: 50
+               )
+
+      assert_received {:span, [:normandy, :memory, :command, :start], _}
+      # Task.shutdown/1 returned only after the tool's process died, and that process's
+      # messages to this one arrive in order before its death is seen, so any end event
+      # would already be here.
+      refute_received {:span, [:normandy, :memory, :command, :stop], _}
+      refute_received {:span, [:normandy, :memory, :command, :exception], _}
     end
 
     test "the default is 30 seconds" do
