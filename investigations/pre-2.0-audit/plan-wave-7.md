@@ -8,11 +8,11 @@
 
 **Tech Stack:** Elixir ~> 1.15 / OTP ≥ 24, Claudio `~> 0.7.0` → `~> 0.7.1` (Hex, after Q publishes), NimbleOptions (through `Normandy.Options`), ExDoc, ExUnit, cocogitto 7 (`cog`), GitHub Actions.
 
-**Spec:** `investigations/pre-2.0-audit/plan.md` § "Wave 7" (Tasks 7.1–7.7), "Global Constraints", "Review Focus", "Finding coverage"; decisions 2, 3, 4, 14, 25 (A4, A10), 26, and **27** (Q's answers to `wave-7-research/QUESTIONS.md`, binding) in `investigations/pre-2.0-audit/decisions.md`; findings REL-1, REL-3–5, REL-7, REL-9 (`release.md`), DX-8, DX-10, DX-13, DX-20, DX-23, DX-24, DX-29, DX-31–35 (`devex.md`). The facts inventories behind this plan are `wave-7-research/7.0-code-leftovers.md`, `7.1-release-docs.md`, `7.3-api-docs-testing.md`, `7.5-release-mechanics.md` (verified against HEAD `0ed6783`). Section writers read the inventory for their group in full.
+**Spec:** `investigations/pre-2.0-audit/plan.md` § "Wave 7" (Tasks 7.1–7.7), "Global Constraints", "Review Focus", "Finding coverage"; decisions 2, 3, 4, 14, 25 (A4, A10), 26, **27** (Q's answers to `wave-7-research/QUESTIONS.md`, binding) and **28** (Q's answers to this plan's Appendix A, binding) in `investigations/pre-2.0-audit/decisions.md`; findings REL-1, REL-3–5, REL-7, REL-9 (`release.md`), DX-8, DX-10, DX-13, DX-20, DX-23, DX-24, DX-29, DX-31–35 (`devex.md`). The facts inventories behind this plan are `wave-7-research/7.0-code-leftovers.md`, `7.1-release-docs.md`, `7.3-api-docs-testing.md`, `7.5-release-mechanics.md` (verified against HEAD `0ed6783`). Section writers read the inventory for their group in full.
 
 ## Finding IDs closed by this wave
 
-REL-1 (rest), REL-3, REL-4, REL-5, REL-7, REL-9, DX-8, DX-10, DX-13, DX-20 (docs), DX-23, DX-24, DX-29, DX-31, DX-32, DX-33, DX-34, DX-35; decision 25 A4 and A10 (H10); the parked minors classified "W7" in `7.0-code-leftovers.md` §"parked minors" (rows 1-12); new: the silent terminal save (row 3), the `%Duration{}` compile error on Elixir 1.15/1.16, release.yml's no-bump republish, Horde floor. Stay known limits / 2.x (listed in MIGRATING): rows 17-26 of that table, AX-12, AX-18 retry, AX-19, AX-20, AX-29, AX-33, SEC-8, conservative session deletion, compaction snapshot growth. Dropped as invalid or obsolete: rows 23, 25, 27, 28, 29 (recorded in the inventory). Already fixed (no task): row 31.
+REL-1 (rest), REL-3, REL-4, REL-5, REL-7, REL-9, DX-8, DX-10, DX-13, DX-20 (docs), DX-23, DX-24, DX-29, DX-31, DX-32, DX-33, DX-34, DX-35; decision 25 A4 and A10 (H10); the parked minors classified "W7" in `7.0-code-leftovers.md` §"parked minors" (rows 1-12); new: the silent terminal save (row 3), the `%Duration{}` compile error on Elixir 1.15/1.16, release.yml's no-bump republish, Horde floor, the Horde supervisor `{:EXIT, pid, :normal}` test flake (7.0e). Stay known limits / 2.x (listed in MIGRATING): rows 17-26 of that table, AX-12, AX-18 retry, AX-19, AX-20, AX-29, AX-33, SEC-8, conservative session deletion, compaction snapshot growth. Dropped as invalid or obsolete: rows 23, 25, 27, 28, 29 (recorded in the inventory). Already fixed (no task): row 31.
 
 ## Global Constraints
 
@@ -34,15 +34,15 @@ REL-1 (rest), REL-3, REL-4, REL-5, REL-7, REL-9, DX-8, DX-10, DX-13, DX-20 (docs
 
 ## Task order
 
-`7.0a → 7.0b → 7.0c → 7.0d → 7.2a → 7.2b → 7.3a → 7.3b → 7.3c → 7.3d → 7.3e → 7.3f → 7.3g → 7.3h → 7.5a → 7.1a → 7.1b → 7.1c → 7.4a → [Q publishes Claudio 0.7.1] → 7.5b → 7.6a → 7.6b [Q approves spend] → 7.4b → 7.8 (gate) → 7.7 [Q pushes, opens and merges the PR]`
+`7.0a → 7.0b → 7.0c → 7.0d → 7.0e → 7.2a → 7.2b → 7.3a → 7.3b → 7.3c → 7.3d → 7.3e → 7.3f → 7.3g → 7.3h → 7.5a → 7.1a → 7.1b → 7.1c → 7.4a → [Q publishes Claudio 0.7.1] → 7.5b → 7.6a → 7.6b [Q approves spend] → 7.4b → 7.8 (gate) → 7.7 [Q pushes, opens and merges the PR]`
 
 7.1b (MIGRATING gaps) runs after every code task so its API diff sees the final surface; 7.4b (CHANGELOG) runs after 7.6b so it summarizes fixes from the live run. Files touched by several tasks, in order: `turn/server.ex` (7.0b only), `agents/dispatch.ex` + `components/tool_result.ex` (7.0a), `agents/base_agent.ex` (7.0c A3, 7.3a docs, 7.3h DX-33), `mix.exs` (7.0c `test_load_filters`, 7.0d Horde, 7.2b groups, 7.3b/7.3e groups and extras, 7.3g `files:`, 7.5b Claudio), `MIGRATING-2.0.md` (each code task its own bullets; 7.1b the gaps, index and restructure last), `lib/normandy/llm/claudio_adapter.ex` (7.5b only), `test/support/*` (7.3c deletes 3 clients, 7.3d moves the contracts). Anchor edits on function names, not line numbers.
 
 ### Group content
 
-- **7.0a** A4: Dispatch renders a tool output once (`ToolResult.render_output/1` result carried through truncation, `after_tool` and the result struct); row 11 `unencodable_output/1` stops quoting `Exception.message` (tag only). Counting test: 2 encodings per tool result on run, stream, Turn.Server and Turn.Inline (`linear_history_test.exs:46` updated). **7.0b** H10 (decision 27 A1, A2): `persist_turn_state/2` failure at a terminal state is logged by tag (row 3); the server keeps the unsaved terminal state, retries it (on the next event and on a timer), refuses `run` with `%TurnError{type: :persist_failed}` until it lands, and defers passivation; resume of an in-flight state whose answer is already in history makes no model call. Known-limits bullet reduced to process death during a store outage. Store tests on all five backends via the tagged suites. **7.0c** Rows 6-10 and 12: Workflow moduledoc example, `test_load_filters`, Summarizer no-`type` block and escaped summary tag, `chat_message: nil` is blank on every path (decision 27 A3; MIGRATING), Known-limits blank line. **7.0d** `%Duration{}` guard in `schema/validator.ex` (decision 27 B1) and its test guards; Horde `~> 0.10` (B2; MIGRATING, `mix.lock` unchanged).
+- **7.0a** A4: Dispatch renders a tool output once (`ToolResult.render_output/1` result carried through truncation, `after_tool` and the result struct); row 11 `unencodable_output/1` stops quoting `Exception.message` (tag only). Counting test: 2 encodings per tool result on run, stream, Turn.Server and Turn.Inline (`linear_history_test.exs:46` updated). **7.0b** H10 (decision 27 A1, A2): `persist_turn_state/2` failure at a terminal state is logged by tag (row 3); the server keeps the unsaved terminal state, retries it (on the next event and on a timer), refuses `run` with `%TurnError{type: :persist_failed}` until it lands, and defers passivation; resume of an in-flight state whose answer is already in history makes no model call. Known-limits bullet reduced to process death during a store outage. Store tests on all five backends via the tagged suites. **7.0c** Rows 6-10 and 12: Workflow moduledoc example, `test_load_filters`, Summarizer no-`type` block and escaped summary tag, `chat_message: nil` is blank on every path (decision 27 A3; MIGRATING), Known-limits blank line. **7.0d** `%Duration{}` guard in `schema/validator.ex` (decision 27 B1) and its test guards; Horde `~> 0.10` (B2; MIGRATING, `mix.lock` unchanged). **7.0e** (decision 28 A6) The Horde `{:EXIT, pid, :normal}` flake: ExUnit's capture-log handler links a `Task` to `Horde.DynamicSupervisorImpl` from its `init/1` `:info` log, before it traps exits; `test/test_helper.exs` sets that module's log level to `:warning`, and `test/agents/turn/horde_init_log_test.exs` pins both halves. Test environment only, no MIGRATING bullet.
 - **7.2a** Hide the internals of decision 27 C1 (`@moduledoc false`) and un-backtick every public reference (`mix docs --warnings-as-errors` clean). **7.2b** `groups_for_modules` for every visible module (Errors group kept, a "Testing" group for `Normandy.Test.*`), `groups_for_extras`, `test/docs/docs_groups_test.exs` (every module with docs in exactly one group).
-- **7.3a** `@doc` for `BaseAgent.reset_memory/1`, `register_context_provider/3`, `delete_context_provider/2`; the DX-10 decision table in the `Normandy` moduledoc; `test/docs/doc_coverage_test.exs` scoped to BaseAgent and Turn.Session. **7.3b** `Normandy.Test.FakeClient` (scripted text / structured / tool-call / error replies, streaming, captured requests, owner pid + atomics, works on every path) + tests + the name-clash test. **7.3c** Migrate the 3 scripted clients' 11 test files to FakeClient and delete those clients (D2). **7.3d** `Normandy.Test.SessionStoreContract`, `MemoryStoreContract`, `SessionRegistryContract` in `lib/` with `:new` (`{m, f, a}`), optional `:stored_entry_ids` (D3). **7.3e** `docs/guides/testing.md` + `test/docs/testing_guide_test.exs` + extras + README link. **7.3f** Widen the doc-coverage test to every visible module, functions, macros and callbacks (C5); write the ~100 docs, split by area. **7.3g** Non-breaking devex: DX-20 migration docs, DX-31, DX-32, DX-34 (`claude-opus-5-5` everywhere, README quickstart reads `chat_message` and shows the error tuple), DX-35 `MIGRATING-2.0.md` in `package.files`. **7.3h** Breaking devex (MIGRATING each): DX-23 DSL compile-time errors, DX-24 remove Workflow `:context`, DX-33 `ModelCatalog.Static` deprecation warning once per VM, DX-35 remove the 3 Toolset filters, DX-29 delete both `examples/` apps (README pointer kept).
+- **7.3a** `@doc` for `BaseAgent.reset_memory/1`, `register_context_provider/3`, `delete_context_provider/2`; the DX-10 decision table in the `Normandy` moduledoc; `test/docs/doc_coverage_test.exs` scoped to BaseAgent and Turn.Session. **7.3b** `Normandy.Test.FakeClient` (scripted text / structured / tool-call / error replies, streaming, captured requests, owner pid + atomics, works on every path) + tests + the name-clash test. **7.3c** Migrate the 3 scripted clients' 11 test files to FakeClient and delete those clients (D2). **7.3d** `Normandy.Test.SessionStoreContract`, `MemoryStoreContract`, `SessionRegistryContract` in `lib/` with `:new` (`{m, f, a}`), optional `:stored_entry_ids` (D3). **7.3e** `docs/guides/testing.md` + `test/docs/testing_guide_test.exs` + extras + README link. **7.3f** Widen the doc-coverage test to every visible module, functions, macros and callbacks (C5); write the ~100 docs, split by area. **7.3g** Non-breaking devex: DX-20 migration docs, DX-31, DX-32, DX-34 (`claude-opus-5-5` everywhere, README quickstart reads `chat_message` and shows the error tuple), DX-35 `MIGRATING-2.0.md` in `package.files`. **7.3h** Breaking devex (MIGRATING each): DX-23 the DSL compile-time error for `system_prompt` beside `background`/`steps`/`output_instructions` (decision 28 A2: an `agent` block without `model` still compiles and `new/1` given `:model` serves it; MIGRATING §21 unchanged), DX-24 remove Workflow `:context`, DX-33 `ModelCatalog.Static` deprecation warning once per VM, DX-35 remove the 3 Toolset filters, DX-29 delete both `examples/` apps (README pointer kept; right after the `git rm -r` the implementer reports the untracked/ignored leftovers and Q runs the `rm -rf` of both directories; `marketing/demo-1.0/agent-horde-script.md` gets a one-line "written for Normandy 1.0" note, decision 28 A4).
 - **7.5a** Claudio local branch `feat/add-messages`: citations replay patch (`response.ex` keeps `citations` on text blocks and `to_assistant_content/1` replays them), `@version "0.7.1"`, Claudio CHANGELOG entry, Claudio's own tests green; **Q:** push, tag, `mix hex.publish`. **7.1a** `tools/api_diff/` scripts (C4), excluded from the package, README on how to run. **7.1b** MIGRATING: the uncovered API and REL-4 changes (from a fresh `tools/api_diff` run against `main`), tables/samples only where a shape changes (C2), the two misfiled bullets moved, "Who is affected" index (C3), Known limits refreshed. **7.1c** Triage of keyword-flagged commits; the mapping table recorded in the commit body. **7.4a** release.yml: release only when `cog bump --auto --dry-run`'s last line is a version (F1); `.github/workflows/README.md` matrix text.
 - **7.5b** (after Q publishes) `{:claudio, "~> 0.7.1"}`, `mix.lock`, `claudio_adapter.ex` `add_messages/3` → `Claudio.Messages.Request.add_messages/2`, wire identity unchanged, `claudio-gaps.md` closed, citations replay test. **7.6a** e2e: usage/cost totals printed by the runner; scenario 15 AX-7 preserved-thinking replay on `claude-opus-5-5` with `thinking_block_binding: :error`; scenario 16 MCP-connector `server_tool_use` pause → crash → new input (F3, through a public MCP server the writer names, with a fallback if none is reachable); runner tests. **7.6b** **Q:** approve spend (estimate printed first); one full `mix e2e`; fixes as separate commits; rerun only failed scenarios; log saved to `investigations/pre-2.0-audit/e2e-2.0.log`; Known limits updated from the probes' results. **7.4b** CHANGELOG 2.0 block after the first `- - -` (C6), rehearsed on a scratch clone. **7.8** Gate (controller). **7.7** Squash body text written to `investigations/pre-2.0-audit/release-pr.md` (title `feat!: Normandy 2.0`, body ending `BREAKING CHANGE: see MIGRATING-2.0.md`, no AI trailers); **Q:** push, open the PR, CI green on the whole matrix, squash-merge with the edited body (F2).
 
@@ -89,7 +89,7 @@ REL-1 (rest), REL-3, REL-4, REL-5, REL-7, REL-9, DX-8, DX-10, DX-13, DX-20 (docs
 - **H9 (7.3f, 7.3g)** 7.3f runs as 7.3f1-f4 (87 gaps, a shrinking `@not_yet_documented` list); 7.3g as 7.3g1-g2.
 - **H10 (7.3b)** FakeClient's API extends the header row (chunked text, `%ToolCall{}` calls, function items, `stream_error_after:`, `remaining/1`, `:options`); capture is atomics + an ETS table owned by the creating process. An exhausted script under `Turn.Server` is `:task_down`.
 - **H11 (7.3d)** Contracts take `impl:` (required), `new:` (default `{impl, :new, []}`) and `stored_entry_ids:` (`{m, f, a}` called with the handle appended); no `async:` option.
-- **H12 (7.3h)** E3 deletes the "model given to `new/1`" path for agents that declare none (Appendix A2). The DX-33 bullet edits §5, not §46.
+- **H12 (7.3h)** E3 is only the `system_prompt`-conflict compile error: the "model given to `new/1`" path for agents that declare none stays, with its runtime `requires :model` check and MIGRATING §21 (decision 28 A2). The DX-33 bullet edits §5, not §46.
 - **H13 (7.6a)** The MCP connector is the agent option `mcp_servers:` (already supported), so scenario 16 is a full Normandy scenario; whether the connector returns `pause_turn` live is unknown, and the scenario falls back to a rebuilt paused-turn shape (Appendix A5). Scenario 16 part B checks citations replay live (decision 27 B3). Prices live in `test/support/e2e/prices.ex`; the runner's suite cap rises from 140 to 150; `mix e2e --estimate` prints $1.92 expected / $2.24 upper.
 - **H14 (7.6b)** The run uses partition `_w54probe` (never `mix ecto.setup`). **H15 (7.4a)** A failing `cog` fails the Release job. **H16 (7.1b)** Row 26 gets no MIGRATING bullet (not observable). **H17 (7.1c)** The triage table goes to `wave-7-migrating-triage.md` and the commit body.
 
@@ -2201,6 +2201,245 @@ with Elixir 1.17, so lib/ did not compile on the 1.15 and 1.16 CI legs.
 The clause and two tests are guarded with Code.ensure_loaded?/1, as in
 type.ex (decision 27 B1). Horde is tightened to ~> 0.10, the version
 SessionRegistry.Horde.Via was checked against (B2); mix.lock unchanged."
+```
+
+---
+
+### Task 7.0e: No log handler runs in the Horde supervisor's `init/1` (decision 28 A6)
+
+The preflight saw `test/agents/turn/session_delete_test.exs:170` ("through the Horde supervisor
+too") fail once (seed 606572, `scratchpad/w7-7.3d.log`): `Session.run/2`'s `start_child` call
+exited because `Horde.DynamicSupervisorImpl` (`:del_21253`) crashed with `FunctionClauseError` in
+`handle_info/2` on `{:EXIT, #PID<0.49741.0>, :normal}`, 1 ms after it started.
+
+**Cause (verified; Appendix A6's theory was wrong).** No Normandy process is linked to the Horde
+impl: Normandy links nothing to it (`grep -rn "Process.link\|spawn_link" lib` → only
+`watched_worker.ex:35` and `turn/server.ex:1636`, both their own workers), and right after
+`Turn.Supervisor.Horde.start_link/1` the impl's links are exactly its parent (probe below). The
+linked process is a `Task` started **inside the impl** by ExUnit's log capture:
+
+- `deps/horde/lib/horde/dynamic_supervisor_impl.ex:44` logs `"Starting ... with name ..."` at
+  `:info` in `init/1`, **before** `:46` sets `trap_exit`; its `handle_info/2` clauses
+  (`:355-398`) have no `{:EXIT, _, _}` clause. (`registry_impl.ex:52` traps first and has an
+  `:EXIT` clause at `:115`, so `Horde.Registry` is not affected.)
+- A `:logger` handler runs in the logging process. Whenever any test captures logs
+  (`@moduletag :capture_log`, `capture_log/2`; `session_delete_test.exs` has the tag),
+  `ExUnit.CaptureServer.log/2` (Elixir 1.19.5, read from its debug info) runs one
+  `Task.async` per capture format in the caller, `Task.await_many/1`s them, and drains the tasks'
+  `{:EXIT, pid, _}` only when the caller traps exits **at that moment**. The impl does not trap
+  yet, so nothing is drained and the task stays linked until it exits `:normal`.
+- If the task exits after the impl has reached `:46`, the link's `:normal` exit becomes a
+  `{:EXIT, task, :normal}` message, the impl crashes, and its `:one_for_all`,
+  `max_restarts: 0` supervisor goes down. Usually the task exits first and the signal is dropped,
+  hence a rare flake.
+- The failing log's pids match: with the capture task, Horde's children start as outer, crdt,
+  impl, **task**, processes supervisor, signal, poller, listener, and the test's
+  `InMemory.new()` comes next. The store was `#PID<0.49746.0>`, so the impl was `0.49740` and
+  `#PID<0.49741.0>` the task spawned in its `init/1`.
+
+Probes (scratch worktree of `4ac60ee`, deterministic): (A) a `:logger` handler that, like
+`CaptureServer.log/2`, `spawn_link`s a process from the logging Horde impl and holds it: after
+`start_link/1` the impl's links are `[outer, held]` and `trap_exit` is `true`; releasing the held
+process crashes the impl with `{:function_clause, [{Horde.DynamicSupervisorImpl, :handle_info, ...}`,
+`Last message: {:EXIT, #PID<...>, :normal}` (the preflight's crash). (B) the same with
+`Logger.put_module_level(Horde.DynamicSupervisorImpl, :warning)`: the handler is never called and
+the links are `[outer]`. (C) an `:erlang.trace(self(), true, [:procs, :set_on_spawn])` around
+`capture_log(fn -> HSup.start_link(name: sup) end)`: the impl (`0.386`) spawns and links
+`{Task.Supervised, :reply, ...}` (`0.387`), which exits `:normal`.
+
+**Fix on Normandy's side (test environment only).** `test/test_helper.exs` sets
+`Horde.DynamicSupervisorImpl`'s module level to `:warning`, so its `init/1` `:info` line reaches
+no handler and nothing is linked before it traps exits. Production is not affected (the default
+handler links nothing), so no `lib/` change and no MIGRATING bullet. A test pins both halves: no
+handler runs in the impl's `init/1`, and Horde 0.10 still crashes on a stray `:normal` exit (when
+that test fails after a Horde upgrade, the `test_helper.exs` line can go). Reporting it upstream is
+Q's call (Appendix A7).
+
+**Files:**
+- Create: `test/agents/turn/horde_init_log_test.exs`
+- Modify: `test/test_helper.exs`
+
+**Interfaces:**
+- Consumes: `Normandy.Agents.Turn.Supervisor.Horde.start_link/1`; `Logger.put_module_level/2`; `:logger.add_handler/3`.
+- Produces: nothing in `lib/`. After this task, no `:logger` handler sees `Horde.DynamicSupervisorImpl`'s `:info` events in the test VM.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/agents/turn/horde_init_log_test.exs`:
+
+```elixir
+defmodule Normandy.Agents.Turn.HordeInitLogTest do
+  @moduledoc """
+  Task 7.0e. Horde 0.10's `Horde.DynamicSupervisorImpl.init/1` logs "Starting ..." at
+  `:info` before it traps exits, and its `handle_info/2` has no clause for
+  `{:EXIT, pid, reason}`. A `:logger` handler runs in the logging process, and ExUnit's
+  capture handler (`ExUnit.CaptureServer.log/2`, active whenever any test captures logs)
+  links a `Task` to that process. When the task exits `:normal` after the impl has
+  started trapping exits, the impl crashes with `FunctionClauseError` and its Horde
+  supervisor (`:one_for_all`, no restarts) goes down. `test/test_helper.exs` sets the
+  impl's module level to `:warning`, so no handler runs in its `init/1`.
+  """
+  use ExUnit.Case, async: true
+
+  alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
+
+  # Links a process to the process that logs, as ExUnit.CaptureServer.log/2's
+  # Task.async does, and keeps it alive, so it is still linked when init/1 returns.
+  # Acts only in the impl registered under this test's name (async: true).
+  defmodule LinkingHandler do
+    @moduledoc false
+    def log(_event, %{config: %{sup: sup, to: to}}) do
+      if Process.info(self(), :registered_name) == {:registered_name, sup} do
+        linked =
+          spawn_link(fn ->
+            receive do
+              :release -> :ok
+            end
+          end)
+
+        send(to, {:linked, self(), linked})
+      end
+
+      :ok
+    end
+  end
+
+  defp unique_name, do: :"horde_init_log_#{System.unique_integer([:positive])}"
+
+  # :temporary: a crashed Horde supervisor is not restarted under the same name.
+  defp start_horde(sup) do
+    start_supervised!(%{
+      id: sup,
+      start: {HSup, :start_link, [[name: sup]]},
+      type: :supervisor,
+      restart: :temporary
+    })
+  end
+
+  test "no log handler runs in the Horde impl's init/1" do
+    sup = unique_name()
+    handler = :"#{sup}_handler"
+
+    :ok =
+      :logger.add_handler(handler, LinkingHandler, %{
+        config: %{sup: sup, to: self()},
+        level: :all
+      })
+
+    on_exit(fn -> :logger.remove_handler(handler) end)
+
+    outer = start_horde(sup)
+    impl = Process.whereis(sup)
+
+    # start_link returns after init/1, so a handler call made in init/1 has sent this.
+    refute_received {:linked, ^impl, _linked}
+    assert {:links, [^outer]} = Process.info(impl, :links)
+  end
+
+  # Pins the Horde behaviour the module level in test_helper.exs works around: when
+  # this test fails, Horde handles a stray {:EXIT, pid, :normal}; drop that line.
+  @tag :capture_log
+  test "Horde 0.10's impl crashes on {:EXIT, pid, :normal} from a linked process" do
+    sup = unique_name()
+    start_horde(sup)
+    impl = Process.whereis(sup)
+    ref = Process.monitor(impl)
+    test_pid = self()
+
+    linked =
+      spawn(fn ->
+        Process.link(impl)
+        send(test_pid, :linked)
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    assert_receive :linked
+    send(linked, :release)
+
+    assert_receive {:DOWN, ^ref, :process, ^impl,
+                    {:function_clause, [{Horde.DynamicSupervisorImpl, :handle_info, _, _} | _]}},
+                   1_000
+  end
+end
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `mix format && mix test test/agents/turn/horde_init_log_test.exs`
+Expected: FAIL, `2 tests, 1 failure`: "no log handler runs in the Horde impl's init/1" with
+`Unexpectedly received message {:linked, #PID<...>, #PID<...>} (which matched {:linked, ^impl, _linked})`.
+The second test passes (it pins Horde's behaviour and passes before and after the fix).
+
+- [ ] **Step 3: Keep the impl's `init/1` line out of every handler**
+
+In `test/test_helper.exs`, replace
+
+```elixir
+base_exclude = [:integration, :normandy_integration, :postgres, :distributed, :redis]
+```
+
+with
+
+```elixir
+# Horde 0.10's DynamicSupervisorImpl logs "Starting ..." at :info in init/1 before it
+# traps exits, and has no handle_info/2 clause for {:EXIT, _, _}. ExUnit's capture_log
+# handler runs in the logging process and links a Task to it; a Task that exits :normal
+# after the impl traps exits crashes the impl and its Horde supervisor. No handler runs
+# for that line at :warning (Task 7.0e, test/agents/turn/horde_init_log_test.exs).
+:ok = Logger.put_module_level(Horde.DynamicSupervisorImpl, :warning)
+
+base_exclude = [:integration, :normandy_integration, :postgres, :distributed, :redis]
+```
+
+(`Logger.put_module_level/2` needs no loaded module; it applies to Horde's compiled
+`Logger.info/1` call, which checks the level before any handler runs.)
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `mix format && mix test test/agents/turn/horde_init_log_test.exs`
+Expected: PASS, `2 tests, 0 failures`.
+
+- [ ] **Step 5: Repeat the Horde tests**
+
+Run:
+`mix test test/agents/turn/session_delete_test.exs test/agents/turn/supervisor_horde_test.exs test/agents/turn/horde_init_log_test.exs --repeat-until-failure 50 2>&1 | tee /tmp/w7-7.0e-repeat.log | grep -cE "^16 tests, 0 failures"`
+Expected: `51` (the first run plus 50 repeats, each `16 tests, 0 failures`; Elixir 1.19's
+`--repeat-until-failure` stops at the first failing run; a lower count means a run failed: read
+`/tmp/w7-7.0e-repeat.log`). Verified on `4ac60ee` + this task: 51.
+
+- [ ] **Step 6: Gate**
+
+Run: `mix format && mix precommit 2>&1 | tee /tmp/w7-7.0e.log; grep -E " [0-9]+ failures|Total errors" /tmp/w7-7.0e.log`
+and `mix docs --warnings-as-errors`.
+Expected: ` 0 failures` (two more tests than after Task 7.0d), exit 0; docs exit 0.
+
+Then the distributed suite (Horde across peer nodes): `docker start normandy-test-pg`, then
+`MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix test --only distributed --include postgres`
+→ ` 0 failures` (on `4ac60ee` + this task: 77 tests, 0 failures); the controller stops
+`normandy-test-pg` afterwards. No Redis or Postgres store suite: no store, registry or
+`Turn.Server` code changes.
+
+- [ ] **Step 7: MIGRATING-2.0.md**
+
+No bullet: the change is in the test environment only; no public function, option, message or
+behaviour of the library changes.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add test/agents/turn/horde_init_log_test.exs
+git add test/test_helper.exs
+git commit -m "test(horde): keep log handlers out of the Horde supervisor's init
+
+Horde 0.10's DynamicSupervisorImpl logs at :info in init/1 before it
+traps exits and has no handle_info/2 clause for {:EXIT, _, _}. ExUnit's
+capture_log handler runs in the logging process and links a Task to it;
+a Task that exited :normal after the impl trapped exits crashed the impl
+(session_delete_test, seed 606572). test_helper.exs raises the impl's
+module level to :warning; a test pins both halves (decision 28 A6)."
 ```
 
 ---
@@ -6925,11 +7164,10 @@ git commit -m "fix(schema): field/3 errors name the field and the valid options;
 
 ---
 
-### Task 7.3h-i: DSL agent blocks fail to compile without a model or with a mixed prompt (DX-23, decision 27 E3)
+### Task 7.3h-i: DSL agent blocks with a mixed prompt fail to compile (DX-23, decision 27 E3, decision 28 A2)
 
-An `agent do ... end` block without `model`, or with `system_prompt` beside `background`,
-`steps` or `output_instructions`, now raises `ArgumentError` while the module compiles.
-Today the first raises only from `new/1` (`dsl/agent.ex:461-463`), and the second compiles
+An `agent do ... end` block with `system_prompt` beside `background`, `steps` or
+`output_instructions` now raises `ArgumentError` while the module compiles. Today it compiles
 and silently drops the structured prompt (`apply_system_prompt/1`'s `cond`,
 `dsl/agent.ex:661-683`: `system_prompt` wins). The error is an `ArgumentError`, like the
 DSL's other compile-time checks (`memory/1`, `guardrails/3`, `hooks/1`, all tested through
@@ -6937,71 +7175,43 @@ DSL's other compile-time checks (`memory/1`, `guardrails/3`, `hooks/1`, all test
 `agent_guardrails_test.exs:132-146`, `agent_hooks_test.exs:45-70`). Verified on 1.19.5: a raise
 in `__before_compile__/1` reaches `Code.compile_string/1`'s caller as that `ArgumentError`.
 
+An `agent` block without `model` still compiles, and `new/1` still serves it when given
+`:model` (decision 28 A2: Q keeps the "model given to `new/1`" path). The runtime check in
+`init_config!/4` (`"<Mod>.new/1: requires :model (a string), got none"`), its two tests in
+`test/dsl/agent_test.exs` (`"an agent that declares no model raises, naming new/1"`,
+`"a model given to new/1 serves an agent that declares none"`, both on `NoModelAgent`) and
+MIGRATING §21's sentence on it stay unchanged.
+
 Scoping the `import` into `agent do` (the other half of DX-23 in `devex.md`) is out of scope:
-decision 27 E3 asks only for the two compile errors, and the clash is documented
+decision 27 E3 asks only for the compile errors, and the clash is documented
 (`dsl/agent.ex:58-77`).
 
 **Files:**
-- Modify: `lib/normandy/dsl/agent.ex` (moduledoc "Features" bullet; `agent/1` doc; `init_config!/4`; new `check_declarations!/1`; `__before_compile__/1`)
-- Modify: `MIGRATING-2.0.md` (§21 sentence; create `## 46. DSL, Workflow and Toolset`)
+- Modify: `lib/normandy/dsl/agent.ex` (moduledoc "Features" bullet; `agent/1` doc; new `check_declarations!/1`; `__before_compile__/1`)
+- Modify: `MIGRATING-2.0.md` (create `## 46. DSL, Workflow and Toolset`)
 - Test: modify `test/dsl/agent_test.exs`
 
 **Interfaces:**
-- Consumes: the module attributes the DSL macros set (`:agent_model`, `:agent_system_prompt`, `:agent_background`, `:agent_steps`, `:agent_output_instructions`).
-- Produces: compile-time `ArgumentError` messages
-  `"<Mod>: the agent block declares no model; add model \"...\""` and
+- Consumes: the module attributes the DSL macros set (`:agent_system_prompt`, `:agent_background`, `:agent_steps`, `:agent_output_instructions`).
+- Produces: the compile-time `ArgumentError` message
   `"<Mod>: system_prompt cannot be combined with <names>; use system_prompt alone or background/steps/output_instructions"`
   (`<names>` = the declared ones among `background, steps, output_instructions`, in that order, joined by `", "`).
 
 Callers checked (every `use Normandy.DSL.Agent` in the repo:
 `grep -rln "use Normandy.DSL.Agent" lib test docs e2e README.md` → 14 hits outside
-`examples/`). Only `test/dsl/agent_test.exs`'s `NoModelAgent` breaks: a scratch run of the
-change over `test/dsl`, `test/options_coverage_test.exs`,
-`test/normandy_integration/dsl_comprehensive_test.exs`, `test/agents/base_agent_logging_test.exs`,
-`test/agents/base_agent_max_tokens_test.exs`, `test/telemetry/span_hierarchy_test.exs` and then
-the full `mix test` gave 0 failures once `agent_test.exs` was changed as below. `e2e/09_dsl.exs`
-declares `model` and `system_prompt` only; `docs/guides/agent-memory.md:89-95` and the
-`Normandy.DSL.Agent` moduledoc examples declare a model and no mixed prompt. The `examples/`
-apps are deleted in Task 7.3h-v.
+`examples/`). None declares `system_prompt` beside a structured prompt: a scratch run of this
+change on `4ac60ee` gave `mix test` 3642 tests, 0 failures, with only the test below added.
+`e2e/09_dsl.exs` declares `model` and `system_prompt` only; `docs/guides/agent-memory.md:89-95`
+and the `Normandy.DSL.Agent` moduledoc examples declare no mixed prompt. The `examples/` apps
+are deleted in Task 7.3h-v.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing test**
 
-In `test/dsl/agent_test.exs`, delete the `NoModelAgent` module and its comment:
-
-```elixir
-  # Declares no model: new/1 raises before it builds anything.
-  defmodule NoModelAgent do
-    use Normandy.DSL.Agent
-
-    agent do
-      name("No Model Agent")
-    end
-  end
-
-```
-
-Replace the two tests `"an agent that declares no model raises, naming new/1"` and
-`"a model given to new/1 serves an agent that declares none"` (the agent they use cannot
-compile any more) with:
+In `test/dsl/agent_test.exs`, insert before `    test "a missing client raises ArgumentError naming new/1" do`
+(after `"a misspelled :model is named, not reported missing"`, which stays as it is, on
+`NoModelAgent`):
 
 ```elixir
-    test "an agent block without a model does not compile" do
-      assert_raise ArgumentError,
-                   ~s(Normandy.DSLTest.NoModelAgent: the agent block declares no model; ) <>
-                     ~s(add model "..."),
-                   fn ->
-                     Code.compile_string("""
-                     defmodule Normandy.DSLTest.NoModelAgent do
-                       use Normandy.DSL.Agent
-
-                       agent do
-                         name("No Model Agent")
-                       end
-                     end
-                     """)
-                   end
-    end
-
     test "system_prompt beside background, steps or output_instructions does not compile" do
       assert_raise ArgumentError,
                    "Normandy.DSLTest.MixedPromptAgent: system_prompt cannot be combined with " <>
@@ -7022,28 +7232,15 @@ compile any more) with:
                      """)
                    end
     end
+
 ```
 
-In the next test, `"a misspelled :model is named, not reported missing"`, replace
-`NoModelAgent` by `TestAgent` (two places), so it reads:
+`NoModelAgent` and its three tests stay.
 
-```elixir
-    test "a misspelled :model is named, not reported missing" do
-      assert_raise ArgumentError,
-                   ~r/^Normandy.DSL.AgentTest.TestAgent.new\/1: unknown option :modle; supported: /,
-                   fn ->
-                     TestAgent.new(client: %NormandyTest.Support.ModelMockup{}, modle: "m")
-                   end
-    end
-```
-
-Check: `grep -n "NoModelAgent" test/dsl/agent_test.exs` → only the two `Normandy.DSLTest.NoModelAgent`
-lines inside the new test's string and assertion.
-
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 2: Run the test to verify it fails**
 
 Run: `mix format && mix test test/dsl/agent_test.exs`
-Expected: FAIL, 2 failures: both new tests report `Expected exception ArgumentError but nothing was raised` (the modules compile today).
+Expected: FAIL, 1 failure: the new test reports `Expected exception ArgumentError but nothing was raised` (the module compiles today).
 
 - [ ] **Step 3: The compile-time check**
 
@@ -7053,11 +7250,6 @@ In `lib/normandy/dsl/agent.ex`, add after `put_declared_hooks/2` (the private he
 ```elixir
   # The agent block's own contradictions, checked when the module compiles.
   defp check_declarations!(module) do
-    if Module.get_attribute(module, :agent_model) == nil do
-      raise ArgumentError,
-            "#{inspect(module)}: the agent block declares no model; add model \"...\""
-    end
-
     structured =
       Enum.filter(
         [
@@ -7097,29 +7289,13 @@ to
 ```
 
 `Module.get_attribute/2` works here: `__before_compile__/1` expands while the module is still
-open. The values are the evaluated ones (`model(System.get_env("M"))` that yields `nil` counts as
-no model).
+open. The values are the evaluated ones (a `background(System.get_env("B"))` that yields `nil`
+counts as not declared).
 
-- [ ] **Step 4: Delete the unreachable runtime check**
+`init_config!/4`'s runtime `requires :model` check stays: it is the error for an agent that
+declares no model and is given none in `new/1`.
 
-In `init_config!/4`, delete:
-
-```elixir
-    # After every option check (a misspelled :model is named first) and after the merge (a
-    # :model given to new/1 serves an agent that declares none).
-    if Keyword.get(overrides, :model, base_config.model) == nil do
-      raise ArgumentError,
-            "#{inspect(agent_module)}.new/1: requires :model (a string), got none"
-    end
-
-```
-
-Why it is dead: `base_config.model` is the declared model, never `nil` once Step 3 holds, and
-`:model` given to `new/1` (top level or `:override`) is validated as `:string`
-(`InitOptions` `model: [type: :string, ...]`), so `nil` raises in `Options.validate!/3` first.
-`agent_module` stays used (the `:client` under `:override` raise).
-
-- [ ] **Step 5: Docs**
+- [ ] **Step 4: Docs**
 
 In the moduledoc "## Features" list, replace
 
@@ -7130,9 +7306,9 @@ In the moduledoc "## Features" list, replace
 with
 
 ```
-  - Checked when the module compiles: an `agent` block without `model`, or with
-    `system_prompt` beside `background`, `steps` or `output_instructions`, raises
-    `ArgumentError`
+  - Configuration checked when the agent is built (`new/1` raises without a model)
+  - Checked when the module compiles: an `agent` block with `system_prompt` beside
+    `background`, `steps` or `output_instructions` raises `ArgumentError`
 ```
 
 In `agent/1`'s `@doc` "## Available Options", replace
@@ -7148,32 +7324,20 @@ with
     `steps` or `output_instructions`: the module does not compile
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `mix format && mix test test/dsl`
-Expected: PASS, 109 tests, 0 failures (after Tasks 7.0a-7.3g2: Task 7.0c adds one test under `test/dsl`; this task replaces two tests by two).
+Expected: PASS, 110 tests, 0 failures (after Tasks 7.0a-7.3g2: Task 7.0c adds one test under `test/dsl`; this task adds one; on `4ac60ee` alone the count is 109).
 
-- [ ] **Step 7: Gate**
+- [ ] **Step 6: Gate**
 
 Run: `mix precommit 2>&1 | tee /tmp/w7-7.3h-i.log; grep -E " [0-9]+ failures|Total errors" /tmp/w7-7.3h-i.log` and `mix docs --warnings-as-errors`.
 Expected: ` 0 failures`, exit 0; docs exit 0. No tagged suite: nothing here touches a store, the registry or `Turn.Server`.
 
-- [ ] **Step 8: MIGRATING-2.0.md**
+- [ ] **Step 7: MIGRATING-2.0.md**
 
-In `## 21.`, replace
-
-```markdown
-  raises `ArgumentError` (1.x: `KeyError`); an agent that declares no model and is given none
-  in `new/1` raises `ArgumentError` `"MyAgent.new/1: requires :model (a string), got none"`
-  (1.x: `RuntimeError` `"model is required in agent definition"`).
-```
-
-with
-
-```markdown
-  raises `ArgumentError` (1.x: `KeyError`); an agent that declares no model does not compile
-  (§46; 1.x: `RuntimeError` `"model is required in agent definition"` from `new/1`).
-```
+`## 21.` does not change (its "an agent that declares no model and is given none in `new/1`
+raises `ArgumentError`" sentence stays true).
 
 Create the section after `## 45. Testing support and docs` (Task 7.2a) and before
 `## Known limits of 2.0`:
@@ -7181,21 +7345,17 @@ Create the section after `## 45. Testing support and docs` (Task 7.2a) and befor
 ```markdown
 ## 46. DSL, Workflow and Toolset
 
-- An `agent do ... end` block without `model` no longer compiles:
-  `ArgumentError` `"MyAgent: the agent block declares no model; add model \"...\""`. It used to
-  compile and raise from `new/1` unless `new/1` was given `:model`. Declare the model in the
-  block; `MyAgent.new(client: c, model: "other")` still overrides it.
 - An `agent` block with `system_prompt` and any of `background`, `steps` or
   `output_instructions` no longer compiles (`ArgumentError` naming the module and the
   conflicting declarations). `system_prompt` used to win and the others were dropped without a
   word. Keep `system_prompt` alone, or move its text into `background`.
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add lib/normandy/dsl/agent.ex test/dsl/agent_test.exs MIGRATING-2.0.md
-git commit -m "feat(dsl)!: an agent block without a model or with a mixed prompt fails to compile"
+git commit -m "feat(dsl)!: an agent block with a mixed prompt fails to compile"
 ```
 
 ---
@@ -7727,7 +7887,7 @@ git commit -m "feat(behaviours): ModelCatalog.Static logs its deprecation once p
 
 ---
 
-### Task 7.3h-v: Delete the 1.x example apps; `examples/README.md` points at the guides (DX-29, decision 27 E1, ruling R7)
+### Task 7.3h-v: Delete the 1.x example apps; `examples/README.md` points at the guides (DX-29, decision 27 E1, ruling R7, decision 28 A4)
 
 Both apps use removed 1.x APIs and do not compile against 2.0
 (`examples/agent_horde/lib/agent_horde/pipeline.ex:107` calls `Normandy.Tools.BaseTool.run/1`;
@@ -7745,18 +7905,21 @@ On disk, the apps also hold ignored, untracked files: `git status --short --igno
 the root `.gitignore:17` ignores everywhere. `git rm -r` deletes those tracked `.gitignore` files,
 so the `_build/`, `deps/` and `reports/` leftovers become **untracked** (shown by `git status`).
 The implementer does not delete them (deleting directories needs `rm -rf`, forbidden without Q's
-confirmation) and must not `git add` them; a `**Q:**` step at the end removes them. They are build
-output and a generated report; nothing is lost.
+confirmation) and must not `git add` them: right after the `git rm -r` the implementer reports
+them (Step 4) and Q removes both directories (Step 5, decision 28 A4a). They are build output and
+a generated report; nothing is lost.
 
 Other references (`git grep -n "examples/\|customer_support\|agent_horde\|CustomerSupport\|AgentHorde" -- ':!examples' ':!investigations' ':!docs/superpowers' ':!CHANGELOG.md'`):
 `MIGRATING-2.0.md:599` (`examples/tools/weather.ex`, kept), `test/support/normandy_integration_helper.ex:84-90`
 (the weather tool, kept), `marketing/demo-1.0/agent-horde-script.md:25,35,42,44` (the 1.0 demo
-script; it describes the 1.0 release and is left as it is, see Notes). `mix.exs`, `.formatter.exs`,
+script; it describes the 1.0 release and keeps its text, with a one-line note at the top that it
+was written for 1.0 and the app is gone in 2.0: Step 8, decision 28 A4b). `mix.exs`, `.formatter.exs`,
 `.credo.exs` and `.github/` name no example (`grep -rn "examples" mix.exs .formatter.exs .credo.exs .github` → no output).
 
 **Files:**
 - Delete: `examples/customer_support_app/` (27 tracked files), `examples/agent_horde/` (24 tracked files)
 - Modify: `examples/README.md` (rewritten)
+- Modify: `marketing/demo-1.0/agent-horde-script.md` (one note line at the top)
 - Modify: `MIGRATING-2.0.md` (§46 bullet)
 - Test: create `test/docs/examples_readme_test.exs`
 
@@ -7831,7 +7994,32 @@ this machine). Do not delete or add the `??` paths.
 
 Check: `git ls-files examples` → exactly `examples/README.md` and `examples/tools/weather.ex`.
 
-- [ ] **Step 4: Rewrite `examples/README.md`**
+- [ ] **Step 4: Report the leftovers**
+
+Run: `git status --short --ignored examples/`
+
+Report its untracked (`??`) and ignored (`!!`) lines to the controller verbatim, with
+`git ls-files examples/agent_horde examples/customer_support_app` (expected: no output, so
+neither directory holds a tracked file any more). Expected, on a working tree that has built the
+apps: `?? examples/agent_horde/_build/`, `?? examples/agent_horde/deps/`,
+`?? examples/agent_horde/reports/`, `!! examples/agent_horde/erl_crash.dump` (ignored by the
+root `.gitignore:17`), `?? examples/customer_support_app/_build/`,
+`?? examples/customer_support_app/deps/`; on a fresh checkout, no `??`/`!!` line under the two
+apps. Do not delete, move or `git add` any of them. Stop here until Step 5 is done.
+
+- [ ] **Step 5: Q: remove the leftovers**
+
+**Q:** With the list from Step 4 in front of you, run in the Claude Code prompt:
+
+```
+! rm -rf examples/customer_support_app examples/agent_horde
+```
+
+The implementer never runs `rm -rf`. When Q confirms, the implementer checks
+`git status --short --ignored examples/` → only the `D ` deletions of Step 3 (no `??` or `!!`
+line under the two apps) and continues.
+
+- [ ] **Step 6: Rewrite `examples/README.md`**
 
 Replace the whole file with:
 
@@ -7862,19 +8050,40 @@ application and rename the module. It is not part of the Normandy package.
 
 Check that the file's statement about `weather.ex` is true: `grep -n "use Normandy.Tool" examples/tools/weather.ex` → 1 hit.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 7: Run the test to verify it passes**
 
 Run: `mix format && mix test test/docs/examples_readme_test.exs`
 Expected: PASS, 2 tests, 0 failures.
 
-- [ ] **Step 6: Gate**
+- [ ] **Step 8: Mark the 1.0 demo script**
+
+In `marketing/demo-1.0/agent-horde-script.md`, replace the first line
+
+```markdown
+# Normandy Agent Horde — Screen-Recording Script
+```
+
+with
+
+```markdown
+> Written for Normandy 1.0. The `examples/agent_horde` app it records was removed in Normandy 2.0 (it used the 1.x API); see `examples/README.md`.
+
+# Normandy Agent Horde — Screen-Recording Script
+```
+
+(the note line, then a blank line so the heading stays a heading). Nothing else in the file
+changes.
+
+Check: `git diff --stat marketing/demo-1.0/agent-horde-script.md` → `1 file changed, 2 insertions(+)`;
+`head -1 marketing/demo-1.0/agent-horde-script.md` → the note line.
+
+- [ ] **Step 9: Gate**
 
 Run: `mix precommit 2>&1 | tee /tmp/w7-7.3h-v.log; grep -E " [0-9]+ failures|Total errors" /tmp/w7-7.3h-v.log` and `mix docs --warnings-as-errors`.
 Expected: ` 0 failures`, exit 0; docs exit 0. `mix format --check-formatted` (in precommit) does
-not read `examples/` (`.formatter.exs` inputs), so the untracked leftovers do not matter. No tagged
-suite.
+not read `examples/` or `marketing/` (`.formatter.exs` inputs). No tagged suite.
 
-- [ ] **Step 7: MIGRATING-2.0.md**
+- [ ] **Step 10: MIGRATING-2.0.md**
 
 Append to `## 46.`:
 
@@ -7885,27 +8094,22 @@ Append to `## 46.`:
   `examples/tools/weather.ex` stays.
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 11: Commit**
 
 The deletions are already staged by Step 3.
 
 ```bash
-git add examples/README.md test/docs/examples_readme_test.exs MIGRATING-2.0.md
-git status --short examples
+git add examples/README.md
+git add marketing/demo-1.0/agent-horde-script.md
+git add test/docs/examples_readme_test.exs
+git add MIGRATING-2.0.md
+git status --short examples marketing
 git commit -m "docs(examples)!: delete the 1.x example apps; point examples/README.md at the guides"
 ```
 
-Expected `git status --short examples` before the commit: the `D ` deletions, `M  examples/README.md`,
-and the `??` leftovers, which stay out of the commit.
-
-- [ ] **Step 9: Q: remove the leftover build output**
-
-**Q:** After the commit, `git status --short examples` lists the untracked leftovers of the deleted
-apps (`_build/`, `deps/`, `reports/`). They are compiled output, fetched dependencies and one
-generated report. If you agree, delete them with
-`rm -rf examples/agent_horde examples/customer_support_app` (both directories hold no tracked file
-after Step 3; check with `git ls-files examples/agent_horde examples/customer_support_app` → no
-output first). The implementer does not run this.
+Expected `git status --short examples marketing` before the commit: the `D ` deletions,
+`M  examples/README.md` and `M  marketing/demo-1.0/agent-horde-script.md`; no `??` line (Q
+removed the leftovers in Step 5).
 
 ---
 
@@ -11580,12 +11784,20 @@ Expected: ` 0 failures`, exit 0; docs exit 0.
 ## Appendix A — questions for Q (from the section writers)
 
 1. **A3 reaches native structured outputs.** With `chat_message: nil` blank, an answer under native structured outputs whose model omits the optional `chat_message` is `{:error, %LLMError{type: :invalid_output}}`. **Recommend accept** (an omitted answer is blank; the retry/fallback already handles `:invalid_output`). Alternative: also make `chat_message` required in the default output schema so structured outputs cannot omit it — that changes wire bytes (the schema) and needs a MIGRATING line.
+   **Q (decision 28):** accepted. An omitted `chat_message` under native structured outputs is `:invalid_output`; no schema change.
 2. **E3's missing-model error removes a documented 2.0 path.** Today an `agent` block with no `model` compiles and `MyAgent.new(client: c, model: "m")` serves it (`dsl/agent.ex:459-464`, MIGRATING §21). My E3 question described it as "fails only at runtime", which undersold it. **Recommend: keep that path** — Task 7.3h-i does only the `system_prompt`-conflict half; §21 stays. Alternative: as written (compile error without `model`).
+   **Q (decision 28):** accepted: keep the path. Task 7.3h-i does only the `system_prompt`-conflict compile error; the runtime `requires :model` check, its tests and §21 stay (H12 updated).
 3. **Hiding `Hooks.Runner`** drops its documented "supported way to test a hook"; 7.2a moves the guide to an agent-level test (verified). **Recommend hide** (C1). Alternative: keep Runner public with a narrowed moduledoc.
+   **Q (decision 28):** accepted. `Hooks.Runner` is hidden; hooks are tested through `BaseAgent.run/3`.
 4. **`examples/` leftovers.** After `git rm -r` of both apps, untracked build output (`_build`, `deps`) remains under them; clearing it is an `rm -rf` of those two directories — **your command** (or approve mine at that step). `marketing/demo-1.0/agent-horde-script.md` points at the deleted app: **recommend keep** (a 1.0 demo script) — or delete it.
+   **Q (decision 28):** (a) accepted: after `git rm -r` the implementer reports the leftovers (`git status --short --ignored examples/`) and Q runs `! rm -rf examples/customer_support_app examples/agent_horde` (Task 7.3h-v Steps 4-5). (b) **not as recommended:** the script gets a one-line note that it was written for Normandy 1.0 and the app is gone in 2.0 (Task 7.3h-v Step 8).
 5. **Scenario 16 if no live `pause_turn` can be provoked.** The rebuilt paused-turn shape checks "does the API accept the history", not a live pause. **Recommend:** accept the rebuilt shape and word the Known-limits bullet exactly as checked (7.6b Step 6). 7.6b's spend approval asks for the first run (~$1.92-2.24) plus up to $1 of reruns in one go.
+   **Q (decision 28):** accepted: the rebuilt shape counts if no live `pause_turn` occurs; the spend for 7.6b is asked at the step.
 
 6. **A Horde flake found by the preflight.** `test/.../session_delete_test.exs:170` "through the Horde supervisor too" failed once (seed 606572, not reproducible with the same seed or 3 file reruns): `Horde.DynamicSupervisorImpl.handle_info/2` raised `FunctionClauseError` on `{:EXIT, pid, :normal}`. Theory (unverified): a process linked to the Horde supervisor but not its child — likely on Wave 6's `stop_server/2` path for `Session.delete/1` — exits `:normal`, and Horde 0.10 has no clause for it. **Recommend:** a new Task 7.0e before 7.2a: reproduce deterministically (link a non-child process to the supervisor and exit it `:normal`), then fix our side so no non-child is linked to the Horde supervisor; if it is Horde's own bug, report it to you with the evidence before any workaround.
+   **Q (decision 28):** accepted: new Task 7.0e. Its investigation proved the theory wrong: no Normandy process is linked to the impl. ExUnit's capture-log handler (`ExUnit.CaptureServer.log/2`) links a `Task` to `Horde.DynamicSupervisorImpl` while it logs `:info` in `init/1` (`dynamic_supervisor_impl.ex:44`), before it traps exits (`:46`); a task that exits `:normal` afterwards hits the missing `{:EXIT, _, _}` clause (`:355-398`). Normandy avoids it in its test environment (`test_helper.exs` module level, Task 7.0e); production is unaffected. See item 7.
+
+7. **Open — report the Horde init-order issue upstream? (from Task 7.0e)** Horde 0.10's `DynamicSupervisorImpl` logs before it traps exits and has no catch-all `handle_info/2`, so any `:logger` handler that links a process to the caller (ExUnit's capture handler does) can crash it. Task 7.0e works around it in Normandy's test environment only; users who capture logs in their own suites while starting `Turn.Supervisor.Horde` can hit the same rare flake. Filing an issue (or a PR moving `Process.flag(:trap_exit, true)` above the log line) is outward-facing, so it is yours. **Recommend:** file it after 2.0; no Normandy change either way. Not answered by decision 28. **Q (decision 28, A7):** accept the test-only fix; no upstream report.
 
 ## Appendix B — section writers' notes (verbatim)
 
@@ -11762,13 +11974,18 @@ edit needed. In "Dependencies", no Horde line exists; none proposed.
 - **Header conflicts** above: E3 removes "a model given to `new/1` serves an agent that declares
   none" (I assumed Q accepted it with E3's "code that compiles today stops compiling"); the
   DX-33 bullet edits MIGRATING §5 instead of §46.
+  *[Decision 28 A2: superseded. Q keeps the "model given to `new/1`" path; Task 7.3h-i does only
+  the `system_prompt`-conflict compile error.]*
 - **`marketing/demo-1.0/agent-horde-script.md`** still tells the reader to `cd examples/agent_horde`.
   It is a 1.0 demo script; I left it. Question for Q: delete it, add a "1.0 only" line, or keep.
-  Assumed: keep, unchanged.
+  Assumed: keep, unchanged. *[Decision 28 A4b: Q chose the one-line "written for 1.0" note; Task
+  7.3h-v Step 8.]*
 - **Ignored leftovers become untracked** after `git rm -r` (the apps' own `.gitignore` files go
   with them); the plan forbids adding them and gives Q the `rm -rf` (Step 9 of 7.3h-v). If Q
   prefers, the controller can instead add `examples/*/_build/`, `examples/*/deps/` to the root
   `.gitignore`; I did not, since the directories should simply go.
+  *[Decision 28 A4a: the report and Q's `rm -rf` now come right after the `git rm -r` (Task 7.3h-v
+  Steps 4-5); no `.gitignore` change.]*
 - **The warning race:** two concurrent first `init/1` calls with `ModelCatalog.Static` may both
   log (check-then-put on `:persistent_term`). Accepted as documented; making it strictly once
   would need a lock for a deprecation notice.
@@ -11779,7 +11996,8 @@ edit needed. In "Dependencies", no Horde line exists; none proposed.
   inserts `## 46.` after it.
 - **CLAUDE.md:** no line becomes false. Optional addition to the `Normandy.DSL.Agent` bullet
   (verbatim, for Q):
-  `  - An `agent` block without `model`, or with `system_prompt` beside `background`/`steps`/`output_instructions`, raises `ArgumentError` at compile time`
+  `  - An `agent` block with `system_prompt` beside `background`/`steps`/`output_instructions` raises `ArgumentError` at compile time`
+  *[Decision 28 A2: the "without `model`" clause is dropped from this proposal; that half is not built.]*
 
 ### Notes: 7.1, 7.4-7.7
 
