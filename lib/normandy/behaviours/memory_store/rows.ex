@@ -121,11 +121,14 @@ defmodule Normandy.Behaviours.MemoryStore.Rows do
         {:error, :exists}
 
       true ->
-        Enum.each(moving, fn {path, _d} -> :ok = mod.delete(arg, {ns, path}) end)
-
+        # Destination rows first: a reader outside the table's owner (ETS `get/3`) sees
+        # the document at its old path, its new path or both, never neither. No
+        # destination path is a source path (the destination was empty above).
         Enum.each(moving, fn {path, d} ->
           :ok = mod.put(arg, {ns, MemoryStore.reparent(path, from, to)}, d)
         end)
+
+        Enum.each(moving, fn {path, _d} -> :ok = mod.delete(arg, {ns, path}) end)
 
         {:ok, length(moving)}
     end

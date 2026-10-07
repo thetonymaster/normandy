@@ -5,7 +5,10 @@ defmodule Normandy.Behaviours.MemoryStore.ETS do
   `:ordered_set`, so an operation costs what it touches, not the namespace's size. A
   GenServer owns the `:protected` table and runs every write and every `list/3`, so
   compare-and-set, rename and the `put/6` limits are atomic and a listing never sees half
-  of a rename. `get/3` reads the table directly. The handle is `{pid, table}`.
+  of a rename. `get/3` reads the table directly, one document at a time, outside the
+  owner: during a `rename/4` or `delete_tree/3` it may see the document at its old path, its
+  new path or both (never neither, for a rename), or some of a tree's documents already
+  gone. The handle is `{pid, table}`.
   """
   @behaviour Normandy.Behaviours.MemoryStore
 
