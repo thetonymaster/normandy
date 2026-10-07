@@ -22,7 +22,7 @@ PERF-3/B1, B3 (by measurement), PERF-4, PERF-7, B2, PERF-6, PERF-8, PERF-10, PER
 - Every new telemetry event or metadata key is documented in the `Normandy.Telemetry` moduledoc (`test/telemetry/catalogue_test.exs` enforces it).
 - Every user-visible change gets a bullet in `MIGRATING-2.0.md`, in the section its task owns (see "MIGRATING sections"), placed after `## 37.` and before `## New, non-breaking`; non-breaking additions go under `## New, non-breaking`.
 - A change to message encoding, request building, the loop or run telemetry holds on **every** path: BaseAgent `run/3`, `stream/3`, `Turn.Driver`, `Turn.Inline`, `Turn.Server`. A new Turn core effect is wired into all three interpreters. Tests cover sync, `stream/3` and `Turn.Server` at minimum.
-- **6.1 changes no wire byte and no token estimate.** Request bodies for the same scripted conversation are identical before and after: every value, every array in order, compared decoded (JSON object key order of atom-keyed maps is not stable between VM runs on OTP 26+, see H1). The fixture is recorded on unmodified `d624fbf` code as Task 6.1a's first commit. Exception: `tokens_removed` uses the cached model-facing estimate (H2).
+- **6.1 changes no wire byte and no token estimate.** Request bodies for the same scripted conversation are identical before and after: every value, every array in order, compared decoded (JSON object key order of atom-keyed maps is not stable between VM runs on OTP 26+, see H1). The fixture is recorded on unmodified `d624fbf` code as Task 6.1a's first commit. Task 6.1f (decision 25) changes the key order inside model-visible JSON text, never a value; the decoded fixture still holds. Exception: `tokens_removed` uses the cached model-facing estimate (H2).
 - Store backend changes keep `test/support/session_store_contract.ex` / `memory_store_contract.ex` passing on every backend; a new rule goes into the contract, not one backend's test file.
 - Tests are deterministic: no test depends on two processes racing; never `Process.sleep` to wait for a message (use `assert_receive`, `Normandy.Test.Eventually.wait_until/1`, `:sys.get_state/1` or a synchronous call). Concurrency is proven with gates (a counter of arrivals plus an explicit release), not timing. The one wall-clock assertion (Task 6.2b) has ≥5× headroom and lives in an `async: false` module next to its deterministic twin.
 - Run `mix format` before every test run. A task is done only when `mix precommit 2>&1 | tee <log>` shows ` 0 failures` and exit 0, and `mix docs --warnings-as-errors` exits 0. Tasks that touch a Redis or Postgres backend, `Turn.Server` start paths, the registry or the reaper also run `mix test.redis`, `MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix test.postgres` (after `docker start normandy-test-pg`) and `mix test --only distributed`; the task text names which.
@@ -53,6 +53,7 @@ Section writers may split or merge lettered sub-tasks inside their group; the gr
 | `AgentMemory.request_messages_for(memory, prefix_key)` | 6.1b | `@doc false`; one chain walk → request messages, applying the stale-thinking verdict to the cached `wire` and merging tool runs exactly as `request_messages/1`. `drop_stale_thinking/2`, `history/1`, `request_messages/1` stay public and unchanged. |
 | `AgentMemory.keep_entries(memory, kept_entries, opts)` | 6.1c | `@doc false`; one-pass rebuild from kept `%Entry{}`s (re-links `parent_id`, strips thinking via `put_content/2`). |
 | `Normandy.Test.CountingContent` | 6.1a | Test-support struct + `BaseIOSchema` impl counting `to_json/1` calls in a `:counters` ref. |
+| `Normandy.JSON.sort_keys(term)` | 6.1f | `@doc false`; every plain map, at any depth, becomes a `Jason.OrderedObject` with its keys sorted by their JSON text; structs as `Normandy.JSON`'s struct rule (not sorted); an `OrderedObject` keeps its order, its values walked. Used by `ToolResult.render_output/1` and `BaseIOSchema`'s `Map` impl only. |
 | `client.options[:enable_caching]` default `true` | 6.1e | ClaudioAdapter; `false` opts out. |
 | `{:error, {:store_exit, reason}}` | 6.2a | Turn.Server-internal wrapper for a store call that exited; surfaces as `%TurnError{type: :persist_failed, reason: {:store_exit, reason}}` (in-turn writes) or `:session_unavailable` (loads). Store raises still raise mid-turn; during the load everything is caught (R5). |
 | `Turn.Server` state `:loading` | 6.2b | Entered only by `init/1`, left in the `:internal :load` event to `:idle` or `:unavailable`. |
@@ -101,7 +102,7 @@ Section writers may split or merge lettered sub-tasks inside their group; the gr
 
 ## Header refinements from the section writers (accepted by the controller)
 
-- **H1 (6.1)** JSON key order of atom-keyed maps varies between VM runs (OTP 26+ orders small atom-keyed maps by atom index): observed on `d624fbf`, `tool_result` blocks from `components/tool_result.ex:37-44` encoded `tool_use_id`/`is_error` in either order across runs. The 6.1 fixture compares decoded bodies. Whether model-visible JSON text (a tool's atom-keyed map output encoded into a `tool_result` string) should be key-sorted for prompt-cache stability is an open question for Q (Appendix A1); this wave does not change it.
+- **H1 (6.1)** JSON key order of atom-keyed maps varies between VM runs (OTP 26+ orders small atom-keyed maps by atom index): observed on `d624fbf`, `tool_result` blocks from `components/tool_result.ex:37-44` encoded `tool_use_id`/`is_error` in either order across runs. The 6.1 fixture compares decoded bodies. Model-visible JSON text built from a plain map (a tool's map output in a `tool_result` string, map message content) is key-sorted by Task 6.1f (Q chose A1 (b), decision 25); values are unchanged, so the decoded fixture holds.
 - **H2 (6.1c)** `tokens_removed` is computed from the cached model-facing estimate, so `tokens_removed == tokens_before - tokens_after` now holds for chat messages too (it did not); MIGRATING bullet.
 - **H3 (6.1b)** `TokenCounter` keeps `history/1` (it drops no stale thinking and removes system messages before merging); after 6.1a that reads the cache.
 - **H4 (6.1a)** Turn.Server admission's `BaseAgent.begin_turn/2` runs under `call_handler(data, :append, ...)`, so an unencodable input replies `:handler_crashed` (`:append`) instead of crashing the server. A memory dump whose tool calls are plain maps (never encodable) raises at `load/1`, naming the entry.
@@ -2512,6 +2513,362 @@ git -C /Users/antonio/personal/claudio switch main
 ```
 
 Report the commit hash to the controller (Task 7.5 consumes it). Do not push.
+
+---
+
+### Task 6.1f: Model-facing JSON text lists plain-map keys sorted (decision 25, A1)
+
+On OTP 26+ a small atom-keyed map iterates its keys in atom-creation order, so a tool that returns
+a plain atom-keyed map can produce different `tool_result` text for the same result on two nodes or
+after a restart: the prompt-cache prefix misses, and caching is on by default since 6.1e. Every
+model-visible JSON text Normandy builds from a message's plain map goes through two functions, and
+both now sort: `ToolResult.render_output/1` (the `tool_result` text, which `AgentMemory.model_content/1`
+caches in `Entry.wire` through `ToolResult`'s `BaseIOSchema.to_json/1`, and which `Dispatch.finish/3`'s
+cap measures) and `BaseIOSchema`'s `Map` impl (a plain map given as message content; also the A2A
+server's and `HierarchicalCoordinator`'s text for a map answer). Both call the new
+`@doc false Normandy.JSON.sort_keys/1`: every plain map, at any depth, becomes a
+`Jason.OrderedObject` with its keys sorted by their JSON text (ties such as `"a"` and `:a` by term
+order); a struct goes through `Normandy.JSON`'s struct rule as before (not sorted); a
+`Jason.OrderedObject` keeps its order and its values are walked. Values and list order never change,
+so 6.1a's decoded fixture still passes (its JSON tool result is string-keyed, already in order; its
+io_schema input is a struct).
+
+Not changed (rulings, recorded in `wave-6-sections/PREFLIGHT.md`):
+- **io_schema structs** (`Normandy.Schema`'s `BaseIOSchema.to_json/1`, `__serializable__/1`): a struct
+  keeps its encoding (decision 25: structs untouched). Sorting it would also change 6.1a's fixture
+  (`{"text":...,"lang":...}` would become `{"lang":...,"text":...}`), which this task must keep.
+- **The system prompt's `# OUTPUT SCHEMA` block and `RetryFeedback`'s schema**: their maps are
+  Normandy's compile-time JSON Schema specifications, keyed by keyword atoms (`:type`,
+  `:description`, `:required`, `:properties`) that exist before host code runs; properties are
+  already an `OrderedObject` in declaration order. Sorting would move `"type"` after `"properties"`
+  in every structured-output prompt, with no instability observed.
+- **`Summarizer`'s transcript** reads `history/1`, whose tool results and map content are the sorted
+  cached text; only a map handed to `summarize_messages/4` directly is encoded there, for a one-off
+  request that is never a cached prefix. **`TokenCounter`**'s `count_tokens` text and the token
+  estimates only measure length, which sorting does not change.
+
+**Files:**
+- Modify: `lib/normandy/json.ex` (moduledoc "## Text for the model"; new `sort_keys/1`, `key_text/1`)
+- Modify: `lib/normandy/components/tool_result.ex` (`render_output/1`)
+- Modify: `lib/normandy/components/base_io_schema.ex` (`Map` impl)
+- Modify: `MIGRATING-2.0.md` (`## 38.`)
+- Test: create `test/agents/model_text_key_order_test.exs`
+
+**Interfaces:**
+- Consumes: `Normandy.JSON.normalize/1` (private, the struct rule), `Normandy.Test.WireScript.client/2`, `message/3`, `block/3` (6.1a), `Normandy.Test.ReturnTool`. After 6.1a, `AgentMemory.put_content/2` stores `model_content(content)` in `Entry.wire`; this task changes what that text is for maps, not where it is computed.
+- Produces: `@doc false Normandy.JSON.sort_keys(term) :: term()` (header Shared interfaces). No new public function, option or event.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `test/agents/model_text_key_order_test.exs`:
+
+```elixir
+defmodule Normandy.Agents.ModelTextKeyOrderTest do
+  @moduledoc """
+  Task 6.1f (decision 25, A1): the JSON text Normandy writes for the model from a plain
+  map lists its keys sorted, at every depth, so the same tool result is the same text on
+  every node and after a restart (a stable prompt-cache prefix). On OTP 26+ a small
+  atom-keyed map iterates its keys in atom-creation order, so before this task the text
+  depended on which atom the VM happened to create first.
+
+  The keys here are atoms created at test time in reverse alphabetical order, so the
+  unsorted encoding lists them zeta, mid, alpha. A struct with its own `Jason.Encoder`
+  and a `Jason.OrderedObject` keep their order; values and list order never change.
+  """
+  use ExUnit.Case, async: true
+  @moduletag :capture_log
+
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Turn.Server
+  alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.BaseIOSchema
+  alias Normandy.Components.ToolResult
+  alias Normandy.Test.ReturnTool
+  alias Normandy.Test.WireScript
+  alias Normandy.Tools.Toolset
+
+  defmodule Derived do
+    @moduledoc false
+    @derive {Jason.Encoder, only: [:zulu, :alpha]}
+    defstruct [:zulu, :alpha]
+  end
+
+  # Three atoms created now, in reverse alphabetical order (zeta, mid, alpha).
+  defp fresh_keys do
+    suffix = System.unique_integer([:positive])
+    for name <- ["zeta", "mid", "alpha"], do: String.to_atom("#{name}_#{suffix}")
+  end
+
+  # A tool output with atom keys at three depths, a string key among them, and a list of
+  # maps; and its text with every object's keys sorted.
+  defp output_and_text do
+    [z, m, a] = fresh_keys()
+    [z2, m2, a2] = fresh_keys()
+
+    output = %{
+      z => 1,
+      "beta" => "b",
+      m => %{z2 => "x", a2 => "y"},
+      a => [%{m2 => true, a2 => false}, 3]
+    }
+
+    text =
+      ~s({"#{a}":[{"#{a2}":false,"#{m2}":true},3],"beta":"b",) <>
+        ~s("#{m}":{"#{a2}":"y","#{z2}":"x"},"#{z}":1})
+
+    {output, text}
+  end
+
+  defp result_text(output) do
+    [%{content: text}] = BaseIOSchema.to_json(%ToolResult{tool_call_id: "t", output: output})
+    text
+  end
+
+  describe "the encoding" do
+    test "a tool's map output is sent with its keys sorted, at every depth" do
+      {output, text} = output_and_text()
+
+      assert result_text(output) == text
+      assert ToolResult.render_output(output) == text
+      # The same values: only the order of the keys changed.
+      assert Jason.decode!(text) == Jason.decode!(Normandy.JSON.encode!(output))
+    end
+
+    test "map content is sent with its keys sorted" do
+      {output, text} = output_and_text()
+
+      assert BaseIOSchema.to_json(output) == text
+    end
+
+    test "a struct with its own encoder and an OrderedObject keep their order; maps in an OrderedObject are sorted" do
+      [z, _m, a] = fresh_keys()
+
+      output = %{
+        "struct" => %Derived{zulu: 1, alpha: 2},
+        "ordered" => Jason.OrderedObject.new([{"zulu", %{z => 1, a => 2}}, {"alpha", 0}])
+      }
+
+      assert result_text(output) ==
+               ~s({"ordered":{"zulu":{"#{a}":2,"#{z}":1},"alpha":0},) <>
+                 ~s("struct":{"zulu":1,"alpha":2}})
+    end
+  end
+
+  describe "on every path" do
+    @replies [
+      {[%{"type" => "tool_use", "id" => "t1", "name" => "facts", "input" => %{}}], "tool_use"},
+      {[%{"type" => "text", "text" => "Done."}], "end_turn"}
+    ]
+
+    defp json_replies, do: Enum.map(@replies, fn {blocks, stop} -> {:json, blocks, stop} end)
+
+    defp sse_replies do
+      for {{[block], stop}, i} <- Enum.with_index(@replies) do
+        events =
+          case block do
+            %{"type" => "tool_use"} ->
+              WireScript.block(0, block, [
+                %{"type" => "input_json_delta", "partial_json" => "{}"}
+              ])
+
+            %{"type" => "text", "text" => text} ->
+              WireScript.block(0, %{"type" => "text", "text" => ""}, [
+                %{"type" => "text_delta", "text" => text}
+              ])
+          end
+
+        {:sse, WireScript.message("msg_#{i}", events, stop)}
+      end
+    end
+
+    defp agent(client, output) do
+      BaseAgent.init(%{
+        client: client,
+        model: "claude-opus-5-5",
+        max_tokens: 1024,
+        toolset: Toolset.new([%ReturnTool{name: "facts", output: output}])
+      })
+    end
+
+    # The tool_result texts in the request that follows the tool round.
+    defp sent_results do
+      assert_received {:wire_body, 1, body}
+
+      for %{"content" => blocks} when is_list(blocks) <- body["messages"],
+          %{"type" => "tool_result", "content" => content} <- blocks,
+          do: content
+    end
+
+    test "run/3" do
+      {output, text} = output_and_text()
+      config = agent(WireScript.client(json_replies()), output)
+
+      assert {:ok, _config, _out} = BaseAgent.run(config, "go")
+      assert sent_results() == [text]
+    end
+
+    test "stream/3" do
+      {output, text} = output_and_text()
+      config = agent(WireScript.client(sse_replies()), output)
+
+      assert {:ok, _config, _out} = BaseAgent.stream(config, "go", fn _event -> :ok end)
+      assert sent_results() == [text]
+    end
+
+    test "Turn.Server" do
+      {output, text} = output_and_text()
+
+      {:ok, srv} =
+        Server.start_link(
+          session_id: "key-order-#{System.unique_integer([:positive])}",
+          config: agent(WireScript.client(json_replies()), output),
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()}
+        )
+
+      assert {:ok, _out} = Server.run(srv, "go")
+      assert sent_results() == [text]
+    end
+  end
+end
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `mix format && mix test test/agents/model_text_key_order_test.exs`
+Expected: `6 tests, 6 failures`. Each `left:` lists the keys in creation order, e.g.
+`"{\"zeta_326\":1,\"mid_326\":{\"zeta_390\":\"x\",\"alpha_390\":\"y\"},\"alpha_326\":[...],\"beta\":\"b\"}"`
+against the sorted `right:`; the struct/OrderedObject test differs only inside the `OrderedObject`
+(`{"zeta_N":1,"alpha_N":2}` against `{"alpha_N":2,"zeta_N":1}`).
+
+- [ ] **Step 3: Implement**
+
+`lib/normandy/json.ex`. In the moduledoc, after the paragraph ending
+`` it is: the adapter raises on it, and `encode/2` returns that exception. `` add:
+
+```
+  ## Text for the model
+
+  The JSON text Normandy writes into a message for the model (a tool result's text,
+  a map given as message content) lists every plain map's keys sorted by their text,
+  at any depth, so the same value is the same text on every node and after a restart
+  (on OTP 26+ a small atom-keyed map iterates its keys in atom-creation order). Values
+  and list order are unchanged. A struct is encoded as above, and a
+  `Jason.OrderedObject` keeps its order (the plain maps among its values are sorted).
+  The sorted maps reach the adapter as `Jason.OrderedObject` structs, so a custom
+  `:adapter` must encode those in order, as Jason does.
+```
+
+After `defp normalize(other), do: other` (before the `@doc false` of `own_encoder?/1`) add:
+
+```elixir
+  @doc false
+  # "Text for the model" in the moduledoc: every plain map becomes a Jason.OrderedObject
+  # with its keys sorted by their JSON text (ties, such as "a" and :a, by term order, so
+  # the result never depends on the map's iteration order). A struct is normalized as
+  # encode!/2 does it, not sorted; an OrderedObject keeps its order and its values are
+  # walked. Callers: ToolResult.render_output/1 and BaseIOSchema's Map impl.
+  @spec sort_keys(term()) :: term()
+  def sort_keys(%Jason.OrderedObject{values: values} = object),
+    do: %{object | values: Enum.map(values, fn {key, value} -> {key, sort_keys(value)} end)}
+
+  def sort_keys(%_{} = struct), do: normalize(struct)
+
+  def sort_keys(map) when is_map(map) do
+    map
+    |> Enum.map(fn {key, value} -> {key, sort_keys(value)} end)
+    |> Enum.sort_by(fn {key, _value} -> {key_text(key), key} end)
+    |> Jason.OrderedObject.new()
+  end
+
+  def sort_keys(list) when is_list(list), do: Enum.map(list, &sort_keys/1)
+  def sort_keys(other), do: other
+
+  # A key as Jason writes it: an atom by its name, anything else through String.Chars.
+  defp key_text(key) when is_atom(key), do: Atom.to_string(key)
+  defp key_text(key), do: to_string(key)
+```
+
+(`encode!/2` then normalizes the result again: an `OrderedObject` has its own `Jason.Encoder`, so it
+is kept whole. A key JSON cannot express, such as a tuple, raises `Protocol.UndefinedError` from
+`key_text/1`, the exception Jason raised for it before.)
+
+`lib/normandy/components/tool_result.ex`, `render_output/1`: replace
+
+```elixir
+  # else (a map, a list, an atom, a boolean, nil) as JSON. Dispatch turns an output JSON
+  # cannot express into an error result after every hook has run, so this raises only
+  # for a ToolResult built outside Dispatch.
+  @spec render_output(term()) :: String.t()
+  def render_output(output) when is_binary(output), do: output
+  def render_output(output) when is_number(output), do: to_string(output)
+  def render_output(output), do: Normandy.JSON.encode!(output)
+```
+
+with
+
+```elixir
+  # else (a map, a list, an atom, a boolean, nil) as JSON, every plain map's keys sorted
+  # (Normandy.JSON "Text for the model": the same result is the same text on every node).
+  # Dispatch turns an output JSON cannot express into an error result after every hook
+  # has run, so this raises only for a ToolResult built outside Dispatch.
+  @spec render_output(term()) :: String.t()
+  def render_output(output) when is_binary(output), do: output
+  def render_output(output) when is_number(output), do: to_string(output)
+  def render_output(output), do: output |> Normandy.JSON.sort_keys() |> Normandy.JSON.encode!()
+```
+
+`lib/normandy/components/base_io_schema.ex`, `defimpl Normandy.Components.BaseIOSchema, for: Map`:
+replace `  def to_json(map), do: Normandy.JSON.encode!(map)` with
+
+```elixir
+  # Keys sorted at every depth (Normandy.JSON "Text for the model").
+  def to_json(map), do: map |> Normandy.JSON.sort_keys() |> Normandy.JSON.encode!()
+```
+
+Dispatch's encodability checks (`ensure_encodable/1`, `wrap_output/2`, `wrap_error/2`) keep
+`Normandy.JSON.encode/1` unsorted: they only ask whether the output encodes, and sorting does not
+change that.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `mix format && mix test test/agents/model_text_key_order_test.exs test/agents/wire_identity_test.exs test/components/ test/json_test.exs test/json_struct_encoding_test.exs`
+Expected: `2 properties, 179 tests, 0 failures` (preflight on 6.1a–6.1e). `wire_identity_test.exs`
+passing is the "values unchanged" proof against the frozen fixture.
+
+- [ ] **Step 5: Gate**
+
+Run: `mix precommit 2>&1 | tee /tmp/w6-6.1f.log; grep -E " [0-9]+ failures|Total errors" /tmp/w6-6.1f.log` and `mix docs --warnings-as-errors`.
+Expected: ` 0 failures`, exit 0 (preflight on 6.1a–6.1e: `72 doctests, 31 properties, 3426 tests`);
+docs exit 0. Tagged suites: none (no backend, no `Turn.Server` start path).
+
+- [ ] **Step 6: MIGRATING-2.0.md**
+
+Append to `## 38.` (after 6.1e's prompt-caching bullet):
+
+```markdown
+- The JSON text Normandy writes for the model from a plain map (a tool's map or list output in
+  its `tool_result`, a map given as message content) lists every map's keys sorted by their
+  text, at any depth. On OTP 26+ a small atom-keyed map iterates its keys in atom-creation
+  order, so the same tool result could be different text on two nodes or after a restart, and
+  miss the prompt cache. Values and list order are unchanged. Structs are encoded as before
+  (one with its own `Jason.Encoder` by that encoder), and a `Jason.OrderedObject` keeps its
+  order: return one from a tool whose key order means something to the model. A custom
+  `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
+  encode them in order, as Jason does.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/normandy/json.ex
+git add lib/normandy/components/tool_result.ex
+git add lib/normandy/components/base_io_schema.ex
+git add test/agents/model_text_key_order_test.exs
+git add MIGRATING-2.0.md
+git commit -m "fix(json): model-facing JSON text lists plain-map keys sorted (A1)"
+```
 
 ---
 
@@ -7574,10 +7931,13 @@ git commit -m "feat(session_store)!: delete_session/2 on every store, keeping fo
 
 Without a caller the store callback is unreachable for hosts, and they would have to stop servers
 themselves (R8 / 6.3 Q5). `delete/1` stops the live server through the supervisor (header conflict 2)
-and then calls `delete_session/2`.
+and then calls `delete_session/2`. A store call that exits is a failed delete, as in `Turn.Server`
+(6.2a's `store_call/1` rule: exits caught, raises propagate; decision 25, A6):
+`{:error, %TurnError{type: :persist_failed, reason: {:store_exit, tag}}}`. Registry and supervisor
+calls are not wrapped, as in `run/2` (ruling, `PREFLIGHT.md`).
 
 **Files:**
-- Modify: `lib/normandy/agents/turn/session.ex` (moduledoc first paragraph, `delete/1`, `stop_server_fun!/1`, `stop_live_server/3`)
+- Modify: `lib/normandy/agents/turn/session.ex` (moduledoc first paragraph, `delete/1`, `delete_from_store/3`, `stop_server_fun!/1`, `stop_live_server/3`)
 - Modify: `lib/normandy/agents/turn/supervisor.ex` (`stop_server/2`)
 - Modify: `lib/normandy/agents/turn/supervisor/horde.ex` (`stop_server/2`)
 - Modify: `lib/normandy/agents/turn/resume_reaper.ex` (moduledoc and the `:store` option doc only; 6.2f owns `reap/1`)
@@ -7586,7 +7946,7 @@ and then calls `delete_session/2`.
 - Test: create `test/agents/turn/session_delete_test.exs`
 
 **Interfaces:**
-- Consumes: `SessionStore.delete_session/2` (6.3d); `SessionRegistry.whereis/2`; `DynamicSupervisor.terminate_child/2`, `Horde.DynamicSupervisor.terminate_child/2` (both `:ok | {:error, :not_found}`). After Tasks 6.2c/6.2d, `session.ex` has `run/2`'s passivation retry; `delete/1` is added after `put_config/2` and does not touch it.
+- Consumes: `SessionStore.delete_session/2` (6.3d); `SessionRegistry.whereis/2`; `TurnError.drop_stacktraces/1` (exists before Wave 6); `Describe.reason_term/1` (6.2a); `DynamicSupervisor.terminate_child/2`, `Horde.DynamicSupervisor.terminate_child/2` (both `:ok | {:error, :not_found}`). After Tasks 6.2c/6.2d, `session.ex` has `run/2`'s passivation retry; `delete/1` is added after `put_config/2` and does not touch it.
 - Produces: `Normandy.Agents.Turn.Session.delete(t()) :: :ok | {:error, TurnError.t()}`; `Normandy.Agents.Turn.Supervisor.stop_server(sup, pid) :: :ok | {:error, :not_found}`; `Normandy.Agents.Turn.Supervisor.Horde.stop_server(sup, pid) :: :ok | {:error, :not_found}`.
 
 - [ ] **Step 1: Write the failing test**
@@ -7625,6 +7985,18 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
   defmodule RefusingStore do
     @moduledoc false
     def delete_session(_handle, _sid), do: {:error, :disk_full}
+  end
+
+  # A store whose call exits, as a GenServer.call to a stuck store process does.
+  defmodule ExitingStore do
+    @moduledoc false
+    def delete_session(_handle, sid),
+      do: exit({:timeout, {GenServer, :call, [:store, {:delete_session, sid}, 5_000]}})
+  end
+
+  defmodule RaisingStore do
+    @moduledoc false
+    def delete_session(_handle, _sid), do: raise("store bug")
   end
 
   # A supervisor whose stop_server/2 never finds the child.
@@ -7804,6 +8176,26 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
              Session.delete(session)
   end
 
+  # Decision 25 (A6): a store exit is a failed delete, as in Turn.Server (Task 6.2a's
+  # store_call/1); the call's arguments (the session id here) are not in the reason.
+  test "a store that exits is a :persist_failed TurnError with {:store_exit, tag}" do
+    {_store, reg, sup} = setup_infra()
+    session = session(nil, reg, sup, store: {ExitingStore, nil})
+
+    assert {:error,
+            %TurnError{
+              type: :persist_failed,
+              reason: {:store_exit, {:timeout, {GenServer, :call, "a list"}}}
+            }} = Session.delete(session)
+  end
+
+  test "a store that raises raises (a bug, not a failed delete)" do
+    {_store, reg, sup} = setup_infra()
+    session = session(nil, reg, sup, store: {RaisingStore, nil})
+
+    assert_raise RuntimeError, "store bug", fn -> Session.delete(session) end
+  end
+
   test "a :supervisor_mod without stop_server/2 raises, naming it" do
     {store, reg, _sup} = setup_infra()
     session = session(store, reg, :unused, supervisor_mod: NoStopSupervisor)
@@ -7830,7 +8222,7 @@ mix format
 mix test test/agents/turn/session_delete_test.exs
 ```
 
-Expected: 9 failures, `UndefinedFunctionError ... Normandy.Agents.Turn.Session.delete/1 is
+Expected: 11 failures, `UndefinedFunctionError ... Normandy.Agents.Turn.Session.delete/1 is
 undefined or private`.
 
 - [ ] **Step 3: Implement**
@@ -7896,7 +8288,10 @@ Insert before the `@doc` of `put_config/2`:
       exited, so calling again is safe). Nothing was deleted.
     * `{:error, %Normandy.TurnError{type: :persist_failed, reason: reason}}` - the store
       refused the delete (`reason` is its reason reduced to its tags, as for `run/2`'s
-      store failures). The server is already stopped; calling again finishes the job.
+      store failures), or its call exited (`reason: {:store_exit, tag}`, the exit reason
+      reduced the same way, e.g. `{:store_exit, {:timeout, {GenServer, :call, "a list"}}}`).
+      The server is already stopped; calling again finishes the job. A store that raises
+      raises.
 
   The handle's `:supervisor_mod` must export `stop_server/2`
   (`Normandy.Agents.Turn.Supervisor` and `Normandy.Agents.Turn.Supervisor.Horde` do);
@@ -7916,7 +8311,7 @@ Insert before the `@doc` of `put_config/2`:
     with :ok <-
            stop_live_server(reg_mod.whereis(reg_handle, session.session_id), session, stop_server) do
       # The store's reason is reduced to its tags, as run/2's template save does.
-      case store_mod.delete_session(store_handle, session.session_id) do
+      case delete_from_store(store_mod, store_handle, session.session_id) do
         :ok ->
           :ok
 
@@ -7937,6 +8332,14 @@ Insert before the `@doc` of `put_config/2`:
 Insert before `defp ensure_server(`:
 
 ```elixir
+  # A store call that exits (a dead store process, a call timeout) is a failed delete,
+  # as in Turn.Server (store_call/1); a raise is a bug and propagates.
+  defp delete_from_store(store_mod, store_handle, session_id) do
+    store_mod.delete_session(store_handle, session_id)
+  catch
+    :exit, reason -> {:error, {:store_exit, TurnError.drop_stacktraces(reason)}}
+  end
+
   defp stop_server_fun!(mod) do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :stop_server, 2) do
       &mod.stop_server/2
@@ -7973,7 +8376,8 @@ with
 
 ```
       their count, `{:timeout, {GenServer, :call, 3}}`. `Turn.Session.delete/1` returns it
-      when the store refused the delete
+      when the store refused the delete or its call exited, with the reason reduced to its
+      tags (`{:store_exit, {:timeout, {GenServer, :call, "a list"}}}`)
 ```
 
 and at the end of the `:session_unavailable` bullet replace
@@ -8020,7 +8424,8 @@ mix format
 mix test test/agents/turn/session_delete_test.exs test/agents/turn/session_test.exs test/agents/turn/resume_reaper_test.exs
 ```
 
-Expected: ` 0 failures` (scratch: 9/9 in `session_delete_test.exs`, 3 consecutive runs).
+Expected: ` 0 failures` (scratch: 9/9 in `session_delete_test.exs`, 3 consecutive runs; 11/11 with
+A6's two tests, preflight on the stacked tree: `54 tests, 0 failures` for the three files).
 
 - [ ] **Step 5: Gate**
 
@@ -8056,7 +8461,9 @@ idempotent. It does not stop new turns: stop routing to a session before deletin
 - `Turn.Session.delete/1` stops a session's live server and deletes it from the store
   (`SessionStore.delete_session/2`). `Turn.Supervisor.stop_server/2` and
   `Turn.Supervisor.Horde.stop_server/2` stop one server without a restart; a custom
-  `:supervisor_mod` needs `stop_server/2` only for `delete/1`.
+  `:supervisor_mod` needs `stop_server/2` only for `delete/1`. A store that refuses the
+  delete, or whose call exits, is `{:error, %TurnError{type: :persist_failed}}` (an exit as
+  `reason: {:store_exit, tag}`); a store that raises raises.
 ```
 
 - [ ] **Step 7: Commit**
@@ -16569,12 +16976,12 @@ git commit -m "fix(coordination): pool order, protected context table, hierarchi
 
 ## Appendix A: open questions for Q (raised by writers and preflight; each with a recommendation)
 
-- **A1. Model-visible JSON key order is not stable across restarts or nodes.** On OTP 26+ a small atom-keyed map orders its keys by atom creation, not alphabetically (verified: `#{zzz_new_atom_1 => 1, aaa_new_atom_2 => 2}` lists `zzz_` first on OTP 28). A tool that returns a plain atom-keyed map (`Dispatch.wrap_output/2` keeps the map; it is encoded into the `tool_result` text later) can therefore produce different text for the same result on two nodes or after a restart, so the prompt-cache prefix misses and, with caching on by default (R4), costs more. Structs with derived encoders and `Jason.OrderedObject` are stable. Options: (a) leave it and document it; (b) add Task 6.1f: the one model-facing encoding (`AgentMemory.model_content/1` for tool results, and the tool-output path) sorts the keys of plain maps recursively, leaving structs and `OrderedObject` alone, with a test that builds the map's atoms in reverse order in a peer node. **Recommend (b).** It changes wire bytes but not values (the decoded fixture still holds). Cost if wrong: a tool whose map key order carried meaning to the model loses that order; such tools should return an `OrderedObject`.
+- **A1. Model-visible JSON key order is not stable across restarts or nodes.** On OTP 26+ a small atom-keyed map orders its keys by atom creation, not alphabetically (verified: `#{zzz_new_atom_1 => 1, aaa_new_atom_2 => 2}` lists `zzz_` first on OTP 28). A tool that returns a plain atom-keyed map (`Dispatch.wrap_output/2` keeps the map; it is encoded into the `tool_result` text later) can therefore produce different text for the same result on two nodes or after a restart, so the prompt-cache prefix misses and, with caching on by default (R4), costs more. Structs with derived encoders and `Jason.OrderedObject` are stable. Options: (a) leave it and document it; (b) add Task 6.1f: the one model-facing encoding (`AgentMemory.model_content/1` for tool results, and the tool-output path) sorts the keys of plain maps recursively, leaving structs and `OrderedObject` alone, with a test that builds the map's atoms in reverse order in a peer node. **Recommend (b).** It changes wire bytes but not values (the decoded fixture still holds). Cost if wrong: a tool whose map key order carried meaning to the model loses that order; such tools should return an `OrderedObject`. *Accepted (decision 25): Task 6.1f.*
 - **A2. `AgentMemory.load/1` raises for a dump it cannot encode** (6.1a writer's call; a 1.x dump with untagged tool calls). Alternative: load lazily and fail at the next request, as today. **Recommend keep raising** (same move as R1: fail at the cause; such a dump cannot be sent anyway). MIGRATING says it.
 - **A3. `tokens_removed` now uses the cached model-facing estimate** (H2), a few tokens lower per chat message, and `tokens_removed == tokens_before - tokens_after` now holds. **Recommend keep.**
 - **A4. `Dispatch` encodes each tool output four times** (three redundant; constant per result, not PERF-3). **Recommend defer to 2.x** (measured cost small; it touches the Wave 5 cap/encodability rules).
 - **A5. A fenced `Turn.Server` (`{:shutdown, :registration_lost}`) reaches a `Session.run/2` caller as an exit**, like any mid-turn crash (H8 retries only passivation). Option: map it to a `:session_unavailable` `TurnError` in 6.2d. **Recommend leave as an exit** (the turn may have run; MIGRATING says so).
-- **A6. `Turn.Session.delete/1` lets a store exit reach the caller** (R5's exit catching is Turn.Server-only; `run/2`'s template save behaves the same today). Option: catch exits in `delete/1` and return `:persist_failed` `{:store_exit, tag}`. **Recommend catch** (one clause in 6.3e, consistent with 6.2a). If you agree, I add it to 6.3e before execution.
+- **A6. `Turn.Session.delete/1` lets a store exit reach the caller** (R5's exit catching is Turn.Server-only; `run/2`'s template save behaves the same today). Option: catch exits in `delete/1` and return `:persist_failed` `{:store_exit, tag}`. **Recommend catch** (one clause in 6.3e, consistent with 6.2a). If you agree, I add it to 6.3e before execution. *Accepted (decision 25): applied in Task 6.3e.*
 - **A7. `get_stats/1` `run_count` counts failed turns** in both `AgentProcess` modes (inline counted only successes before). **Recommend keep** (both modes agree).
 - **A8. `HierarchicalCoordinator` errors keep a tag around the bare exception** (`{:manager_failed | :aggregation_failed, e}`, no stacktrace) rather than an `%OrchestrationError{}`. **Recommend keep.**
 - **A9. Claudio `feat/add-messages`** branches from `main` (`005c51d`); no citations branch exists yet, and the branch does not bump `@version` (you own the release). **Recommend as written.**
@@ -16734,6 +17141,10 @@ delete rules green on all five backends. The items below are the writer's origin
 - `Turn.Session.delete/1` lets a store **exit** (a dead InMemory Agent, a Redis connection exit)
   propagate to the caller; R5's exit catching is Turn.Server-only. Same as `run/2`'s template
   save today.
+  *Preflight annotation:* resolved by A6 (decision 25): `delete/1` catches a store exit and returns
+  `:persist_failed` with `reason: {:store_exit, tag}` (Step 3 `delete_from_store/3`, two tests);
+  a store raise still raises; registry and supervisor exits are not wrapped (as in `run/2`).
+  `run/2`'s template save is unchanged.
 - `TurnError`'s `:session_unavailable` message reads "the session could not be started (...)",
   which is odd for a delete error. Left as is (changing the message is out of scope); flag for 6.4c.
 - Mnesia `delete_session/2` write-locks both tables for a full scan: fine for rare deletes, bad for
