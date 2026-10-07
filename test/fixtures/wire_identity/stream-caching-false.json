@@ -1,0 +1,374 @@
+[
+  {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "{\"text\":\"Weather in Paris?\",\"lang\":\"en\"}",
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "stream": true,
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one",
+    "tools": [
+      {
+        "description": "returns its configured output",
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "name": "facts"
+      },
+      {
+        "description": "fake",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "weather"
+      }
+    ]
+  },
+  {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "{\"text\":\"Weather in Paris?\",\"lang\":\"en\"}",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "signature": "sig-1",
+            "thinking": "plan one",
+            "type": "thinking"
+          },
+          {
+            "text": "Checking.",
+            "type": "text"
+          },
+          {
+            "id": "t1",
+            "input": {
+              "city": "Paris"
+            },
+            "name": "weather",
+            "type": "tool_use"
+          },
+          {
+            "id": "t2",
+            "input": {},
+            "name": "facts",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "weather in Paris",
+            "is_error": false,
+            "tool_use_id": "t1",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"population\":2100000,\"tags\":[\"capital\"]}",
+            "is_error": false,
+            "tool_use_id": "t2",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "stream": true,
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one",
+    "tools": [
+      {
+        "description": "returns its configured output",
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "name": "facts"
+      },
+      {
+        "description": "fake",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "weather"
+      }
+    ]
+  },
+  {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "{\"text\":\"Weather in Paris?\",\"lang\":\"en\"}",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Checking.",
+            "type": "text"
+          },
+          {
+            "id": "t1",
+            "input": {
+              "city": "Paris"
+            },
+            "name": "weather",
+            "type": "tool_use"
+          },
+          {
+            "id": "t2",
+            "input": {},
+            "name": "facts",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "weather in Paris",
+            "is_error": false,
+            "tool_use_id": "t1",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"population\":2100000,\"tags\":[\"capital\"]}",
+            "is_error": false,
+            "tool_use_id": "t2",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": "Paris is sunny.",
+        "role": "assistant"
+      },
+      {
+        "content": "{\"text\":\"And Lyon?\",\"lang\":\"fr\"}",
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "stream": true,
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "tools": [
+      {
+        "description": "returns its configured output",
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "name": "facts"
+      },
+      {
+        "description": "fake",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "weather"
+      }
+    ]
+  },
+  {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "{\"text\":\"Weather in Paris?\",\"lang\":\"en\"}",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "text": "Checking.",
+            "type": "text"
+          },
+          {
+            "id": "t1",
+            "input": {
+              "city": "Paris"
+            },
+            "name": "weather",
+            "type": "tool_use"
+          },
+          {
+            "id": "t2",
+            "input": {},
+            "name": "facts",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "weather in Paris",
+            "is_error": false,
+            "tool_use_id": "t1",
+            "type": "tool_result"
+          },
+          {
+            "content": "{\"population\":2100000,\"tags\":[\"capital\"]}",
+            "is_error": false,
+            "tool_use_id": "t2",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": "Paris is sunny.",
+        "role": "assistant"
+      },
+      {
+        "content": "{\"text\":\"And Lyon?\",\"lang\":\"fr\"}",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "signature": "sig-2",
+            "thinking": "plan two",
+            "type": "thinking"
+          },
+          {
+            "id": "t3",
+            "input": {
+              "city": "Lyon"
+            },
+            "name": "weather",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "weather in Lyon",
+            "is_error": false,
+            "tool_use_id": "t3",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "stream": true,
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "tools": [
+      {
+        "description": "returns its configured output",
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "name": "facts"
+      },
+      {
+        "description": "fake",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "weather"
+      }
+    ]
+  },
+  {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "{\"text\":\"And Lyon?\",\"lang\":\"fr\"}",
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "id": "t3",
+            "input": {
+              "city": "Lyon"
+            },
+            "name": "weather",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "weather in Lyon",
+            "is_error": false,
+            "tool_use_id": "t3",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": "Lyon is cloudy.",
+        "role": "assistant"
+      },
+      {
+        "content": "{\"text\":\"Thanks, that is all.\",\"lang\":\"en\"}",
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "stream": true,
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "tools": [
+      {
+        "description": "returns its configured output",
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "name": "facts"
+      },
+      {
+        "description": "fake",
+        "input_schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "weather"
+      }
+    ]
+  }
+]
