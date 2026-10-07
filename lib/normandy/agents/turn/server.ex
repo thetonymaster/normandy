@@ -1709,8 +1709,16 @@ defmodule Normandy.Agents.Turn.Server do
 
   # A failed turn's error is persisted as the exception the turn failed with, redacted
   # (TurnError.redact/1): a bug's fields and message never reach the store.
-  defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid}, turn_state),
-    do: store_call(fn -> mod.save_turn_state(handle, sid, persistable(turn_state)) end)
+  defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid} = data, turn_state),
+    do:
+      store_call(fn ->
+        mod.save_turn_state(handle, sid, persistable(turn_state), inflight?(data, turn_state))
+      end)
+
+  # The store's in-flight index (list_resumable/1, read by ResumeReaper): an eager
+  # session whose turn has not ended. Saved with the state, so the two never disagree.
+  defp inflight?(%Data{resume_policy: policy}, turn_state),
+    do: policy == :eager and resumable?(turn_state)
 
   # A store call that exits (a GenServer or Agent call timeout, a dead store process, a
   # dead connection) fails like the store's own {:error, reason}: the write is not

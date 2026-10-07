@@ -111,7 +111,7 @@ defmodule Normandy.SessionStoreContract do
 
       test "turn state round-trips an opaque term; missing is :error", %{handle: h} do
         term = {:turn, %{step: 3, calls: [:a, :b]}, "opaque"}
-        assert :ok = @store.save_turn_state(h, "s1", term)
+        assert :ok = @store.save_turn_state(h, "s1", term, false)
         assert {:ok, ^term} = @store.load_turn_state(h, "s1")
         assert :error = @store.load_turn_state(h, "never-saved")
       end
@@ -130,14 +130,29 @@ defmodule Normandy.SessionStoreContract do
         assert :error = @store.load_config_template(h, "never")
       end
 
-      test "list_resumable returns only sessions whose template resume_policy is :eager",
+      test "list_resumable lists the sessions whose last turn-state save was in flight",
            %{handle: h} do
-        :ok = @store.save_config_template(h, "eager1", %{template_id: "k", resume_policy: :eager})
-        :ok = @store.save_config_template(h, "lazy1", %{template_id: "k", resume_policy: :lazy})
-        :ok = @store.save_config_template(h, "eager2", %{template_id: "k", resume_policy: :eager})
+        :ok = @store.save_turn_state(h, "parked", {:state, :awaiting_approval}, true)
+        :ok = @store.save_turn_state(h, "steering", {:state, :steering}, true)
+        :ok = @store.save_turn_state(h, "idle", {:state, :stopped}, false)
 
         assert {:ok, ids} = @store.list_resumable(h)
-        assert Enum.sort(ids) == ["eager1", "eager2"]
+        assert Enum.sort(ids) == ["parked", "steering"]
+
+        # The turn ends: the same write that saves the terminal state drops the session.
+        :ok = @store.save_turn_state(h, "parked", {:state, :stopped}, false)
+        assert {:ok, ["steering"]} = @store.list_resumable(h)
+
+        # Saving it again in flight lists it again, once.
+        :ok = @store.save_turn_state(h, "parked", {:state, :steering}, true)
+        :ok = @store.save_turn_state(h, "parked", {:state, :steering}, true)
+        assert {:ok, ids} = @store.list_resumable(h)
+        assert Enum.sort(ids) == ["parked", "steering"]
+      end
+
+      test "an :eager config template does not list a session by itself", %{handle: h} do
+        :ok = @store.save_config_template(h, "eager1", %{template_id: "k", resume_policy: :eager})
+        assert {:ok, []} = @store.list_resumable(h)
       end
 
       test "implements the SessionStore behaviour" do

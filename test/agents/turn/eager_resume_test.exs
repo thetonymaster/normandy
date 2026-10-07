@@ -35,7 +35,7 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
 
     # Seed a non-terminal persisted turn state at a steering boundary.
     steering = %Turn.State{status: :steering, iterations_left: 1, max_iterations: 5}
-    :ok = InMemory.save_turn_state(store, sid, steering)
+    :ok = InMemory.save_turn_state(store, sid, steering, true)
 
     # Stub call_llm so the resumed turn finalizes instead of hitting a nil client.
     handlers = %{

@@ -30,7 +30,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
 
   test "WAIT with numreplicas: 0 is a no-op and save succeeds", %{handle: h} do
     # Default wait config {0,0} → no-op; boundary write returns :ok against single Redis.
-    assert :ok = Redis.save_turn_state(h, "s1", %{step: 1})
+    assert :ok = Redis.save_turn_state(h, "s1", %{step: 1}, false)
     assert {:ok, %{step: 1}} = Redis.load_turn_state(h, "s1")
   end
 

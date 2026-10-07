@@ -4,7 +4,7 @@ defmodule Normandy.Behaviours.SessionStore do
 
   The memory-backing half (`append_entry`, `history`, `fork`) persists the
   parent-linked entry graph keyed by `session_id`. The turn-state half
-  (`save_turn_state`, `load_turn_state`) round-trips an **opaque term** — defined
+  (`save_turn_state/4`, `load_turn_state/2`) round-trips an **opaque term** — defined
   and contract-tested in Phase 3 but with no real consumer until Phase 4's
   `%TurnState{}` (suspendable turn / passivation).
 
@@ -37,7 +37,18 @@ defmodule Normandy.Behaviours.SessionStore do
   @callback history(handle(), session_id()) :: {:ok, [Entry.t()]} | {:error, term()}
   @callback fork(handle(), session_id(), from_entry_id :: String.t()) ::
               {:ok, session_id()} | {:error, term()}
-  @callback save_turn_state(handle(), session_id(), state :: term()) :: :ok | {:error, term()}
+  @doc """
+  Saves the session's turn state and, in the same write, whether its turn is in flight.
+
+  `inflight?` is what `Turn.Server` computes: the session is `:eager` and its turn has
+  not ended (status other than `:stopped` and `:failed`). `list_resumable/1` lists the
+  sessions whose last save had `inflight?: true`. The two are written together, so the
+  index never disagrees with the saved state; a backend that cannot write both
+  atomically may leave a session listed that is not in flight (the reaper re-checks the
+  turn state), never the reverse.
+  """
+  @callback save_turn_state(handle(), session_id(), state :: term(), inflight? :: boolean()) ::
+              :ok | {:error, term()}
   @callback load_turn_state(handle(), session_id()) :: {:ok, term()} | :error | {:error, term()}
 
   @callback save_config_template(handle(), session_id(), template :: term()) ::
@@ -46,11 +57,12 @@ defmodule Normandy.Behaviours.SessionStore do
               {:ok, term()} | :error | {:error, term()}
 
   @doc """
-  Lists the `session_id`s whose persisted config template has `resume_policy: :eager`.
+  Lists the sessions with a turn in flight: those whose last `save_turn_state/4` had
+  `inflight?: true`.
 
-  Used by `Turn.ResumeReaper` on node-down to find candidate eager sessions; the
-  reaper further filters by liveness (`whereis`) and non-terminal turn state, so
-  this returns *eager* sessions regardless of their turn state.
+  Used by `Turn.ResumeReaper` on node-down to find the eager sessions to restart; the
+  reaper still checks liveness (`whereis`) and the saved turn state, so a stale member
+  is skipped. The cost follows the number of sessions in flight, not the number stored.
   """
   @callback list_resumable(handle()) :: {:ok, [session_id()]} | {:error, term()}
 end

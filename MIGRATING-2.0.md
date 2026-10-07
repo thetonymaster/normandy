@@ -1497,6 +1497,10 @@ code you wrote against 1.x must follow the changes below.
 | 1.x | 2.0 |
 |---|---|
 | `SessionStore.Redis.fork/3` named the new session `"fork_<n>"`, an integer unique only on the node that forked | A UUID, as every other store returns |
+| `@callback save_turn_state(handle, session_id, state)` | `@callback save_turn_state(handle, session_id, state, inflight?)`. `Turn.Server` passes `inflight?: true` while an `:eager` session's turn has not ended (status other than `:stopped`/`:failed`); the store writes it with the state |
+| `list_resumable/1`: every session whose config template is `:eager`, whatever its turn state | The sessions whose last `save_turn_state/4` had `inflight?: true`. A template alone no longer lists a session |
+| `SessionStore.Redis`: the eager set `"<namespace>:resumable"`, filled by `save_config_template/3` and never emptied | `"<namespace>:inflight"`, kept by `save_turn_state/4`. `"<namespace>:resumable"` is no longer read; delete it after the upgrade |
+| `SessionStore.Postgres`: `Migration`, `MigrationAddTemplate`, `MigrationAddResumePolicy` | Also run `MigrationAddInflight` (column `inflight`, a partial index on it, an index on `head_id`) before 2.0 serves traffic |
 
 - `SessionStore.Redis`: a pipelined write whose command fails inside Redis (a `WRONGTYPE`, an
   out-of-memory error) returns `{:error, %Redix.Error{}}`. 1.x returned `:ok` and dropped the error.
@@ -1504,6 +1508,20 @@ code you wrote against 1.x must follow the changes below.
   trip per entry. If a pipeline fails, the partial copy is deleted and `fork/3` returns the error.
 - `SessionStore.Postgres.fork/3` checks that the fork point is on the session's chain by ids; it no
   longer reads and decodes every entry's content.
+- **Your own `SessionStore`.** Implement `save_turn_state/4` and write `inflight?` in the same write
+  as the state. If your backend cannot, add the session to the index before writing the state and
+  remove it after, so a crash leaves an extra member (the reaper re-checks the turn state), never
+  a missing one. `list_resumable/1` returns the sessions saved with `inflight?: true`. Duck-typed
+  test stores that define `save_turn_state/3` must take the fourth argument.
+- **Drain eager sessions before upgrading.** No store backfills the new index: the turn state is an
+  opaque term, and Postgres cannot read it in SQL. A session whose turn is in flight when you
+  upgrade is not in the index until `Turn.Server` saves its turn state again, so a node lost in
+  that window is not resumed by `ResumeReaper` (the session still recovers on its next caller,
+  through the lazy path). Before upgrading, let eager turns finish and approve or reject parked
+  calls. Together with §13 (2.0 and 1.x nodes must not host sessions from one Postgres or Redis
+  store at the same time), upgrade all session-hosting nodes at once after the drain.
+- `SessionStore.Mnesia`: a session row written by 1.x has no `:inflight` key and is not listed until
+  its next turn-state save. ETS and InMemory stores do not outlive the node.
 
 ## New, non-breaking
 

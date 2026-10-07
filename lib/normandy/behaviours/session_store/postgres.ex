@@ -9,7 +9,8 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     `fork/3` shares ancestors instead of copying.
 
     Configure via `{Normandy.Behaviours.SessionStore.Postgres, repo: MyApp.Repo}` and
-    run `Normandy.Behaviours.SessionStore.Postgres.Migration` from a host migration.
+    run `Normandy.Behaviours.SessionStore.Postgres.Migration`, `MigrationAddTemplate`,
+    `MigrationAddResumePolicy` and `MigrationAddInflight` from a host migration.
     """
     @behaviour Normandy.Behaviours.SessionStore
 
@@ -115,16 +116,18 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     end
 
     @impl true
-    def save_turn_state(repo, session_id, term),
-      do: backend(fn -> do_save_turn_state(repo, session_id, term) end)
+    def save_turn_state(repo, session_id, term, inflight?) when is_boolean(inflight?),
+      do: backend(fn -> do_save_turn_state(repo, session_id, term, inflight?) end)
 
-    defp do_save_turn_state(repo, session_id, term) do
+    defp do_save_turn_state(repo, session_id, term, inflight?) do
       blob = encode(term)
 
       %Session{session_id: session_id}
-      |> Ecto.Changeset.change(turn_state: blob)
+      |> Ecto.Changeset.change(turn_state: blob, inflight: inflight?)
       |> repo.insert(
-        on_conflict: [set: [turn_state: blob, updated_at: DateTime.utc_now()]],
+        on_conflict: [
+          set: [turn_state: blob, inflight: inflight?, updated_at: DateTime.utc_now()]
+        ],
         conflict_target: :session_id
       )
       |> case do
@@ -181,7 +184,8 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     defp do_list_resumable(repo) do
       ids =
         Session
-        |> where([s], s.resume_policy == "eager")
+        # Served by the partial index normandy_sessions_inflight_index.
+        |> where([s], s.inflight == true)
         |> select([s], s.session_id)
         |> repo.all()
 

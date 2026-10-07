@@ -48,9 +48,9 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
       InMemory.load_turn_state(mem, sid)
     end
 
-    def save_turn_state({mem, _} = h, sid, ts) do
+    def save_turn_state({mem, _} = h, sid, ts, inflight?) do
       maybe_exit(h, :save_turn_state, {:save_turn_state, sid, ts})
-      InMemory.save_turn_state(mem, sid, ts)
+      InMemory.save_turn_state(mem, sid, ts, inflight?)
     end
 
     defp maybe_exit({_mem, switch}, op, message) do

@@ -55,7 +55,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitConfigTest do
       )
 
     assert_raise ArgumentError, ~r/:redis_wait .* timeout_ms must be positive/, fn ->
-      Redis.save_turn_state({conn, "normandy-test-wait"}, "s1", :ts)
+      Redis.save_turn_state({conn, "normandy-test-wait"}, "s1", :ts, false)
     end
   end
 end

@@ -29,7 +29,7 @@ defmodule Normandy.Agents.Turn.ServerStartTest do
 
     defdelegate append_entry(mem, sid, entry), to: InMemory
     defdelegate load_turn_state(mem, sid), to: InMemory
-    defdelegate save_turn_state(mem, sid, term), to: InMemory
+    defdelegate save_turn_state(mem, sid, term, inflight?), to: InMemory
   end
 
   @sessions 50

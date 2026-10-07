@@ -25,7 +25,10 @@ defmodule Normandy.Test.FlakyStore do
     do: unless_down(store, fn mem -> InMemory.load_config_template(mem, sid) end)
 
   def append_entry({mem, _}, sid, entry), do: InMemory.append_entry(mem, sid, entry)
-  def save_turn_state({mem, _}, sid, term), do: InMemory.save_turn_state(mem, sid, term)
+
+  def save_turn_state({mem, _}, sid, term, inflight?),
+    do: InMemory.save_turn_state(mem, sid, term, inflight?)
+
   def save_config_template({mem, _}, sid, tmpl), do: InMemory.save_config_template(mem, sid, tmpl)
   def list_resumable({mem, _}), do: InMemory.list_resumable(mem)
 

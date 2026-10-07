@@ -60,7 +60,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     current_turn_id: nil,
     turn_state: nil,
     config_template: nil,
-    resume_policy: nil
+    resume_policy: nil,
+    inflight: false
   }
 
   @doc """
@@ -158,11 +159,14 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   end
 
   @impl true
-  def save_turn_state(%{sessions: st}, session_id, term) do
+  def save_turn_state(%{sessions: st}, session_id, term, inflight?) when is_boolean(inflight?) do
     to_ok(
       txn(fn ->
         data = read_session(st, session_id)
-        :mnesia.write({st, session_id, %{data | turn_state: term}})
+        # Map.put, not %{data | ...}: a row written before 2.0 has no :inflight key.
+        :mnesia.write(
+          {st, session_id, data |> Map.put(:turn_state, term) |> Map.put(:inflight, inflight?)}
+        )
       end)
     )
   end
@@ -203,16 +207,9 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
   @impl true
   def list_resumable(%{sessions: st}) do
-    txn(fn ->
-      :mnesia.foldl(
-        fn
-          {_, sid, %{resume_policy: :eager}}, acc -> [sid | acc]
-          _, acc -> acc
-        end,
-        [],
-        st
-      )
-    end)
+    # A scan of the sessions table that copies out only the matching ids; a row written
+    # before 2.0 has no :inflight key and does not match.
+    txn(fn -> :mnesia.select(st, [{{st, :"$1", %{inflight: true}}, [], [:"$1"]}]) end)
   end
 
   # --- private ---

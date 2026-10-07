@@ -261,7 +261,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       sid = opts[:session_id]
       # A turn state that exists before the first start, so a restart that reuses
       # the first start's arguments would bring this one back.
-      :ok = InMemory.save_turn_state(store, sid, %Turn.State{})
+      :ok = InMemory.save_turn_state(store, sid, %Turn.State{}, false)
       assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "first message")
       assert_receive {:llm_memory, _}
       {:ok, pid} = Native.whereis(reg, sid)
@@ -469,7 +469,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   describe "resume_policy: :eager" do
-    test "a Tier-2 start saves it in the template, so the session is listed as resumable" do
+    test "a Tier-2 start saves it in the template; the session is listed only once a turn is in flight" do
       store = InMemory.new()
       {:ok, cat} = Catalog.start_link([])
 
@@ -488,7 +488,8 @@ defmodule Normandy.Agents.Turn.SessionTest do
                Turn.Session.run(Turn.Session.new(opts), "hi")
 
       assert {:ok, %{resume_policy: :eager}} = InMemory.load_config_template(store, "s-eager")
-      assert {:ok, ["s-eager"]} = InMemory.list_resumable(store)
+      # No turn ran (the supervisor refused the start), so nothing is in flight.
+      assert {:ok, []} = InMemory.list_resumable(store)
     end
 
     test "a Tier 0/1 start passes it to the server" do

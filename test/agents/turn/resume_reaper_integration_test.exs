@@ -61,7 +61,9 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     # turn state.
     tmpl = ConfigTemplate.from_config(TurnConfig.build(), "k", :eager)
     :ok = PG.save_config_template(Normandy.TestRepo, sid, tmpl)
-    :ok = PG.save_turn_state(Normandy.TestRepo, sid, %Turn.State{status: :awaiting_approval})
+
+    :ok =
+      PG.save_turn_state(Normandy.TestRepo, sid, %Turn.State{status: :awaiting_approval}, true)
 
     # Precondition: not currently live anywhere.
     assert HReg.whereis(reg, sid) == :none

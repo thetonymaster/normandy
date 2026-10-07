@@ -154,7 +154,7 @@ defmodule Normandy.AppEnvConfigTest do
 
       # The test Redis has no replicas, so a wait for one is never met.
       assert {:error, {:wait_unmet, 0, 1}} =
-               Redis.save_turn_state(store, "s1", :state)
+               Redis.save_turn_state(store, "s1", :state, false)
     end
   end
 end

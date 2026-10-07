@@ -5,8 +5,9 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   to the same `session_id` cannot clobber each other. The handle is the owner pid.
 
   One row per entry: `{{:entry, session_id, id}, %Entry{}}`, plus the session's head
-  `{{:head, session_id}, id}`, its opaque turn state `{{:turn_state, session_id}, term}`
-  and its config template `{{:config_template, session_id}, template}`. An append
+  `{{:head, session_id}, id}`, its opaque turn state `{{:turn_state, session_id}, term}`,
+  its config template `{{:config_template, session_id}, template}` and, while its turn
+  is in flight, `{{:inflight, session_id}}`. An append
   writes two rows whatever the history's length; `history/2` walks `parent_id` from
   the head (O(n), once per server start). `fork/3` copies the chain from the fork
   point back to the root into the new session. The table is private to the owner;
@@ -73,8 +74,8 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   end
 
   @impl Normandy.Behaviours.SessionStore
-  def save_turn_state(pid, session_id, term) do
-    GenServer.call(pid, {:save_turn_state, session_id, term})
+  def save_turn_state(pid, session_id, term, inflight?) when is_boolean(inflight?) do
+    GenServer.call(pid, {:save_turn_state, session_id, term, inflight?})
   end
 
   @impl Normandy.Behaviours.SessionStore
@@ -134,8 +135,13 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
     {:reply, reply, table}
   end
 
-  def handle_call({:save_turn_state, session_id, term}, _from, table) do
+  def handle_call({:save_turn_state, session_id, term, inflight?}, _from, table) do
     :ets.insert(table, {{:turn_state, session_id}, term})
+
+    if inflight?,
+      do: :ets.insert(table, {{:inflight, session_id}}),
+      else: :ets.delete(table, {:inflight, session_id})
+
     {:reply, :ok, table}
   end
 
@@ -165,15 +171,7 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   end
 
   def handle_call(:list_resumable, _from, table) do
-    ids =
-      table
-      |> :ets.match_object({{:config_template, :_}, :_})
-      |> Enum.filter(fn {{:config_template, _sid}, tmpl} ->
-        is_map(tmpl) and Map.get(tmpl, :resume_policy) == :eager
-      end)
-      |> Enum.map(fn {{:config_template, sid}, _tmpl} -> sid end)
-
-    {:reply, {:ok, ids}, table}
+    {:reply, {:ok, List.flatten(:ets.match(table, {{:inflight, :"$1"}}))}, table}
   end
 
   defp head(table, session_id) do

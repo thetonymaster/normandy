@@ -32,7 +32,7 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
     defdelegate append_entry(h, sid, entry), to: InMemory
     defdelegate history(h, sid), to: InMemory
     defdelegate load_turn_state(h, sid), to: InMemory
-    defdelegate save_turn_state(h, sid, ts), to: InMemory
+    defdelegate save_turn_state(h, sid, ts, inflight?), to: InMemory
   end
 
   defp config(keep) do

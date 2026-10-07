@@ -51,7 +51,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     def new, do: InMemory.new()
     def append_entry(_h, _sid, %{role: "assistant"}), do: {:error, :boom}
     def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
-    def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def save_turn_state(h, sid, t, i), do: InMemory.save_turn_state(h, sid, t, i)
     def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
     def history(h, sid), do: InMemory.history(h, sid)
   end
@@ -76,7 +76,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         else: InMemory.append_entry(inmem, sid, entry)
     end
 
-    def save_turn_state({h, _, _}, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def save_turn_state({h, _, _}, sid, t, i), do: InMemory.save_turn_state(h, sid, t, i)
     def load_turn_state({h, _, _}, sid), do: InMemory.load_turn_state(h, sid)
     def history({h, _, _}, sid), do: InMemory.history(h, sid)
   end
@@ -932,7 +932,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       def new, do: :handle
 
       @impl true
-      def save_turn_state(_handle, _sid, _state), do: :ok
+      def save_turn_state(_handle, _sid, _state, _inflight?), do: :ok
 
       @impl true
       def load_turn_state(_handle, _sid), do: :error
@@ -1042,7 +1042,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     }
 
     store = InMemory.new()
-    :ok = InMemory.save_turn_state(store, "s-resume-announce", parked)
+    :ok = InMemory.save_turn_state(store, "s-resume-announce", parked, true)
 
     {:ok, _srv} =
       Turn.Server.start_link(
@@ -1077,7 +1077,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       |> Map.delete(:trace_carrier)
 
     store = InMemory.new()
-    :ok = InMemory.save_turn_state(store, sid, parked)
+    :ok = InMemory.save_turn_state(store, sid, parked, true)
 
     :telemetry.attach(
       {__MODULE__, sid},
@@ -2220,7 +2220,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
       # The server reads its turn state from the store, so seed it there.
       {turn_state, server_opts} = Keyword.pop(Keyword.get(opts, :server_opts, []), :turn_state)
-      if turn_state, do: :ok = InMemory.save_turn_state(store, sid, turn_state)
+      if turn_state, do: :ok = InMemory.save_turn_state(store, sid, turn_state, false)
 
       test_pid = self()
 

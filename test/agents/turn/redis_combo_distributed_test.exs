@@ -22,16 +22,16 @@ defmodule Normandy.Agents.Turn.RedisComboTest do
 
     # eager + non-terminal + unregistered  -> SHOULD be reaped
     :ok = Store.save_config_template(store, "eager_live", %{resume_policy: :eager})
-    :ok = Store.save_turn_state(store, "eager_live", %State{status: :steering})
+    :ok = Store.save_turn_state(store, "eager_live", %State{status: :steering}, true)
 
     # eager + non-terminal but REGISTERED   -> skipped (whereis != :none)
     :ok = Store.save_config_template(store, "eager_registered", %{resume_policy: :eager})
-    :ok = Store.save_turn_state(store, "eager_registered", %State{status: :steering})
+    :ok = Store.save_turn_state(store, "eager_registered", %State{status: :steering}, true)
     :ok = Reg.register(reg, "eager_registered", self())
 
-    # eager but TERMINAL                     -> skipped (status :stopped)
+    # eager but TERMINAL                     -> not in flight, so not listed
     :ok = Store.save_config_template(store, "eager_done", %{resume_policy: :eager})
-    :ok = Store.save_turn_state(store, "eager_done", %State{status: :stopped})
+    :ok = Store.save_turn_state(store, "eager_done", %State{status: :stopped}, false)
 
     # lazy                                   -> not in list_resumable at all
     :ok = Store.save_config_template(store, "lazy_one", %{resume_policy: :lazy})

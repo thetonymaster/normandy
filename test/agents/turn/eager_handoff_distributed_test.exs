@@ -144,7 +144,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
       max_iterations: 5
     }
 
-    :ok = PGStore.save_turn_state(repo, sid, steering)
+    :ok = PGStore.save_turn_state(repo, sid, steering, true)
 
     # Verify the seeds are in Postgres.
     assert match?({:ok, %{template_id: "k"}}, PGStore.load_config_template(repo, sid)),

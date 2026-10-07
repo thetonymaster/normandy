@@ -29,6 +29,7 @@ if Code.ensure_loaded?(Ecto.Schema) do
         field(:turn_state, :binary)
         field(:config_template, :binary)
         field(:resume_policy, :string)
+        field(:inflight, :boolean, default: false)
         timestamps(type: :utc_datetime_usec)
       end
     end

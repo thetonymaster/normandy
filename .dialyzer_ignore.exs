@@ -19,6 +19,10 @@
   # Ecto create/index/drop calls discard their return values; :unmatched_returns is just noisy here.
   {"lib/normandy/behaviours/session_store/postgres/migration.ex", :unmatched_return},
 
+  # behaviours/session_store/postgres/migration_add_inflight.ex up/0 + down/0: the same
+  # idiomatic Ecto create/drop index calls.
+  {"lib/normandy/behaviours/session_store/postgres/migration_add_inflight.ex", :unmatched_return},
+
   # behaviours/memory_store/postgres/migration.ex up/0 + down/0: the same idiomatic Ecto
   # create/drop calls, two tables (documents and the namespace counters).
   {"lib/normandy/behaviours/memory_store/postgres/migration.ex", :unmatched_return},

@@ -26,7 +26,10 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @spec start_link(keyword()) :: Agent.on_start()
   def start_link(opts \\ []) do
     [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :start_link, 1})
-    Agent.start_link(fn -> %{sessions: %{}, turn_states: %{}, config_templates: %{}} end)
+
+    Agent.start_link(fn ->
+      %{sessions: %{}, turn_states: %{}, config_templates: %{}, inflight: MapSet.new()}
+    end)
   end
 
   @doc """
@@ -84,8 +87,15 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   end
 
   @impl true
-  def save_turn_state(pid, session_id, term) do
-    Agent.update(pid, fn state -> put_in(state.turn_states[session_id], term) end)
+  def save_turn_state(pid, session_id, term, inflight?) when is_boolean(inflight?) do
+    Agent.update(pid, fn state ->
+      inflight =
+        if inflight?,
+          do: MapSet.put(state.inflight, session_id),
+          else: MapSet.delete(state.inflight, session_id)
+
+      %{state | turn_states: Map.put(state.turn_states, session_id, term), inflight: inflight}
+    end)
   end
 
   @impl true
@@ -115,15 +125,7 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
   @impl true
   def list_resumable(pid) do
-    Agent.get(pid, fn state ->
-      ids =
-        for {sid, tmpl} <- state.config_templates,
-            is_map(tmpl),
-            Map.get(tmpl, :resume_policy) == :eager,
-            do: sid
-
-      {:ok, ids}
-    end)
+    Agent.get(pid, fn state -> {:ok, MapSet.to_list(state.inflight)} end)
   end
 
   # Append an entry, minting an id and linking to the current head when absent.

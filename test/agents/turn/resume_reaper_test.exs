@@ -51,30 +51,31 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     :ok =
       InMemory.save_config_template(store, "s-eager", %{template_id: "k", resume_policy: :eager})
 
-    :ok = InMemory.save_turn_state(store, "s-eager", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s-eager", %Turn.State{status: :steering}, true)
 
-    # s-lazy: lazy -> not in list_resumable -> SKIP
+    # s-lazy: lazy -> saved not in flight -> not in list_resumable -> SKIP
     :ok =
       InMemory.save_config_template(store, "s-lazy", %{template_id: "k", resume_policy: :lazy})
 
-    :ok = InMemory.save_turn_state(store, "s-lazy", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s-lazy", %Turn.State{status: :steering}, false)
 
-    # s-done / s-failed: eager but terminal turn state (:stopped / :failed) -> SKIP
+    # s-done / s-failed: listed (a stale index member, as a Redis crash between the
+    # state and the index write leaves one) but terminal (:stopped / :failed) -> SKIP
     :ok =
       InMemory.save_config_template(store, "s-done", %{template_id: "k", resume_policy: :eager})
 
-    :ok = InMemory.save_turn_state(store, "s-done", %Turn.State{status: :stopped})
+    :ok = InMemory.save_turn_state(store, "s-done", %Turn.State{status: :stopped}, true)
 
     :ok =
       InMemory.save_config_template(store, "s-failed", %{template_id: "k", resume_policy: :eager})
 
-    :ok = InMemory.save_turn_state(store, "s-failed", %Turn.State{status: :failed})
+    :ok = InMemory.save_turn_state(store, "s-failed", %Turn.State{status: :failed}, true)
 
     # s-live: eager + non-terminal but already registered -> SKIP
     :ok =
       InMemory.save_config_template(store, "s-live", %{template_id: "k", resume_policy: :eager})
 
-    :ok = InMemory.save_turn_state(store, "s-live", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s-live", %Turn.State{status: :steering}, true)
     :ok = Native.register(reg, "s-live", self())
 
     r = reaper(store, reg, cat)
@@ -93,7 +94,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     {:ok, cat} = Catalog.start_link([])
 
     :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})
-    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :steering}, true)
 
     r = reaper(store, reg, cat)
     send(r, {:nodedown, :"gone@127.0.0.1"})
@@ -115,7 +116,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     subscriber = fn _event, _meta -> :ok end
 
     :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})
-    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :awaiting_approval})
+    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :awaiting_approval}, true)
 
     r = reaper(store, reg, cat, subscriber: subscriber, handlers: handlers)
     send(r, {:nodedown, :"gone@127.0.0.1"})
@@ -131,7 +132,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     {:ok, cat} = Catalog.start_link([])
 
     :ok = InMemory.save_config_template(store, "s1", %{template_id: "k", resume_policy: :eager})
-    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s1", %Turn.State{status: :steering}, true)
 
     r = reaper(store, reg, cat)
     send(r, {:nodedown, :"gone@127.0.0.1"})
@@ -177,7 +178,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     :ok =
       InMemory.save_config_template(store, "s-eager", %{template_id: "k", resume_policy: :eager})
 
-    :ok = InMemory.save_turn_state(store, "s-eager", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s-eager", %Turn.State{status: :steering}, true)
 
     {:ok, r} =
       ResumeReaper.start_link(
@@ -283,7 +284,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       |> ConfigTemplate.from_config("kind-a", :eager)
 
     :ok = InMemory.save_config_template(store, "s-creds", tmpl)
-    :ok = InMemory.save_turn_state(store, "s-creds", %Turn.State{status: :steering})
+    :ok = InMemory.save_turn_state(store, "s-creds", %Turn.State{status: :steering}, true)
 
     state = %{
       store: {InMemory, store},
@@ -406,7 +407,7 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
         :ok =
           InMemory.save_config_template(store, sid, %{template_id: "k", resume_policy: :eager})
 
-        :ok = InMemory.save_turn_state(store, sid, %Turn.State{status: :steering})
+        :ok = InMemory.save_turn_state(store, sid, %Turn.State{status: :steering}, true)
       end
 
       store

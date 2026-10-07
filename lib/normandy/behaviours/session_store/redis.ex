@@ -6,8 +6,8 @@ if Code.ensure_loaded?(Redix) do
     Durable `SessionStore` over Redis, modelled on Redis Streams. The conversation is an
     append-only stream (`XADD`/`XRANGE`) so appends are atomic and O(1) with no
     read-modify-write — concurrent appends never lose an entry. Session metadata
-    (turn state, config template, resume policy) lives in a hash; eager session_ids live
-    in a SET for `list_resumable/1`.
+    (turn state, config template, resume policy) lives in a hash; the ids of the sessions
+    with a turn in flight live in the SET `"<namespace>:inflight"` for `list_resumable/1`.
 
     The `handle` is `{conn, namespace}` or `{conn, namespace, wait}` (the host owns the
     Redix connection, Oban-style).
@@ -130,14 +130,20 @@ if Code.ensure_loaded?(Redix) do
     end
 
     @impl true
-    def save_turn_state(handle, session_id, term) do
+    def save_turn_state(handle, session_id, term, inflight?) when is_boolean(inflight?) do
       {conn, ns} = conn_ns(handle)
       wait = wait_setting!(handle)
+      hset = ["HSET", meta_key(ns, session_id), "turn_state", encode(term)]
 
-      with {:ok, _} <-
-             Redix.command(conn, ["HSET", meta_key(ns, session_id), "turn_state", encode(term)]) do
-        wait(conn, wait)
-      end
+      # Not a MULTI: the index key is in another cluster slot. Ordered so a Redis crash
+      # between the two leaves the index with an extra member (the reaper re-checks the
+      # turn state), never without one: added before the state, removed after it.
+      cmds =
+        if inflight?,
+          do: [["SADD", inflight_key(ns), session_id], hset],
+          else: [hset, ["SREM", inflight_key(ns), session_id]]
+
+      with {:ok, _} <- pipeline_ok(Redix.pipeline(conn, cmds)), do: wait(conn, wait)
     end
 
     @impl true
@@ -162,15 +168,17 @@ if Code.ensure_loaded?(Redix) do
           _ -> "lazy"
         end
 
-      cmds = [
-        ["HSET", meta_key(ns, session_id), "config_template", encode(tmpl), "resume_policy", rp],
-        if(rp == "eager",
-          do: ["SADD", resumable_key(ns), session_id],
-          else: ["SREM", resumable_key(ns), session_id]
-        )
-      ]
-
-      with {:ok, _} <- pipeline_ok(Redix.pipeline(conn, cmds)), do: wait(conn, wait)
+      with {:ok, _} <-
+             Redix.command(conn, [
+               "HSET",
+               meta_key(ns, session_id),
+               "config_template",
+               encode(tmpl),
+               "resume_policy",
+               rp
+             ]) do
+        wait(conn, wait)
+      end
     end
 
     @impl true
@@ -188,7 +196,7 @@ if Code.ensure_loaded?(Redix) do
     def list_resumable(handle) do
       {conn, ns} = conn_ns(handle)
 
-      case Redix.command(conn, ["SMEMBERS", resumable_key(ns)]) do
+      case Redix.command(conn, ["SMEMBERS", inflight_key(ns)]) do
         {:ok, ids} -> {:ok, ids}
         {:error, reason} -> {:error, reason}
       end
@@ -347,7 +355,7 @@ if Code.ensure_loaded?(Redix) do
     # lives in a different Redis Cluster slot than the session keys. This is safe because
     # it is never combined with session keys in a MULTI; the code uses pipelines, not
     # transactions.
-    defp resumable_key(ns), do: "#{ns}:resumable"
+    defp inflight_key(ns), do: "#{ns}:inflight"
 
     defp encode(term), do: Codec.encode(term)
     defp decode(bin) when is_binary(bin), do: Codec.decode(bin)

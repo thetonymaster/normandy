@@ -8,14 +8,22 @@ defmodule Normandy.Behaviours.SessionStore.RedisPipelineErrorTest do
 
   alias Normandy.Behaviours.SessionStore.Redis
 
-  test "save_config_template returns a command's in-band error" do
+  # The in-flight index key holds a string, so SADD and SREM answer WRONGTYPE.
+  defp broken_index do
     {conn, ns} = h = Redis.new()
-    # The eager set's key holds a string, so SADD answers WRONGTYPE.
-    {:ok, "OK"} = Redix.command(conn, ["SET", "#{ns}:resumable", "not-a-set"])
+    {:ok, "OK"} = Redix.command(conn, ["SET", "#{ns}:inflight", "not-a-set"])
+    {h, conn, ns}
+  end
+
+  test "save_turn_state/4 returns the index command's in-band error, in flight or not" do
+    {h, conn, ns} = broken_index()
 
     assert {:error, %Redix.Error{message: "WRONGTYPE" <> _}} =
-             Redis.save_config_template(h, "s1", %{template_id: "k", resume_policy: :eager})
+             Redis.save_turn_state(h, "s1", :steering, true)
 
-    {:ok, _} = Redix.command(conn, ["DEL", "#{ns}:resumable", "#{ns}:{s1}:meta"])
+    assert {:error, %Redix.Error{message: "WRONGTYPE" <> _}} =
+             Redis.save_turn_state(h, "s1", :stopped, false)
+
+    {:ok, _} = Redix.command(conn, ["DEL", "#{ns}:inflight", "#{ns}:{s1}:meta"])
   end
 end

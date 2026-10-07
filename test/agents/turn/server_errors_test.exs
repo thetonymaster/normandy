@@ -31,7 +31,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
     @moduledoc false
     def history(_handle, _sid), do: {:error, :store_down}
     def load_turn_state(_handle, _sid), do: {:error, :store_down}
-    def save_turn_state(_handle, _sid, _ts), do: {:error, :store_down}
+    def save_turn_state(_handle, _sid, _ts, _inflight?), do: {:error, :store_down}
     def append_entry(_handle, _sid, _entry), do: {:error, :store_down}
   end
 

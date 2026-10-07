@@ -28,8 +28,10 @@ defmodule MyApp.Repo.Migrations.AddNormandySessions do
     Normandy.Behaviours.SessionStore.Postgres.Migration.up()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate.up()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy.up()
+    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight.up()
   end
   def down do
+    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight.down()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy.down()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate.down()
     Normandy.Behaviours.SessionStore.Postgres.Migration.down()
@@ -37,10 +39,11 @@ defmodule MyApp.Repo.Migrations.AddNormandySessions do
 end
 ```
 
-> The `MigrationAddTemplate` / `MigrationAddResumePolicy` columns are only *used* by
-> Tier 2 (template-based reconstruction + eager resume). They're nullable and inert
-> under Tier 1, but including them now means a later Tier-2 upgrade needs no extra
-> migration. A strictly Tier-1 deployment may run only `Migration.up()` / `.down()`.
+> The `MigrationAddTemplate`, `MigrationAddResumePolicy` and `MigrationAddInflight` columns are
+> only *used* by Tier 2 (template-based reconstruction + eager resume). They're inert under Tier 1,
+> but including them now means a later Tier-2 upgrade needs no extra migration. A strictly Tier-1
+> deployment may run only `Migration.up()` / `.down()`. Upgrading from 1.x: add a migration that
+> runs `MigrationAddInflight.up()` and apply it before 2.0 serves traffic.
 
 Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to
 `Turn.Session.new/1`. The store holds the conversation graph, suspended turn state, and a
@@ -161,7 +164,9 @@ must keep working after a node dies with no external trigger.
 > `restart`-based eager/lazy selectivity is impossible. Normandy instead ships
 > `Turn.ResumeReaper`: a per-node watcher that, on `:nodedown`, restarts only the
 > eager, unregistered, non-terminal sessions (found via
-> `SessionStore.list_resumable/1`). `Normandy.Cluster.child_specs/1` starts one
+> `SessionStore.list_resumable/1`, which lists only the sessions whose turn is in flight:
+> `Turn.Server` saves that flag with every turn state, so the list does not grow with the
+> number of sessions stored). `Normandy.Cluster.child_specs/1` starts one
 > automatically when you pass `:store` + `:template_provider`.
 
 ## Cluster formation (libcluster, optional)

@@ -24,7 +24,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitTest do
   end
 
   test "turn state and template saves fail when the replica wait is unmet", %{store: store} do
-    assert {:error, {:wait_unmet, 0, 1}} = Redis.save_turn_state(store, "s1", :state)
+    assert {:error, {:wait_unmet, 0, 1}} = Redis.save_turn_state(store, "s1", :state, false)
     assert {:error, {:wait_unmet, 0, 1}} = Redis.save_config_template(store, "s1", %{})
   end
 

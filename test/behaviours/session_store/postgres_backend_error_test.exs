@@ -25,7 +25,7 @@ defmodule Normandy.Behaviours.SessionStore.PostgresBackendErrorTest do
           append_entry: fn -> Postgres.append_entry(DownRepo, "s1", entry) end,
           history: fn -> Postgres.history(DownRepo, "s1") end,
           fork: fn -> Postgres.fork(DownRepo, "s1", Ecto.UUID.generate()) end,
-          save_turn_state: fn -> Postgres.save_turn_state(DownRepo, "s1", :ts) end,
+          save_turn_state: fn -> Postgres.save_turn_state(DownRepo, "s1", :ts, false) end,
           load_turn_state: fn -> Postgres.load_turn_state(DownRepo, "s1") end,
           save_config_template: fn -> Postgres.save_config_template(DownRepo, "s1", %{}) end,
           list_resumable: fn -> Postgres.list_resumable(DownRepo) end,

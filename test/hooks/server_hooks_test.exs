@@ -58,7 +58,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
     def new, do: InMemory.new()
     def append_entry(_h, _sid, %{role: "user"}), do: {:error, :disk_full}
     def append_entry(h, sid, e), do: InMemory.append_entry(h, sid, e)
-    def save_turn_state(h, sid, t), do: InMemory.save_turn_state(h, sid, t)
+    def save_turn_state(h, sid, t, i), do: InMemory.save_turn_state(h, sid, t, i)
     def load_turn_state(h, sid), do: InMemory.load_turn_state(h, sid)
     def history(h, sid), do: InMemory.history(h, sid)
   end
