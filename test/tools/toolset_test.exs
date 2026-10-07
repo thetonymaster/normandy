@@ -59,12 +59,11 @@ defmodule NormandyTest.Tools.ToolsetTest do
       assert {:ok, ^tool2} = Toolset.fetch(registry, "calculator")
     end
 
-    test "a filter drops the timeouts of the tools it drops" do
+    test "unregister/2 drops the timeout of the tool it drops" do
       toolset = Toolset.register(Toolset.new(), %Calculator{}, timeout: 1_000)
-      filtered = Toolset.filter_by_param_type(toolset, "no-such-type")
 
       assert Toolset.timeout(toolset, "calculator") == 1_000
-      assert Toolset.timeout(filtered, "calculator") == nil
+      assert Toolset.timeout(Toolset.unregister(toolset, "calculator"), "calculator") == nil
     end
 
     test "a name the API would reject raises at registration" do
@@ -199,14 +198,11 @@ defmodule NormandyTest.Tools.ToolsetTest do
       assert Toolset.max_result_chars(toolset, "calculator") == :error
     end
 
-    test "unregister/2 and the filters drop the caps of the tools they drop" do
+    test "unregister/2 drops the cap of the tool it drops" do
       toolset = Toolset.register(Toolset.new(), %Calculator{}, max_result_chars: 500)
 
       assert Toolset.max_result_chars(Toolset.unregister(toolset, "calculator"), "calculator") ==
                :error
-
-      filtered = Toolset.filter_by_param_type(toolset, "no-such-type")
-      assert Toolset.max_result_chars(filtered, "calculator") == :error
     end
 
     test "a max_result_chars that is not a positive integer or nil raises, naming the key" do

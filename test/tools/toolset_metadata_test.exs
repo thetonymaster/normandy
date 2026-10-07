@@ -95,108 +95,6 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
     end
   end
 
-  describe "filter_by_required_params/2" do
-    test "filters tools with required parameters" do
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      filtered = Toolset.filter_by_required_params(registry, true)
-
-      assert Toolset.count(filtered) == 1
-      assert Toolset.has_tool?(filtered, "calculator")
-    end
-
-    test "filters tools without required parameters" do
-      # Create a tool without required params (if we had one)
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      filtered = Toolset.filter_by_required_params(registry, false)
-
-      assert Toolset.count(filtered) == 0
-    end
-
-    test "returns empty registry when no tools match" do
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      filtered = Toolset.filter_by_required_params(registry, false)
-
-      assert Toolset.count(filtered) == 0
-    end
-  end
-
-  describe "filter_by_param_type/2" do
-    test "filters tools with number parameters" do
-      calc = %Calculator{}
-      string = %StringManipulator{}
-
-      registry = Toolset.new([calc, string])
-
-      # Calculator has :number type in JSON schema (mapped from :float)
-      # StringManipulator only has string fields
-      # But we need to check the JSON Schema type which may differ
-      filtered = Toolset.filter_by_param_type(registry, "number")
-
-      # Calculator's schema types are atoms (:number); the filter takes a string.
-      assert Toolset.list_names(filtered) == ["calculator"]
-    end
-
-    test "filters tools with string parameters" do
-      calc = %Calculator{}
-      string = %StringManipulator{}
-
-      registry = Toolset.new([calc, string])
-      filtered = Toolset.filter_by_param_type(registry, "string")
-
-      # Both have string params (operation field)
-      assert Toolset.count(filtered) == 2
-    end
-
-    test "returns empty registry when no tools have the parameter type" do
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      filtered = Toolset.filter_by_param_type(registry, "boolean")
-
-      assert Toolset.count(filtered) == 0
-    end
-  end
-
-  describe "tools_with_constraint/2" do
-    test "finds tools with enum constraints" do
-      calc = %Calculator{}
-      string = %StringManipulator{}
-
-      registry = Toolset.new([calc, string])
-      tools = Toolset.tools_with_constraint(registry, :enum)
-
-      # Both have enum on operation field
-      assert length(tools) == 2
-      assert "calculator" in tools
-      assert "string_manipulator" in tools
-    end
-
-    test "finds tools with minimum constraints" do
-      enhanced = %EnhancedCalculator{}
-      registry = Toolset.new([enhanced])
-
-      tools = Toolset.tools_with_constraint(registry, :minimum)
-
-      assert length(tools) == 1
-      assert "enhanced_calculator" in tools
-    end
-
-    test "returns empty list when no tools have the constraint" do
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      tools = Toolset.tools_with_constraint(registry, :pattern)
-
-      assert tools == []
-    end
-  end
-
   describe "introspect_schema/2" do
     test "returns schema introspection for schema-based tools" do
       calc = %Calculator{}
@@ -258,10 +156,6 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
       # Introspect schema
       {:ok, fields} = Toolset.introspect_schema(registry, "enhanced_calculator")
       assert length(fields) == length(metadata.fields)
-
-      # Find constraints
-      enum_tools = Toolset.tools_with_constraint(registry, :enum)
-      assert "enhanced_calculator" in enum_tools
     end
 
     test "handles mixed registry of schema-based tools" do
@@ -290,19 +184,13 @@ defmodule NormandyTest.Tools.ToolsetMetadataTest do
       registry = Toolset.new()
 
       assert Toolset.list_metadata(registry) == []
-      assert Toolset.filter_by_required_params(registry, true) == registry
-      assert Toolset.filter_by_param_type(registry, "string") == registry
-      assert Toolset.tools_with_constraint(registry, :enum) == []
     end
 
-    test "handles tools with no properties in schema" do
-      # This tests backward compatibility
-      calc = %Calculator{}
-      registry = Toolset.new([calc])
-
-      # Should not crash
-      filtered = Toolset.filter_by_param_type(registry, "string")
-      assert is_struct(filtered, Toolset)
+    test "the 1.x schema filters are gone" do
+      Code.ensure_loaded!(Toolset)
+      refute function_exported?(Toolset, :filter_by_required_params, 2)
+      refute function_exported?(Toolset, :filter_by_param_type, 2)
+      refute function_exported?(Toolset, :tools_with_constraint, 2)
     end
 
     test "metadata includes all expected fields" do

@@ -336,87 +336,6 @@ defmodule Normandy.Tools.Toolset do
   end
 
   @doc """
-  Filters tools by whether they have required parameters.
-
-  Returns a new toolset containing only tools that match the criteria.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
-      Normandy.Tools.Toolset.filter_by_required_params(toolset, true)
-      #=> %Normandy.Tools.Toolset{tools: %{"tool1" => tool1}, timeouts: %{}, max_result_chars: %{}}
-
-  """
-  @spec filter_by_required_params(t(), boolean()) :: t()
-  def filter_by_required_params(%__MODULE__{tools: tools} = toolset, has_required?) do
-    filtered_tools =
-      tools
-      |> Enum.filter(fn {_name, tool} ->
-        has_required_params?(tool) == has_required?
-      end)
-      |> Map.new()
-
-    keep(toolset, filtered_tools)
-  end
-
-  @doc """
-  Filters tools by parameter type.
-
-  Returns a new toolset containing only tools that have a parameter of the given type.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator, string_tool])
-      Normandy.Tools.Toolset.filter_by_param_type(toolset, "number")
-      #=> %Normandy.Tools.Toolset{tools: %{"calculator" => calculator}, timeouts: %{}, max_result_chars: %{}}
-
-  """
-  @spec filter_by_param_type(t(), String.t()) :: t()
-  def filter_by_param_type(%__MODULE__{tools: tools} = toolset, param_type) do
-    filtered_tools =
-      tools
-      |> Enum.filter(fn {_name, tool} ->
-        has_param_type?(tool, param_type)
-      end)
-      |> Map.new()
-
-    keep(toolset, filtered_tools)
-  end
-
-  # The filtered tools, with the registration options of the tools kept.
-  defp keep(toolset, tools) do
-    names = Map.keys(tools)
-
-    %{
-      toolset
-      | tools: tools,
-        timeouts: Map.take(toolset.timeouts, names),
-        max_result_chars: Map.take(toolset.max_result_chars, names)
-    }
-  end
-
-  @doc """
-  Gets tools that support a specific constraint type.
-
-  Returns a list of tool names that have parameters with the given constraint.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator, string_tool])
-      Normandy.Tools.Toolset.tools_with_constraint(toolset, :enum)
-      #=> ["calculator", "string_tool"]
-
-  """
-  @spec tools_with_constraint(t(), atom()) :: [String.t()]
-  def tools_with_constraint(%__MODULE__{tools: tools}, constraint_type) do
-    tools
-    |> Enum.filter(fn {_name, tool} ->
-      has_constraint?(tool, constraint_type)
-    end)
-    |> Enum.map(fn {name, _tool} -> name end)
-  end
-
-  @doc """
   Gets schema introspection data for a tool if available.
 
   Returns schema field information for schema-based tools, or nil for legacy tools.
@@ -477,47 +396,6 @@ defmodule Normandy.Tools.Toolset do
           metadata: Introspection.get_field_metadata(input, field_name)
         }
       end)
-    end
-  end
-
-  defp has_required_params?(tool) do
-    schema = Tool.input_schema(tool)
-
-    case schema do
-      %{required: required} when is_list(required) ->
-        required != []
-
-      _ ->
-        false
-    end
-  end
-
-  defp has_param_type?(tool, param_type) do
-    schema = Tool.input_schema(tool)
-
-    case schema do
-      %{properties: properties} when is_map(properties) ->
-        properties
-        |> Map.values()
-        # Schema-based tools use atom types (:number), hand-written ones strings.
-        |> Enum.any?(fn prop -> to_string(prop[:type]) == to_string(param_type) end)
-
-      _ ->
-        false
-    end
-  end
-
-  defp has_constraint?(tool, constraint_type) do
-    schema = Tool.input_schema(tool)
-
-    case schema do
-      %{properties: properties} when is_map(properties) ->
-        properties
-        |> Map.values()
-        |> Enum.any?(fn prop -> Map.has_key?(prop, constraint_type) end)
-
-      _ ->
-        false
     end
   end
 

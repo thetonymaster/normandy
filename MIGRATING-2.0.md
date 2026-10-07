@@ -1866,6 +1866,9 @@ code you wrote against 1.x must follow the changes below.
   `ArgumentError` `"MyWorkflow.execute/1: unknown option :context; supported: :agents, :initial_input"`.
   It was accepted and never reached a step. Pass what a step needs in its input or its agent's
   config.
+- `Toolset.filter_by_required_params/2`, `Toolset.filter_by_param_type/2` and
+  `Toolset.tools_with_constraint/2` are removed; nothing in Normandy called them. Filter
+  `Toolset.list_metadata/1` (each entry has `:input_schema`) or `Toolset.list/1` yourself.
 
 ## Known limits of 2.0
 
