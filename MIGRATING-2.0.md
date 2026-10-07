@@ -1467,6 +1467,12 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   reason: :passivated}}`. It used to exit the caller. `AgentProcess` in `:server` mode inherits
   this. Any other exit of the server (a crash mid-turn, `{:nodedown, _}`, a host's `:normal`
   stop) still propagates, since the turn may have run.
+- Under `Turn.Server`, a tool's execution, budget, `after_tool` and function `after_hooks` run
+  with a config whose `memory` holds no entries (`head`, `current_turn_id` and `max_messages`
+  are kept), so a tool batch no longer copies the conversation into every tool task. Policy
+  engines and `before_hooks` still see the whole conversation. An after-hook that read
+  messages from `config.memory` under `Turn.Server` must get them another way.
+  `BaseAgent.run/3`, `stream/3`, `Turn.Driver` and `Turn.Inline` are unchanged.
 
 ## New, non-breaking
 

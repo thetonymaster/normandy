@@ -676,4 +676,18 @@ defmodule NormandyTest.Components.AgentMemoryTest do
       AgentMemory.fetch_entry!(memory, "missing")
     end
   end
+
+  test "without_entries/1 drops the entries and keeps head, turn id and cap" do
+    memory =
+      AgentMemory.new_memory(5)
+      |> AgentMemory.add_message("user", "a")
+      |> AgentMemory.add_message("assistant", "b")
+
+    slim = AgentMemory.without_entries(memory)
+
+    assert slim.entries == %{}
+    assert slim.head == memory.head
+    assert slim.current_turn_id == memory.current_turn_id
+    assert slim.max_messages == 5
+  end
 end

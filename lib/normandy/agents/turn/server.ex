@@ -1505,10 +1505,14 @@ defmodule Normandy.Agents.Turn.Server do
   #
   # The worker gets this process's OTel context (the run span's, when a bridge
   # made it current at run :start), so its llm_call and tool spans nest under run.
+  #
+  # The closure copies what it captures into the worker's heap: only the fields a
+  # worker reads (call_llm_event/3, compact_event/3, dispatch/2, execute_approved/2,
+  # worker_hook/3), not the start options' second config, the spans or the caller.
   defp spawn_task(data, kind, fun) do
     server = self()
     handlers = data.handlers
-    current = data
+    current = %Data{config: data.config, turn_state: data.turn_state, session_id: data.session_id}
     otel_ctx = OtelCtx.capture()
 
     pid =
@@ -1767,6 +1771,16 @@ defmodule Normandy.Agents.Turn.Server do
          do: {:error, repaired, reason}
   end
 
+  # The config a tool task runs with: the conversation's entries left behind, so each
+  # task's copy is small (B2). Execution, budget, after_tool and after-hooks read the
+  # agent's name, model, toolset, tool_context, behaviours and the turn id
+  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
+  # runs in the worker with the full config.
+  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
+    do: %{config | memory: AgentMemory.without_entries(memory)}
+
+  defp tool_task_config(config), do: config
+
   # Classify every call; execute the allowed ones concurrently (mirrors
   # BaseAgent.dispatch_turn_tools/2's Task.async_stream); collect held results.
   # If any call needs approval, park the batch; else hand back ordered results.
@@ -1785,13 +1799,14 @@ defmodule Normandy.Agents.Turn.Server do
 
     runnable = for {_call, {:execute, invocation, ncall}} <- classified, do: {invocation, ncall}
     denied = for {_call, {:deny, %_{} = result}} <- classified, do: result
+    tool_config = tool_task_config(config)
 
     executed =
       runnable
       |> Task.async_stream(
         fn {invocation, ncall} ->
           OtelCtx.restore(parent_ctx)
-          Dispatch.execute(config, invocation, ncall, pipeline)
+          Dispatch.execute(tool_config, invocation, ncall, pipeline)
         end,
         ordered: true,
         max_concurrency: max_conc,
@@ -1818,12 +1833,13 @@ defmodule Normandy.Agents.Turn.Server do
     pipeline = BaseAgent.base_agent_pipeline(config)
     max_conc = max(config.max_tool_concurrency || 1, 1)
     parent_ctx = OtelCtx.capture()
+    tool_config = tool_task_config(config)
 
     calls
     |> Task.async_stream(
       fn %ToolCall{} = call ->
         OtelCtx.restore(parent_ctx)
-        Dispatch.execute_approved(config, call, pipeline)
+        Dispatch.execute_approved(tool_config, call, pipeline)
       end,
       ordered: true,
       max_concurrency: max_conc,

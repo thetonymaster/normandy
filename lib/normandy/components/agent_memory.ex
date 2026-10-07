@@ -330,6 +330,14 @@ defmodule Normandy.Components.AgentMemory do
   @spec entries(t()) :: %{String.t() => Entry.t()}
   def entries(%__MODULE__{entries: entries}), do: entries
 
+  @doc false
+  # The memory with no entries; head, current_turn_id and max_messages kept. For a copy
+  # sent to a process that reads only the turn id (Turn.Server's tool tasks: tool spans,
+  # Tools.Context and hook contexts read current_turn_id). head names an entry the copy
+  # no longer holds, so nothing may walk or append to it.
+  @spec without_entries(t()) :: t()
+  def without_entries(%__MODULE__{} = memory), do: %{memory | entries: %{}}
+
   @doc "Looks up the entry with id `id`: `{:ok, entry}` or `:error`."
   @spec fetch_entry(t(), String.t()) :: {:ok, Entry.t()} | :error
   def fetch_entry(%__MODULE__{entries: entries}, id), do: Map.fetch(entries, id)
