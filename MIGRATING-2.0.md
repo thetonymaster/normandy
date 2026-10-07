@@ -1640,9 +1640,18 @@ code you wrote against 1.x must follow the changes below.
   `Agent output guardrail violation: ForbiddenSubstrings at chat_message (1 violation)`. It
   no longer holds the violation messages, which quote the guard's configuration
   (`ForbiddenSubstrings`' forbidden term, `RegexGuard`'s pattern) and so could ship a secret
-  the guard protects to your log pipeline. Read the messages from the
-  `[:normandy, :agent, :guardrail, :violation]` telemetry event's `violations`, or run with
-  `on_violation: :block` to get them in the `ViolationError`.
+  the guard protects to your log pipeline. The full messages come only in the
+  `ViolationError` returned to the caller: run with `on_violation: :block` to get them.
+- Guardrail violation messages no longer leave the caller's reply. The `violations` in
+  `[:normandy, :agent, :guardrail, :violation]` and `[:normandy, :agent, :guardrail,
+  :decision]` metadata are `%{guard:, path:, constraint:}` each, with no `:message` (it
+  quoted `ForbiddenSubstrings`' term, `RegexGuard`'s pattern or `SemanticScope`'s model-written
+  reason) and no other key a guard added. A `ViolationError` in a run's `:exception`
+  metadata and in a `Turn.Server` turn state's persisted `error` is reduced the same way
+  (its message is Normandy's fixed text). The `ViolationError` that `run/3`, `stream/3` and
+  `Turn.Server.run/2` return, `admit/2,3`'s `{:block, violations}` and the
+  `:guardrail_violation` stream event keep the full violations. Handlers that read
+  `:message`, `:term` or `:pattern` from the telemetry must read them from the reply.
 - A hook or guard that returns a value outside its contract still raises `ArgumentError`, but
   the message describes the value's shape instead of showing it: `got: {:inject, a string (10
   bytes)}` instead of `got: {:inject, "not a list"}`. Atoms are still shown (`got: :yes`).

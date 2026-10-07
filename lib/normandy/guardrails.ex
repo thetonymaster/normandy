@@ -94,8 +94,8 @@ defmodule Normandy.Guardrails do
     warning names the guards, the paths and the count
     (`Agent output guardrail violation: ForbiddenSubstrings at chat_message (1 violation)`),
     never the messages, which quote the guard's configuration (a forbidden term, a
-    pattern). The messages are in the `[:normandy, :agent, :guardrail, :violation]`
-    telemetry metadata.
+    pattern). Neither the log nor telemetry carries them: only the caller's reply does
+    (the `ViolationError` under `:block`, the `:guardrail_violation` stream event).
 
   The option does not apply to streaming, where the content has already
   reached the caller (see below).
@@ -147,8 +147,12 @@ defmodule Normandy.Guardrails do
   A `[:normandy, :agent, :guardrail, :violation]` event is emitted per
   violation batch. One event per final-response emission, not per user turn —
   with `enable_json_retry` plus retries, a single turn can emit multiple
-  output-guardrail events. Metadata includes the matched `:term` / `:pattern`
-  on the violation payload; redact downstream if your block-list is sensitive.
+  output-guardrail events. Its `violations` are reduced to
+  `%{guard:, path:, constraint:}` each: no message, so no forbidden term, pattern or
+  model text (`SemanticScope`'s reason). The same holds for the `:decision` event below,
+  a `ViolationError` in a run's `:exception` metadata and a `Turn.Server` turn state's
+  persisted `error`. The full violations reach only the caller: the returned
+  `ViolationError`, `admit/2,3`'s `{:block, violations}` and the stream event.
 
   `Normandy.Agents.BaseAgent.admit/2,3` additionally emits
   `[:normandy, :agent, :guardrail, :decision]` with `outcome` in

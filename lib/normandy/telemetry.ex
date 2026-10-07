@@ -278,14 +278,17 @@ defmodule Normandy.Telemetry do
   ### `[:normandy, :agent, :guardrail, :violation]`
 
   One per guardrail violation set. Measurement `count` (violations). Metadata: `stage`,
-  `agent_name`, `guards` (modules), `violations`. The violation maps describe the rule
-  that failed; they do not include the offending text.
+  `agent_name`, `guards` (modules), `violations`, each reduced to `%{guard:, path:,
+  constraint:}`: the guard, where and which rule failed, never the violation's message, so
+  neither the offending text nor the guard's configuration (a forbidden term, a pattern) nor
+  model text. The caller's `ViolationError` keeps the messages. Streaming adds `streaming:
+  true` and `mode`.
 
   ### `[:normandy, :agent, :guardrail, :decision]`
 
   The admission decision of `BaseAgent.admit/2,3`, only when guardrails are configured.
   Measurement `count`. Metadata: `stage` (`:input`), `outcome` (`:admit | :block |
-  :error`), `agent_name`, `guards`, `violations`.
+  :error`), `agent_name`, `guards`, `violations` (reduced as for `:violation`).
 
   ### `[:normandy, :turn, :unavailable]`
 

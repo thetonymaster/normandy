@@ -29,6 +29,7 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Components.StreamProcessor
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.ToolCall
+  alias Normandy.Guardrails.ViolationError
   alias Normandy.Hooks.BaseAgentGlue
   alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.LLM.Call
@@ -2317,8 +2318,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   # The log names the guards, the paths and the count, never the messages: a message
   # quotes the guard's configuration (ForbiddenSubstrings' term, RegexGuard's pattern),
-  # which can be the very secret the guard keeps out of the answer. The caller gets
-  # the messages in telemetry and, under :block, in the ViolationError.
+  # which can be the very secret the guard keeps out of the answer. Only the caller's
+  # reply carries the messages (the ViolationError under :block).
   defp output_violation(:warn, violations) do
     Logger.warning("Agent output guardrail violation: " <> violation_summary(violations))
     :ok
@@ -2363,7 +2364,7 @@ defmodule Normandy.Agents.BaseAgent do
           stage: stage,
           agent_name: config.name,
           guards: Enum.map(guards, &guard_module/1),
-          violations: violations
+          violations: ViolationError.reduce_violations(violations)
         },
         extra_meta
       )
@@ -2383,7 +2384,7 @@ defmodule Normandy.Agents.BaseAgent do
         outcome: outcome,
         agent_name: config.name,
         guards: Enum.map(guards, &guard_module/1),
-        violations: violations
+        violations: ViolationError.reduce_violations(violations)
       }
     )
   end

@@ -71,6 +71,8 @@ defmodule Normandy.TurnError do
 
   require Logger
 
+  alias Normandy.Guardrails.ViolationError
+
   @types [
     :handler_crashed,
     :persist_failed,
@@ -149,7 +151,8 @@ defmodule Normandy.TurnError do
   @doc false
   # The form of a failure that is persisted (Turn.State.error) or emitted (every
   # telemetry :exception reason, see Normandy.Telemetry.Span.exception_metadata/3):
-  # Normandy's own exceptions unchanged, any other exception (a bug) reduced to
+  # Normandy's own exceptions unchanged (a ViolationError has its violations reduced to
+  # guard, path and constraint: see ViolationError.redact/1), any other exception (a bug) reduced to
   # %{exception: Module}, because its fields and its message can hold the value it
   # failed on. A bare one becomes the :task_down TurnError from_reason/1 would make of
   # it; a TurnError keeps its type and handler and has its reason reduced the same way,
@@ -161,12 +164,15 @@ defmodule Normandy.TurnError do
   @spec redact(term()) :: term()
   def redact(%__MODULE__{reason: reason} = error), do: %{error | reason: redact_reason(reason)}
 
+  def redact(%ViolationError{} = error), do: ViolationError.redact(error)
+
   def redact(exception) when is_exception(exception),
     do: if(domain?(exception), do: exception, else: redact(task_down(exception)))
 
   def redact(term), do: redact_reason(term)
 
   defp redact_reason(%__MODULE__{} = error), do: redact(error)
+  defp redact_reason(%ViolationError{} = error), do: ViolationError.redact(error)
 
   defp redact_reason(%module{} = exception) when is_exception(exception),
     do: if(domain?(exception), do: exception, else: %{exception: module})
