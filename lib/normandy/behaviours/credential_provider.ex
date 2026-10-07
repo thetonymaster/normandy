@@ -2,11 +2,14 @@ defmodule Normandy.Behaviours.CredentialProvider do
   @moduledoc """
   Contract for resolving an LLM provider token.
 
-  Defined and defaulted in Phase 2; its consumption at the `Model.converse`
-  boundary is deferred (the token still flows through `config.client` today).
-  The default impl `FromClient` extracts the `api_key` already carried on the
-  client struct, matching any client that exposes a binary `:api_key` so it
-  stays decoupled from `Normandy.LLM`.
+  `Turn.Server` calls `get_token/2` each time it rebuilds a config from a stored template,
+  with `%{model: model}` as the provider, and hands the token to the supplement's
+  `client_builder`. Nothing else consumes it: a config built with `BaseAgent.init/1` keeps
+  its client.
+
+  The default impl `FromClient` reads a binary `:api_key` off the struct it is given. The
+  rebuild passes no client, so `FromClient` returns `{:error, :no_api_key}` there: a session
+  rebuilt from a template needs a provider that returns the credential itself.
   """
 
   @doc """

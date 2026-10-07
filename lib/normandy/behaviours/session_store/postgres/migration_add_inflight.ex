@@ -18,7 +18,7 @@ if Code.ensure_loaded?(Ecto.Migration) do
     @doc """
     Adds the `inflight` boolean column (default `false`) to `normandy_sessions`, the partial
     index `normandy_sessions_inflight_index` over the rows where it is true, and an index on
-    `head_id`. Run it after `Migration`.
+    `head_id`. Run it after `Migration` and the other `Migration*` modules.
     """
     def up do
       alter table(:normandy_sessions) do

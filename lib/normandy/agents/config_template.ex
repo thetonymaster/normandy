@@ -130,8 +130,10 @@ defmodule Normandy.Agents.ConfigTemplate do
   The template holds the fields the moduledoc lists and a `resume_policy` of `:lazy`; use
   `from_config/3` for `:eager`. Fields that cannot be stored (the client, the toolset,
   `mcp_servers`) are left out, and `node_local_fields` records that `mcp_servers` was set.
-  Raises `ArgumentError` when a stored field, or the opts of a hook entry, holds a function,
-  pid, reference or port, or when a hook entry is malformed.
+  Raises `ArgumentError` when one of `initial_memory`, `retry`, `circuit_breaker`,
+  `enable_json_retry`, `json_retry_max_attempts`, `guardrails`, `tool_context` or
+  `max_tool_result_chars`, or the opts of a hook entry, holds a function, pid, reference or
+  port, or when a hook entry is malformed.
   """
   @spec from_config(BaseAgentConfig.t(), String.t()) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id) do

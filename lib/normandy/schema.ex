@@ -454,6 +454,9 @@ defmodule Normandy.Schema do
   it defaults to `:string`. The options are in the moduledoc's "Field Options" and
   "Virtual Fields", plus `:redact` (leave the value out of `inspect/1` and of the JSON sent
   to the model) and `:skip_default_validation` (do not check `:default` against `type`).
+  The composition options `:any_of`, `:one_of` and `:all_of` and the conditional options
+  `:if_schema`, `:then_schema` and `:else_schema` are described in the moduledoc's "JSON
+  Schema Composition" and "Conditional Schemas".
 
   Raises `ArgumentError` at compile time for an unknown type or option, an option value of
   the wrong kind, a `:default` that is invalid for `type`, a field name already used, a

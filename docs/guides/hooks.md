@@ -66,7 +66,7 @@ Use a function hook only for a closure over a runtime value on one node.
 | `before_tool(call, ctx, opts)` | before each tool call | `{:cont, call}`, `{:halt, reason}` or `{:halt, %ToolResult{}}` |
 | `after_tool(call, result, ctx, opts)` | on every tool result the model will see, once | `{:cont, result}` |
 | `after_compact(dropped, meta, ctx, opts)` | after a compaction that removed messages | `{:inject, [text]}` or anything (ignored) |
-| `on_turn_end(outcome, ctx, opts)` | after a turn's outcome is delivered | anything (ignored) |
+| `on_turn_end(outcome, ctx, opts)` | at a turn's end: after `Turn.Server` replies, before `BaseAgent.run/3` returns | anything (ignored) |
 | `on_passivate(ctx, opts)` | `Turn.Server`, before an idle session stops | anything (ignored) |
 
 `on_prompt` receives the validated input: the input schema's struct for a map or struct
@@ -139,16 +139,19 @@ Label them, and vet any text from an untrusted source before injecting it:
 {:inject, [~s(<context source="profile">prefers metric units</context>)]}
 ```
 
-Session-start texts are stored as one message and survive a restart. `after_compact` texts
-live in memory only, like the compacted memory itself.
+Session-start texts are stored as one message and survive a restart. Under `Turn.Server`,
+`after_compact` texts are stored with the compacted conversation (the `"compaction"`
+snapshot), so they survive a restart too. `BaseAgent.run/3` and `stream/3` have no store:
+there they live in memory only.
 
 ## Compaction and deduplication
 
 `after_compact` receives `dropped`, the `%Normandy.Components.AgentMemory.Entry{}` structs
-the compactor removed (`id`, `turn_id`, `role`, original `content`), oldest first. After a
-`Turn.Server` session passivates and starts again, it rebuilds the uncompacted
-conversation, compaction runs again, and `after_compact` reports the same messages again,
-under the same entry ids. Deduplicate on `entry.id`.
+the compactor removed (`id`, `turn_id`, `role`, original `content`), oldest first. A
+`Turn.Server` session stores the compacted conversation, so after it passivates and starts
+again it does not report the same messages again. If that write failed (it is logged), the
+restart rebuilds the uncompacted conversation, compaction runs again, and `after_compact`
+reports the same messages again, under the same entry ids. Deduplicate on `entry.id`.
 
 ## Reaching runtime resources
 

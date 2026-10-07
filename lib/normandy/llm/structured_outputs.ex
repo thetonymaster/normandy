@@ -3,7 +3,7 @@ defmodule Normandy.LLM.StructuredOutputs do
   Decides whether a request should use Anthropic structured outputs. Enabled
   by default; disable globally via `config :normandy, :structured_outputs,
   false` or per-call via `client.options[:structured_outputs]`. A schema that
-  the `SchemaTranslator` cannot express falls back (`:skip`).
+  the JSON Schema translator cannot express falls back (`:skip`).
   """
 
   alias Normandy.LLM.Json.SchemaTranslator
@@ -35,8 +35,8 @@ defmodule Normandy.LLM.StructuredOutputs do
   Returns `{:ok, schema}`, the translated JSON Schema of `response_model`, or `:skip`.
 
   `:skip` when structured outputs are off for `client`, when `response_model` is not a struct
-  of a module with `get_json_schema/0`, or when `SchemaTranslator` cannot express its
-  specification. The caller then uses the legacy parse-and-retry path.
+  of a module with `get_json_schema/0`, or when the JSON Schema translator cannot express
+  its specification. The caller then uses the legacy parse-and-retry path.
   """
   @spec schema_for(struct(), term()) :: {:ok, map()} | :skip
   def schema_for(client, response_model) do

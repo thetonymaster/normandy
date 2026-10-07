@@ -36,8 +36,9 @@ defmodule Normandy.Behaviours.SessionRegistry do
   @doc """
   Frees `session_id` and returns `:ok`; it is `:ok` for an id that is not registered.
 
-  Normandy does not call it: a registration ends when its process dies, which every
-  implementation must do on its own.
+  `Turn.Server` does not call it: a registration ends when its process dies, which every
+  implementation must do on its own. The Redis implementation calls it from its via module,
+  when a start under a via name fails.
   """
   @callback unregister(handle(), session_id()) :: :ok
 

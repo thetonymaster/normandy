@@ -27,13 +27,18 @@ defmodule Normandy.DSL.WorkflowModuledocTest do
   test "the moduledoc's workflow example runs with agents that answer text" do
     # No compiler warning either: its when_result clauses never return {:error, _} or
     # {:ok, _}, which a workflow must be free to do.
-    stderr =
-      ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        send(self(), {:compiled, Code.compile_string(example_source())})
-      end)
+    # Diagnostics are collected per process, so another async test's compile warning on
+    # the global stderr cannot reach this assertion.
+    {[{module, _bytecode}], diagnostics} =
+      Code.with_diagnostics(fn -> Code.compile_string(example_source()) end)
 
-    assert stderr == ""
-    assert_received {:compiled, [{module, _bytecode}]}
+    # A repeated run (--repeat-until-failure) must not see its own earlier definition.
+    on_exit(fn ->
+      :code.purge(module)
+      :code.delete(module)
+    end)
+
+    assert diagnostics == []
 
     agents =
       Map.new(

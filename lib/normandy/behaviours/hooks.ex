@@ -65,8 +65,9 @@ defmodule Normandy.Behaviours.Hooks do
   Runs when `Turn.Server` starts a session whose store holds no history, once per start.
 
   Return `{:inject, [text]}` to add each text to the conversation as a user message; the
-  texts are stored and survive a restart. Any other return value is ignored. A crash is
-  handled by the entry's `:on_error`; under `:reraise` the session waits `:unavailable` and
+  texts are stored and survive a restart. `{:inject, texts}` with anything but a list of
+  strings raises `ArgumentError`, whatever `:on_error` says; any other return value is
+  ignored. A crash is handled by the entry's `:on_error`; under `:reraise` the session waits `:unavailable` and
   retries the start.
   """
   @callback on_session_start(Context.t(), opts()) :: {:inject, [String.t()]} | term()
@@ -119,14 +120,20 @@ defmodule Normandy.Behaviours.Hooks do
   compactor's metadata without `:dropped`.
 
   Return `{:inject, [text]}` to append each text to the conversation as a user message
-  before the next model call. Any other return value is ignored. After a restart the same
-  messages are reported again under the same entry ids, so deduplicate on `entry.id`.
+  before the next model call. `{:inject, texts}` with anything but a list of strings raises
+  `ArgumentError`, whatever `:on_error` says; any other return value is ignored. Under
+  `Turn.Server` the compacted conversation, with the injected texts, is stored, so a restart
+  does not report the same messages again; if that write failed they are reported again under
+  the same entry ids, so deduplicate on `entry.id`.
   """
   @callback after_compact(dropped :: [Entry.t()], meta :: map(), Context.t(), opts()) ::
               {:inject, [String.t()]} | term()
   @doc """
-  Runs after a turn's outcome is delivered, with `{:ok, response}`, `{:rejected, exception}`
-  or `{:error, exception}`.
+  Runs at the end of a turn, with `{:ok, response}`, `{:rejected, exception}` or
+  `{:error, exception}`.
+
+  `Turn.Server` runs it after it has replied to `run/2`; `BaseAgent.run/3` runs it before it
+  returns.
 
   The return value is ignored. A crash is logged, whatever `:on_error` says.
   """
