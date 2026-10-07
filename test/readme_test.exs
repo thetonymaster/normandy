@@ -5,8 +5,7 @@ defmodule Normandy.ReadmeTest do
   """
   use ExUnit.Case, async: true
 
-  @api_key_line ~s|api_key: System.get_env("ANTHROPIC_API_KEY"),|
-  @options_line "options: %{enable_caching: true}"
+  @client_line ~s|%Normandy.LLM.ClaudioAdapter{api_key: System.get_env("ANTHROPIC_API_KEY")}|
 
   test "the quickstart runs and sends max_tokens 16_000" do
     [block] =
@@ -15,15 +14,14 @@ defmodule Normandy.ReadmeTest do
       )
 
     # The swap below must not silently do nothing if the README changes.
-    assert block =~ @api_key_line
-    assert block =~ @options_line
+    assert block =~ @client_line
 
     source =
-      block
-      |> String.replace(@api_key_line, ~s|api_key: "test-key",|)
-      |> String.replace(
-        @options_line,
-        "options: %{enable_caching: true, req_options: [plug: {Req.Test, #{inspect(__MODULE__)}}, retry: false]}"
+      String.replace(
+        block,
+        @client_line,
+        ~s|%Normandy.LLM.ClaudioAdapter{api_key: "test-key", | <>
+          "options: %{req_options: [plug: {Req.Test, #{inspect(__MODULE__)}}, retry: false]}}"
       )
 
     test_pid = self()
