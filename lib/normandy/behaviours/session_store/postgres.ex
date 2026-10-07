@@ -209,13 +209,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       e in [DBConnection.ConnectionError, Postgrex.Error] -> {:error, e}
     end
 
+    # Ids only: the fork check never decodes a content blob.
     defp ancestor_of_head?(repo, session_id, entry_id) do
-      case repo.get(Session, session_id) do
-        %Session{head_id: head_id} when not is_nil(head_id) ->
-          chain(repo, head_id) |> Enum.any?(&(&1.id == entry_id))
-
-        _ ->
-          false
+      with %Session{head_id: head_id} when not is_nil(head_id) <- repo.get(Session, session_id),
+           {:ok, target} <- Ecto.UUID.dump(entry_id) do
+        repo |> chain_ids(head_id) |> Enum.any?(fn {id, _parent} -> id == target end)
+      else
+        _ -> false
       end
     end
 
@@ -251,6 +251,23 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
           content: decode(content)
         }
       end)
+    end
+
+    # The chain from head_id to the root as raw {id, parent_id} pairs, newest first.
+    defp chain_ids(repo, head_id) do
+      sql = """
+      WITH RECURSIVE branch(id, parent_id, depth) AS (
+        SELECT id, parent_id, 0 FROM normandy_session_entries WHERE id = $1
+        UNION ALL
+        SELECT e.id, e.parent_id, b.depth + 1
+        FROM normandy_session_entries e
+        JOIN branch b ON e.id = b.parent_id
+      )
+      SELECT id, parent_id FROM branch ORDER BY depth
+      """
+
+      %{rows: rows} = SQL.query!(repo, sql, [Ecto.UUID.dump!(head_id)])
+      Enum.map(rows, fn [id, parent_id] -> {id, parent_id} end)
     end
 
     defp load_uuid(nil), do: nil

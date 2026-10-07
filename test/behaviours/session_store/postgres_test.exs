@@ -7,7 +7,10 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
   @moduletag :postgres
 
   alias Ecto.Adapters.SQL.Sandbox
+  import Ecto.Query, only: [from: 2]
   alias Normandy.Behaviours.SessionStore.Postgres
+  alias Normandy.Behaviours.SessionStore.Postgres.Schemas.Entry, as: PgEntry
+  alias Normandy.Behaviours.SessionStore.Postgres.Schemas.Session, as: PgSession
   alias Normandy.Components.AgentMemory.Entry
 
   defp entry(role, content), do: %Entry{turn_id: "t", role: role, content: content}
@@ -79,5 +82,19 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
     assert {:ok, %{x: 1}} = Postgres.load_turn_state(Normandy.TestRepo, "s1")
     assert {:ok, [e]} = Postgres.history(Normandy.TestRepo, "s1")
     assert e.content == "a"
+  end
+
+  test "fork checks ancestry by ids, without decoding any entry's content" do
+    {:ok, root} = Postgres.append_entry(Normandy.TestRepo, "s-ids", entry("user", "a"))
+    {:ok, at} = Postgres.append_entry(Normandy.TestRepo, "s-ids", entry("assistant", "b"))
+
+    # A blob binary_to_term rejects: a fork that decoded contents would raise.
+    {1, _} =
+      Normandy.TestRepo.update_all(from(e in PgEntry, where: e.id == ^root),
+        set: [content: <<131, 255>>]
+      )
+
+    assert {:ok, forked} = Postgres.fork(Normandy.TestRepo, "s-ids", at)
+    assert %PgSession{head_id: ^at} = Normandy.TestRepo.get(PgSession, forked)
   end
 end

@@ -28,6 +28,9 @@ if Code.ensure_loaded?(Redix) do
     alias Normandy.Components.AgentMemory.Entry
     alias Normandy.Options
 
+    # Entries copied per pipeline by fork/3.
+    @copy_chunk 1_000
+
     @new_opts_schema NimbleOptions.new!(
                        url: [
                          type: :string,
@@ -113,7 +116,7 @@ if Code.ensure_loaded?(Redix) do
              Redix.command(conn, ["XRANGE", stream_key(ns, session_id), "-", "+"]),
            true <- Enum.any?(raw, &entry_matches?(&1, from_entry_id)) do
         prefix = take_through(raw, from_entry_id)
-        new_id = "fork_#{System.unique_integer([:positive])}"
+        new_id = UUID.uuid4()
 
         case copy_prefix(conn, stream_key(ns, new_id), prefix) do
           :ok -> {:ok, new_id}
@@ -167,10 +170,7 @@ if Code.ensure_loaded?(Redix) do
         )
       ]
 
-      case Redix.pipeline(conn, cmds) do
-        {:ok, _} -> wait(conn, wait)
-        {:error, reason} -> {:error, reason}
-      end
+      with {:ok, _} <- pipeline_ok(Redix.pipeline(conn, cmds)), do: wait(conn, wait)
     end
 
     @impl true
@@ -276,14 +276,40 @@ if Code.ensure_loaded?(Redix) do
       |> Enum.reverse()
     end
 
+    # One pipeline per @copy_chunk entries. A failure part-way deletes the partial stream
+    # (best effort: the fork's id was never returned, so nothing refers to it) and returns
+    # the failure.
     defp copy_prefix(conn, dest_stream, prefix) do
-      Enum.reduce_while(prefix, :ok, fn [_old_id, kv], :ok ->
-        case Redix.command(conn, ["XADD", dest_stream, "*" | kv]) do
+      prefix
+      |> Enum.chunk_every(@copy_chunk)
+      |> Enum.reduce_while(:ok, fn chunk, :ok ->
+        cmds = Enum.map(chunk, fn [_old_id, kv] -> ["XADD", dest_stream, "*" | kv] end)
+
+        case pipeline_ok(Redix.pipeline(conn, cmds)) do
           {:ok, _} -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, reason}}
+          {:error, _reason} = error -> {:halt, error}
         end
       end)
+      |> case do
+        :ok ->
+          :ok
+
+        {:error, _reason} = error ->
+          _ = Redix.command(conn, ["DEL", dest_stream])
+          error
+      end
     end
+
+    # Redix returns a command's Redis error inside {:ok, results}: the first one fails the
+    # whole write instead of being dropped.
+    defp pipeline_ok({:ok, results}) do
+      case Enum.find(results, &match?(%Redix.Error{}, &1)) do
+        nil -> {:ok, results}
+        %Redix.Error{} = error -> {:error, error}
+      end
+    end
+
+    defp pipeline_ok({:error, _reason} = error), do: error
 
     defp take_through(raw, target_id) do
       raw

@@ -1489,6 +1489,22 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   (`Turn.Server could not store a compaction (session "sid"): <tag>; a restart rebuilds the
   uncompacted conversation`); a restart then rebuilds the full conversation, as in 1.x.
 
+## 40. Session stores, registry and memory stores
+
+`SessionStore` and `SessionRegistry.Redis` are released behaviours and modules: a store or host
+code you wrote against 1.x must follow the changes below.
+
+| 1.x | 2.0 |
+|---|---|
+| `SessionStore.Redis.fork/3` named the new session `"fork_<n>"`, an integer unique only on the node that forked | A UUID, as every other store returns |
+
+- `SessionStore.Redis`: a pipelined write whose command fails inside Redis (a `WRONGTYPE`, an
+  out-of-memory error) returns `{:error, %Redix.Error{}}`. 1.x returned `:ok` and dropped the error.
+- `SessionStore.Redis.fork/3` copies the history in pipelines of 1,000 entries instead of one round
+  trip per entry. If a pipeline fails, the partial copy is deleted and `fork/3` returns the error.
+- `SessionStore.Postgres.fork/3` checks that the fork point is on the session's chain by ids; it no
+  longer reads and decodes every entry's content.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

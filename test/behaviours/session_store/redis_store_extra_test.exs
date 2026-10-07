@@ -97,4 +97,24 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
     {:ok, entries} = Redis.history(h, forked)
     assert Enum.map(entries, &{&1.id, &1.content}) == [{"mem-1", "a"}, {"mem-2", "b"}]
   end
+
+  test "two forks of one session get distinct UUID ids", %{handle: h} do
+    {:ok, at} = Redis.append_entry(h, "s-uuid", e("user", "a"))
+
+    {:ok, first} = Redis.fork(h, "s-uuid", at)
+    {:ok, second} = Redis.fork(h, "s-uuid", at)
+
+    assert first != second
+    assert {:ok, _} = UUID.info(first)
+    assert {:ok, _} = UUID.info(second)
+  end
+
+  test "fork copies a prefix longer than one pipeline chunk, in order", %{handle: h} do
+    ids = for n <- 1..1_001, do: elem(Redis.append_entry(h, "s-long", e("user", n)), 1)
+
+    {:ok, forked} = Redis.fork(h, "s-long", List.last(ids))
+    {:ok, entries} = Redis.history(h, forked)
+
+    assert Enum.map(entries, & &1.content) == Enum.to_list(1..1_001)
+  end
 end
