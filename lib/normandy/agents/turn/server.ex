@@ -725,9 +725,14 @@ defmodule Normandy.Agents.Turn.Server do
 
     # Admission first: a rejected input changes nothing, and the interrupted results the
     # repair builds belong to a turn that runs.
+    # begin_turn/2 encodes the input as it appends it, so an input that cannot be
+    # encoded fails here, as a crashed :append, before anything reaches the store.
     with {:ok, admitted} <- admit(data, user_input),
-         {:ok, repairs} <- close_batch(data, missing) do
-      config = BaseAgent.begin_turn(last_config(repairs, data.config), admitted)
+         {:ok, repairs} <- close_batch(data, missing),
+         {:ok, config} <-
+           call_handler(data, :append, fn ->
+             BaseAgent.begin_turn(last_config(repairs, data.config), admitted)
+           end) do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->

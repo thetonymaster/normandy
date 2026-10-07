@@ -21,6 +21,13 @@ defmodule Normandy.Test.TurnConfig do
     defstruct content: "", tool_calls: nil
   end
 
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   # Not BaseAgentConfig.t(): the fixture uses a plain-map client and no input_schema.
   @spec build() :: BaseAgentConfig.partial()
   def build do

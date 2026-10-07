@@ -19,6 +19,13 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     defstruct content: "", tool_calls: nil
   end
 
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   # A plain BaseAgentConfig template (client is nil; the fake LLM is injected via handlers).
   defp server_config(extra \\ %{}) do
     base = %Normandy.Agents.BaseAgentConfig{

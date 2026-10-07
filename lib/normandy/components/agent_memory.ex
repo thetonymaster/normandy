@@ -10,11 +10,18 @@ defmodule Normandy.Components.AgentMemory do
 
   `history/1` reconstructs the active branch in chronological order — output
   identical to the previous linear implementation.
+
+  Each entry's model-facing encoding is computed once, when its content is set (an
+  append, a thinking drop, `from_entries/1`, `load/1`), and kept on the entry
+  (`Normandy.Components.AgentMemory.Entry`'s `wire` and `tokens`). Building a request
+  or estimating the conversation reads it, so a content that cannot be encoded raises
+  at the append rather than at the next LLM call.
   """
 
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.Message
+  alias Normandy.Context.WindowManager
   alias Normandy.Options
 
   defstruct entries: %{}, head: nil, current_turn_id: nil, max_messages: nil
@@ -78,13 +85,16 @@ defmodule Normandy.Components.AgentMemory do
               "an :id must be new (it would overwrite the existing entry and corrupt the branch)"
     end
 
-    entry = %Entry{
-      id: id,
-      parent_id: memory.head,
-      turn_id: Keyword.get(opts, :turn_id, memory.current_turn_id),
-      role: role,
-      content: content
-    }
+    entry =
+      put_content(
+        %Entry{
+          id: id,
+          parent_id: memory.head,
+          turn_id: Keyword.get(opts, :turn_id, memory.current_turn_id),
+          role: role
+        },
+        content
+      )
 
     %{memory | entries: Map.put(memory.entries, id, entry), head: id}
     |> enforce_max_messages()
@@ -116,10 +126,36 @@ defmodule Normandy.Components.AgentMemory do
   @spec history(t()) :: [%{role: String.t(), content: String.t() | list()}]
   def history(%__MODULE__{} = memory) do
     memory
-    |> messages()
-    |> Enum.map(fn %Message{role: role, content: content} ->
-      %{role: role, content: model_content(content)}
-    end)
+    |> entry_chain()
+    |> Enum.map(fn %Entry{role: role} = entry -> %{role: role, content: entry_wire(entry)} end)
+  end
+
+  @doc false
+  # What the model is sent for `entry`: its cached `wire`, or (an entry built by hand,
+  # or decoded from a term written before the field existed) the encoding computed now.
+  @spec entry_wire(Entry.t()) :: String.t() | list()
+  def entry_wire(entry), do: Map.get(entry, :wire) || model_content(entry.content)
+
+  @doc false
+  # The entry's token estimate (Context.WindowManager's, plus 10 for the message),
+  # cached like entry_wire/1.
+  @spec entry_tokens(Entry.t()) :: non_neg_integer()
+  def entry_tokens(entry),
+    do: Map.get(entry, :tokens) || estimate_tokens(entry_wire(entry))
+
+  @doc false
+  # The memory with every entry's cache cleared: what ConfigTemplate persists, so a
+  # template never carries an encoding another Normandy version would replay.
+  @spec drop_cache(t()) :: t()
+  def drop_cache(%__MODULE__{entries: entries} = memory) do
+    %{memory | entries: Map.new(entries, fn {id, entry} -> {id, bare_entry(entry)} end)}
+  end
+
+  @doc false
+  # The memory with every entry's cache computed (ConfigTemplate.rebuild/3).
+  @spec fill_cache(t()) :: t()
+  def fill_cache(%__MODULE__{entries: entries} = memory) do
+    %{memory | entries: Map.new(entries, fn {id, entry} -> {id, fill_entry(entry)} end)}
   end
 
   @doc """
@@ -178,6 +214,30 @@ defmodule Normandy.Components.AgentMemory do
        do: text
 
   defp model_content(content), do: BaseIOSchema.to_json(content)
+
+  # The only place an entry's content is set: content, wire and tokens change together.
+  defp put_content(%Entry{} = entry, content) do
+    wire = model_content(content)
+    %Entry{entry | content: content, wire: wire, tokens: estimate_tokens(wire)}
+  end
+
+  defp estimate_tokens(wire), do: WindowManager.estimate_message_content_tokens(wire) + 10
+
+  # An entry with its five stored fields and no cache. struct/2 reads only those keys,
+  # so it also takes an entry decoded from a term written before `wire` existed.
+  defp bare_entry(entry),
+    do: struct(Entry, Map.take(entry, [:id, :parent_id, :turn_id, :role, :content]))
+
+  defp fill_entry(entry) do
+    bare = bare_entry(entry)
+    put_content(bare, bare.content)
+  end
+
+  # Thinking is dropped by re-setting the content, so the cache follows; an entry with
+  # none is returned as it is (nothing to re-encode).
+  defp strip_thinking(%Entry{content: content} = entry) do
+    if has_thinking?(content), do: put_content(entry, drop_thinking(content)), else: entry
+  end
 
   @doc """
   Total number of stored entries across all branches (`map_size(entries)`).
@@ -242,7 +302,7 @@ defmodule Normandy.Components.AgentMemory do
     entries =
       Map.new(entries, fn {id, entry} ->
         if after_deleted?(entry.parent_id, memory.entries, deleted),
-          do: {id, %{entry | content: drop_thinking(entry.content)}},
+          do: {id, strip_thinking(entry)},
           else: {id, entry}
       end)
 
@@ -277,7 +337,7 @@ defmodule Normandy.Components.AgentMemory do
             {entries, state}
 
           {:drop, state} ->
-            {Map.put(entries, id, %{entry | content: drop_thinking(entry.content)}), state}
+            {Map.put(entries, id, put_content(entry, drop_thinking(entry.content))), state}
         end
       end)
 
@@ -336,6 +396,7 @@ defmodule Normandy.Components.AgentMemory do
   Rebuild a memory from a chronological list of `Entry.t()` (e.g. the output of
   `SessionStore.history/2`). The `head` becomes the last entry's id and the
   `current_turn_id` the last entry's `turn_id`, so the active branch reconstructs.
+  Each entry's encoding is computed here, once.
   """
   @spec from_entries([Entry.t()]) :: t()
   def from_entries([]), do: new_memory()
@@ -344,7 +405,7 @@ defmodule Normandy.Components.AgentMemory do
     last = List.last(entries)
 
     %__MODULE__{
-      entries: Map.new(entries, fn %Entry{id: id} = e -> {id, e} end),
+      entries: Map.new(entries, fn %Entry{id: id} = e -> {id, fill_entry(e)} end),
       head: last.id,
       current_turn_id: last.turn_id,
       max_messages: nil
@@ -390,17 +451,7 @@ defmodule Normandy.Components.AgentMemory do
               "AgentMemory.load/1: unsupported dump version #{inspect(version)} (expected 1)"
     end
 
-    entries =
-      for e <- loaded["entries"], into: %{} do
-        {e["id"],
-         %Entry{
-           id: e["id"],
-           parent_id: e["parent_id"],
-           turn_id: e["turn_id"],
-           role: e["role"],
-           content: decode_content(e["content"])
-         }}
-      end
+    entries = for e <- loaded["entries"], into: %{}, do: {e["id"], load_entry(e)}
 
     %__MODULE__{
       entries: entries,
@@ -411,6 +462,26 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   # ── internals ───────────────────────────────────────────────────────────────
+
+  # A dump is data: content the model cannot be sent (a 1.x tool call stored as a plain
+  # map) is refused here, naming the entry, rather than at the next request.
+  defp load_entry(e) do
+    entry = %Entry{id: e["id"], parent_id: e["parent_id"], turn_id: e["turn_id"], role: e["role"]}
+    content = decode_content(e["content"])
+
+    try do
+      put_content(entry, content)
+    rescue
+      error ->
+        reraise ArgumentError,
+                [
+                  message:
+                    "AgentMemory.load/1: entry #{inspect(entry.id)} has content that cannot be " <>
+                      "encoded for the model (#{inspect(error.__struct__)})"
+                ],
+                __STACKTRACE__
+    end
+  end
 
   defp entry_to_message(%Entry{turn_id: turn_id, role: role, content: content}) do
     %Message{turn_id: turn_id, role: role, content: content}
@@ -460,7 +531,7 @@ defmodule Normandy.Components.AgentMemory do
         dropped
         |> Enum.reduce(memory.entries, fn %Entry{id: id}, acc -> Map.delete(acc, id) end)
         |> Map.update!(oldest_kept.id, fn entry -> %{entry | parent_id: nil} end)
-        |> Map.new(fn {id, entry} -> {id, %{entry | content: drop_thinking(entry.content)}} end)
+        |> Map.new(fn {id, entry} -> {id, strip_thinking(entry)} end)
 
       %{memory | entries: entries}
     end

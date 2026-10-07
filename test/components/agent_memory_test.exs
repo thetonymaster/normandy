@@ -559,7 +559,7 @@ defmodule NormandyTest.Components.AgentMemoryTest do
                Turn.unanswered_tool_calls(AgentMemory.messages(open))
     end
 
-    test "a dump written before nested structs were tagged still loads" do
+    test "a dump written before nested structs were tagged raises at load, naming the entry" do
       legacy =
         Jason.encode!(%{
           version: 1,
@@ -584,10 +584,12 @@ defmodule NormandyTest.Components.AgentMemoryTest do
           ]
         })
 
-      assert [%ToolCallResponse{tool_calls: [%{"id" => "t1"}]} = resp] =
-               legacy |> AgentMemory.load() |> contents()
-
-      assert resp.__meta__ == %ToolCallResponse{}.__meta__
+      # Its tool call decodes as a plain map, which the model cannot be sent: the entry's
+      # encoding is computed at load (Task 6.1a), so the dump is refused here.
+      assert_raise ArgumentError,
+                   ~s|AgentMemory.load/1: entry "e1" has content that cannot be encoded | <>
+                     "for the model (KeyError)",
+                   fn -> AgentMemory.load(legacy) end
     end
   end
 

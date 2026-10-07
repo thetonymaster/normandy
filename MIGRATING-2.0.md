@@ -1354,6 +1354,32 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `Normandy.Agents.Dispatch`. An approved call runs whatever tool holds its name when the
   approval arrives: version a tool's name when its behaviour changes.
 
+## 38. History, encoding and caching
+
+- Memory encodes a message once, when it is stored: `AgentMemory.add_message/4`,
+  `from_entries/1` and `load/1` call `BaseIOSchema.to_json/1` and keep the result on the entry,
+  and every request, token estimate and compaction reads it. A conversation of N turns costs N
+  encodings instead of N². Request bodies are unchanged.
+- Content that cannot be encoded (a struct with no `BaseIOSchema` implementation, a tuple or a
+  pid in an `:any` field) raises when it is stored, from `run/3` or `stream/3`, instead of at the
+  next LLM call. Under `Turn.Server` the turn fails with
+  `%Normandy.TurnError{type: :handler_crashed, handler: :append}` before the store holds the
+  message, the turn's input included; it used to fail as `:task_down` from the LLM worker, after
+  the store held it. A test double used as an output schema needs a `BaseIOSchema`
+  implementation.
+- `%Normandy.Components.AgentMemory.Entry{}` has two derived fields, `wire` (what the model is
+  sent for the message) and `tokens` (its estimate). They are never persisted: a session store
+  returns entries with both `nil`, `from_entries/1` fills them, and a config template stores
+  `initial_memory` without them. A hand-built entry with `nil` fields still works (it is encoded
+  each time it is read). Compare entries from a memory with entries from a store on `id`,
+  `role`, `turn_id` and `content`, not as whole structs.
+- `AgentMemory.load/1` raises `ArgumentError` naming the entry
+  (`AgentMemory.load/1: entry "e1" has content that cannot be encoded for the model (KeyError)`)
+  for a dump whose content cannot be sent, such as a 1.x dump whose tool calls were stored as
+  plain maps. Such a dump used to load and fail at the next request.
+- A memory holds each message's encoding beside its content: histories heavy in JSON tool
+  results take up to about twice the memory they did.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

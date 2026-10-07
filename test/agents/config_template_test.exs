@@ -367,6 +367,30 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN") == config
     end
 
+    test "initial_memory is stored without its entries' encodings; rebuild computes them" do
+      supp = round_trip_supplement()
+      tmpl = ConfigTemplate.from_config(full_config(supp), "t")
+
+      assert [%AgentMemory.Entry{content: "seed", wire: nil, tokens: nil}] =
+               AgentMemory.entry_chain(tmpl.initial_memory)
+
+      assert [%AgentMemory.Entry{content: "seed", wire: "seed", tokens: 11}] =
+               AgentMemory.entry_chain(ConfigTemplate.rebuild(tmpl, supp, "TOKEN").initial_memory)
+    end
+
+    test "a template saved before entries had wire and tokens rebuilds with them" do
+      supp = round_trip_supplement()
+      config = full_config(supp)
+      tmpl = ConfigTemplate.from_config(config, "t")
+
+      old_entries =
+        Map.new(tmpl.initial_memory.entries, fn {id, e} -> {id, Map.drop(e, [:wire, :tokens])} end)
+
+      tmpl = put_in(tmpl.initial_memory.entries, old_entries)
+
+      assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").initial_memory == config.initial_memory
+    end
+
     test "MCP servers come from the supplement, not the template" do
       servers = [
         %Normandy.MCP.ServerConfig{

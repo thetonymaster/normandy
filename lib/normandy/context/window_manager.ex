@@ -146,15 +146,13 @@ defmodule Normandy.Context.WindowManager do
 
       tokens = WindowManager.estimate_conversation_tokens(agent.memory)
   """
-  @spec estimate_conversation_tokens(map()) :: non_neg_integer()
+  @spec estimate_conversation_tokens(AgentMemory.t()) :: non_neg_integer()
   def estimate_conversation_tokens(memory) do
-    history = AgentMemory.history(memory)
-
-    Enum.reduce(history, 0, fn msg, acc ->
-      content_tokens = estimate_message_content_tokens(msg.content)
-      # Add overhead for role and structure (~10 tokens per message)
-      acc + content_tokens + 10
-    end)
+    # Each message's estimate (its content plus ~10 tokens for role and structure) is
+    # computed when the message is stored (AgentMemory.Entry's `tokens`).
+    memory
+    |> AgentMemory.entry_chain()
+    |> Enum.reduce(0, fn entry, acc -> acc + AgentMemory.entry_tokens(entry) end)
   end
 
   @doc """

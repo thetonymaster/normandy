@@ -8,11 +8,11 @@ defprotocol Normandy.Components.BaseIOSchema do
   @dialyzer {:nowarn_function, __protocol__: 1}
 
   @doc "Converts the struct to a JSON string"
-  @spec to_json(struct()) :: String.t() | list()
+  @spec to_json(t()) :: String.t() | list()
   def to_json(struct)
 
   @doc "Returns the schema definition for the struct"
-  @spec get_schema(struct()) :: term()
+  @spec get_schema(t()) :: term()
   def get_schema(struct)
 end
 

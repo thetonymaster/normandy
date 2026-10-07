@@ -17,6 +17,13 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     defstruct content: "", tool_calls: nil
   end
 
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   setup do
     :ok = Sandbox.checkout(Normandy.TestRepo)
     # Supervised Turn.Server runs in its own process and must see the same

@@ -14,6 +14,13 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     defstruct content: "", tool_calls: nil
   end
 
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   # Builds a BaseAgentConfig with billing tool + Ruleset policy requiring approval for "billing".
   defp integration_config(_store) do
     tools = [%FakeTool{name: "billing"}]

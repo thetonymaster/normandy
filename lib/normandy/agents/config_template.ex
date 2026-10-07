@@ -175,8 +175,15 @@ defmodule Normandy.Agents.ConfigTemplate do
       end
     end)
 
-    fields
+    Map.update!(fields, :initial_memory, &memory_cache(&1, :drop))
   end
+
+  # A memory's per-entry encodings (AgentMemory.Entry's `wire` and `tokens`) are derived:
+  # a template stores the memory without them, and rebuild/3 computes them again, so a
+  # template never replays an encoding made by another Normandy version.
+  defp memory_cache(%AgentMemory{} = memory, :drop), do: AgentMemory.drop_cache(memory)
+  defp memory_cache(%AgentMemory{} = memory, :fill), do: AgentMemory.fill_cache(memory)
+  defp memory_cache(other, _action), do: other
 
   @spec from_config(BaseAgentConfig.t(), String.t(), :lazy | :eager) :: map()
   def from_config(%BaseAgentConfig{} = c, template_id, resume_policy) do
@@ -232,6 +239,7 @@ defmodule Normandy.Agents.ConfigTemplate do
       memory: AgentMemory.new_memory(Map.get(tmpl, :max_messages))
     }
     |> struct(Map.take(tmpl, @data_fields))
+    |> Map.update!(:initial_memory, &memory_cache(&1, :fill))
     |> struct(node_local_fields!(tmpl, supplement))
     |> BaseAgent.validate_compaction_config!({__MODULE__, :rebuild, 3})
     |> validate_client_options!()
