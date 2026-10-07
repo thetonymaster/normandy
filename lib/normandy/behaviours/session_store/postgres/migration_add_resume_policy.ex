@@ -8,7 +8,13 @@ if Code.ensure_loaded?(Ecto.Migration) do
     """
     use Ecto.Migration
 
+    @doc """
+    Adds the nullable `resume_policy` column (text) to `normandy_sessions`, which
+    `save_config_template/3` fills from the template's `resume_policy`. Run it after
+    `Migration`.
+    """
     def up, do: alter(table(:normandy_sessions), do: add(:resume_policy, :text))
+    @doc "Removes the `resume_policy` column."
     def down, do: alter(table(:normandy_sessions), do: remove(:resume_policy))
   end
 end

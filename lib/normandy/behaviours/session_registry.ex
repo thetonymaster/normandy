@@ -15,8 +15,30 @@ defmodule Normandy.Behaviours.SessionRegistry do
   @type handle :: term()
   @type session_id :: String.t()
 
+  @doc """
+  Returns `{:ok, pid}` for the live `Turn.Server` of `session_id`, `:none` when there is
+  none, or `{:error, reason}` when the backend cannot answer.
+
+  Never answer `:none` for an outage: the router would start a second server for a live
+  session. A `{:error, reason}` is returned to the caller of `Turn.Session.run/2`, and
+  `Turn.ResumeReaper` skips that session.
+  """
   @callback whereis(handle(), session_id()) :: {:ok, pid()} | :none | {:error, term()}
+  @doc """
+  Registers `pid` under `session_id` and returns `:ok`, or `{:error, :taken}` when a live
+  process already holds it.
+
+  `Turn.Server` calls it from its own `init` with `self()` when `child_name/2` returns
+  `:self_register`, then looks the holder up with `whereis/2` and stops with
+  `{:already_started, holder}`. The registration ends when the process dies.
+  """
   @callback register(handle(), session_id(), pid()) :: :ok | {:error, :taken}
+  @doc """
+  Frees `session_id` and returns `:ok`; it is `:ok` for an id that is not registered.
+
+  Normandy does not call it: a registration ends when its process dies, which every
+  implementation must do on its own.
+  """
   @callback unregister(handle(), session_id()) :: :ok
 
   @doc """

@@ -34,9 +34,34 @@ defmodule Normandy.Behaviours.SessionStore do
   @type handle :: term()
   @type session_id :: String.t()
 
+  @doc """
+  Appends `entry` to the session's history and returns `{:ok, entry_id}`.
+
+  `entry_id` is the entry's own `id`, or a new one when it is `nil`. An entry with no
+  `parent_id` goes after the session's current head, and a session that does not exist yet
+  is created. `Turn.Server` calls it for every message and for each compaction. A store
+  error is `{:error, reason}`; for a message the turn fails with a `:persist_failed`
+  `Normandy.TurnError`, and a failed compaction entry is logged and the turn goes on.
+  """
   @callback append_entry(handle(), session_id(), Entry.t()) ::
               {:ok, String.t()} | {:error, term()}
+  @doc """
+  Returns `{:ok, entries}`, the session's active branch from the oldest entry to the head.
+
+  An unknown session is `{:ok, []}`. The full branch comes back: `max_messages` is not
+  applied. `Turn.Server` rebuilds the memory from it (`AgentMemory.from_entries/1`) when it
+  loads a session; `{:error, reason}` makes the server wait `:unavailable` and retry.
+  """
   @callback history(handle(), session_id()) :: {:ok, [Entry.t()]} | {:error, term()}
+  @doc """
+  Creates a new session whose history is the branch of `session_id` up to `from_entry_id`,
+  and returns `{:ok, new_session_id}`.
+
+  The original keeps its own history. A session that does not exist is
+  `{:error, :no_such_session}`, and an entry that is not on the session's branch is
+  `{:error, :no_such_entry}`. The new session has no turn state or config template. Normandy
+  does not call it; it is for hosts that branch a conversation.
+  """
   @callback fork(handle(), session_id(), from_entry_id :: String.t()) ::
               {:ok, session_id()} | {:error, term()}
   @doc """
@@ -51,10 +76,34 @@ defmodule Normandy.Behaviours.SessionStore do
   """
   @callback save_turn_state(handle(), session_id(), state :: term(), inflight? :: boolean()) ::
               :ok | {:error, term()}
+  @doc """
+  Returns `{:ok, state}`, the term the last `save_turn_state/4` saved for the session.
+
+  `:error` means nothing is saved. A backend failure is `{:error, reason}`, never `:error`:
+  `Turn.Server` waits `:unavailable` and retries on it, but starts a session with no saved
+  state on `:error`.
+  """
   @callback load_turn_state(handle(), session_id()) :: {:ok, term()} | :error | {:error, term()}
 
+  @doc """
+  Saves `template` for the session, replacing an earlier one, and returns `:ok`.
+
+  The template is the plain-data map `Normandy.Agents.ConfigTemplate.from_config/3` builds,
+  plus the session's `:server_options`. `Turn.Session.run/2` saves it when it starts a
+  server for a session that has a `:config` and a `:template_provider`. Treat it as an
+  opaque term and return it unchanged from `load_config_template/2`. `{:error, reason}` is
+  returned by that `run/2`.
+  """
   @callback save_config_template(handle(), session_id(), template :: term()) ::
               :ok | {:error, term()}
+  @doc """
+  Returns `{:ok, template}`, the term the last `save_config_template/3` saved.
+
+  `Turn.Session.run/2` and `Turn.Server` read it to rebuild a session's config. `:error`
+  means no template is saved: `run/2` then returns a `:session_unavailable`
+  `Normandy.TurnError` with reason `{:no_config_template, session_id}`. A backend failure
+  is `{:error, reason}`, never `:error`.
+  """
   @callback load_config_template(handle(), session_id()) ::
               {:ok, term()} | :error | {:error, term()}
 

@@ -10,32 +10,6 @@ defmodule Normandy.Docs.DocCoverageTest do
 
   # Gaps documented by Tasks 7.3f2-7.3f4, which remove their lines; 7.3f4 deletes the list.
   @not_yet_documented ~w(
-    Normandy.Behaviours.MemoryStore:callback:delete/4
-    Normandy.Behaviours.MemoryStore:callback:delete_namespace/2
-    Normandy.Behaviours.MemoryStore:callback:delete_tree/3
-    Normandy.Behaviours.MemoryStore:callback:get/3
-    Normandy.Behaviours.MemoryStore:callback:list/3
-    Normandy.Behaviours.MemoryStore:callback:put/6
-    Normandy.Behaviours.MemoryStore:callback:rename/4
-    Normandy.Behaviours.MemoryStore.Postgres.Migration:function:down/0
-    Normandy.Behaviours.MemoryStore.Postgres.Migration:function:up/0
-    Normandy.Behaviours.SessionRegistry:callback:register/3
-    Normandy.Behaviours.SessionRegistry:callback:unregister/2
-    Normandy.Behaviours.SessionRegistry:callback:whereis/2
-    Normandy.Behaviours.SessionStore:callback:append_entry/3
-    Normandy.Behaviours.SessionStore:callback:fork/3
-    Normandy.Behaviours.SessionStore:callback:history/2
-    Normandy.Behaviours.SessionStore:callback:load_config_template/2
-    Normandy.Behaviours.SessionStore:callback:load_turn_state/2
-    Normandy.Behaviours.SessionStore:callback:save_config_template/3
-    Normandy.Behaviours.SessionStore.Postgres.Migration:function:down/0
-    Normandy.Behaviours.SessionStore.Postgres.Migration:function:up/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight:function:down/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight:function:up/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy:function:down/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy:function:up/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate:function:down/0
-    Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate:function:up/0
     Normandy.Behaviours.AgentTemplate:callback:fetch/2
     Normandy.Behaviours.BudgetTracker:callback:check/3
     Normandy.Behaviours.BudgetTracker:callback:record/4

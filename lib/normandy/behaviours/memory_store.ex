@@ -44,9 +44,33 @@ defmodule Normandy.Behaviours.MemoryStore do
   @type limits :: [max_bytes: pos_integer() | nil, max_documents: pos_integer() | nil]
   @type namespace_full :: {:namespace_full, :bytes | :documents, non_neg_integer()}
 
+  @doc """
+  Returns `{:ok, entries}`, the documents at `prefix` or below it, sorted by path.
+
+  Each entry is `%{path:, size:, updated_at:}` (`size` in bytes). `prefix` matches itself or
+  a `/` boundary, and at most `list_limit/0` entries come back. A namespace or prefix with
+  no documents is `{:ok, []}`, not an error. `Normandy.Tools.Memory` calls it to view a
+  directory and to tell a directory from a file.
+  """
   @callback list(handle(), namespace(), prefix :: path()) :: {:ok, [entry()]} | {:error, term()}
+  @doc """
+  Returns `{:ok, %{content: content, version: version}}` for the document at `path`.
+
+  A missing document is `:not_found`. Only a backend failure is `{:error, reason}`.
+  """
   @callback get(handle(), namespace(), path()) ::
               {:ok, %{content: String.t(), version: version()}} | :not_found | {:error, term()}
+  @doc """
+  Writes `content` at `path` and returns `{:ok, version}`, the document's new version.
+
+  The version is `1` for a new document and the old version plus one otherwise. `expected`
+  is a compare-and-set: `:new` writes only when `path` has no document, a version writes
+  only when it is the stored one, and `:any` always writes. Anything else returns
+  `{:error, :conflict}` and writes nothing. `limits` is `[max_bytes:, max_documents:]`, a
+  key left out meaning no limit; a write over a limit returns
+  `{:error, {:namespace_full, :bytes | :documents, would_be}}` and writes nothing (see the
+  moduledoc). A backend failure is `{:error, reason}`.
+  """
   @callback put(
               handle(),
               namespace(),
@@ -59,12 +83,40 @@ defmodule Normandy.Behaviours.MemoryStore do
               | {:error, :conflict}
               | {:error, namespace_full()}
               | {:error, term()}
+  @doc """
+  Deletes the document at `path` and returns `:ok`.
+
+  `expected` is a version or `:any`. A missing document is `:not_found`, whatever `expected`
+  is. A stored version other than `expected` is `{:error, :conflict}`, and nothing is
+  deleted.
+  """
   @callback delete(handle(), namespace(), path(), version() | :any) ::
               :ok | :not_found | {:error, :conflict} | {:error, term()}
+  @doc """
+  Deletes every document at `prefix` or below it, in one atomic step, and returns
+  `{:ok, count}`, the number deleted.
+
+  `{:ok, 0}` means nothing matched; it is not an error. `prefix` matches itself or a `/`
+  boundary.
+  """
   @callback delete_tree(handle(), namespace(), prefix :: path()) ::
               {:ok, non_neg_integer()} | {:error, term()}
+  @doc """
+  Moves the document at `from`, or every document below `from/`, to `to`, atomically, and
+  returns `{:ok, count}`, the number of documents moved.
+
+  Paths below `from/` keep their relative path, and every moved document keeps its version.
+  It returns `:not_found` when nothing is at or below `from`, and `{:error, :exists}` when
+  `to` is a document or has documents below it; nothing moves in either case.
+  """
   @callback rename(handle(), namespace(), from :: path(), to :: path()) ::
               {:ok, pos_integer()} | :not_found | {:error, :exists} | {:error, term()}
+  @doc """
+  Deletes every document of `namespace`, atomically, and returns `:ok`.
+
+  It is idempotent: an empty or unknown namespace is `:ok`. It is for erasing a user's data;
+  the memory tool never calls it.
+  """
   @callback delete_namespace(handle(), namespace()) :: :ok | {:error, term()}
 
   @list_limit 1000

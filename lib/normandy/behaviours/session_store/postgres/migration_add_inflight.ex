@@ -15,6 +15,11 @@ if Code.ensure_loaded?(Ecto.Migration) do
     """
     use Ecto.Migration
 
+    @doc """
+    Adds the `inflight` boolean column (default `false`) to `normandy_sessions`, the partial
+    index `normandy_sessions_inflight_index` over the rows where it is true, and an index on
+    `head_id`. Run it after `Migration`.
+    """
     def up do
       alter table(:normandy_sessions) do
         add(:inflight, :boolean, null: false, default: false)
@@ -30,6 +35,7 @@ if Code.ensure_loaded?(Ecto.Migration) do
       create(index(:normandy_sessions, [:head_id]))
     end
 
+    @doc "Drops the two indexes and removes the `inflight` column."
     def down do
       drop(index(:normandy_sessions, [:head_id]))
       drop(index(:normandy_sessions, [:session_id], name: :normandy_sessions_inflight_index))

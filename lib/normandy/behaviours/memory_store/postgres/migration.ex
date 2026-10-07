@@ -11,6 +11,11 @@ if Code.ensure_loaded?(Ecto.Migration) do
     """
     use Ecto.Migration
 
+    @doc """
+    Creates `normandy_memory_documents` (primary key `namespace` and `path`; `content`,
+    `version`, `updated_at`) and `normandy_memory_namespaces` (`namespace`, and the `bytes`
+    and `documents` counters that `put/6` checks its limits against).
+    """
     def up do
       create table(:normandy_memory_documents, primary_key: false) do
         add(:namespace, :text, primary_key: true)
@@ -29,6 +34,7 @@ if Code.ensure_loaded?(Ecto.Migration) do
       end
     end
 
+    @doc "Drops `normandy_memory_namespaces` and `normandy_memory_documents`."
     def down do
       drop(table(:normandy_memory_namespaces))
       drop(table(:normandy_memory_documents))
