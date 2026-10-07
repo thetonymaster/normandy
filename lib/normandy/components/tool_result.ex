@@ -23,13 +23,14 @@ defmodule Normandy.Components.ToolResult do
   @doc false
   # The text the model reads for `output` (BaseIOSchema.to_json/1 below, and the cap in
   # Normandy.Agents.Dispatch.finish/3): a binary as-is, a number as its digits, anything
-  # else (a map, a list, an atom, a boolean, nil) as JSON. Dispatch turns an output JSON
-  # cannot express into an error result after every hook has run, so this raises only
-  # for a ToolResult built outside Dispatch.
+  # else (a map, a list, an atom, a boolean, nil) as JSON, every plain map's keys sorted
+  # (Normandy.JSON "Text for the model": the same result is the same text on every node).
+  # Dispatch turns an output JSON cannot express into an error result after every hook
+  # has run, so this raises only for a ToolResult built outside Dispatch.
   @spec render_output(term()) :: String.t()
   def render_output(output) when is_binary(output), do: output
   def render_output(output) when is_number(output), do: to_string(output)
-  def render_output(output), do: Normandy.JSON.encode!(output)
+  def render_output(output), do: output |> Normandy.JSON.sort_keys() |> Normandy.JSON.encode!()
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: Normandy.Components.ToolResult do

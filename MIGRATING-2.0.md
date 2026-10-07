@@ -1396,6 +1396,16 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   its whole prefix on every iteration, pays less. Set `enable_caching: false` to opt out, and
   on a `base_url` gateway that rejects top-level `cache_control`.
 
+- The JSON text Normandy writes for the model from a plain map (a tool's map or list output in
+  its `tool_result`, a map given as message content) lists every map's keys sorted by their
+  text, at any depth. On OTP 26+ a small atom-keyed map iterates its keys in atom-creation
+  order, so the same tool result could be different text on two nodes or after a restart, and
+  miss the prompt cache. Values and list order are unchanged. Structs are encoded as before
+  (one with its own `Jason.Encoder` by that encoder), and a `Jason.OrderedObject` keeps its
+  order: return one from a tool whose key order means something to the model. A custom
+  `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
+  encode them in order, as Jason does.
+
 ## New, non-breaking
 
 - `[:normandy, :tool, :result_truncated]` telemetry event (see the `Normandy.Telemetry` catalogue) when a tool result is cut to its cap.

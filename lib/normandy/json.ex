@@ -30,6 +30,17 @@ defmodule Normandy.JSON do
 
   A term JSON cannot express (a tuple, a pid, a reference, a function) is left as
   it is: the adapter raises on it, and `encode/2` returns that exception.
+
+  ## Text for the model
+
+  The JSON text Normandy writes into a message for the model (a tool result's text,
+  a map given as message content) lists every plain map's keys sorted by their text,
+  at any depth, so the same value is the same text on every node and after a restart
+  (on OTP 26+ a small atom-keyed map iterates its keys in atom-creation order). Values
+  and list order are unchanged. A struct is encoded as above, and a
+  `Jason.OrderedObject` keeps its order (the plain maps among its values are sorted).
+  The sorted maps reach the adapter as `Jason.OrderedObject` structs, so a custom
+  `:adapter` must encode those in order, as Jason does.
   """
 
   alias Normandy.Components.ContentBlock.Describe
@@ -110,6 +121,32 @@ defmodule Normandy.JSON do
   defp normalize(map) when is_map(map), do: :maps.map(fn _key, value -> normalize(value) end, map)
   defp normalize(list) when is_list(list), do: Enum.map(list, &normalize/1)
   defp normalize(other), do: other
+
+  @doc false
+  # "Text for the model" in the moduledoc: every plain map becomes a Jason.OrderedObject
+  # with its keys sorted by their JSON text (ties, such as "a" and :a, by term order, so
+  # the result never depends on the map's iteration order). A struct is normalized as
+  # encode!/2 does it, not sorted; an OrderedObject keeps its order and its values are
+  # walked. Callers: ToolResult.render_output/1 and BaseIOSchema's Map impl.
+  @spec sort_keys(term()) :: term()
+  def sort_keys(%Jason.OrderedObject{values: values} = object),
+    do: %{object | values: Enum.map(values, fn {key, value} -> {key, sort_keys(value)} end)}
+
+  def sort_keys(%_{} = struct), do: normalize(struct)
+
+  def sort_keys(map) when is_map(map) do
+    map
+    |> Enum.map(fn {key, value} -> {key, sort_keys(value)} end)
+    |> Enum.sort_by(fn {key, _value} -> {key_text(key), key} end)
+    |> Jason.OrderedObject.new()
+  end
+
+  def sort_keys(list) when is_list(list), do: Enum.map(list, &sort_keys/1)
+  def sort_keys(other), do: other
+
+  # A key as Jason writes it: an atom by its name, anything else through String.Chars.
+  defp key_text(key) when is_atom(key), do: Atom.to_string(key)
+  defp key_text(key), do: to_string(key)
 
   @doc false
   # Shared with Normandy.Schema.__serializable__/1, which applies the same rule.

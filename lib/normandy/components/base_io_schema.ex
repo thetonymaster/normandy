@@ -22,7 +22,8 @@ defimpl Normandy.Components.BaseIOSchema, for: BitString do
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: Map do
-  def to_json(map), do: Normandy.JSON.encode!(map)
+  # Keys sorted at every depth (Normandy.JSON "Text for the model").
+  def to_json(map), do: map |> Normandy.JSON.sort_keys() |> Normandy.JSON.encode!()
 
   def get_schema(_map), do: %{}
 end
