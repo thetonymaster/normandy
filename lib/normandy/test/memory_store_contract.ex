@@ -1,25 +1,61 @@
-defmodule Normandy.MemoryStoreContract do
+defmodule Normandy.Test.MemoryStoreContract do
+  @schema NimbleOptions.new!(
+            impl: [
+              type: :atom,
+              required: true,
+              doc: "The module implementing `Normandy.Behaviours.MemoryStore`."
+            ],
+            new: [
+              type: :mfa,
+              doc:
+                "`{module, function, args}` returning a handle, called once per test. " <>
+                  "Default: `{impl, :new, []}`."
+            ]
+          )
+
   @moduledoc """
-  Shared ExUnit contract for `Normandy.Behaviours.MemoryStore` impls:
+  The ExUnit tests every `Normandy.Behaviours.MemoryStore` implementation must pass.
+  Normandy runs them against its own five backends; run them against yours.
 
-      use Normandy.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.InMemory
+      defmodule MyApp.MemoryStoreTest do
+        use ExUnit.Case, async: true
 
-  The impl exports `new/0` returning the bare handle. Each test uses its own namespace,
-  so impls with a shared backing store (Postgres, Redis) stay isolated.
+        use Normandy.Test.MemoryStoreContract,
+          impl: MyApp.MemoryStore,
+          new: {MyApp.MemoryStore, :new, [[url: "..."]]}
+      end
+
+  Options, checked when the test module compiles (a bad one raises `ArgumentError`):
+
+  #{Normandy.Options.docs(@schema)}
+
+  Each test writes under its own namespace (`"contract-<unique integer>"`), so handles may
+  share storage and the test module may be `async: true`, unless your backend keeps
+  node-global state that `new` resets (then `async: false`). The tests run real
+  concurrency (`Task`s racing on one namespace, awaited for up to 15 s), drive the
+  `memory` tool (`Normandy.Tools.Memory`) against the store, and fill a namespace past
+  `Normandy.Behaviours.MemoryStore.list_limit/0`.
   """
 
-  defmacro __using__(opts) do
-    impl = Keyword.fetch!(opts, :impl)
+  @doc false
+  @spec validate!(keyword()) :: keyword()
+  def validate!(opts),
+    do: Normandy.Options.validate!(opts, @schema, {__MODULE__, :__using__, 1})
 
+  defmacro __using__(opts) do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
-    quote bind_quoted: [impl: impl] do
+    quote bind_quoted: [opts: opts, contract: __MODULE__] do
       alias Normandy.Behaviours.MemoryStore
       alias Normandy.Tools.{Context, Memory}
 
-      @store impl
+      contract_opts = contract.validate!(opts)
+      @store Keyword.fetch!(contract_opts, :impl)
+      @new_handle Keyword.get(contract_opts, :new) || {@store, :new, []}
 
       setup do
-        {:ok, handle: @store.new(), ns: "contract-#{System.unique_integer([:positive])}"}
+        {mod, fun, args} = @new_handle
+
+        {:ok, handle: apply(mod, fun, args), ns: "contract-#{System.unique_integer([:positive])}"}
       end
 
       test "get on a missing document is :not_found", %{handle: h, ns: ns} do

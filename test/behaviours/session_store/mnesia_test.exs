@@ -24,9 +24,9 @@ defmodule Normandy.Behaviours.SessionStore.MnesiaTest do
     on_exit(fn -> :mnesia.stop() end)
   end
 
-  use Normandy.SessionStoreContract,
+  use Normandy.Test.SessionStoreContract,
     impl: Normandy.Behaviours.SessionStore.Mnesia,
-    stored_entry_ids: {__MODULE__, :stored_entry_ids}
+    stored_entry_ids: {__MODULE__, :stored_entry_ids, []}
 
   use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Mnesia
 

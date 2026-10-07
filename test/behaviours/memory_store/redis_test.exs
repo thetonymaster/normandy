@@ -3,7 +3,7 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
   @moduletag :redis
   alias Normandy.Behaviours.MemoryStore.Redis
 
-  use Normandy.MemoryStoreContract, impl: Redis
+  use Normandy.Test.MemoryStoreContract, impl: Redis
 
   # Every test gets a fresh random key prefix; drop its keys so runs leave the shared Redis clean.
   setup %{handle: {_conn, prefix}} do

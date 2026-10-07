@@ -1,35 +1,76 @@
-defmodule Normandy.SessionStoreContract do
+defmodule Normandy.Test.SessionStoreContract do
+  @schema NimbleOptions.new!(
+            impl: [
+              type: :atom,
+              required: true,
+              doc: "The module implementing `Normandy.Behaviours.SessionStore`."
+            ],
+            new: [
+              type: :mfa,
+              doc:
+                "`{module, function, args}` returning a fresh, empty handle, called once " <>
+                  "per test. Default: `{impl, :new, []}`."
+            ],
+            stored_entry_ids: [
+              type: {:or, [:mfa, nil]},
+              default: nil,
+              doc:
+                "`{module, function, args}` called with the handle appended to `args`; it " <>
+                  "returns the id of every entry the backend still stores, in any session " <>
+                  "(an entry without an `id` of its own counts under the id `history/2` " <>
+                  "returns for it). `nil` skips the storage-level delete checks."
+            ]
+          )
+
   @moduledoc """
-  Shared ExUnit contract for `Normandy.Behaviours.SessionStore` impls.
+  The ExUnit tests every `Normandy.Behaviours.SessionStore` implementation must pass.
+  Normandy runs them against its own five backends; run them against yours.
 
-  Use in a test module that also `use ExUnit.Case`:
+      defmodule MyApp.SessionStoreTest do
+        use ExUnit.Case, async: true
 
-      use Normandy.SessionStoreContract,
-        impl: Normandy.Behaviours.SessionStore.InMemory,
-        stored_entry_ids: {__MODULE__, :stored_entry_ids}
+        use Normandy.Test.SessionStoreContract,
+          impl: MyApp.SessionStore,
+          new: {MyApp.SessionStore, :new, [[url: "..."]]}
+      end
 
-  The impl must export `new/0` (or `new/1` with all defaults) returning the bare
-  handle (not `{:ok, handle}`), passable directly to the callbacks.
+  Options, checked when the test module compiles (a bad one raises `ArgumentError`):
 
-  `:stored_entry_ids` names a public function of the test module that takes a handle and
-  returns the ids of every entry the backend still stores, in any session (an entry with
-  no `id` of its own counts under the id `history/2` returns for it). The delete rules
-  use it to check that a deleted session's unshared entries are gone.
+  #{Normandy.Options.docs(@schema)}
+
+  Every test builds its handle with `:new` and needs it **empty**: tests use fixed
+  session ids (`"s1"`, `"parked"`) and assert exact `list_resumable/1` results. A
+  backend whose storage is shared between handles (a database, a node-global table)
+  must give each handle its own namespace, or reset the storage in a `setup` placed
+  before the `use` line, and its test module must be `async: false` when handles can
+  see each other's data.
+
+  The tests run real concurrency (200 `Task`s appending to one session, awaited for up
+  to 5 s) and fork and delete sessions.
+
+  With `:stored_entry_ids`, the two tests that delete a fork's parent or a fork also
+  check that the deleted session's own entries are gone from storage; without it they
+  check through the behaviour's callbacks only (`history/2` of the survivor).
   """
 
-  defmacro __using__(opts) do
-    impl = Keyword.fetch!(opts, :impl)
-    stored_entry_ids = Keyword.fetch!(opts, :stored_entry_ids)
+  @doc false
+  @spec validate!(keyword()) :: keyword()
+  def validate!(opts),
+    do: Normandy.Options.validate!(opts, @schema, {__MODULE__, :__using__, 1})
 
+  defmacro __using__(opts) do
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
-    quote bind_quoted: [impl: impl, stored_entry_ids: stored_entry_ids] do
+    quote bind_quoted: [opts: opts, contract: __MODULE__] do
       alias Normandy.Components.AgentMemory.Entry
 
-      @store impl
-      @stored_entry_ids stored_entry_ids
+      contract_opts = contract.validate!(opts)
+      @store Keyword.fetch!(contract_opts, :impl)
+      @new_handle Keyword.get(contract_opts, :new) || {@store, :new, []}
+      @stored_entry_ids Keyword.fetch!(contract_opts, :stored_entry_ids)
 
       setup do
-        {:ok, handle: @store.new()}
+        {mod, fun, args} = @new_handle
+        {:ok, handle: apply(mod, fun, args)}
       end
 
       defp contract_entry(role, content), do: %Entry{turn_id: "t", role: role, content: content}
@@ -165,9 +206,12 @@ defmodule Normandy.SessionStoreContract do
         assert {:ok, []} = @store.list_resumable(h)
       end
 
+      # nil when the test module passed no :stored_entry_ids: the storage checks are skipped.
       defp contract_stored_ids(h) do
-        {mod, fun} = @stored_entry_ids
-        apply(mod, fun, [h])
+        case @stored_entry_ids do
+          nil -> nil
+          {mod, fun, args} -> apply(mod, fun, args ++ [h])
+        end
       end
 
       # Entries with their own UUID ids, as Turn.Server writes them: every backend
@@ -222,14 +266,20 @@ defmodule Normandy.SessionStoreContract do
         {:ok, forked} = @store.fork(h, "parent", at)
 
         assert :ok = @store.delete_session(h, "parent")
+        assert {:ok, []} = @store.history(h, "parent")
 
         assert {:ok, entries} = @store.history(h, forked)
         assert Enum.map(entries, & &1.content) == ["a", "b"]
 
-        stored = contract_stored_ids(h)
-        refute own in stored
-        refute snap in stored
-        assert Enum.all?(entries, &(&1.id in stored))
+        case contract_stored_ids(h) do
+          nil ->
+            :ok
+
+          stored ->
+            refute own in stored
+            refute snap in stored
+            assert Enum.all?(entries, &(&1.id in stored))
+        end
       end
 
       test "deleting a fork keeps its parent's history", %{handle: h} do
@@ -243,7 +293,12 @@ defmodule Normandy.SessionStoreContract do
 
         assert {:ok, entries} = @store.history(h, "parent")
         assert Enum.map(entries, & &1.content) == ["a", "b", "c"]
-        refute fork_own in contract_stored_ids(h)
+        assert {:ok, []} = @store.history(h, forked)
+
+        case contract_stored_ids(h) do
+          nil -> :ok
+          stored -> refute fork_own in stored
+        end
       end
 
       test "implements the SessionStore behaviour" do

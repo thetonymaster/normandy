@@ -7,7 +7,7 @@ defmodule Normandy.Behaviours.MemoryStore do
   agent: Normandy gives it no meaning). Paths are validated by `Normandy.Tools.Memory`
   before they reach a store. Directories exist only as path prefixes.
 
-  Semantics every impl must pass (`Normandy.MemoryStoreContract`):
+  Semantics every impl must pass (`Normandy.Test.MemoryStoreContract`):
 
     * A missing document is `:not_found`, a value. A backend failure (timeout, lost
       connection, aborted transaction) is always `{:error, reason}`, so a timeout is never

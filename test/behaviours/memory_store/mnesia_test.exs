@@ -13,7 +13,7 @@ defmodule Normandy.Behaviours.MemoryStore.MnesiaTest do
     on_exit(fn -> :mnesia.stop() end)
   end
 
-  use Normandy.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.Mnesia
+  use Normandy.Test.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.Mnesia
 
   test "a missing table is a backend error, not :not_found" do
     assert {:error, _} = MnesiaStore.get(:normandy_no_such_table, "ns", "/memories/a")

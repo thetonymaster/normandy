@@ -11,6 +11,8 @@ defmodule Normandy.Behaviours.SessionStore do
   `handle` is impl-specific (a pid for `InMemory`, a table for `ETS`). Each impl
   exposes `new/0` (or `new/1`) returning a fresh handle for tests and callers.
 
+  Every impl must pass the ExUnit suite `Normandy.Test.SessionStoreContract`.
+
   This seam persists the **full** entry graph: it deliberately does not apply
   `max_messages` windowing (that is a read-time / agent-runtime concern, applied
   by the turn loop in Phase 4, not at the persistence layer).

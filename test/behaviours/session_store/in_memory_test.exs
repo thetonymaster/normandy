@@ -1,9 +1,9 @@
 defmodule Normandy.Behaviours.SessionStore.InMemoryTest do
   use ExUnit.Case, async: true
 
-  use Normandy.SessionStoreContract,
+  use Normandy.Test.SessionStoreContract,
     impl: Normandy.Behaviours.SessionStore.InMemory,
-    stored_entry_ids: {__MODULE__, :stored_entry_ids}
+    stored_entry_ids: {__MODULE__, :stored_entry_ids, []}
 
   def stored_entry_ids(pid) do
     Agent.get(pid, fn state ->

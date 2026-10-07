@@ -227,10 +227,14 @@ defmodule Normandy.MixProject do
             Normandy.LLM.StructuredOutputs,
             Normandy.LLM.JsonDeserializer
           ],
-          # Shipped test helpers (Normandy.Test.*); Tasks 7.3b and 7.3d add their modules.
+          # Test helpers that ship in the package (Normandy.Test.*): a scripted model client
+          # and the contract suites a custom store or registry runs.
           Testing: [
             Normandy.Test.FakeClient,
-            Normandy.Test.FakeClient.ScriptExhaustedError
+            Normandy.Test.FakeClient.ScriptExhaustedError,
+            Normandy.Test.SessionStoreContract,
+            Normandy.Test.MemoryStoreContract,
+            Normandy.Test.SessionRegistryContract
           ],
           Errors: [
             Normandy.LLMError,

@@ -2,9 +2,9 @@ defmodule Normandy.Behaviours.SessionStore.RedisTest do
   use ExUnit.Case, async: true
   @moduletag :redis
 
-  use Normandy.SessionStoreContract,
+  use Normandy.Test.SessionStoreContract,
     impl: Normandy.Behaviours.SessionStore.Redis,
-    stored_entry_ids: {__MODULE__, :stored_entry_ids}
+    stored_entry_ids: {__MODULE__, :stored_entry_ids, []}
 
   use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Redis
 

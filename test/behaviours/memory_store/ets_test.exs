@@ -1,6 +1,6 @@
 defmodule Normandy.Behaviours.MemoryStore.ETSTest do
   use ExUnit.Case, async: true
-  use Normandy.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.ETS
+  use Normandy.Test.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.ETS
 
   alias Normandy.Behaviours.MemoryStore.ETS, as: EtsMem
 

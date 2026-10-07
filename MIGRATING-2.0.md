@@ -1837,6 +1837,21 @@ code you wrote against 1.x must follow the changes below.
   protocol implementation or `consolidate_protocols: false` of your own and no
   Mox/`Req.Test` allowance, and records every request (`FakeClient.requests/1`). A request
   past the script raises `Normandy.Test.FakeClient.ScriptExhaustedError`.
+- The store and registry contract suites ship in the package:
+  `Normandy.Test.SessionStoreContract`, `Normandy.Test.MemoryStoreContract` and
+  `Normandy.Test.SessionRegistryContract`. A custom `SessionStore`, `MemoryStore` or
+  `SessionRegistry` runs the tests Normandy's own backends pass:
+  `use Normandy.Test.SessionStoreContract, impl: MyApp.Store` inside a module that has
+  `use ExUnit.Case`. `new: {module, function, args}` builds each test's handle (default
+  `{impl, :new, []}`); the session store's optional `stored_entry_ids: {m, f, a}` (called
+  with the handle appended) adds storage-level checks to the two delete tests. Options are
+  checked when the test module compiles. Each moduledoc says what a handle must provide
+  (empty per test) and when the test module must be `async: false`.
+- Projects that copied Normandy's `test/support` contracts (`Normandy.SessionStoreContract`,
+  `Normandy.MemoryStoreContract`, `Normandy.SessionRegistryContract`, never part of the
+  package) switch to the `Normandy.Test.*` names. `stored_entry_ids:` is now
+  `{module, function, args}` (`{__MODULE__, :stored_entry_ids, []}` for the old
+  `{__MODULE__, :stored_entry_ids}`) and may be left out.
 
 ## Known limits of 2.0
 

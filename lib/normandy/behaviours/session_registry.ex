@@ -8,6 +8,8 @@ defmodule Normandy.Behaviours.SessionRegistry do
 
   The default `Native` impl wraps Elixir's built-in `Registry` (O(1) lookup,
   auto-unregister on owner death). Distributed impls (Horde/syn) are deferred.
+
+  Every impl must pass the ExUnit suite `Normandy.Test.SessionRegistryContract`.
   """
 
   @type handle :: term()
