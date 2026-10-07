@@ -1557,3 +1557,9 @@ code you wrote against 1.x must follow the changes below.
 - `SessionStore.ETS` keeps one row per entry: an append writes two rows instead of copying the
   session's whole history (B5), and a fork copies only the history up to the fork point. The
   handle and every return value are unchanged.
+- `Turn.Session.delete/1` stops a session's live server and deletes it from the store
+  (`SessionStore.delete_session/2`). `Turn.Supervisor.stop_server/2` and
+  `Turn.Supervisor.Horde.stop_server/2` stop one server without a restart; a custom
+  `:supervisor_mod` needs `stop_server/2` only for `delete/1`. A store that refuses the
+  delete, or whose call exits, is `{:error, %TurnError{type: :persist_failed}}` (an exit as
+  `reason: {:store_exit, tag}`); a store that raises raises.

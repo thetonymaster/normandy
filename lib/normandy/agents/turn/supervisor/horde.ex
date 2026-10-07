@@ -90,6 +90,15 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
       Horde.DynamicSupervisor.start_child(sup, spec)
     end
 
+    @doc """
+    Stops the session server `pid`, on any node, without a restart. Returns
+    `{:error, :not_found}` when the Horde supervisor `sup` (its name) has no such child.
+    Used by `Normandy.Agents.Turn.Session.delete/1`.
+    """
+    @spec stop_server(term(), pid()) :: :ok | {:error, :not_found}
+    def stop_server(sup, pid) when is_pid(pid),
+      do: Horde.DynamicSupervisor.terminate_child(sup, pid)
+
     defp restart_for(:eager), do: :transient
     defp restart_for(_), do: :temporary
 

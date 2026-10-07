@@ -169,6 +169,17 @@ must keep working after a node dies with no external trigger.
 > number of sessions stored). `Normandy.Cluster.child_specs/1` starts one
 > automatically when you pass `:store` + `:template_provider`.
 
+## Deleting a session
+
+`Turn.Session.delete(session)` stops the session's live server through its supervisor (a turn in
+flight is not resumed; a `run/2` waiting on it exits), then calls the store's
+`delete_session/2`: the turn state, the config template, the in-flight index membership and the
+history go. On Postgres and Mnesia a fork shares its parent's history up to the fork point, so
+the entries a fork still reaches stay; deleting the fork later removes them. `delete/1` is
+idempotent. It does not stop new turns: stop routing to a session before deleting it, or a
+`run/2` (or `ResumeReaper`, for an eager session in flight) may start it again. A custom
+`:supervisor_mod` must export `stop_server/2`.
+
 ## Cluster formation (libcluster, optional)
 
 Normandy does not own cluster formation and does not depend on `libcluster`. If you

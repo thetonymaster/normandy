@@ -74,7 +74,7 @@ defmodule Normandy.Behaviours.SessionStore do
   backends that copy a fork's entries (InMemory, ETS, Redis) the session's own copy goes;
   on those that share ancestor entries between forks (Postgres, Mnesia) an entry stays
   while another session's history still reaches it. Deleting does not stop a live
-  `Turn.Server`: stop it first.
+  `Turn.Server`; `Normandy.Agents.Turn.Session.delete/1` does both.
   """
   @callback delete_session(handle(), session_id()) :: :ok | {:error, term()}
 end

@@ -100,7 +100,8 @@ defmodule Normandy.Agents.Turn.Session do
 
   @moduledoc """
   A handle on one durable session. `new/1` checks the options once; `run/2` routes a turn
-  to the session's `Turn.Server` and `approve/2` delivers approval decisions to it.
+  to the session's `Turn.Server`, `approve/2` delivers approval decisions to it and
+  `delete/1` stops it and deletes it from the store.
 
       session =
         Turn.Session.new(
@@ -296,6 +297,61 @@ defmodule Normandy.Agents.Turn.Session do
   def approve(other, _decisions), do: raise(ArgumentError, not_a_session(:approve, other))
 
   @doc """
+  Deletes the session: stops its live server, if any, through `:supervisor_mod`'s
+  `stop_server/2`, then deletes it from the store (`SessionStore.delete_session/2`: turn
+  state, template, in-flight index membership, and the history no fork still uses).
+  Returns `:ok`, also for a session that does not exist.
+
+  A server is stopped by its supervisor's shutdown, mid-turn included: a `run/2` waiting
+  on it exits, and a turn in flight is not resumed. Errors:
+
+    * `{:error, %Normandy.TurnError{type: :session_unavailable, reason: reason}}` - the
+      registry could not answer (`reason` is its reason), or the live server is not a
+      child of `:supervisor` (`reason: {:not_stopped, :not_found}`; it may have just
+      exited, so calling again is safe). Nothing was deleted.
+    * `{:error, %Normandy.TurnError{type: :persist_failed, reason: reason}}` - the store
+      refused the delete (`reason` is its reason reduced to its tags, as for `run/2`'s
+      store failures), or its call exited (`reason: {:store_exit, tag}`, the exit reason
+      reduced the same way, e.g. `{:store_exit, {:timeout, {GenServer, :call, "a list"}}}`).
+      The server is already stopped; calling again finishes the job. A store that raises
+      raises.
+
+  The handle's `:supervisor_mod` must export `stop_server/2`
+  (`Normandy.Agents.Turn.Supervisor` and `Normandy.Agents.Turn.Supervisor.Horde` do);
+  another module raises `ArgumentError` naming it.
+
+  Nothing stops a new turn from starting the session again: a `run/2` that starts after
+  the server stopped (or a `ResumeReaper` restart between the stop and the delete) gets
+  a fresh server, which then finds the history deleted or, if it wrote first, keeps its
+  own writes. Stop routing turns to a session before deleting it.
+  """
+  @spec delete(t()) :: :ok | {:error, TurnError.t()}
+  def delete(%__MODULE__{} = session) do
+    {reg_mod, reg_handle} = session.registry
+    {store_mod, store_handle} = session.store
+    stop_server = stop_server_fun!(session.supervisor_mod)
+
+    with :ok <-
+           stop_live_server(reg_mod.whereis(reg_handle, session.session_id), session, stop_server) do
+      # The store's reason is reduced to its tags, as run/2's template save does.
+      case delete_from_store(store_mod, store_handle, session.session_id) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          {:error, %TurnError{type: :persist_failed, reason: Describe.reason_term(reason)}}
+      end
+    end
+  end
+
+  def delete(other) do
+    raise ArgumentError,
+          "Normandy.Agents.Turn.Session.delete/1: expected a %Normandy.Agents.Turn.Session{} " <>
+            "(build one with Normandy.Agents.Turn.Session.new/1), got: " <>
+            Describe.type_of(other)
+  end
+
+  @doc """
   Returns `session` with `config` as the config a later server start uses (a first
   start, a restart after passivation, a Tier-2 template save). A live server keeps the
   config it started with.
@@ -343,6 +399,39 @@ defmodule Normandy.Agents.Turn.Session do
     "Normandy.Agents.Turn.Session.#{fun}/2: expected a %Normandy.Agents.Turn.Session{} " <>
       "(build one with Normandy.Agents.Turn.Session.new/1), got: " <> Describe.type_of(other)
   end
+
+  # A store call that exits (a dead store process, a call timeout) is a failed delete,
+  # as in Turn.Server (store_call/1); a raise is a bug and propagates.
+  defp delete_from_store(store_mod, store_handle, session_id) do
+    store_mod.delete_session(store_handle, session_id)
+  catch
+    :exit, reason -> {:error, {:store_exit, TurnError.drop_stacktraces(reason)}}
+  end
+
+  defp stop_server_fun!(mod) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :stop_server, 2) do
+      &mod.stop_server/2
+    else
+      raise ArgumentError,
+            "Normandy.Agents.Turn.Session.delete/1: the :supervisor_mod #{inspect(mod)} " <>
+              "does not export stop_server/2, so the session's server cannot be stopped"
+    end
+  end
+
+  defp stop_live_server(:none, _session, _stop_server), do: :ok
+
+  defp stop_live_server({:ok, pid}, session, stop_server) do
+    case stop_server.(session.supervisor, pid) do
+      :ok ->
+        :ok
+
+      {:error, :not_found} ->
+        {:error, %TurnError{type: :session_unavailable, reason: {:not_stopped, :not_found}}}
+    end
+  end
+
+  defp stop_live_server({:error, reason}, _session, _stop_server),
+    do: {:error, %TurnError{type: :session_unavailable, reason: reason}}
 
   defp ensure_server(%__MODULE__{registry: {reg_mod, reg_handle}, session_id: sid} = session) do
     case reg_mod.whereis(reg_handle, sid) do

@@ -90,6 +90,14 @@ defmodule Normandy.Agents.Turn.Supervisor do
     DynamicSupervisor.start_child(sup, spec)
   end
 
+  @doc """
+  Stops the session server `pid`, a child of `sup`, without a restart. Returns
+  `{:error, :not_found}` when `pid` is not a child of `sup` (it already exited, or another
+  supervisor started it). Used by `Normandy.Agents.Turn.Session.delete/1`.
+  """
+  @spec stop_server(:gen_statem.server_ref() | pid(), pid()) :: :ok | {:error, :not_found}
+  def stop_server(sup, pid) when is_pid(pid), do: DynamicSupervisor.terminate_child(sup, pid)
+
   # Turn.Server.start_link/1 takes :name, but here the registry names the server; a
   # caller's :name would be replaced (or, with a self-registering registry, used instead).
   defp reject_name!(opts) do

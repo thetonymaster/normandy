@@ -8,9 +8,11 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   *selective* eager handoff instead: it monitors cluster nodes and, on `:nodedown`,
   restarts the `:eager` sessions whose server died with the lost node.
 
-  A session is reaped when it is (1) `:eager` (`SessionStore.list_resumable/1`),
-  (2) not currently registered anywhere (`SessionRegistry.whereis/2 == :none`), and
-  (3) has a **non-terminal** persisted turn state. It is restarted as a thin spec
+  A session is reaped when (1) its turn is in flight (`SessionStore.list_resumable/1`
+  lists the sessions whose last turn-state save was `:eager` and unfinished), (2) it is
+  not registered anywhere (`SessionRegistry.whereis/2 == :none`), and (3) its persisted
+  turn state is still **non-terminal** (this guards against an index member a crash left
+  behind). A deleted session (`Turn.Session.delete/1`) is never listed. It is restarted as a thin spec
   under the supervisor; the started `Turn.Server` reconstructs config from the
   persisted template and `Turn.resume/1`s the in-flight turn — no inbound request.
 
@@ -64,7 +66,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
                               required: true,
                               doc:
                                 "The `SessionStore` as `{module, handle}`; its " <>
-                                  "`list_resumable/1` names the `:eager` sessions."
+                                  "`list_resumable/1` names the sessions with an eager turn in flight."
                             ],
                             registry: [
                               type: @server_types.registry,

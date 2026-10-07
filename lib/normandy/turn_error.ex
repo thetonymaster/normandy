@@ -24,7 +24,9 @@ defmodule Normandy.TurnError do
     * `:persist_failed` - the session store rejected a write; `:reason` is its reason, or
       `{:store_exit, exit_reason}` when the store call exited (a call timeout, a dead store
       process): the exit reason with no stacktrace and a call's arguments replaced by
-      their count, `{:timeout, {GenServer, :call, 3}}`
+      their count, `{:timeout, {GenServer, :call, 3}}`. `Turn.Session.delete/1` returns it
+      when the store refused the delete or its call exited, with the reason reduced to its
+      tags (`{:store_exit, {:timeout, {GenServer, :call, "a list"}}}`)
     * `:approval_timeout` - nobody approved in time and `on_approval_timeout: :fail`;
       `:reason` is the list of tool call ids
     * `:task_down` - the LLM call, the compactor or the tool dispatch raised an exception
@@ -36,7 +38,9 @@ defmodule Normandy.TurnError do
       walked, an exception becomes its module, and any other term becomes a description of
       its type (`{:query_failed, "a map"}`). A load that raised, exited or threw gives the
       exception (an exit's or a throw's reason).
-      `Turn.Session.approve/2` returns it with `reason: :no_session` when no server is live
+      `Turn.Session.approve/2` returns it with `reason: :no_session` when no server is live;
+      `Turn.Session.delete/1` returns it when the registry cannot answer or the live server
+      is not the supervisor's (`reason: {:not_stopped, :not_found}`)
     * `:unexpected_event`, `:unresumable_state` - a persisted turn that can't continue, or
       a Normandy bug; `:reason` describes it
 
