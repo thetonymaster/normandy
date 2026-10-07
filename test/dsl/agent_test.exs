@@ -217,6 +217,27 @@ defmodule Normandy.DSL.AgentTest do
                    end
     end
 
+    test "system_prompt beside background, steps or output_instructions does not compile" do
+      assert_raise ArgumentError,
+                   "Normandy.DSLTest.MixedPromptAgent: system_prompt cannot be combined with " <>
+                     "background, output_instructions; use system_prompt alone or " <>
+                     "background/steps/output_instructions",
+                   fn ->
+                     Code.compile_string("""
+                     defmodule Normandy.DSLTest.MixedPromptAgent do
+                       use Normandy.DSL.Agent
+
+                       agent do
+                         model("m")
+                         system_prompt("You are helpful.")
+                         background("Background")
+                         output_instructions("Be brief")
+                       end
+                     end
+                     """)
+                   end
+    end
+
     test "a missing client raises ArgumentError naming new/1" do
       assert_raise ArgumentError,
                    "Normandy.DSL.AgentTest.TestAgent.new/1: required :client option not found, " <>

@@ -50,6 +50,8 @@ defmodule Normandy.DSL.Agent do
   - Clean, declarative syntax
   - Sensible defaults
   - Configuration checked when the agent is built (`new/1` raises without a model)
+  - Checked when the module compiles: an `agent` block with `system_prompt` beside
+    `background`, `steps` or `output_instructions` raises `ArgumentError`
   - Generated helper functions
   - Tool registration support
   - Memory management helpers
@@ -105,7 +107,8 @@ defmodule Normandy.DSL.Agent do
   - `model` - LLM model to use (required)
   - `temperature` - Sampling temperature, or omit it to send none (default: none; Opus 4.7+ reject sampling parameters)
   - `max_tokens` - Maximum tokens in response (default: 16_000)
-  - `system_prompt` - System prompt text (optional)
+  - `system_prompt` - System prompt text (optional). Not together with `background`,
+    `steps` or `output_instructions`: the module does not compile
   - `background` - Background context for prompt (optional)
   - `steps` - Internal reasoning steps (optional)
   - `output_instructions` - Output formatting instructions (optional)
@@ -513,8 +516,32 @@ defmodule Normandy.DSL.Agent do
     Map.put(config, :behaviours, %{behaviours | hooks: declared ++ behaviours.hooks})
   end
 
+  # The agent block's own contradictions, checked when the module compiles.
+  defp check_declarations!(module) do
+    structured =
+      Enum.filter(
+        [
+          background: :agent_background,
+          steps: :agent_steps,
+          output_instructions: :agent_output_instructions
+        ],
+        fn {_name, attr} -> Module.get_attribute(module, attr) != nil end
+      )
+
+    if Module.get_attribute(module, :agent_system_prompt) != nil and structured != [] do
+      raise ArgumentError,
+            "#{inspect(module)}: system_prompt cannot be combined with " <>
+              Enum.map_join(structured, ", ", fn {name, _attr} -> Atom.to_string(name) end) <>
+              "; use system_prompt alone or background/steps/output_instructions"
+    end
+
+    :ok
+  end
+
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defmacro __before_compile__(_env) do
+  defmacro __before_compile__(env) do
+    check_declarations!(env.module)
+
     # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       # Store configuration at compile time - MUST come first before any function uses it

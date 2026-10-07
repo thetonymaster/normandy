@@ -1856,6 +1856,13 @@ code you wrote against 1.x must follow the changes below.
   with `FakeClient` on `run/3`, `stream/3` and `Turn.Session`, telemetry assertions, and the
   contract suites for a custom store or registry. Its examples run in Normandy's own suite.
 
+## 46. DSL, Workflow and Toolset
+
+- An `agent` block with `system_prompt` and any of `background`, `steps` or
+  `output_instructions` no longer compiles (`ArgumentError` naming the module and the
+  conflicting declarations). `system_prompt` used to win and the others were dropped without a
+  word. Keep `system_prompt` alone, or move its text into `background`.
+
 ## Known limits of 2.0
 
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.
