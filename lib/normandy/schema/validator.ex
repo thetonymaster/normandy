@@ -203,7 +203,12 @@ defmodule Normandy.Schema.Validator do
   # data may hold the Elixir value itself rather than its string form.
   defp formatted_value?(%Date{}, :string, "date"), do: true
   defp formatted_value?(%Time{}, :string, "time"), do: true
-  defp formatted_value?(%Duration{}, :string, "duration"), do: true
+
+  # Duration ships with Elixir 1.17; on 1.15 and 1.16 the struct pattern would not compile.
+  if Code.ensure_loaded?(Duration) do
+    defp formatted_value?(%Duration{}, :string, "duration"), do: true
+  end
+
   defp formatted_value?(_, _, _), do: false
 
   defp actual_type(data) when is_binary(data), do: :string

@@ -1804,6 +1804,12 @@ code you wrote against 1.x must follow the changes below.
   model unchanged, or a structured-output answer that leaves the field out). A stream builds
   its answer from text, so it never holds `nil`. Make test doubles fill `chat_message`.
 
+## 44. Dependencies and platform
+
+- The optional `horde` dependency is `~> 0.10` (was `~> 0.9`):
+  `SessionRegistry.Horde.Via` relies on Horde 0.10's registration order. A project locked
+  to Horde 0.9 runs `mix deps.update horde`.
+
 ## Known limits of 2.0
 
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.

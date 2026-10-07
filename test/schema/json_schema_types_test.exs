@@ -35,6 +35,9 @@ defmodule Normandy.Schema.JsonSchemaTypesTest do
 
   defp prop(name), do: Kinds.__schema__(:specification).properties[name]
 
+  # Duration ships with Elixir 1.17 (the library supports 1.15).
+  @duration if Code.ensure_loaded?(Duration), do: %{for: Duration.new!(hour: 1)}, else: %{}
+
   test ":map and :struct are JSON objects" do
     assert prop(:meta).type == :object
     assert prop(:thing).type == :object
@@ -75,14 +78,19 @@ defmodule Normandy.Schema.JsonSchemaTypesTest do
 
   test "the Validator accepts Elixir values for the string-with-format types" do
     assert {:ok, _} =
-             Validator.validate(Kinds, %{
-               on: ~D[2026-10-01],
-               at: ~T[10:00:00],
-               for: Duration.new!(hour: 1),
-               blob: "abc",
-               meta: %{"a" => 1},
-               thing: %URI{}
-             })
+             Validator.validate(
+               Kinds,
+               Map.merge(
+                 %{
+                   on: ~D[2026-10-01],
+                   at: ~T[10:00:00],
+                   blob: "abc",
+                   meta: %{"a" => 1},
+                   thing: %URI{}
+                 },
+                 @duration
+               )
+             )
   end
 
   test "the Validator still rejects a wrong value for those types" do

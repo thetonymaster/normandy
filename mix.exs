@@ -208,7 +208,8 @@ defmodule Normandy.MixProject do
       # :comment option, fixed in 0.22.4) and EEF-CVE-2026-58225 (Notifications reconnect
       # replay, fixed in 0.22.3).
       {:postgrex, "~> 0.22 and >= 0.22.4", optional: true},
-      {:horde, "~> 0.9", optional: true},
+      # SessionRegistry.Horde.Via relies on Horde 0.10's registration order (decision 26a).
+      {:horde, "~> 0.10", optional: true},
       {:redix, "~> 1.5", optional: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

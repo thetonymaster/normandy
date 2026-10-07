@@ -14,9 +14,13 @@ defmodule Normandy.TypeBaseTypesTest do
     any: {:anything},
     date: ~D[2026-01-01],
     time: ~T[10:00:00],
-    duration: Duration.new!(hour: 1),
     struct: %URI{host: "example.com"}
   ]
+
+  # Duration ships with Elixir 1.17 (the library supports 1.15).
+  @samples if Code.ensure_loaded?(Duration),
+             do: @samples ++ [duration: Duration.new!(hour: 1)],
+             else: @samples
 
   for {type, sample} <- @samples do
     test "#{type}: cast, dump and load each return the value" do
