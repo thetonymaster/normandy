@@ -1066,7 +1066,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   and sent back as it is, with no user message after it, and the model continues the turn. Each
   continuation spends one of `max_tool_iterations`. The paused turn's partial text used to be
   returned as the final answer. A pause on the forced final call (`max_tool_iterations` spent)
-  is not continued.
+  is continued too, at most three times, then fails with `:pause_turn` (§32).
 - `%Normandy.Agents.ToolCallResponse{}` has a new field `stop_reason`
   (`t:Normandy.LLM.Response.stop_reason/0` or `nil`), filled by `ClaudioAdapter` and the stream
   path. It is never sent to the API. A custom `Model` that wants `pause_turn` continued sets it.
