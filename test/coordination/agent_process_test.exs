@@ -6,6 +6,7 @@ defmodule Normandy.Coordination.AgentProcessTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Test.StubClient
 
   setup do
     config = %{
@@ -303,22 +304,52 @@ defmodule Normandy.Coordination.AgentProcessTest do
       assert stats.run_count == 10
     end
 
-    test "async execution doesn't block GenServer", %{agent: agent} do
-      {:ok, pid} = AgentProcess.start_link(agent: agent, agent_id: "nonblocking")
+    # Every cast's LLM call is held until the test releases it, so the reads below
+    # happen while a run is in flight and 19 more wait behind it (no wall-clock bound).
+    test "async execution doesn't block GenServer" do
+      {:ok, pid} = AgentProcess.start_link(agent: gated_agent(), agent_id: "nonblocking")
 
-      # Send many async requests
       for i <- 1..20 do
         AgentProcess.cast(pid, "Async #{i}", reply_to: self())
       end
 
-      # GenServer should still respond quickly to sync calls
-      start_time = System.monotonic_time(:millisecond)
-      stats = AgentProcess.get_stats(pid)
-      end_time = System.monotonic_time(:millisecond)
+      assert_receive {:llm_started, 1, worker}, 5_000
 
-      # Stats call should be fast (< 10ms) even with async work happening
-      assert end_time - start_time < 10
+      # A blocking implementation exits each of these with {:timeout, _} after 5 s.
+      stats = AgentProcess.get_stats(pid)
       assert stats.agent_id == "nonblocking"
+      assert stats.run_count == 0
+      assert :queue.len(:sys.get_state(pid).queue) == 19
+
+      send(worker, {:release, 1})
+      assert_receive {:agent_result, "nonblocking", {:ok, "answer 1"}}, 5_000
+
+      for n <- 2..20 do
+        assert_receive {:llm_started, ^n, worker}, 5_000
+        send(worker, {:release, n})
+        assert_receive {:agent_result, "nonblocking", {:ok, answer}}, 5_000
+        assert answer == "answer #{n}"
+      end
+
+      assert AgentProcess.get_stats(pid).run_count == 20
+    end
+
+    # A client whose call `n` sends `{:llm_started, n, worker}` and blocks in the
+    # worker until the test sends it `{:release, n}`.
+    defp gated_agent do
+      parent = self()
+      calls = :atomics.new(1, [])
+
+      reply = fn response_model ->
+        n = :atomics.add_get(calls, 1, 1)
+        send(parent, {:llm_started, n, self()})
+
+        receive do
+          {:release, ^n} -> %{response_model | chat_message: "answer #{n}"}
+        end
+      end
+
+      BaseAgent.init(%{client: %StubClient{reply: reply}, model: "m"})
     end
   end
 end
