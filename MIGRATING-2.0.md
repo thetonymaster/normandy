@@ -1626,6 +1626,11 @@ code you wrote against 1.x must follow the changes below.
   its module, any other term its type (`{:http_error, %{"token" => ...}}` becomes
   `{:http_error, "a map"}`); the provider's data (a response body, a token) is dropped. Log
   the detail in the provider if you need it.
+- A session store's own `{:error, reason}` from a write during a `Turn.Server` turn (the user
+  message, a turn's append, a turn-state save) reaches the `:persist_failed` `TurnError` with
+  `reason` reduced the same way (`{:sql, "SELECT ..."}` becomes `{:sql, "a string (N
+  bytes)"}`; a `Postgrex.Error` becomes `{Postgrex.Error, sqlstate}`), in the reply, the
+  persisted turn state, the log and telemetry. `{:store_exit, exit_reason}` keeps its shape.
 
 ## New, non-breaking
 

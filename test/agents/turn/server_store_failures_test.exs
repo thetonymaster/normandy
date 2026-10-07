@@ -14,6 +14,9 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Components.ToolCall
+  alias Normandy.Test.ReturnTool
+  alias Normandy.Test.ScriptedToolClient
   alias Normandy.Test.StubClient
   alias Normandy.Test.TurnConfig
   alias Normandy.TurnError
@@ -59,6 +62,42 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
     end
   end
 
+  # InMemory, except that the operations in the switch return the store's own error,
+  # whose reason carries SQL text (as a Postgrex.Error's query does). Handle:
+  # {in_memory_pid, switch_agent}; ops as ExitingStore's.
+  defmodule ErroringStore do
+    @moduledoc false
+    alias Normandy.Behaviours.SessionStore.InMemory
+
+    @reason {:sql, "SELECT secret_token FROM vault WHERE id = 7", %{"password" => "hunter2"}}
+
+    def reason, do: @reason
+
+    def new do
+      {:ok, switch} = Agent.start_link(fn -> MapSet.new() end)
+      {InMemory.new(), switch}
+    end
+
+    def fail_on({_mem, switch}, ops), do: Agent.update(switch, fn _ -> MapSet.new(ops) end)
+
+    def append_entry({mem, _} = h, sid, entry) do
+      if failing?(h, {:append_entry, entry.role}),
+        do: {:error, @reason},
+        else: InMemory.append_entry(mem, sid, entry)
+    end
+
+    def history({mem, _}, sid), do: InMemory.history(mem, sid)
+    def load_turn_state({mem, _}, sid), do: InMemory.load_turn_state(mem, sid)
+
+    def save_turn_state({mem, _} = h, sid, ts, inflight?) do
+      if failing?(h, :save_turn_state),
+        do: {:error, @reason},
+        else: InMemory.save_turn_state(mem, sid, ts, inflight?)
+    end
+
+    defp failing?({_mem, switch}, op), do: MapSet.member?(Agent.get(switch, & &1), op)
+  end
+
   # A store whose history read fails with a reason carrying a secret and a query.
   defmodule LeakyReasonStore do
     @moduledoc false
@@ -98,16 +137,27 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
 
   defp sid(tag), do: "#{tag}-#{System.unique_integer([:positive])}"
 
-  defp start(sup, sid, store, reg) do
+  defp start(sup, sid, store, reg, tools? \\ false) do
     {:ok, srv} =
       Turn.Supervisor.start_server(sup,
         session_id: sid,
-        config: BaseAgent.init(%{client: %StubClient{}, model: "m"}),
+        config: start_config(tools?),
         store: store,
         registry: {Native, reg}
       )
 
     srv
+  end
+
+  defp start_config(false), do: BaseAgent.init(%{client: %StubClient{}, model: "m"})
+
+  # One tool round: the turn persists its :steering state after the batch.
+  defp start_config(true) do
+    client = %ScriptedToolClient{calls: [%ToolCall{id: "call_1", name: "big", input: %{}}]}
+
+    %{client: client, model: "m"}
+    |> BaseAgent.init()
+    |> BaseAgent.register_tool(%ReturnTool{output: "ok"})
   end
 
   describe "in-turn writes" do
@@ -173,6 +223,73 @@ defmodule Normandy.Agents.Turn.ServerStoreFailuresTest do
       assert Process.alive?(sup)
     end
   end
+
+  describe "a store's own error reason in a turn" do
+    setup do
+      id = "store-reason-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach_many(
+          id,
+          [[:normandy, :agent, :run, :exception], [:normandy, :agent, :run, :stop]],
+          &__MODULE__.forward_event/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    # Every in-turn write site: the user message before the turn starts, an append
+    # inside the turn, and the turn-state save after a tool batch (the one a turn fails
+    # on; a terminal save is best-effort).
+    for {label, op, tools?, persisted?} <- [
+          {"the user-message append", {:append_entry, "user"}, false, false},
+          {"an in-turn append", {:append_entry, "assistant"}, false, true},
+          {"a turn-state save", :save_turn_state, true, false}
+        ] do
+      test "#{label} that fails replies, persists, logs and emits the reason by its tags only" do
+        sup = sup()
+        {mem, _} = store = ErroringStore.new()
+        sid = sid("store-reason")
+        srv = start(sup, sid, {ErroringStore, store}, Native.new(), unquote(tools?))
+
+        ErroringStore.fail_on(store, [unquote(Macro.escape(op))])
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            assert {:error,
+                    %TurnError{
+                      type: :persist_failed,
+                      reason: {:sql, "a string (" <> _, "a map"}
+                    } = error} = Turn.Server.run(srv, %{chat_message: "hi"})
+
+            refute inspect(error, limit: :infinity) =~ "secret_token"
+            refute inspect(error, limit: :infinity) =~ "hunter2"
+            refute Exception.message(error) =~ "secret_token"
+          end)
+
+        refute log =~ "secret_token"
+        refute log =~ "hunter2"
+
+        assert_received {:telemetry, [:normandy, :agent, :run, _], %{session_id: ^sid} = meta}
+        refute inspect(meta, limit: :infinity) =~ "secret_token"
+        refute inspect(meta, limit: :infinity) =~ "hunter2"
+
+        if unquote(persisted?) do
+          assert {:ok, %Turn.State{status: :failed, error: persisted}} =
+                   InMemory.load_turn_state(mem, sid)
+
+          assert %TurnError{type: :persist_failed, reason: {:sql, _, "a map"}} = persisted
+          refute inspect(persisted, limit: :infinity) =~ "secret_token"
+        end
+
+        assert Process.alive?(srv)
+      end
+    end
+  end
+
+  def forward_event(event, _measurements, metadata, pid),
+    do: send(pid, {:telemetry, event, metadata})
 
   describe "the load" do
     test "a history read that exits leaves the server :unavailable until the store answers" do

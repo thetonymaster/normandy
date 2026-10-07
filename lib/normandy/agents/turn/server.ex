@@ -127,9 +127,11 @@ defmodule Normandy.Agents.Turn.Server do
       `on_error: :reraise`, or a hook's return-contract violation), an `after_tool` hook
       on a result the server built itself (an approval rejected, expired or interrupted
       result), or a `before_llm` or `after_compact` hook.
-    * `:persist_failed` - the session store rejected a write; `:reason` is its reason, or
-      `{:store_exit, exit_reason}` when the store call exited. The write is not adopted
-      and the server stays up; a store that raises is a bug and crashes the server.
+    * `:persist_failed` - the session store rejected a write; `:reason` is its reason
+      reduced to its tags (`{:sql, "SELECT ..."}` becomes `{:sql, "a string (N bytes)"}`:
+      atoms and integers kept, tuples walked, an exception its module, any other term its
+      type), or `{:store_exit, exit_reason}` when the store call exited. The write is not
+      adopted and the server stays up; a store that raises is a bug and crashes the server.
     * `:approval_timeout` - nobody approved in time and `on_approval_timeout: :fail`;
       `:reason` is the list of tool call ids.
     * `:task_down` - the LLM call, the compactor or the tool dispatch raised an
@@ -696,9 +698,11 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # A session store's load reason is replied to every run/2 caller: it is reduced to its
-  # tags (Describe.reason_term/1), since a backend's reason can hold a query, a response
-  # body or a connection's options.
+  # A session store's load reason is replied to every run/2 caller, and an in-turn write's
+  # reason to the turn's caller, its persisted state, the log and telemetry: it is
+  # reduced to its tags (Describe.reason_term/1), since a backend's reason can hold a
+  # query, a response body or a connection's options. A {:store_exit, _} reason
+  # (store_call/1) keeps its shape: it is already atoms, integers and tuples.
   defp store_reason(reason), do: Describe.reason_term(reason)
 
   # A thin start restores the server options saved with the template;
@@ -1744,12 +1748,17 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # A failed turn's error is persisted as the exception the turn failed with, redacted
-  # (TurnError.redact/1): a bug's fields and message never reach the store.
-  defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid} = data, turn_state),
-    do:
-      store_call(fn ->
-        mod.save_turn_state(handle, sid, persistable(turn_state), inflight?(data, turn_state))
-      end)
+  # (TurnError.redact/1): a bug's fields and message never reach the store. A failed
+  # save's reason is reduced to its tags (store_reason/1) before it becomes the turn's
+  # :persist_failed reason: it is replied, persisted, logged and emitted.
+  defp persist_turn_state(%Data{store: {mod, handle}, session_id: sid} = data, turn_state) do
+    case store_call(fn ->
+           mod.save_turn_state(handle, sid, persistable(turn_state), inflight?(data, turn_state))
+         end) do
+      :ok -> :ok
+      {:error, reason} -> {:error, store_reason(reason)}
+    end
+  end
 
   # The store's in-flight index (list_resumable/1, read by ResumeReaper): an eager
   # session whose turn has not ended. Saved with the state, so the two never disagree.
@@ -1786,9 +1795,11 @@ defmodule Normandy.Agents.Turn.Server do
       content: content
     }
 
+    # The reason becomes a :persist_failed reason (replied, persisted, logged, emitted):
+    # reduced to its tags, as a load reason is (store_reason/1).
     case store_call(fn -> mod.append_entry(handle, sid, entry) end) do
       {:ok, _id} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, store_reason(reason)}
     end
   end
 
