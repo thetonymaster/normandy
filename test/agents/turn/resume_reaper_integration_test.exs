@@ -39,13 +39,17 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     reg = HReg.new()
     # Horde calls take the name; start_link's pid is Horde's outer Supervisor.
     sup = :"reapsup_#{System.unique_integer([:positive])}"
-    {:ok, sup_pid} = HSup.start_link(name: sup)
-    {:ok, cat} = Catalog.start_link([])
+    # Under the test supervisor, which stops them (reverse start order, each with its
+    # shutdown) and waits for them to be gone before the next test. Killing the Horde
+    # supervisor in on_exit instead let its SignalShutdown child log an [error]
+    # (`:horde_shutting_down` call to a killed process) into a later test's capture_log.
+    start_supervised!(%{
+      id: :horde_sup,
+      start: {HSup, :start_link, [[name: sup]]},
+      type: :supervisor
+    })
 
-    on_exit(fn ->
-      if Process.alive?(sup_pid), do: Process.exit(sup_pid, :kill)
-      if Process.alive?(cat), do: Process.exit(cat, :kill)
-    end)
+    cat = start_supervised!(%{id: :catalog, start: {Catalog, :start_link, [[]]}})
 
     # Node-local supplement (non-serializable half of config) for template_id "k".
     :ok =
@@ -68,13 +72,14 @@ defmodule Normandy.Agents.Turn.ResumeReaperIntegrationTest do
     # Precondition: not currently live anywhere.
     assert HReg.whereis(reg, sid) == :none
 
-    {:ok, reaper} =
-      ResumeReaper.start_link(
-        store: {PG, Normandy.TestRepo},
-        registry: {HReg, reg},
-        supervisor: sup,
-        supervisor_mod: HSup,
-        template_provider: {Catalog, cat}
+    reaper =
+      start_supervised!(
+        {ResumeReaper,
+         store: {PG, Normandy.TestRepo},
+         registry: {HReg, reg},
+         supervisor: sup,
+         supervisor_mod: HSup,
+         template_provider: {Catalog, cat}}
       )
 
     send(reaper, {:nodedown, :"gone@127.0.0.1"})
