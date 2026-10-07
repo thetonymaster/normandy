@@ -1712,6 +1712,50 @@ code you wrote against 1.x must follow the changes below.
   bytes, so their cost grows with the square of the answer's length (now documented in
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
 
+## Known limits of 2.0
+
+These are known and not fixed in this release. Each is a candidate for a later 2.x release.
+
+- **The context budget undercounts the prompt** (AX-12). `Normandy.Context.WindowManager`
+  estimates the history only, at about four characters per token. The system prompt and the
+  tool definitions are not counted, and `reserved_tokens` is a fixed 4096 whatever
+  `max_tokens` or thinking needs. Compaction can therefore start late, and an API "prompt is
+  too long" error is still possible near the window. Leave headroom: raise
+  `reserved_tokens` when `max_tokens` is large or thinking is on.
+- **The structured-output path has no corrective retry** (AX-18). Constraints the API drops
+  (`pattern`, lengths, ranges, item counts) are stated in the property description, but an
+  answer that breaks one is not re-asked. The legacy parse-retry path still re-asks with
+  feedback.
+- **The output schema is sent twice under structured outputs** (AX-19). The system prompt's
+  `# OUTPUT SCHEMA` block is kept beside `output_config.format`, which costs its tokens on
+  every call.
+- **Context providers sit inside the cached system block** (AX-20). The system prompt is one
+  block with one cache breakpoint, and the output schema follows the providers. A provider
+  whose text changes (a date, per-user data) invalidates the cached system prompt and
+  everything after it, and drops replayed thinking.
+- **A custom input schema reaches the model as bare JSON** (AX-29). The user message is the
+  input's JSON; nothing in the system prompt describes its fields. Describe them in
+  `background` or `steps` if the model needs them.
+- **The memory tool is a custom tool** (AX-33). `Normandy.Tools.Memory` matches the
+  Anthropic memory-tool commands but is sent as a custom tool, not the native
+  `memory_20250818` type.
+- **Stored templates are not signed** (SEC-8). `Turn.Server` checks a stored template before
+  use and against the supplement's `:pinned` settings, but nothing proves the store's bytes
+  came from you. The session store is inside your trust boundary: anyone who can write it
+  can change a session's configuration within what `:pinned` allows.
+- **A paused server-tool turn after a crash is unverified.** If `Turn.Server` stops while a
+  turn is paused on a `server_tool_use` (`pause_turn`) and the session then takes new input,
+  whether the API accepts the resulting history has not been checked live.
+- **A failed final turn-state save can leave a session in the in-flight index** (H10). If
+  the store fails while saving a turn's terminal state, the session stays marked in flight,
+  and `ResumeReaper` may later resume a turn that had already finished.
+- **Session deletion is conservative on Postgres and Mnesia.** `delete_session/2` removes the
+  session's current chain only: entries on a branch its head no longer reaches (appended
+  with an explicit `parent_id`) stay, and on Postgres two concurrent deletes of sessions that
+  share an ancestor can both keep the shared entries. No other session's history is lost;
+  the cost is entries left behind. If you must erase a user's data, check the store
+  afterwards.
+
 ## New, non-breaking
 
 - `[:normandy, :workflow, :run, :stop]` carries `status: :ok | :error` (`:error` when the
