@@ -1400,8 +1400,9 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   its `tool_result`, a map given as message content) lists every map's keys sorted by their
   text, at any depth. On OTP 26+ a small atom-keyed map iterates its keys in atom-creation
   order, so the same tool result could be different text on two nodes or after a restart, and
-  miss the prompt cache. Values and list order are unchanged. Structs are encoded as before
-  (one with its own `Jason.Encoder` by that encoder), and a `Jason.OrderedObject` keeps its
+  miss the prompt cache. Values and list order are unchanged. A struct without its own
+  `Jason.Encoder` is written as its fields, sorted like a map; one with its own encoder is
+  encoded by that encoder, unchanged. A `Jason.OrderedObject` keeps its
   order: return one from a tool whose key order means something to the model. A custom
   `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
   encode them in order, as Jason does.

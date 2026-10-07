@@ -37,8 +37,10 @@ defmodule Normandy.JSON do
   a map given as message content) lists every plain map's keys sorted by their text,
   at any depth, so the same value is the same text on every node and after a restart
   (on OTP 26+ a small atom-keyed map iterates its keys in atom-creation order). Values
-  and list order are unchanged. A struct is encoded as above, and a
-  `Jason.OrderedObject` keeps its order (the plain maps among its values are sorted).
+  and list order are unchanged. A struct without its own `Jason.Encoder` is written as
+  its fields, sorted like a plain map. A struct with its own encoder is encoded by that
+  encoder, whose output is its own, and a `Jason.OrderedObject` keeps its order (the
+  plain maps among its values are sorted).
   The sorted maps reach the adapter as `Jason.OrderedObject` structs, so a custom
   `:adapter` must encode those in order, as Jason does.
   """
@@ -126,13 +128,20 @@ defmodule Normandy.JSON do
   # "Text for the model" in the moduledoc: every plain map becomes a Jason.OrderedObject
   # with its keys sorted by their JSON text (ties, such as "a" and :a, by term order, so
   # the result never depends on the map's iteration order). A struct is normalized as
-  # encode!/2 does it, not sorted; an OrderedObject keeps its order and its values are
-  # walked. Callers: ToolResult.render_output/1 and BaseIOSchema's Map impl.
+  # encode!/2 does it (a struct with its own encoder is kept whole, unsorted; one without
+  # becomes its field map, sorted like any plain map); an OrderedObject keeps its order and
+  # its values are walked. Callers: ToolResult.render_output/1 and BaseIOSchema's Map impl.
   @spec sort_keys(term()) :: term()
   def sort_keys(%Jason.OrderedObject{values: values} = object),
     do: %{object | values: Enum.map(values, fn {key, value} -> {key, sort_keys(value)} end)}
 
-  def sort_keys(%_{} = struct), do: normalize(struct)
+  def sort_keys(%_{} = struct) do
+    if own_encoder?(struct) do
+      struct
+    else
+      struct |> Map.from_struct() |> Map.delete(:__meta__) |> sort_keys()
+    end
+  end
 
   def sort_keys(map) when is_map(map) do
     map
@@ -144,7 +153,9 @@ defmodule Normandy.JSON do
   def sort_keys(list) when is_list(list), do: Enum.map(list, &sort_keys/1)
   def sort_keys(other), do: other
 
-  # A key as Jason writes it: an atom by its name, anything else through String.Chars.
+  # A key as Jason writes it: an atom by its name, anything else through String.Chars. A key
+  # without a String.Chars impl (a tuple) raises Protocol.UndefinedError here, the exception
+  # the adapter raised for it before.
   defp key_text(key) when is_atom(key), do: Atom.to_string(key)
   defp key_text(key), do: to_string(key)
 

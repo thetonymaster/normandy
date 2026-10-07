@@ -23,6 +23,11 @@ defmodule Normandy.Agents.ModelTextKeyOrderTest do
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 
+  defmodule Plain do
+    @moduledoc false
+    defstruct [:zulu, :alpha, :nested]
+  end
+
   defmodule Derived do
     @moduledoc false
     @derive {Jason.Encoder, only: [:zulu, :alpha]}
@@ -87,6 +92,26 @@ defmodule Normandy.Agents.ModelTextKeyOrderTest do
       assert result_text(output) ==
                ~s({"ordered":{"zulu":{"#{a}":2,"#{z}":1},"alpha":0},) <>
                  ~s("struct":{"zulu":1,"alpha":2}})
+    end
+  end
+
+  describe "structs without an encoder, integer keys and ties" do
+    test "a struct without its own encoder is written as its sorted fields, nested maps sorted" do
+      [z, _m, a] = fresh_keys()
+      plain = %Plain{zulu: 1, alpha: 2, nested: %{z => 1, a => 2}}
+
+      assert result_text(%{"s" => plain}) ==
+               ~s({"s":{"alpha":2,"nested":{"#{a}":2,"#{z}":1},"zulu":1}})
+    end
+
+    test "integer keys sort by their text" do
+      assert result_text(%{10 => "c", 2 => "b", 1 => "a"}) == ~s({"1":"a","10":"c","2":"b"})
+    end
+
+    test "\"a\" and :a tie deterministically whatever the map's order" do
+      expected = ~s({"a":2,"a":1})
+      assert result_text(%{"a" => 1, a: 2}) == expected
+      assert result_text(Map.new([{:a, 2}, {"a", 1}])) == expected
     end
   end
 
