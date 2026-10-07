@@ -1,11 +1,14 @@
 defmodule Normandy.Agents.Turn.ResumeReaperTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.ResumeReaper
   alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Test.TurnConfig
 
   # A fake supervisor that records each start_server call (session_id + full opts)
   # instead of really starting a Turn.Server. The "supervisor" handle is the test pid.
@@ -274,10 +277,10 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
 
     tmpl =
       %{
-        Normandy.Test.TurnConfig.build()
-        | behaviours: %Normandy.Behaviours.Config{credential: {FailingCreds, [marker: marker]}}
+        TurnConfig.build()
+        | behaviours: %Config{credential: {FailingCreds, [marker: marker]}}
       }
-      |> Normandy.Agents.ConfigTemplate.from_config("kind-a", :eager)
+      |> ConfigTemplate.from_config("kind-a", :eager)
 
     :ok = InMemory.save_config_template(store, "s-creds", tmpl)
     :ok = InMemory.save_turn_state(store, "s-creds", %Turn.State{status: :steering})
