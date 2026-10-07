@@ -90,4 +90,27 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitPoolTest do
       assert Task.await(task) == {:error, {:wait_unmet, 0, 1}}
     end
   end
+
+  test "every waited write runs wholly on the session's wait connection, never on conn" do
+    url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+    {:ok, dead} = Redix.start_link(url)
+    Process.unlink(dead)
+    ref = Process.monitor(dead)
+    :ok = GenServer.stop(dead)
+    assert_receive {:DOWN, ^ref, :process, ^dead, _reason}
+
+    {_conn, ns, wait, wait_conns} = Redis.new(wait: {1, 50}, wait_connections: 2)
+    store = {dead, ns, wait, wait_conns}
+
+    # No replica: each write reaches its WAIT on a wait connection and finds it unmet. A
+    # write sent to the dead main connection would exit instead.
+    for write <- [
+          fn -> Redis.append_entry(store, "s-w", %Entry{role: "user", content: "a"}) end,
+          fn -> Redis.save_turn_state(store, "s-w", :ts, false) end,
+          fn -> Redis.save_config_template(store, "s-w", %{}) end,
+          fn -> Redis.delete_session(store, "s-w") end
+        ] do
+      assert write.() == {:error, {:wait_unmet, 0, 1}}
+    end
+  end
 end
