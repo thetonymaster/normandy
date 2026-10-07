@@ -1,9 +1,8 @@
 defmodule Normandy.LLM.Json.ContentCleaner do
-  @moduledoc """
-  Cleans raw LLM output into a parseable JSON string: strips markdown code
-  fences and trims. `extract_balanced/1` is the prose-extraction fallback
-  (implemented in the hardening phase).
-  """
+  @moduledoc false
+  # Cleans raw LLM output into a parseable JSON string: strips markdown code
+  # fences and trims. `extract_balanced/1` is the prose-extraction fallback
+  # (implemented in the hardening phase).
 
   @doc "Strip code fences and trim. Non-binary content passes through unchanged."
   def clean(content) when is_binary(content) do

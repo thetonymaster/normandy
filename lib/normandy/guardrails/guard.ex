@@ -7,11 +7,9 @@ defmodule Normandy.Guardrails.Guard do
   guard's options. It must return `:ok` to allow the value through, or
   `{:error, [violation]}` to reject it.
 
-  Violations use the same `%{path, message, constraint}` shape as
-  `Normandy.Agents.ValidationMiddleware`, with an additional `:guard` key
-  identifying the module that produced the violation. This means
-  `Normandy.Agents.ValidationMiddleware.error_message/1` renders guardrail
-  violations without modification.
+  Violations use the same `%{path, message, constraint}` shape as the `errors` of a
+  `Normandy.Schema.ValidationError`, with an additional `:guard` key identifying the
+  module that produced the violation.
 
   ## Example
 

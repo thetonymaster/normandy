@@ -1,47 +1,46 @@
 defmodule Normandy.Telemetry.OtelCtx do
-  @moduledoc """
-  Soft OpenTelemetry context propagation across process boundaries.
-
-  Normandy doesn't depend on `:opentelemetry` directly — consumers wire it up
-  via telemetry handlers. When OTel is loaded, `capture/0` snapshots the
-  active context in the calling process so another process can install it;
-  spans created there then nest under the parent's active span instead of
-  becoming root spans in their own trace. When OTel is not loaded, every
-  function here is a cheap no-op.
-
-  Whether each OTel module is loaded is asked of the code server once per node, then
-  cached in `:persistent_term`: an absent module would otherwise cost a code-server
-  round trip on every call, from every process. So OTel loaded after the first call
-  that looked for it (a hot code load) is not seen until the node restarts.
-
-  Two ways to install a captured context:
-
-    * `restore/1` attaches it and never undoes that. Use it only at the top of
-      a short-lived process (a Task, a spawned worker) whose context dies with
-      it.
-    * `attach/1` returns a token that `detach/1` takes to put back the context
-      that was current before. Use it in a long-lived process (a gen_statem
-      serving many requests), so one request's context does not leak into the
-      next.
-
-  A context lives only in memory. To keep one across a restart, `inject/1`
-  turns it into a W3C text-map carrier (a list of string pairs) that can be
-  persisted, and `extract/1` rebuilds a context from that carrier.
-
-  ## Usage
-
-      parent_ctx = Normandy.Telemetry.OtelCtx.capture()
-
-      Task.async(fn ->
-        Normandy.Telemetry.OtelCtx.restore(parent_ctx)
-        # ... spans opened here nest under the parent's active span
-      end)
-
-      # In a long-lived process:
-      token = Normandy.Telemetry.OtelCtx.attach(caller_ctx)
-      # ... spans opened here nest under the caller's active span
-      Normandy.Telemetry.OtelCtx.detach(token)
-  """
+  @moduledoc false
+  # Soft OpenTelemetry context propagation across process boundaries.
+  #
+  # Normandy doesn't depend on `:opentelemetry` directly — consumers wire it up
+  # via telemetry handlers. When OTel is loaded, `capture/0` snapshots the
+  # active context in the calling process so another process can install it;
+  # spans created there then nest under the parent's active span instead of
+  # becoming root spans in their own trace. When OTel is not loaded, every
+  # function here is a cheap no-op.
+  #
+  # Whether each OTel module is loaded is asked of the code server once per node, then
+  # cached in `:persistent_term`: an absent module would otherwise cost a code-server
+  # round trip on every call, from every process. So OTel loaded after the first call
+  # that looked for it (a hot code load) is not seen until the node restarts.
+  #
+  # Two ways to install a captured context:
+  #
+  #   * `restore/1` attaches it and never undoes that. Use it only at the top of
+  #     a short-lived process (a Task, a spawned worker) whose context dies with
+  #     it.
+  #   * `attach/1` returns a token that `detach/1` takes to put back the context
+  #     that was current before. Use it in a long-lived process (a gen_statem
+  #     serving many requests), so one request's context does not leak into the
+  #     next.
+  #
+  # A context lives only in memory. To keep one across a restart, `inject/1`
+  # turns it into a W3C text-map carrier (a list of string pairs) that can be
+  # persisted, and `extract/1` rebuilds a context from that carrier.
+  #
+  # ## Usage
+  #
+  #     parent_ctx = Normandy.Telemetry.OtelCtx.capture()
+  #
+  #     Task.async(fn ->
+  #       Normandy.Telemetry.OtelCtx.restore(parent_ctx)
+  #       # ... spans opened here nest under the parent's active span
+  #     end)
+  #
+  #     # In a long-lived process:
+  #     token = Normandy.Telemetry.OtelCtx.attach(caller_ctx)
+  #     # ... spans opened here nest under the caller's active span
+  #     Normandy.Telemetry.OtelCtx.detach(token)
 
   @doc false
   # Code.ensure_loaded?/1, asked once per node and module (see the moduledoc). Public

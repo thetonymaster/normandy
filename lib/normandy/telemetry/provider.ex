@@ -1,35 +1,34 @@
 defmodule Normandy.Telemetry.Provider do
-  @moduledoc """
-  Names the LLM provider behind a client and the facts about a request that
-  telemetry reports on the `[:normandy, :agent, :llm_call]` span.
-
-  `provider/1` is the single place the provider is resolved; other spans reuse it.
-
-  | client                                  | provider              |
-  |-----------------------------------------|-----------------------|
-  | `Normandy.LLM.ClaudioAdapter`           | `:anthropic`          |
-  | `Normandy.LLM.OpenAICompatibleAdapter`  | `:openai_compatible`  |
-  | any other struct                        | `client.options[:provider]` when it is an atom, else `nil` |
-
-  `Normandy.Agents.Model` is implemented by third parties, so no function is
-  added to it: a custom client names its provider with `options: %{provider: :my_provider}`.
-  A client that wraps another (retries, caching, fault injection) does the same with the
-  wrapped client's provider, `provider(inner)`: spans see only the outer struct.
-  `nil` means "unknown" and callers leave the key out of the metadata.
-
-  ## llm_call stop metadata (set by the adapters and BaseAgent)
-
-    * `:response_id` - the provider's message/completion id
-    * `:finish_reason` - the provider's stop reason as a string (`"end_turn"`,
-      `"stop"`); an atom reported by a client is converted. Absent when the provider
-      sent none, e.g. a stream an incremental guardrail halted before its end
-    * `:time_to_first_chunk` - streaming only; native time units (convert with
-      `System.convert_time_unit/3`) from the start of the stream attempt that
-      delivered it (retry backoff is not counted) to the first content chunk: a
-      text delta, a thinking delta or a tool-use start (not message start/stop).
-      Absent when the stream had none. It is metadata, not a measurement,
-      because `:telemetry.span/3` fixes the stop measurements.
-  """
+  @moduledoc false
+  # Names the LLM provider behind a client and the facts about a request that
+  # telemetry reports on the `[:normandy, :agent, :llm_call]` span.
+  #
+  # `provider/1` is the single place the provider is resolved; other spans reuse it.
+  #
+  # | client                                  | provider              |
+  # |-----------------------------------------|-----------------------|
+  # | `Normandy.LLM.ClaudioAdapter`           | `:anthropic`          |
+  # | `Normandy.LLM.OpenAICompatibleAdapter`  | `:openai_compatible`  |
+  # | any other struct                        | `client.options[:provider]` when it is an atom, else `nil` |
+  #
+  # `Normandy.Agents.Model` is implemented by third parties, so no function is
+  # added to it: a custom client names its provider with `options: %{provider: :my_provider}`.
+  # A client that wraps another (retries, caching, fault injection) does the same with the
+  # wrapped client's provider, `provider(inner)`: spans see only the outer struct.
+  # `nil` means "unknown" and callers leave the key out of the metadata.
+  #
+  # ## llm_call stop metadata (set by the adapters and BaseAgent)
+  #
+  #   * `:response_id` - the provider's message/completion id
+  #   * `:finish_reason` - the provider's stop reason as a string (`"end_turn"`,
+  #     `"stop"`); an atom reported by a client is converted. Absent when the provider
+  #     sent none, e.g. a stream an incremental guardrail halted before its end
+  #   * `:time_to_first_chunk` - streaming only; native time units (convert with
+  #     `System.convert_time_unit/3`) from the start of the stream attempt that
+  #     delivered it (retry backoff is not counted) to the first content chunk: a
+  #     text delta, a thinking delta or a tool-use start (not message start/stop).
+  #     Absent when the stream had none. It is metadata, not a measurement,
+  #     because `:telemetry.span/3` fixes the stop measurements.
 
   alias Normandy.LLM.{ClaudioAdapter, OpenAICompatibleAdapter}
 

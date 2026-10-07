@@ -259,28 +259,39 @@ Declare it with `on_error: :open` so a logging failure never fails a tool call.
 
 ## Testing a hook
 
-Call the callback directly with a context:
+Call the callback directly with a context, or run it through an agent:
 
 ```elixir
 defmodule MyAppTest.RedactHookTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Hooks.{Context, Runner}
+  alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.ContentBlock
+  alias Normandy.HookHaltError
+  alias Normandy.Hooks.Context
 
   test "redacts an SSN" do
     ctx = %Context{event: :on_prompt}
     assert {:cont, "id [ssn]"} = MyApp.Hooks.Redact.on_prompt("id 123-45-6789", ctx, [])
   end
 
-  test "under the library's rules" do
-    config = %{name: "test", behaviours: %{hooks: [{MyApp.Hooks.Redact, []}]}}
-    assert Runner.prompt(config, 42) == {:halt, MyApp.Hooks.Redact, "unsupported input shape"}
+  test "an agent refuses what the hook cannot read" do
+    config =
+      BaseAgent.init(
+        client: %Normandy.LLM.ClaudioAdapter{api_key: "never-used"},
+        model: "claude-opus-5-5",
+        behaviours: %Normandy.Behaviours.Config{hooks: [{MyApp.Hooks.Redact, []}]}
+      )
+
+    assert {:error, %HookHaltError{hook: MyApp.Hooks.Redact, reason: "unsupported input shape"}} =
+             BaseAgent.run(config, [%ContentBlock.Text{text: "id 123-45-6789"}])
   end
 end
 ```
 
-`Normandy.Hooks.Runner` applies ordering, `:on_error` and the return contracts, as an
-agent would. To receive messages from a hook in a test, register the test process under a
+The second test runs the hook the way an agent does: ordering, `:on_error` and the return
+contracts apply. An `on_prompt` halt ends the turn before any model call, so the client is
+never called. To receive messages from a hook in a test, register the test process under a
 name and pass the name in opts (a pid is refused).
 
 ## What hooks do not cover

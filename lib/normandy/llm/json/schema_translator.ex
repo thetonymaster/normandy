@@ -1,18 +1,17 @@
 defmodule Normandy.LLM.Json.SchemaTranslator do
-  @moduledoc """
-  Translates a Normandy schema specification (`__schema__(:specification)`)
-  into a JSON Schema suitable for Anthropic structured outputs (constrained
-  decoding): string keys, recursive `additionalProperties: false`, only the
-  supported keywords. Returns `{:incompatible, reason}` for schemas
-  constrained decoding cannot express (open `:map` objects, runaway nesting),
-  so the caller can fall back to the legacy path.
-
-  Properties keep the declaration order recorded in `:property_order` (constrained
-  decoding generates them in that order), as a `Jason.OrderedObject`. Constraints it
-  cannot send (`pattern`, string lengths, numeric bounds, item counts, `uniqueItems`,
-  unsupported formats) are stated at the end of the property's `description`; the
-  answer is still validated against the full schema.
-  """
+  @moduledoc false
+  # Translates a Normandy schema specification (`__schema__(:specification)`)
+  # into a JSON Schema suitable for Anthropic structured outputs (constrained
+  # decoding): string keys, recursive `additionalProperties: false`, only the
+  # supported keywords. Returns `{:incompatible, reason}` for schemas
+  # constrained decoding cannot express (open `:map` objects, runaway nesting),
+  # so the caller can fall back to the legacy path.
+  #
+  # Properties keep the declaration order recorded in `:property_order` (constrained
+  # decoding generates them in that order), as a `Jason.OrderedObject`. Constraints it
+  # cannot send (`pattern`, string lengths, numeric bounds, item counts, `uniqueItems`,
+  # unsupported formats) are stated at the end of the property's `description`; the
+  # answer is still validated against the full schema.
 
   alias Normandy.Schema.Wire
 

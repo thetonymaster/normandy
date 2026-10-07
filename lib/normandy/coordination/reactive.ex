@@ -40,7 +40,7 @@ defmodule Normandy.Coordination.Reactive do
   (not for one killed in `on_complete`), possibly without a matching `:start`; the
   `llm_call`/`tool` spans open inside it stay open.
   Agent processes (pids) are not killed, only the task waiting on them, so
-  their runs end normally. See `Normandy.Telemetry.KilledRun`.
+  their runs end normally. See "Killed runs" in `Normandy.Telemetry`.
   """
 
   alias Normandy.Agents.BaseAgent

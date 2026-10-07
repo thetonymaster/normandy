@@ -1688,7 +1688,7 @@ code you wrote against 1.x must follow the changes below.
 
 ## 42. AgentProcess and coordination
 
-- `Normandy.Telemetry.OtelCtx` asks the code server once per node whether OpenTelemetry is
+- Normandy asks the code server once per node whether OpenTelemetry is
   loaded and caches the answer. OpenTelemetry loaded into a running node after Normandy first
   looked for it (a hot code load) is not seen until the node restarts.
 - `AgentMemory.delete_turn/2` is linear in the number of entries for a linear history (it
@@ -1809,6 +1809,25 @@ code you wrote against 1.x must follow the changes below.
 - The optional `horde` dependency is `~> 0.10` (was `~> 0.9`):
   `SessionRegistry.Horde.Via` relies on Horde 0.10's registration order. A project locked
   to Horde 0.9 runs `mix deps.update horde`.
+
+## 45. Testing support and docs
+
+- These modules are internal in 2.0: they have no docs page (`@moduledoc false`) and may
+  change in any release: Normandy.Hooks.Runner, Normandy.Hooks.Handlers,
+  Normandy.Agents.Turn.Driver, Normandy.Agents.Turn.Inline,
+  Normandy.Agents.ValidationMiddleware, Normandy.Telemetry.KilledRun,
+  Normandy.Telemetry.Metadata, Normandy.Telemetry.OtelCtx, Normandy.Telemetry.Provider,
+  Normandy.Telemetry.WorkflowSpan, Normandy.LLM.Json.ContentCleaner,
+  Normandy.LLM.Json.Decoder, Normandy.LLM.Json.RetryFeedback, Normandy.LLM.Json.Scanner,
+  Normandy.LLM.Json.SchemaBinder, Normandy.LLM.Json.SchemaTranslator,
+  Normandy.Behaviours.SessionRegistry.Horde.Via and
+  Normandy.Behaviours.SessionRegistry.Redis.Via. `Normandy.Agents.Turn.Driver.Handlers`,
+  `Normandy.Hooks.Context`, `Normandy.Telemetry.Request` and `Normandy.Telemetry.Usage`
+  stay public.
+- To test a hook under the library's rules (ordering, `:on_error`, return contracts), run
+  it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The
+  hooks guide's "Testing a hook" section shows it. Calling the hook runner directly is no
+  longer documented.
 
 ## Known limits of 2.0
 

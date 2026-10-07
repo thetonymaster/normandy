@@ -1,23 +1,22 @@
 defmodule Normandy.Telemetry.Metadata do
-  @moduledoc """
-  Builds the metadata maps shared by the `[:normandy, :agent, :run]`,
-  `[:normandy, :agent, :llm_call]` and `[:normandy, :tool, :execute]` spans, so
-  `BaseAgent` and `Turn.Server` (which hand-emits the run span) report the same keys.
-
-  Keys with no value are left out. Metadata never carries message content.
-
-    * `:model`, `:agent_name` - always present (as before), even when `nil`
-    * `:provider` - `Normandy.Telemetry.Provider.provider/1`, omitted when unknown
-    * `:session_id` - `config.session_id` (set by `Turn.Server`), omitted when nil
-    * `:conversation_id` - the session id, when there is one
-    * `:turn_id` - the memory turn id: `ids/1` reads it from the config's memory
-      (the llm_call and tool spans run inside an admitted turn); `run/2` takes it
-      from `:turn_id` because the run span starts before `BaseAgent` admits input
-
-  Tool spans (`tool/3`) and `[:normandy, :tool, :denied]` (`tool_denied/4`) add the
-  call's `:tool_name` and `:tool_call_id`; spans also add `:tool_description` and
-  `:tool_type` (`:extension` for an MCP-wrapped tool, `:function` otherwise).
-  """
+  @moduledoc false
+  # Builds the metadata maps shared by the `[:normandy, :agent, :run]`,
+  # `[:normandy, :agent, :llm_call]` and `[:normandy, :tool, :execute]` spans, so
+  # `BaseAgent` and `Turn.Server` (which hand-emits the run span) report the same keys.
+  #
+  # Keys with no value are left out. Metadata never carries message content.
+  #
+  #   * `:model`, `:agent_name` - always present (as before), even when `nil`
+  #   * `:provider` - `Normandy.Telemetry.Provider.provider/1`, omitted when unknown
+  #   * `:session_id` - `config.session_id` (set by `Turn.Server`), omitted when nil
+  #   * `:conversation_id` - the session id, when there is one
+  #   * `:turn_id` - the memory turn id: `ids/1` reads it from the config's memory
+  #     (the llm_call and tool spans run inside an admitted turn); `run/2` takes it
+  #     from `:turn_id` because the run span starts before `BaseAgent` admits input
+  #
+  # Tool spans (`tool/3`) and `[:normandy, :tool, :denied]` (`tool_denied/4`) add the
+  # call's `:tool_name` and `:tool_call_id`; spans also add `:tool_description` and
+  # `:tool_type` (`:extension` for an MCP-wrapped tool, `:function` otherwise).
 
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn

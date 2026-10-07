@@ -180,7 +180,7 @@ defmodule Normandy.Telemetry do
 
   ### `[:normandy, :hook, :start | :stop | :exception]`
 
-  One hook module call (`Normandy.Hooks.Runner`): one span per `{module, opts}` entry per
+  One hook module call: one span per `{module, opts}` entry per
   event, for entries whose module exports the event's callback. No hooks, no spans.
 
     * Start metadata: `event` (`:on_session_start | :on_passivate | :on_prompt |
@@ -417,8 +417,6 @@ defmodule Normandy.Telemetry do
       for tasks `Task.async_stream` shuts down when the consumer halts early
       (`Reactive.all` with `fail_fast`). A short window between a run's
       `:stop` and its completion mark can still produce a late synthetic `:exception`.
-
-  See `Normandy.Telemetry.KilledRun` for the details.
 
   ## OpenTelemetry GenAI mapping
 

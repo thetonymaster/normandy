@@ -132,7 +132,7 @@ This document tracks the phased implementation of the Normandy AI agent framewor
 
 **Key Modules**:
 - `Normandy.Agents.BaseAgent` - Integrated telemetry and logging
-- `Normandy.Agents.ValidationMiddleware` - Integrated logging for validation
+- Normandy.Agents.ValidationMiddleware (internal since 2.0) - Integrated logging for validation
 - `Normandy.Tools.Executor` - Telemetry for tool execution
 
 ### Phase 13: Protocol Interoperability (MCP & A2A) ✅

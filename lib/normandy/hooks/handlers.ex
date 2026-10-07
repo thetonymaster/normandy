@@ -1,17 +1,16 @@
 defmodule Normandy.Hooks.Handlers do
-  @moduledoc """
-  Wraps a `Normandy.Agents.Turn.Driver.Handlers` set so `before_llm` and `after_compact`
-  hooks run whatever handlers a shell was given: BaseAgent's own sets, or the `:handlers`
-  a caller passes to `Turn.Server`. BaseAgent wraps its set once per drive; Turn.Server
-  keeps its set unwrapped and, in its internal hook glue, wraps a copy whose
-  `call_llm` or `compact` is a stub, so it can tell a hook's crash from the client's or
-  the compactor's. The default sets hold no hook calls, so no hook runs twice. A config
-  with no entry exporting a callback gets its handler back unwrapped.
-
-  `wrap/2` is not idempotent: wrapping a set twice runs each hook twice. A handler set is
-  a `Driver.Handlers` struct with no room for a "wrapped" marker, so never wrap a set
-  that is already wrapped.
-  """
+  @moduledoc false
+  # Wraps a `Normandy.Agents.Turn.Driver.Handlers` set so `before_llm` and `after_compact`
+  # hooks run whatever handlers a shell was given: BaseAgent's own sets, or the `:handlers`
+  # a caller passes to `Turn.Server`. BaseAgent wraps its set once per drive; Turn.Server
+  # keeps its set unwrapped and, in its internal hook glue, wraps a copy whose
+  # `call_llm` or `compact` is a stub, so it can tell a hook's crash from the client's or
+  # the compactor's. The default sets hold no hook calls, so no hook runs twice. A config
+  # with no entry exporting a callback gets its handler back unwrapped.
+  #
+  # `wrap/2` is not idempotent: wrapping a set twice runs each hook twice. A handler set is
+  # a `Driver.Handlers` struct with no room for a "wrapped" marker, so never wrap a set
+  # that is already wrapped.
 
   alias Normandy.Agents.Turn.Driver
   alias Normandy.Components.AgentMemory

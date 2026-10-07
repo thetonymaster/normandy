@@ -1,8 +1,7 @@
 defmodule Normandy.LLM.Json.Decoder do
-  @moduledoc """
-  Decodes a cleaned JSON string via the configured adapter, with an optional
-  one-shot truncated-string recovery pass (see Json.Scanner).
-  """
+  @moduledoc false
+  # Decodes a cleaned JSON string via the configured adapter, with an optional
+  # one-shot truncated-string recovery pass (see Json.Scanner).
 
   alias Normandy.LLM.Json.Scanner
 

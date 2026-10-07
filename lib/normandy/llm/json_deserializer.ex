@@ -2,15 +2,10 @@ defmodule Normandy.LLM.JsonDeserializer do
   @moduledoc """
   JSON deserialization helper with automatic error recovery.
 
-  This module is a thin facade over five focused units under `Normandy.LLM.Json.*`:
-
-  | Unit | Responsibility |
-  |------|----------------|
-  | `Normandy.LLM.Json.Scanner` | Truncated top-level-string recovery: scans raw bytes to find the safe truncation point and produces a closed-string fragment with balancing closers |
-  | `Normandy.LLM.Json.ContentCleaner` | Markdown fence-strip, whitespace trim, and balanced-brace prose extraction via `extract_balanced/1` — isolates the first well-formed JSON object embedded in prose |
-  | `Normandy.LLM.Json.Decoder` | Adapter decode with optional truncated-string recovery (delegates to `Scanner`) and a `:max_input_bytes` size guard that short-circuits before any parsing attempt |
-  | `Normandy.LLM.Json.SchemaBinder` | Normalises decoded maps, casts and validates against the target schema, and unwraps tool-use `"arguments"` envelopes |
-  | `Normandy.LLM.Json.RetryFeedback` | Builds an adapter-encoded corrective retry prompt from the parse error and augments the message history before the next LLM call |
+  It strips Markdown fences and surrounding prose, recovers a truncated top-level
+  string, decodes through the configured JSON adapter (with a `:max_input_bytes` guard),
+  casts and validates the result against the target schema, and builds the corrective
+  retry prompt after a parse error.
 
   This module provides robust JSON deserialization with:
   - Automatic retry on JSON parse errors

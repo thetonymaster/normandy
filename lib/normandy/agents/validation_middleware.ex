@@ -1,32 +1,31 @@
 defmodule Normandy.Agents.ValidationMiddleware do
-  @moduledoc """
-  Validation middleware for BaseAgent input/output schemas.
-
-  Provides automatic validation of agent inputs and outputs using Normandy schemas,
-  ensuring type safety and constraint enforcement throughout the agent lifecycle.
-
-  ## Features
-
-  - **Input Validation**: Validates user inputs before processing
-  - **Output Validation**: Validates LLM responses before returning
-  - **Clear Error Messages**: Path-based validation errors
-  - **Opt-in**: Runs only for a schema that can validate (a Normandy schema);
-    any other input or output passes through unchanged
-
-  ## Usage
-
-      # Validate input
-      case ValidationMiddleware.validate_input(config, user_input) do
-        {:ok, validated_input} -> # proceed
-        {:error, errors} -> # handle validation failure
-      end
-
-      # Validate output
-      case ValidationMiddleware.validate_output(config, response) do
-        {:ok, validated_response} -> # proceed
-        {:error, errors} -> # handle validation failure
-      end
-  """
+  @moduledoc false
+  # Validation middleware for BaseAgent input/output schemas.
+  #
+  # Provides automatic validation of agent inputs and outputs using Normandy schemas,
+  # ensuring type safety and constraint enforcement throughout the agent lifecycle.
+  #
+  # ## Features
+  #
+  # - **Input Validation**: Validates user inputs before processing
+  # - **Output Validation**: Validates LLM responses before returning
+  # - **Clear Error Messages**: Path-based validation errors
+  # - **Opt-in**: Runs only for a schema that can validate (a Normandy schema);
+  #   any other input or output passes through unchanged
+  #
+  # ## Usage
+  #
+  #     # Validate input
+  #     case ValidationMiddleware.validate_input(config, user_input) do
+  #       {:ok, validated_input} -> # proceed
+  #       {:error, errors} -> # handle validation failure
+  #     end
+  #
+  #     # Validate output
+  #     case ValidationMiddleware.validate_output(config, response) do
+  #       {:ok, validated_response} -> # proceed
+  #       {:error, errors} -> # handle validation failure
+  #     end
 
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.BaseAgentInputSchema

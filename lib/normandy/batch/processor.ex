@@ -44,7 +44,7 @@ defmodule Normandy.Batch.Processor do
   emits a synthetic `[:normandy, :agent, :run, :exception]` with
   `reason: :killed` for it, possibly without a matching `:start`; the
   `llm_call`/`tool` spans open inside it stay open. See
-  `Normandy.Telemetry.KilledRun`.
+  "Killed runs" in `Normandy.Telemetry`.
   """
 
   require Logger

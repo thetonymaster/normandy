@@ -72,7 +72,7 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   with `reason: :killed` for it (`execute_stream/2` when the timed-out element
   is consumed) unless its run had already returned and the timeout hit its
   `:transform` or `:on_agent_complete` callback, possibly without a matching `:start`;
-  the `llm_call`/`tool` spans open inside it stay open. See `Normandy.Telemetry.KilledRun`.
+  the `llm_call`/`tool` spans open inside it stay open. See "Killed runs" in `Normandy.Telemetry`.
   """
 
   @doc """

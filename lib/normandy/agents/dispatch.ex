@@ -40,15 +40,15 @@ defmodule Normandy.Agents.Dispatch do
   ## Telemetry
 
   A call answered without running its tool emits `[:normandy, :tool, :denied]`
-  (`%{count: 1}`, metadata from `Normandy.Telemetry.Metadata.tool_denied/4`) with
+  (`%{count: 1}`, metadata as listed in `Normandy.Telemetry`) with
   `reason` `:policy` (a policy deny, or a `:needs_approval` verdict collapsed by
   `dispatch_one/3`), `:hook_halt` (a before-hook halted it) or `:budget` (the
   budget pre-check refused it). Approval outcomes (`:approval_rejected`,
   `:approval_expired`) are emitted by `Turn.Server`, the only shell that parks.
   Toolset misses and invalid or schema-failing input are errors, not denials,
   and emit nothing. A result cut by the cap (below) emits
-  `[:normandy, :tool, :result_truncated]` (`%{original_chars, kept_chars}`, metadata from
-  `Normandy.Telemetry.Metadata.tool_result_truncated/3`).
+  `[:normandy, :tool, :result_truncated]` (`%{original_chars, kept_chars}`, metadata as
+  listed in `Normandy.Telemetry`).
 
   ## Result cap
 

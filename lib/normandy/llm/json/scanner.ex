@@ -1,9 +1,8 @@
 defmodule Normandy.LLM.Json.Scanner do
-  @moduledoc """
-  Byte-scanner recovery for a single JSON truncation failure mode:
-  an unclosed top-level string at depth 1 (e.g. a vision worker's `page_text`
-  payload that exhausts max_tokens mid-string). Pure; zero dependencies.
-  """
+  @moduledoc false
+  # Byte-scanner recovery for a single JSON truncation failure mode:
+  # an unclosed top-level string at depth 1 (e.g. a vision worker's `page_text`
+  # payload that exhausts max_tokens mid-string). Pure; zero dependencies.
 
   @doc """
   Attempt to recover a truncated payload. Returns `{:ok, recovered_string}`

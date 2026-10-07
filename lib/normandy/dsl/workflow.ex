@@ -127,7 +127,7 @@ defmodule Normandy.DSL.Workflow do
   (`:workflow`) and `:step_count`. Agent runs started by the workflow's steps
   nest under it, so a trace shows workflow -> run -> llm_call/tool. The
   orchestrators in `Normandy.Coordination` emit the same span from their own
-  entry points (see `Normandy.Telemetry.WorkflowSpan`); `Reactive`'s combinators
+  entry points (see `Normandy.Telemetry`); `Reactive`'s combinators
   are building blocks used inside this span and emit none of their own (a current
   limitation).
 

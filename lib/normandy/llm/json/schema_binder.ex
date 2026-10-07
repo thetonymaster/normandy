@@ -1,8 +1,7 @@
 defmodule Normandy.LLM.Json.SchemaBinder do
-  @moduledoc """
-  Binds a parsed JSON map to a Normandy schema: normalize field names, cast,
-  validate required fields, and unwrap a one-level tool-use "arguments" envelope.
-  """
+  @moduledoc false
+  # Binds a parsed JSON map to a Normandy schema: normalize field names, cast,
+  # validate required fields, and unwrap a one-level tool-use "arguments" envelope.
 
   alias Normandy.Validate
 

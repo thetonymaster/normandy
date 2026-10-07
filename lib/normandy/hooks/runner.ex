@@ -1,36 +1,26 @@
 defmodule Normandy.Hooks.Runner do
-  @moduledoc """
-  The only caller of hook modules (`Normandy.Behaviours.Hooks`). Every function takes the
-  agent's config, reads its entries (`config.behaviours.hooks`) and runs, in list order,
-  the entries whose module exports the event's callback. With none it returns the pass
-  value at once: no context is built and no telemetry is emitted.
-
-  These functions are also the supported way to test a hook with the library's rules
-  applied (rewrite threading, halts, `:on_error`, return contracts): pass a config map such
-  as `%{name: "a", behaviours: %{hooks: [{MyHook, []}]}}`.
-
-  ## Rules
-
-    * A rewrite (`{:cont, new}`) is what the next entry receives; the first halt stops the
-      chain.
-    * `:on_error`, removed from opts before the callback sees them:
-
-      | Event | `:reraise` (default) | `:open` | `:closed` |
-      |---|---|---|---|
-      | `on_prompt`, `before_llm`, `before_tool` | propagates | logged; the value passes on | halts, reason naming the hook |
-      | `after_tool` | propagates | logged; the result passes on | the result becomes an error result naming the hook; later `after_tool` entries do not run |
-      | `after_compact`, `on_session_start` | propagates | logged; injects nothing | propagates |
-      | `on_turn_end`, `on_passivate` | logged | logged | logged |
-
-    * A return value is checked only where the library consumes it; a violation raises
-      `ArgumentError` whatever `:on_error` says. `on_turn_end` and `on_passivate` ignore
-      their return value, and so do `after_compact`/`on_session_start` for anything but
-      `{:inject, texts}`.
-    * A module that is not loaded raises `ArgumentError` (logged and skipped on
-      `on_turn_end`/`on_passivate`). `handles?/2` is a plain predicate: such a module is
-      simply not handling.
-    * Each entry call is a `[:normandy, :hook, :start | :stop | :exception]` span.
-  """
+  @moduledoc false
+  # The only caller of hook modules (`Normandy.Behaviours.Hooks`). Every function takes the
+  # agent's config, reads its entries (`config.behaviours.hooks`) and runs, in list order,
+  # the entries whose module exports the event's callback. With none it returns the pass
+  # value at once: no context is built and no telemetry is emitted.
+  #
+  # ## Rules
+  #
+  #   * A rewrite (`{:cont, new}`) is what the next entry receives; the first halt stops the
+  #     chain.
+  #   * `:on_error` is removed from opts before the callback sees them; what each policy
+  #     does per event is the table in docs/guides/hooks.md, "Errors (`:on_error`)". Under
+  #     `:closed`, an `after_tool` crash makes the result an error result naming the hook
+  #     and later `after_tool` entries do not run.
+  #   * A return value is checked only where the library consumes it; a violation raises
+  #     `ArgumentError` whatever `:on_error` says. `on_turn_end` and `on_passivate` ignore
+  #     their return value, and so do `after_compact`/`on_session_start` for anything but
+  #     `{:inject, texts}`.
+  #   * A module that is not loaded raises `ArgumentError` (logged and skipped on
+  #     `on_turn_end`/`on_passivate`). `handles?/2` is a plain predicate: such a module is
+  #     simply not handling.
+  #   * Each entry call is a `[:normandy, :hook, :start | :stop | :exception]` span.
 
   require Logger
 

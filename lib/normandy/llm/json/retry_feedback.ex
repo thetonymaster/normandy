@@ -1,8 +1,7 @@
 defmodule Normandy.LLM.Json.RetryFeedback do
-  @moduledoc """
-  Builds the corrective feedback sent as a user message on a JSON
-  retry, and augments the message history with it.
-  """
+  @moduledoc false
+  # Builds the corrective feedback sent as a user message on a JSON
+  # retry, and augments the message history with it.
 
   alias Normandy.Components.Message
   alias Normandy.Schema.Wire

@@ -1,22 +1,21 @@
 defmodule Normandy.Agents.Turn.Driver do
-  @moduledoc """
-  Generic synchronous interpreter for the pure `Normandy.Agents.Turn` core.
-
-  Drives a turn to a stop by feeding `:start` into `Turn.step/2`, performing each
-  returned effect via an injected `%Handlers{}` set, and feeding the resulting
-  event back into `step/2` until the turn reaches a terminal effect. The driver
-  owns FSM stepping and `acc` threading; the handlers own all side effects (LLM
-  calls, tool dispatch, memory, guards, telemetry) and return the updated `acc`.
-
-  `acc` is opaque to the driver — the production shells pass the running
-  `%BaseAgentConfig{}` (the memory accumulator). This lets one driver serve the
-  non-streaming and streaming production paths (and future shells) with different
-  handler sets, the same way `Turn.Inline` serves the test/library path.
-
-  By design, `step/2` always places the single blocking/terminal effect last in
-  its effect list, so the driver performs the leading `:emit_event` /
-  `:append_message` effects in order, then acts on the terminal one.
-  """
+  @moduledoc false
+  # Generic synchronous interpreter for the pure `Normandy.Agents.Turn` core.
+  #
+  # Drives a turn to a stop by feeding `:start` into `Turn.step/2`, performing each
+  # returned effect via an injected `%Handlers{}` set, and feeding the resulting
+  # event back into `step/2` until the turn reaches a terminal effect. The driver
+  # owns FSM stepping and `acc` threading; the handlers own all side effects (LLM
+  # calls, tool dispatch, memory, guards, telemetry) and return the updated `acc`.
+  #
+  # `acc` is opaque to the driver — the production shells pass the running
+  # `%BaseAgentConfig{}` (the memory accumulator). This lets one driver serve the
+  # non-streaming and streaming production paths (and future shells) with different
+  # handler sets, the same way `Turn.Inline` serves the test/library path.
+  #
+  # By design, `step/2` always places the single blocking/terminal effect last in
+  # its effect list, so the driver performs the leading `:emit_event` /
+  # `:append_message` effects in order, then acts on the terminal one.
 
   alias Normandy.Agents.Turn
 

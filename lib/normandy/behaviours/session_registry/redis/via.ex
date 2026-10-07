@@ -1,13 +1,12 @@
 if Code.ensure_loaded?(Redix) do
   defmodule Normandy.Behaviours.SessionRegistry.Redis.Via do
-    @moduledoc """
-    `:via` callbacks for `SessionRegistry.Redis`. The name is
-    `{%SessionRegistry.Redis.Handle{}, session_id}`; registration goes through the local
-    owner GenServer, lookups run in the caller. A `Turn.Server` started under
-    `{:via, __MODULE__, {handle, session_id}}`
-    registers atomically at process start (`SET … NX`); a losing concurrent start gets
-    `{:error, {:already_started, pid}}` and the router routes to the winner.
-    """
+    @moduledoc false
+    # `:via` callbacks for `SessionRegistry.Redis`. The name is
+    # `{%SessionRegistry.Redis.Handle{}, session_id}`; registration goes through the local
+    # owner GenServer, lookups run in the caller. A `Turn.Server` started under
+    # `{:via, __MODULE__, {handle, session_id}}`
+    # registers atomically at process start (`SET … NX`); a losing concurrent start gets
+    # `{:error, {:already_started, pid}}` and the router routes to the winner.
     alias Normandy.Behaviours.SessionRegistry.Redis, as: Reg
     alias Normandy.Components.ContentBlock.Describe
 

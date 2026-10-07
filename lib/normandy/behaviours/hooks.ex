@@ -1,7 +1,7 @@
 defmodule Normandy.Behaviours.Hooks do
   @moduledoc """
   Lifecycle hooks: modules an agent lists on `Normandy.Behaviours.Config` `:hooks` as
-  `{module, opts}` entries, run in list order by `Normandy.Hooks.Runner`.
+  `{module, opts}` entries, run in list order.
 
   Every callback is optional; an entry whose module does not export an event's callback is
   skipped for that event. A hook exists where it can change an outcome (rewrite, halt,
