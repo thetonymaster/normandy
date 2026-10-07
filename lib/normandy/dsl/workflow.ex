@@ -158,12 +158,6 @@ defmodule Normandy.DSL.Workflow do
                            type: :any,
                            required: true,
                            doc: "The first step's input."
-                         ],
-                         context: [
-                           type: {:custom, Normandy.Options, :plain_map, []},
-                           type_doc: "`t:map/0`",
-                           default: %{},
-                           doc: "A context map the steps share."
                          ]
                        )
 
@@ -472,7 +466,6 @@ defmodule Normandy.DSL.Workflow do
         opts = unquote(__MODULE__).__validate_execute_opts__(opts, __MODULE__)
         agents_map = Keyword.fetch!(opts, :agents)
         initial_input = Keyword.fetch!(opts, :initial_input)
-        context = Keyword.fetch!(opts, :context)
 
         steps = unquote(Macro.escape(steps))
 
@@ -480,7 +473,7 @@ defmodule Normandy.DSL.Workflow do
         metadata = %{workflow_name: __MODULE__, step_count: length(steps)}
 
         WorkflowSpan.span(:workflow, metadata, fn ->
-          execute_workflow(steps, agents_map, initial_input, context)
+          execute_workflow(steps, agents_map, initial_input)
         end)
       end
 
@@ -498,10 +491,9 @@ defmodule Normandy.DSL.Workflow do
 
       unquote_splicing(condition_clauses)
 
-      defp execute_workflow(steps, agents_map, initial_input, context) do
+      defp execute_workflow(steps, agents_map, initial_input) do
         initial_state = %{
           results: %{},
-          context: context,
           current_input: initial_input
         }
 

@@ -168,15 +168,17 @@ defmodule Normandy.DSL.WorkflowTest do
       assert {:error, {:second, {:missing_agent, ProcessAgent}}} = result
     end
 
-    test "passes context through workflow", %{agents: agents_map} do
-      result =
-        SequentialWorkflow.execute(
-          agents: agents_map,
-          initial_input: "test",
-          context: %{user_id: 123}
-        )
-
-      assert {:ok, _results} = result
+    test ":context is no longer an option (DX-24)", %{agents: agents_map} do
+      assert_raise ArgumentError,
+                   "Normandy.DSL.WorkflowTest.SequentialWorkflow.execute/1: unknown option " <>
+                     ":context; supported: :agents, :initial_input",
+                   fn ->
+                     SequentialWorkflow.execute(
+                       agents: agents_map,
+                       initial_input: "test",
+                       context: %{user_id: 123}
+                     )
+                   end
     end
   end
 

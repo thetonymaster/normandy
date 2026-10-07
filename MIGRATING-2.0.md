@@ -873,7 +873,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   window, bad client, policy or hook options) raises in the caller as
   `...AgentPool.start_link/1: invalid :agent_config: ...` instead of crashing the pool's
   `init/1`; `HierarchicalCoordinator.execute/3`'s
-  `:manager_prompt` is a string; a workflow's `execute/1` `:context` is a plain map.
+  `:manager_prompt` is a string.
 - `Context.Summarizer.compress_conversation/3` documented `:max_summary_tokens` but never read
   it; the summary size is `:max_tokens`, as in `summarize_messages/4`, and
   `:max_summary_tokens` now raises. `:summary_role` must be `"user"` or `"assistant"`.
@@ -1862,6 +1862,10 @@ code you wrote against 1.x must follow the changes below.
   `output_instructions` no longer compiles (`ArgumentError` naming the module and the
   conflicting declarations). `system_prompt` used to win and the others were dropped without a
   word. Keep `system_prompt` alone, or move its text into `background`.
+- A workflow's `execute/1` no longer takes `:context`; passing it raises
+  `ArgumentError` `"MyWorkflow.execute/1: unknown option :context; supported: :agents, :initial_input"`.
+  It was accepted and never reached a step. Pass what a step needs in its input or its agent's
+  config.
 
 ## Known limits of 2.0
 
