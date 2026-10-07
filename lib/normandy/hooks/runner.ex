@@ -37,6 +37,7 @@ defmodule Normandy.Hooks.Runner do
   alias Normandy.Agents.Dispatch
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Hooks.Context
@@ -374,7 +375,7 @@ defmodule Normandy.Hooks.Runner do
   defp contract!(event, mod, ret) do
     raise ArgumentError,
           "expected #{inspect(mod)}.#{event}/#{Map.fetch!(@arity, event)} to return " <>
-            "#{Map.fetch!(@contracts, event)}, got: #{inspect(ret)}"
+            "#{Map.fetch!(@contracts, event)}, got: #{Describe.shape(ret)}"
   end
 
   # ── crash descriptions ──────────────────────────────────────────────────────

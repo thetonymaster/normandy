@@ -10,6 +10,7 @@ defmodule Normandy.Tools.Memory.Commands do
   require Logger
 
   alias Normandy.Behaviours.MemoryStore
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Tools.Memory
   alias Normandy.Tools.Memory.{Paths, Render}
 
@@ -475,26 +476,35 @@ defmodule Normandy.Tools.Memory.Commands do
 
   defp exit_tag(_reason), do: :unknown
 
-  @reason_chars 200
-
-  # The model sees a bounded reason: an exception reports its module only (a Postgrex
-  # error carries SQL text), anything else is cut. The log keeps the whole reason.
+  # The log and the model get the same text (decision 6): a store reason can carry SQL
+  # text, row values or a backend's options.
   defp backend(reason) do
-    Logger.warning(
-      "memory store failure: #{inspect(reason, limit: :infinity, printable_limit: :infinity)}"
-    )
-
-    {:error, :backend, "Error: memory store unavailable: " <> reason_text(reason)}
+    text = safe_reason(reason)
+    Logger.warning("memory store failure: " <> text)
+    {:error, :backend, "Error: memory store unavailable: " <> text}
   end
 
-  defp reason_text(%{__exception__: true, __struct__: mod}), do: inspect(mod)
-  defp reason_text({:exception, mod}) when is_atom(mod), do: inspect(mod)
+  # A store reason described without its data. A term built only from atoms and integers
+  # (:timeout, {:exit, :noproc}, {:namespace_full, :bytes, 10}) is shown whole. An
+  # exception is its module, and a Postgrex.Error adds its SQLSTATE name
+  # (postgres.code, e.g. :unique_violation), never its query or detail. Anything else
+  # is its tag (Describe.reason_tag/1). Postgrex is optional, so the error is matched
+  # as a map.
+  defp safe_reason(%{__exception__: true, __struct__: Postgrex.Error, postgres: %{code: code}})
+       when is_atom(code) and not is_nil(code),
+       do: "Postgrex.Error (#{inspect(code)})"
 
-  defp reason_text(reason) do
-    text = inspect(reason)
+  defp safe_reason(%{__exception__: true, __struct__: mod}), do: inspect(mod)
+  defp safe_reason({:exception, mod}) when is_atom(mod), do: inspect(mod)
 
-    if String.length(text) > @reason_chars,
-      do: String.slice(text, 0, @reason_chars) <> "…",
-      else: text
+  defp safe_reason(reason) do
+    if plain_term?(reason), do: inspect(reason), else: Describe.reason_tag(reason)
   end
+
+  defp plain_term?(term) when is_atom(term) or is_integer(term), do: true
+
+  defp plain_term?(term) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.all?(&plain_term?/1)
+
+  defp plain_term?(_term), do: false
 end

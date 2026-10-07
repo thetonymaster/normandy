@@ -1,9 +1,9 @@
 defmodule NormandyTest.BaseAgentGuardrailsTest do
-  # async: false — captures :stderr (IO.warn) and refutes on it; stderr capture
-  # is global, so another test's warning would break the refute.
+  # async: false — captures the log and refutes on it; another test's warning could
+  # land in the same capture.
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias Normandy.Agents.{BaseAgent, ToolCallResponse}
   alias Normandy.Components.{AgentMemory, ToolCall}
@@ -173,12 +173,9 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
           })
         )
 
-      {output, {_updated, response}} =
-        capture_io_and_result(fn ->
-          BaseAgent.run!(agent, "hi")
-        end)
+      {{_updated, response}, output} = with_log(fn -> BaseAgent.run!(agent, "hi") end)
 
-      assert output =~ "output guardrail violation"
+      assert output =~ "[warning] Agent output guardrail violation"
       # Flow still completes with the response.
       assert response == %Normandy.Agents.BaseAgentOutputSchema{}
     end
@@ -193,7 +190,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       # chat_message is nil → MaxLength is a no-op on nil fields, no warning.
       output =
-        capture_io(:stderr, fn ->
+        capture_log(fn ->
           {_updated, _response} = BaseAgent.run!(agent, "hi")
         end)
 
@@ -368,10 +365,7 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
 
       agent = BaseAgent.register_tool(agent, %NoopTool{})
 
-      {output, {updated, _response}} =
-        capture_io_and_result(fn ->
-          BaseAgent.run!(agent, "anything")
-        end)
+      {{updated, _response}, output} = with_log(fn -> BaseAgent.run!(agent, "anything") end)
 
       # Guardrail must fire.
       assert output =~ "output guardrail violation"
@@ -381,20 +375,6 @@ defmodule NormandyTest.BaseAgentGuardrailsTest do
       # path when iterations_left hits 0 after executing the tool call).
       roles = updated.memory |> AgentMemory.history() |> Enum.map(& &1.role)
       assert "tool" in roles, "expected a tool message in memory, got: #{inspect(roles)}"
-    end
-  end
-
-  # capture_io on :stderr swallows IO.warn output. Returns {stderr_output, function_result}.
-  defp capture_io_and_result(fun) do
-    parent = self()
-
-    output =
-      capture_io(:stderr, fn ->
-        send(parent, {:result, fun.()})
-      end)
-
-    receive do
-      {:result, result} -> {output, result}
     end
   end
 end

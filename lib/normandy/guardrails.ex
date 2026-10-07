@@ -186,7 +186,7 @@ defmodule Normandy.Guardrails do
 
         other ->
           raise ArgumentError,
-                "expected #{inspect(mod)}.check/2 to return :ok or {:error, [violation]}, got: #{inspect(other)}"
+                "expected #{inspect(mod)}.check/2 to return :ok or {:error, [violation]}, got: #{Describe.shape(other)}"
       end
     end)
   end

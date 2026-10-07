@@ -361,6 +361,56 @@ defmodule NormandyTest.Telemetry.SpanHierarchyTest do
       assert run.parent_span_id == caller_span.span_id
     end
 
+    # Review Focus #5.
+    test "a malformed on_prompt return carrying a secret: parented, reported, never leaked" do
+      secret = "SECRET-#{System.unique_integer([:positive])}"
+
+      srv =
+        start_hooked_turn_server(counted_client(false), [
+          {Normandy.Test.Hooks.PromptOnly, returns: {:ok, secret}}
+        ])
+
+      attach_forward([
+        [:normandy, :hook, :exception],
+        [:normandy, :agent, :run, :start],
+        [:normandy, :agent, :run, :exception]
+      ])
+
+      caller = start_caller_span()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error,
+                  %Normandy.TurnError{
+                    type: :handler_crashed,
+                    handler: :admit,
+                    reason: %ArgumentError{}
+                  } = error} = Turn.Server.run(srv, %{chat_message: "hi"})
+
+          refute inspect(error, limit: :infinity) =~ secret
+          refute Exception.message(error.reason) =~ secret
+        end)
+
+      :otel_span.end_span(caller)
+      spans = OtelSpanBridge.await_spans(["caller", "normandy.hook", "normandy.agent.run"])
+
+      caller_span = OtelSpanBridge.fetch_span!(spans, "caller")
+      hook = OtelSpanBridge.fetch_span!(spans, "normandy.hook")
+      assert hook.parent_span_id == caller_span.span_id
+
+      assert_received {:telemetry, [:normandy, :agent, :run, :exception], _,
+                       %{
+                         kind: :error,
+                         reason: %Normandy.TurnError{type: :handler_crashed, handler: :admit}
+                       } = run_meta, _}
+
+      assert_received {:telemetry, [:normandy, :hook, :exception], _, hook_meta, _}
+
+      refute inspect(run_meta, limit: :infinity) =~ secret
+      refute inspect(hook_meta, limit: :infinity) =~ secret
+      refute log =~ secret
+    end
+
     test "after a hooked turn the server holds no caller context" do
       srv =
         start_hooked_turn_server(counted_client(false), [{Normandy.Test.Hooks.TurnEndOnly, []}])

@@ -195,7 +195,7 @@ defmodule Normandy.Resilience.Retry do
     case execute_safely(fun) do
       {:ok, result} ->
         if attempt > 1 do
-          Logger.info("Retry succeeded on attempt #{attempt}")
+          Logger.debug("Retry succeeded on attempt #{attempt}")
         end
 
         {:ok, result}

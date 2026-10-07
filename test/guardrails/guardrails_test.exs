@@ -46,6 +46,13 @@ defmodule Normandy.GuardrailsTest do
     end
   end
 
+  defmodule ReturnsSecret do
+    @behaviour Normandy.Guardrails.Guard
+
+    @impl true
+    def check(_value, _opts), do: {:error, "SECRET-in-return"}
+  end
+
   defmodule ReturnsGarbage do
     @behaviour Normandy.Guardrails.Guard
 
@@ -100,6 +107,14 @@ defmodule Normandy.GuardrailsTest do
 
       assert_received {RecordsOpts, :value, [tag: :a]}
       assert_received {RecordsOpts, :value, [tag: :b]}
+    end
+
+    test "a malformed guard return is described by its shape, not its contents" do
+      error =
+        assert_raise ArgumentError, fn -> Guardrails.run([ReturnsSecret], "x") end
+
+      assert error.message =~ "got: {:error, a string (16 bytes)}"
+      refute error.message =~ "SECRET"
     end
 
     test "raises on malformed guard return" do

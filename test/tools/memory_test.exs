@@ -943,7 +943,7 @@ defmodule Normandy.Tools.MemoryTest do
 
     # B2
     @tag :capture_log
-    test "backend text for an exception struct names only the module, and logs the whole reason" do
+    test "backend text for an exception struct names only the module, in the log too" do
       reason = %RuntimeError{message: "SELECT secret FROM keys WHERE id = 7"}
       t = Memory.new(store: {RawErrorStore, reason})
 
@@ -953,7 +953,31 @@ defmodule Normandy.Tools.MemoryTest do
                    typed(t, %{"command" => "view", "path" => "/memories/a"})
         end)
 
-      assert log =~ "SELECT secret FROM keys"
+      assert log =~ "memory store failure: RuntimeError"
+      refute log =~ "SELECT"
+    end
+
+    @tag :capture_log
+    test "a Postgrex.Error is its module and SQLSTATE name, never its query or detail" do
+      reason = %Postgrex.Error{
+        postgres: %{
+          code: :unique_violation,
+          detail: "Key (path)=(/memories/secret-doc) already exists."
+        },
+        query: "INSERT INTO normandy_memory_documents VALUES ('secret-content')"
+      }
+
+      t = Memory.new(store: {RawErrorStore, reason})
+
+      log =
+        capture_log(fn ->
+          assert {:error, :backend,
+                  "Error: memory store unavailable: Postgrex.Error (:unique_violation)"} =
+                   typed(t, %{"command" => "view", "path" => "/memories/a"})
+        end)
+
+      refute log =~ "secret"
+      refute log =~ "INSERT"
     end
 
     @tag :capture_log
@@ -967,24 +991,33 @@ defmodule Normandy.Tools.MemoryTest do
     end
 
     @tag :capture_log
-    test "a long reason is cut at 200 characters plus an ellipsis; short ones are unchanged" do
+    test "a reason with data is its tag; a reason of atoms and integers is shown whole" do
       long = String.duplicate("x", 500)
-      t = Memory.new(store: {RawErrorStore, long})
 
       log =
         capture_log(fn ->
-          assert {:error, :backend, "Error: memory store unavailable: " <> text} =
-                   typed(t, %{"command" => "view", "path" => "/memories/a"})
+          for {reason, text} <- [
+                {long, "a string (500 bytes)"},
+                {{:http_error, %{"token" => "sk-secret"}}, ":http_error"},
+                {%{password: "pw"}, "a map"}
+              ] do
+            t = Memory.new(store: {RawErrorStore, reason})
 
-          assert String.length(text) == 201
-          assert String.ends_with?(text, "…")
-          assert text == String.slice(inspect(long), 0, 200) <> "…"
+            assert {:error, :backend, "Error: memory store unavailable: " <> ^text} =
+                     typed(t, %{"command" => "view", "path" => "/memories/a"})
+          end
         end)
 
-      assert log =~ long
+      refute log =~ "xxxxx"
+      refute log =~ "sk-secret"
+      refute log =~ "pw"
 
       capture_log(fn ->
-        for {reason, text} <- [{:timeout, ":timeout"}, {{:exit, :noproc}, "{:exit, :noproc}"}] do
+        for {reason, text} <- [
+              {:timeout, ":timeout"},
+              {{:exit, :noproc}, "{:exit, :noproc}"},
+              {{:namespace_full, :bytes, 10}, "{:namespace_full, :bytes, 10}"}
+            ] do
           t = Memory.new(store: {RawErrorStore, reason})
 
           assert {:error, :backend, "Error: memory store unavailable: " <> ^text} =

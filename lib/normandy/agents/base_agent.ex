@@ -1765,7 +1765,7 @@ defmodule Normandy.Agents.BaseAgent do
   # re-raised unchanged after the hook (the Runner never raises for on_turn_end).
   defp with_agent_run_span(config, telemetry_metadata, fun) do
     Span.span([:normandy, :agent, :run], telemetry_metadata, fn ->
-      log_lifecycle(:info, "normandy agent run start",
+      log_lifecycle(:debug, "normandy agent run start",
         agent: log_agent_name(config),
         iteration: 0,
         max_iterations: max_run_iterations(config)
@@ -1781,7 +1781,7 @@ defmodule Normandy.Agents.BaseAgent do
       stop_metadata = put_turn_id(stop_metadata, result)
       duration_ms = Map.get(stop_metadata, :duration_ms, elapsed_ms(started_at))
 
-      log_lifecycle(:info, "normandy agent run stop",
+      log_lifecycle(:debug, "normandy agent run stop",
         agent: log_agent_name(config),
         iterations: Map.get(stop_metadata, :iterations, 0),
         status: :ok,
@@ -1805,7 +1805,7 @@ defmodule Normandy.Agents.BaseAgent do
   # get_response/2): a call that reaches :stop adds its counts to it.
   defp with_llm_call_span(config, telemetry_metadata, run_usage, fun) do
     Span.span([:normandy, :agent, :llm_call], telemetry_metadata, fn ->
-      log_lifecycle(:info, "normandy llm call start",
+      log_lifecycle(:debug, "normandy llm call start",
         agent: log_agent_name(config),
         model: config.model,
         iteration: Map.get(telemetry_metadata, :iteration)
@@ -1836,7 +1836,7 @@ defmodule Normandy.Agents.BaseAgent do
           :error -> log_metadata
         end
 
-      log_lifecycle(:info, "normandy llm call stop", log_metadata)
+      log_lifecycle(:debug, "normandy llm call stop", log_metadata)
       log_dropped_thinking(Map.get(stop_metadata, :input_transformations, []), log_metadata)
 
       {result, stop_metadata}
@@ -1845,7 +1845,7 @@ defmodule Normandy.Agents.BaseAgent do
 
   defp with_tool_execute_span(config, tool_name, telemetry_metadata, fun) do
     Span.span([:normandy, :tool, :execute], telemetry_metadata, fn ->
-      log_lifecycle(:info, "normandy tool execute start",
+      log_lifecycle(:debug, "normandy tool execute start",
         agent: log_agent_name(config),
         tool: tool_name
       )
@@ -1854,7 +1854,7 @@ defmodule Normandy.Agents.BaseAgent do
 
       {result, stop_metadata} = fun.()
 
-      log_lifecycle(:info, "normandy tool execute stop",
+      log_lifecycle(:debug, "normandy tool execute stop",
         agent: log_agent_name(config),
         tool: tool_name,
         duration_ms: elapsed_ms(started_at),
@@ -2316,7 +2316,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   defp output_violation(:warn, violations) do
-    IO.warn(
+    Logger.warning(
       "Agent output guardrail violation: " <> ValidationMiddleware.error_message(violations)
     )
 

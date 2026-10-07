@@ -181,7 +181,7 @@ defmodule Normandy.Batch.Processor do
 
     total = length(inputs)
 
-    Logger.info("Starting batch processing: #{total} items with concurrency #{max_concurrency}")
+    Logger.debug("Starting batch processing: #{total} items with concurrency #{max_concurrency}")
 
     # Results arrive as items complete. Each carries its index and input (an
     # exit carries them via zip_input_on_exit), so the callbacks run here in
@@ -214,7 +214,7 @@ defmodule Normandy.Batch.Processor do
         {{index, input, outcome}, completed}
       end)
 
-    Logger.info("Batch processing complete")
+    Logger.debug("Batch processing complete")
 
     if ordered do
       {:ok, outcomes |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 2))}
@@ -291,7 +291,7 @@ defmodule Normandy.Batch.Processor do
     {chunk_size, opts} = Keyword.pop!(opts, :chunk_size)
     {chunk_delay, opts} = Keyword.pop!(opts, :chunk_delay)
 
-    Logger.info("Processing #{length(inputs)} items in chunks of #{chunk_size}")
+    Logger.debug("Processing #{length(inputs)} items in chunks of #{chunk_size}")
 
     chunks = Enum.chunk_every(inputs, chunk_size)
     last_index = length(chunks) - 1
@@ -301,7 +301,7 @@ defmodule Normandy.Batch.Processor do
       chunks
       |> Enum.with_index()
       |> Enum.map(fn {chunk, index} ->
-        Logger.info("Processing chunk #{index + 1}")
+        Logger.debug("Processing chunk #{index + 1}")
 
         chunk_opts = chunk_progress(opts, index * chunk_size, total)
         {:ok, chunk_result} = process_batch(agent, chunk, chunk_opts)

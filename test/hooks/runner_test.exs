@@ -362,13 +362,17 @@ defmodule Normandy.Hooks.RunnerTest do
                      )
                    end
 
-      assert_raise ArgumentError, ~r/got: \{:inject, "not a list"\}/, fn ->
-        Runner.after_compact(
-          config([probe(:a, returns: [after_compact: {:inject, "not a list"}])]),
-          [],
-          %{}
-        )
-      end
+      error =
+        assert_raise ArgumentError, fn ->
+          Runner.after_compact(
+            config([probe(:a, returns: [after_compact: {:inject, "not a list"}])]),
+            [],
+            %{}
+          )
+        end
+
+      assert error.message =~ "got: {:inject, a string (10 bytes)}"
+      refute error.message =~ "not a list"
 
       assert_raise ArgumentError, ~r/before_tool\/3 to return/, fn ->
         Runner.before_tool(config([probe(:a, returns: [before_tool: {:halt, 42}])]), call())

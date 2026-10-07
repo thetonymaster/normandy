@@ -1283,6 +1283,13 @@ defmodule Normandy.Agents.Turn.ServerTest do
       def get_token(_provider, _opts), do: {:error, :vault_sealed}
     end
 
+    defmodule LeakyCreds do
+      @behaviour Normandy.Behaviours.CredentialProvider
+      @impl true
+      def get_token(_provider, _opts),
+        do: {:error, {:http_error, %{"token" => "SECRET-vault-token", "status" => 403}}}
+    end
+
     defp thin_start(creds, supplement?) do
       store = InMemory.new()
       sid = "thin-fail-#{System.unique_integer([:positive])}"
@@ -1329,6 +1336,24 @@ defmodule Normandy.Agents.Turn.ServerTest do
                 reason: {:credential_unavailable, FailingCreds, :vault_sealed}
               }} =
                Turn.Server.run(srv, "hello")
+    end
+
+    test "a credential provider's reason reaches the reply and the log as its tag only" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, srv} = thin_start(LeakyCreds, true)
+
+          assert {:error,
+                  %TurnError{
+                    type: :session_unavailable,
+                    reason: {:credential_unavailable, LeakyCreds, {:http_error, "a map"}}
+                  } = error} = Turn.Server.run(srv, "hello")
+
+          refute inspect(error, limit: :infinity) =~ "SECRET"
+          refute Exception.message(error) =~ "SECRET"
+        end)
+
+      refute log =~ "SECRET"
     end
   end
 

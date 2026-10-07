@@ -1604,6 +1604,28 @@ code you wrote against 1.x must follow the changes below.
 - On a resumed durable turn, the run `:stop`'s `llm_calls` and token totals count only the
   calls made after the resume, while `iterations`, `stop_reason` and `finish_reason` describe
   the whole turn.
+- The lifecycle log lines `normandy agent run start|stop`, `normandy llm call start|stop` and
+  `normandy tool execute start|stop`, `Batch.Processor`'s progress lines and `Retry`'s
+  "Retry succeeded on attempt N" are now `:debug` (they were `:info`). Set the `Logger` level
+  to `:debug` to keep them, or use the telemetry events, which carry the same facts.
+- An output guardrail with `on_violation: :warn` now logs `Logger.warning("Agent output
+  guardrail violation: ...")` instead of printing with `IO.warn` to stderr. Tests that
+  captured it with `capture_io(:stderr, ...)` use `capture_log/1`.
+- A hook or guard that returns a value outside its contract still raises `ArgumentError`, but
+  the message describes the value's shape instead of showing it: `got: {:inject, a string (10
+  bytes)}` instead of `got: {:inject, "not a list"}`. Atoms are still shown (`got: :yes`).
+- The memory tool's "memory store unavailable" text, and the `memory store failure` log line,
+  show the store reason only when it is made of atoms and integers (`:timeout`,
+  `{:exit, :noproc}`); an exception is its module (`Postgrex.Error (:unique_violation)` adds
+  the SQLSTATE name), anything else its tag (`:http_error`, `a string (500 bytes)`). The log
+  no longer holds the full reason (a `Postgrex.Error`'s SQL and row values), and the
+  200-character cut is gone.
+- A credential provider's failure reaches `run/2`'s `:session_unavailable` `TurnError` as
+  `{:credential_unavailable, provider_module, reason}`, where `reason` is reduced as session
+  store load reasons are (`## 39.`): atoms and integers kept, tuples walked, an exception
+  its module, any other term its type (`{:http_error, %{"token" => ...}}` becomes
+  `{:http_error, "a map"}`); the provider's data (a response body, a token) is dropped. Log
+  the detail in the provider if you need it.
 
 ## New, non-breaking
 

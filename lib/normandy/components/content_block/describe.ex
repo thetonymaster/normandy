@@ -45,4 +45,15 @@ defmodule Normandy.Components.ContentBlock.Describe do
     do: reason |> Tuple.to_list() |> Enum.map(&reason_term/1) |> List.to_tuple()
 
   def reason_term(reason), do: type_of(reason)
+
+  # A value returned against a contract, for its error message: an atom in full, a
+  # tuple as the shapes of its elements, anything else by its type (type_of/1). Never a
+  # string's, a map's or a list's contents.
+  @spec shape(term()) :: String.t()
+  def shape(value) when is_atom(value), do: inspect(value)
+
+  def shape(value) when is_tuple(value),
+    do: "{" <> (value |> Tuple.to_list() |> Enum.map_join(", ", &shape/1)) <> "}"
+
+  def shape(value), do: type_of(value)
 end

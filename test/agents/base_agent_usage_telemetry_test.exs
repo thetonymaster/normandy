@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
-  # async: false — one test sets the global Logger level to :info.
+  # async: false — one test sets the global Logger level to :debug.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
@@ -23,9 +23,12 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
       agent = BaseAgent.init(%{client: client, model: "claude-opus-5-5", temperature: nil})
 
       log =
-        ExUnit.CaptureLog.capture_log([metadata: [:input_tokens, :output_tokens]], fn ->
-          run.(agent)
-        end)
+        ExUnit.CaptureLog.capture_log(
+          [level: :debug, metadata: [:input_tokens, :output_tokens]],
+          fn ->
+            run.(agent)
+          end
+        )
 
       assert_receive {:stop, metadata}
       {metadata, log}
@@ -150,9 +153,25 @@ defmodule Normandy.Agents.BaseAgentUsageTelemetryTest do
     assert metadata.cache_write_input_tokens == 20
   end
 
+  # The global level is set to :debug so an :info line would be captured: the refutes
+  # cannot pass because the logger dropped everything.
+  test "lifecycle lines are :debug: nothing is logged at :info for a run" do
+    previous = Logger.level()
+    Logger.configure(level: :debug)
+    on_exit(fn -> Logger.configure(level: previous) end)
+
+    agent =
+      BaseAgent.init(%{client: stub_client(nil), model: "claude-opus-5-5", temperature: nil})
+
+    log = ExUnit.CaptureLog.capture_log([level: :info], fn -> BaseAgent.run!(agent, "hello") end)
+
+    refute log =~ "normandy agent run"
+    refute log =~ "normandy llm call"
+  end
+
   test "the llm call stop log line carries the normalized token counts" do
     previous = Logger.level()
-    Logger.configure(level: :info)
+    Logger.configure(level: :debug)
     on_exit(fn -> Logger.configure(level: previous) end)
 
     usage = %{input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100}

@@ -637,9 +637,16 @@ defmodule Normandy.Agents.Turn.Server do
          {:token, {:ok, token}} <- {:token, cred_mod.get_token(token_provider(tmpl), cred_opts)} do
       {:ok, ConfigTemplate.rebuild(tmpl, supplement, token)}
     else
-      {:supplement, :error} -> {:error, {:no_template_supplement, template_id}}
-      {:pinned, {:error, _} = error} -> error
-      {:token, {:error, reason}} -> {:error, {:credential_unavailable, cred_mod, reason}}
+      {:supplement, :error} ->
+        {:error, {:no_template_supplement, template_id}}
+
+      {:pinned, {:error, _} = error} ->
+        error
+
+      # The provider's reason can hold a token, a vault path or a response body: the
+      # reply and the log carry it reduced to its tags (Describe.reason_term/1).
+      {:token, {:error, reason}} ->
+        {:error, {:credential_unavailable, cred_mod, Describe.reason_term(reason)}}
     end
   end
 

@@ -1,5 +1,5 @@
 defmodule Normandy.Agents.BaseAgentServedByTest do
-  # async: false — one test sets the global Logger level to :info.
+  # async: false — one test sets the global Logger level to :debug.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
@@ -36,7 +36,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
       agent = BaseAgent.init(%{client: client, model: "claude-opus-5-5", temperature: nil})
 
       log =
-        ExUnit.CaptureLog.capture_log([metadata: [:served_by]], fn ->
+        ExUnit.CaptureLog.capture_log([level: :debug, metadata: [:served_by]], fn ->
           run.(agent)
         end)
 
@@ -59,7 +59,7 @@ defmodule Normandy.Agents.BaseAgentServedByTest do
 
   test "the llm call stop log line carries served_by" do
     previous = Logger.level()
-    Logger.configure(level: :info)
+    Logger.configure(level: :debug)
     on_exit(fn -> Logger.configure(level: previous) end)
 
     {_metadata, log} = run_and_capture_stop(meta_client(%{served_by: "claude-opus-5"}))
