@@ -281,6 +281,15 @@ defmodule Normandy.Telemetry do
   `:error`). The last attempt, and an error that is not retried, emit nothing. LLM calls
   also emit one `[:normandy, :llm, :request]` span per attempt.
 
+  ### `[:normandy, :session_registry, :ownership_lost]`
+
+  A `SessionRegistry.Redis` refresh found a session key it held now holding another
+  process, so two processes claimed one session; the owner stopped its local one with
+  exit reason `{:shutdown, :registration_lost}`. Measurement `count: 1`. Metadata:
+  `session_id`, `registry` (the owner's registered name). Emitted in the owner's process,
+  outside any caller's trace context. A key that merely lapsed is claimed again and
+  emits nothing.
+
   ## Turn.Server
 
   `Turn.Server` is a `:gen_statem` whose turn spans several callbacks, so it emits the

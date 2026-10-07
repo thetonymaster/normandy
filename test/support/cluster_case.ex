@@ -166,7 +166,7 @@ defmodule Normandy.ClusterCase do
   @doc """
   Start a `Normandy.Behaviours.SessionRegistry.Redis` owner on a remote peer node
   without letting the erpc transport worker link to it (same unlinking pattern as
-  `start_horde_on_peer/2`).
+  `start_horde_on_peer/2`). Returns `{:ok, handle}`.
   """
   def start_redis_on_peer(node, opts) do
     :rpc.call(node, __MODULE__, :start_redis_unlinked, [opts])
@@ -176,26 +176,26 @@ defmodule Normandy.ClusterCase do
   def start_redis_unlinked(opts) do
     {:ok, pid} = Redis.start_link(opts)
     Process.unlink(pid)
-    {:ok, pid}
+    {:ok, Redis.fetch_handle(Keyword.fetch!(opts, :name))}
   end
 
   @doc """
   Spawn a long-lived process on `node` that registers itself in the Redis registry
-  `reg_name` under `session_id` and then sleeps. Returns the remote pid.
+  `handle` under `session_id` and then sleeps. Returns the remote pid.
 
   Mirrors `do_spawn_registered/2` but for the Redis backend.
   """
-  def spawn_redis_registered_on_peer(node, reg_name, session_id) do
-    :rpc.call(node, __MODULE__, :do_spawn_redis_registered, [reg_name, session_id])
+  def spawn_redis_registered_on_peer(node, handle, session_id) do
+    :rpc.call(node, __MODULE__, :do_spawn_redis_registered, [handle, session_id])
   end
 
   @doc false
-  def do_spawn_redis_registered(reg_name, session_id) do
+  def do_spawn_redis_registered(handle, session_id) do
     parent = self()
 
     pid =
       spawn(fn ->
-        :ok = Redis.register(reg_name, session_id, self())
+        :ok = Redis.register(handle, session_id, self())
         send(parent, :registered)
         Process.sleep(:infinity)
       end)
@@ -204,7 +204,7 @@ defmodule Normandy.ClusterCase do
       :registered -> pid
     after
       5000 ->
-        raise "do_spawn_redis_registered: timeout waiting for registration on #{inspect(reg_name)}"
+        raise "do_spawn_redis_registered: timeout waiting for registration on #{inspect(handle.owner)}"
     end
   end
 end

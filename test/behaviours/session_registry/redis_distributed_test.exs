@@ -33,15 +33,18 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
     # ClusterCase.start_redis_on_peer/2 prevents the rpc worker from killing the
     # GenServer on return (same unlinking pattern as start_horde_on_peer/2).
     {:ok, _} = Reg.start_link(name: :reg_a, url: url, namespace: ns)
-    {:ok, _} = ClusterCase.start_redis_on_peer(peer_node, name: :reg_b, url: url, namespace: ns)
+    reg_a = Reg.fetch_handle(:reg_a)
+
+    {:ok, reg_b} =
+      ClusterCase.start_redis_on_peer(peer_node, name: :reg_b, url: url, namespace: ns)
 
     # A long-lived process on the peer registers itself under "s1".
     # ClusterCase.spawn_redis_registered_on_peer/3 avoids closures that reference
     # the test module (test beams aren't in elixirc_paths, so peers can't load them).
-    peer_pid = ClusterCase.spawn_redis_registered_on_peer(peer_node, :reg_b, "s1")
+    peer_pid = ClusterCase.spawn_redis_registered_on_peer(peer_node, reg_b, "s1")
 
     # The primary's owner sees the peer's pid (cross-node, alive because peer is connected).
-    assert wait_until(fn -> Reg.whereis(:reg_a, "s1") == {:ok, peer_pid} end)
+    assert wait_until(fn -> Reg.whereis(reg_a, "s1") == {:ok, peer_pid} end)
   end
 
   test "concurrent register from two nodes yields exactly one winner", %{url: url, ns: ns} do
@@ -53,7 +56,10 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
     :rpc.call(peer_node, :code, :add_paths, [:code.get_path()])
 
     {:ok, _} = Reg.start_link(name: :reg_a, url: url, namespace: ns)
-    {:ok, _} = ClusterCase.start_redis_on_peer(peer_node, name: :reg_b, url: url, namespace: ns)
+    reg_a = Reg.fetch_handle(:reg_a)
+
+    {:ok, reg_b} =
+      ClusterCase.start_redis_on_peer(peer_node, name: :reg_b, url: url, namespace: ns)
 
     # Stable, long-lived owner pids on each node. A registrant dying triggers the
     # registry's DOWN cleanup, which releases the SET NX lock — so both owners must
@@ -65,10 +71,10 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
 
     # Fire both registrations concurrently so they genuinely contend for the
     # SET NX lock, rather than the local one always winning by completing first.
-    local = Task.async(fn -> Reg.register(:reg_a, "race", local_pid) end)
+    local = Task.async(fn -> Reg.register(reg_a, "race", local_pid) end)
 
     remote =
-      Task.async(fn -> :rpc.call(peer_node, Reg, :register, [:reg_b, "race", peer_pid]) end)
+      Task.async(fn -> :rpc.call(peer_node, Reg, :register, [reg_b, "race", peer_pid]) end)
 
     a = Task.await(local, 5_000)
     b = Task.await(remote, 5_000)

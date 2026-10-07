@@ -25,7 +25,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisUntrustedValueTest do
     put_raw(ctx.conn, ctx.ns, "s1", :erlang.term_to_binary({:not, :a_pid}))
 
     assert Redis.whereis(ctx.owner, "s1") == :none
-    assert Process.alive?(Process.whereis(ctx.owner))
+    assert Process.alive?(Process.whereis(ctx.owner.owner))
   end
 
   test "a value naming an unknown atom is no session and creates no atom", ctx do

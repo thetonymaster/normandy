@@ -1530,6 +1530,29 @@ code you wrote against 1.x must follow the changes below.
   row `FOR SHARE`, so a fork and a delete of the same session do not interleave.
 - `SessionStore.Mnesia.delete_session/2` scans both tables under a write lock on both
   (O(entries + sessions)); writes to the store wait for it.
+- `SessionRegistry.Redis`'s handle is `%Normandy.Behaviours.SessionRegistry.Redis.Handle{owner:,
+  conn:, namespace:}`, not the owner's registered name. `new/1` returns one. For an owner you
+  start yourself, build it with `SessionRegistry.Redis.handle(owner: MyApp.SessionRegistry,
+  conn: MyApp.SessionRedix, namespace: "normandy")` (the `:name`, `:conn` and `:namespace` you
+  gave `start_link/1`), or call `SessionRegistry.Redis.fetch_handle(MyApp.SessionRegistry)` once
+  for an owner started with `:url`. Pass `{SessionRegistry.Redis, handle}` where you passed
+  `{SessionRegistry.Redis, MyApp.SessionRegistry}`; the old form raises `ArgumentError` naming
+  the struct. The `:via` name is `{handle, session_id}`. With the Redis combo,
+  `Normandy.Cluster.redis_handles/1` (the options of `redis_child_specs/1`) returns the
+  registry and the store to give `Turn.Session.new/1`.
+- `SessionRegistry.Redis.whereis/2` runs in the caller on the handle's Redix connection
+  instead of calling the owner, so a lookup no longer queues behind registrations and the TTL
+  refresh. A connection that is not running returns `{:error, :noproc}`, one that dies during
+  the call `{:error, {:exit, tag}}`; 1.x exited the caller when the owner was down.
+- The registry's TTL refresh sends one pipeline of `EVALSHA` per 1,000 sessions instead of one
+  `EVAL` per session. A key that lapsed is claimed again. A key another process now holds (two
+  servers for one session, after a partition or a Redis failover) stops the local process with
+  exit reason `{:shutdown, :registration_lost}`, logs a warning and emits
+  `[:normandy, :session_registry, :ownership_lost]`. A `Turn.Server` stopped this way is not
+  restarted, and a caller waiting in its `run/2` exits with that reason, as for any server
+  that stops mid-turn (`Turn.Session.run/2` routes a turn again only after
+  `{:shutdown, :passivated}` or `:noproc`, see `## 39.`); the session goes on where the key
+  points.
 
 ## New, non-breaking
 

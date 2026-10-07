@@ -161,21 +161,11 @@ defmodule Normandy.Cluster do
       Options.validate!(opts, @redis_child_specs_opts_schema, {__MODULE__, :redis_child_specs, 1})
 
     redix = Keyword.fetch!(opts, :redix)
-
-    conn_name =
-      case Keyword.fetch(redix, :name) do
-        {:ok, name} ->
-          name
-
-        :error ->
-          raise ArgumentError,
-                "Normandy.Cluster.redis_child_specs/1: :redix must include :name, the Redix " <>
-                  "connection's registered name"
-      end
-
+    conn_name = conn_name!(redix, :redis_child_specs)
     ns = Keyword.fetch!(opts, :namespace)
     registry = Keyword.fetch!(opts, :registry)
     supervisor = Keyword.fetch!(opts, :supervisor)
+    handles = build_redis_handles(opts, :redis_child_specs)
 
     [
       {Redix, redix},
@@ -184,17 +174,55 @@ defmodule Normandy.Cluster do
         start: {RedisReg, :start_link, [[name: registry, conn: conn_name, namespace: ns]]}
       },
       %{id: supervisor, start: {LocalSup, :start_link, [[name: supervisor]]}}
-    ] ++ redis_reaper_specs(opts, conn_name, ns, registry, supervisor)
+    ] ++ redis_reaper_specs(opts, handles, registry, supervisor)
   end
 
-  defp redis_reaper_specs(opts, conn_name, ns, registry, supervisor) do
+  @doc """
+  The `{module, handle}` pairs of the registry and store that `redis_child_specs/1` starts
+  for the same options: pass them to `Normandy.Agents.Turn.Session.new/1` as `:registry`
+  and `:store`. Starts and calls nothing.
+
+  ## Options
+
+  The options of `redis_child_specs/1`.
+  """
+  @spec redis_handles(keyword()) :: %{registry: {module(), term()}, store: {module(), term()}}
+  def redis_handles(opts) do
+    opts
+    |> Options.validate!(@redis_child_specs_opts_schema, {__MODULE__, :redis_handles, 1})
+    |> build_redis_handles(:redis_handles)
+  end
+
+  defp build_redis_handles(opts, fun) do
+    conn_name = conn_name!(Keyword.fetch!(opts, :redix), fun)
+    ns = Keyword.fetch!(opts, :namespace)
+
+    %{
+      registry:
+        {RedisReg,
+         RedisReg.handle(owner: Keyword.fetch!(opts, :registry), conn: conn_name, namespace: ns)},
+      store: {RedisStore, {conn_name, ns}}
+    }
+  end
+
+  defp conn_name!(redix, fun) do
+    case Keyword.fetch(redix, :name) do
+      {:ok, name} ->
+        name
+
+      :error ->
+        raise ArgumentError,
+              "Normandy.Cluster.#{fun}/1: :redix must include :name, the Redix " <>
+                "connection's registered name"
+    end
+  end
+
+  defp redis_reaper_specs(opts, handles, registry, supervisor) do
     case Keyword.get(opts, :template_provider) do
       nil ->
         []
 
       template_provider ->
-        store = {RedisStore, {conn_name, ns}}
-
         [
           %{
             id: {ResumeReaper, registry},
@@ -202,8 +230,8 @@ defmodule Normandy.Cluster do
               {ResumeReaper, :start_link,
                [
                  [
-                   store: store,
-                   registry: {RedisReg, registry},
+                   store: handles.store,
+                   registry: handles.registry,
                    supervisor: supervisor,
                    supervisor_mod: LocalSup,
                    template_provider: template_provider

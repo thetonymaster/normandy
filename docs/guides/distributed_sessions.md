@@ -244,8 +244,17 @@ children =
 
 The store and registry are chosen here, in the child specs; `Normandy.Behaviours.Config` has
 no session slots (the two 1.x slots were never read and are gone in 2.0).
+`Normandy.Cluster.redis_handles/1`, given the same options, returns the registry and store
+to pass to `Turn.Session.new/1`:
 
-> Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
+```elixir
+%{registry: registry, store: store} = Normandy.Cluster.redis_handles(same_opts)
+Normandy.Agents.Turn.Session.new(session_id: id, registry: registry, store: store, ...)
+```
+
+The registry's handle is a `%Normandy.Behaviours.SessionRegistry.Redis.Handle{}` (not the
+owner's name). Lookups (`whereis`) run in the caller on the Redix connection, so they never
+queue behind the registry owner; registrations go through the owner.
 
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
 Redis with AOF enabled + a replica wait to block every write (entries, turn state,

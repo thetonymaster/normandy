@@ -25,6 +25,7 @@ defmodule Normandy.Options.StoreOptionsTest do
     {:nam, {HordeReg, :new, [[nam: :x]]}},
     {:namespce, {RedisReg, :new, [[namespce: "n"]]}},
     {:ttl, {RedisReg, :start_link, [[ttl: 1]]}},
+    {:ownr, {RedisReg, :handle, [[ownr: :x]]}},
     {:name, {InMemoryStore, :start_link, [[name: :x]]}},
     {:name, {InMemoryStore, :new, [[name: :x]]}},
     {:nam, {EtsStore, :start_link, [[nam: :x]]}},
@@ -40,6 +41,7 @@ defmodule Normandy.Options.StoreOptionsTest do
     {:templats, {Catalog, :start_link, [[templats: %{}]]}},
     {:topologys, {Cluster, :child_specs, [[topologys: []]]}},
     {:namespce, {Cluster, :redis_child_specs, [[namespce: "n"]]}},
+    {:namespce, {Cluster, :redis_handles, [[namespce: "n"]]}},
     {:copys, {Cluster, :setup_mnesia_store!, [[copys: :ram_copies]]}}
   ]
 
@@ -111,6 +113,17 @@ defmodule Normandy.Options.StoreOptionsTest do
 
     assert error.message ==
              "Normandy.Cluster.redis_child_specs/1: :redix must include :name, the Redix " <>
+               "connection's registered name"
+  end
+
+  test "Cluster.redis_handles/1 names a :redix list without :name" do
+    error =
+      assert_raise ArgumentError, fn ->
+        Cluster.redis_handles(redix: [host: "h"], namespace: "n", registry: :r, supervisor: :s)
+      end
+
+    assert error.message ==
+             "Normandy.Cluster.redis_handles/1: :redix must include :name, the Redix " <>
                "connection's registered name"
   end
 end

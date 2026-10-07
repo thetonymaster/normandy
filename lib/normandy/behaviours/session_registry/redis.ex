@@ -4,14 +4,33 @@ if Code.ensure_loaded?(Redix) do
     @moduledoc """
     Distributed `SessionRegistry` using Redis as the shared `session_id → pid` name
     table, with cross-node routing over **Erlang distribution** (Redis replaces Horde's
-    CRDT, not distribution). A per-node owner GenServer holds the Redix connection,
-    monitors locally-registered pids (clearing the key on `:DOWN`), and refreshes key
-    TTLs so a crashed node's keys lapse on their own.
+    CRDT, not distribution). A per-node owner GenServer monitors locally registered pids
+    (clearing the key on `:DOWN`) and refreshes key TTLs so a crashed node's keys lapse on
+    their own.
 
-    The `handle` is the owner's registered name. Registration is atomic via `SET … NX`
-    (no read-modify-write), so a concurrent start cluster-wide yields one winner; the
-    losers route to it. Use as a `:via` registry through `child_name/2` to get
-    atomic, supervisor-driven starts (closes the start race), exactly like the Horde impl.
+    The handle is a `Normandy.Behaviours.SessionRegistry.Redis.Handle`,
+    `%Handle{owner:, conn:, namespace:}`: the owner's
+    registered name, the Redix connection and the key namespace. `new/1` returns one;
+    build one with `handle/1` from the values given to `start_link/1`, or with
+    `fetch_handle/1` for an owner that opened its own connection from `:url`.
+    `whereis/2` runs in the caller, on the handle's connection: a lookup never waits on
+    the owner. `register/3` and `unregister/2` go through the owner, which monitors the
+    pids.
+
+    Registration is atomic via `SET … NX` (no read-modify-write), so a concurrent start
+    cluster-wide yields one winner; the losers route to it. Use as a `:via` registry
+    through `child_name/2` (the via term is `{handle, session_id}`) to get atomic,
+    supervisor-driven starts (closes the start race), exactly like the Horde impl.
+
+    ## Refresh and lost ownership
+
+    Every `ttl_ms / 2` the owner extends the TTL of each key it holds, in pipelines of
+    1,000 `EVALSHA` calls. A key that lapsed (a late refresh, an eviction) is
+    claimed again with `SET … NX`. A key another node now holds means two servers for
+    one session: the owner stops its local process with exit reason
+    `{:shutdown, :registration_lost}`, logs a warning and emits
+    `[:normandy, :session_registry, :ownership_lost]`. A `Turn.Server` stopped this way
+    is not restarted (`restart: :transient`); its session goes on where the key points.
     """
     @behaviour Normandy.Behaviours.SessionRegistry
     use GenServer
@@ -19,7 +38,22 @@ if Code.ensure_loaded?(Redix) do
     alias Normandy.Components.ContentBlock.Describe
     alias Normandy.Options
 
+    require Logger
+
     @default_ttl_ms 60_000
+    @refresh_chunk 1_000
+
+    defmodule Handle do
+      @moduledoc """
+      A `SessionRegistry.Redis` handle: the owner's registered name, the Redix connection
+      the caller looks keys up on, and the key namespace. Build it with
+      `Normandy.Behaviours.SessionRegistry.Redis.handle/1`.
+      """
+      @enforce_keys [:owner, :conn, :namespace]
+      defstruct [:owner, :conn, :namespace]
+
+      @type t :: %__MODULE__{owner: atom(), conn: GenServer.server(), namespace: String.t()}
+    end
 
     @new_opts_schema NimbleOptions.new!(
                        name: [type: :atom, doc: "The owner's name (default: a unique one)."],
@@ -34,11 +68,30 @@ if Code.ensure_loaded?(Redix) do
                        ]
                      )
 
+    @handle_opts_schema NimbleOptions.new!(
+                          owner: [
+                            type: :atom,
+                            required: true,
+                            doc: "The owner's registered name (`start_link/1`'s `:name`)."
+                          ],
+                          conn: [
+                            type: {:custom, __MODULE__, :conn, []},
+                            type_doc: "`t:GenServer.server/0`",
+                            required: true,
+                            doc: "The Redix connection the owner uses (pid or name)."
+                          ],
+                          namespace: [
+                            type: :string,
+                            required: true,
+                            doc: "The key namespace (`start_link/1`'s `:namespace`)."
+                          ]
+                        )
+
     @start_link_opts_schema NimbleOptions.new!(
                               name: [
                                 type: :atom,
                                 required: true,
-                                doc: "The owner's registered name, which is also the handle."
+                                doc: "The owner's registered name (the handle's `:owner`)."
                               ],
                               conn: [
                                 type: {:custom, __MODULE__, :conn, []},
@@ -70,31 +123,75 @@ if Code.ensure_loaded?(Redix) do
 
     @pexpire_if_owner ~S{if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("PEXPIRE", KEYS[1], ARGV[2]) else return 0 end}
 
-    # --- behaviour API (handle = owner name) ---
+    @del_if_owner_sha :crypto.hash(:sha, @del_if_owner) |> Base.encode16(case: :lower)
+    @pexpire_if_owner_sha :crypto.hash(:sha, @pexpire_if_owner) |> Base.encode16(case: :lower)
+
+    # --- behaviour API (handle = %Handle{}) ---
+
+    # In the caller, on the handle's connection: no owner hop, so a lookup never queues
+    # behind a registration or a refresh. A stale value is deleted here too
+    # (compare-and-delete, so a key another node re-claimed survives).
+    @impl Normandy.Behaviours.SessionRegistry
+    def whereis(%Handle{conn: conn, namespace: ns}, session_id) do
+      key = reg_key(ns, session_id)
+
+      case redis(conn, &Redix.command(&1, ["GET", key])) do
+        {:ok, nil} ->
+          :none
+
+        {:ok, blob} when is_binary(blob) ->
+          case decode_pid(blob) do
+            {:ok, pid} -> {:ok, pid}
+            :stale -> stale(conn, key, blob)
+          end
+
+        # An outage is not "no session": that would start a duplicate server.
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    def whereis(other, _session_id), do: raise(ArgumentError, not_a_handle(:whereis, 2, other))
 
     @impl Normandy.Behaviours.SessionRegistry
-    def whereis(owner, session_id), do: GenServer.call(owner, {:whereis, session_id})
+    def register(%Handle{owner: owner}, session_id, pid),
+      do: GenServer.call(owner, {:register, session_id, pid})
+
+    def register(other, _session_id, _pid),
+      do: raise(ArgumentError, not_a_handle(:register, 3, other))
 
     @impl Normandy.Behaviours.SessionRegistry
-    def register(owner, session_id, pid), do: GenServer.call(owner, {:register, session_id, pid})
+    def unregister(%Handle{owner: owner}, session_id),
+      do: GenServer.call(owner, {:unregister, session_id})
+
+    def unregister(other, _session_id),
+      do: raise(ArgumentError, not_a_handle(:unregister, 2, other))
 
     @impl Normandy.Behaviours.SessionRegistry
-    def unregister(owner, session_id), do: GenServer.call(owner, {:unregister, session_id})
+    def child_name(%Handle{} = handle, session_id),
+      do: {:via, Normandy.Behaviours.SessionRegistry.Redis.Via, {handle, session_id}}
 
-    @impl Normandy.Behaviours.SessionRegistry
-    def child_name(owner, session_id),
-      do: {:via, Normandy.Behaviours.SessionRegistry.Redis.Via, {owner, session_id}}
+    def child_name(other, _session_id),
+      do: raise(ArgumentError, not_a_handle(:child_name, 2, other))
+
+    # A 1.x handle was the owner's name: say what replaced it.
+    defp not_a_handle(fun, arity, other) do
+      "#{inspect(__MODULE__)}.#{fun}/#{arity}: expected a " <>
+        "%#{inspect(Handle)}{} (build it with #{inspect(__MODULE__)}.handle/1), got: " <>
+        Describe.type_of(other)
+    end
 
     # --- lifecycle ---
 
     @doc """
-    Test/default handle: start a Redix conn + owner GenServer; return the owner name.
+    Test/default handle: starts an owner GenServer with its own Redix connection and
+    returns its handle.
 
     ## Options
 
     #{Options.docs(@new_opts_schema)}
     """
-    @spec new(keyword()) :: atom()
+    @spec new(keyword()) :: Handle.t()
     def new(opts \\ []) do
       opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
 
@@ -112,11 +209,40 @@ if Code.ensure_loaded?(Redix) do
 
       ns = Keyword.get(opts, :namespace, "normandy_reg_#{UUID.uuid4()}")
       {:ok, _pid} = start_link(name: name, url: url, namespace: ns)
-      name
+      fetch_handle(name)
     end
 
     @doc """
-    Starts the per-node owner GenServer, which holds the Redix connection.
+    Builds the handle of an owner started with `start_link/1`'s `:name`, `:conn` and
+    `:namespace`. Starts and calls nothing.
+
+    ## Options
+
+    #{Options.docs(@handle_opts_schema)}
+    """
+    @spec handle(keyword()) :: Handle.t()
+    def handle(opts) do
+      opts = Options.validate!(opts, @handle_opts_schema, {__MODULE__, :handle, 1})
+
+      %Handle{
+        owner: Keyword.fetch!(opts, :owner),
+        conn: Keyword.fetch!(opts, :conn),
+        namespace: Keyword.fetch!(opts, :namespace)
+      }
+    end
+
+    @doc """
+    The handle of a running owner, asked of it once: for an owner started with `:url`,
+    whose connection only the owner knows. Keep the result; a lookup with it never calls
+    the owner.
+    """
+    @spec fetch_handle(atom()) :: Handle.t()
+    def fetch_handle(owner) when is_atom(owner), do: GenServer.call(owner, :handle)
+
+    @doc """
+    Starts the per-node owner GenServer. Build the handle with `handle/1` from the same
+    `:name`, `:conn` and `:namespace`, or with `fetch_handle/1` when the owner connects
+    from `:url`.
 
     ## Options
 
@@ -166,14 +292,22 @@ if Code.ensure_loaded?(Redix) do
       ttl = Keyword.fetch!(opts, :ttl_ms)
       {:ok, _ref} = :timer.send_interval(div(ttl, 2), :refresh)
 
-      {:ok, %{conn: conn, ns: Keyword.fetch!(opts, :namespace), ttl: ttl, mons: %{}, sids: %{}}}
+      {:ok,
+       %{
+         name: Keyword.fetch!(opts, :name),
+         conn: conn,
+         ns: Keyword.fetch!(opts, :namespace),
+         ttl: ttl,
+         mons: %{},
+         sids: %{}
+       }}
     end
 
     @impl GenServer
     def handle_call({:register, sid, pid}, _from, s) do
       cmd = ["SET", reg_key(s.ns, sid), :erlang.term_to_binary(pid), "NX", "PX", to_string(s.ttl)]
 
-      case Redix.command(s.conn, cmd) do
+      case redis(s.conn, &Redix.command(&1, cmd)) do
         {:ok, "OK"} ->
           s = drop_existing(s, sid)
           ref = Process.monitor(pid)
@@ -189,25 +323,8 @@ if Code.ensure_loaded?(Redix) do
       end
     end
 
-    def handle_call({:whereis, sid}, _from, s) do
-      reply =
-        case Redix.command(s.conn, ["GET", reg_key(s.ns, sid)]) do
-          {:ok, nil} ->
-            :none
-
-          {:ok, blob} when is_binary(blob) ->
-            case decode_pid(blob) do
-              {:ok, pid} -> {:ok, pid}
-              :stale -> stale(s, sid, blob)
-            end
-
-          # An outage is not "no session": that would start a duplicate server.
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:reply, reply, s}
-    end
+    def handle_call(:handle, _from, s),
+      do: {:reply, %Handle{owner: s.name, conn: s.conn, namespace: s.ns}, s}
 
     def handle_call({:unregister, sid}, _from, s) do
       s =
@@ -240,10 +357,7 @@ if Code.ensure_loaded?(Redix) do
     end
 
     def handle_info(:refresh, s) do
-      Enum.each(s.sids, fn {sid, {pid, _ref}} ->
-        pexpire_if_owner(s.conn, reg_key(s.ns, sid), :erlang.term_to_binary(pid), s.ttl)
-      end)
-
+      s = s.sids |> Enum.chunk_every(@refresh_chunk) |> Enum.reduce(s, &refresh_chunk/2)
       {:noreply, s}
     end
 
@@ -264,8 +378,8 @@ if Code.ensure_loaded?(Redix) do
       ArgumentError -> :stale
     end
 
-    defp stale(s, sid, blob) do
-      _ = del_if_owner(s.conn, reg_key(s.ns, sid), blob)
+    defp stale(conn, key, blob) do
+      _ = del_if_owner(conn, key, blob)
       :none
     end
 
@@ -280,12 +394,137 @@ if Code.ensure_loaded?(Redix) do
     defp reg_key(ns, sid), do: "#{ns}:reg:{#{sid}}"
 
     defp del_if_owner(conn, key, value) do
-      Redix.command(conn, ["EVAL", @del_if_owner, "1", key, value])
+      redis(conn, fn c ->
+        case Redix.command(c, ["EVALSHA", @del_if_owner_sha, "1", key, value]) do
+          {:error, %Redix.Error{message: "NOSCRIPT" <> _}} ->
+            Redix.command(c, ["EVAL", @del_if_owner, "1", key, value])
+
+          other ->
+            other
+        end
+      end)
     end
 
-    defp pexpire_if_owner(conn, key, value, ttl) do
-      Redix.command(conn, ["EVAL", @pexpire_if_owner, "1", key, value, to_string(ttl)])
+    # One pipeline of compare-and-PEXPIRE per chunk. 1: still ours, TTL extended.
+    # 0: the key lapsed or another node holds it (reclaim/4 tells which).
+    defp refresh_chunk(chunk, s) do
+      case pexpire_chunk(s, chunk) do
+        {:ok, results} ->
+          chunk
+          |> Enum.zip(results)
+          |> Enum.reduce(s, fn {{sid, {pid, ref}}, result}, s ->
+            refreshed(s, sid, pid, ref, result)
+          end)
+
+        {:error, reason} ->
+          Logger.warning(
+            "SessionRegistry.Redis #{inspect(s.name)} could not refresh " <>
+              "#{length(chunk)} registrations (#{Describe.reason_tag(reason)}); " <>
+              "retrying at the next refresh"
+          )
+
+          s
+      end
     end
+
+    defp pexpire_chunk(s, chunk) do
+      cmds =
+        Enum.map(chunk, fn {sid, {pid, _ref}} ->
+          ["EVALSHA", @pexpire_if_owner_sha, "1", reg_key(s.ns, sid)] ++
+            [:erlang.term_to_binary(pid), Integer.to_string(s.ttl)]
+        end)
+
+      redis(s.conn, &pexpire_pipeline(&1, cmds))
+    end
+
+    defp pexpire_pipeline(conn, cmds) do
+      with {:ok, results} <- Redix.pipeline(conn, cmds) do
+        if Enum.any?(results, &noscript?/1),
+          do: reload_and_retry(conn, cmds),
+          else: {:ok, results}
+      end
+    end
+
+    # A restarted or flushed server forgot the script: load it, send the chunk again
+    # (PEXPIRE is idempotent).
+    defp reload_and_retry(conn, cmds) do
+      with {:ok, _sha} <- Redix.command(conn, ["SCRIPT", "LOAD", @pexpire_if_owner]),
+           do: Redix.pipeline(conn, cmds)
+    end
+
+    defp noscript?(%Redix.Error{message: "NOSCRIPT" <> _}), do: true
+    defp noscript?(_result), do: false
+
+    defp refreshed(s, _sid, _pid, _ref, 1), do: s
+    defp refreshed(s, sid, pid, ref, 0), do: reclaim(s, sid, pid, ref)
+
+    defp refreshed(s, sid, _pid, _ref, %Redix.Error{} = error) do
+      Logger.warning(
+        "SessionRegistry.Redis #{inspect(s.name)} could not refresh session " <>
+          "#{inspect(sid)} (#{Describe.reason_tag(error)}); retrying at the next refresh"
+      )
+
+      s
+    end
+
+    # The key is not ours any more. If it lapsed, SET NX takes it back. If another node
+    # holds it, two processes claim one session: stop ours.
+    defp reclaim(s, sid, pid, ref) do
+      cmd = ["SET", reg_key(s.ns, sid), :erlang.term_to_binary(pid), "NX", "PX"]
+
+      case redis(s.conn, &Redix.command(&1, cmd ++ [Integer.to_string(s.ttl)])) do
+        {:ok, "OK"} ->
+          s
+
+        {:ok, nil} ->
+          fence(s, sid, pid, ref)
+
+        {:error, reason} ->
+          Logger.warning(
+            "SessionRegistry.Redis #{inspect(s.name)} could not re-claim session " <>
+              "#{inspect(sid)} (#{Describe.reason_tag(reason)}); retrying at the next refresh"
+          )
+
+          s
+      end
+    end
+
+    defp fence(s, sid, pid, ref) do
+      Process.demonitor(ref, [:flush])
+
+      Logger.warning(
+        "SessionRegistry.Redis #{inspect(s.name)}: session #{inspect(sid)} is registered " <>
+          "by another process; stopping the local one"
+      )
+
+      :telemetry.execute(
+        [:normandy, :session_registry, :ownership_lost],
+        %{count: 1},
+        %{session_id: sid, registry: s.name}
+      )
+
+      Process.exit(pid, {:shutdown, :registration_lost})
+      %{s | mons: Map.delete(s.mons, ref), sids: Map.delete(s.sids, sid)}
+    end
+
+    # A Redix call that cannot exit or raise: a connection that is not running is
+    # {:error, :noproc}, one that dies mid-call {:error, {:exit, tag}}.
+    defp redis(conn, fun) do
+      case GenServer.whereis(conn) do
+        nil -> {:error, :noproc}
+        server -> fun.(server)
+      end
+    catch
+      :exit, reason -> {:error, {:exit, exit_tag(reason)}}
+    end
+
+    defp exit_tag(reason) when is_atom(reason), do: reason
+
+    defp exit_tag(reason)
+         when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
+         do: elem(reason, 0)
+
+    defp exit_tag(_reason), do: :unknown
 
     defp drop_existing(s, sid) do
       case Map.pop(s.sids, sid) do
