@@ -40,4 +40,11 @@ defmodule Normandy.Test.OwnLogTest do
     assert log =~ "mine-"
     refute log =~ "other-process"
   end
+
+  # 6.6a review: the capture's own format would silently replace a caller's.
+  test "capture/2 refuses a caller's :format" do
+    assert_raise ArgumentError, ~r/sets its own :format/, fn ->
+      OwnLog.capture([format: "$message"], fn -> :ok end)
+    end
+  end
 end

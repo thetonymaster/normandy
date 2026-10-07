@@ -12,6 +12,10 @@ defmodule Normandy.Test.OwnLog do
 
       log = Normandy.Test.OwnLog.capture([metadata: :all], fn -> ... end)
       refute log =~ "secret"
+
+  `opts` are `ExUnit.CaptureLog.capture_log/2`'s, except `:format`: the capture sets its
+  own format to tell events and their pids apart, so a caller's `:format` raises
+  `ArgumentError`.
   """
 
   # Separators no log message is expected to contain: one opens an event, the
@@ -21,6 +25,11 @@ defmodule Normandy.Test.OwnLog do
 
   @spec capture(keyword(), (-> any())) :: String.t()
   def capture(opts \\ [], fun) when is_list(opts) and is_function(fun, 0) do
+    if Keyword.has_key?(opts, :format) do
+      raise ArgumentError,
+            "Normandy.Test.OwnLog.capture/2 sets its own :format; drop the :format option"
+    end
+
     pid_token = "pid=" <> List.to_string(:erlang.pid_to_list(self()))
 
     opts
