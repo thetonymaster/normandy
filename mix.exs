@@ -54,24 +54,93 @@ defmodule Normandy.MixProject do
           # "guides/multi_agent_coordination.md",
           # "guides/dsl_guide.md"
         ],
-        # groups_for_extras: [
-        #   "Guides": ~r/guides\/.*/
-        # ],
+        groups_for_extras: [
+          Guides: ~r{docs/guides/.*},
+          "Upgrading and changes": ["MIGRATING-2.0.md", "CHANGELOG.md"]
+        ],
+        # Every module with docs is in exactly one group (test/docs/docs_groups_test.exs).
         groups_for_modules: [
           Core: [
+            Normandy,
             Normandy.Schema,
             Normandy.Schema.Wire,
+            Normandy.Schema.Introspection,
+            Normandy.Schema.Validator,
             Normandy.Type,
             Normandy.Validate,
             Normandy.ParameterizedType,
-            Normandy.JSON
+            Normandy.JSON,
+            Normandy.Metadata
           ],
           Agents: [
             Normandy.Agents.BaseAgent,
             Normandy.Agents.BaseAgentConfig,
+            Normandy.Agents.BaseAgentInputSchema,
+            Normandy.Agents.BaseAgentOutputSchema,
+            Normandy.Agents.ConfigTemplate,
             Normandy.Agents.Model,
             Normandy.Agents.ToolCallResponse,
             Normandy.Options
+          ],
+          "Durable turns": [
+            Normandy.Agents.Turn,
+            Normandy.Agents.Turn.State,
+            Normandy.Agents.Turn.Session,
+            Normandy.Agents.Turn.Server,
+            Normandy.Agents.Turn.Supervisor,
+            Normandy.Agents.Turn.Supervisor.Horde,
+            Normandy.Agents.Turn.ResumeReaper,
+            Normandy.Agents.Turn.Driver.Handlers,
+            Normandy.Cluster
+          ],
+          "Session stores and registries": [
+            Normandy.Behaviours.SessionStore,
+            Normandy.Behaviours.SessionStore.InMemory,
+            Normandy.Behaviours.SessionStore.ETS,
+            Normandy.Behaviours.SessionStore.Mnesia,
+            Normandy.Behaviours.SessionStore.Postgres,
+            Normandy.Behaviours.SessionStore.Postgres.Migration,
+            Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate,
+            Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy,
+            Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight,
+            Normandy.Behaviours.SessionStore.Redis,
+            Normandy.Behaviours.SessionRegistry,
+            Normandy.Behaviours.SessionRegistry.Native,
+            Normandy.Behaviours.SessionRegistry.Horde,
+            Normandy.Behaviours.SessionRegistry.Redis,
+            Normandy.Behaviours.SessionRegistry.Redis.Handle
+          ],
+          Memory: [
+            Normandy.Tools.Memory,
+            Normandy.Behaviours.MemoryStore,
+            Normandy.Behaviours.MemoryStore.InMemory,
+            Normandy.Behaviours.MemoryStore.ETS,
+            Normandy.Behaviours.MemoryStore.Mnesia,
+            Normandy.Behaviours.MemoryStore.Postgres,
+            Normandy.Behaviours.MemoryStore.Postgres.Migration,
+            Normandy.Behaviours.MemoryStore.Redis
+          ],
+          Hooks: [
+            Normandy.Behaviours.Hooks,
+            Normandy.Hooks.Context
+          ],
+          Behaviours: [
+            Normandy.Behaviours.Config,
+            Normandy.Behaviours.AgentTemplate,
+            Normandy.Behaviours.AgentTemplate.Catalog,
+            Normandy.Behaviours.BudgetTracker,
+            Normandy.Behaviours.BudgetTracker.NoOp,
+            Normandy.Behaviours.Compactor,
+            Normandy.Behaviours.Compactor.NoOp,
+            Normandy.Behaviours.Compactor.WindowManager,
+            Normandy.Behaviours.CredentialProvider,
+            Normandy.Behaviours.CredentialProvider.FromClient,
+            Normandy.Behaviours.ModelCatalog,
+            Normandy.Behaviours.ModelCatalog.ModelsAPI,
+            Normandy.Behaviours.ModelCatalog.Static,
+            Normandy.Behaviours.PolicyEngine,
+            Normandy.Behaviours.PolicyEngine.AllowAll,
+            Normandy.Behaviours.PolicyEngine.Ruleset
           ],
           DSL: [
             Normandy.DSL.Agent,
@@ -93,11 +162,16 @@ defmodule Normandy.MixProject do
           ],
           Components: [
             Normandy.Components.AgentMemory,
+            Normandy.Components.AgentMemory.Entry,
             Normandy.Components.Message,
+            Normandy.Components.ContentBlock.Text,
+            Normandy.Components.ContentBlock.Image,
+            Normandy.Components.ContentBlock.Document,
             Normandy.Components.PromptSpecification,
             Normandy.Components.SystemPromptGenerator,
             Normandy.Components.BaseIOSchema,
             Normandy.Components.ContextProvider,
+            Normandy.Components.DateTimeProvider,
             Normandy.Components.StreamEvent,
             Normandy.Components.StreamProcessor,
             Normandy.Components.ToolCall,
@@ -108,7 +182,10 @@ defmodule Normandy.MixProject do
             Normandy.Tools.Toolset,
             Normandy.Tools.Context,
             Normandy.Tools.Input,
-            Normandy.Tools.Executor
+            Normandy.Tools.Executor,
+            Normandy.Agents.Dispatch,
+            Normandy.Agents.Dispatch.Invocation,
+            Normandy.Agents.Dispatch.Pipeline
           ],
           "Context Management": [
             Normandy.Context.TokenCounter,
@@ -126,7 +203,8 @@ defmodule Normandy.MixProject do
             Normandy.Guardrails.Builtins.MaxLength,
             Normandy.Guardrails.Builtins.ForbiddenSubstrings,
             Normandy.Guardrails.Builtins.RegexGuard,
-            Normandy.Guardrails.Builtins.RequiredFields
+            Normandy.Guardrails.Builtins.RequiredFields,
+            Normandy.Guardrails.Builtins.SemanticScope
           ],
           "Batch Processing": [
             Normandy.Batch.Processor
@@ -144,8 +222,13 @@ defmodule Normandy.MixProject do
           "LLM Adapters": [
             Normandy.LLM.Request,
             Normandy.LLM.Response,
-            Normandy.LLM.ClaudioAdapter
+            Normandy.LLM.ClaudioAdapter,
+            Normandy.LLM.OpenAICompatibleAdapter,
+            Normandy.LLM.StructuredOutputs,
+            Normandy.LLM.JsonDeserializer
           ],
+          # Shipped test helpers (Normandy.Test.*); Tasks 7.3b and 7.3d add their modules.
+          Testing: [],
           Errors: [
             Normandy.LLMError,
             Normandy.TurnError,
@@ -157,11 +240,14 @@ defmodule Normandy.MixProject do
             Normandy.ModelCatalogError,
             Normandy.Schema.ValidationError,
             Normandy.CastError,
-            Normandy.InvalidChangesetError
+            Normandy.InvalidChangesetError,
+            Normandy.Guardrails.GuardError
           ],
           Telemetry: [
             Normandy.Telemetry,
-            Normandy.Telemetry.Span
+            Normandy.Telemetry.Span,
+            Normandy.Telemetry.Request,
+            Normandy.Telemetry.Usage
           ]
         ],
         # Old entries name functions since removed (e.g. Normandy.Type.load/1); cocogitto

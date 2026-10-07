@@ -91,7 +91,7 @@ Bring your own LLM by implementing the `Normandy.Agents.Model` protocol — Clau
 
 Full API reference and guides are published on HexDocs:
 
-- **📚 [API documentation](https://hexdocs.pm/normandy)** — every module, grouped by Core, Agents, DSL, Coordination, Tools, Context Management, Resilience, Guardrails, MCP, A2A, and LLM Adapters.
+- **📚 [API documentation](https://hexdocs.pm/normandy)** — every public module, grouped by area: Core, Agents, Durable turns, Session stores and registries, Memory, Hooks, Behaviours, DSL, Coordination, Components, Tools, Context Management, Resilience, Guardrails, Batch Processing, MCP, A2A, LLM Adapters, Testing, Errors and Telemetry.
 - **🌐 [Distributed sessions guide](docs/guides/distributed_sessions.md)** — Tiers 0/1/2, durable stores, and multi-node setup.
 - **📝 [CHANGELOG](CHANGELOG.md)** — release notes and migration guidance.
 - **🗺️ [ROADMAP](ROADMAP.md)** — phased development history and direction.
