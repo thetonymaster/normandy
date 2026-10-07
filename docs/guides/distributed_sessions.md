@@ -262,11 +262,20 @@ connection on every write, so the combo then also starts a pool of `:wait_connec
 (default 4) Redix connections, and each session's waited writes and their `WAIT` run on
 one of them. To give the store a connection of its own instead (for every command and
 every `WAIT`), pass `store_redix: [name: MyApp.StoreRedix, ...]`; share it with nothing.
+`:wait_connections` given while `:redis_wait` asks for no replicas raises `ArgumentError`.
+
+Set `:redis_wait` before you build the specs and the handles (in `config/runtime.exs`), and
+never change it at runtime: `redis_child_specs/1` and `redis_handles/1` read it once, to
+decide whether the pool starts and what the store's handle holds, while a store handle built
+without a wait of its own reads it again on every write. A change after boot leaves the two
+disagreeing.
 
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
 Redis with AOF enabled + a replica wait to block every write (entries, turn state,
-template) on replica acks (fail-closed): per store with the handle
-`{conn, namespace, {numreplicas, timeout_ms}}` (or `SessionStore.Redis.new(wait: ...)`),
-or for all Redis stores with `config :normandy, :redis_wait, {numreplicas, timeout_ms}`. Ephemeral: `Mnesia(ram_copies)`,
+template) on replica acks (fail-closed): per store with
+`SessionStore.Redis.new(wait: ...)`, which runs each waited write on a pool of its own, or for
+all Redis stores with `config :normandy, :redis_wait, {numreplicas, timeout_ms}`. A handle
+`{conn, namespace, {numreplicas, timeout_ms}}` waits on `conn` itself: give it a connection
+nothing else uses, since a `WAIT` blocks every other command on its connection. Ephemeral: `Mnesia(ram_copies)`,
 `ETS`, `InMemory`. Redis can lose recent writes on a hard crash — durable, not bulletproof;
 do not use it for audit-grade history.

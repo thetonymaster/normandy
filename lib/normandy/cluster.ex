@@ -121,7 +121,8 @@ defmodule Normandy.Cluster do
                                        "How many connections the store's `WAIT` pool opens " <>
                                          "(default `4`); only when `config :normandy, " <>
                                          ":redis_wait` asks for replicas and without " <>
-                                         "`:store_redix`."
+                                         "`:store_redix`. Given when `:redis_wait` asks " <>
+                                         "for none, it raises `ArgumentError`."
                                    ]
                                  )
 
@@ -240,7 +241,7 @@ defmodule Normandy.Cluster do
   defp store_handle(opts, fun) do
     ns = Keyword.fetch!(opts, :namespace)
 
-    case {store_plan(opts, fun), RedisStore.app_env_wait!()} do
+    case {store_plan(opts, fun), store_wait!(opts, fun)} do
       {{:own, conn}, {0, _timeout}} -> {conn, ns}
       {{:own, conn}, wait} -> {conn, ns, wait}
       {{:shared, conn}, {0, _timeout}} -> {conn, ns}
@@ -249,7 +250,7 @@ defmodule Normandy.Cluster do
   end
 
   defp store_conn_specs(opts, fun) do
-    case {store_plan(opts, fun), RedisStore.app_env_wait!()} do
+    case {store_plan(opts, fun), store_wait!(opts, fun)} do
       {{:own, _conn}, _wait} ->
         [Supervisor.child_spec({Redix, Keyword.fetch!(opts, :store_redix)}, id: :store_redix)]
 
@@ -261,6 +262,21 @@ defmodule Normandy.Cluster do
 
         for name <- wait_conn_names(opts, fun),
             do: Supervisor.child_spec({Redix, Keyword.put(redix, :name, name)}, id: name)
+    end
+  end
+
+  # The app env's wait. :wait_connections sizes a WAIT pool that only starts when it
+  # asks for replicas; given without that, it is refused as SessionStore.Redis.new/1
+  # refuses it, so a host learns that its writes are not waited.
+  defp store_wait!(opts, fun) do
+    case {RedisStore.app_env_wait!(), Keyword.has_key?(opts, :wait_connections)} do
+      {{0, _timeout}, true} ->
+        raise ArgumentError,
+              "Normandy.Cluster.#{fun}/1: :wait_connections needs config :normandy, " <>
+                ":redis_wait to ask for one replica or more, got 0 replicas"
+
+      {wait, _given} ->
+        wait
     end
   end
 

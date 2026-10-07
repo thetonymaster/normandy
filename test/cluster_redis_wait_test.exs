@@ -88,6 +88,20 @@ defmodule Normandy.ClusterRedisWaitTest do
                  fn -> Cluster.redis_child_specs(opts) end
   end
 
+  # Final review M-f: SessionStore.Redis.new/1 refuses :wait_connections without a wait;
+  # the combo ignored it, so a host never learned its writes were not waited.
+  test ":wait_connections without replicas in :redis_wait raises in both entry points" do
+    Application.put_env(:normandy, :redis_wait, {0, 0})
+    opts = Keyword.put(@combo, :wait_connections, 2)
+
+    for fun <- [:redis_child_specs, :redis_handles] do
+      assert_raise ArgumentError,
+                   "Normandy.Cluster.#{fun}/1: :wait_connections needs config :normandy, " <>
+                     ":redis_wait to ask for one replica or more, got 0 replicas",
+                   fn -> apply(Cluster, fun, [opts]) end
+    end
+  end
+
   test "a pool needs an atom :redix name" do
     Application.put_env(:normandy, :redis_wait, {1, 100})
     opts = Keyword.put(@combo, :redix, name: {:global, :combo}, host: "h")

@@ -1580,7 +1580,9 @@ code you wrote against 1.x must follow the changes below.
   default 4) Redix connections named `:"<redix name>.wait.<i>"` (the `:redix` `:name` must then
   be an atom) and gives the store that pool. The new option `:store_redix` (Redix options with
   `:name`) gives the store a connection of its own for every command and every `WAIT` instead;
-  it cannot be combined with `:wait_connections`. Build the handles for `Turn.Session.new/1`
+  it cannot be combined with `:wait_connections`. `:wait_connections` given while
+  `:redis_wait` asks for no replicas raises `ArgumentError` in `redis_child_specs/1` and
+  `redis_handles/1`, as in `SessionStore.Redis.new/1`. Build the handles for `Turn.Session.new/1`
   with `Cluster.redis_handles/1`, not by hand: the store's handle depends on these options and
   the app env. The guide's old advice to "pass a separate `:conn`" was not possible and is
   gone.
