@@ -85,11 +85,15 @@ defmodule Normandy.DSL.Workflow do
         agent MyAgent
         input from: :previous
         when_result do
-          {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
+          {:ok, %{chat_message: "REJECT" <> _}} -> {:error, :rejected}
           {:ok, %{confidence: c}} when c < 0.5 -> :low_confidence
           {:ok, result} -> {:ok, result}
         end
       end
+
+  A blank answer never reaches `when_result`: the agent's run already failed with
+  `%Normandy.LLMError{type: :invalid_output}`, so the workflow returns
+  `{:error, {step_name, %Normandy.LLMError{}}}`.
 
   ### Transforming Input
 
@@ -346,10 +350,13 @@ defmodule Normandy.DSL.Workflow do
   ## Examples
 
       when_result do
-        {:ok, %{chat_message: ""}} -> {:error, :empty_answer}
+        {:ok, %{chat_message: "REJECT" <> _}} -> {:error, :rejected}
         {:ok, %{confidence: c}} when c < 0.5 -> :low_confidence
         {:ok, result} -> {:ok, result}
       end
+
+  A blank answer fails the step before `when_result` runs (see "Conditional Execution"
+  in the moduledoc).
   """
   defmacro when_result(do: clauses) do
     fun =

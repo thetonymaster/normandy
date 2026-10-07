@@ -284,6 +284,18 @@ defmodule Normandy.Coordination.StatefulContextTest do
     end
   end
 
+  describe "the table is :protected" do
+    test "another process can read it but not write it" do
+      {:ok, ctx} = StatefulContext.start_link()
+      :ok = StatefulContext.put(ctx, "key", "value")
+      table = StatefulContext.get_table(ctx)
+
+      assert [{"key", "value"}] = :ets.lookup(table, "key")
+      assert_raise ArgumentError, fn -> :ets.insert(table, {"key", "forged"}) end
+      assert StatefulContext.fetch(ctx, "key") == {:ok, "value"}
+    end
+  end
+
   describe "process termination" do
     test "cleans up ETS table on termination" do
       {:ok, ctx} = StatefulContext.start_link()

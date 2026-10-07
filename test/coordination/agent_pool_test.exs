@@ -87,6 +87,40 @@ defmodule Normandy.Coordination.AgentPoolTest do
     end
   end
 
+  describe "checkout strategy" do
+    # Size 2, no overflow: check out both, return a then b (casts, ordered by the
+    # stats/1 call behind them), then check out one.
+    defp checkout_after_returns(strategy) do
+      {:ok, pool} =
+        AgentPool.start_link(
+          agent_config: create_agent_config(),
+          size: 2,
+          max_overflow: 0,
+          strategy: strategy
+        )
+
+      {:ok, a} = AgentPool.checkout(pool)
+      {:ok, b} = AgentPool.checkout(pool)
+      :ok = AgentPool.checkin(pool, a)
+      :ok = AgentPool.checkin(pool, b)
+      assert %{available: 2} = AgentPool.stats(pool)
+
+      {:ok, next} = AgentPool.checkout(pool)
+      AgentPool.stop(pool)
+      {a, b, next}
+    end
+
+    test ":lifo hands out the most recently returned agent" do
+      {_a, b, next} = checkout_after_returns(:lifo)
+      assert next == b
+    end
+
+    test ":fifo hands out the least recently returned agent" do
+      {a, _b, next} = checkout_after_returns(:fifo)
+      assert next == a
+    end
+  end
+
   describe "transaction/3" do
     test "executes function with agent from pool" do
       agent_config = create_agent_config()

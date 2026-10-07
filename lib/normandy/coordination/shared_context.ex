@@ -6,6 +6,10 @@ defmodule Normandy.Coordination.SharedContext do
   read from and write to, enabling information sharing across agent
   boundaries.
 
+  A `SharedContext` is an immutable value: `put/3` returns a new one. Share it by
+  passing it along (to the next step, the next agent), not between processes; for
+  state several processes read and write, use `Normandy.Coordination.StatefulContext`.
+
   ## Example
 
       # Create shared context

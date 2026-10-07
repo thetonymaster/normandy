@@ -5,6 +5,19 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   The Hierarchical Coordinator implements a manager-worker pattern where
   a manager agent delegates tasks to worker agents and aggregates results.
 
+  `execute/3` runs the manager twice, both times from the config the coordinator holds:
+  the aggregation call is a fresh conversation that does not include the planning call;
+  it gets the workers' results, each under its worker id.
+
+  ## Errors
+
+  `{:error, {:manager_failed, exception}}` when the planning call fails and
+  `{:error, {:aggregation_failed, exception}}` when the aggregation call does. The
+  exception is Normandy's own (`Normandy.LLMError`, `Normandy.Schema.ValidationError`,
+  ...), the exception a bug raised (logged with its stacktrace, arities only), or a
+  `:task_down` `Normandy.TurnError` for an exit or a throw. No stacktrace is returned.
+  A failed worker does not fail the call: the manager is told about it.
+
   ## Example
 
       coordinator = HierarchicalCoordinator.new(
@@ -29,6 +42,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   alias Normandy.Options
   alias Normandy.OrchestrationError
   alias Normandy.Telemetry.WorkflowSpan
+  alias Normandy.TurnError
 
   @type delegation_strategy :: :round_robin | :broadcast | :conditional
   @type t :: %__MODULE__{
@@ -133,7 +147,9 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         manager_prompt: "Break down this task for worker agents"
       )
   """
-  @spec execute(t(), term(), keyword()) :: {:ok, term()} | {:error, term()}
+  @spec execute(t(), term(), keyword()) ::
+          {:ok, term()}
+          | {:error, {:manager_failed | :aggregation_failed, Exception.t()}}
   def execute(%__MODULE__{} = coordinator, input, opts \\ []) do
     opts = Options.validate!(opts, @execute_opts_schema, {__MODULE__, :execute, 3})
 
@@ -168,8 +184,8 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         # Step 4: Manager aggregates results
         aggregate_with_manager(coordinator.manager, worker_results, context)
 
-      {:error, reason} ->
-        {:error, {:manager_failed, reason}}
+      {:error, exception} ->
+        {:error, {:manager_failed, exception}}
     end
   end
 
@@ -195,7 +211,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       )
   """
   @spec execute_with_tasks(t(), [%{worker_id: String.t(), task: term()}], keyword()) ::
-          {:ok, term()} | {:error, term()}
+          {:ok, term()} | {:error, {:aggregation_failed, Exception.t()}}
   def execute_with_tasks(%__MODULE__{} = coordinator, tasks, opts \\ []) do
     opts =
       Options.validate!(
@@ -283,18 +299,24 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   end
 
   defp execute_manager(manager, input, _context) do
-    {_updated_manager, response} = BaseAgent.run!(manager, input)
+    with {:ok, response} <- run_manager(manager, input, "planning") do
+      {:ok, extract_delegation_plan(response)}
+    end
+  end
 
-    # Extract delegation plan from response
-    plan = extract_delegation_plan(response)
-    {:ok, plan}
+  # One manager call: {:ok, response} or {:error, exception}. A Normandy error is
+  # returned; a raise (a bug) is logged (arities only) and returned bare; an exit (a
+  # timed-out GenServer.call, say) or a throw is a :task_down TurnError.
+  defp run_manager(manager, input, call) do
+    case BaseAgent.run(manager, input) do
+      {:ok, _updated_manager, response} -> {:ok, response}
+      {:error, _exception} = error -> error
+    end
   rescue
-    e ->
-      {:error, {:exception, e, __STACKTRACE__}}
+    e -> TurnError.log_raised("HierarchicalCoordinator manager (#{call})", e, __STACKTRACE__)
   catch
-    # An exit (a timed-out GenServer.call, say) is the manager's failure too.
-    :exit, reason ->
-      {:error, {:exit, reason}}
+    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
+    :throw, value -> {:error, TurnError.from_reason({:task_down, {:nocatch, value}})}
   end
 
   defp extract_delegation_plan(response) when is_map(response) do
@@ -359,7 +381,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   defp create_conditional_specs(workers, plan) when is_map(plan) do
     # Plan should contain worker assignments
     Enum.flat_map(workers, fn worker ->
-      case Map.get(plan, worker.id) || Map.get(plan, String.to_atom(worker.id)) do
+      case plan_task(plan, worker.id) do
         nil ->
           []
 
@@ -378,6 +400,16 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   defp create_conditional_specs(workers, plan) do
     # Fallback to round-robin
     create_round_robin_specs(workers, plan)
+  end
+
+  # The task the plan assigns to worker `id`: under the id, or under an atom key of the
+  # same name. The id is never made an atom (worker ids are any strings the host passes,
+  # and an atom is never freed), so an atom key is matched by its name.
+  defp plan_task(plan, id) do
+    Map.get(plan, id) ||
+      Enum.find_value(plan, fn {key, task} ->
+        if is_atom(key) and Atom.to_string(key) == id, do: task
+      end)
   end
 
   # ParallelOrchestrator keys results by spec id, so a worker with several tasks
@@ -416,21 +448,13 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     # Results travel as text in chat_message: an input schema drops any other key.
     aggregation_input = %{chat_message: aggregation_message(worker_results)}
 
-    try do
-      {_updated_manager, response} = BaseAgent.run!(manager, aggregation_input)
+    case run_manager(manager, aggregation_input, "aggregation") do
+      {:ok, response} ->
+        {:ok,
+         Map.get(response, :chat_message) || Map.get(response, :aggregated_result) || response}
 
-      result =
-        Map.get(response, :chat_message) ||
-          Map.get(response, :aggregated_result) ||
-          response
-
-      {:ok, result}
-    rescue
-      e ->
-        {:error, {:aggregation_failed, e, __STACKTRACE__}}
-    catch
-      :exit, reason ->
-        {:error, {:aggregation_failed, {:exit, reason}}}
+      {:error, exception} ->
+        {:error, {:aggregation_failed, exception}}
     end
   end
 

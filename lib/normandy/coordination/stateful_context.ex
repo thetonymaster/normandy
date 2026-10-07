@@ -3,13 +3,15 @@ defmodule Normandy.Coordination.StatefulContext do
   GenServer-backed shared context for multi-agent systems.
 
   StatefulContext provides a concurrent, process-based key-value store
-  using GenServer with ETS backing for high-performance reads.
+  using GenServer with ETS backing.
 
   ## Features
 
   - Concurrent access from multiple processes
-  - Fast reads via ETS (no GenServer bottleneck)
-  - Atomic updates via GenServer
+  - Reads from ETS: each read makes one short `GenServer.call` for the table, then
+    looks the key up in ETS (a read never waits behind a write's work)
+  - Atomic updates via GenServer: the table is `:protected`, so only the context
+    process writes it
   - Optional pub/sub notifications for changes
   - Process supervision compatible
 
@@ -90,7 +92,8 @@ defmodule Normandy.Coordination.StatefulContext do
   @doc """
   Looks up `key`: `{:ok, value}` or `:error`.
 
-  Reads directly from ETS for maximum performance (no GenServer call).
+  Asks the context process for its table (one short `GenServer.call`), then reads
+  the key from ETS.
 
   ## Example
 
@@ -223,9 +226,11 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @doc """
-  Returns the ETS table reference for direct access.
+  Returns the ETS table, for reads (`:ets.lookup/2`, `:ets.select/2`, ...).
 
-  Advanced users can use this for custom ETS operations.
+  The table is `:protected`: only the context process writes it, so a write from
+  any other process raises `ArgumentError`. Write through `put/3`, `update/4` and
+  `delete/2`.
 
   ## Example
 
@@ -247,7 +252,7 @@ defmodule Normandy.Coordination.StatefulContext do
     table =
       :ets.new(:stateful_context, [
         :set,
-        :public,
+        :protected,
         read_concurrency: true,
         write_concurrency: false
       ])

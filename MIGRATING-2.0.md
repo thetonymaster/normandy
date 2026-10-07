@@ -1686,6 +1686,32 @@ code you wrote against 1.x must follow the changes below.
   starts; two processes with the same `agent_id` still never see each other's servers. A
   supplied `:registry` is used as before.
 
+- `AgentPool` `strategy: :lifo` (the default) now hands out the most recently returned agent
+  and `:fifo` the least recently returned one, as documented; the two were swapped.
+- `StatefulContext`'s ETS table is `:protected`: a write to `get_table/1`'s table from any
+  process but the context raises `ArgumentError`; write through `put/3`, `update/4` and
+  `delete/2`. Reads still make one `GenServer.call` for the table (the docs said they made
+  none).
+- `HierarchicalCoordinator.execute/3` and `execute_with_tasks/3` errors carry no stacktrace:
+
+| 1.x | 2.0 |
+|---|---|
+| `{:error, {:manager_failed, {:exception, e, stacktrace}}}` | `{:error, {:manager_failed, e}}`, `e` the raised exception (logged with arities only) |
+| `{:error, {:manager_failed, {:exit, reason}}}` | `{:error, {:manager_failed, %Normandy.TurnError{type: :task_down, reason: reason}}}` |
+| `{:error, {:aggregation_failed, e, stacktrace}}` | `{:error, {:aggregation_failed, e}}` |
+| `{:error, {:aggregation_failed, {:exit, reason}}}` | `{:error, {:aggregation_failed, %Normandy.TurnError{type: :task_down, reason: reason}}}` |
+| a Normandy error (`LLMError`, ...) as `{:exception, e, stacktrace}` | the exception bare: `{:error, {:manager_failed, %Normandy.LLMError{}}}` |
+| a throw escaped `execute/3` | `%Normandy.TurnError{type: :task_down, reason: {:nocatch, value}}` |
+
+- `HierarchicalCoordinator`'s `:conditional` strategy no longer turns each worker id into an
+  atom to look up its task (an atom per distinct worker id, never freed). A plan keyed by
+  atoms still works: an atom key is matched by its name.
+- `Reactive.race/3`, `all/3` and `some/3` no longer cut a pid contestant's call at 60 s:
+  the race's own `:timeout` bounds it.
+- `:incremental` output guardrails re-check the whole accumulated text every `chunk_size`
+  bytes, so their cost grows with the square of the answer's length (now documented in
+  `Normandy.Guardrails`); raise `chunk_size` for long answers.
+
 ## New, non-breaking
 
 - `[:normandy, :workflow, :run, :stop]` carries `status: :ok | :error` (`:error` when the

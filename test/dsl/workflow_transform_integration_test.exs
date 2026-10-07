@@ -144,6 +144,13 @@ defmodule Normandy.DSL.WorkflowTransformIntegrationTest do
              )
   end
 
+  test "a blank answer fails the step before when_result runs" do
+    assert {:error, {:check, %Normandy.LLMError{type: :invalid_output}}} =
+             WhenWorkflow.execute(agents: agents(""), initial_input: "x")
+
+    refute_received {:agent_input, "second", _}
+  end
+
   test "steps/0 reports which steps have a when_result" do
     assert [%{name: :check, condition: true}, %{name: :after, condition: false}] =
              WhenWorkflow.steps()

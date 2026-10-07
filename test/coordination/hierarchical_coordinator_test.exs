@@ -3,6 +3,9 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.HierarchicalCoordinator
+  alias Normandy.TurnError
+
+  import ExUnit.CaptureLog
 
   # Replies with `reply` merged into the response model and reports each call.
   defmodule CaptureClient do
@@ -227,6 +230,36 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       assert worker_input("w2") =~ "only for w2"
       refute_received {:llm_call, "w1", _}
     end
+
+    test ":conditional reads a task under the worker id as an atom key" do
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager:
+            agent("manager", %{delegation_plan: %{w2: "atom key for w2"}}, %AssignmentPlan{}),
+          workers: workers(),
+          delegation_strategy: :conditional
+        )
+
+      assert {:ok, _} = HierarchicalCoordinator.execute(coordinator, "x")
+
+      assert worker_input("w2") =~ "atom key for w2"
+      refute_received {:llm_call, "w1", _}
+    end
+
+    test ":conditional creates no atom from a worker id" do
+      # A fresh id: no atom of that name exists, and looking it up must not create one.
+      id = "w-#{System.unique_integer([:positive])}-not-an-atom"
+
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: agent("manager", %{delegation_plan: %{"w1" => "t"}}, %AssignmentPlan{}),
+          workers: [%{id: id, agent: agent("w1", %{chat_message: "r1"})}],
+          delegation_strategy: :conditional
+        )
+
+      assert {:ok, _} = HierarchicalCoordinator.execute(coordinator, "x")
+      assert_raise ArgumentError, fn -> String.to_existing_atom(id) end
+    end
   end
 
   describe "workers and failures" do
@@ -245,7 +278,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
       refute_received {:llm_call, "w1", _}
     end
 
-    test "a manager whose model call exits returns {:error, {:manager_failed, {:exit, _}}}" do
+    test "a manager whose model call exits returns a :task_down TurnError" do
       exiting =
         BaseAgent.init(%{
           client: %Normandy.Test.StubClient{reply: fn _ -> exit(:boom) end},
@@ -258,11 +291,11 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
           workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
         )
 
-      assert {:error, {:manager_failed, {:exit, :boom}}} =
+      assert {:error, {:manager_failed, %TurnError{type: :task_down, reason: :boom}}} =
                HierarchicalCoordinator.execute(coordinator, "x")
     end
 
-    test "a manager whose aggregation call exits returns {:error, {:aggregation_failed, _}}" do
+    test "a manager whose aggregation call exits returns a :task_down TurnError" do
       calls = :counters.new(1, [])
 
       # Plans on the first call, exits on the second (the aggregation).
@@ -287,18 +320,62 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
           workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
         )
 
-      assert {:error, {:aggregation_failed, {:exit, :boom}}} =
+      assert {:error, {:aggregation_failed, %TurnError{type: :task_down, reason: :boom}}} =
                HierarchicalCoordinator.execute(coordinator, "x")
     end
 
-    test "a failing manager returns {:error, {:manager_failed, reason}}" do
+    test "a manager that raises returns the bare exception and logs arities only" do
       coordinator =
         HierarchicalCoordinator.new(
           manager: agent("manager", %{}, %Plan{}, true),
           workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
         )
 
-      assert {:error, {:manager_failed, {:exception, %RuntimeError{message: "worker down"}, _}}} =
+      log =
+        capture_log(fn ->
+          assert {:error, {:manager_failed, %RuntimeError{message: "worker down"}}} =
+                   HierarchicalCoordinator.execute(coordinator, "x")
+        end)
+
+      assert log =~ "HierarchicalCoordinator manager (planning) raised RuntimeError"
+      assert log =~ ~r/Normandy\.Agents\.BaseAgent\.\S+\/\d+/
+    end
+
+    test "a manager whose model call throws returns a :task_down TurnError" do
+      throwing =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{reply: fn _ -> throw(:boom) end},
+          model: "test-model"
+        })
+
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: throwing,
+          workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
+        )
+
+      assert {:error, {:manager_failed, %TurnError{type: :task_down, reason: {:nocatch, :boom}}}} =
+               HierarchicalCoordinator.execute(coordinator, "x")
+    end
+
+    test "a manager whose model call returns a Normandy error returns it bare" do
+      failing =
+        BaseAgent.init(%{
+          client: %Normandy.Test.StubClient{
+            reply: fn _ ->
+              {:error, Normandy.LLMError.new(type: :overloaded, retryable?: false)}
+            end
+          },
+          model: "test-model"
+        })
+
+      coordinator =
+        HierarchicalCoordinator.new(
+          manager: failing,
+          workers: [%{id: "w1", agent: agent("w1", %{chat_message: "r1"})}]
+        )
+
+      assert {:error, {:manager_failed, %Normandy.LLMError{type: :overloaded}}} =
                HierarchicalCoordinator.execute(coordinator, "x")
     end
   end

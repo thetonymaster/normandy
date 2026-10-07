@@ -121,6 +121,14 @@ defmodule Normandy.Guardrails do
     `{:error, %Normandy.LLMError{type: :invalid_output}}`. Follows NVIDIA NeMo
     Guardrails' chunking approach.
 
+    Each check runs the guards on the **whole** text accumulated so far, not on the
+    new chunk, so a pattern that spans two chunks is still seen. The cost grows with
+    the square of the answer's length: an answer of `n` bytes is checked about
+    `n / chunk_size` times on texts up to `n` bytes long (a 100_000-byte answer with
+    the default `chunk_size: 200` runs the guards about 500 times, on 50_000 bytes on
+    average). For long answers or guards that are slow or call a service, raise
+    `chunk_size` or use `:accumulate`.
+
   `RequiredFields` is terminal-only and does not apply to either streaming
   mode (no schema struct to inspect).
 

@@ -539,11 +539,12 @@ defmodule Normandy.Coordination.AgentPool do
     end
   end
 
+  # `available` is newest first: a checkin puts the returned agent at its head.
   defp do_checkout(%State{available: available, strategy: strategy} = state) do
     {agent_pid, remaining} =
       case strategy do
-        :lifo -> {List.last(available), Enum.drop(available, -1)}
-        :fifo -> {List.first(available), Enum.drop(available, 1)}
+        :lifo -> {hd(available), tl(available)}
+        :fifo -> {List.last(available), Enum.drop(available, -1)}
       end
 
     new_state = %{

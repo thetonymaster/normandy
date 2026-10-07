@@ -472,7 +472,8 @@ defmodule Normandy.Coordination.Reactive do
     :throw, value -> {:error, TurnError.from_reason({:task_down, {:nocatch, value}})}
   end
 
-  defp run_one(pid, input) when is_pid(pid), do: AgentProcess.run(pid, input)
+  # No call timeout of its own: the race's :timeout bounds it (the task is killed past it).
+  defp run_one(pid, input) when is_pid(pid), do: AgentProcess.run(pid, input, timeout: :infinity)
 
   defp run_one(agent, input) do
     case BaseAgent.run(agent, prepare_input(input)) do
