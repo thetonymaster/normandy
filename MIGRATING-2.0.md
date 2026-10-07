@@ -1828,6 +1828,15 @@ code you wrote against 1.x must follow the changes below.
   it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The
   hooks guide's "Testing a hook" section shows it. Calling the hook runner directly is no
   longer documented.
+- `Normandy.Test.FakeClient` is a model client for tests that answers from a script:
+  `FakeClient.new([{:tool_calls, [{"weather", %{"city" => "Oslo"}}]}, {:text, "Cold."}])`.
+  Items are text (a list of chunks streams one delta per chunk), structured maps, tool calls,
+  `{:error, %Normandy.LLMError{}}` or a function of the request, with optional
+  `:stop_reason`, `:usage` and `:stream_error_after`. It works with `BaseAgent.run/3`,
+  `stream/3`, `Turn.Session` and `AgentProcess` from any process on the node, needs no
+  protocol implementation or `consolidate_protocols: false` of your own and no
+  Mox/`Req.Test` allowance, and records every request (`FakeClient.requests/1`). A request
+  past the script raises `Normandy.Test.FakeClient.ScriptExhaustedError`.
 
 ## Known limits of 2.0
 

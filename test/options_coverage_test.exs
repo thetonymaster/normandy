@@ -64,6 +64,7 @@ defmodule Normandy.OptionsCoverageTest do
     "lib/normandy/mcp/registry.ex",
     "lib/normandy/mcp/tool_wrapper.ex",
     "lib/normandy/resilience/circuit_breaker.ex",
+    "lib/normandy/test/fake_client.ex",
     "lib/normandy/tools/executor.ex",
     "lib/normandy/tools/toolset.ex"
   ]

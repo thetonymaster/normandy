@@ -228,7 +228,10 @@ defmodule Normandy.MixProject do
             Normandy.LLM.JsonDeserializer
           ],
           # Shipped test helpers (Normandy.Test.*); Tasks 7.3b and 7.3d add their modules.
-          Testing: [],
+          Testing: [
+            Normandy.Test.FakeClient,
+            Normandy.Test.FakeClient.ScriptExhaustedError
+          ],
           Errors: [
             Normandy.LLMError,
             Normandy.TurnError,
