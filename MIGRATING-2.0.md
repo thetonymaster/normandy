@@ -1872,6 +1872,10 @@ code you wrote against 1.x must follow the changes below.
 - `Toolset.filter_by_required_params/2`, `Toolset.filter_by_param_type/2` and
   `Toolset.tools_with_constraint/2` are removed; nothing in Normandy called them. Filter
   `Toolset.list_metadata/1` (each entry has `:input_schema`) or `Toolset.list/1` yourself.
+- The repository's `examples/customer_support_app` and `examples/agent_horde` applications are
+  removed: they used the 1.x API (`Normandy.Tools.BaseTool`) and no longer compiled. They were
+  never in the Hex package. `examples/README.md` now points at the guides;
+  `examples/tools/weather.ex` stays.
 
 ## Known limits of 2.0
 
