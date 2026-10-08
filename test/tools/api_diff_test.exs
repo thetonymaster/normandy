@@ -110,4 +110,58 @@ defmodule NormandyTools.ApiDiffTest do
              &String.starts_with?(&1, "Normandy.Agents.Model.Normandy.")
            )
   end
+
+  describe "changed specs are matched as members" do
+    test "a section naming only another module's run/2 does not cover Bar.run/2" do
+      diff = %{changed_specs: ["Normandy.Foo.Bar.run/2"]}
+
+      assert ApiDiff.unmatched(diff, "## 1. X\n\n`Other.run/2` changed.\n", MapSet.new()) ==
+               ["Normandy.Foo.Bar.run/2"]
+    end
+
+    test "a `Bar.run` span covers it" do
+      diff = %{changed_specs: ["Normandy.Foo.Bar.run/2"]}
+      assert ApiDiff.unmatched(diff, "## 1. X\n\n`Bar.run` changed.\n", MapSet.new()) == []
+    end
+
+    test "a `run` span in a section that mentions Bar covers it" do
+      diff = %{changed_specs: ["Normandy.Foo.Bar.run/2"]}
+      text = "## 1. X\n\nThe `run` function of Bar changed.\n"
+      assert ApiDiff.unmatched(diff, text, MapSet.new()) == []
+    end
+  end
+
+  @tag :tmp_dir
+  test "dump/1 keeps an @impl function without @doc public, and hides @doc false", %{
+    tmp_dir: tmp_dir
+  } do
+    source = """
+    defmodule NormandyTools.ApiDiffProbe.Behave do
+      @callback cb(integer()) :: :ok
+    end
+
+    defmodule NormandyTools.ApiDiffProbe.Impl do
+      @behaviour NormandyTools.ApiDiffProbe.Behave
+
+      @impl true
+      def cb(_), do: :ok
+
+      @doc false
+      def secret, do: :ok
+
+      def shown, do: :ok
+    end
+    """
+
+    # elixirc keeps docs chunks; the test env's in-memory compile does not.
+    file = Path.join(tmp_dir, "probe.ex")
+    File.write!(file, source)
+    assert {_, 0} = System.cmd("elixirc", ["-o", tmp_dir, file], stderr_to_stdout: true)
+
+    snapshot = ApiDiff.dump(tmp_dir)
+
+    assert "NormandyTools.ApiDiffProbe.Impl.cb/1 function" in snapshot.functions
+    assert "NormandyTools.ApiDiffProbe.Impl.shown/0 function" in snapshot.functions
+    refute "NormandyTools.ApiDiffProbe.Impl.secret/0 function" in snapshot.functions
+  end
 end

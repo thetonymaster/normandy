@@ -24,8 +24,8 @@ if ! (cd "$root" && MIX_ENV=dev mix compile) >"$work/head-build.log" 2>&1; then
   exit 2
 fi
 
-elixir "$here/cli.exs" dump "$work/base/_build/dev/lib/normandy/ebin" "$work/base.term"
-elixir "$here/cli.exs" dump "$root/_build/dev/lib/normandy/ebin" "$work/head.term"
+elixir "$here/cli.exs" dump "$work/base/_build/dev/lib/normandy/ebin" "$work/base.term" || exit 2
+elixir "$here/cli.exs" dump "$root/_build/dev/lib/normandy/ebin" "$work/head.term" || exit 2
 
 status=0
 elixir "$here/cli.exs" compare "$work/base.term" "$work/head.term" \

@@ -51,7 +51,7 @@ defmodule NormandyTools.ApiDiff do
   end
 
   defp add_module(acc, mod, mod_atom, beam, entries) do
-    funs = public_functions(mod, entries)
+    funs = public_functions(mod, mod_atom, entries)
 
     %{
       acc
@@ -63,14 +63,45 @@ defmodule NormandyTools.ApiDiff do
   end
 
   # "Mod.name/arity kind", default arguments expanded (f/3 with one default is also f/2).
-  defp public_functions(mod, entries) do
+  #
+  # `@impl` without a `@doc` marks the function's doc `:hidden`; such a function is still
+  # public when the module exports it and it implements a callback of a behaviour it declares.
+  defp public_functions(mod, mod_atom, entries) do
+    callbacks = declared_callbacks(mod_atom)
+
     for {{kind, name, arity}, _, _, doc, meta} <- entries,
         kind in @kinds,
-        doc != :hidden,
+        doc != :hidden or impl_callback?(mod_atom, kind, name, arity, callbacks),
         a <- (arity - Map.get(meta, :defaults, 0))..arity//1,
         into: MapSet.new(),
         do: "#{mod}.#{name}/#{a} #{kind}"
   end
+
+  defp declared_callbacks(mod_atom) do
+    mod_atom.module_info(:attributes)
+    |> Keyword.get_values(:behaviour)
+    |> List.flatten()
+    |> Enum.flat_map(fn behaviour ->
+      with {:module, ^behaviour} <- Code.ensure_loaded(behaviour),
+           true <- function_exported?(behaviour, :behaviour_info, 1) do
+        behaviour.behaviour_info(:callbacks)
+      else
+        _ -> []
+      end
+    end)
+    |> MapSet.new()
+  end
+
+  defp impl_callback?(mod_atom, :function, name, arity, callbacks),
+    do: MapSet.member?(callbacks, {name, arity}) and function_exported?(mod_atom, name, arity)
+
+  # A macro callback is listed as {:"MACRO-name", arity + 1} (the caller's env comes first).
+  defp impl_callback?(mod_atom, :macro, name, arity, callbacks),
+    do:
+      MapSet.member?(callbacks, {:"MACRO-#{name}", arity + 1}) and
+        macro_exported?(mod_atom, name, arity)
+
+  defp impl_callback?(_mod_atom, _kind, _name, _arity, _callbacks), do: false
 
   defp specs(mod, beam, funs) do
     visible = MapSet.new(funs, &(&1 |> String.split(" ") |> hd()))
@@ -177,13 +208,20 @@ defmodule NormandyTools.ApiDiff do
 
   defp named?(item, sections) do
     case String.split(item, " ") do
-      [mod] ->
-        last = mod |> String.split(".") |> List.last()
-        Enum.any?(sections, fn {_text, spans} -> Enum.any?(spans, &token?(&1, last)) end)
+      # A changed spec is "Mod.f/1" (no kind): matched as a member, like a function.
+      [path] ->
+        if String.contains?(path, "/"),
+          do: member_named?(path, sections),
+          else: module_named?(path, sections)
 
       [path, _kind] ->
         member_named?(path, sections)
     end
+  end
+
+  defp module_named?(mod, sections) do
+    last = mod |> String.split(".") |> List.last()
+    Enum.any?(sections, fn {_text, spans} -> Enum.any?(spans, &token?(&1, last)) end)
   end
 
   defp member_named?(path, sections) do
