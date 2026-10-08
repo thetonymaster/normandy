@@ -465,6 +465,9 @@ This also reaches input you don't build by hand:
   field of the schema.
 - A required value that is only whitespace is blank: `validate_required/2` rejects `"  "` as it rejects
   `""`. 1.x accepted it.
+- `Normandy.Validate.validate_number/3` takes number options (`greater_than: 0`). 1.x raised
+  `ArgumentError` for every number and accepted only an atom, which it compared by term order: pass
+  numbers, as an atom now raises.
 
 ## 19. An output that breaks its schema is an error
 
@@ -503,6 +506,21 @@ The OpenAI-compatible adapter parses its text the same way: its `:invalid_output
 `LLMError.reason` is the parse failure itself, no longer `{:max_retries_reached, reason}`,
 and the `[:normandy, :json_deserializer, :fallback]` metadata `reason` is the failure's tag
 (it was `:max_retries_reached`).
+
+- A field whose type is another `io_schema` module (or `{:array, Schema}`) casts a map into that
+  schema's struct, checking its field types and required fields; 1.x raised
+  `UndefinedFunctionError` when it bound the model's answer. A `:struct` field accepts any struct,
+  and a field typed with a module that is neither a `Normandy.Type` nor a schema raises
+  `ArgumentError` naming it: give such fields a schema or a `Normandy.Type`.
+- A `"response"`, `"message"` or `"text"` key in the model's answer is renamed to `chat_message`
+  only when the output schema has `chat_message` and no field of that name, and never over a
+  `chat_message` the answer already has. 1.x renamed it for every schema, so a schema's own
+  `text`, `message` or `response` field lost its value and failed validation; a schema that relied
+  on the rename must declare `chat_message`.
+- Input and output validation, a tool's input check and a schema's `compute:` now run for a
+  schema or tool module that is not loaded yet. 1.x skipped them for such a module (its first use
+  in an interactive node, or a module named by a stored template), so unvalidated input and
+  output passed: expect the validation errors 1.x let through.
 
 ## 20. Entry points: `run/3`, `run!/3`, `stream/3`
 
@@ -577,6 +595,9 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   `virtual: true` (a compile error), a guardrail `:field` the struct does not have (`ArgumentError`), and
   a built-in guard's configuration error, which raises under every `:on_error` (`:open` and `:closed`
   used to swallow it).
+- A DSL agent's `max_messages` (declared in the `agent` block or given to `new/1`) now caps its
+  memory. 1.x passed it to `BaseAgent.init/1`, which dropped it, so the memory grew without
+  bound: remove the declaration to keep every message, or expect the trim described in §38.
 
 ## 22. Config groups, the compactor's window pin, and 1.0 session templates
 
@@ -674,6 +695,14 @@ fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
 
 - `Toolset.register/3` raises `ArgumentError` on an unknown or mistyped option (1.x ignored
   them).
+- `Toolset.register/3` (and `BaseAgent.register_tool/3`) raises `ArgumentError` for a tool name
+  the API rejects, one outside `^[a-zA-Z0-9_-]{1,64}$` (a dot, or more than 64 characters); 1.x
+  registered it and the first request failed with a 400. MCP and A2A discovery return
+  `{:error, {:invalid_tool_name, name}}` for such a name (§37): rename the tool or shorten the prefix.
+- Registering a second tool under a name already registered raises `ArgumentError` unless you pass
+  `replace: true`; 1.x replaced the first tool silently. MCP and A2A `discover_and_register`
+  return `{:error, {:tool_name_taken, name}}` instead: pass `replace: true` where you meant to
+  replace, or give each server its own prefix.
 
 ### Writing a tool
 
@@ -842,6 +871,13 @@ agents, one input and options, and return:
   `:max_concurrency` error).
 - `Reactive.some/3` with `count:` above the number of agents raises `ArgumentError` (was
   `{:error, :count_exceeds_agent_count}`).
+- `SequentialOrchestrator` with `on_error: :continue` gives the agent after a failure the last
+  successful output (or the pipeline's input when none succeeded yet); 1.x gave it the
+  `{:error, reason}` tuple as its input. A next agent that read that tuple reads the failure from
+  the `OrchestrationError`'s `errors` instead.
+- `ParallelOrchestrator.execute_stream/2` yields `{:exit, {agent_id, :timeout}}` for an agent past
+  `:timeout` and goes on with the others; in 1.x that timeout exited the process consuming the
+  stream. Match the new element.
 
 ## 28. Lookups are `fetch_*`; two exceptions renamed
 
@@ -981,6 +1017,12 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
   and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
   `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
+- `ClaudioAdapter` client options are checked when the agent is built (`BaseAgent.init/1`,
+  `ConfigTemplate.rebuild/3`): an unknown key (`:thinkin`, `:enable_cacheing`), a non-boolean
+  `:enable_caching` or `:structured_outputs`, `options` that are not a map, or a missing or empty
+  `api_key` raises `ArgumentError`; 1.x accepted them. `:timeout`, `:recv_timeout` and
+  `options[:base_url]`, documented in 1.x but never read, now reach the HTTP client: check the
+  values you set.
 
 ## 31. Circuit breakers are shared and supervised by Normandy
 
@@ -1020,6 +1062,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - `CircuitBreaker.start_link/1` and `call/3` remain for a breaker you start and supervise
   yourself.
 - A shared breaker that has been closed and idle for 15 minutes stops; the next call starts a fresh one. Open and half-open breakers stay.
+- `CircuitBreaker.call/3` counts a function return that is neither `{:ok, _}` nor `{:error, _}` as a
+  failure and returns `{:error, {:unexpected_return, value}}`, and turns an exit or a throw into
+  `{:error, {:exit, reason}}` or `{:error, {:throw, value}}`. 1.x returned `{:ok, value}` and counted
+  a success, and let exits and throws through: return `{:ok, value}` from the function
+  (`fn -> {:ok, MyAPI.call()} end`).
 
 ## 32. Tool loops return the output schema; stop reasons are errors
 
@@ -1030,6 +1077,10 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   plain text.
 - `stream/3` with a non-chat output schema sends it too, with or without tools. A 400 that
   names the output format or schema re-sends the stream request without it, as `run/3` does.
+- The structured-outputs fallback (a second request on the legacy parse-retry path) runs only for
+  a 400 whose message names `output_format`, `output_config` or `schema`; 1.x re-sent the request
+  for any `invalid_request_error`, so a 400 such as "prompt is too long" cost two requests. Any
+  other 400 returns `{:error, %Normandy.LLMError{type: :invalid_request}}` at once.
 - A custom `Normandy.Agents.Model` receives the schema as the new `Normandy.LLM.Request` field
   `output_format` (the output-schema struct). An implementation without constrained decoding
   can ignore it.
@@ -1139,6 +1190,10 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   agent's. With the chat schema, its system prompt no longer shows an output schema and its
   answer is plain text. It used to be `{"chat_message": ...}` JSON constrained by structured
   outputs.
+- Streaming calls through `ClaudioAdapter` send the agent's `mcp_servers`; 1.x's streaming path
+  dropped them, so a streamed MCP-connector agent ran without its servers. A message that is not a
+  `%Normandy.Components.Message{}`, or whose role is not a string, raises `ArgumentError` instead of
+  being left out of the request: pass `Message` structs when you call the adapter directly.
 
 ## 34. Tool results and memory namespaces are capped
 
@@ -1431,6 +1486,17 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   `:all`); 1.x listed every tool. `handle_message/4` returns `{:error, :agent_failed}` when the agent
   raises or exits (the detail is logged, not sent), and `{:error, :no_text}` for a message with only file
   or data parts (1.x ran it as an empty prompt).
+- `A2A.Server.handle_message` replies with an output that has neither `chat_message` nor `content` as
+  its schema's JSON (`BaseIOSchema.to_json/1`, declared fields only), not its `inspect/1` text, which
+  showed the remote caller internal metadata. A remote caller that read that text parses JSON.
+- Each `PolicyEngine.Ruleset` rule needs `:match` (a string) and `:action` (`:allow`, `:deny` or
+  `:require_approval`), or `BaseAgent.init/1` raises `ArgumentError` naming its position. 1.x treated a
+  rule without `:action` as `:allow` and one without `:match` as never matching: fix such rules
+  before you upgrade.
+- The `ArgumentError` for an invalid image or document block, a bad cache-control value or an
+  unsupported content block names the value's type (`got url: a string (0 bytes)`) instead of
+  printing it, since the value can hold megabytes of user data. Tests that matched the printed
+  value must match the type.
 
 ## 38. History, encoding and caching
 
@@ -1487,6 +1553,15 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   order: return one from a tool whose key order means something to the model. A custom
   `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
   encode them in order, as Jason does.
+- `ClaudioAdapter` raises `ArgumentError`, naming the position and turn id, for a `"system"`
+  message anywhere but first in the history; 1.x let it replace the agent's system prompt
+  silently. Store summaries and notes in memory as `"user"` or `"assistant"` messages.
+- When `max_messages` trims a memory, every kept message loses its thinking blocks (replayed
+  thinking must follow the exact history that produced it), and the kept window starts at a user
+  message: the oldest one among the last `max_messages`, or the newest one when none is among
+  them, so the memory can hold more than `max_messages` until the turn ends. 1.x kept exactly
+  `max_messages` with their thinking: code that counts a trimmed memory's messages or reads its
+  thinking must allow for both.
 
 ## 39. Turn.Server start, store failures and compaction persistence
 
@@ -1695,6 +1770,14 @@ code you wrote against 1.x must follow the changes below.
   `{registry, key, value}`.
 - Normandy no longer starts `:mnesia`. If you use `SessionStore.Mnesia` or `MemoryStore.Mnesia`, add it
   to your application's `extra_applications` in `mix.exs`: `[:logger, :mnesia]`.
+- `SessionStore.Redis` refuses a replica wait with a zero timeout, `wait: {n, 0}` or
+  `config :normandy, :redis_wait, {n, 0}` with `n > 0`: `new/1` raises `ArgumentError`, and the app
+  env is checked before each write, which raises the same. Redis treats a 0 `WAIT` timeout as
+  forever, and 1.x then blocked the shared connection: set a positive `timeout_ms`.
+- `SessionStore.Postgres` returns `{:error, %DBConnection.ConnectionError{}}` or
+  `{:error, %Postgrex.Error{}}` from every callback when the database fails; 1.x raised them, so a
+  database outage crashed `Turn.Server` and `ResumeReaper`. Code that calls the store itself and
+  rescued them must match the error tuple.
 
 ## 41. Telemetry and logs
 
@@ -1864,7 +1947,7 @@ code you wrote against 1.x must follow the changes below.
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
 - `Batch.Processor.process_batch/3`, `process_batch_chunked/3` and `BaseAgent.process_batch/3` return
   (by default, `ordered: true`) one `{:ok, result}` or `{:error, reason}` per input, in input order. With
-  `ordered: false` they return the `batch_result` map, as before. 1.x returned the bare response, or
+  `ordered: false` they return the `batch_result` map (its `errors` entries changed, below). 1.x returned the bare response, or
   `nil` for an input that failed. A slow input no longer stops the batch.
 
   | 1.x | 2.0 |
@@ -1877,6 +1960,16 @@ code you wrote against 1.x must follow the changes below.
   ```
 - `AgentPool.checkout/2` returns `{:error, :timeout}` when no agent frees up within `:timeout`; 1.x
   exited the caller. Match the tuple instead of catching the exit.
+- `AgentPool` takes back an agent whose holder exits, drops a waiter that exits before it is
+  served, ignores (with a warning) a checkin of an agent the caller does not hold, and replaces
+  once an agent that crashes, idle or checked out. 1.x left a dead holder's agent checked out for
+  good and terminated an agent checked in twice: check agents in once, from the process that
+  checked them out.
+- With `ordered: false`, each entry of the batch stats' `errors` is `{input, error}` (1.x listed
+  the bare error, though its type said `{input, error}`). `:on_progress` and `:on_error` run in
+  the calling process, `:on_progress` getting the number of items finished so far (1.x called both
+  in each item's task, `:on_progress` with that item's position): read the pairs, and do not rely
+  on the callbacks' process.
 
 ## 43. Turn.Server terminal saves and blank answers
 
@@ -1908,6 +2001,8 @@ code you wrote against 1.x must follow the changes below.
 - The optional `horde` dependency is `~> 0.10` (was `~> 0.9`):
   `SessionRegistry.Horde.Via` relies on Horde 0.10's registration order. A project locked
   to Horde 0.9 runs `mix deps.update horde`.
+- `telemetry` is `~> 1.3` (was `~> 1.0`); Normandy's spans need 1.3. A project locked to an older
+  `telemetry` runs `mix deps.update telemetry`.
 
 ## 45. Testing support and docs
 
@@ -2136,3 +2231,7 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - The Hex package includes MIGRATING-2.0.md.
 - The README quickstart and the guides use `claude-opus-5-5`; the quickstart reads
   `response.chat_message` and handles `{:error, exception}`.
+- `ClaudioAdapter` `client.options[:thinking_block_binding]` (`:error | :drop_block`) sets what the
+  API does with a replayed thinking block whose history changed; it needs `thinking: :adaptive` or
+  `:thinking_budget` (otherwise `ArgumentError`). The blocks the API reports dropping arrive as
+  `input_transformations` in `[:normandy, :agent, :llm_call, :stop]`, each logged as a warning.
