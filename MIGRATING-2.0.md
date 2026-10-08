@@ -597,7 +597,8 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   used to swallow it).
 - A DSL agent's `max_messages` (declared in the `agent` block or given to `new/1`) now caps its
   memory. 1.x passed it to `BaseAgent.init/1`, which dropped it, so the memory grew without
-  bound: remove the declaration to keep every message, or expect the trim described in §38.
+  bound: remove the declaration to keep every message, or expect the trim described in §38. A
+  `memory:` given to `new/1` wins, and the cap is not applied to it.
 
 ## 22. Config groups, the compactor's window pin, and 1.0 session templates
 
@@ -1020,9 +1021,9 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - `ClaudioAdapter` client options are checked when the agent is built (`BaseAgent.init/1`,
   `ConfigTemplate.rebuild/3`): an unknown key (`:thinkin`, `:enable_cacheing`), a non-boolean
   `:enable_caching` or `:structured_outputs`, `options` that are not a map, or a missing or empty
-  `api_key` raises `ArgumentError`; 1.x accepted them. `:timeout`, `:recv_timeout` and
-  `options[:base_url]`, documented in 1.x but never read, now reach the HTTP client: check the
-  values you set.
+  `api_key` raises `ArgumentError`; 1.x accepted them. `:timeout` and `options[:base_url]`,
+  documented in 1.x but never read, now reach the HTTP client, as does the new `:recv_timeout`:
+  check the values you set.
 
 ## 31. Circuit breakers are shared and supervised by Normandy
 
@@ -1080,7 +1081,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - The structured-outputs fallback (a second request on the legacy parse-retry path) runs only for
   a 400 whose message names `output_format`, `output_config` or `schema`; 1.x re-sent the request
   for any `invalid_request_error`, so a 400 such as "prompt is too long" cost two requests. Any
-  other 400 returns `{:error, %Normandy.LLMError{type: :invalid_request}}` at once.
+  other 400 returns `{:error, %Normandy.LLMError{type: :invalid_request}}` at once: handle
+  `:invalid_request` instead of relying on a second attempt.
 - A custom `Normandy.Agents.Model` receives the schema as the new `Normandy.LLM.Request` field
   `output_format` (the output-schema struct). An implementation without constrained decoding
   can ignore it.
@@ -1271,6 +1273,14 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
     BaseAgent.run(agent, input)
   end
   ```
+- `Summarizer.compress_conversation/3` stores its summary as a `"user"` message by default
+  (`:summary_role` takes `"user"` or `"assistant"`); 1.x stored it as `"system"`, also for a
+  `:summarize` compaction through `Context.WindowManager`, and the adapter let it replace the
+  system prompt. A memory dumped, or a session stored, by 1.x after such a summary still holds
+  that `"system"` entry, and under 2.0 every request from it raises `ArgumentError`
+  (`Normandy.LLM.ClaudioAdapter: system message at position N ...`, §38). Before you run such a
+  memory, rewrite the entry's role to `"user"`: in the `AgentMemory.dump/1` string before
+  `AgentMemory.load/1` (`"role":"system"` to `"role":"user"`), or in the session store's history.
 
 ## 36. Model-facing text and schemas
 
@@ -1560,8 +1570,7 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   thinking must follow the exact history that produced it), and the kept window starts at a user
   message: the oldest one among the last `max_messages`, or the newest one when none is among
   them, so the memory can hold more than `max_messages` until the turn ends. 1.x kept exactly
-  `max_messages` with their thinking: code that counts a trimmed memory's messages or reads its
-  thinking must allow for both.
+  `max_messages`: code that counts a trimmed memory's messages must allow for the longer window.
 
 ## 39. Turn.Server start, store failures and compaction persistence
 
@@ -1947,8 +1956,9 @@ code you wrote against 1.x must follow the changes below.
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
 - `Batch.Processor.process_batch/3`, `process_batch_chunked/3` and `BaseAgent.process_batch/3` return
   (by default, `ordered: true`) one `{:ok, result}` or `{:error, reason}` per input, in input order. With
-  `ordered: false` they return the `batch_result` map (its `errors` entries changed, below). 1.x returned the bare response, or
-  `nil` for an input that failed. A slow input no longer stops the batch.
+  `ordered: false` they return the `batch_result` map (its `errors` entries changed, below). 1.x
+  returned the bare response, or `nil` for an input that failed. A slow input no longer stops the
+  batch.
 
   | 1.x | 2.0 |
   |---|---|
@@ -1970,6 +1980,9 @@ code you wrote against 1.x must follow the changes below.
   the calling process, `:on_progress` getting the number of items finished so far (1.x called both
   in each item's task, `:on_progress` with that item's position): read the pairs, and do not rely
   on the callbacks' process.
+- `Batch.Processor.process_batch_chunked/3` with `ordered: false` returns `{:ok, batch_result}`, one
+  map merged over every chunk; 1.x returned `{:ok, list}` of the successes only and dropped the
+  errors. Read `batch_result.success` for the list, and `batch_result.errors` for what 1.x dropped.
 
 ## 43. Turn.Server terminal saves and blank answers
 
@@ -2077,6 +2090,11 @@ code you wrote against 1.x must follow the changes below.
   removed: they used the 1.x API (`Normandy.Tools.BaseTool`) and no longer compiled. They were
   never in the Hex package. `examples/README.md` now points at the guides;
   `examples/tools/weather.ex` stays.
+- `use Normandy.DSL.Agent` imports a `hooks/1` macro. A DSL agent module that defines its own
+  `hooks/1` and calls it no longer compiles: the local call expands to the DSL's `hooks`
+  (`ArgumentError` "hooks must be a list of {module, opts} entries"), or the compiler reports that
+  the import conflicts with the local function. Rename the function, or add
+  `import Normandy.DSL.Agent, except: [hooks: 1]` after the `use`.
 
 ## 47. Behaviour callbacks and removed leftovers
 
