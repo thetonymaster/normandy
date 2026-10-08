@@ -57,21 +57,11 @@ jobs:
           git config user.name "normandy-release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
+      # cog 7 exits 0 with nothing to release, so the script releases only when the dry
+      # run's last line is a version (a docs-only merge to main must not republish).
       - name: Determine next version
         id: bump_check
-        run: |
-          # No pipe in the `if` condition: the exit status must be cog's, not
-          # tail's. Piping here would mask a non-zero cog exit unless pipefail
-          # is set, breaking the clean no-op when nothing is releasable.
-          if version="$(cog bump --auto --dry-run 2>/dev/null)"; then
-            version="$(printf '%s\n' "$version" | tail -n1)"
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "version=${version}" >> "$GITHUB_OUTPUT"
-            echo "Releasable change detected: ${version}"
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No releasable commits since last tag; skipping release."
-          fi
+        run: .github/scripts/release-version.sh >> "$GITHUB_OUTPUT"
 
       - name: Bump version, changelog, and tag
         if: steps.bump_check.outputs.release == 'true'
