@@ -2,8 +2,8 @@ defmodule Normandy.Docs.MigratingTest do
   @moduledoc """
   Task 7.1b (decision 27 C2, C3): MIGRATING-2.0.md's numbered sections run 1..n, its
   "Who is affected" index names only existing sections and every section at least once,
-  the closing sections follow the last numbered one, the two breaking items no longer sit
-  under "New, non-breaking", and its code fences are balanced.
+  the closing sections follow the last numbered one, the 2.0-only `client.options` checks sit
+  under "New, non-breaking", not section 30, and its code fences are balanced.
   """
   use ExUnit.Case, async: true
 
@@ -47,10 +47,10 @@ defmodule Normandy.Docs.MigratingTest do
     assert last_at < limits_at and limits_at < new_at
   end
 
-  test "breaking changes are not filed under New, non-breaking", %{text: text} do
-    new = section(text, "## New, non-breaking")
-    refute new =~ "`:fallbacks` is rejected on streaming calls"
-    refute new =~ "now raise on an invalid"
+  test "options that did not exist in 1.x are not filed as breaking in section 30", %{text: text} do
+    [_, s30] = Regex.run(~r/^## 30\. .*?\n(.*?)(?=^## 31\. )/ms, text)
+    refute s30 =~ "`client.options[:fallbacks]` is refused"
+    refute s30 =~ "raise on an invalid `ClaudioAdapter`"
   end
 
   test "code fences are balanced", %{text: text} do

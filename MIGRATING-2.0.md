@@ -11,8 +11,8 @@ Find the rows that describe you and read the sections they list. Every section i
 | You | Read |
 |---|---|
 | Everyone upgrading | §1, §11, §17, §20, §21, §30, §44 |
-| Build and run agents (`BaseAgent`, schemas, prompts, memory) | §2, §8, §18, §19, §23, §28, §29, §32, §33, §36, §38, §43 |
-| Write tools, or use MCP or A2A | §3, §15, §24, §25, §34, §37 |
+| Build and run agents (`BaseAgent`, schemas, prompts, memory) | §2, §8, §18, §19, §22, §23, §28, §29, §31, §32, §33, §36, §38, §43 |
+| Write tools, or use MCP or A2A | §3, §15, §24, §25, §34, §37, §46 |
 | Use the DSLs (`agent do`, `workflow do`) | §21, §46 |
 | Run durable sessions (`Turn.Session`, `Turn.Server`, clusters) | §12, §13, §22, §26, §39, §40, §43 |
 | Implement `Normandy.Agents.Model` (your own LLM client) | §4, §9, §23, §33, §38 |
@@ -240,7 +240,7 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 
   | 1.x | 2.0 |
   |---|---|
-  | non-retryable failure: `{:error, reason}` | `{:error, {reason, 1, [reason]}}` |
+  | non-retryable failure: `{:error, reason}` | `{:error, {reason, attempts, errors}}`, the same shape as exhaustion (`{reason, 1, [reason]}` when it fails on the first attempt) |
   | retries exhausted: `{:error, {reason, attempts, errors}}` | unchanged |
   | `Retry.preset(:typo)` → the `:standard` options | raises `ArgumentError` |
 
@@ -564,9 +564,11 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   raises `ArgumentError` (1.x: `KeyError`); an agent that declares no model and is given none
   in `new/1` raises `ArgumentError` `"MyAgent.new/1: requires :model (a string), got none"`
   (1.x: `RuntimeError` `"model is required in agent definition"`).
-- **An output guardrail violation blocks the answer by default.** `run/3` and `stream/3` return
-  `{:error, %Normandy.Guardrails.ViolationError{}}`; 1.x logged the violation and returned the answer. To
-  keep the 1.x behaviour, set `on_violation: :warn`:
+- **An output guardrail violation blocks the answer by default.** `run/3` returns
+  `{:error, %Normandy.Guardrails.ViolationError{}}` (`run!/3` raises it, `Turn.Server.run/2` replies it);
+  1.x logged the violation and returned the answer. To keep the 1.x behaviour, set `on_violation: :warn`.
+  Streaming is unchanged: `on_violation` does not apply to `stream/3`, where a violation arrives as a
+  `:guardrail_violation` stream event:
 
   ```elixir
   BaseAgent.init(client: client, model: model, guardrails: [output: guards, on_violation: :warn])
@@ -979,11 +981,6 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
   and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
   `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
-- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` raise on an invalid `ClaudioAdapter`
-  `client.options` combination; 1.x failed on the first call, after any retries.
-  `ClaudioAdapter.validate_options!/1` is the public check.
-- `client.options[:fallbacks]` is refused on streaming calls (`ArgumentError`): partial output from a
-  declining model would already have reached the stream callback.
 
 ## 31. Circuit breakers are shared and supervised by Normandy
 
@@ -1866,7 +1863,8 @@ code you wrote against 1.x must follow the changes below.
   bytes, so their cost grows with the square of the answer's length (now documented in
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
 - `Batch.Processor.process_batch/3`, `process_batch_chunked/3` and `BaseAgent.process_batch/3` return
-  one `{:ok, result}` or `{:error, reason}` per input, in input order. 1.x returned the bare response, or
+  (by default, `ordered: true`) one `{:ok, result}` or `{:error, reason}` per input, in input order. With
+  `ordered: false` they return the `batch_result` map, as before. 1.x returned the bare response, or
   `nil` for an input that failed. A slow input no longer stops the batch.
 
   | 1.x | 2.0 |
@@ -2076,7 +2074,9 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - **Memory-store bookkeeping.** `MemoryStore.InMemory` totals a namespace from all its documents on every
   limited write, so a write's cost grows with the namespace. `MemoryStore.Postgres` keeps a namespace's
   counter row, at zero, after its last document is deleted, until `delete_namespace/2`.
-- **`Schema.Wire` cleans the top level only.** `title` keys inside `$defs`, `definitions`,
+- **`Schema.Wire` skips some schema keywords.** It removes `title` and `$schema` and orders properties in every
+  node it recurses into (`properties`, `items`, `additionalProperties`, `not`, `if`/`then`/`else`,
+  `anyOf`/`oneOf`/`allOf`, `prefixItems`), but `title` keys inside `$defs`, `definitions`,
   `patternProperties`, `dependentSchemas` and `contains` reach the model as written.
 - **A policy reason that is not a string is not shown to the model.** A `PolicyEngine` that denies with
   a non-binary reason gets the generic "blocked by policy" text in the tool result.
@@ -2097,6 +2097,11 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.
 - With `:task_budget`, Normandy sends the total and, after in-turn compaction, a fixed
   `remaining` that subtracts the tokens compaction removed from the current turn.
+- `:fallbacks` is rejected on streaming calls: partial output from a declining model would
+  already have reached the stream callback.
+- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` now raise on an invalid
+  `ClaudioAdapter` `client.options` combination instead of failing on the first call (after
+  any retries). `ClaudioAdapter.validate_options!/1` is the public check.
 - `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
 - `served_by` appears in `[:normandy, :agent, :llm_call, :stop]` telemetry and the
   `normandy llm call stop` log line after a server-side fallback (non-streaming calls;
