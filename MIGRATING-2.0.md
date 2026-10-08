@@ -4,6 +4,28 @@ Normandy 2.0 moves to Claudio 0.7 and makes its defaults work on Claude Opus 4.7
 which reject sampling parameters and `budget_tokens` thinking. Each breaking change below
 says what to do.
 
+## Who is affected
+
+Find the rows that describe you and read the sections they list. Every section is listed at least once.
+
+| You | Read |
+|---|---|
+| Everyone upgrading | §1, §11, §17, §20, §21, §30, §44 |
+| Build and run agents (`BaseAgent`, schemas, prompts, memory) | §2, §8, §18, §19, §23, §28, §29, §32, §33, §36, §38, §43 |
+| Write tools, or use MCP or A2A | §3, §15, §24, §25, §34, §37 |
+| Use the DSLs (`agent do`, `workflow do`) | §21, §46 |
+| Run durable sessions (`Turn.Session`, `Turn.Server`, clusters) | §12, §13, §22, §26, §39, §40, §43 |
+| Implement `Normandy.Agents.Model` (your own LLM client) | §4, §9, §23, §33, §38 |
+| Implement a behaviour or a custom type (`BudgetTracker`, `PolicyEngine`, `ModelCatalog`, `Compactor`, `SessionStore`, `MemoryStore`, hooks, `Normandy.Type`) | §5, §16, §37, §40, §47 |
+| Compact long conversations | §5, §6, §7, §35 |
+| Coordinate agents (orchestrators, `AgentProcess`, `AgentPool`, batches) | §27, §31, §42 |
+| Consume telemetry or logs | §9, §14, §41 |
+| Operate stores (Postgres, Redis, Mnesia) | §10, §13, §40 |
+| Test code that uses Normandy | §45 |
+| Referenced a module that is now internal | §45 |
+
+Limits that 2.0 still has are listed under "Known limits of 2.0" at the end.
+
 ## 1. `temperature` is unset by default
 
 `BaseAgentConfig`, `BaseAgent.init/1`, the `agent do ... end` DSL and the summarizer no longer
@@ -100,6 +122,8 @@ error); in 1.x it was `type: :unknown`.
   A config that names it logs one warning per VM (from `BaseAgent.init/1` or
   `ConfigTemplate.rebuild/3`); set `model_catalog: {ModelCatalog.ModelsAPI, []}` and re-save
   persisted templates to silence it.
+- `ModelCatalog.Static.limits/0` is gone with the static table. Ask `ModelCatalog.ModelsAPI` for a
+  model's window (`context_window/2`).
 - **Compaction now runs on current models.** Before, the static table didn't know them, so
   a real compactor silently did nothing. Now memory gets truncated, and the `:summarize`
   strategy makes extra paid LLM calls.
@@ -210,6 +234,22 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - `stream/3` returns `{:error, %Normandy.LLMError{}}` when the stream fails (see §20). 1.x's
   `stream_response/3` and `stream_with_tools/3` returned `{config, %{error: reason}}`. A
   stream that ends without `message_stop` is now a failure, not a complete message.
+- `Normandy.Resilience.Retry.with_retry/2` returns `{:error, {reason, attempts, errors}}` for every
+  failure, a non-retryable one included (1.x returned that error bare). `Retry.preset/1` raises
+  `ArgumentError` on an unknown name (1.x fell back to `:standard`).
+
+  | 1.x | 2.0 |
+  |---|---|
+  | non-retryable failure: `{:error, reason}` | `{:error, {reason, 1, [reason]}}` |
+  | retries exhausted: `{:error, {reason, attempts, errors}}` | unchanged |
+  | `Retry.preset(:typo)` → the `:standard` options | raises `ArgumentError` |
+
+  ```elixir
+  case Retry.with_retry(fun, Retry.preset(:standard)) do
+    {:ok, value} -> value
+    {:error, {reason, _attempts, _errors}} -> {:error, reason}
+  end
+  ```
 
 ## 12. `Turn.Server` failure replies and approval expiry
 
@@ -421,6 +461,10 @@ This also reaches input you don't build by hand:
 - Input guardrails see a validated `%BaseAgentInputSchema{}` for string and map input alike.
   Built-in guards without a `:field` option check its `chat_message` text; custom guards
   receive the struct.
+- `Normandy.Validate.validate/2` requires only the fields declared `required: true`. 1.x required every
+  field of the schema.
+- A required value that is only whitespace is blank: `validate_required/2` rejects `"  "` as it rejects
+  `""`. 1.x accepted it.
 
 ## 19. An output that breaks its schema is an error
 
@@ -520,6 +564,17 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   raises `ArgumentError` (1.x: `KeyError`); an agent that declares no model and is given none
   in `new/1` raises `ArgumentError` `"MyAgent.new/1: requires :model (a string), got none"`
   (1.x: `RuntimeError` `"model is required in agent definition"`).
+- **An output guardrail violation blocks the answer by default.** `run/3` and `stream/3` return
+  `{:error, %Normandy.Guardrails.ViolationError{}}`; 1.x logged the violation and returned the answer. To
+  keep the 1.x behaviour, set `on_violation: :warn`:
+
+  ```elixir
+  BaseAgent.init(client: client, model: model, guardrails: [output: guards, on_violation: :warn])
+  ```
+- These now fail where they are written instead of passing silently: `compute:` on a field that is not
+  `virtual: true` (a compile error), a guardrail `:field` the struct does not have (`ArgumentError`), and
+  a built-in guard's configuration error, which raises under every `:on_error` (`:open` and `:closed`
+  used to swallow it).
 
 ## 22. Config groups, the compactor's window pin, and 1.0 session templates
 
@@ -924,6 +979,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `AgentTemplate.Catalog.start_link/1`'s `:templates` a plain map; `Cluster`'s `:registry`
   and `:supervisor` are atoms, `:store` and `:template_provider` `{module, handle}` tuples (as
   `Turn.Session.new/1` takes them), and `:topologies` and `:redix` keyword lists.
+- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` raise on an invalid `ClaudioAdapter`
+  `client.options` combination; 1.x failed on the first call, after any retries.
+  `ClaudioAdapter.validate_options!/1` is the public check.
+- `client.options[:fallbacks]` is refused on streaming calls (`ArgumentError`): partial output from a
+  declining model would already have reached the stream callback.
 
 ## 31. Circuit breakers are shared and supervised by Normandy
 
@@ -1150,6 +1210,15 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   only when the conversation no longer fits the window.
 - `Turn.Server` stores each compaction, and a restored session starts from the compacted
   conversation; see section 39.
+- `Normandy.Context.WindowManager.truncate_conversation/2` and `ensure_within_limit/2` return
+  `{:error, reason}` when a `:summarize` compaction fails (its summary request failed). 1.x returned only
+  `{:ok, agent}`.
+
+  ```elixir
+  with {:ok, agent} <- WindowManager.ensure_within_limit(agent, manager) do
+    BaseAgent.run(agent, input)
+  end
+  ```
 
 ## 36. Model-facing text and schemas
 
@@ -1354,6 +1423,17 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   approval, hooks, budget or input validation (now documented); the agent loop uses
   `Normandy.Agents.Dispatch`. An approved call runs whatever tool holds its name when the
   approval arrives: version a tool's name when its behaviour changes.
+- `PolicyEngine.Ruleset` requires `:rules` and `:default_action`. 1.x defaulted `:default_action` to
+  `:allow`; a ref without it now raises `ArgumentError` when the agent is built. Say what an unmatched
+  call gets:
+
+  ```elixir
+  {Normandy.Behaviours.PolicyEngine.Ruleset, rules: rules, default_action: :allow}
+  ```
+- `A2A.Server.build_agent_card/2` lists no tools unless you pass `:expose_tools` (a list of names or
+  `:all`); 1.x listed every tool. `handle_message/4` returns `{:error, :agent_failed}` when the agent
+  raises or exits (the detail is logged, not sent), and `{:error, :no_text}` for a message with only file
+  or data parts (1.x ran it as an empty prompt).
 
 ## 38. History, encoding and caching
 
@@ -1503,6 +1583,8 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   the last stored compaction`); a restart then rebuilds from the last compaction that was
   stored, followed by every message stored after it, or the full conversation, as in 1.x,
   when none was.
+- `Turn.Supervisor` and `Turn.Supervisor.Horde` allow 100 restarts in 5 seconds (OTP's default is 3);
+  `start_link/1` takes `:max_restarts` and `:max_seconds`.
 
 ## 40. Session stores, registry and memory stores
 
@@ -1614,6 +1696,8 @@ code you wrote against 1.x must follow the changes below.
   term `{registry, session_id}`, the registry process and `Horde.Registry.lookup/2` are
   unchanged. The new module takes only that 2-tuple name, not Horde's
   `{registry, key, value}`.
+- Normandy no longer starts `:mnesia`. If you use `SessionStore.Mnesia` or `MemoryStore.Mnesia`, add it
+  to your application's `extra_applications` in `mix.exs`: `[:logger, :mnesia]`.
 
 ## 41. Telemetry and logs
 
@@ -1781,6 +1865,20 @@ code you wrote against 1.x must follow the changes below.
 - `:incremental` output guardrails re-check the whole accumulated text every `chunk_size`
   bytes, so their cost grows with the square of the answer's length (now documented in
   `Normandy.Guardrails`); raise `chunk_size` for long answers.
+- `Batch.Processor.process_batch/3`, `process_batch_chunked/3` and `BaseAgent.process_batch/3` return
+  one `{:ok, result}` or `{:error, reason}` per input, in input order. 1.x returned the bare response, or
+  `nil` for an input that failed. A slow input no longer stops the batch.
+
+  | 1.x | 2.0 |
+  |---|---|
+  | `{:ok, [response, nil]}` | `{:ok, [{:ok, response}, {:error, reason}]}` |
+
+  ```elixir
+  {:ok, results} = Batch.Processor.process_batch(agent, inputs)
+  for {:ok, response} <- results, do: response
+  ```
+- `AgentPool.checkout/2` returns `{:error, :timeout}` when no agent frees up within `:timeout`; 1.x
+  exited the caller. Match the tuple instead of catching the exit.
 
 ## 43. Turn.Server terminal saves and blank answers
 
@@ -1827,6 +1925,16 @@ code you wrote against 1.x must follow the changes below.
   Normandy.Behaviours.SessionRegistry.Redis.Via. `Normandy.Agents.Turn.Driver.Handlers`,
   `Normandy.Hooks.Context`, `Normandy.Telemetry.Request` and `Normandy.Telemetry.Usage`
   stay public.
+
+  If you called one directly:
+
+  - `Turn.Driver`, `Turn.Inline`: run turns with `BaseAgent.run/3`, `stream/3` or
+    `Turn.Session`. `Turn.Driver.Handlers` stays public.
+  - `ValidationMiddleware`: input and output validation run inside every turn.
+  - `Json.ContentCleaner`, `Decoder`, `RetryFeedback`, `Scanner`, `SchemaBinder`,
+    `SchemaTranslator`: use `Normandy.LLM.JsonDeserializer`.
+  - `OtelCtx`: trace context is carried for you (see `Normandy.Telemetry`).
+  - `Redis.Via`: pass the registry handle (`SessionRegistry.Redis.handle/1`).
 - To test a hook under the library's rules (ordering, `:on_error`, return contracts), run
   it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The
   hooks guide's "Testing a hook" section shows it. Calling the hook runner directly is no
@@ -1876,6 +1984,35 @@ code you wrote against 1.x must follow the changes below.
   removed: they used the 1.x API (`Normandy.Tools.BaseTool`) and no longer compiled. They were
   never in the Hex package. `examples/README.md` now points at the guides;
   `examples/tools/weather.ex` stays.
+
+## 47. Behaviour callbacks and removed leftovers
+
+- `Normandy.Behaviours.BudgetTracker` callbacks receive the tool call and the opts:
+
+  | 1.x | 2.0 |
+  |---|---|
+  | `check(scope, est)` | `check(scope, call, opts)` |
+  | `record(scope, usage)` | `record(scope, call, result, opts)` |
+
+  `call` is the `%Normandy.Components.ToolCall{}`, `result` its `%Normandy.Components.ToolResult{}`, and
+  `opts` the `opts` half of the `{module, opts}` ref in `Normandy.Behaviours.Config`.
+  `BudgetTracker.NoOp.check/3` and `NoOp.record/4` take the same new arguments.
+
+  ```elixir
+  defmodule MyBudget do
+    @behaviour Normandy.Behaviours.BudgetTracker
+
+    @impl true
+    def check(scope, _call, opts),
+      do: if(MyLedger.spent(scope) < opts[:limit], do: :ok, else: {:error, :over_budget})
+
+    @impl true
+    def record(scope, call, _result, _opts), do: MyLedger.add(scope, call.name)
+  end
+  ```
+- The `Normandy.Type` optional callback `autogenerate/0` is gone; nothing calls it. Delete it from a
+  custom type (an `@impl true` on it warns at compile time).
+- `Normandy`'s generated placeholder `hello/0` is gone.
 
 ## Known limits of 2.0
 
@@ -1933,6 +2070,20 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   errors). A `retry_if` that also retries `:invalid_output`, `:max_tokens` or `:refusal`
   reports only the final attempt's tokens in `[:normandy, :agent, :llm_call, :stop]` and the
   run totals; the retried attempts' usage is dropped.
+- **A resumed turn can miss the iteration-cap notice.** If `Turn.Server` stops while it appends the
+  results of the last allowed tool round, the resumed turn makes its final call without the notice that
+  no more tools will run. The answer is still produced.
+- **Memory-store bookkeeping.** `MemoryStore.InMemory` totals a namespace from all its documents on every
+  limited write, so a write's cost grows with the namespace. `MemoryStore.Postgres` keeps a namespace's
+  counter row, at zero, after its last document is deleted, until `delete_namespace/2`.
+- **`Schema.Wire` cleans the top level only.** `title` keys inside `$defs`, `definitions`,
+  `patternProperties`, `dependentSchemas` and `contains` reach the model as written.
+- **A policy reason that is not a string is not shown to the model.** A `PolicyEngine` that denies with
+  a non-binary reason gets the generic "blocked by policy" text in the tool result.
+- **A schema struct inside a plain-map field is not validated.** Validation descends into fields that
+  are schema structs or lists of them, not into plain maps.
+- **The memory tool checks its mounts on its first call.** A session namespace that equals a mount's
+  raises on the first `memory` tool call, not when the agent is built.
 
 ## New, non-breaking
 
@@ -1944,11 +2095,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - `client.options` on `Normandy.LLM.ClaudioAdapter` accepts `:thinking`
   (`:adaptive | :disabled`), `:thinking_display`, `:effort`, `:speed`, `:inference_geo`,
   `:fallbacks` and `:task_budget`. Nothing is sent unless set. See the adapter's moduledoc.
-- `:fallbacks` is rejected on streaming calls: partial output from a declining model would
-  already have reached the stream callback.
-- `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` now raise on an invalid
-  `ClaudioAdapter` `client.options` combination instead of failing on the first call (after
-  any retries). `ClaudioAdapter.validate_options!/1` is the public check.
 - With `:task_budget`, Normandy sends the total and, after in-turn compaction, a fixed
   `remaining` that subtracts the tokens compaction removed from the current turn.
 - `:req_options` is merged into the Req client, as on `OpenAICompatibleAdapter`.
