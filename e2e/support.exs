@@ -13,18 +13,33 @@ defmodule E2E.Support do
     [:normandy, :memory, :command, :stop]
   ]
 
+  # Scenario 15 (AX-7): preserved thinking is checked on Opus 5.5, never on Haiku 4.5.
+  @opus "claude-opus-5-5"
+
+  alias NormandyTest.E2E.Prices
+
   def model, do: @model
+  def model(:opus), do: @opus
 
   def start(id, cap: cap) do
     {:ok, _} =
       Agent.start_link(
-        fn -> %{id: id, cap: cap, calls: 0, usages: [], events: %{}, t0: System.monotonic_time(:millisecond)} end,
+        fn -> %{id: id, cap: cap, calls: 0, usages: [], priced: [], events: %{}, t0: System.monotonic_time(:millisecond)} end,
         name: __MODULE__
       )
 
     # Lifecycle [info] logs would bury the narrated transcript; warnings and errors stay.
     Logger.configure(level: :warning)
     :ok = :telemetry.attach("e2e-claudio-calls", [:claudio, :messages, :create, :stop], &__MODULE__.on_call/4, nil)
+    # A streamed request reports its tokens when the stream ends, not on create's stop.
+    :ok =
+      :telemetry.attach(
+        "e2e-claudio-stream-usage",
+        [:claudio, :messages, :stream, :stop],
+        &__MODULE__.on_stream_usage/4,
+        nil
+      )
+
     :ok = :telemetry.attach_many("e2e-probes", @probe_events, &__MODULE__.on_event/4, nil)
     IO.puts("\n=== #{id} (live-call cap #{cap}) ===")
     if otel?(), do: E2E.OtelBridge.setup(id)
@@ -37,7 +52,13 @@ defmodule E2E.Support do
   defp otel_report, do: if(otel?(), do: E2E.OtelBridge.report())
 
   @doc false
-  def on_call(_event, measurements, _meta, _config), do: count_remote_call(measurements)
+  def on_call(_event, measurements, meta, _config),
+    do: count_remote_call(measurements, Map.get(meta, :model))
+
+  @doc false
+  def on_stream_usage(_event, measurements, meta, _config) do
+    Agent.update(__MODULE__, fn s -> %{s | priced: s.priced ++ [{Map.get(meta, :model), measurements}]} end)
+  end
 
   @doc false
   def on_event(event, measurements, metadata, _config) do
@@ -47,15 +68,22 @@ defmodule E2E.Support do
   end
 
   @doc "Count one real Messages API request; halts the scenario when the cap is exceeded."
-  def count_remote_call(measurements) do
+  def count_remote_call(measurements, model \\ @model) do
     {n, cap} =
       Agent.get_and_update(__MODULE__, fn s ->
-        s = %{s | calls: s.calls + 1, usages: s.usages ++ [measurements]}
+        s = %{
+          s
+          | calls: s.calls + 1,
+            usages: s.usages ++ [measurements],
+            priced: s.priced ++ [{model, measurements}]
+        }
+
         {{s.calls, s.cap}, s}
       end)
 
     if n > cap do
       IO.puts("INVARIANT FAILED: live-call cap #{cap} exceeded (#{n})")
+      report()
       otel_report()
       System.halt(2)
     end
@@ -87,6 +115,7 @@ defmodule E2E.Support do
 
   def assert!(label, _falsy, msg) do
     IO.puts("INVARIANT FAILED: #{label} — #{msg}")
+    report()
     otel_report()
     System.halt(2)
   end
@@ -115,10 +144,27 @@ defmodule E2E.Support do
   end
 
   def finish do
-    %{id: id, calls: n, t0: t0} = Agent.get(__MODULE__, & &1)
-    ms = System.monotonic_time(:millisecond) - t0
     otel_report()
+    report()
+  end
+
+  # The usage line and the E2E_RESULT line the runner parses; also printed before a failure
+  # halts, so a failed scenario's spend is known too.
+  defp report do
+    %{id: id, calls: n, t0: t0, priced: priced} = Agent.get(__MODULE__, & &1)
+    ms = System.monotonic_time(:millisecond) - t0
+    totals = Prices.totals(priced)
     IO.puts("\nLIVE CALLS USED: #{n}")
-    IO.puts("E2E_RESULT " <> Jason.encode!(%{scenario: id, calls: n, ms: ms}))
+    IO.puts(Prices.format(totals))
+
+    usage = %{
+      input: totals.input,
+      output: totals.output,
+      cache_read: totals.cache_read,
+      cache_write: totals.cache_write,
+      cost_usd: Float.round(totals.cost, 6)
+    }
+
+    IO.puts("E2E_RESULT " <> Jason.encode!(%{scenario: id, calls: n, ms: ms, usage: usage}))
   end
 end

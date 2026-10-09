@@ -6,13 +6,18 @@ defmodule NormandyTest.E2E.Runner do
   `mix run e2e/run.exs` under MIX_ENV=test.
   """
 
-  @suite_cap 140
+  alias NormandyTest.E2E.Prices
+
+  @suite_cap 150
   @default_timeout_ms 300_000
-  @timeouts %{"11_distributed" => 600_000}
+  @timeouts %{"11_distributed" => 600_000, "16_mcp_pause" => 600_000}
   @needs_postgres ["11_distributed"]
   # :peer needs a distributed origin node; hidden, so Horde's members: :auto on the
   # peers doesn't count the observing primary as a cluster member.
   @distributed ["11_distributed"]
+  # Assumed tokens per call for `estimate/1` (input, output); every scenario at its cap.
+  @est_tokens %{"15_preserved_thinking" => {8_000, 2_000}, "16_mcp_pause" => {30_000, 1_000}}
+  @default_est_tokens {6_000, 400}
 
   def discover(dir) do
     dir
@@ -54,19 +59,37 @@ defmodule NormandyTest.E2E.Runner do
     |> String.split("\n")
     |> Enum.reverse()
     |> Enum.find_value(:missing, fn
-      "E2E_RESULT " <> json ->
-        case Jason.decode(json) do
-          {:ok, %{"calls" => calls, "ms" => ms}} when is_integer(calls) and is_integer(ms) ->
-            {:ok, %{calls: calls, ms: ms}}
+      "E2E_RESULT " <> json -> decode_result(json)
+      _ -> nil
+    end)
+  end
 
-          _ ->
-            {:error, "malformed E2E_RESULT line: #{String.slice(json, 0, 200)}"}
+  defp decode_result(json) do
+    case Jason.decode(json) do
+      {:ok, %{"calls" => calls, "ms" => ms} = result} when is_integer(calls) and is_integer(ms) ->
+        case decode_usage(Map.get(result, "usage")) do
+          {:ok, usage} -> {:ok, %{calls: calls, ms: ms, usage: usage}}
+          :error -> {:error, "malformed E2E_RESULT usage: #{String.slice(json, 0, 200)}"}
         end
 
       _ ->
-        nil
-    end)
+        {:error, "malformed E2E_RESULT line: #{String.slice(json, 0, 200)}"}
+    end
   end
+
+  defp decode_usage(nil), do: {:ok, nil}
+
+  defp decode_usage(%{
+         "input" => i,
+         "output" => o,
+         "cache_read" => r,
+         "cache_write" => w,
+         "cost_usd" => c
+       })
+       when is_integer(i) and is_integer(o) and is_integer(r) and is_integer(w) and is_number(c),
+       do: {:ok, %{input: i, output: o, cache_read: r, cache_write: w, cost: c / 1}}
+
+  defp decode_usage(_other), do: :error
 
   def preflight(key, _scenarios, _pg) when key in [nil, ""] do
     {:error,
@@ -165,22 +188,23 @@ defmodule NormandyTest.E2E.Runner do
           status: :fail,
           exit: nil,
           calls: nil,
+          usage: nil,
           reason: "timeout: killed after #{timeout_ms} ms"
         })
 
       {:exit, status} ->
         case parse_result(output) do
-          {:ok, %{calls: calls}} when status == 0 ->
-            Map.merge(base, %{status: :pass, exit: 0, calls: calls})
+          {:ok, %{calls: calls, usage: usage}} when status == 0 ->
+            Map.merge(base, %{status: :pass, exit: 0, calls: calls, usage: usage})
 
-          {:ok, %{calls: calls}} ->
-            Map.merge(base, %{status: :fail, exit: status, calls: calls})
+          {:ok, %{calls: calls, usage: usage}} ->
+            Map.merge(base, %{status: :fail, exit: status, calls: calls, usage: usage})
 
           :missing ->
-            Map.merge(base, %{status: :fail, exit: status, calls: nil})
+            Map.merge(base, %{status: :fail, exit: status, calls: nil, usage: nil})
 
           {:error, reason} ->
-            Map.merge(base, %{status: :fail, exit: status, calls: nil, reason: reason})
+            Map.merge(base, %{status: :fail, exit: status, calls: nil, usage: nil, reason: reason})
         end
     end
   end
@@ -215,22 +239,84 @@ defmodule NormandyTest.E2E.Runner do
         calls = if is_integer(r.calls), do: Integer.to_string(r.calls), else: "?"
         exit = if is_integer(r.exit), do: Integer.to_string(r.exit), else: "-"
         secs = :erlang.float_to_binary(r.ms / 1000, decimals: 1)
+        cost = if r.usage, do: Prices.dollars(r.usage.cost), else: "?"
         note = if r.reason, do: " #{r.reason}", else: ""
 
-        "| #{r.id} | #{r.status |> Atom.to_string() |> String.upcase()} | #{exit} | #{calls} | #{secs} |#{note}"
+        "| #{r.id} | #{r.status |> Atom.to_string() |> String.upcase()} | #{exit} | #{calls} | " <>
+          "#{secs} | #{cost} |#{note}"
       end)
 
     known = results |> Enum.map(& &1.calls) |> Enum.filter(&is_integer/1) |> Enum.sum()
+    usage = results |> Enum.map(& &1.usage) |> Enum.reject(&is_nil/1) |> Prices.sum()
 
     Enum.join(
-      ["| scenario | result | exit | live calls | wall s |", "|---|---|---|---|---|"] ++
-        rows ++ ["", "total live calls (known): #{known} (suite cap #{@suite_cap})"],
+      ["| scenario | result | exit | live calls | wall s | est $ |", "|---|---|---|---|---|---|"] ++
+        rows ++
+        [
+          "",
+          "total live calls (known): #{known} (suite cap #{@suite_cap})",
+          Prices.format(usage, "usage (known)")
+        ],
+      "\n"
+    )
+  end
+
+  @doc """
+  A spend estimate for `scenarios` before a run: every scenario at its live-call cap, with
+  the assumed tokens per call in `@est_tokens`. "Upper" prices every input token as a
+  cache write. A scenario that contains `S.model(:opus)` is priced as Opus 5.5.
+  """
+  def estimate(scenarios) do
+    rows =
+      Enum.map(scenarios, fn s ->
+        model =
+          if File.read!(s.path) =~ "S.model(:opus)",
+            do: "claude-opus-5-5",
+            else: "claude-haiku-4-5"
+
+        {input, output} = Map.get(@est_tokens, s.id, @default_est_tokens)
+        p = Prices.price!(model)
+        expected = s.cap * (input * p.input + output * p.output) / 1_000_000
+        upper = s.cap * (input * p.cache_write + output * p.output) / 1_000_000
+
+        {"| #{s.id} | #{model} | #{s.cap} | #{input}+#{output} | #{Prices.dollars(expected)} | " <>
+           "#{Prices.dollars(upper)} |", expected, upper}
+      end)
+
+    expected = rows |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+    upper = rows |> Enum.map(&elem(&1, 2)) |> Enum.sum()
+
+    Enum.join(
+      [
+        "| scenario | model | cap | tokens/call in+out | est $ | upper $ |",
+        "|---|---|---|---|---|---|"
+      ] ++
+        Enum.map(rows, &elem(&1, 0)) ++
+        [
+          "",
+          "estimate: $#{Prices.dollars(expected)} expected, $#{Prices.dollars(upper)} upper bound " <>
+            "(every scenario at its cap)"
+        ],
       "\n"
     )
   end
 
   # main/1 always ends in System.halt/1: it is the process exit of `mix e2e`.
   @dialyzer {:nowarn_function, main: 1}
+  def main(["--estimate" | names]) do
+    all = discover("e2e")
+
+    with {:ok, selected} <- select(all, names),
+         :ok <- check_caps(selected) do
+      IO.puts(estimate(selected))
+      System.halt(0)
+    else
+      {:error, msg} ->
+        IO.puts(:stderr, "mix e2e --estimate: " <> msg)
+        System.halt(1)
+    end
+  end
+
   def main(argv) do
     all = discover("e2e")
     key = System.get_env("ANTHROPIC_API_KEY") || System.get_env("API_KEY")
@@ -255,7 +341,16 @@ defmodule NormandyTest.E2E.Runner do
     Enum.map(selected, fn s ->
       case Map.fetch(blocked, s.id) do
         {:ok, reason} ->
-          %{id: s.id, status: :blocked, exit: nil, calls: 0, ms: 0, log: nil, reason: reason}
+          %{
+            id: s.id,
+            status: :blocked,
+            exit: nil,
+            calls: 0,
+            ms: 0,
+            log: nil,
+            reason: reason,
+            usage: nil
+          }
 
         :error ->
           run_one(s, report_dir: dir)

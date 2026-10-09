@@ -83,11 +83,11 @@ defmodule NormandyTest.E2E.RunnerTest do
   end
 
   test "preflight refuses a selection whose live-call caps exceed the suite cap" do
-    big = Enum.map(1..8, &%{id: "0#{&1}_s", name: "s", path: "p", cap: 18})
+    big = Enum.map(1..9, &%{id: "0#{&1}_s", name: "s", path: "p", cap: 18})
 
     assert {:error, msg} = Runner.preflight("sk-x", big, fn -> :ok end)
-    assert msg =~ "144"
-    assert msg =~ "140"
+    assert msg =~ "162"
+    assert msg =~ "150"
   end
 
   test "preflight refuses a scenario that declares no live-call cap" do
@@ -159,15 +159,77 @@ defmodule NormandyTest.E2E.RunnerTest do
     assert result.reason =~ "malformed E2E_RESULT"
   end
 
-  test "summary shows unknown call counts as ? and totals the known ones" do
+  test "summary shows unknown counts and costs as ? and totals the known ones" do
     table =
       Runner.summary([
-        %{id: "01_a", status: :pass, exit: 0, calls: 8, ms: 12_000, log: "l", reason: nil},
-        %{id: "02_b", status: :fail, exit: 2, calls: nil, ms: 3_000, log: "l", reason: nil}
+        %{
+          id: "01_a",
+          status: :pass,
+          exit: 0,
+          calls: 8,
+          ms: 12_000,
+          log: "l",
+          reason: nil,
+          usage: %{input: 1_000, output: 200, cache_read: 0, cache_write: 0, cost: 0.12}
+        },
+        %{
+          id: "02_b",
+          status: :fail,
+          exit: 2,
+          calls: nil,
+          ms: 3_000,
+          log: "l",
+          reason: nil,
+          usage: nil
+        }
       ])
 
-    assert table =~ "| 01_a | PASS | 0 | 8 | 12.0 |"
-    assert table =~ "| 02_b | FAIL | 2 | ? | 3.0 |"
+    assert table =~ "| scenario | result | exit | live calls | wall s | est $ |"
+    assert table =~ "| 01_a | PASS | 0 | 8 | 12.0 | 0.12 |"
+    assert table =~ "| 02_b | FAIL | 2 | ? | 3.0 | ? |"
     assert table =~ "total live calls (known): 8"
+
+    assert table =~
+             "usage (known): input=1000 output=200 cache_read=0 cache_write=0 est_cost=$0.12"
+  end
+
+  test "parse_result reads the usage block" do
+    out =
+      ~s(E2E_RESULT {"scenario":"x","calls":2,"ms":5,"usage":{"input":10,"output":2,) <>
+        ~s("cache_read":0,"cache_write":4,"cost_usd":0.25}})
+
+    assert {:ok,
+            %{
+              calls: 2,
+              ms: 5,
+              usage: %{input: 10, output: 2, cache_read: 0, cache_write: 4, cost: 0.25}
+            }} = Runner.parse_result(out)
+  end
+
+  test "parse_result names a malformed usage block" do
+    out = ~s(E2E_RESULT {"scenario":"x","calls":2,"ms":5,"usage":{"input":"ten"}})
+
+    assert {:error, "malformed E2E_RESULT usage: " <> _} = Runner.parse_result(out)
+  end
+
+  test "parse_result leaves usage nil when the scenario printed none" do
+    assert {:ok, %{usage: nil}} =
+             Runner.parse_result(~s(E2E_RESULT {"scenario":"x","calls":1,"ms":2}))
+  end
+
+  test "estimate prices every scenario at its cap, Opus where the scenario asks for it",
+       %{tmp_dir: dir} do
+    File.write!(Path.join(dir, "01_a.exs"), ~s|S.start("01_a", cap: 20)|)
+
+    File.write!(
+      Path.join(dir, "15_preserved_thinking.exs"),
+      ~s|S.start("15_preserved_thinking", cap: 8)\nmodel: S.model(:opus)|
+    )
+
+    text = Runner.estimate(Runner.discover(dir))
+
+    assert text =~ "| 01_a | claude-haiku-4-5 | 20 | 6000+400 | 0.16 | 0.19 |"
+    assert text =~ "| 15_preserved_thinking | claude-opus-5-5 | 8 | 8000+2000 | 0.58 | 0.64 |"
+    assert text =~ "estimate: $0.74 expected, $0.83 upper bound"
   end
 end
