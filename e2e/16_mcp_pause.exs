@@ -85,7 +85,7 @@ end
 
 agent_for = fn server, name ->
   BaseAgent.init(%{
-    client: S.client(%{recv_timeout: 290_000}),
+    client: S.client(%{recv_timeout: 150_000}),
     model: S.model(),
     max_tokens: 4_000,
     name: name,
@@ -114,7 +114,16 @@ synthetic_mcp = fn server ->
   config = agent_for.(server, "s16-synthetic")
   ask = %BaseAgentInputSchema{chat_message: "Call #{server.tool} once for #{hd(server.items)}, then answer in one sentence."}
   config = %{config | memory: AgentMemory.add_message(config.memory, "user", ask)}
-  %ToolCallResponse{content_blocks: blocks} = BaseAgent.get_response(config, %ToolCallResponse{})
+
+  # get_response raises on a failed call; report it as a scenario failure with usage.
+  blocks =
+    try do
+      %ToolCallResponse{content_blocks: blocks} = BaseAgent.get_response(config, %ToolCallResponse{})
+      blocks
+    rescue
+      error in Normandy.LLMError ->
+        S.assert!("the rebuilt pause's source call succeeds", false, Exception.message(error))
+    end
 
   case Enum.find_index(blocks, &(&1["type"] == "mcp_tool_use")) do
     nil ->
@@ -140,8 +149,11 @@ synthetic_web = fn ->
     |> Request.add_web_search_tool(version: :basic)
     |> Request.add_message(:user, "Search the web once for the Elixir programming language, then answer in one sentence.")
 
-  {:ok, response} = Claudio.Messages.create(client, request)
-  blocks = Response.to_assistant_content(response)
+  blocks =
+    case Claudio.Messages.create(client, request) do
+      {:ok, response} -> Response.to_assistant_content(response)
+      {:error, error} -> S.assert!("the web_search source call succeeds", false, inspect(error))
+    end
 
   case Enum.find_index(blocks, &(&1["type"] == "server_tool_use")) do
     nil ->
@@ -230,7 +242,23 @@ result =
           )
 
         S.narrate("Restarted as #{inspect(new_pid)}; new input on the paused history.")
-        result = Turn.Session.run(session, %{chat_message: followup})
+
+        # Own deadline, above the call's recv_timeout (150 s); the exit is a failed result below.
+        follow_task =
+          Task.async(fn ->
+            try do
+              Turn.Session.run(session, %{chat_message: followup})
+            catch
+              :exit, reason -> {:exited, reason}
+            end
+          end)
+
+        result =
+          case Task.yield(follow_task, 170_000) || Task.shutdown(follow_task, :brutal_kill) do
+            {:ok, result} -> result
+            _timeout -> S.assert!("the follow-up turn answers within 170 s", false, "no answer")
+          end
+
         {:ok, entries} = InMemory.history(store, sid)
         i = Enum.find_index(entries, paused_entry?)
         S.assert!("the store holds the paused assistant turn", is_integer(i), inspect(Enum.map(entries, & &1.role)))
@@ -240,10 +268,18 @@ result =
 
       {ref, first} when ref == task.ref ->
         Process.demonitor(ref, [:flush])
-        S.narrate("No pause_turn: the server-side loop finished the turn (#{inspect(elem(first, 0))}). Rebuilding the paused shape.")
-        synthetic_mcp.(server)
+
+        case first do
+          {:ok, _output} ->
+            S.narrate("No pause_turn: the server-side loop finished the turn. Rebuilding the paused shape.")
+            synthetic_mcp.(server)
+
+          failed ->
+            # {:error, _} may be the API failing to reach the chosen MCP server: not a finished turn.
+            S.assert!("the first turn ends without an error", false, inspect(failed))
+        end
     after
-      280_000 -> S.assert!("the first turn pauses or finishes within 280 s", false, "neither happened")
+      200_000 -> S.assert!("the first turn pauses or finishes within 200 s", false, "neither happened")
     end
   else
     S.narrate("No candidate MCP server answered an initialize from here; rebuilding the shape with web_search.")
