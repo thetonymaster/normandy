@@ -33,7 +33,7 @@ MIX_ENV=test elixir --hidden --name e2e_primary@127.0.0.1 -S mix run e2e/11_dist
                                # scenario 11 alone: it needs a distributed (hidden) primary
 ```
 
-A scenario that outruns its timeout (5 min; 10 for scenario 11) is killed and reported as
+A scenario that outruns its timeout (5 min; 10 for scenario 11, 20 for scenario 15, 15 for scenario 16) is killed and reported as
 `FAIL` with a `timeout:` note.
 
 Logs and `summary.md` land in `e2e/reports/<UTC timestamp>/` (gitignored).

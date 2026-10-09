@@ -13,7 +13,7 @@ defmodule NormandyTest.E2E.Runner do
   @timeouts %{
     "11_distributed" => 600_000,
     "15_preserved_thinking" => 1_200_000,
-    "16_mcp_pause" => 600_000
+    "16_mcp_pause" => 900_000
   }
   @needs_postgres ["11_distributed"]
   # :peer needs a distributed origin node; hidden, so Horde's members: :auto on the

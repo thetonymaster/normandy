@@ -100,6 +100,33 @@ S.assert!("run 1 made 3 calls: two tool rounds, then the forced final call", S.c
 S.assert!("run 1 totals A1 + B2 = 12", s1.total == 12, inspect(s1))
 S.assert!("memory holds thinking blocks to replay (else this probe proves nothing)", thinking_replayed?.(agent), "no thinking block in any assistant tool turn")
 
+# The prefix key BaseAgent stamps on each tool-loop response (the key the request that produced it
+# ran under). Thinking replays only under the key the next request computes, so: run 1's
+# replayed messages under its key must hold thinking, and run 2 must stamp that same key.
+stamped_key = fn agent, pick ->
+  agent.memory
+  |> AgentMemory.messages()
+  |> Enum.flat_map(fn
+    %Message{role: "assistant", content: %ToolCallResponse{prefix_key: key}} when is_integer(key) -> [key]
+    _other -> []
+  end)
+  |> pick.()
+end
+
+key1 = stamped_key.(agent, &List.first/1)
+S.assert!("run 1 stamped its prefix key on a tool turn", is_integer(key1), inspect(key1))
+
+replayed_blocks =
+  agent.memory
+  |> AgentMemory.request_messages_for(key1)
+  |> Enum.flat_map(fn
+    %Message{role: "assistant", content: blocks} when is_list(blocks) -> blocks
+    _other -> []
+  end)
+  |> Enum.filter(&(Map.get(&1, "type", Map.get(&1, :type)) in ["thinking", "redacted_thinking"]))
+
+S.assert!("the request run 2 builds replays thinking blocks (under run 1's prefix key)", replayed_blocks != [], "none replayed under key #{key1}")
+
 S.narrate("Run 2 (run/3) on the same memory: run 1's thinking, tool and notice blocks replay.")
 
 {agent, s2} =
@@ -110,6 +137,8 @@ S.narrate("Run 2 (run/3) on the same memory: run 1's thinking, tool and notice b
 
 S.turn(2, "add C3", inspect(s2))
 S.assert!("run 2 totals 16", s2.total == 16, inspect(s2))
+key2 = stamped_key.(agent, &List.last/1)
+S.assert!("run 2 ran under the same prefix key as run 1 (so run 1's thinking was not dropped as stale)", key2 == key1, "#{inspect(key1)} vs #{inspect(key2)}")
 
 S.narrate("Run 3 (stream/3) on the same memory.")
 

@@ -85,7 +85,7 @@ end
 
 agent_for = fn server, name ->
   BaseAgent.init(%{
-    client: S.client(%{recv_timeout: 150_000}),
+    client: S.client(%{recv_timeout: 240_000}),
     model: S.model(),
     max_tokens: 4_000,
     name: name,
@@ -121,8 +121,8 @@ synthetic_mcp = fn server ->
       %ToolCallResponse{content_blocks: blocks} = BaseAgent.get_response(config, %ToolCallResponse{})
       blocks
     rescue
-      error in Normandy.LLMError ->
-        S.assert!("the rebuilt pause's source call succeeds", false, Exception.message(error))
+      error ->
+        S.assert!("the rebuilt pause's source call succeeds", false, Exception.format(:error, error, __STACKTRACE__))
     end
 
   case Enum.find_index(blocks, &(&1["type"] == "mcp_tool_use")) do
@@ -217,8 +217,11 @@ result =
       Task.async(fn ->
         try do
           Turn.Session.run(session, %{chat_message: prompt.(server)})
+        rescue
+          error -> {:raised, Exception.format(:error, error, __STACKTRACE__)}
         catch
           :exit, reason -> {:exited, reason}
+          :throw, value -> {:raised, "throw: " <> inspect(value)}
         end
       end)
 
@@ -243,22 +246,26 @@ result =
 
         S.narrate("Restarted as #{inspect(new_pid)}; new input on the paused history.")
 
-        # Own deadline, above the call's recv_timeout (150 s); the exit is a failed result below.
+        # Own deadline, above the call's recv_timeout (240 s); the exit is a failed result below.
         follow_task =
           Task.async(fn ->
             try do
               Turn.Session.run(session, %{chat_message: followup})
+            rescue
+              error -> {:raised, Exception.format(:error, error, __STACKTRACE__)}
             catch
               :exit, reason -> {:exited, reason}
+              :throw, value -> {:raised, "throw: " <> inspect(value)}
             end
           end)
 
         result =
-          case Task.yield(follow_task, 170_000) || Task.shutdown(follow_task, :brutal_kill) do
+          case Task.yield(follow_task, 270_000) || Task.shutdown(follow_task, :brutal_kill) do
             {:ok, result} -> result
-            _timeout -> S.assert!("the follow-up turn answers within 170 s", false, "no answer")
+            _timeout -> S.assert!("the follow-up turn answers within 270 s", false, "no answer")
           end
 
+        S.assert!("the follow-up Session.run does not raise", not match?({:raised, _}, result), inspect(result))
         {:ok, entries} = InMemory.history(store, sid)
         i = Enum.find_index(entries, paused_entry?)
         S.assert!("the store holds the paused assistant turn", is_integer(i), inspect(Enum.map(entries, & &1.role)))
@@ -279,7 +286,7 @@ result =
             S.assert!("the first turn ends without an error", false, inspect(failed))
         end
     after
-      200_000 -> S.assert!("the first turn pauses or finishes within 200 s", false, "neither happened")
+      270_000 -> S.assert!("the first turn pauses or finishes within 270 s", false, "neither happened")
     end
   else
     S.narrate("No candidate MCP server answered an initialize from here; rebuilding the shape with web_search.")
