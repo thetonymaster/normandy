@@ -656,4 +656,39 @@ defmodule Normandy.Agents.TurnTest do
       assert Turn.unanswered_tool_calls(messages) == [call("b")]
     end
   end
+
+  describe "paused_last?/1" do
+    @user %Message{role: "user", content: "q1"}
+
+    for reason <- [:pause_turn, "pause_turn"] do
+      test "is true when the last message is a paused assistant turn (#{inspect(reason)})" do
+        paused = %ToolCallResponse{tool_calls: [], stop_reason: unquote(reason)}
+        assert Turn.paused_last?([@user, %Message{role: "assistant", content: paused}])
+      end
+    end
+
+    test "is false for an answer, a tool call, a tool result, a user message or nothing" do
+      paused = %Message{
+        role: "assistant",
+        content: %ToolCallResponse{tool_calls: [], stop_reason: :pause_turn}
+      }
+
+      answer = %Message{role: "assistant", content: %ToolCallResponse{content: "done"}}
+
+      tool_use = %Message{
+        role: "assistant",
+        content: %ToolCallResponse{tool_calls: [call("a")], stop_reason: :pause_turn}
+      }
+
+      result = %Message{role: "tool", content: %ToolResult{tool_call_id: "a", output: "ok"}}
+
+      refute Turn.paused_last?([])
+      refute Turn.paused_last?([@user])
+      refute Turn.paused_last?([@user, answer])
+      refute Turn.paused_last?([@user, %Message{role: "assistant", content: "done"}])
+      refute Turn.paused_last?([@user, tool_use])
+      refute Turn.paused_last?([@user, tool_use, result])
+      refute Turn.paused_last?([@user, paused, @user])
+    end
+  end
 end

@@ -317,6 +317,14 @@ A turn that failed after the assistant's `tool_use` no longer leaves the session
 unusable: the next turn appends an `interrupted: true` tool result for each
 unanswered call.
 
+A session whose stored history ends in a paused turn (`pause_turn`: a turn that failed or
+was killed after the API paused a server-tool or MCP-connector call) no longer refuses every
+later input with a 400 (`mcp_tool_use ... without a corresponding mcp_tool_result`). The
+next `run/2` first continues the paused turn, as a resumed run (`resumed: true` on its run
+`:start`), then runs its input. Nothing to change: expect one extra model call and one
+extra run before such an input. If that continuation fails, the `run/2` returns its error
+and stores nothing of its input; the next `run/2` tries again.
+
 ## 13. Rolling deploys
 
 `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `Turn.Server.approve/2` casts

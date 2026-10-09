@@ -399,6 +399,27 @@ defmodule Normandy.Agents.Turn do
   end
 
   @doc """
+  Whether `messages` end with a paused turn: an assistant message that makes no tool
+  call and whose `stop_reason` is `pause_turn` (`:pause_turn` or `"pause_turn"`). The
+  API paused a long server-tool turn there (an MCP connector's `mcp_tool_use` with no
+  `mcp_tool_result` yet); the turn is continued by sending it back with nothing after it,
+  and a request that adds a user message after it is rejected.
+
+  `Turn.Server` reads it before it admits a new input: a turn that failed or was killed
+  after its pause is continued first.
+  """
+  @spec paused_last?([Message.t()]) :: boolean()
+  def paused_last?(messages) when is_list(messages) do
+    case List.last(messages) do
+      %Message{role: "assistant", content: content} ->
+        tool_calls(content) == [] and paused?(content)
+
+      _other ->
+        false
+    end
+  end
+
+  @doc """
   The tool calls of the latest assistant message that have no `%ToolResult{}` in a
   later `"tool"` message, in `tool_use` order; `[]` when the latest assistant message
   made no tool calls.
