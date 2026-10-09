@@ -121,6 +121,14 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
     assert inspect(answer) =~ "Found it."
   end
 
+  defp spans do
+    receive do
+      {:span, event, meta} -> [{event, meta} | spans()]
+    after
+      0 -> []
+    end
+  end
+
   defp assert_answered_history(ctx) do
     assert [
              {"user", %BaseAgentInputSchema{chat_message: "q1"}},
@@ -171,9 +179,26 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
         steering_state()
       )
 
+    TelemetryCapture.attach_span(
+      [[:normandy, :agent, :run, :start], [:normandy, :agent, :run, :exception]],
+      session_id: ctx.sid
+    )
+
     assert {:error, %LLMError{status: 529}} = Turn.Server.run(srv, "q2")
     assert_continuation(0)
     refute_received {:wire_body, 1, _}
+
+    # The continuation is a resumed run that fails; the refused request is a run of its
+    # own (no resumed flag) that fails with the same error.
+    assert [
+             {[:normandy, :agent, :run, :start], %{resumed: true}},
+             {[:normandy, :agent, :run, :exception], %{resumed: true, reason: %LLMError{}}},
+             {[:normandy, :agent, :run, :start], refused_start},
+             {[:normandy, :agent, :run, :exception], %{reason: %LLMError{status: 529}} = refused}
+           ] = spans()
+
+    refute Map.has_key?(refused_start, :resumed)
+    refute Map.has_key?(refused, :resumed)
 
     assert [
              {"user", %BaseAgentInputSchema{chat_message: "q1"}},

@@ -870,7 +870,8 @@ defmodule Normandy.Agents.Turn.Server do
          [{{:timeout, :retry_terminal_save}, :cancel}, {:next_event, {:call, from}, msg}]}
 
       {:error, data, reason} ->
-        refuse_unsaved_terminal(from, msg, data, reason)
+        exception = %TurnError{type: :persist_failed, reason: {:terminal_unsaved, reason}}
+        refuse_request(from, msg, data, {:error, exception})
     end
   end
 
@@ -885,7 +886,8 @@ defmodule Normandy.Agents.Turn.Server do
     if data.config.memory |> AgentMemory.messages() |> Turn.paused_last?() do
       continue_paused_first(from, msg, data)
     else
-      admit_turn(from, msg, data)
+      # A request back from a continuation that answered: the bound is spent.
+      admit_turn(from, msg, %{data | paused_continued_for: nil})
     end
   end
 
@@ -1180,17 +1182,10 @@ defmodule Normandy.Agents.Turn.Server do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
       {:rejected, exception} ->
-        emit_failed_run(data, data.config, nil, exception)
-        :gen_statem.reply(from, {:error, exception})
-        turn_end(data, data.config, {:rejected, exception}, turn_id: nil)
-        {:keep_state, release_turn_ctx(data)}
+        reply_refusal(from, data, {:rejected, exception})
 
       {:crashed, reason} ->
-        exception = TurnError.from_reason(reason)
-        emit_failed_run(data, data.config, nil, exception)
-        :gen_statem.reply(from, {:error, exception})
-        turn_end(data, data.config, {:error, exception}, turn_id: nil)
-        {:keep_state, release_turn_ctx(data)}
+        reply_refusal(from, data, {:error, TurnError.from_reason(reason)})
     end
   end
 
@@ -1202,36 +1197,26 @@ defmodule Normandy.Agents.Turn.Server do
   # it postponed until the approval resolves. A request that comes back to a history
   # still paused (the continuation failed) is refused with the continuation's failure and
   # nothing is appended; the next request tries the continuation again.
-  defp continue_paused_first(from, msg, %Data{paused_continued_for: from} = data) do
-    data = %{
-      data
-      | paused_continued_for: nil,
-        turn_ctx_token: OtelCtx.attach(turn_caller_ctx(msg))
-    }
-
-    exception = continuation_error(data.turn_state)
-    emit_failed_run(data, data.config, nil, exception)
-    :gen_statem.reply(from, {:error, exception})
-    turn_end(data, data.config, {:error, exception}, turn_id: nil)
-    {:keep_state, release_turn_ctx(data)}
-  end
+  defp continue_paused_first(from, msg, %Data{paused_continued_for: from} = data),
+    do: refuse_request(from, msg, data, {:error, continuation_error(data.turn_state)})
 
   defp continue_paused_first(from, msg, data) do
     data
-    |> paused_steering_state()
+    |> paused_steering_state(msg)
     |> Map.put(:paused_continued_for, from)
     |> start_resumed_run_span()
     |> resume_turn()
     |> postpone_request(from, msg)
   end
 
-  # A saved :steering turn is resumed as it is. Any other (a turn that failed after the
-  # pause, or no saved turn) gets a :steering turn built from the config as start_turn/5
-  # builds a turn.
-  defp paused_steering_state(%Data{turn_state: %Turn.State{status: :steering}} = data),
+  # A saved :steering turn is resumed as it is, under the context it was saved with. Any
+  # other (a turn that failed after the pause, or no saved turn) gets a :steering turn
+  # built from the config as start_turn/5 builds a turn, carrying the waiting caller's
+  # context, so the continuation's run span nests under that caller's span.
+  defp paused_steering_state(%Data{turn_state: %Turn.State{status: :steering}} = data, _msg),
     do: data
 
-  defp paused_steering_state(data) do
+  defp paused_steering_state(data, msg) do
     config = BaseAgent.with_default_output_schema(data.config)
 
     state =
@@ -1241,7 +1226,8 @@ defmodule Normandy.Agents.Turn.Server do
         output_schema: config.output_schema
       )
 
-    %{data | config: config, turn_state: %{state | status: :steering}}
+    state = %{state | status: :steering, trace_carrier: OtelCtx.inject(turn_caller_ctx(msg))}
+    %{data | config: config, turn_state: state}
   end
 
   # gen_statem retries a postponed event only after a state change: a continuation that
@@ -2033,20 +2019,28 @@ defmodule Normandy.Agents.Turn.Server do
     )
   end
 
-  # The reply to a turn request while the last turn's terminal state is unsaved: a
-  # :persist_failed TurnError, reported like a refused admission (a run :start and
-  # :exception, on_turn_end with no turn id). Nothing is appended.
-  defp refuse_unsaved_terminal(from, msg, data, reason) do
+  # A turn request refused before any turn begins (the last turn's terminal state still
+  # unsaved, or a paused turn's continuation that failed): the caller's context is made
+  # current, the paused-continuation bound is cleared, and the refusal is reported like a
+  # refused admission (reply_refusal/3). Nothing is appended.
+  defp refuse_request(from, msg, data, outcome) do
     data = %{
       data
       | turn_ctx_token: OtelCtx.attach(turn_caller_ctx(msg)),
         paused_continued_for: nil
     }
 
-    exception = %TurnError{type: :persist_failed, reason: {:terminal_unsaved, reason}}
+    reply_refusal(from, data, outcome)
+  end
+
+  # The one report of a refused turn request, under the caller's context already
+  # attached: a run :start and :exception, the {:error, exception} reply, on_turn_end
+  # with `outcome` ({:rejected, e} or {:error, e}) and no turn id; then the context is
+  # released.
+  defp reply_refusal(from, data, {_kind, exception} = outcome) do
     emit_failed_run(data, data.config, nil, exception)
     :gen_statem.reply(from, {:error, exception})
-    turn_end(data, data.config, {:error, exception}, turn_id: nil)
+    turn_end(data, data.config, outcome, turn_id: nil)
     {:keep_state, release_turn_ctx(data)}
   end
 
