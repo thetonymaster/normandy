@@ -52,7 +52,9 @@ S.start("15_preserved_thinking", cap: 8)
 
 agent =
   BaseAgent.init(%{
-    client: S.client(%{thinking: :adaptive, thinking_block_binding: :error, recv_timeout: 180_000}),
+    # effort: :high: on the first live run, adaptive thinking at the default effort produced no
+    # thinking on this easy task (154 output tokens over 3 calls), so there was nothing to replay.
+    client: S.client(%{thinking: :adaptive, effort: :high, thinking_block_binding: :error, recv_timeout: 180_000}),
     model: S.model(:opus),
     max_tokens: 4_000,
     name: "s15",
@@ -92,7 +94,8 @@ before = S.calls()
     BaseAgent.run(agent, %{
       chat_message:
         "Look up SKU A1 with stock_lookup. Its result names a linked SKU: look that one up " <>
-          "too, one call at a time. Then report the total units and the SKUs."
+          "too, one call at a time. Before each call, think through which SKU comes next and " <>
+          "why, and check the running total. Then report the total units and the SKUs."
     })
   )
 
