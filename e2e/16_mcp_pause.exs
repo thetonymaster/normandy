@@ -123,6 +123,9 @@ synthetic_mcp = fn server ->
     rescue
       error ->
         S.assert!("the rebuilt pause's source call succeeds", false, Exception.format(:error, error, __STACKTRACE__))
+    catch
+      kind, reason ->
+        S.assert!("the rebuilt pause's source call succeeds", false, "#{kind}: #{inspect(reason)}")
     end
 
   case Enum.find_index(blocks, &(&1["type"] == "mcp_tool_use")) do
@@ -149,8 +152,19 @@ synthetic_web = fn ->
     |> Request.add_web_search_tool(version: :basic)
     |> Request.add_message(:user, "Search the web once for the Elixir programming language, then answer in one sentence.")
 
+  # A raise, throw or exit from the direct Claudio call is a reported failure too.
+  create = fn req, label ->
+    try do
+      Claudio.Messages.create(client, req)
+    rescue
+      error -> S.assert!(label, false, Exception.format(:error, error, __STACKTRACE__))
+    catch
+      kind, reason -> S.assert!(label, false, "#{kind}: #{inspect(reason)}")
+    end
+  end
+
   blocks =
-    case Claudio.Messages.create(client, request) do
+    case create.(request, "the web_search source call succeeds") do
       {:ok, response} -> Response.to_assistant_content(response)
       {:error, error} -> S.assert!("the web_search source call succeeds", false, inspect(error))
     end
@@ -165,7 +179,7 @@ synthetic_web = fn ->
       request
       |> Request.add_message(:assistant, Enum.take(blocks, i + 1))
       |> Request.add_message(:user, "Answer in one sentence without searching again.")
-      |> then(&Claudio.Messages.create(client, &1))
+      |> then(&create.(&1, "the web_search follow-up call returns"))
   end
 end
 
@@ -229,7 +243,13 @@ result =
       {:paused, pid} ->
         S.narrate("The turn paused (pause_turn); killing its Turn.Server before the continuation.")
         Process.exit(pid, :kill)
-        first = Task.await(task, 30_000)
+        first =
+          case Task.yield(task, 30_000) || Task.shutdown(task, :brutal_kill) do
+            {:ok, first} -> first
+            {:exit, reason} -> {:exited, reason}
+            nil -> S.assert!("the killed turn's caller returns within 30 s", false, "no return after the kill")
+          end
+
         S.assert!("the caller of the killed turn gets an exit, not an answer", match?({:exited, _}, first), inspect(first))
 
         new_pid =

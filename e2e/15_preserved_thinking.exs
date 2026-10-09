@@ -113,7 +113,8 @@ stamped_key = fn agent, pick ->
   |> pick.()
 end
 
-key1 = stamped_key.(agent, &List.first/1)
+keys_before = stamped_key.(agent, & &1)
+key1 = List.first(keys_before)
 S.assert!("run 1 stamped its prefix key on a tool turn", is_integer(key1), inspect(key1))
 
 replayed_blocks =
@@ -137,7 +138,10 @@ S.narrate("Run 2 (run/3) on the same memory: run 1's thinking, tool and notice b
 
 S.turn(2, "add C3", inspect(s2))
 S.assert!("run 2 totals 16", s2.total == 16, inspect(s2))
-key2 = stamped_key.(agent, &List.last/1)
+# Only keys run 2 itself stamped count; none stamped is a failure, never a fallback to run 1's.
+run2_keys = agent |> stamped_key.(& &1) |> Enum.drop(length(keys_before))
+S.assert!("run 2 stamped a prefix key on its own turns", run2_keys != [], "no new stamped turn after run 1's #{length(keys_before)}")
+key2 = List.last(run2_keys)
 S.assert!("run 2 ran under the same prefix key as run 1 (so run 1's thinking was not dropped as stale)", key2 == key1, "#{inspect(key1)} vs #{inspect(key2)}")
 
 S.narrate("Run 3 (stream/3) on the same memory.")
