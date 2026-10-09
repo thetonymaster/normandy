@@ -93,7 +93,11 @@ defmodule Normandy.Agents.AssistantTurnReplayTest do
   end
 
   defp assert_replayed_as_received do
-    assert replayed_assistant(1) == expected_replay()
+    content = replayed_assistant(1)
+    assert content == expected_replay()
+    # Claudio 0.7.1 replays a text block's citations (Task 7.5b, decision 27 B3): the
+    # cited block goes back exactly as the API returned it.
+    assert Enum.at(content, 1) == @cited
     assert_received {:tool_ran, "weather"}
     refute_received {:tool_ran, "docs__search"}
   end

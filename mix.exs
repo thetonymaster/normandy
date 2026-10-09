@@ -284,7 +284,7 @@ defmodule Normandy.MixProject do
     [
       {:elixir_uuid, "~> 1.2"},
       {:telemetry, "~> 1.3"},
-      {:claudio, "~> 0.7.0"},
+      {:claudio, "~> 0.7.1"},
       {:req, "~> 0.6 and >= 0.6.1"},
       {:jason, "~> 1.4"},
       # Option schemas for every public entry point (Normandy.Options).

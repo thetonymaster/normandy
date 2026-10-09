@@ -1165,9 +1165,9 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   unchanged: thinking, text, `tool_use`, `server_tool_use`, `mcp_tool_use` and their results, in
   their order. It used to be rebuilt as `thinking ++ [text] ++ tool_use`, which merged the text
   blocks, moved all thinking first, and dropped server and MCP blocks. A response stored before
-  this field existed, or built by hand with `content_blocks: []`, is rebuilt as before. Claudio
-  0.7 leaves `citations` out of replayed text blocks, and `server_name` out of a replayed
-  `mcp_tool_result` (the API rejects it there).
+  this field existed, or built by hand with `content_blocks: []`, is rebuilt as before. A
+  replayed text block keeps its `citations` (Claudio 0.7.1); a replayed `mcp_tool_result` leaves
+  out `server_name`, which the API rejects there.
 - After a server-side fallback, the replayed turn keeps the `fallback` block (the API's
   continuation rules). Only the blocks after it used to be replayed.
 - A streamed turn's `server_tool_use` and `mcp_tool_use` inputs and its text `citations` are now
@@ -2016,6 +2016,11 @@ code you wrote against 1.x must follow the changes below.
   to Horde 0.9 runs `mix deps.update horde`.
 - `telemetry` is `~> 1.3` (was `~> 1.0`); Normandy's spans need 1.3. A project locked to an older
   `telemetry` runs `mix deps.update telemetry`.
+- Normandy requires Claudio `~> 0.7.1`: run `mix deps.update claudio`. A request is built with one
+  `Claudio.Messages.Request.add_messages/2` call, in time linear in the conversation's length (it was
+  quadratic); the request body is unchanged.
+- A cited text block in a tool-using turn goes back to the API with its `citations`. Claudio 0.7.0
+  dropped them on replay, so the replayed turn differed from the one the API returned.
 
 ## 45. Testing support and docs
 

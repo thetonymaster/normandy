@@ -460,9 +460,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterMultimodalTest do
   # own hand-built maps and the passthrough still holds.
   describe "product scenarios — shapes Claudio helpers don't wrap" do
     test "mood-board: 5 base64 images + 1 text prompt falls through to raw-list" do
-      # 6-block list deliberately avoids the 2-arity shapes Claudio wraps
-      # (add_message_with_image etc.), guaranteeing dispatch_multimodal/3's
-      # raw-list fallback clause runs.
+      # Six blocks in one message: each becomes its API map, in order.
       images =
         for n <- 1..5 do
           ImageBlock.new_base64("IMG#{n}DATA", "image/jpeg")

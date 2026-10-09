@@ -504,10 +504,21 @@ defmodule Normandy.LLM.ClaudioAdapter do
           do: Claudio.Messages.Request.set_cache_control(request),
           else: request
 
-      Enum.reduce(messages, request, fn msg, req ->
-        add_single_message(req, msg, enable_caching)
-      end)
+      case messages do
+        [%Message{role: "system"} = system | rest] ->
+          request
+          |> add_single_message(system, enable_caching)
+          |> append_messages(rest)
+
+        _no_system ->
+          append_messages(request, messages)
+      end
     end
+
+    # One Claudio call for the whole conversation: Request.add_messages/2 appends in
+    # time linear in the history (a loop of add_message/3 copies the list each time).
+    defp append_messages(request, messages),
+      do: Claudio.Messages.Request.add_messages(request, Enum.map(messages, &message_entry/1))
 
     @doc false
     # Public (not `defp`) so tests can exercise the dispatch branches
@@ -537,84 +548,61 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    def add_single_message(
-          request,
-          %Message{role: role, content: content},
-          _enable_caching
-        )
-        when role in ["user", "assistant"] and is_list(content) do
-      _ = ensure_non_empty_content!(content)
-      role_atom = String.to_existing_atom(role)
-      dispatch_multimodal(request, role_atom, content)
+    def add_single_message(request, message, _enable_caching) do
+      {role, content} = message_entry(message)
+      Claudio.Messages.Request.add_message(request, role, content)
+    end
+
+    # A message as Claudio's `{role, content}`: content blocks become API maps here, so
+    # add_messages/2 and add_message/3 get the same entry.
+    defp message_entry(%Message{role: role, content: content})
+         when role in ["user", "assistant"] and is_list(content) do
+      blocks = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
+      {String.to_existing_atom(role), blocks}
     end
 
     # Single ContentBlock struct as content — treat as a one-element list
     # so the wire shape is symmetric with `content: [block]`. Without this,
     # a caller who sets `content: %Image{...}` ships a raw struct to
     # Claudio and the request is malformed at JSON-encode time.
-    def add_single_message(
-          request,
-          %Message{role: role, content: %block_mod{} = block},
-          _enable_caching
-        )
-        when role in ["user", "assistant"] and
-               block_mod in [TextBlock, ImageBlock, DocumentBlock] do
-      role_atom = String.to_existing_atom(role)
-      Claudio.Messages.Request.add_message(request, role_atom, [block_to_claudio(block)])
+    defp message_entry(%Message{role: role, content: %block_mod{} = block})
+         when role in ["user", "assistant"] and
+                block_mod in [TextBlock, ImageBlock, DocumentBlock] do
+      {String.to_existing_atom(role), [block_to_claudio(block)]}
     end
 
-    def add_single_message(request, %Message{role: role, content: content}, _enable_caching)
-        when role in ["user", "assistant"] do
-      role_atom = String.to_existing_atom(role)
-      Claudio.Messages.Request.add_message(request, role_atom, content)
-    end
+    defp message_entry(%Message{role: role, content: content})
+         when role in ["user", "assistant"],
+         do: {String.to_existing_atom(role), content}
 
     # List-form tool content: convert ContentBlock structs to Anthropic
     # wire shape. Pre-shaped maps (e.g. from BaseIOSchema.to_json/1) pass
     # through via the `%{} = raw when not is_struct` branch of
     # block_to_claudio/1, preserving the pre-multimodal tool_result path.
-    def add_single_message(
-          request,
-          %Message{role: "tool", content: content},
-          _enable_caching
-        )
-        when is_list(content) do
-      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
-      Claudio.Messages.Request.add_message(request, :user, raw)
-    end
+    defp message_entry(%Message{role: "tool", content: content}) when is_list(content),
+      do: {:user, content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)}
 
-    def add_single_message(
-          request,
-          %Message{role: "tool", content: content},
-          _enable_caching
-        ) do
-      # Tool results are serialized via BaseIOSchema protocol
-      # They come as content blocks, send as user message
-      Claudio.Messages.Request.add_message(request, :user, content)
-    end
+    # Tool results are serialized via the BaseIOSchema protocol; they go as a user message.
+    defp message_entry(%Message{role: "tool", content: content}), do: {:user, content}
 
     # Caller typos and unsupported roles (e.g. OpenAI's "function") would
     # otherwise silently disappear from the request — the model gets a
     # degraded conversation with no feedback loop. Raise at the boundary.
-    def add_single_message(
-          _request,
-          %Message{role: role, turn_id: turn_id},
-          _enable_caching
-        )
-        when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
+    defp message_entry(%Message{role: role, turn_id: turn_id})
+         when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: unrecognized message role #{inspect(role)} " <>
               "(turn_id=#{inspect(turn_id)}). Expected one of: " <>
               ~s("system", "user", "assistant", "tool".)
     end
 
-    def add_single_message(_request, %Message{role: role}, _enable_caching) do
+    defp message_entry(%Message{role: role}) do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: message role must be a string, got: " <>
               Describe.type_of(role)
     end
 
-    def add_single_message(_request, other, _enable_caching) do
+    defp message_entry(other) do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: expected a %Normandy.Components.Message{}, got " <>
               Describe.type_of(other)
@@ -652,60 +640,6 @@ defmodule Normandy.LLM.ClaudioAdapter do
     end
 
     defp ensure_non_empty_content!(list) when is_list(list), do: list
-
-    # Opportunistic dispatch: when a content list exactly matches a shape
-    # covered by one of Claudio's named helpers, use the helper so intent
-    # is preserved in the request builder. Any other shape (multi-block,
-    # reversed order, image-alone, cache-annotated, etc.) falls through
-    # to the raw-list path, which Claudio's `add_message/3` accepts
-    # natively. Empty-list is rejected at every list-branch entry via
-    # `ensure_non_empty_content!/1`, so the clauses below never see `[]`.
-    #
-    # Cache annotations: Claudio's named helpers (`add_message_with_image`
-    # etc.) take raw args and rebuild blocks internally, dropping
-    # `cache_control`. So we only take the named-helper path when neither
-    # block carries one — `cache_control: nil` in the pattern enforces
-    # this. Cached blocks always go through the raw-list fallback.
-    # Non-empty-string guards mirror `ContentBlock.{Image,Document}.to_claudio/1`:
-    # the raw-list fallback (below) ultimately calls those serializers and
-    # raises ArgumentError on empty `data`/`media_type`/`url`/`file_id`. The
-    # named-helper path here would otherwise ship empty values to Anthropic
-    # downstream, asymmetrically letting malformed blocks through.
-    defp dispatch_multimodal(request, role, [
-           %ImageBlock{
-             source: :base64,
-             data: data,
-             media_type: media_type,
-             cache_control: nil
-           },
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(data) and data != "" and
-                is_binary(media_type) and media_type != "" and
-                is_binary(text) do
-      Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
-    end
-
-    defp dispatch_multimodal(request, role, [
-           %ImageBlock{source: :url, url: url, cache_control: nil},
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(url) and url != "" and is_binary(text) do
-      Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
-    end
-
-    defp dispatch_multimodal(request, role, [
-           %DocumentBlock{source: :file_id, file_id: file_id, cache_control: nil},
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(file_id) and file_id != "" and is_binary(text) do
-      Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
-    end
-
-    defp dispatch_multimodal(request, role, blocks) when is_list(blocks) do
-      raw = Enum.map(blocks, &block_to_claudio/1)
-      Claudio.Messages.Request.add_message(request, role, raw)
-    end
 
     defp block_to_claudio(%TextBlock{} = b), do: TextBlock.to_claudio(b)
     defp block_to_claudio(%ImageBlock{} = b), do: ImageBlock.to_claudio(b)
