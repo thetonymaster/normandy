@@ -1,20 +1,27 @@
 # Live e2e scenarios
 
-Fourteen multi-turn scenarios, one per major Normandy 2.0 feature. Each is a narrated demo
+Sixteen multi-turn scenarios, one per major Normandy 2.0 feature. Each is a narrated demo
 and a gate: it prints what it does, checks hard invariants, and exits 2 on the first broken
 invariant (1 if it crashes outright).
 
-**Every run calls the live Anthropic API** (Haiku 4.5). Each scenario declares a live-call cap
-(`S.start(id, cap: n)`) and halts if it exceeds it; the runner refuses a selection whose caps
-sum past 140. A full run is roughly $0.15–0.50.
+**Every run calls the live Anthropic API**: Haiku 4.5, except scenario 15 (Opus 5.5). Each scenario
+declares a live-call cap (`S.start(id, cap: n)`) and halts if it exceeds it; the runner refuses a
+selection whose caps sum past 150. `mix e2e --estimate [names]` prints a cap-based estimate without
+calling the API (about $1.92, at most $2.24, for the full suite with every scenario at its cap; a real run
+uses fewer calls). Each scenario prints `usage: input=N output=N cache_read=N cache_write=N
+est_cost=$X.XX`, and the summary adds them up (prices in `test/support/e2e/prices.ex`, list prices as of
+2026-10).
 
 ## Prerequisites
 
 - `export ANTHROPIC_API_KEY=...` (or `API_KEY`)
 - Scenario 12 only: Elixir ≥ 1.17 (the `ex_mcp` test dependency is skipped on older
   versions) and OTP ≥ 27 (the stdio MCP server uses the built-in `:json` module)
-- Scenario 11 only: `docker compose -f docker-compose.verify.yml up -d` and
-  `MIX_ENV=test mix ecto.setup`
+- Scenario 11 only: a Postgres the test config reaches, with the test database migrated. Either
+  `docker compose -f docker-compose.verify.yml up -d` and `MIX_ENV=test mix ecto.setup`, or an existing
+  partition database: `MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix e2e distributed`
+- Scenario 16 only: a public MCP server the API can reach (it tries DeepWiki, then the remote Fetch
+  server, and falls back to a rebuilt paused turn; see the scenario's header)
 
 ## Running
 
@@ -52,3 +59,9 @@ is a finding to triage (model wording vs. lost memory), not something to retry.
 | 12 | mcp_a2a | stdio MCP server tools, A2A over HTTP |
 | 13 | budget_policy | BudgetTracker denial, Ruleset deny |
 | 14 | memory | `Tools.Memory` across sessions, namespace isolation (InMemory store) |
+| 15 | preserved_thinking | AX-7: thinking replay on Opus 5.5 with `thinking_block_binding: :error`, final call after the iteration cap, run/3 and stream/3 |
+| 16 | mcp_pause | MCP-connector `pause_turn`, `Turn.Server` killed while paused, new input; cited text replayed |
+
+Scenario 16 prints `PAUSE_PATH live` when the API paused the turn and the kill happened on the paused
+history, `PAUSE_PATH synthetic_mcp` or `synthetic_web_search` when it rebuilt the paused shape instead
+(no pause came, or no MCP server answered), and `CITATIONS_REPLAY accepted (N cited block(s))`.
