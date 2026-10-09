@@ -64,7 +64,8 @@ agent =
 # An LLMError's message carries the API's text: a 400 naming thinking is the finding.
 expect_stock = fn label, result ->
   case result do
-    {:ok, agent, %E2E.S15.Stock{} = stock} -> {agent, stock}
+    # is_struct/2, not %E2E.S15.Stock{}: the file defines the struct, so a pattern on it does not compile.
+    {:ok, agent, stock} when is_struct(stock, E2E.S15.Stock) -> {agent, stock}
     {:error, error} -> S.assert!(label, false, Exception.message(error))
     other -> S.assert!(label, false, inspect(other))
   end
