@@ -86,8 +86,9 @@ defmodule NormandyTest.E2E.Runner do
          "cache_write" => w,
          "cost_usd" => c
        })
-       when is_integer(i) and is_integer(o) and is_integer(r) and is_integer(w) and is_number(c),
-       do: {:ok, %{input: i, output: o, cache_read: r, cache_write: w, cost: c / 1}}
+       when is_integer(i) and is_integer(o) and is_integer(r) and is_integer(w) and
+              (is_number(c) or is_nil(c)),
+       do: {:ok, %{input: i, output: o, cache_read: r, cache_write: w, cost: c && c / 1}}
 
   defp decode_usage(_other), do: :error
 
@@ -239,7 +240,7 @@ defmodule NormandyTest.E2E.Runner do
         calls = if is_integer(r.calls), do: Integer.to_string(r.calls), else: "?"
         exit = if is_integer(r.exit), do: Integer.to_string(r.exit), else: "-"
         secs = :erlang.float_to_binary(r.ms / 1000, decimals: 1)
-        cost = if r.usage, do: Prices.dollars(r.usage.cost), else: "?"
+        cost = if r.usage && r.usage.cost, do: Prices.dollars(r.usage.cost), else: "?"
         note = if r.reason, do: " #{r.reason}", else: ""
 
         "| #{r.id} | #{r.status |> Atom.to_string() |> String.upcase()} | #{exit} | #{calls} | " <>

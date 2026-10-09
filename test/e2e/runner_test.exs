@@ -212,6 +212,30 @@ defmodule NormandyTest.E2E.RunnerTest do
     assert {:error, "malformed E2E_RESULT usage: " <> _} = Runner.parse_result(out)
   end
 
+  test "parse_result accepts an unknown (null) cost and summary shows ?" do
+    out =
+      ~s(E2E_RESULT {"scenario":"x","calls":2,"ms":5,"usage":{"input":10,"output":2,) <>
+        ~s("cache_read":0,"cache_write":4,"cost_usd":null}})
+
+    assert {:ok, %{usage: %{cost: nil} = usage}} = Runner.parse_result(out)
+
+    table =
+      Runner.summary([
+        %{
+          id: "01_a",
+          status: :fail,
+          exit: 2,
+          calls: 2,
+          ms: 1_000,
+          log: "l",
+          reason: nil,
+          usage: usage
+        }
+      ])
+
+    assert table =~ "| 01_a | FAIL | 2 | 2 | 1.0 | ? |"
+  end
+
   test "parse_result leaves usage nil when the scenario printed none" do
     assert {:ok, %{usage: nil}} =
              Runner.parse_result(~s(E2E_RESULT {"scenario":"x","calls":1,"ms":2}))

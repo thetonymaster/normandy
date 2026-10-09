@@ -153,7 +153,7 @@ defmodule E2E.Support do
   defp report do
     %{id: id, calls: n, t0: t0, priced: priced} = Agent.get(__MODULE__, & &1)
     ms = System.monotonic_time(:millisecond) - t0
-    totals = Prices.totals(priced)
+    totals = Prices.safe_totals(priced)
     IO.puts("\nLIVE CALLS USED: #{n}")
     IO.puts(Prices.format(totals))
 
@@ -162,7 +162,7 @@ defmodule E2E.Support do
       output: totals.output,
       cache_read: totals.cache_read,
       cache_write: totals.cache_write,
-      cost_usd: Float.round(totals.cost, 6)
+      cost_usd: totals.cost && Float.round(totals.cost, 6)
     }
 
     IO.puts("E2E_RESULT " <> Jason.encode!(%{scenario: id, calls: n, ms: ms, usage: usage}))

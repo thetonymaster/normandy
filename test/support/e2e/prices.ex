@@ -48,6 +48,22 @@ defmodule NormandyTest.E2E.Prices do
     end)
   end
 
+  @doc """
+  Like `totals/1`, but never raises: when a call cannot be priced (unknown model, or tokens
+  without a model) the token counts are still summed and `cost` is `nil`. For reports that
+  must print on a failure path.
+  """
+  @spec safe_totals([{String.t() | nil, map()}]) :: map()
+  def safe_totals(calls) do
+    totals(calls)
+  rescue
+    ArgumentError ->
+      calls
+      |> Enum.map(fn {_model, m} -> totals([{"claude-haiku-4-5", m}]) end)
+      |> sum()
+      |> Map.put(:cost, nil)
+  end
+
   defp cost(_model, %{input: 0, output: 0, cache_read: 0, cache_write: 0}), do: 0.0
 
   defp cost(nil, t) do
@@ -66,6 +82,8 @@ defmodule NormandyTest.E2E.Prices do
   @spec sum([map()]) :: map()
   def sum(totals) do
     Enum.reduce(totals, @zero, fn t, acc ->
+      t = Map.update!(t, :cost, &(&1 || 0.0))
+
       %{
         input: acc.input + t.input,
         output: acc.output + t.output,
@@ -80,7 +98,7 @@ defmodule NormandyTest.E2E.Prices do
   @spec format(map(), String.t()) :: String.t()
   def format(t, label \\ "usage") do
     "#{label}: input=#{t.input} output=#{t.output} cache_read=#{t.cache_read} " <>
-      "cache_write=#{t.cache_write} est_cost=$#{dollars(t.cost)}"
+      "cache_write=#{t.cache_write} est_cost=#{if t.cost, do: "$" <> dollars(t.cost), else: "unknown"}"
   end
 
   @doc "Dollars with two decimals."

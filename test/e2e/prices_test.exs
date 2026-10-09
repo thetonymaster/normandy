@@ -51,6 +51,18 @@ defmodule NormandyTest.E2E.PricesTest do
     end
   end
 
+  test "safe_totals/1 keeps the tokens and reports an unknown cost instead of raising" do
+    assert %{input: 5, output: 0, cost: nil} =
+             t = Prices.safe_totals([{nil, %{input_tokens: 5}}])
+
+    assert Prices.format(t) ==
+             "usage: input=5 output=0 cache_read=0 cache_write=0 est_cost=unknown"
+
+    assert %{cost: nil} = Prices.safe_totals([{"gpt-x", %{input_tokens: 5}}])
+    assert %{cost: cost} = Prices.safe_totals([{"claude-opus-5-5", %{output_tokens: 1_000_000}}])
+    assert_in_delta cost, 20.0, 1.0e-9
+  end
+
   test "sum/1 adds totals" do
     a = %{input: 1, output: 2, cache_read: 3, cache_write: 4, cost: 0.5}
     assert Prices.sum([a, a]) == %{input: 2, output: 4, cache_read: 6, cache_write: 8, cost: 1.0}
