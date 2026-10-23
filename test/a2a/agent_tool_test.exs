@@ -208,14 +208,54 @@ defmodule Normandy.A2A.AgentToolTest do
     end
   end
 
-  describe "poll_for_result/4" do
-    test "returns timeout error when deadline passed" do
-      # Deadline in the past
-      deadline = System.monotonic_time(:millisecond) - 1000
+  describe "polling a task that is not finished" do
+    defmodule PollTransport do
+      alias Claudio.A2A.Artifact
+      alias Claudio.A2A.Task, as: A2ATask
 
-      result = AgentTool.poll_for_result("https://example.com/a2a", "task-1", [], deadline)
-      assert {:error, msg} = result
-      assert msg =~ "timed out"
+      def send_message(_endpoint, _message, _opts),
+        do: {:ok, %A2ATask{id: "t1", status: %{state: :working}}}
+
+      def get_task(_endpoint, "t1", opts) do
+        send(Keyword.fetch!(opts, :test_pid), :polled)
+        n = Process.get(:polls, 0)
+        Process.put(:polls, n + 1)
+
+        if n == 0 do
+          {:ok, %A2ATask{id: "t1", status: %{state: :working}}}
+        else
+          {:ok,
+           %A2ATask{
+             id: "t1",
+             status: %{state: :completed},
+             artifacts: [%Artifact{artifact_id: "a", parts: [Part.text("done")]}]
+           }}
+        end
+      end
+    end
+
+    test "polls again after :poll_interval until the task completes", %{card: card} do
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
+          poll_interval: 1,
+          transport_opts: [transport: PollTransport, test_pid: self()]
+        )
+
+      context = %Normandy.Tools.Context{tool_call_id: "c1", input: %{"message" => "go"}}
+
+      {t, result} = :timer.tc(fn -> Tool.run(tool, context) end)
+
+      assert {:ok, "done"} = result
+      assert_received :polled
+      assert_received :polled
+      assert t < 500_000
+    end
+
+    test ":poll_interval must be a positive integer", %{card: card} do
+      assert_raise ArgumentError, ~r/poll_interval/, fn ->
+        AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a", poll_interval: 0)
+      end
     end
   end
 
