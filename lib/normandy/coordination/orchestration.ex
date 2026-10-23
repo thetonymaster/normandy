@@ -213,13 +213,10 @@ defmodule Normandy.Coordination.Orchestration do
   def result(results, errors) when map_size(errors) == 0, do: {:ok, results}
   def result(results, errors), do: {:error, %OrchestrationError{results: results, errors: errors}}
 
-  # A string or a map with a chat_message is the chat message; a struct goes as is.
+  # A string is the chat message; a map or struct goes as is, so an agent whose input
+  # schema has more than :chat_message gets every field (BaseAgent.run/3 validates it).
   @doc false
   @spec prepare_input(term()) :: term()
   def prepare_input(input) when is_binary(input), do: %{chat_message: input}
-
-  def prepare_input(input) when is_map(input) and not is_struct(input),
-    do: Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
-
   def prepare_input(input), do: input
 end
