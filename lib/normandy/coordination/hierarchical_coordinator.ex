@@ -29,16 +29,12 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
         delegation_strategy: :round_robin
       )
 
-      {:ok, result} = HierarchicalCoordinator.execute(
-        coordinator,
-        "Analyze this dataset",
-        shared_context: context
-      )
+      {:ok, result} = HierarchicalCoordinator.execute(coordinator, "Analyze this dataset")
   """
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Components.BaseIOSchema
-  alias Normandy.Coordination.{ParallelOrchestrator, SharedContext}
+  alias Normandy.Coordination.ParallelOrchestrator
   alias Normandy.Options
   alias Normandy.OrchestrationError
   alias Normandy.Telemetry.WorkflowSpan
@@ -48,14 +44,12 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   @type t :: %__MODULE__{
           manager: struct(),
           workers: [%{id: String.t(), agent: struct()}],
-          delegation_strategy: delegation_strategy(),
-          shared_context: SharedContext.t()
+          delegation_strategy: delegation_strategy()
         }
 
   defstruct manager: nil,
             workers: [],
-            delegation_strategy: :round_robin,
-            shared_context: nil
+            delegation_strategy: :round_robin
 
   @new_opts_schema NimbleOptions.new!(
                      manager: [type: :any, required: true, doc: "The manager agent."],
@@ -69,18 +63,10 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
                        type: {:in, [:round_robin, :broadcast, :conditional]},
                        default: :round_robin,
                        doc: "How the manager's plan is delegated."
-                     ],
-                     shared_context: [
-                       type: {:struct, Normandy.Coordination.SharedContext},
-                       doc: "The context the agents share (default: a new `SharedContext`)."
                      ]
                    )
 
   @execute_opts_schema NimbleOptions.new!(
-                         shared_context: [
-                           type: {:struct, Normandy.Coordination.SharedContext},
-                           doc: "Overrides the coordinator's shared context for this run."
-                         ],
                          max_concurrency: [
                            type: :pos_integer,
                            default: 5,
@@ -93,10 +79,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
                        )
 
   @execute_with_tasks_opts_schema NimbleOptions.new!(
-                                    Keyword.take(@execute_opts_schema.schema, [
-                                      :shared_context,
-                                      :max_concurrency
-                                    ])
+                                    Keyword.take(@execute_opts_schema.schema, [:max_concurrency])
                                   )
 
   @doc """
@@ -124,8 +107,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     %__MODULE__{
       manager: Keyword.fetch!(opts, :manager),
       workers: Keyword.fetch!(opts, :workers),
-      delegation_strategy: Keyword.fetch!(opts, :delegation_strategy),
-      shared_context: Keyword.get_lazy(opts, :shared_context, &SharedContext.new/0)
+      delegation_strategy: Keyword.fetch!(opts, :delegation_strategy)
     }
   end
 
@@ -160,14 +142,13 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
   end
 
   defp run_hierarchy(coordinator, input, opts) do
-    context = Keyword.get(opts, :shared_context, coordinator.shared_context)
     max_concurrency = Keyword.fetch!(opts, :max_concurrency)
     manager_prompt = Keyword.get(opts, :manager_prompt)
 
     # Step 1: Manager analyzes input and creates delegation plan
     manager_input = prepare_manager_input(input, manager_prompt)
 
-    case execute_manager(coordinator.manager, manager_input, context) do
+    case execute_manager(coordinator.manager, manager_input) do
       {:ok, delegation_plan} ->
         # Step 2: Delegate to workers based on strategy
         worker_specs = create_worker_specs(coordinator, delegation_plan, input)
@@ -182,7 +163,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
           |> worker_outcome()
 
         # Step 4: Manager aggregates results
-        aggregate_with_manager(coordinator.manager, worker_results, context)
+        aggregate_with_manager(coordinator.manager, worker_results)
 
       {:error, exception} ->
         {:error, {:manager_failed, exception}}
@@ -227,7 +208,6 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
 
   defp run_tasks(coordinator, tasks, opts) do
     max_concurrency = Keyword.fetch!(opts, :max_concurrency)
-    context = Keyword.get(opts, :shared_context, coordinator.shared_context)
 
     # Map tasks to worker specs
     worker_specs =
@@ -248,7 +228,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       |> worker_outcome()
 
     # Aggregate with manager
-    aggregate_with_manager(coordinator.manager, worker_results, context)
+    aggregate_with_manager(coordinator.manager, worker_results)
   end
 
   @doc """
@@ -298,7 +278,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     end
   end
 
-  defp execute_manager(manager, input, _context) do
+  defp execute_manager(manager, input) do
     with {:ok, response} <- run_manager(manager, input, "planning") do
       {:ok, extract_delegation_plan(response)}
     end
@@ -444,7 +424,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
               "workers are #{inspect(Enum.map(workers, & &1.id))}"
   end
 
-  defp aggregate_with_manager(manager, worker_results, _context) do
+  defp aggregate_with_manager(manager, worker_results) do
     # Results travel as text in chat_message: an input schema drops any other key.
     aggregation_input = %{chat_message: aggregation_message(worker_results)}
 
