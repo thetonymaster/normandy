@@ -60,9 +60,10 @@ defmodule Normandy.DSL.Agent do
   ## Name clashes
 
   `use Normandy.DSL.Agent` imports every macro of this module, `hooks/1` included. A
-  module that defines its own `hooks/1` (or imports another one) gets a compile error
-  for the clash. Keep the DSL's `hooks` by calling it qualified, and drop it from the
-  import:
+  module that defines its own `hooks/1` compiles, but an unqualified local call
+  `hooks(...)` inside it is a compile error (it matches both the local function and the
+  import). Keep the DSL's `hooks` by calling it
+  qualified, and drop it from the import:
 
       defmodule MyAgent do
         use Normandy.DSL.Agent

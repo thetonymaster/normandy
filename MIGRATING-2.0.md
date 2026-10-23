@@ -1289,8 +1289,10 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   system prompt. A memory dumped, or a session stored, by 1.x after such a summary still holds
   that `"system"` entry, and under 2.0 every request from it raises `ArgumentError`
   (`Normandy.LLM.ClaudioAdapter: system message at position N ...`, §38). Before you run such a
-  memory, rewrite the entry's role to `"user"`: in the `AgentMemory.dump/1` string before
-  `AgentMemory.load/1` (`"role":"system"` to `"role":"user"`), or in the session store's history.
+  memory, rewrite the entry's role to `"user"`: in the decoded `AgentMemory.dump/1` data before
+  `AgentMemory.load/1`, set the top-level `role` key of each object in `entries` (do not
+  replace the string `"role":"system"` in the whole dump: tool outputs and schemas nest
+  `role` keys of their own), or in the session store's history.
 
 ## 36. Model-facing text and schemas
 

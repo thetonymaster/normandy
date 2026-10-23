@@ -311,8 +311,8 @@ documentation is the contract). Two things differ from `FakeClient`:
   are consolidated. Put the implementation in a file compiled with your project (for
   example `test/support/`, added to `elixirc_paths` for the test environment), or set
   `consolidate_protocols: false` for the test environment in `mix.exs`.
-- **Process ownership.** A `Turn.Server` session, an `AgentProcess` and BaseAgent's tool
-  tasks call the client from their own processes. `Req.Test` and Mox expectations
+- **Process ownership.** A `Turn.Server` session and an `AgentProcess` call the client
+  from their own processes (`BaseAgent.run/3` calls it from the caller's). `Req.Test` and Mox expectations
   need an allowance for those pids (see `MIGRATING-2.0.md`, "AgentProcess and
   coordination"). `FakeClient` needs none: any process on the node takes the next reply.
 

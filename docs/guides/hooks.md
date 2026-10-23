@@ -299,8 +299,8 @@ name and pass the name in opts (a pid is refused).
 
 ## What hooks do not cover
 
-- `Turn.Inline` has no hook site of its own; tool hooks run there when its `:dispatch`
-  calls `Dispatch.dispatch_one/3` with an agent pipeline.
+- The in-process turn that `BaseAgent.run/3` drives has no hook site of its own; tool hooks
+  run there when its `:dispatch` calls `Dispatch.dispatch_one/3` with an agent pipeline.
 - There is no session-end event: passivation runs `on_passivate`, but a supervisor
   shutdown, `:kill` or node loss runs no callback.
 - LLM requests and responses cannot be rewritten.
