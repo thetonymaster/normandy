@@ -201,8 +201,8 @@ if Code.ensure_loaded?(Redix) do
     # --- lifecycle ---
 
     @doc """
-    Test/default handle: starts an owner GenServer with its own Redix connection and
-    returns its handle.
+    Starts an owner GenServer with its own Redix connection to `:url` and returns its
+    handle. `:url` and `:namespace` are required.
 
     ## Options
 

@@ -7,8 +7,10 @@ defmodule Normandy.Behaviours.SessionStore do
   (`save_turn_state/4`, `load_turn_state/2`) round-trips an **opaque term**, which
   `Turn.Server` uses to suspend and resume a turn (passivation).
 
-  `handle` is impl-specific (a pid for `InMemory`, a table for `ETS`). Each impl
-  exposes `new/0` (or `new/1`) returning a fresh handle for tests and callers.
+  `handle` is impl-specific (a pid for `InMemory`, a table for `ETS`). The in-process
+  impls expose `new/0` (or `new/1`) returning a fresh handle; `Redis.new/1` requires
+  `:url` and `:namespace`; for `Postgres` the handle is the host's Repo module (no
+  constructor).
 
   Every impl must pass the ExUnit suite `Normandy.Test.SessionStoreContract`.
 
