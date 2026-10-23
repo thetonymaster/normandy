@@ -42,7 +42,8 @@ defmodule Normandy.Schema.Validator do
     - `minLength` / `min_length` - Minimum string length
     - `maxLength` / `max_length` - Maximum string length
     - `pattern` - Regular expression pattern matching
-    - `format` - String format validation (email, uri, uuid, date-time, ipv4, ipv6)
+    - `format` - String format validation (email, uri, uuid, date-time, date, time,
+      duration, hostname, ipv4, ipv6)
   - **Number constraints**
     - `minimum` - Minimum value (inclusive)
     - `maximum` - Maximum value (inclusive)
@@ -69,12 +70,17 @@ defmodule Normandy.Schema.Validator do
 
   ### Format Validation
 
-  The validator supports the following string formats:
+  The validator supports the following ten string formats (any other `format` is
+  not checked):
 
   - `email` - RFC 5322 email addresses (simplified)
   - `uri` - Uniform Resource Identifiers
   - `uuid` - UUID (Universally Unique Identifier) format
   - `date-time` - ISO 8601 date-time format
+  - `date` - ISO 8601 calendar date
+  - `time` - ISO 8601 time of day
+  - `duration` - ISO 8601 duration (`P1Y2M3W4DT5H6M7.5S`; at least one part)
+  - `hostname` - RFC 1123 hostname
   - `ipv4` - IPv4 address format
   - `ipv6` - IPv6 address format (simplified)
 
@@ -493,7 +499,6 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
-  # ISO 8601 date-time format validation (simplified)
   # ISO 8601 durations (P1Y2M3W4DT5H6M7.5S; at least one part) and RFC 1123 hostnames.
   defp duration_regex,
     do: ~r/^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/
@@ -511,6 +516,7 @@ defmodule Normandy.Schema.Validator do
     ]
   end
 
+  # ISO 8601 date-time format validation (simplified)
   defp validate_datetime_format(errors, value, path) do
     datetime_regex = ~r/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/
 
@@ -825,26 +831,10 @@ defmodule Normandy.Schema.Validator do
 
       schemas ->
         # At least one schema must validate
-        valid? =
-          Enum.any?(schemas, fn schema ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case validate_against_spec(data, schema, path) do
-              {:ok, _} -> true
-              {:error, _} -> false
-            end
-          end)
-
-        if valid? do
+        if Enum.any?(schemas, &matches?(data, &1, path)) do
           errors
         else
-          [
-            %{
-              path: path,
-              message: "must match at least one schema",
-              constraint: :anyOf
-            }
-            | errors
-          ]
+          [%{path: path, message: "must match at least one schema", constraint: :anyOf} | errors]
         end
     end
   end
@@ -856,34 +846,15 @@ defmodule Normandy.Schema.Validator do
 
       schemas ->
         # Exactly one schema must validate
-        valid_count =
-          Enum.count(schemas, fn schema ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case validate_against_spec(data, schema, path) do
-              {:ok, _} -> true
-              {:error, _} -> false
-            end
-          end)
-
-        cond do
-          valid_count == 1 ->
+        case Enum.count(schemas, &matches?(data, &1, path)) do
+          1 ->
             errors
 
-          valid_count == 0 ->
+          count ->
             [
               %{
                 path: path,
-                message: "must match exactly one schema (matched 0)",
-                constraint: :oneOf
-              }
-              | errors
-            ]
-
-          true ->
-            [
-              %{
-                path: path,
-                message: "must match exactly one schema (matched #{valid_count})",
+                message: "must match exactly one schema (matched #{count})",
                 constraint: :oneOf
               }
               | errors
@@ -892,62 +863,30 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
+  # All schemas must validate: each one adds its errors to the accumulator.
   defp validate_all_of(errors, data, spec, path) do
-    case spec[:allOf] do
+    Enum.reduce(spec[:allOf] || [], errors, &validate_schema(&2, data, &1, path))
+  end
+
+  # Conditional validation (if/then/else): the branch the `if` selects is
+  # checked, a missing branch passes.
+  defp validate_conditionals(errors, data, spec, path) do
+    case spec[:if] do
       nil ->
         errors
 
-      schemas ->
-        # All schemas must validate
-        Enum.reduce(schemas, errors, fn schema, acc ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case validate_against_spec(data, schema, path) do
-            {:ok, _} ->
-              acc
-
-            {:error, schema_errors} ->
-              schema_errors ++ acc
-          end
-        end)
+      if_schema ->
+        branch = if matches?(data, if_schema, path), do: spec[:then], else: spec[:else]
+        validate_branch(errors, data, branch, path)
     end
   end
 
-  # Conditional validation (if/then/else)
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defp validate_conditionals(errors, data, spec, path) do
-    if_schema = spec[:if]
-    then_schema = spec[:then]
-    else_schema = spec[:else]
+  defp validate_branch(errors, _data, nil, _path), do: errors
 
-    if is_nil(if_schema) do
-      errors
-    else
-      case validate_against_spec(data, if_schema, path) do
-        {:ok, _} ->
-          # If condition passed, validate against then schema
-          if then_schema do
-            case validate_against_spec(data, then_schema, path) do
-              {:ok, _} -> errors
-              {:error, then_errors} -> then_errors ++ errors
-            end
-          else
-            errors
-          end
+  defp validate_branch(errors, data, schema, path),
+    do: validate_schema(errors, data, schema, path)
 
-        {:error, _} ->
-          # If condition failed, validate against else schema
-          if else_schema do
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case validate_against_spec(data, else_schema, path) do
-              {:ok, _} -> errors
-              {:error, else_errors} -> else_errors ++ errors
-            end
-          else
-            errors
-          end
-      end
-    end
-  end
+  defp matches?(data, schema, path), do: validate_schema([], data, schema, path) == []
 
   # Format errors for display
   defp format_errors(errors) do
