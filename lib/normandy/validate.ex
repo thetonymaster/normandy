@@ -36,39 +36,26 @@ defmodule Normandy.Validate do
             errors: [],
             validations: [],
             required: [],
-            prepare: [],
-            constraints: [],
-            filters: %{},
             action: nil,
             types: %{},
-            changes: []
+            changes: %{}
 
   @type t(data_type) :: %Validate{
           valid?: boolean(),
           data: data_type,
           params: %{optional(String.t()) => term} | nil,
           required: [atom],
-          prepare: [(t -> t)],
           errors: [{atom, error}],
-          constraints: [constraint],
           validations: [validation],
-          filters: %{optional(atom) => term},
           action: action,
-          types: types
+          types: types,
+          changes: %{optional(atom) => term}
         }
   @type t :: t(Normandy.Schema.t() | map | nil)
   @type error :: {String.t(), Keyword.t()}
   @type action :: nil | :insert | :update | :delete | :replace | :ignore | atom
-  @type constraint :: %{
-          type: :check | :exclusion | :foreign_key | :unique,
-          constraint: String.t() | Regex.t(),
-          match: :exact | :suffix | :prefix,
-          field: atom,
-          error_message: String.t(),
-          error_type: atom
-        }
   @type data :: map()
-  @type types :: %{atom => Normandy.Type.t() | {:assoc, term()} | {:embed, term()}}
+  @type types :: %{atom => Normandy.Type.t()}
   @type traverse_result :: %{atom => [term] | traverse_result}
   @type validation :: {atom, term}
   @type empty_value :: (term() -> boolean()) | binary() | list() | map() | tuple()
@@ -247,8 +234,7 @@ defmodule Normandy.Validate do
         known_fields = types |> Map.keys() |> Enum.map_join(", ", &inspect/1)
 
         raise ArgumentError,
-              "unknown field `#{inspect(key)}` given to cast. Either the field does not exist or it is a " <>
-                ":through association (which are read-only). The known fields are: #{known_fields}"
+              "unknown field `#{inspect(key)}` given to cast. The known fields are: #{known_fields}"
     end
   end
 
