@@ -9,7 +9,7 @@ defmodule Normandy.Coordination.AgentSupervisor do
 
   - Dynamic agent spawning
   - Automatic restart on failure
-  - Configurable restart strategies
+  - Configurable restart intensity (`:max_restarts`, `:max_seconds`)
   - Agent process discovery
 
   ## Example

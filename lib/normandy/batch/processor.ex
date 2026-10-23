@@ -2,7 +2,7 @@ defmodule Normandy.Batch.Processor do
   @moduledoc """
   Batch processing utilities for handling multiple agent requests concurrently.
 
-  Provides efficient batch processing with configurable concurrency, rate limiting,
+  Provides efficient batch processing with configurable concurrency, a delay between chunks,
   and result aggregation for AI agent operations.
 
   ## Features
@@ -262,7 +262,7 @@ defmodule Normandy.Batch.Processor do
   @doc """
   Process a batch in chunks with a delay between chunks.
 
-  Useful for very large batches or strict rate limiting requirements.
+  Useful for very large batches: `:chunk_delay` is a fixed pause between chunks, not a rate limiter.
 
   ## Options
 
