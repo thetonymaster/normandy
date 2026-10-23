@@ -5,9 +5,7 @@ defmodule Normandy.LLM.ClaudioAdapterRetryUsageTest do
   alias Normandy.Telemetry.Usage
 
   defp collect(first, retries) do
-    ref = make_ref()
-    for r <- retries, do: send(self(), {ref, :retry_usage, r})
-    ClaudioAdapter.collect_retry_usage(ref, first)
+    ClaudioAdapter.add_retry_usages(first, retries)
   end
 
   test "a retry without iterations is appended to the first call's iterations" do
@@ -43,9 +41,9 @@ defmodule Normandy.LLM.ClaudioAdapterRetryUsageTest do
     }
 
     retry = %{
-      "input_tokens" => 2,
-      "output_tokens" => 2,
-      "iterations" => [
+      input_tokens: 2,
+      output_tokens: 2,
+      iterations: [
         %{"input_tokens" => 5, "output_tokens" => 1},
         %{"input_tokens" => 2, "output_tokens" => 2}
       ]
@@ -53,7 +51,6 @@ defmodule Normandy.LLM.ClaudioAdapterRetryUsageTest do
 
     merged = collect(first, [retry])
     assert length(merged.iterations) == 3
-    refute Map.has_key?(merged, "iterations")
     assert Usage.normalize(merged) == %{input_tokens: 8, output_tokens: 4}
   end
 

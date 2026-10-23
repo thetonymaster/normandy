@@ -130,8 +130,7 @@ defmodule Normandy.Schema.WireTest do
         RetryFeedback.build(
           {:json_parse_error, :invalid, "oops"},
           "oops",
-          %Ordered{},
-          Normandy.JSON
+          %Ordered{}
         )
 
       [_, json] = Regex.run(~r/## Required Schema\n```json\n(.*)\n```/s, feedback)

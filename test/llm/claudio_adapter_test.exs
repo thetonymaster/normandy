@@ -281,18 +281,6 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
                on_parse_failure: :error
              }) == %MultiField{}
     end
-
-    test "string-keyed stop_reason is classified like the atom-keyed form" do
-      resp = %{
-        "stop_reason" => "refusal",
-        "content" => [%{"type" => "text", "text" => "nope"}],
-        "usage" => %{}
-      }
-
-      assert ClaudioAdapter.__handle_structured_response__(resp, %MultiField{}, %{
-               on_parse_failure: :error
-             }) == %MultiField{}
-    end
   end
 
   describe "__structured_error_action__/1" do
@@ -446,7 +434,7 @@ defmodule NormandyTest.LLM.ClaudioAdapterTest do
         %{type: :text, text: "declined-1"},
         @fallback,
         %{type: :text, text: "declined-2"},
-        %{"type" => "fallback"},
+        @fallback,
         %{type: :text, text: "served"}
       ]
 

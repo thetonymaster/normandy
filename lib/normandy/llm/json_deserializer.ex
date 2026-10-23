@@ -2,7 +2,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @moduledoc """
   JSON deserialization helper with automatic error recovery.
 
-  It strips Markdown fences and surrounding prose, decodes through the configured JSON adapter (with a `:max_input_bytes` guard),
+  It strips Markdown fences and surrounding prose, decodes through `Normandy.JSON` (with a `:max_input_bytes` guard),
   casts and validates the result against the target schema, and builds the corrective
   retry prompt after a parse error.
 
@@ -10,7 +10,6 @@ defmodule Normandy.LLM.JsonDeserializer do
   - Automatic retry on JSON parse errors
   - Error feedback to the LLM in a user message after the conversation
   - Configurable retry attempts
-  - Support for nested/double-encoded JSON
 
   ## Usage with Agent
 
@@ -54,7 +53,6 @@ defmodule Normandy.LLM.JsonDeserializer do
   - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed to each
     retry's `converse/3` (with `request_kind: :json_retry`) so the retry's request
     span is numbered within the enclosing llm_call
-  - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
   - `:max_input_bytes` - Maximum byte size of the raw content accepted before
     any parsing is attempted (default: `10_000_000`). When the content exceeds
     this limit, `Decoder.decode/3` returns
@@ -116,8 +114,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
     - `opts` - Options:
-      - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
-
+    
   ## Returns
 
     - `{:ok, populated_schema}` - Success
@@ -136,8 +133,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @spec parse_and_validate(String.t(), struct(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def parse_and_validate(content, schema, opts \\ []) do
-    adapter = Keyword.get(opts, :adapter, Normandy.JSON)
-    parse_and_populate(content, schema, adapter, opts)
+    parse_and_populate(content, schema, opts)
   end
 
   @doc """
@@ -156,7 +152,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `client` - LLM client
     - `request` - the `Normandy.LLM.Request` that produced `content`; a retry resends
       it with the error feedback appended to its messages
-    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:adapter`)
+    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`)
 
   ## Returns
 
@@ -166,146 +162,105 @@ defmodule Normandy.LLM.JsonDeserializer do
   @spec deserialize_with_retry(String.t(), struct(), struct(), Request.t(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def deserialize_with_retry(content, schema, client, %Request{} = request, opts \\ []) do
-    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
-    adapter = Keyword.get(opts, :adapter, Normandy.JSON)
+    callback = Keyword.get(opts, :on_retry_usage)
+    take_usage? = is_function(callback, 1)
 
-    deserialize_loop(content, schema, client, request, opts, adapter, 0, max_retries)
+    {result, usages} = run(content, schema, client, request, opts, take_usage?)
+    if take_usage?, do: Enum.each(usages, callback)
+    result
   end
 
-  # Main retry loop
-  defp deserialize_loop(content, schema, _client, _request, opts, adapter, attempt, max_retries)
-       when attempt >= max_retries do
-    # Max retries reached, attempt final parse and return result
-    case parse_and_populate(content, schema, adapter, opts) do
+  @doc false
+  # Like `deserialize_with_retry/5`, and the caller owns the usage: returns the
+  # result and the token usage of every retry call, in order, an LLM failure's
+  # usage included (it is taken off the error). `:on_retry_usage` is not read.
+  @spec deserialize_with_usage(String.t(), struct(), struct(), Request.t(), keyword()) ::
+          {{:ok, struct()} | {:error, term()}, [map()]}
+  def deserialize_with_usage(content, schema, client, %Request{} = request, opts \\ []),
+    do: run(content, schema, client, request, opts, true)
+
+  # `take_usage?` is whether the caller takes a billed failure's usage off the
+  # error; without it, the error keeps its usage for a direct caller to see.
+  defp run(content, schema, client, request, opts, take_usage?) do
+    run = %{
+      schema: schema,
+      client: client,
+      request: request,
+      opts: opts,
+      max_retries: Keyword.get(opts, :max_retries, @default_max_retries),
+      take_usage?: take_usage?
+    }
+
+    deserialize_loop(content, run, 0, [])
+  end
+
+  # Main retry loop: only `content` and `attempt` change; `usages` is the retry
+  # calls' usage so far, newest first.
+  defp deserialize_loop(content, run, attempt, usages) do
+    case parse_and_populate(content, run.schema, run.opts) do
       {:ok, populated_schema} ->
-        {:ok, populated_schema}
+        {{:ok, populated_schema}, Enum.reverse(usages)}
+
+      {:error, reason} when attempt >= run.max_retries ->
+        {{:error, {:max_retries_reached, reason}}, Enum.reverse(usages)}
 
       {:error, reason} ->
-        {:error, {:max_retries_reached, reason}}
-    end
-  end
-
-  defp deserialize_loop(content, schema, client, request, opts, adapter, attempt, max_retries) do
-    case parse_and_populate(content, schema, adapter, opts) do
-      {:ok, populated_schema} ->
-        {:ok, populated_schema}
-
-      # The clause above handles attempt >= max_retries, so a retry is left.
-      {:error, reason} ->
-        retry_with_feedback(
-          reason,
-          content,
-          schema,
-          client,
-          request,
-          opts,
-          adapter,
-          attempt + 1,
-          max_retries
-        )
-    end
-  end
-
-  defp hand_off_retry_usage(opts, %LLMError{} = error) do
-    if is_function(Keyword.get(opts, :on_retry_usage), 1) do
-      report_retry_usage(opts, error.usage)
-      %{error | usage: nil, usage_counts: nil}
-    else
-      error
-    end
-  end
-
-  defp report_retry_usage(opts, usage) do
-    case Keyword.get(opts, :on_retry_usage) do
-      fun when is_function(fun, 1) and not is_nil(usage) -> fun.(usage)
-      _ -> :ok
+        retry_with_feedback(reason, content, run, attempt + 1, usages)
     end
   end
 
   # Retry by calling the LLM again with error feedback. Each retry augments the
   # original request's messages, not the previous retry's, and asks for text
   # (response_model: nil).
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  defp retry_with_feedback(
-         error,
-         failed_content,
-         schema,
-         client,
-         request,
-         opts,
-         adapter,
-         attempt,
-         max_retries
-       ) do
-    error_message = RetryFeedback.build(error, failed_content, schema, adapter)
+  defp retry_with_feedback(error, failed_content, run, attempt, usages) do
+    error_message = RetryFeedback.build(error, failed_content, run.schema)
 
     retry_request = %{
-      request
-      | messages: RetryFeedback.augment_messages(request.messages, error_message),
+      run.request
+      | messages: RetryFeedback.augment_messages(run.request.messages, error_message),
         response_model: nil
     }
 
-    llm_opts = [request_kind: :json_retry] ++ Keyword.take(opts, [:request_tracker])
+    llm_opts = [request_kind: :json_retry] ++ Keyword.take(run.opts, [:request_tracker])
 
-    case Call.converse(client, retry_request, llm_opts) do
+    case Call.converse(run.client, retry_request, llm_opts) do
       # An LLM failure is not a parse failure: stop and hand it back. A billed failure
       # (a retry cut off at max_tokens) reports its usage like a successful retry, so the
-      # adapter attaches the call's total instead of this retry's alone. Without that
-      # callback the error keeps its usage: a direct caller still sees what it billed.
+      # adapter attaches the call's total instead of this retry's alone.
       {:error, %LLMError{} = error} ->
-        {:error, hand_off_retry_usage(opts, error)}
+        hand_off_failure(error, run, usages)
 
       {:ok, %Response{content: response, usage: usage}} ->
-        report_retry_usage(opts, usage)
+        usages = add_usage(usages, usage)
 
-        continue_after_retry(
-          response,
-          schema,
-          client,
-          request,
-          opts,
-          adapter,
-          attempt,
-          max_retries
-        )
+        case response_text(response) do
+          {:ok, text} -> deserialize_loop(text, run, attempt, usages)
+          :error -> {{:error, :llm_call_failed}, Enum.reverse(usages)}
+        end
     end
   end
 
-  defp continue_after_retry(
-         response,
-         schema,
-         client,
-         request,
-         opts,
-         adapter,
-         attempt,
-         max_retries
-       ) do
-    cond do
-      is_binary(response) ->
-        deserialize_loop(response, schema, client, request, opts, adapter, attempt, max_retries)
-
-      is_struct(response) ->
-        deserialize_loop(
-          extract_content_from_response(response),
-          schema,
-          client,
-          request,
-          opts,
-          adapter,
-          attempt,
-          max_retries
-        )
-
-      true ->
-        {:error, :llm_call_failed}
-    end
+  defp hand_off_failure(error, %{take_usage?: true}, usages) do
+    {{:error, %{error | usage: nil, usage_counts: nil}},
+     Enum.reverse(add_usage(usages, error.usage))}
   end
 
-  defp parse_and_populate(content, schema, adapter, opts) do
+  defp hand_off_failure(error, _run, usages), do: {{:error, error}, Enum.reverse(usages)}
+
+  defp add_usage(usages, nil), do: usages
+  defp add_usage(usages, usage), do: [usage | usages]
+
+  defp response_text(response) when is_binary(response), do: {:ok, response}
+
+  defp response_text(response) when is_struct(response),
+    do: {:ok, extract_content_from_response(response)}
+
+  defp response_text(_response), do: :error
+
+  defp parse_and_populate(content, schema, opts) do
     cleaned_content = ContentCleaner.clean(content)
 
-    case Decoder.decode(cleaned_content, adapter, opts) do
+    case Decoder.decode(cleaned_content, opts) do
       {:ok, parsed} when is_map(parsed) ->
         SchemaBinder.bind(parsed, schema, content)
 
@@ -313,7 +268,7 @@ defmodule Normandy.LLM.JsonDeserializer do
         {:error, reason}
 
       {:error, reason} ->
-        try_extracted_regions(cleaned_content, adapter, opts, schema, content, reason)
+        try_extracted_regions(cleaned_content, opts, schema, content, reason)
 
       _ ->
         {:error, {:unexpected_parse_result, content}}
@@ -326,12 +281,12 @@ defmodule Normandy.LLM.JsonDeserializer do
   # JSON of the wrong shape) — so a later valid object is still found. If a
   # region produced a validation error and nothing later binds, that error is
   # preserved rather than masked as a generic json_parse_error.
-  defp try_extracted_regions(cleaned_content, adapter, opts, schema, content, reason) do
+  defp try_extracted_regions(cleaned_content, opts, schema, content, reason) do
     result =
       cleaned_content
       |> ContentCleaner.balanced_regions()
       |> Enum.reduce_while(reason, fn {extracted, _start}, reason ->
-        bind_region(extracted, adapter, opts, schema, content, reason)
+        bind_region(extracted, opts, schema, content, reason)
       end)
 
     case result do
@@ -341,8 +296,8 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  defp bind_region(extracted, adapter, opts, schema, content, reason) do
-    case Decoder.decode(extracted, adapter, opts) do
+  defp bind_region(extracted, opts, schema, content, reason) do
+    case Decoder.decode(extracted, opts) do
       {:ok, parsed} when is_map(parsed) ->
         case SchemaBinder.bind(parsed, schema, content) do
           {:ok, _populated} = ok -> {:halt, ok}

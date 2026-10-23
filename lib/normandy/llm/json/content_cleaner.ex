@@ -1,8 +1,7 @@
 defmodule Normandy.LLM.Json.ContentCleaner do
   @moduledoc false
   # Cleans raw LLM output into a parseable JSON string: strips markdown code
-  # fences and trims. `extract_balanced/1` is the prose-extraction fallback
-  # (implemented in the hardening phase).
+  # fences and trims. `balanced_regions/1` is the prose-extraction fallback.
 
   @doc "Strip code fences and trim. Non-binary content passes through unchanged."
   def clean(content) when is_binary(content) do
@@ -16,20 +15,9 @@ defmodule Normandy.LLM.Json.ContentCleaner do
 
   def clean(content), do: content
 
-  @doc "Locate the first balanced JSON object/array within surrounding prose."
-  @spec extract_balanced(binary()) :: {:ok, binary()} | :error
-  def extract_balanced(content) when is_binary(content) do
-    case extract_balanced(content, 0) do
-      {:ok, region, _start} -> {:ok, region}
-      :error -> :error
-    end
-  end
-
-  def extract_balanced(_content), do: :error
-
   @doc """
-  Like `extract_balanced/1` but begins scanning at byte offset `from` and also
-  returns the byte offset where the located region started.
+  Locates the first balanced JSON object/array at or after byte offset `from`, within
+  surrounding prose, and returns it with the byte offset where it started.
   """
   @spec extract_balanced(binary(), non_neg_integer()) ::
           {:ok, binary(), non_neg_integer()} | :error
