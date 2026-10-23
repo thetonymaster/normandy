@@ -456,6 +456,30 @@ defmodule Normandy.LLM.JsonDeserializerTest do
                JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})
     end
 
+    for lines <- [100, 7_700] do
+      test "an answer after C code that prints escaped JSON is found (#{lines} lines)" do
+        line = ~S|  printf("{\"id\": %d}\n", x);| <> "\n"
+        text = "int main() {\n" <> String.duplicate(line, unquote(lines)) <> "}\n"
+        text = text <> ~s({"chat_message": "done"})
+
+        {t, result} =
+          :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+        assert {:ok, %BaseAgentOutputSchema{chat_message: "done"}} = result
+        assert t < 1_000_000
+      end
+    end
+
+    test "240 KB of deeply nested brackets returns within 1 s" do
+      text = String.duplicate("[", 120_000) <> String.duplicate("]", 120_000) <> " x"
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
     test "unclosed brackets and braces mixed still find the later balanced region" do
       text = String.duplicate("[ {", 5_000) <> ~s( {"chat_message": "hi"})
 

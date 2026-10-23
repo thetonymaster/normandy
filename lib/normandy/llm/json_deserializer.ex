@@ -182,7 +182,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `client` - LLM client
     - `request` - the `Normandy.LLM.Request` that produced `content`; a retry resends
       it with the error feedback appended to its messages
-    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`)
+    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:max_input_bytes`)
 
   ## Returns
 
@@ -326,12 +326,24 @@ defmodule Normandy.LLM.JsonDeserializer do
   # JSON of the wrong shape) — so a later valid object is still found. If a
   # region produced a validation error and nothing later binds, that error is
   # preserved rather than masked as a generic json_parse_error.
+  #
+  # Regions nest, so their sizes add up to more than the content's (`[[[...]]]`
+  # has one region per level): the regions together may cost at most `8 * size + 1024`
+  # bytes of decoding (a failed decode costs the bytes read up to its error), then
+  # the walk stops with the reason so far.
   defp try_extracted_regions(cleaned_content, opts, schema, content, reason) do
-    result =
+    budget = 8 * byte_size(cleaned_content) + 1024
+
+    {result, _budget} =
       cleaned_content
       |> ContentCleaner.balanced_regions()
-      |> Enum.reduce_while(reason, fn {extracted, _start}, reason ->
-        bind_region(extracted, opts, schema, content, reason)
+      |> Enum.reduce_while({reason, budget}, fn {extracted, _start}, {reason, budget} ->
+        {tag, reason, cost} = bind_region(extracted, opts, schema, content, reason)
+
+        case budget - cost do
+          left when left < 0 -> {:halt, {reason, left}}
+          left -> {tag, {reason, left}}
+        end
       end)
 
     case result do
@@ -341,16 +353,24 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
+  # {:cont | :halt, reason_or_result, bytes read}. A decode that fails costs the
+  # bytes it read before the failure, not the region's size.
   defp bind_region(extracted, opts, schema, content, reason) do
     case Decoder.decode(extracted, opts) do
       {:ok, parsed} when is_map(parsed) ->
         case SchemaBinder.bind(parsed, schema, content) do
-          {:ok, _populated} = ok -> {:halt, ok}
-          {:error, bind_reason} -> {:cont, bind_reason}
+          {:ok, _populated} = ok -> {:halt, ok, 0}
+          {:error, bind_reason} -> {:cont, bind_reason, byte_size(extracted)}
         end
 
+      {:ok, _not_a_map} ->
+        {:cont, reason, byte_size(extracted)}
+
+      {:error, %{position: position}} when is_integer(position) ->
+        {:cont, reason, position + 1}
+
       _ ->
-        {:cont, reason}
+        {:cont, reason, byte_size(extracted)}
     end
   end
 

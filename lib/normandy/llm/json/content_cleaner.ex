@@ -37,13 +37,16 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   yielded too, so a caller that rejects an outer region still sees the inner
   ones. Lazy.
 
-  Work is bounded: the scans together read at most `8 * byte_size(content) + 1024`
-  bytes, whatever the input. A scan that starts at an opener settles every
-  same-kind opener it passes outside a string, and stops as soon as it reaches a
-  lexer state an earlier unclosed scan already crossed with no more openers
-  pending, so prose and the usual pathological shapes (`{ word `, `{ \\"`
-  repeated) cost a few passes. If an input still exhausts the budget the stream
-  ends there: regions that would start later are not yielded.
+  The guarantee: the scans together read at most `8 * byte_size(content) + 1024` bytes,
+  whatever the input, so the time is linear in the size. Scans share work: a scan that
+  starts at an opener settles every same-kind opener it passes outside a string, and
+  stops at a lexer state an earlier scan of that kind already crossed, when the outcome
+  there is known (that scan closed its first opener with the same number pending, or
+  never closed it with no more pending). Prose, nested code and repeated escaped-quote
+  shapes (`{ word `, `{ \\"`, `printf("{\\"id\\": %d}")` lines) stay far under the budget.
+  Some inputs still need more than it allows; then the stream ends early, and the
+  regions yielded are always a prefix of the full list in start order: a later region
+  can be missed, a wrong one never returned.
   """
   @spec balanced_regions(binary()) :: Enumerable.t()
   def balanced_regions(content) when is_binary(content) do
@@ -54,7 +57,8 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   # `:unclosed`. `seen`: `{opener, pos, in_string?, escape?}` => the fewest openers pending
   # when a scan that never closed its first opener crossed that state. `work`: bytes
   # the scans may still read.
-  defp new_state(content), do: %{memo: %{}, seen: %{}, work: 8 * byte_size(content) + 1024}
+  defp new_state(content),
+    do: %{memo: %{}, seen: %{}, done: %{}, work: 8 * byte_size(content) + 1024}
 
   # The next balanced region at or after `from`, or nil. An opener whose region never
   # closes is skipped, so a stray brace in prose doesn't hide a valid region later in
@@ -90,7 +94,7 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   defp settle(content, start, st) do
     opener = :binary.at(content, start)
     closer = if opener == ?{, do: ?}, else: ?]
-    scan(content, start + 1, {opener, closer}, [start], 1, {false, false}, [], st)
+    scan(content, start + 1, {opener, closer, start}, [start], 1, {false, false}, [], st)
   end
 
   # scan(content, pos, {opener, closer}, open_stack, depth, {in_string?, escape?}, trail, st)
@@ -105,13 +109,27 @@ defmodule Normandy.LLM.Json.ContentCleaner do
        when work <= 0,
        do: :exhausted
 
-  defp scan(content, pos, {opener, _} = kind, stack, depth, {in_str, esc} = lex, trail, st) do
+  defp scan(content, pos, {opener, _, start} = kind, stack, depth, {in_str, esc} = lex, trail, st) do
     key = {opener, pos, in_str, esc}
 
-    case st.seen do
+    case st do
+      # An earlier scan of this kind crossed this state with this many openers pending
+      # and closed its first opener at `stop`; so does this one.
+      %{done: %{{^key, ^depth} => stop}} ->
+        {:ok, closed(start, stop, trail, st)}
+
+      _ ->
+        scan_seen(content, pos, kind, stack, depth, lex, trail, st)
+    end
+  end
+
+  defp scan_seen(content, pos, kind, stack, depth, {in_str, esc} = lex, trail, st) do
+    key = {elem(kind, 0), pos, in_str, esc}
+
+    case Map.get(st.seen, key) do
       # An earlier unclosed scan crossed this state with `min` openers pending, so
       # an opener with `min` or more pending at this point never closes.
-      %{^key => min} when depth >= min ->
+      min when is_integer(min) and depth >= min ->
         {:ok, unclosed(Enum.drop(stack, min - 1), trail, st)}
 
       _ ->
@@ -121,7 +139,7 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defp step(content, pos, {opener, closer} = kind, stack, depth, {in_str, esc}, trail, st) do
+  defp step(content, pos, {opener, closer, start} = kind, stack, depth, {in_str, esc}, trail, st) do
     byte = :binary.at(content, pos)
     next = pos + 1
 
@@ -149,12 +167,20 @@ defmodule Normandy.LLM.Json.ContentCleaner do
         st = %{st | memo: Map.put(st.memo, open, {:closed, next})}
 
         if outer == [],
-          do: {:ok, st},
+          do: {:ok, closed(start, next, trail, st)},
           else: scan(content, next, kind, outer, depth - 1, {false, false}, trail, st)
 
       true ->
         scan(content, next, kind, stack, depth, {false, false}, trail, st)
     end
+  end
+
+  # The scan's first opener closed at `stop`: remember the states crossed with the
+  # depth they were crossed at. (`start` is settled by the caller's memo already
+  # when the scan closed on its own.)
+  defp closed(start, stop, trail, st) do
+    done = Enum.reduce(trail, st.done, fn {key, d}, acc -> Map.put(acc, {key, d}, stop) end)
+    %{st | done: done, memo: Map.put(st.memo, start, {:closed, stop})}
   end
 
   # The scan's first opener never closed: settle the openers known unclosed and

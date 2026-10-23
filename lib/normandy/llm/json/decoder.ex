@@ -8,7 +8,7 @@ defmodule Normandy.LLM.Json.Decoder do
   @doc false
   # `opts[:max_input_bytes]` (default 10_000_000): larger content is
   # `{:error, {:input_too_large, size, limit}}` before any parse.
-  @spec decode(binary(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec decode(binary(), keyword()) :: {:ok, term()} | {:error, term()}
   def decode(content, opts) when is_binary(content) do
     case Keyword.get(opts, :max_input_bytes, @default_max_input_bytes) do
       limit when is_integer(limit) and limit > 0 ->
