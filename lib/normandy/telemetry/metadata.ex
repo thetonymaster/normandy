@@ -41,13 +41,13 @@ defmodule Normandy.Telemetry.Metadata do
   end
 
   @doc """
-  The keys a finished run's `:stop` adds (see "Run totals" in `Normandy.Telemetry`), from
-  the turn's final state and the run's usage accumulator (internal):
-  `llm_calls` and the token totals some call reported, `iterations` (tool rounds and
-  pause continuations completed), `stop_reason` (`:completed | :max_iterations`) and
-  `finish_reason` (the last response's stop reason as a string, when it has one) and
-  `answer_source` (`:tool_round` when the answer is this turn's last tool-round text,
-  else `:final`).
+  The keys a finished run's `:stop` adds (see "Run totals" and "Answer source" in
+  `Normandy.Telemetry`), from the turn's final state and the run's usage accumulator
+  (internal): `llm_calls` and the token totals some call reported, `iterations` (tool
+  rounds and pause continuations completed), `stop_reason` (`:completed |
+  :max_iterations`), `finish_reason` (the last response's stop reason as a string, when it
+  has one) and `answer_source` (`:tool_round` when the answer is this turn's last
+  tool-round text, else `:final`).
   """
   @spec run_stop(Turn.State.t(), :counters.counters_ref()) :: map()
   def run_stop(%Turn.State{} = state, run_usage) do

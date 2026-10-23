@@ -51,8 +51,8 @@ defmodule Normandy.Telemetry do
     * Stop metadata: the start keys, plus `turn_id` from the finished run and the run
       totals (see "Run totals" below): `llm_calls`, `input_tokens`, `output_tokens`,
       `cache_read_input_tokens`, `cache_write_input_tokens` (each token total only when
-      some call reported it), `iterations`, `stop_reason`, `finish_reason` and
-      `answer_source`.
+      some call reported it), `iterations`, `stop_reason` and `finish_reason`; and
+      `answer_source` (see "Answer source" below), which is not a total.
     * Turn.Server only: stop and exception measurements add `approval_wait` (see
       "Approval wait"); start metadata carries `resumed: true` for a resumed durable turn.
     * `:exception` from `Turn.Server` has `kind: :error`, `reason`: the exception `run/2`
@@ -80,9 +80,6 @@ defmodule Normandy.Telemetry do
       (`"end_turn"`); absent when that response carries none (a run without tools gets
       its answer as the output schema, which is never read for one, even when it has a
       `stop_reason` field).
-    * `answer_source` - `:tool_round` when a chat (`:chat_message`) agent's final
-      response was blank and the answer is the text of this turn's last tool-calling
-      response (see `Normandy.Agents.BaseAgent.run/3`), else `:final` (always present).
 
   Not counted: a failed llm_call, compaction's summary calls (their own llm_call spans
   carry `purpose: :summary`; add them from those), and calls a custom `call_llm` handler
@@ -91,6 +88,13 @@ defmodule Normandy.Telemetry do
   resume in `llm_calls` and the token totals, while `iterations`, `stop_reason` and
   `finish_reason` describe the whole turn (do not divide one by the other). A run that
   ends in `:exception` carries no totals.
+
+  #### Answer source
+
+  A run's `:stop` also carries `answer_source` (always present): `:tool_round` when a
+  chat (`:chat_message`) agent's final response was blank and the answer is the text of
+  this turn's last tool-calling response (see `Normandy.Agents.BaseAgent.run/3`), else
+  `:final`. A run that ends in `:exception` has none.
 
   ### `[:normandy, :agent, :llm_call, :start | :stop | :exception]`
 

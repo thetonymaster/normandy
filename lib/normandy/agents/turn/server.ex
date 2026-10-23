@@ -317,8 +317,11 @@ defmodule Normandy.Agents.Turn.Server do
                                 "A `Normandy.Agents.Turn.Driver.Handlers` set (default " <>
                                   "`Normandy.Agents.BaseAgent`'s non-streaming handlers). A `nil` " <>
                                   "`:emit` is skipped. Hook modules' `before_llm` and " <>
-                                  "`after_compact` run around whichever set is used. Never saved " <>
-                                  "with the template."
+                                  "`after_compact` run around whichever set is used. BaseAgent's " <>
+                                  "`validate` makes the blank-answer check, the chat agent's " <>
+                                  "tool-round fallback and the run `:stop` `answer_source`; a " <>
+                                  "custom `validate` makes none of them. Never saved with the " <>
+                                  "template."
                             ],
                             approval_timeout_ms: [
                               type: @session_types.approval_timeout_ms,
