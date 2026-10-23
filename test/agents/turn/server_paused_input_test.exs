@@ -11,13 +11,17 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
 
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, BaseAgentOutputSchema}
   alias Normandy.Agents.{ToolCallResponse, Turn}
+  alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.PolicyEngine.Ruleset
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.LLMError
   alias Normandy.MCP.ServerConfig
+  alias Normandy.Test.FakeTool
   alias Normandy.Test.TelemetryCapture
   alias Normandy.Test.WireScript
+  alias Normandy.Tools.Toolset
 
   @mcp_use %{
     "type" => "mcp_tool_use",
@@ -211,5 +215,59 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
     assert_continuation(1)
     assert_q2_request(2)
     assert_answered_history(ctx)
+  end
+
+  test "a continuation that parks for approval holds the input until the approval resolves",
+       ctx do
+    billing = %{"type" => "tool_use", "id" => "pk1", "name" => "billing", "input" => %{}}
+
+    config =
+      agent(
+        WireScript.client([
+          {:json, [@mcp_result, billing], "tool_use"},
+          {:json, [@found], "end_turn"},
+          {:json, [@answer_two], "end_turn"}
+        ])
+      )
+
+    config = %{
+      config
+      | toolset: Toolset.new([%FakeTool{name: "billing"}]),
+        behaviours: %Config{
+          policy:
+            {Ruleset,
+             rules: [%{match: "billing", action: :require_approval, rule_id: "R1"}],
+             default_action: :allow}
+        }
+    }
+
+    parent = self()
+    :ok = InMemory.save_turn_state(ctx.store, ctx.sid, steering_state(), false)
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: ctx.sid,
+        config: config,
+        store: {InMemory, ctx.store},
+        registry: {Native, Native.new()},
+        subscriber: fn name, meta -> send(parent, {:event, name, meta}) end
+      )
+
+    task = Task.async(fn -> Turn.Server.run(srv, "q2") end)
+
+    assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
+    assert_received {:wire_body, 0, _}
+    # Parked: run/2 is still waiting, and q2 has not reached the model.
+    assert Task.yield(task, 100) == nil
+    refute_received {:wire_body, 1, _}
+
+    :ok = Turn.Server.approve(srv, %{"pk1" => :approve})
+
+    assert {:ok, %BaseAgentOutputSchema{chat_message: "Answer two."}} = Task.await(task, 5_000)
+
+    assert_received {:wire_body, 1, _}
+    assert_received {:wire_body, 2, body}
+    assert %{"role" => "user", "content" => q2} = List.last(body["messages"])
+    assert inspect(q2) =~ "q2"
   end
 end
