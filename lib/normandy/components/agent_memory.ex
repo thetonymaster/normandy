@@ -233,6 +233,16 @@ defmodule Normandy.Components.AgentMemory do
   A non-empty text `"user"` message right after such a run (the iteration-cap notice, an
   `after_compact` injection) becomes its last block, as the API expects text sent with
   tool results.
+
+  An `"assistant"` message other than the last loses each `"server_tool_use"` or
+  `"mcp_tool_use"` block that nothing answers (no block of the same message or of any
+  later one has its id as `"tool_use_id"`), and goes if that leaves it empty.
+  The API accepts an unanswered server-tool use only in the last message, where it
+  continues a paused turn; once a later message follows, it rejects the request. A
+  continuation that pauses again or calls a client tool is stored as the next assistant
+  message, starting with the result of the earlier pause; the API joins consecutive
+  assistant messages into one turn, so that use and result pair up and both stay. What
+  is stored does not change.
   """
   @spec request_messages([%{role: String.t(), content: term()}]) :: [Message.t()]
   def request_messages(history) when is_list(history) do
@@ -240,7 +250,50 @@ defmodule Normandy.Components.AgentMemory do
     |> Enum.reduce([], &add_request_message/2)
     |> Enum.reverse()
     |> fold_user_text()
+    |> drop_unanswered_server_tools()
   end
+
+  defp drop_unanswered_server_tools([]), do: []
+
+  # One walk from the end: `later` holds the "tool_use_id"s of every message after the
+  # current one, so a use is kept when its own message or any later one answers it.
+  defp drop_unanswered_server_tools(messages) do
+    [last | earlier] = Enum.reverse(messages)
+
+    {kept, _later} =
+      Enum.reduce(earlier, {[last], answered_ids(last, MapSet.new())}, fn message, {acc, later} ->
+        {trim_unanswered(message, later) ++ acc, answered_ids(message, later)}
+      end)
+
+    kept
+  end
+
+  defp answered_ids(%Message{content: blocks}, ids) when is_list(blocks),
+    do: Enum.reduce(blocks, ids, fn block, acc -> put_answered(block, acc) end)
+
+  defp answered_ids(_message, ids), do: ids
+
+  defp put_answered(%{"tool_use_id" => id}, ids), do: MapSet.put(ids, id)
+  defp put_answered(_block, ids), do: ids
+
+  defp trim_unanswered(%Message{role: "assistant", content: blocks} = message, later)
+       when is_list(blocks) do
+    answered = answered_ids(message, later)
+
+    case Enum.reject(blocks, &unanswered_use?(&1, answered)) do
+      ^blocks -> [message]
+      [] -> []
+      kept -> [%{message | content: kept}]
+    end
+  end
+
+  defp trim_unanswered(message, _later), do: [message]
+
+  defp unanswered_use?(%{"type" => type, "id" => id}, answered)
+       when type in ["server_tool_use", "mcp_tool_use"],
+       do: not MapSet.member?(answered, id)
+
+  defp unanswered_use?(_block, _answered), do: false
 
   @doc false
   # The messages of a request built from `memory` in one walk of the active branch:

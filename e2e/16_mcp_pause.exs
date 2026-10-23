@@ -289,7 +289,32 @@ result =
         {:ok, entries} = InMemory.history(store, sid)
         i = Enum.find_index(entries, paused_entry?)
         S.assert!("the store holds the paused assistant turn", is_integer(i), inspect(Enum.map(entries, & &1.role)))
-        S.assert!("the new input directly follows the paused turn", Enum.at(entries, i + 1).role == "user", inspect(Enum.map(entries, & &1.role)))
+        # 2.0 (fix 53f7931): Turn.Server continues a stored paused turn before new input, so the
+        # input follows the continuation's answer (an unpaused assistant turn), never the pause.
+        roles = inspect(Enum.map(entries, & &1.role))
+        j = entries |> Enum.drop(i + 1) |> Enum.find_index(&(&1.role == "user"))
+        S.assert!("the new input is stored after the paused turn", is_integer(j), roles)
+        before_input = Enum.at(entries, i + j)
+        S.assert!("the paused turn was continued before the new input (an answer precedes it)", before_input.role == "assistant" and not paused_entry?.(before_input), roles)
+        # Diagnostic: each stored entry's block types and tool ids (no text), to see whether the
+        # continuation answered the paused mcp_tool_use and what of it the history keeps.
+        Enum.each(entries, fn entry ->
+          shape =
+            case entry.content do
+              %ToolCallResponse{content_blocks: blocks, stop_reason: reason} ->
+                ids = Enum.map(blocks, &{&1["type"], &1["id"] || &1["tool_use_id"]})
+                "ToolCallResponse stop_reason=#{inspect(reason)} blocks=#{inspect(ids)}"
+
+              %{__struct__: mod} ->
+                inspect(mod)
+
+              other ->
+                inspect(other, limit: 3, printable_limit: 40)
+            end
+
+          IO.puts("ENTRY #{entry.role}: #{shape}")
+        end)
+
         IO.puts("PAUSE_PATH live")
         result
 

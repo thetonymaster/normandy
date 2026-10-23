@@ -260,6 +260,35 @@ defmodule Normandy.Agents.PauseTurnTest do
       assert_continued()
     end
 
+    test "a second run after a continued paused turn sends no unanswered server-tool use" do
+      client =
+        WireScript.client([
+          {:json, @paused, "pause_turn"},
+          {:json, [@result, @sunny], "end_turn"},
+          {:json, [@sunny], "end_turn"}
+        ])
+
+      {:ok, config, _} = BaseAgent.run(mcp_agent(client), "weather?")
+      assert {:ok, _config, %{chat_message: "Sunny."}} = BaseAgent.run(config, "and tomorrow?")
+
+      assert_received {:wire_body, 2, body}
+
+      assert [%{"role" => "user"}, %{"role" => "assistant"}, %{"role" => "assistant"}, last] =
+               body["messages"]
+
+      assert last["role"] == "user"
+      assert [_user, %{"content" => [@searching]}, _, _] = body["messages"]
+
+      for %{"role" => "assistant", "content" => blocks} <- body["messages"], is_list(blocks) do
+        answered = for %{"tool_use_id" => id} <- blocks, do: id
+
+        for %{"type" => type, "id" => id} <- blocks,
+            type in ["server_tool_use", "mcp_tool_use"] do
+          assert id in answered
+        end
+      end
+    end
+
     test "Turn.Server continues a paused connector turn" do
       client =
         WireScript.client([
