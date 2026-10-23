@@ -563,20 +563,20 @@ defmodule Normandy.Coordination.AgentPool do
     # Check if this is an overflow agent
     is_overflow = length(new_state.available) >= state.size
 
-    cond do
-      # There are waiting checkouts
-      not :queue.is_empty(new_state.waiting) ->
-        hand_to_waiter(agent_pid, new_state, false)
-
-      # Return to pool if not overflow
-      not is_overflow ->
-        %{new_state | available: [agent_pid | new_state.available]}
-
-      # Overflow agent, terminate it
-      true ->
-        new_state = stop_agent(agent_pid, new_state)
-        %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
+    if is_overflow and :queue.is_empty(new_state.waiting) do
+      # Overflow agent nobody waits for: terminate it
+      new_state = stop_agent(agent_pid, new_state)
+      %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
+    else
+      offer(agent_pid, new_state)
     end
+  end
+
+  # An idle agent: a waiting checkout gets it, else it goes to `available`.
+  defp offer(agent_pid, state) do
+    if :queue.is_empty(state.waiting),
+      do: %{state | available: [agent_pid | state.available]},
+      else: hand_to_waiter(agent_pid, state, false)
   end
 
   defp handle_agent_death(agent_pid, state) do
@@ -591,24 +591,21 @@ defmodule Normandy.Coordination.AgentPool do
     total_agents = length(state.available) + MapSet.size(state.in_use)
 
     if total_agents < state.size do
-      # Start replacement agent
-      case start_agent(state) do
-        :error ->
-          Logger.warning("Failed to start replacement agent")
-          state
-
-        {:ok, new_pid, state} ->
-          # Check if there are waiting checkouts
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if :queue.is_empty(state.waiting) do
-            %{state | available: [new_pid | state.available]}
-          else
-            hand_to_waiter(new_pid, state, false)
-          end
-      end
+      replace_agent(state)
     else
       # It was an overflow agent; its slot can serve a waiting checkout.
       serve_waiter(%{state | overflow_count: max(0, state.overflow_count - 1)})
+    end
+  end
+
+  defp replace_agent(state) do
+    case start_agent(state) do
+      :error ->
+        Logger.warning("Failed to start replacement agent")
+        state
+
+      {:ok, new_pid, state} ->
+        offer(new_pid, state)
     end
   end
 

@@ -191,11 +191,13 @@ defmodule Normandy.Coordination.SharedContext do
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{data: data}), do: data
 
-  # Private functions
-
-  defp normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
+  @doc false
+  # The one string a key is stored under: a `{namespace, key}` pair is "namespace:key".
+  # `StatefulContext` stores its keys the same way.
+  @spec normalize_key(String.t() | {String.t(), String.t()}) :: String.t()
+  def normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
     "#{namespace}:#{key}"
   end
 
-  defp normalize_key(key) when is_binary(key), do: key
+  def normalize_key(key) when is_binary(key), do: key
 end

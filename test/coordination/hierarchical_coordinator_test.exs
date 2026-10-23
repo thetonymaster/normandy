@@ -2,7 +2,7 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.HierarchicalCoordinator
+  alias Normandy.Coordination.{HierarchicalCoordinator, SharedContext}
   alias Normandy.TurnError
 
   import ExUnit.CaptureLog
@@ -103,6 +103,35 @@ defmodule Normandy.Coordination.HierarchicalCoordinatorTest do
     results = aggregated_results()
     assert results =~ "## w1\n"
     refute results =~ "w1#"
+  end
+
+  test ":shared_context is refused by new/1, execute/3 and execute_with_tasks/3" do
+    context = SharedContext.new()
+
+    for {fun, call} <- [
+          {:new,
+           fn ->
+             HierarchicalCoordinator.new(
+               manager: :m,
+               workers: [],
+               shared_context: context
+             )
+           end},
+          {:execute,
+           fn ->
+             HierarchicalCoordinator.execute(coordinator([]), "go", shared_context: context)
+           end},
+          {:execute_with_tasks,
+           fn ->
+             HierarchicalCoordinator.execute_with_tasks(coordinator([]), [],
+               shared_context: context
+             )
+           end}
+        ] do
+      error = assert_raise ArgumentError, call
+      assert error.message =~ "HierarchicalCoordinator.#{fun}/"
+      assert error.message =~ ":shared_context"
+    end
   end
 
   test "the manager prompt reaches the manager" do

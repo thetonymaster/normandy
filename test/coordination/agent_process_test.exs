@@ -325,7 +325,7 @@ defmodule Normandy.Coordination.AgentProcessTest do
       stats = AgentProcess.get_stats(pid)
       assert stats.agent_id == "nonblocking"
       assert stats.run_count == 0
-      assert :queue.len(:sys.get_state(pid).queue) == 19
+      assert :queue.len(:sys.get_state(pid).engine_state.queue) == 19
 
       send(worker, {:release, 1})
       assert_receive {:agent_result, "nonblocking", {:ok, "answer 1"}}, 5_000

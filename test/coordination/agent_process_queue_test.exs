@@ -40,7 +40,7 @@ defmodule Normandy.Coordination.AgentProcessQueueTest do
 
   defp run_in_task(pid, input), do: Task.async(fn -> AgentProcess.run(pid, input) end)
 
-  defp queued(pid), do: :queue.len(:sys.get_state(pid).queue)
+  defp queued(pid), do: :queue.len(:sys.get_state(pid).engine_state.queue)
 
   defp messages(pid), do: AgentMemory.count_messages(AgentProcess.get_agent(pid).memory)
 

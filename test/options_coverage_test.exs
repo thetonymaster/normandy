@@ -70,6 +70,8 @@ defmodule Normandy.OptionsCoverageTest do
   ]
 
   @internal %{
+    "lib/normandy/coordination/agent_process/engine/server.ex" =>
+      "reads the opts AgentProcess.start_link/1 already validated, to build the Turn.Session",
     "lib/normandy/behaviours/hooks.ex" =>
       "validate_entries!/2's :load comes from BaseAgent.init/1 and Turn.Server; each hook " <>
         "entry's :on_error is checked by validate_on_error!/2",
