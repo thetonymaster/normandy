@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+- - -
+## Normandy 2.0 release notes
+
+Normandy 2.0 moves to Claudio 0.7.1 and works with the current Claude models (Opus 4.7 and later reject
+sampling parameters and budgeted thinking). It is a breaking release: **read `MIGRATING-2.0.md` before
+upgrading**; its "Who is affected" table at the top sends you to the sections that concern you, and
+"Known limits of 2.0" at the end lists what 2.0 does not do yet.
+
+### Highlights
+
+- **One model protocol.** `Normandy.Agents.Model` is `converse/3` and `stream/3` over
+  `%Normandy.LLM.Request{}`; failures are `%Normandy.LLMError{}` and `run/3` returns
+  `{:ok, config, output}` or `{:error, exception}` (`run!/3` raises). `stream/3` returns the output schema
+  like `run/3`.
+- **Durable sessions.** `Turn.Session` and `Turn.Server` persist every turn boundary to a
+  `SessionStore` (InMemory, ETS, Mnesia, Postgres, Redis), resume after a crash or on another node
+  (`SessionRegistry` Native, Horde or Redis; `ResumeReaper`), park tool calls for approval, and keep a
+  turn whose final save failed until the store recovers.
+- **Tools.** One `Normandy.Tool` behaviour (`use Normandy.Tool, name:, description:, input:`), a
+  `Toolset`, validated tool input, per-tool timeouts and result caps; MCP and A2A tools are prefixed.
+- **Lifecycle hooks** (`Normandy.Behaviours.Hooks`), **long-term memory** (`Normandy.Tools.Memory` over a
+  `MemoryStore`), **policy, budget and guardrails** checked on every path.
+- **Structured outputs on tool loops.** A non-chat output schema is sent as `output_config.format` beside
+  the tools; a cut-off, refused or blank answer is an error on every path.
+- **Prompt caching on by default**, the conversation built in linear time, assistant turns (thinking,
+  citations, server and MCP tool blocks) replayed exactly as the API returned them.
+- **Every option is validated** (NimbleOptions; an unknown option raises naming it).
+- **Observability.** The `Normandy.Telemetry` catalogue documents every event; run, LLM-call, request,
+  tool, approval and workflow spans carry OpenTelemetry GenAI attributes and run totals.
+- **Testing support.** `Normandy.Test.FakeClient` and the store and registry contracts
+  (`Normandy.Test.SessionStoreContract`, `MemoryStoreContract`, `SessionRegistryContract`) ship in the
+  package; `docs/guides/testing.md` shows them.
 
 ### Added
 
@@ -37,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Breaking changes are listed, with what to do, in `MIGRATING-2.0.md` (sections 1–47). The bullets below
+  are the telemetry and rolling-deploy changes; MIGRATING has the rest.
 - `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `approve/2` casts `{:approval, decisions, ctx}`.
   `AgentProcess.run/3` sends `{:run, input, ctx}` and `AgentProcess.cast/3` sends
   `{:run_async, input, reply_to, ctx}`. New servers still accept the old shapes, but an old-version
@@ -52,6 +85,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Turn.Server` no longer leaves a finished session in the in-flight index when the store fails at the
+  turn's last save: it keeps the result, retries the save, refuses new turns with `:persist_failed`
+  until it lands, and a resume whose answer is already stored makes no model call.
+- A tool result is encoded once on every path (it was encoded up to five times).
+- Normandy compiles on Elixir 1.15 and 1.16 again (`%Duration{}` is matched only where it exists).
+- A new input after a stored paused turn continues that turn first, so the API no longer rejects every later request.
+- A module using the `agent do` DSL compiles without warnings on Elixir 1.20.
+- A request drops a server-tool use nothing answers, except in its last message, so the next input after a continued pause is accepted.
+- A chat answer given beside a tool call survives a blank final reply instead of failing with `:invalid_output`.
 - Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
   `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
