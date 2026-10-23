@@ -33,10 +33,12 @@ defmodule Normandy.Agents.Turn.Session do
               doc: "The supervisor that starts the session's `Turn.Server`: a pid or a name."
             ],
             supervisor_mod: [
-              type: :atom,
+              type: {:custom, __MODULE__, :validate_supervisor_mod, []},
+              type_doc: "`t:module/0`",
               default: Supervisor,
               doc:
-                "The module whose `start_server/2` starts the server " <>
+                "A `Normandy.Agents.Turn.ServerSupervisor`: the module whose " <>
+                  "`start_server/2` starts the server and whose `stop_server/2` stops it " <>
                   "(`Normandy.Agents.Turn.Supervisor.Horde` in a cluster)."
             ],
             store: [
@@ -318,9 +320,9 @@ defmodule Normandy.Agents.Turn.Session do
       The server is already stopped; calling again finishes the job. A store that raises
       raises.
 
-  The handle's `:supervisor_mod` must export `stop_server/2`
-  (`Normandy.Agents.Turn.Supervisor` and `Normandy.Agents.Turn.Supervisor.Horde` do);
-  another module raises `ArgumentError` naming it.
+  `new/1` checks that the handle's `:supervisor_mod` exports `stop_server/2`
+  (`Normandy.Agents.Turn.ServerSupervisor`); a handle whose struct was edited to another
+  module raises `ArgumentError` naming it.
 
   Nothing stops a new turn from starting the session again: a `run/2` that starts after
   the server stopped (or a `ResumeReaper` restart between the stop and the delete) gets
@@ -393,6 +395,24 @@ defmodule Normandy.Agents.Turn.Session do
 
   def validate_session_id(other),
     do: {:error, "expected a non-empty string, got: " <> Describe.type_of(other)}
+
+  @doc false
+  # The ServerSupervisor callbacks, checked by export (a host's module need not declare
+  # the behaviour).
+  @spec validate_supervisor_mod(term()) :: {:ok, module()} | {:error, String.t()}
+  def validate_supervisor_mod(mod) when is_atom(mod) and mod != nil do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :start_server, 2) and
+         function_exported?(mod, :stop_server, 2) do
+      {:ok, mod}
+    else
+      {:error,
+       "expected a module that implements Normandy.Agents.Turn.ServerSupervisor " <>
+         "(exports start_server/2 and stop_server/2), got: #{inspect(mod)}"}
+    end
+  end
+
+  def validate_supervisor_mod(other),
+    do: {:error, "expected a module, got: " <> Describe.type_of(other)}
 
   @doc false
   def validate_config(%BaseAgentConfig{} = config), do: {:ok, config}

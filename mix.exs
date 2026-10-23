@@ -88,6 +88,7 @@ defmodule Normandy.MixProject do
             Normandy.Agents.Turn.State,
             Normandy.Agents.Turn.Session,
             Normandy.Agents.Turn.Server,
+            Normandy.Agents.Turn.ServerSupervisor,
             Normandy.Agents.Turn.Supervisor,
             Normandy.Agents.Turn.Supervisor.Horde,
             Normandy.Agents.Turn.ResumeReaper,

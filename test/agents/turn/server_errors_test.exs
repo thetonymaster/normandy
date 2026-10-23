@@ -16,6 +16,8 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   # DynamicSupervisor's {:error, {exception, stacktrace}}.
   defmodule UncheckedSupervisor do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(sup, server_opts) do
       DynamicSupervisor.start_child(sup, %{
         id: Normandy.Agents.Turn.Server,
@@ -24,6 +26,8 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
         type: :worker
       })
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   # A store whose history read fails: the server starts :unavailable.

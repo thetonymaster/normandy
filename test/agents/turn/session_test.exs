@@ -49,10 +49,14 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
   # A supervisor stand-in that reports the server opts Session built, then refuses.
   defmodule CapturingSupervisor do
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(test_pid, opts) do
       send(test_pid, {:server_opts, opts})
       {:error, :captured}
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   defp session_config do
@@ -127,6 +131,24 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       assert %Turn.Session{config: nil} =
                Turn.Session.new(Keyword.delete(tier2, :config))
+    end
+
+    defmodule StartOnlySupervisor do
+      def start_server(_sup, _opts), do: {:error, :unused}
+    end
+
+    test "a :supervisor_mod that does not export the ServerSupervisor callbacks is refused" do
+      for mod <- [StartOnlySupervisor, NoSuchSupervisorModule] do
+        error =
+          assert_raise ArgumentError, fn -> Turn.Session.new(new_opts(supervisor_mod: mod)) end
+
+        assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+        assert error.message =~ ":supervisor_mod"
+        assert error.message =~ "Normandy.Agents.Turn.ServerSupervisor"
+      end
+
+      assert %Turn.Session{supervisor_mod: Turn.Supervisor.Horde} =
+               Turn.Session.new(new_opts(supervisor_mod: Turn.Supervisor.Horde))
     end
 
     test "keeps only the server options it was given" do
@@ -394,7 +416,11 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   defmodule NoStartSupervisor do
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(_sup, _opts), do: raise("no server should be started")
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   test "a registry lookup that fails is run/2's and approve/2's error; no server starts" do

@@ -46,6 +46,8 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
   # A supervisor whose stop_server/2 never finds the child.
   defmodule ForeignSupervisor do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(_sup, _opts), do: {:error, :unused}
     def stop_server(_sup, _pid), do: {:error, :not_found}
   end
@@ -240,9 +242,11 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
     assert_raise RuntimeError, "store bug", fn -> Session.delete(session) end
   end
 
+  # new/1 refuses such a module (Turn.ServerSupervisor); a handle edited after it is
+  # still caught here.
   test "a :supervisor_mod without stop_server/2 raises, naming it" do
     {store, reg, _sup} = setup_infra()
-    session = session(store, reg, :unused, supervisor_mod: NoStopSupervisor)
+    session = %{session(store, reg, :unused) | supervisor_mod: NoStopSupervisor}
 
     assert_raise ArgumentError,
                  "Normandy.Agents.Turn.Session.delete/1: the :supervisor_mod " <>
