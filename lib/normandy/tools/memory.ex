@@ -43,6 +43,7 @@ defmodule Normandy.Tools.Memory do
 
   use Normandy.Tool, name: "memory"
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.Span
   alias Normandy.Tools.Context
   alias Normandy.Tools.Memory.{Commands, Paths}
@@ -70,67 +71,66 @@ defmodule Normandy.Tools.Memory do
           telemetry_include_paths: boolean()
         }
 
-  @options [
-    :store,
-    :namespace_key,
-    :mounts,
-    :max_document_bytes,
-    :max_namespace_bytes,
-    :max_namespace_documents,
-    :max_view_chars,
-    :max_cas_retries,
-    :telemetry_include_paths
-  ]
+  @schema NimbleOptions.new!(
+            store: [
+              type: :any,
+              required: true,
+              type_doc: "`{module, handle}`",
+              doc: "The `Normandy.Behaviours.MemoryStore` module and its handle."
+            ],
+            namespace_key: [
+              type: :atom,
+              default: :memory_namespace,
+              doc: "The `tool_context` key holding the session namespace."
+            ],
+            mounts: [
+              type: {:custom, Normandy.Options, :plain_map, []},
+              type_doc: "`%{path => {namespace, :read_only | :read_write}}`",
+              default: %{},
+              doc: "Shared directories mounted under `/memories`."
+            ],
+            max_document_bytes: [type: :pos_integer, default: 100_000, doc: "Largest document."],
+            max_namespace_bytes: [
+              type: {:or, [:pos_integer, nil]},
+              type_doc: "`t:pos_integer/0` or `nil`",
+              default: 1_000_000,
+              doc: "Total content bytes of a namespace; `nil` = no cap."
+            ],
+            max_namespace_documents: [
+              type: {:or, [:pos_integer, nil]},
+              type_doc: "`t:pos_integer/0` or `nil`",
+              default: 1000,
+              doc: "Documents in a namespace; `nil` = no cap."
+            ],
+            max_view_chars: [type: :pos_integer, default: 16_000, doc: "Longest `view` result."],
+            max_cas_retries: [
+              type: :non_neg_integer,
+              default: 3,
+              doc: "Compare-and-set retries of a write."
+            ],
+            telemetry_include_paths: [
+              type: :boolean,
+              default: false,
+              doc: "Put the namespace and path in telemetry metadata."
+            ]
+          )
   @fields ~w(command path view_range file_text old_str new_str insert_line insert_text old_path new_path)a
   @commands ~w(view create str_replace insert delete rename)
 
-  @doc "Builds the tool, validating every option; raises `ArgumentError` naming a bad one."
-  @spec new(keyword()) :: t()
-  def new(opts) when is_list(opts) do
-    case Keyword.keys(opts) -- @options do
-      [] ->
-        :ok
+  @doc """
+  Builds the tool, validating every option; raises `ArgumentError` naming a bad one.
+  Takes a keyword list or a map.
 
-      [key | _] ->
-        raise ArgumentError,
-              "Normandy.Tools.Memory.new/1: unknown option #{inspect(key)}; allowed: #{Enum.map_join(@options, ", ", &inspect/1)}"
-    end
+  ## Options
 
-    unless Keyword.has_key?(opts, :store),
-      do:
-        raise(ArgumentError, "Normandy.Tools.Memory.new/1: :store is required: {module, handle}")
-
+  #{Normandy.Options.docs(@schema)}
+  """
+  @spec new(keyword() | map()) :: t()
+  def new(opts) do
+    opts = Normandy.Options.validate!(opts, @schema, {__MODULE__, :new, 1})
     tool = struct!(__MODULE__, opts)
     validate_store!(tool.store)
     validate_mounts!(tool.mounts)
-    check!(:namespace_key, tool.namespace_key, is_atom(tool.namespace_key), "an atom")
-    for key <- [:max_document_bytes, :max_view_chars], do: positive!(key, Map.fetch!(tool, key))
-
-    for key <- [:max_namespace_bytes, :max_namespace_documents] do
-      value = Map.fetch!(tool, key)
-
-      check!(
-        key,
-        value,
-        is_nil(value) or (is_integer(value) and value > 0),
-        "a positive integer or nil"
-      )
-    end
-
-    check!(
-      :max_cas_retries,
-      tool.max_cas_retries,
-      is_integer(tool.max_cas_retries) and tool.max_cas_retries >= 0,
-      "a non-negative integer"
-    )
-
-    check!(
-      :telemetry_include_paths,
-      tool.telemetry_include_paths,
-      is_boolean(tool.telemetry_include_paths),
-      "a boolean"
-    )
-
     tool
   end
 
@@ -287,7 +287,8 @@ defmodule Normandy.Tools.Memory do
     do:
       raise(
         ArgumentError,
-        "Normandy.Tools.Memory.new/1: :store must be {module, handle}, got: #{inspect(other)}"
+        "Normandy.Tools.Memory.new/1: :store must be {module, handle}, got: " <>
+          Describe.type_of(other)
       )
 
   defp validate_mounts!(mounts) when is_map(mounts) do
@@ -332,17 +333,5 @@ defmodule Normandy.Tools.Memory do
         ArgumentError,
         "Normandy.Tools.Memory.new/1: :mounts must map a path under /memories (not /memories itself) " <>
           "to {namespace, :read_only | :read_write}; bad entry: #{inspect(what)}"
-      )
-
-  defp positive!(key, value),
-    do: check!(key, value, is_integer(value) and value > 0, "a positive integer")
-
-  defp check!(_key, _value, true, _want), do: :ok
-
-  defp check!(key, value, false, want),
-    do:
-      raise(
-        ArgumentError,
-        "Normandy.Tools.Memory.new/1: #{inspect(key)} must be #{want}, got: #{inspect(value)}"
       )
 end

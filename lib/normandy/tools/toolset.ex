@@ -11,17 +11,27 @@ defmodule Normandy.Tools.Toolset do
   """
 
   alias Normandy.Components.ContentBlock.Describe
-  alias Normandy.Schema.Introspection
   alias Normandy.Schema.Wire
   alias Normandy.Tool
 
-  @type t :: %__MODULE__{
-          tools: %{String.t() => struct()},
-          timeouts: %{String.t() => pos_integer()},
-          max_result_chars: %{String.t() => pos_integer() | nil}
-        }
+  defmodule Entry do
+    @moduledoc false
+    # One registration: the tool and the options it was registered with. A `nil` timeout is
+    # "none given"; `max_result_chars` is `:unset` when none was given, since `nil` there means
+    # "no cap".
+    @enforce_keys [:tool]
+    defstruct [:tool, :timeout, max_result_chars: :unset]
 
-  defstruct tools: %{}, timeouts: %{}, max_result_chars: %{}
+    @type t :: %__MODULE__{
+            tool: struct(),
+            timeout: pos_integer() | nil,
+            max_result_chars: pos_integer() | nil | :unset
+          }
+  end
+
+  @type t :: %__MODULE__{tools: %{String.t() => Entry.t()}}
+
+  defstruct tools: %{}
 
   @register_schema NimbleOptions.new!(
                      timeout: [
@@ -96,21 +106,14 @@ defmodule Normandy.Tools.Toolset do
     end
 
     # An option left out drops what an earlier registration under the name set.
-    %{
-      toolset
-      | tools: Map.put(tools, tool_name, tool),
-        timeouts: put_or_delete(toolset.timeouts, tool_name, Keyword.fetch(opts, :timeout)),
-        max_result_chars:
-          put_or_delete(
-            toolset.max_result_chars,
-            tool_name,
-            Keyword.fetch(opts, :max_result_chars)
-          )
+    entry = %Entry{
+      tool: tool,
+      timeout: Keyword.get(opts, :timeout),
+      max_result_chars: Keyword.get(opts, :max_result_chars, :unset)
     }
-  end
 
-  defp put_or_delete(map, key, {:ok, value}), do: Map.put(map, key, value)
-  defp put_or_delete(map, key, :error), do: Map.delete(map, key)
+    %{toolset | tools: Map.put(tools, tool_name, entry)}
+  end
 
   @migration "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
@@ -141,7 +144,12 @@ defmodule Normandy.Tools.Toolset do
   one (or is not registered).
   """
   @spec timeout(t(), String.t()) :: pos_integer() | nil
-  def timeout(%__MODULE__{timeouts: timeouts}, tool_name), do: Map.get(timeouts, tool_name)
+  def timeout(%__MODULE__{tools: tools}, tool_name) do
+    case Map.fetch(tools, tool_name) do
+      {:ok, %Entry{timeout: timeout}} -> timeout
+      :error -> nil
+    end
+  end
 
   @doc """
   The `:max_result_chars` `tool_name` was registered with: `{:ok, chars}`, `{:ok, nil}` (no
@@ -149,12 +157,18 @@ defmodule Normandy.Tools.Toolset do
   `:max_tool_result_chars` applies) or is not registered.
   """
   @spec max_result_chars(t(), String.t()) :: {:ok, pos_integer() | nil} | :error
-  def max_result_chars(%__MODULE__{max_result_chars: caps}, tool_name),
-    do: Map.fetch(caps, tool_name)
+  def max_result_chars(%__MODULE__{tools: tools}, tool_name) do
+    case Map.fetch(tools, tool_name) do
+      {:ok, %Entry{max_result_chars: chars}} when chars != :unset -> {:ok, chars}
+      _ -> :error
+    end
+  end
 
   @doc "The tool registered as `tool_name`: `{:ok, tool}`, or `:error`."
   @spec fetch(t(), String.t()) :: {:ok, struct()} | :error
-  def fetch(%__MODULE__{tools: tools}, tool_name), do: Map.fetch(tools, tool_name)
+  def fetch(%__MODULE__{tools: tools}, tool_name) do
+    with {:ok, %Entry{tool: tool}} <- Map.fetch(tools, tool_name), do: {:ok, tool}
+  end
 
   @doc """
   The tool registered as `tool_name`. Raises `Normandy.ToolNotFoundError` (naming the
@@ -180,18 +194,12 @@ defmodule Normandy.Tools.Toolset do
 
       toolset = Normandy.Tools.Toolset.new([calculator])
       Normandy.Tools.Toolset.unregister(toolset, "calculator")
-      #=> %Normandy.Tools.Toolset{tools: %{}, timeouts: %{}, max_result_chars: %{}}
+      #=> %Normandy.Tools.Toolset{tools: %{}}
 
   """
   @spec unregister(t(), String.t()) :: t()
-  def unregister(%__MODULE__{} = toolset, tool_name) do
-    %{
-      toolset
-      | tools: Map.delete(toolset.tools, tool_name),
-        timeouts: Map.delete(toolset.timeouts, tool_name),
-        max_result_chars: Map.delete(toolset.max_result_chars, tool_name)
-    }
-  end
+  def unregister(%__MODULE__{tools: tools} = toolset, tool_name),
+    do: %{toolset | tools: Map.delete(tools, tool_name)}
 
   @doc """
   Returns a list of all registered tools.
@@ -205,7 +213,7 @@ defmodule Normandy.Tools.Toolset do
   """
   @spec list(t()) :: [struct()]
   def list(%__MODULE__{tools: tools}) do
-    Map.values(tools)
+    Enum.map(tools, fn {_name, %Entry{tool: tool}} -> tool end)
   end
 
   @doc """
@@ -276,127 +284,13 @@ defmodule Normandy.Tools.Toolset do
   """
   @spec to_tool_schemas(t()) :: [map()]
   def to_tool_schemas(%__MODULE__{tools: tools}) do
-    tools
-    |> Map.values()
-    |> Enum.map(fn tool ->
+    Enum.map(tools, fn {_name, %Entry{tool: tool}} ->
       %{
         name: Tool.name(tool),
         description: Tool.description(tool),
         input_schema: Wire.encodable(Tool.input_schema(tool))
       }
     end)
-  end
-
-  @doc """
-  Gets metadata for a specific tool by name.
-
-  Returns detailed metadata including schema introspection if available.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator])
-      Normandy.Tools.Toolset.fetch_metadata(toolset, "calculator")
-      #=> {:ok, %{
-      #     name: "calculator",
-      #     description: "Performs arithmetic operations",
-      #     input_schema: %{...},
-      #     fields: [...]
-      #   }}
-
-  """
-  @spec fetch_metadata(t(), String.t()) :: {:ok, map()} | :error
-  def fetch_metadata(%__MODULE__{} = toolset, tool_name) do
-    case fetch(toolset, tool_name) do
-      {:ok, tool} ->
-        metadata = build_tool_metadata(tool)
-        {:ok, metadata}
-
-      :error ->
-        :error
-    end
-  end
-
-  @doc """
-  Gets metadata for all tools in the toolset.
-
-  Returns a list of metadata maps for each registered tool.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
-      Normandy.Tools.Toolset.list_metadata(toolset)
-      #=> [%{name: "tool1", ...}, %{name: "tool2", ...}]
-
-  """
-  @spec list_metadata(t()) :: [map()]
-  def list_metadata(%__MODULE__{tools: tools}) do
-    tools
-    |> Map.values()
-    |> Enum.map(&build_tool_metadata/1)
-  end
-
-  @doc """
-  Gets schema introspection data for a tool if available.
-
-  Returns schema field information for schema-based tools, or nil for legacy tools.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator])
-      Normandy.Tools.Toolset.introspect_schema(toolset, "calculator")
-      #=> {:ok, [
-      #     %{name: :operation, type: :string, required: true, ...},
-      #     ...
-      #   ]}
-
-  """
-  @spec introspect_schema(t(), String.t()) :: {:ok, [map()]} | {:ok, nil} | :error
-  def introspect_schema(%__MODULE__{} = toolset, tool_name) do
-    case fetch(toolset, tool_name) do
-      {:ok, tool} ->
-        schema_info = get_schema_introspection(tool)
-        {:ok, schema_info}
-
-      :error ->
-        :error
-    end
-  end
-
-  # Private helper functions
-
-  defp build_tool_metadata(tool) do
-    base_metadata = %{
-      name: Tool.name(tool),
-      description: Tool.description(tool),
-      input_schema: Tool.input_schema(tool)
-    }
-
-    # Add schema introspection if available
-    case get_schema_introspection(tool) do
-      nil ->
-        base_metadata
-
-      fields ->
-        Map.put(base_metadata, :fields, fields)
-    end
-  end
-
-  # Field introspection for a tool that declared `input: Schema`; nil for a tool with a
-  # hand-written input_schema/1 map.
-  defp get_schema_introspection(%module{}) do
-    if Code.ensure_loaded?(module) and function_exported?(module, :__tool_input__, 0) do
-      input = module.__tool_input__()
-      required_fields = Introspection.get_required_fields(input)
-
-      Enum.map(Introspection.list_fields(input), fn field_name ->
-        %{
-          name: field_name,
-          type: Introspection.get_field_type(input, field_name),
-          required: field_name in required_fields,
-          metadata: Introspection.get_field_metadata(input, field_name)
-        }
-      end)
-    end
   end
 
   @doc """

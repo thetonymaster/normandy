@@ -231,7 +231,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
     test "a supplement toolset holding a 1.x tool raises, naming its module" do
       supp = round_trip_supplement()
       tmpl = full_config(supp) |> ConfigTemplate.from_config("t")
-      bad = %{supp | toolset: %Toolset{tools: %{"old" => %OldStyleTool{}}}}
+      bad = %{supp | toolset: %Toolset{tools: %{"old" => %Toolset.Entry{tool: %OldStyleTool{}}}}}
 
       error = assert_raise ArgumentError, fn -> ConfigTemplate.rebuild(tmpl, bad, "TOKEN") end
 

@@ -28,4 +28,31 @@ defmodule Normandy.Guardrails.Builtins.Field do
           "#{inspect(guard)} expected a map or struct when using :field #{inspect(field)}, got " <>
             Describe.type_of(value)
   end
+
+  @doc false
+  # The string a guard checks: `extract!/3`, then nil stays nil and anything but a string
+  # raises (a string guard on a non-string is a configuration bug, not a violation).
+  @spec string!(module(), term(), atom() | nil) :: nil | String.t()
+  def string!(guard, value, field) do
+    case extract!(guard, value, field) do
+      nil ->
+        nil
+
+      string when is_binary(string) ->
+        string
+
+      other ->
+        raise ArgumentError,
+              "#{inspect(guard)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+    end
+  end
+
+  @doc false
+  # A violation's `:path` for a guard with an optional `:field`.
+  @spec path(atom() | nil) :: [atom()]
+  def path(nil), do: []
+  def path(field), do: [field]
+
+  defp field_suffix(nil), do: ""
+  defp field_suffix(field), do: " at field #{inspect(field)}"
 end

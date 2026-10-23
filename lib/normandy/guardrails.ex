@@ -165,6 +165,16 @@ defmodule Normandy.Guardrails do
   alias Normandy.Guardrails.Guard
   alias Normandy.Guardrails.GuardError
 
+  # Guards the library ships: their ArgumentError/KeyError is a configuration bug that
+  # `:on_error` never swallows. A host guard is not one, whatever its module name.
+  @builtins [
+    Normandy.Guardrails.Builtins.MaxLength,
+    Normandy.Guardrails.Builtins.ForbiddenSubstrings,
+    Normandy.Guardrails.Builtins.RegexGuard,
+    Normandy.Guardrails.Builtins.RequiredFields,
+    Normandy.Guardrails.Builtins.SemanticScope
+  ]
+
   @type spec :: module() | {module(), keyword()}
 
   @doc """
@@ -220,23 +230,7 @@ defmodule Normandy.Guardrails do
         do_check(mod, value, opts, context)
 
       policy when policy in [:open, :closed] ->
-        try do
-          do_check(mod, value, opts, context)
-        rescue
-          # A built-in guard raises ArgumentError or KeyError only for its own
-          # configuration (a :field typo, a bad or missing option): a bug to fix,
-          # never a pass or a violation.
-          exception in [ArgumentError, KeyError] ->
-            if builtin?(mod),
-              do: reraise(exception, __STACKTRACE__),
-              else: on_error_result(policy, mod, exception)
-
-          exception ->
-            on_error_result(policy, mod, exception)
-        catch
-          :exit, reason -> on_error_result(policy, mod, {:exit, reason})
-          :throw, value -> on_error_result(policy, mod, {:throw, value})
-        end
+        guarded_check(policy, mod, value, opts, context)
 
       other ->
         raise ArgumentError,
@@ -244,6 +238,26 @@ defmodule Normandy.Guardrails do
                 ":closed, got: #{inspect(other)}"
     end
   end
+
+  defp guarded_check(policy, mod, value, opts, context) do
+    do_check(mod, value, opts, context)
+  rescue
+    exception -> crashed(policy, mod, exception, __STACKTRACE__)
+  catch
+    :exit, reason -> on_error_result(policy, mod, {:exit, reason})
+    :throw, value -> on_error_result(policy, mod, {:throw, value})
+  end
+
+  # A built-in guard raises ArgumentError or KeyError only for its own configuration (a
+  # :field typo, a bad or missing option): a bug to fix, never a pass or a violation.
+  defp crashed(policy, mod, %error{} = exception, stacktrace)
+       when error in [ArgumentError, KeyError] do
+    if mod in @builtins,
+      do: reraise(exception, stacktrace),
+      else: on_error_result(policy, mod, exception)
+  end
+
+  defp crashed(policy, mod, exception, _stacktrace), do: on_error_result(policy, mod, exception)
 
   # Dispatches to the guard's check/3 when it implements the optional context
   # arity, otherwise its check/2. Context-unaware guards are invoked exactly as
@@ -255,8 +269,6 @@ defmodule Normandy.Guardrails do
       mod.check(value, opts)
     end
   end
-
-  defp builtin?(mod), do: String.starts_with?(inspect(mod), "Normandy.Guardrails.Builtins.")
 
   defp on_error_result(:open, _mod, _crash), do: :ok
 

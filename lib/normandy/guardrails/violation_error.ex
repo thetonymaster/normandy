@@ -1,6 +1,6 @@
 defmodule Normandy.Guardrails.ViolationError do
   @moduledoc """
-  Exception raised when an input guardrail rejects an agent's input.
+  Exception raised when an input or output guardrail rejects an agent's input or answer.
 
   Modeled on `Normandy.Schema.ValidationError` so callers that already handle
   validation errors can rescue the two uniformly if desired.

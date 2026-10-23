@@ -21,6 +21,13 @@ defmodule Normandy.Guardrails.GuardCrashTest do
     def check(_value, _opts), do: throw({:nope, "SECRET-THROWN"})
   end
 
+  defmodule Elixir.Normandy.Guardrails.Builtins.HostLookalike do
+    @moduledoc false
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(_value, _opts), do: raise(ArgumentError, "host bug")
+  end
+
   @scope SemanticScope
 
   defp classifiers do
@@ -40,6 +47,13 @@ defmodule Normandy.Guardrails.GuardCrashTest do
       "guard Normandy.Guardrails.Builtins.SemanticScope crashed: host code raised ArgumentError",
     throw: "guard Normandy.Guardrails.Builtins.SemanticScope crashed: host code threw"
   }
+
+  test "a host guard named under the Builtins namespace is still a host guard" do
+    guard = Normandy.Guardrails.Builtins.HostLookalike
+    assert Guardrails.run([{guard, on_error: :open}], "x") == {:ok, "x"}
+    assert {:error, [v]} = Guardrails.run([{guard, on_error: :closed}], "x")
+    assert v.constraint == :guard_error
+  end
 
   describe "a guard module that exits or throws" do
     test ":open admits" do

@@ -19,7 +19,6 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def check(value, opts) do
     terms = Keyword.fetch!(opts, :terms)
     field = Keyword.get(opts, :field)
@@ -30,48 +29,33 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
             "#{inspect(__MODULE__)} :terms must be a non-empty list of strings, got: #{inspect(terms)}"
     end
 
-    case Field.extract!(__MODULE__, value, field) do
-      nil ->
-        :ok
-
-      string when is_binary(string) ->
-        haystack = if case_sensitive, do: string, else: String.downcase(string)
-        needles = if case_sensitive, do: terms, else: Enum.map(terms, &String.downcase/1)
-
-        matched =
-          terms
-          |> Enum.zip(needles)
-          |> Enum.filter(fn {_original, needle} -> String.contains?(haystack, needle) end)
-          |> Enum.map(fn {original, _needle} -> original end)
-
-        case matched do
-          [] ->
-            :ok
-
-          matched_terms ->
-            path = if field, do: [field], else: []
-
-            # credo:disable-for-lines:3 Credo.Check.Refactor.Nesting
-            violations =
-              Enum.map(matched_terms, fn term ->
-                %{
-                  guard: __MODULE__,
-                  path: path,
-                  message: "must not contain forbidden term #{inspect(term)}",
-                  constraint: :forbidden_substring,
-                  term: term
-                }
-              end)
-
-            {:error, violations}
-        end
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+    case Field.string!(__MODULE__, value, field) do
+      nil -> :ok
+      string -> violations(string, terms, case_sensitive, Field.path(field))
     end
   end
 
-  defp field_suffix(nil), do: ""
-  defp field_suffix(field), do: " at field #{inspect(field)}"
+  defp violations(string, terms, case_sensitive, path) do
+    haystack = if case_sensitive, do: string, else: String.downcase(string)
+
+    matched =
+      Enum.filter(terms, fn term ->
+        String.contains?(haystack, if(case_sensitive, do: term, else: String.downcase(term)))
+      end)
+
+    case matched do
+      [] -> :ok
+      _ -> {:error, Enum.map(matched, &violation(&1, path))}
+    end
+  end
+
+  defp violation(term, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must not contain forbidden term #{inspect(term)}",
+      constraint: :forbidden_substring,
+      term: term
+    }
+  end
 end
