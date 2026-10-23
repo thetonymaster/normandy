@@ -98,4 +98,34 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesServerToolTest do
     assert [_, %Message{content: [@dangling]}, %Message{content: [@answer_x, ^tool_use]}, _] =
              messages
   end
+
+  @thinking %{"type" => "thinking", "thinking" => "hm", "signature" => "sig"}
+  @redacted %{"type" => "redacted_thinking", "data" => "xx"}
+
+  defp history(blocks) do
+    [
+      %{role: "user", content: "q"},
+      %{role: "assistant", content: blocks},
+      %{role: "assistant", content: "answer"},
+      %{role: "user", content: "next"}
+    ]
+  end
+
+  test "a non-last message the trim leaves with only thinking blocks is dropped" do
+    messages = AgentMemory.request_messages(history([@thinking, @redacted, @dangling]))
+
+    assert [%Message{role: "user", content: "q"}, %Message{content: "answer"}, _] = messages
+  end
+
+  test "a thinking-only message the trim did not change is kept" do
+    messages = AgentMemory.request_messages(history([@thinking, @redacted]))
+
+    assert [_, %Message{content: [@thinking, @redacted]}, _, _] = messages
+  end
+
+  test "thinking beside the answered pair and a text survives the trim" do
+    messages = AgentMemory.request_messages(history([@thinking, @answered, @answer, @dangling]))
+
+    assert [_, %Message{content: [@thinking, @answered, @answer]}, _, _] = messages
+  end
 end

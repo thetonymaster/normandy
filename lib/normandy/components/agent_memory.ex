@@ -236,7 +236,9 @@ defmodule Normandy.Components.AgentMemory do
 
   An `"assistant"` message other than the last loses each `"server_tool_use"` or
   `"mcp_tool_use"` block that nothing answers (no block of the same message or of any
-  later one has its id as `"tool_use_id"`), and goes if that leaves it empty.
+  later one has its id as `"tool_use_id"`), and goes if that leaves it empty or holding
+  only `"thinking"` and `"redacted_thinking"` blocks (a message the trim did not change is
+  never dropped).
   The API accepts an unanswered server-tool use only in the last message, where it
   continues a paused turn; once a later message follows, it rejects the request. A
   continuation that pauses again or calls a client tool is stored as the next assistant
@@ -282,12 +284,15 @@ defmodule Normandy.Components.AgentMemory do
 
     case Enum.reject(blocks, &unanswered_use?(&1, answered)) do
       ^blocks -> [message]
-      [] -> []
-      kept -> [%{message | content: kept}]
+      kept -> if thinking_only?(kept), do: [], else: [%{message | content: kept}]
     end
   end
 
   defp trim_unanswered(message, _later), do: [message]
+
+  # [] is thinking-only too: a trimmed message that kept nothing, or only thinking, goes.
+  defp thinking_only?(blocks),
+    do: Enum.all?(blocks, &(is_map(&1) and &1["type"] in ["thinking", "redacted_thinking"]))
 
   defp unanswered_use?(%{"type" => type, "id" => id}, answered)
        when type in ["server_tool_use", "mcp_tool_use"],
