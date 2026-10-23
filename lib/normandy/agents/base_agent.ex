@@ -430,7 +430,7 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}` when Normandy's own checks or the model failed:
   `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
   `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
-  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. Any other exception (a bug in a
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer. Any other exception (a bug in a
   tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
   turn is lost: keep using the config you passed in.
 
@@ -862,7 +862,8 @@ defmodule Normandy.Agents.BaseAgent do
 
   # A final answer's text as the output schema (convert_final_output/4):
   #   * a :chat_message schema gets the unwrapped text; an empty or whitespace-only
-  #     answer (the model ended its turn with no text, AX-32) is the :invalid_output
+  #     answer (the model ended its turn with no text, AX-32) is the text of this turn's
+  #     last tool-call response when it has some (chat_answer/2), else the :invalid_output
   #     LLMError, never a blank success;
   #   * a schema with a JSON Schema (the one the system prompt showed,
   #     prompt_output_schema/2) gets the text parsed into it under the client's
@@ -870,8 +871,8 @@ defmodule Normandy.Agents.BaseAgent do
   #     answer or one that does not parse raises the :invalid_output LLMError;
   #   * any other struct has nothing to parse the text into: the :invalid_output
   #     LLMError, never the raw response presented as success.
-  defp convert_final_text(_config, text, %{chat_message: _} = output_schema) do
-    answer = unwrap_llm_content(text)
+  defp convert_final_text(config, text, %{chat_message: _} = output_schema) do
+    answer = chat_answer(config, unwrap_llm_content(text))
     ensure_answer!(answer)
     Map.put(output_schema, :chat_message, answer)
   end
@@ -902,9 +903,9 @@ defmodule Normandy.Agents.BaseAgent do
   # none (a client that returns the output struct with chat_message: nil, decision 27 A3),
   # is the :invalid_output LLMError, never a blank success (decision 22). The one check,
   # for the converted answer (convert_final_text/3) and the validated one
-  # (validate_turn_output/2).
+  # (validate_turn_output/2); both first let chat_answer/2 replace a blank chat answer.
   defp ensure_answer!(answer) do
-    if is_nil(answer) or (is_binary(answer) and String.trim(answer) == "") do
+    if blank_answer?(answer) do
       raise LLMError.new(
               type: :invalid_output,
               retryable?: false,
@@ -916,14 +917,65 @@ defmodule Normandy.Agents.BaseAgent do
     :ok
   end
 
+  defp blank_answer?(answer),
+    do: is_nil(answer) or (is_binary(answer) and String.trim(answer) == "")
+
+  # A chat agent's blank final answer after a tool round that answered: a model can write
+  # its answer beside a tool call ([text, tool_use]) and end the turn with no text once the
+  # result is in (e2e 16 Part B). The text of this turn's last assistant response that made
+  # tool calls, unwrapped as the final text is, is then the answer; anything else (a
+  # non-blank answer, no such response, a blank one) is returned unchanged for
+  # ensure_answer!/1. Only the current turn counts (AgentMemory's current_turn_id), and in
+  # it only what follows its latest final answer: run(config, nil) continues under the same
+  # turn_id, so the walk stops at an assistant entry that is not a ToolCallResponse (a
+  # stored final answer is the output struct; a paused response is a ToolCallResponse with
+  # no tool calls and does not stop it). An earlier run's text never answers this one. The
+  # final response is not in memory yet (the core appends it after the output is guarded).
+  defp chat_answer(config, answer) do
+    if blank_answer?(answer), do: last_tool_round_text(config.memory) || answer, else: answer
+  end
+
+  defp last_tool_round_text(%AgentMemory{current_turn_id: turn_id} = memory)
+       when is_binary(turn_id) do
+    memory
+    |> AgentMemory.entry_chain()
+    |> Enum.reverse()
+    |> Enum.take_while(&(&1.turn_id == turn_id and not final_answer_entry?(&1)))
+    |> Enum.find_value(fn
+      %{role: "assistant", content: %ToolCallResponse{tool_calls: [_ | _], content: text}} ->
+        {:found, unwrap_llm_content(text)}
+
+      _entry ->
+        nil
+    end)
+    |> case do
+      {:found, text} when is_binary(text) -> if blank_answer?(text), do: nil, else: text
+      _none -> nil
+    end
+  end
+
+  defp last_tool_round_text(_memory), do: nil
+
+  defp final_answer_entry?(%{role: "assistant", content: %ToolCallResponse{}}), do: false
+  defp final_answer_entry?(%{role: "assistant"}), do: true
+  defp final_answer_entry?(_entry), do: false
+
   # An output that breaks its schema is an error (SEC-5): run/2 returns the
   # ValidationError. Neither the value nor the errors are logged: they can hold user data.
-  # A chat answer is checked for blankness first: a chat agent with no tools answers the
-  # output schema itself, so its answer is validated here and never converted.
+  # A chat answer is checked for blankness first (after chat_answer/2): a chat agent with
+  # no tools answers the output schema itself, so its answer is validated here and never
+  # converted; a tool loop's final response that is the output schema's own struct passes
+  # conversion unchanged.
   defp validate_turn_output(config, value) do
-    with %{chat_message: _} <- config.output_schema,
-         %{chat_message: answer} <- value,
-         do: ensure_answer!(answer)
+    value =
+      with %{chat_message: _} <- config.output_schema,
+           %{chat_message: answer} <- value do
+        answer = chat_answer(config, answer)
+        ensure_answer!(answer)
+        %{value | chat_message: answer}
+      else
+        _not_chat -> value
+      end
 
     case ValidationMiddleware.validate_output(config, value) do
       {:ok, validated} ->

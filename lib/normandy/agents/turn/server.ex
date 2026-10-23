@@ -1923,7 +1923,8 @@ defmodule Normandy.Agents.Turn.Server do
     e in Normandy.LLMError -> {:output_unparsed, e}
   end
 
-  # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22).
+  # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22),
+  # unless this turn's last tool-calling response carried text (the handler's validate).
   defp validate_output(data, value) do
     data.handlers.validate.(data.config, value)
   rescue
