@@ -323,7 +323,9 @@ later input with a 400 (`mcp_tool_use ... without a corresponding mcp_tool_resul
 next `run/2` first continues the paused turn, as a resumed run (`resumed: true` on its run
 `:start`), then runs its input. Nothing to change: expect one extra model call and one
 extra run before such an input. If that continuation fails, the `run/2` returns its error
-and stores nothing of its input; the next `run/2` tries again.
+and stores nothing of its input; the next `run/2` tries again. Every later request leaves
+out the paused turn's last server-tool call, whose result is never stored (the API rejects an
+unanswered call anywhere but in the last message); what is stored does not change.
 
 ## 13. Rolling deploys
 
@@ -1351,7 +1353,9 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   on `run/3`, `stream/3` and `Turn.Server`, instead of `%BaseAgentOutputSchema{chat_message: ""}`.
   This holds for a chat agent with no tools too, and for a structured-output answer whose
   `chat_message` is blank. It is not retried. A test model client that answers with an empty response model must
-  answer with text.
+  answer with text. One exception, for a `chat_message` output schema: when the model already
+  answered in this turn's last tool-calling reply (text beside the tool call) and ends the turn
+  blank after the tool results, that text is the answer.
 
 - Schema properties reach the model in declaration order, in tool `input_schema`, the
   `# OUTPUT SCHEMA` block, JSON retry feedback and the structured-outputs schema (which was
@@ -2170,9 +2174,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   use and against the supplement's `:pinned` settings, but nothing proves the store's bytes
   came from you. The session store is inside your trust boundary: anyone who can write it
   can change a session's configuration within what `:pinned` allows.
-- **A paused server-tool turn after a crash is unverified.** If `Turn.Server` stops while a
-  turn is paused on a `server_tool_use` (`pause_turn`) and the session then takes new input,
-  whether the API accepts the resulting history has not been checked live.
 - **A failed turn can run again after a store outage** (H10). `Turn.Server` retries a
   terminal turn-state save the store refused (§43), but if the server process dies first (a
   node crash, a supervisor shutdown) the session stays in the in-flight index and the next
