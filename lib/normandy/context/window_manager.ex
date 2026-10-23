@@ -255,6 +255,13 @@ defmodule Normandy.Context.WindowManager do
   end
 
   defp truncate_with_summary(agent, manager) do
+    # Checked before the budget, so a client-less agent fails whatever its size.
+    client =
+      Map.get(agent, :client) ||
+        raise ArgumentError,
+              "Normandy.Context.WindowManager.truncate_conversation/2: the :summarize " <>
+                "strategy needs the agent's :client, got #{inspect(Map.get(agent, :client))}"
+
     # Calculate how many recent messages to keep
     target_tokens = manager.max_tokens - manager.reserved_tokens
     current_tokens = estimate_conversation_tokens(agent.memory)
@@ -265,12 +272,6 @@ defmodule Normandy.Context.WindowManager do
       # Keep approximately half the target tokens worth of recent messages
       # and summarize the rest
       keep_messages = estimate_messages_for_tokens(agent.memory, div(target_tokens, 2))
-
-      client =
-        Map.get(agent, :client) ||
-          raise ArgumentError,
-                "Normandy.Context.WindowManager.truncate_conversation/2: the :summarize " <>
-                  "strategy needs the agent's :client, got #{inspect(Map.get(agent, :client))}"
 
       # A nil budget is the Summarizer's default.
       Summarizer.compress_conversation(

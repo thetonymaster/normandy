@@ -17,8 +17,8 @@ defmodule Normandy.TelemetryCatalogueTest do
        [:normandy, :llm, :request, :exception]
      ]},
     # Span.span/3 and /4 share the emitters `event_prefix ++ [:start | :stop |
-    # :exception]`, three call sites. Its callers pass literal prefixes, which the scan reads as `Span.span`
-    # calls, so these call sites add no events of their own.
+    # :exception]`, three call sites. Their callers pass literal prefixes, which the
+    # scan reads as `Span.span` calls, so these call sites add no events of their own.
     {"lib/normandy/telemetry/span.ex", 3, []},
     # Turn.Server.stop_run_span/3 emits `[:normandy, :agent, :run, event]` with event
     # :stop or :exception (the :start is a literal elsewhere in the same file).

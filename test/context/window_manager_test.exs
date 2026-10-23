@@ -374,8 +374,19 @@ defmodule Normandy.Context.WindowManagerTest do
 
       # Should have fewer messages than original
       assert length(history) < 15
-      # Should have at least one summary message
-      assert history != []
+
+      # The summarizer ran: its summary message leads the history
+      assert [%{content: summary} | _] = history
+      assert summary =~ "Summary of old messages"
+    end
+
+    test "raises naming :client even when the conversation is under budget" do
+      manager = WindowManager.new(max_tokens: 100_000, strategy: :summarize)
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "short")
+
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WindowManager.truncate_conversation(%{memory: memory, config: %{}}, manager)
+      end
     end
 
     test "raises naming :client when the agent has none" do
