@@ -41,6 +41,7 @@ defmodule Normandy.Resilience.Retry do
 
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.LLMError
+  alias Normandy.Options
   alias Normandy.TurnError
 
   @type retry_option ::
@@ -52,7 +53,7 @@ defmodule Normandy.Resilience.Retry do
           | {:retry_on, [atom()]}
           | {:retry_if, (term() -> boolean())}
 
-  @type retry_options :: [retry_option()]
+  @type retry_options :: [retry_option()] | %{optional(atom()) => term()}
 
   @default_max_attempts 3
   @default_base_delay 1000
@@ -82,7 +83,8 @@ defmodule Normandy.Resilience.Retry do
   - `:retry_on` - List of error types to retry on (default: network errors, timeouts, rate limits)
   - `:retry_if` - Custom retry condition function
 
-  An unknown option or a bad value raises `ArgumentError`.
+  Options are a keyword list or a map. An unknown or repeated option or a bad value raises
+  `ArgumentError`.
 
   ## Returns
 
@@ -121,15 +123,23 @@ defmodule Normandy.Resilience.Retry do
     do_retry(fun, retry_config!(opts), 1, [])
   end
 
-  @option_defaults [
-    max_attempts: @default_max_attempts,
-    base_delay: @default_base_delay,
-    max_delay: @default_max_delay,
-    backoff_factor: @default_backoff_factor,
-    jitter: @default_jitter,
-    retry_on: @default_retry_on,
-    retry_if: nil
-  ]
+  @options_schema NimbleOptions.new!(
+                    max_attempts: [type: :pos_integer, default: @default_max_attempts],
+                    base_delay: [type: :non_neg_integer, default: @default_base_delay],
+                    max_delay: [type: :non_neg_integer, default: @default_max_delay],
+                    backoff_factor: [
+                      type: {:custom, __MODULE__, :factor, []},
+                      type_doc: "a number >= 1",
+                      default: @default_backoff_factor
+                    ],
+                    jitter: [type: :boolean, default: @default_jitter],
+                    retry_on: [type: {:list, :atom}, default: @default_retry_on],
+                    retry_if: [
+                      type: {:custom, __MODULE__, :predicate, []},
+                      type_doc: "a 1-arity function or `nil`",
+                      default: nil
+                    ]
+                  )
 
   @doc """
   Checks retry options without running anything, raising `ArgumentError` on an
@@ -138,57 +148,30 @@ defmodule Normandy.Resilience.Retry do
   """
   @spec validate_options!(retry_options()) :: :ok
   def validate_options!(opts) do
-    _ = retry_config!(opts)
+    _ = Options.validate!(opts, @options_schema, {__MODULE__, :validate_options!, 1})
     :ok
   end
 
-  # An unknown option or a bad value raises: a typo such as max_attemps: must
-  # not silently fall back to the default.
+  @doc false
+  # A NimbleOptions custom type for :backoff_factor.
+  @spec factor(term()) :: {:ok, number()} | {:error, String.t()}
+  def factor(value) when is_number(value) and value >= 1, do: {:ok, value}
+  def factor(value), do: {:error, "expected a number >= 1, got: #{inspect(value)}"}
+
+  @doc false
+  # A NimbleOptions custom type for :retry_if. It names the type of a bad value, never the value.
+  @spec predicate(term()) :: {:ok, nil | (term() -> boolean())} | {:error, String.t()}
+  def predicate(nil), do: {:ok, nil}
+  def predicate(fun) when is_function(fun, 1), do: {:ok, fun}
+
+  def predicate(other),
+    do: {:error, "expected a 1-arity function or nil, got: #{Describe.type_of(other)}"}
+
   defp retry_config!(opts) do
-    case Keyword.keys(opts) -- Keyword.keys(@option_defaults) do
-      [] ->
-        :ok
-
-      [key | _] ->
-        raise ArgumentError,
-              "Retry.with_retry/2: unknown option #{inspect(key)}; supported: " <>
-                Enum.map_join(Keyword.keys(@option_defaults), ", ", &inspect/1)
-    end
-
-    config = Map.new(Keyword.merge(@option_defaults, opts))
-
-    check_option!(config, :max_attempts, &(is_integer(&1) and &1 > 0), "a positive integer")
-    check_option!(config, :base_delay, &(is_integer(&1) and &1 >= 0), "a non-negative integer")
-    check_option!(config, :max_delay, &(is_integer(&1) and &1 >= 0), "a non-negative integer")
-    check_option!(config, :backoff_factor, &(is_number(&1) and &1 >= 1), "a number >= 1")
-    check_option!(config, :jitter, &is_boolean/1, "a boolean")
-
-    check_option!(
-      config,
-      :retry_on,
-      &(is_list(&1) and Enum.all?(&1, fn a -> is_atom(a) end)),
-      "a list of atoms"
-    )
-
-    check_option!(config, :retry_if, &(is_nil(&1) or is_function(&1, 1)), "a 1-arity function")
-
-    config
+    opts
+    |> Options.validate!(@options_schema, {__MODULE__, :with_retry, 2})
+    |> Map.new()
   end
-
-  defp check_option!(config, key, valid?, expected) do
-    value = Map.fetch!(config, key)
-
-    unless valid?.(value) do
-      raise ArgumentError,
-            "Retry.with_retry/2: #{inspect(key)} must be #{expected}, got: #{shown(value)}"
-    end
-  end
-
-  # A map, list or tuple can hold a secret, so only its type is shown.
-  defp shown(value) when is_map(value) or is_list(value) or is_tuple(value),
-    do: Describe.type_of(value)
-
-  defp shown(value), do: inspect(value)
 
   # Private retry loop (retry_or_fail/5 only re-enters below max_attempts)
   defp do_retry(fun, config, attempt, errors) do
@@ -364,7 +347,7 @@ defmodule Normandy.Resilience.Retry do
   ## Presets
 
   - `:quick` - Fast retries for quick operations (2 attempts, 100ms base)
-  - `:standard` - Default configuration (3 attempts, 1s base)
+  - `:standard` - Balanced configuration (3 attempts, 1s base)
   - `:persistent` - More aggressive retries (5 attempts, 1s base)
   - `:patient` - Long-running retries (10 attempts, 2s base)
 
@@ -372,7 +355,7 @@ defmodule Normandy.Resilience.Retry do
 
       Retry.with_retry(fn -> api_call() end, Retry.preset(:persistent))
   """
-  @spec preset(atom()) :: retry_options()
+  @spec preset(atom()) :: [retry_option()]
   def preset(:quick) do
     [
       max_attempts: 2,

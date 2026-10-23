@@ -123,9 +123,12 @@ defmodule Normandy.Test.FakeClient do
 
   @item_opts [:stop_reason, :usage, :stream_error_after]
 
-  @return_shape "expected {:text, text}, {:structured, map}, {:tool_calls, calls} (each with " <>
-                  "an optional keyword list of :stop_reason, :usage, :stream_error_after) " <>
-                  "or {:error, %Normandy.LLMError{}}"
+  # The shapes a script item may take. A script holds replies and 1-arity functions; a
+  # function must return a reply, so its shape leaves the function out.
+  @reply_shape "expected {:text, text}, {:structured, map}, {:tool_calls, calls} (each with an " <>
+                 "optional keyword list of :stop_reason, :usage, :stream_error_after)"
+  @script_shape "#{@reply_shape}, {:error, %Normandy.LLMError{}} or a 1-arity function"
+  @return_shape "#{@reply_shape} or {:error, %Normandy.LLMError{}}"
 
   @doc """
   A client that answers its requests with `script`, in order.
@@ -143,7 +146,7 @@ defmodule Normandy.Test.FakeClient do
     script
     |> Enum.with_index()
     |> Enum.each(fn {item, index} ->
-      check_item!(item, "Normandy.Test.FakeClient.new/2: script item #{index}")
+      check_item!(item, "Normandy.Test.FakeClient.new/2: script item #{index}", @script_shape)
     end)
 
     %__MODULE__{
@@ -209,7 +212,8 @@ defmodule Normandy.Test.FakeClient do
 
         check_item!(
           item,
-          "Normandy.Test.FakeClient: the function at script item #{index} returned an item that"
+          "Normandy.Test.FakeClient: the function at script item #{index} returned an item that",
+          @return_shape
         )
 
         {index, item}
@@ -385,35 +389,33 @@ defmodule Normandy.Test.FakeClient do
 
   # ── Script checks ─────────────────────────────────────────────────────────────
 
-  @shape "expected {:text, text}, {:structured, map}, {:tool_calls, calls} (each with an " <>
-           "optional keyword list of :stop_reason, :usage, :stream_error_after), " <>
-           "{:error, %Normandy.LLMError{}} or a 1-arity function"
+  defp check_item!(fun, _where, _shape) when is_function(fun, 1), do: :ok
+  defp check_item!({:error, %LLMError{}}, _where, _shape), do: :ok
 
-  defp check_item!(fun, _where) when is_function(fun, 1), do: :ok
-  defp check_item!({:error, %LLMError{}}, _where), do: :ok
+  defp check_item!({kind, value}, where, shape) when kind in [:text, :structured, :tool_calls],
+    do: check_value!(kind, value, where, shape)
 
-  defp check_item!({kind, value}, where) when kind in [:text, :structured, :tool_calls],
-    do: check_value!(kind, value, where)
-
-  defp check_item!({kind, value, opts} = item, where)
+  defp check_item!({kind, value, opts} = item, where, shape)
        when kind in [:text, :structured, :tool_calls] do
-    check_value!(kind, value, where)
+    check_value!(kind, value, where, shape)
     check_opts!(opts, item, where)
   end
 
-  defp check_item!(item, where), do: bad!(where, "is #{inspect(item, limit: 5)}; #{@shape}")
+  defp check_item!(item, where, shape),
+    do: bad!(where, "is #{inspect(item, limit: 5)}; #{shape}")
 
-  defp check_value!(:text, text, _where) when is_binary(text), do: :ok
+  defp check_value!(:text, text, _where, _shape) when is_binary(text), do: :ok
 
-  defp check_value!(:text, [_ | _] = chunks, where) do
+  defp check_value!(:text, [_ | _] = chunks, where, _shape) do
     if Enum.all?(chunks, &is_binary/1),
       do: :ok,
       else: bad!(where, "is a :text reply whose list holds a non-binary chunk")
   end
 
-  defp check_value!(:structured, map, _where) when is_map(map) and not is_struct(map), do: :ok
+  defp check_value!(:structured, map, _where, _shape) when is_map(map) and not is_struct(map),
+    do: :ok
 
-  defp check_value!(:tool_calls, [_ | _] = calls, where) do
+  defp check_value!(:tool_calls, [_ | _] = calls, where, _shape) do
     case Enum.find(calls, &(not call?(&1))) do
       nil ->
         :ok
@@ -427,8 +429,8 @@ defmodule Normandy.Test.FakeClient do
     end
   end
 
-  defp check_value!(kind, value, where),
-    do: bad!(where, "is a #{inspect(kind)} reply with #{inspect(value, limit: 5)}; #{@shape}")
+  defp check_value!(kind, value, where, shape),
+    do: bad!(where, "is a #{inspect(kind)} reply with #{inspect(value, limit: 5)}; #{shape}")
 
   defp call?({name, input}) when is_binary(name) and is_map(input), do: true
   defp call?(%ToolCall{}), do: true
@@ -465,19 +467,7 @@ defmodule Normandy.Test.FakeClient do
   defp supported, do: Enum.map_join(@item_opts, ", ", &inspect/1)
 
   @spec bad!(String.t(), String.t()) :: no_return()
-  defp bad!(where, detail) do
-    detail =
-      if String.contains?(where, "returned an item"),
-        do:
-          String.replace(
-            detail,
-            ", {:error, %Normandy.LLMError{}} or a 1-arity function",
-            " or {:error, %Normandy.LLMError{}}"
-          ),
-        else: detail
-
-    raise ArgumentError, "#{where} #{detail}"
-  end
+  defp bad!(where, detail), do: raise(ArgumentError, "#{where} #{detail}")
 
   defimpl Normandy.Agents.Model do
     alias Normandy.Test.FakeClient
