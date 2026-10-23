@@ -10,7 +10,7 @@ defmodule Normandy.Resilience.CircuitBreaker do
   ## States
 
   ```
-  Closed ──(failures > threshold)──> Open
+  Closed ──(failures >= threshold)──> Open
     ↑                                   │
     │                                   │
     └──(success)── Half-Open ←─(timeout)┘
