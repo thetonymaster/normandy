@@ -56,9 +56,8 @@ defmodule Normandy.Components.StreamProcessor do
 
   ## Example
 
-      stream
-      |> parse_stream_events()
-      |> accumulate_text()
+      events
+      |> StreamProcessor.accumulate_text()
       |> Enum.each(&IO.write/1)
   """
   @spec accumulate_text(Enumerable.t()) :: Enumerable.t()
