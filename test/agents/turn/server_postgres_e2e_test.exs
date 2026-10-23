@@ -57,7 +57,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     opts = [
       session_id: sid,
       config: server_config(),
-      store: {Postgres, Postgres.new()},
+      store: {Postgres, Normandy.TestHandles.postgres_repo()},
       registry: {Native, reg},
       supervisor: sup,
       idle_timeout_ms: 60,
@@ -68,7 +68,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     assert {:ok, %Resp{content: "first"}} = Turn.Session.run(Turn.Session.new(opts), "hello")
 
     # DURABILITY INVARIANT: the user input is in Postgres after the turn.
-    assert {:ok, entries} = Postgres.history(Postgres.new(), sid)
+    assert {:ok, entries} = Postgres.history(Normandy.TestHandles.postgres_repo(), sid)
     assert entries != [], "expected the turn to persist entries to Postgres; got none"
     first_count = length(entries)
 
@@ -85,7 +85,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
              )
 
     # NO-LOSS INVARIANT: history grew across passivation; turn-1 entries survived.
-    assert {:ok, entries2} = Postgres.history(Postgres.new(), sid)
+    assert {:ok, entries2} = Postgres.history(Normandy.TestHandles.postgres_repo(), sid)
 
     assert length(entries2) > first_count,
            "rehydrated history did not grow; passivation may have dropped persisted state"

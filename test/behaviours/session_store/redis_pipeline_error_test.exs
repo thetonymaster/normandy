@@ -10,7 +10,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisPipelineErrorTest do
 
   # The in-flight index key holds a string, so SADD and SREM answer WRONGTYPE.
   defp broken_index do
-    {conn, ns} = h = Redis.new()
+    {conn, ns} = h = Normandy.TestHandles.redis_session_store()
     {:ok, "OK"} = Redix.command(conn, ["SET", "#{ns}:inflight", "not-a-set"])
     {h, conn, ns}
   end

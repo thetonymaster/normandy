@@ -19,8 +19,7 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
     :ok = Sandbox.checkout(Normandy.TestRepo)
   end
 
-  test "new/0 returns the configured repo handle and the behaviour is implemented" do
-    assert Postgres.new() == Normandy.TestRepo
+  test "the behaviour is implemented" do
     behaviours = Postgres.module_info(:attributes)[:behaviour] || []
     assert Normandy.Behaviours.SessionStore in behaviours
   end

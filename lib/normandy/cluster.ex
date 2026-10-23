@@ -194,10 +194,11 @@ defmodule Normandy.Cluster do
     ns = Keyword.fetch!(opts, :namespace)
     registry = Keyword.fetch!(opts, :registry)
     supervisor = Keyword.fetch!(opts, :supervisor)
-    handles = build_redis_handles(opts, :redis_child_specs)
+    store = store_setup(opts, :redis_child_specs)
+    handles = build_redis_handles(opts, store, :redis_child_specs)
 
     [{Redix, redix}] ++
-      store_conn_specs(opts, :redis_child_specs) ++
+      store_conn_specs(opts, store) ++
       [
         %{
           id: registry,
@@ -220,10 +221,10 @@ defmodule Normandy.Cluster do
   def redis_handles(opts) do
     opts
     |> Options.validate!(@redis_child_specs_opts_schema, {__MODULE__, :redis_handles, 1})
-    |> build_redis_handles(:redis_handles)
+    |> then(&build_redis_handles(&1, store_setup(&1, :redis_handles), :redis_handles))
   end
 
-  defp build_redis_handles(opts, fun) do
+  defp build_redis_handles(opts, store, fun) do
     conn_name = conn_name!(Keyword.fetch!(opts, :redix), fun)
     ns = Keyword.fetch!(opts, :namespace)
 
@@ -231,17 +232,17 @@ defmodule Normandy.Cluster do
       registry:
         {RedisReg,
          RedisReg.handle(owner: Keyword.fetch!(opts, :registry), conn: conn_name, namespace: ns)},
-      store: {RedisStore, store_handle(opts, fun)}
+      store: {RedisStore, store_handle(opts, store)}
     }
   end
 
   # The store's handle: on :store_redix's connection, or on :redix's with a WAIT pool
   # when the app env asks for replicas. {conn, ns} otherwise, which reads the app env
   # on every write, as any such handle does.
-  defp store_handle(opts, fun) do
+  defp store_handle(opts, {plan, wait, fun}) do
     ns = Keyword.fetch!(opts, :namespace)
 
-    case {store_plan(opts, fun), store_wait!(opts, fun)} do
+    case {plan, wait} do
       {{:own, conn}, {0, _timeout}} -> {conn, ns}
       {{:own, conn}, wait} -> {conn, ns, wait}
       {{:shared, conn}, {0, _timeout}} -> {conn, ns}
@@ -249,8 +250,8 @@ defmodule Normandy.Cluster do
     end
   end
 
-  defp store_conn_specs(opts, fun) do
-    case {store_plan(opts, fun), store_wait!(opts, fun)} do
+  defp store_conn_specs(opts, {plan, wait, fun}) do
+    case {plan, wait} do
       {{:own, _conn}, _wait} ->
         [Supervisor.child_spec({Redix, Keyword.fetch!(opts, :store_redix)}, id: :store_redix)]
 
@@ -264,6 +265,10 @@ defmodule Normandy.Cluster do
             do: Supervisor.child_spec({Redix, Keyword.put(redix, :name, name)}, id: name)
     end
   end
+
+  # The store's `{plan, wait}`, computed once per call: the `:redis_wait` app env is read
+  # here and nowhere else, so the handle and the WAIT-pool specs agree.
+  defp store_setup(opts, fun), do: {store_plan(opts, fun), store_wait!(opts, fun), fun}
 
   # The app env's wait. :wait_connections sizes a WAIT pool that only starts when it
   # asks for replicas; given without that, it is refused as SessionStore.Redis.new/1

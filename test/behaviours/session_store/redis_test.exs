@@ -4,9 +4,12 @@ defmodule Normandy.Behaviours.SessionStore.RedisTest do
 
   use Normandy.Test.SessionStoreContract,
     impl: Normandy.Behaviours.SessionStore.Redis,
+    new: {Normandy.TestHandles, :redis_session_store, []},
     stored_entry_ids: {__MODULE__, :stored_entry_ids, []}
 
-  use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.Redis
+  use Normandy.Test.TerminalSaveCases,
+    store: Normandy.Behaviours.SessionStore.Redis,
+    new: {Normandy.TestHandles, :redis_session_store, []}
 
   # Every stream in the handle's namespace; an entry's id is its `id` field, else its
   # stream id (as history/2 returns it).

@@ -21,9 +21,10 @@ if Code.ensure_loaded?(Redix) do
                        url: [
                          type: :string,
                          type_doc: "`t:String.t/0`",
-                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                         required: true,
+                         doc: "The Redis URL."
                        ],
-                       prefix: [type: :string, doc: "The key prefix (default: a unique one)."]
+                       prefix: [type: :string, required: true, doc: "The key prefix."]
                      )
 
     # KEYS: index, document, bytes. ARGV: path, content, expected, updated_at, max_bytes,
@@ -136,25 +137,21 @@ if Code.ensure_loaded?(Redix) do
           end)
 
     @doc """
-    Test/default handle: a Redix conn to the configured URL and a unique key prefix.
+    Opens a Redix connection to `:url` and returns the store's handle `{conn, prefix}`.
+    `:url` and `:prefix` are required.
 
     ## Options
 
     #{Options.docs(@new_opts_schema)}
     """
     @spec new(keyword()) :: {pid(), String.t()}
-    def new(opts \\ []) do
+    def new(opts) do
       opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
 
-      url =
-        Keyword.get(
-          opts,
-          :url,
-          Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
-        )
+      url = Keyword.fetch!(opts, :url)
 
       {:ok, conn} = Redix.start_link(url)
-      {conn, Keyword.get(opts, :prefix, "normandy_test_mem_#{UUID.uuid4()}")}
+      {conn, Keyword.fetch!(opts, :prefix)}
     end
 
     @impl true

@@ -2,11 +2,12 @@ defmodule Normandy.Behaviours.SessionRegistry.Redis.ViaTest do
   use ExUnit.Case, async: true
   @moduletag :redis
 
-  alias Normandy.Behaviours.SessionRegistry.Redis
   alias Normandy.Behaviours.SessionRegistry.Redis.Via
 
   setup do
-    {:ok, owner: Redis.new(), sid: "via-#{System.unique_integer([:positive])}"}
+    {:ok,
+     owner: Normandy.TestHandles.redis_registry(),
+     sid: "via-#{System.unique_integer([:positive])}"}
   end
 
   test "register_name answers :yes, then :no for a taken name", %{owner: owner, sid: sid} do

@@ -9,7 +9,7 @@ defmodule Normandy.Behaviours.SessionStore.ConcurrentAppendRedisTest do
   @n 50
 
   test "#{@n} concurrent appends land as #{@n} ordered stream entries" do
-    store = Redis.new()
+    store = Normandy.TestHandles.redis_session_store()
     sid = "redis-concurrent-#{System.unique_integer([:positive])}"
 
     results =

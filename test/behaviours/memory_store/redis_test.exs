@@ -3,7 +3,9 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
   @moduletag :redis
   alias Normandy.Behaviours.MemoryStore.Redis
 
-  use Normandy.Test.MemoryStoreContract, impl: Redis
+  use Normandy.Test.MemoryStoreContract,
+    impl: Redis,
+    new: {Normandy.TestHandles, :redis_memory_store, []}
 
   # Every test gets a fresh random key prefix; drop its keys so runs leave the shared Redis clean.
   setup %{handle: {_conn, prefix}} do
@@ -77,7 +79,7 @@ defmodule Normandy.Behaviours.MemoryStore.RedisTest do
 
   # A separate connection: the test's own may already be gone when on_exit runs.
   defp delete_prefix(prefix) do
-    url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+    url = Normandy.TestHandles.redis_url()
     {:ok, conn} = Redix.start_link(url)
 
     try do

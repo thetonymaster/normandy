@@ -206,9 +206,8 @@ Operational notes for Redis:
   Redis Cluster accepts this. A proxy or Redis-compatible server that insists on declared
   keys (for example Dragonfly in its default mode) may reject the scripts.
 
-`MemoryStore.Redis.new/1` defaults to a random test prefix; in production set `:prefix`
-(or build the `{conn, "myapp"}` handle yourself) so documents survive a restart and are
-found again.
+`MemoryStore.Redis.new/1` requires `:url` and `:prefix` (or build the `{conn, "myapp"}`
+handle yourself): a fixed prefix is what lets documents survive a restart and be found again.
 
 ## Limits
 

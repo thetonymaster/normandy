@@ -7,7 +7,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
   alias Normandy.Components.AgentMemory.Entry
 
   setup do
-    {:ok, handle: Redis.new()}
+    {:ok, handle: Normandy.TestHandles.redis_session_store()}
   end
 
   defp e(role, content), do: %Entry{turn_id: "t", role: role, content: content}

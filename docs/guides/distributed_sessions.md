@@ -276,7 +276,7 @@ disagreeing.
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
 Redis with AOF enabled + a replica wait to block every write (entries, turn state,
 template) on replica acks (fail-closed): per store with
-`SessionStore.Redis.new(wait: ...)`, which runs each waited write on a pool of its own, or for
+`SessionStore.Redis.new(url: ..., namespace: ..., wait: ...)`, which runs each waited write on a pool of its own, or for
 all Redis stores with `config :normandy, :redis_wait, {numreplicas, timeout_ms}`. A handle
 `{conn, namespace, {numreplicas, timeout_ms}}` waits on `conn` itself: give it a connection
 nothing else uses, since a `WAIT` blocks every other command on its connection. Ephemeral: `Mnesia(ram_copies)`,

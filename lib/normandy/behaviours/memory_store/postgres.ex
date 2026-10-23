@@ -27,14 +27,6 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     @table "normandy_memory_documents"
     @namespaces "normandy_memory_namespaces"
 
-    @doc """
-    Returns the first Repo of `config :normandy, :ecto_repos`, the handle Normandy's own
-    tests use. An application passes its Repo module as the handle instead. Raises
-    `ArgumentError` when `:ecto_repos` is not set for `:normandy`.
-    """
-    @spec new() :: module()
-    def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))
-
     @impl true
     def list(repo, ns, prefix) do
       backend(fn ->
