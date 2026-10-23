@@ -18,7 +18,6 @@ defmodule Normandy.Components.AgentMemory do
   at the append rather than at the next LLM call.
   """
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.BaseIOSchema
@@ -303,13 +302,16 @@ defmodule Normandy.Components.AgentMemory do
   defp unanswered_use?(_block, _answered), do: false
 
   @doc false
-  # The messages of a request built from `memory` in one walk of the active branch:
-  # each entry's cached encoding, with the thinking drop_stale_thinking/2 would remove
-  # under `prefix_key` removed from that encoding (drop_thinking/1 on the encoded blocks
-  # gives what encoding the dropped content gives), then request_history/1's pass (a
-  # tool-round answer shown once), then merged as request_messages/1 merges. Equal to
-  # `memory |> drop_stale_thinking(prefix_key) |> request_history() |> request_messages()`,
-  # without encoding anything again.
+  # The messages of a request built from `memory` in linear passes over the active
+  # branch, encoding nothing again: each entry's cached encoding, with the thinking
+  # drop_stale_thinking/2 would remove under `prefix_key` removed from that encoding
+  # (drop_thinking/1 on the encoded blocks gives what encoding the dropped content gives),
+  # then request_history/1's pass (a tool-round answer shown once), then merged as
+  # request_messages/1 merges. Equal to
+  # `memory |> drop_stale_thinking(prefix_key) |> request_history() |> request_messages()`.
+  # A deduped round differs from what the turn that produced it sent, so the next
+  # request's prompt-cache prefix diverges there once: the round and the messages after
+  # it are written to the cache again, once per deduped turn.
   @spec request_messages_for(t(), integer()) :: [Message.t()]
   def request_messages_for(%__MODULE__{} = memory, prefix_key) do
     chain = entry_chain(memory)
@@ -327,18 +329,25 @@ defmodule Normandy.Components.AgentMemory do
 
   @doc false
   # history/1 as a request shows it: a chat agent's final answer taken from its tool
-  # round (BaseAgent's blank-answer fallback) is stored twice, as the text of the
-  # tool-calling response and as the answer. For each final chat answer (an assistant
+  # round (BaseAgent's blank-answer fallback), or a model that wrote the same sentence
+  # beside its tool call and as its final answer, puts it in memory twice, as the text of
+  # the tool-calling response and as the answer. For each final chat answer (an assistant
   # entry whose content is a struct with a binary :chat_message), the response
   # last_tool_round/2 finds before it in its turn loses its "text" blocks when its text
-  # equals the answer; its tool_use and server-tool blocks stay. A response whose
-  # encoding holds a "thinking" or "redacted_thinking" block is left whole: editing a
-  # message that carries signed thinking may invalidate it, so a thinking agent's
-  # request still shows the sentence twice. Answers that differ (an output guardrail
-  # rewrote one), a round of an earlier turn, a paused response (no tool calls), a
-  # round followed by another final answer and a structured output (no :chat_message)
-  # are left as stored. Nothing stored changes; messages/1 and history/1 still hold
-  # both. TokenCounter counts this, so its payload equals the request's.
+  # equals the answer; its tool_use and server-tool blocks stay. Left whole:
+  #   * a round when it, or any message after it up to the answer (a paused response),
+  #     holds thinking the request sends ("thinking" or "redacted_thinking" in its
+  #     encoding): editing the history that signed thinking was produced after may
+  #     invalidate it, so a thinking agent's request still shows the sentence twice;
+  #   * a round with a text block whose "citations" are not empty: the plain answer has
+  #     none, so the citations would be lost;
+  #   * answers that differ (an output guardrail rewrote one), a round of an earlier
+  #     turn, a paused response (no tool calls), a round followed by another final answer
+  #     and a structured output (no :chat_message).
+  # Nothing stored changes; messages/1 and history/1 still hold both. TokenCounter counts
+  # this history, without drop_stale_thinking/2 (it has no prefix key): its payload equals
+  # the request's messages when no thinking is stale, and otherwise still holds the stale
+  # thinking and the text of a round whose only thinking was stale.
   @spec request_history(t()) :: [%{role: String.t(), content: String.t() | list()}]
   def request_history(%__MODULE__{} = memory) do
     memory
@@ -348,78 +357,124 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   defp answer_once(pairs) do
-    repeated = pairs |> Enum.map(&elem(&1, 0)) |> repeated_rounds()
+    {repeated, _newest_first} =
+      Enum.reduce(pairs, {MapSet.new(), []}, fn pair, {ids, before} ->
+        {mark_repeated(pair, before, ids), [pair | before]}
+      end)
 
     Enum.map(pairs, fn {%Entry{id: id, role: role}, wire} ->
-      if MapSet.member?(repeated, id) and not has_thinking?(wire),
+      if MapSet.member?(repeated, id),
         do: %{role: role, content: Enum.reject(wire, &text_block?/1)},
         else: %{role: role, content: wire}
     end)
   end
 
-  # The ids of the tool-calling responses whose text a later final answer repeats.
-  defp repeated_rounds(chain) do
-    {ids, _newest_first} =
-      Enum.reduce(chain, {MapSet.new(), []}, fn entry, {ids, before} ->
-        case repeated_round(entry, before) do
-          nil -> {ids, [entry | before]}
-          id -> {MapSet.put(ids, id), [entry | before]}
-        end
-      end)
-
-    ids
-  end
-
-  defp repeated_round(
-         %Entry{role: "assistant", turn_id: turn_id, content: %_{chat_message: answer}},
-         before
+  # Marks the round a final chat answer repeats, unless the round or any message after it
+  # up to the answer (a paused response) sends thinking, or a text block of the round
+  # carries citations the plain answer does not.
+  defp mark_repeated(
+         {%Entry{role: "assistant", turn_id: turn_id, content: %_{chat_message: answer}}, _wire},
+         before,
+         ids
        )
        when is_binary(answer) do
-    case last_tool_round(before, turn_id) do
-      {%Entry{id: id}, ^answer} -> id
-      _other -> nil
+    case tool_round_span(before, turn_id, &elem(&1, 0)) do
+      {{%Entry{id: id}, _wire} = round, ^answer, later} ->
+        if keep_whole?(round, later), do: ids, else: MapSet.put(ids, id)
+
+      _other ->
+        ids
     end
   end
 
-  defp repeated_round(_entry, _before), do: nil
+  defp mark_repeated(_pair, _before, ids), do: ids
+
+  defp keep_whole?({_entry, wire} = round, later),
+    do: cited?(wire) or Enum.any?([round | later], &sends_thinking?/1)
+
+  defp sends_thinking?({_entry, wire}), do: has_thinking?(wire)
 
   defp text_block?(%{type: "text"}), do: true
   defp text_block?(%{"type" => "text"}), do: true
   defp text_block?(_block), do: false
 
+  defp cited?(wire) when is_list(wire),
+    do: Enum.any?(wire, &(text_block?(&1) and citations(&1) not in [nil, []]))
+
+  defp cited?(_wire), do: false
+
+  defp citations(block), do: Map.get(block, "citations") || Map.get(block, :citations)
+
   @doc false
   # The tool round a chat answer of `turn_id` can come from: in `newest_first` (the
   # entries before that answer, newest first), the latest ToolCallResponse with tool
-  # calls, with its text unwrapped as a final text is (BaseAgent.unwrap_llm_content/1),
-  # or nil when there is none or its text is blank. Only `turn_id` counts, and in it only
-  # what follows its latest final answer: the walk stops at an entry of another turn and
-  # at an assistant entry that is not a ToolCallResponse (a stored final answer); a
-  # paused response (a ToolCallResponse with no tool calls) does not stop it. One
-  # definition for BaseAgent's blank-answer fallback and request_history/1's pass.
+  # calls, with its text unwrapped as a final text is (unwrap_llm_content/1), or nil when
+  # there is none or its text is blank. Only `turn_id` counts, and in it only what
+  # follows its latest final answer: the walk stops at an entry of another turn and at an
+  # assistant entry that is not a ToolCallResponse (a stored final answer); a paused
+  # response (a ToolCallResponse with no tool calls) does not stop it. One definition for
+  # BaseAgent's blank-answer fallback and request_history/1's pass.
   @spec last_tool_round([Entry.t()], String.t() | nil) :: {Entry.t(), String.t()} | nil
-  def last_tool_round(newest_first, turn_id) when is_binary(turn_id) do
-    newest_first
-    |> Enum.take_while(&(&1.turn_id == turn_id and not final_answer_entry?(&1)))
-    |> Enum.find(
-      &match?(%{role: "assistant", content: %ToolCallResponse{tool_calls: [_ | _]}}, &1)
-    )
-    |> round_text()
+  def last_tool_round(newest_first, turn_id) do
+    case tool_round_span(newest_first, turn_id, & &1) do
+      {entry, text, _later} -> {entry, text}
+      nil -> nil
+    end
   end
 
-  def last_tool_round(_newest_first, _turn_id), do: nil
+  # last_tool_round/2 over items `entry_of` maps to entries, with the items between the
+  # round and the answer (`later`, newest first) too.
+  defp tool_round_span(newest_first, turn_id, entry_of) when is_binary(turn_id) do
+    in_span? = fn item ->
+      entry = entry_of.(item)
+      entry.turn_id == turn_id and not final_answer_entry?(entry)
+    end
 
-  defp round_text(%Entry{content: %ToolCallResponse{content: text}} = entry) do
-    case BaseAgent.unwrap_llm_content(text) do
-      text when is_binary(text) -> if String.trim(text) == "", do: nil, else: {entry, text}
+    {span, _rest} = Enum.split_while(newest_first, in_span?)
+
+    case Enum.split_while(span, &(not tool_round?(entry_of.(&1)))) do
+      {later, [round | _earlier]} ->
+        case round_text(entry_of.(round)) do
+          nil -> nil
+          text -> {round, text, later}
+        end
+
+      {_span, []} ->
+        nil
+    end
+  end
+
+  defp tool_round_span(_newest_first, _turn_id, _entry_of), do: nil
+
+  defp tool_round?(%{role: "assistant", content: %ToolCallResponse{tool_calls: [_ | _]}}),
+    do: true
+
+  defp tool_round?(_entry), do: false
+
+  defp round_text(%Entry{content: %ToolCallResponse{content: text}}) do
+    case unwrap_llm_content(text) do
+      text when is_binary(text) -> if String.trim(text) == "", do: nil, else: text
       _none -> nil
     end
   end
 
-  defp round_text(nil), do: nil
-
   defp final_answer_entry?(%{role: "assistant", content: %ToolCallResponse{}}), do: false
   defp final_answer_entry?(%{role: "assistant"}), do: true
   defp final_answer_entry?(_entry), do: false
+
+  @doc false
+  # A model's final text as the answer it holds: the "chat_message" of a JSON object
+  # that has one (a model that answered in the default output schema's shape), else the
+  # text itself. Shared by BaseAgent's final-text conversion and last_tool_round/2.
+  @spec unwrap_llm_content(term()) :: term()
+  def unwrap_llm_content(content) when is_binary(content) do
+    case Normandy.JSON.decode(content) do
+      {:ok, %{"chat_message" => text}} when is_binary(text) -> text
+      _ -> content
+    end
+  end
+
+  def unwrap_llm_content(content), do: content
 
   defp fold_user_text([
          %Message{role: "tool", content: blocks} = tool,

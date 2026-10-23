@@ -99,9 +99,11 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
   input after a continued pause is accepted.
 - A chat answer given beside a tool call survives a blank final reply instead of failing with
   `:invalid_output`. The run `:stop` metadata marks such an answer `answer_source: :tool_round`
-  (`:final` otherwise). Memory stores the sentence in the tool-calling reply and as the answer;
-  later requests show it once (the tool-calling message is sent without its text), unless that
-  message carries thinking, which is sent as the model wrote it.
+  (`:final` otherwise). Memory stores the sentence in the tool-calling reply and as the answer
+  (also when the model itself wrote it in both); later requests show it once: the tool-calling
+  message is sent without its text, which rewrites the prompt cache from that message once. It
+  is sent whole when it, or a later message of that turn before the answer, carries thinking
+  the request sends, or when its text carries citations.
 - Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
   `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.

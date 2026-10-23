@@ -137,6 +137,22 @@ defmodule Normandy.Components.AgentMemory.RepeatedAnswerTest do
     assert [^server, ^server_result, %{"type" => "tool_use"}] = blocks
   end
 
+  test "a later paused response whose thinking the request drops as stale: still dropped" do
+    memory = probe(paused_with_thinking(2))
+
+    messages = request(memory)
+    assert count(messages, "Paris.") == 1
+    refute Enum.any?(messages, &match?(%{content: [@thinking | _]}, &1))
+  end
+
+  test "empty citations are no citations: still dropped" do
+    round = tool_round("Paris.")
+    [text | rest] = round.content_blocks
+    round = %{round | content_blocks: [Map.put(text, "citations", []) | rest]}
+
+    assert count(request(chain(round)), "Paris.") == 1
+  end
+
   test "a cap notice between the tool result and the answer: still dropped" do
     memory =
       memory([
@@ -165,6 +181,61 @@ defmodule Normandy.Components.AgentMemory.RepeatedAnswerTest do
       redacted = %{"type" => "redacted_thinking", "data" => "d"}
       memory = chain(tool_round("Paris.", thinking: [redacted]))
       assert count(request(memory), "Paris.") == 2
+    end
+
+    # The review probe: a paused response after the round sends signed thinking produced
+    # against the unedited round, so editing the round could invalidate it.
+    defp paused_with_thinking(prefix_key) do
+      server = %{
+        "type" => "server_tool_use",
+        "id" => "s1",
+        "name" => "web_search",
+        "input" => %{}
+      }
+
+      result = %{"type" => "web_search_tool_result", "tool_use_id" => "s1", "content" => []}
+
+      %ToolCallResponse{
+        content: nil,
+        tool_calls: [],
+        thinking: [@thinking],
+        stop_reason: :pause_turn,
+        prefix_key: prefix_key,
+        content_blocks: [@thinking, server, result]
+      }
+    end
+
+    defp probe(paused) do
+      memory([
+        :new_turn,
+        {"user", "Capital of France?"},
+        {"assistant", tool_round("Paris.")},
+        {"tool", result()},
+        {"assistant", paused},
+        {"assistant", answer("Paris.")},
+        :new_turn,
+        {"user", "Thanks"}
+      ])
+    end
+
+    test "a later message of the round's span that sends thinking (a paused response)" do
+      messages = request(probe(paused_with_thinking(1)))
+
+      assert count(messages, "Paris.") == 2
+      assert Enum.any?(messages, &match?(%{content: [@thinking | _]}, &1))
+    end
+
+    test "a text block with citations" do
+      cited = %{
+        "type" => "text",
+        "text" => "Paris.",
+        "citations" => [%{"type" => "web_search_result_location", "url" => "https://x"}]
+      }
+
+      round = tool_round("Paris.")
+      round = %{round | content_blocks: [cited | tl(round.content_blocks)]}
+
+      assert [_, %{content: [^cited, %{"type" => "tool_use"}]} | _] = request(chain(round))
     end
 
     test "texts that differ (a guardrail rewrote the answer)" do

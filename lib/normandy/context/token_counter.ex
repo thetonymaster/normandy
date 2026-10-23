@@ -181,7 +181,9 @@ defmodule Normandy.Context.TokenCounter do
   # conversion: tool results become user tool_result blocks and tool calls
   # assistant tool_use blocks (count_tokens accepts only user and assistant). The
   # history is AgentMemory.request_history/1's, so a tool-round answer counts once, as
-  # the request shows it.
+  # the request shows it. Stale thinking is not dropped (the prefix key needs the
+  # request's system prompt and tools), so the payload equals the request's messages only
+  # when no thinking is stale.
   defp build_messages_payload(memory) do
     messages =
       memory

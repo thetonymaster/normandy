@@ -430,7 +430,7 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}` when Normandy's own checks or the model failed:
   `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
   `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
-  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer, and the run `:stop` telemetry says so with `answer_source: :tool_round` (`:final` otherwise); memory stores the sentence twice (in that response and as the answer), and later requests show it once unless that response carries thinking. Any other exception (a bug in a
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer, and the run `:stop` telemetry says so with `answer_source: :tool_round` (`:final` otherwise); memory stores the sentence twice (in that response and as the answer), and later requests show it once (as they do when the model itself repeated it), unless that response or a later message of the turn carries thinking the request sends, or its text carries citations. Any other exception (a bug in a
   tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
   turn is lost: keep using the config you passed in.
 
@@ -563,15 +563,7 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   @doc false
-  def unwrap_llm_content(content) when is_binary(content) do
-    case Normandy.JSON.decode(content) do
-      {:ok, %{"chat_message" => text}} when is_binary(text) -> text
-      _ -> content
-    end
-  end
-
-  @doc false
-  def unwrap_llm_content(content), do: content
+  defdelegate unwrap_llm_content(content), to: AgentMemory
 
   # ── Turn FSM production interpreter (Phase 1c, non-streaming) ────────────────
   #
