@@ -329,17 +329,29 @@ defmodule Normandy.LLM.JsonDeserializerTest do
     end
   end
 
-  describe "parse_and_validate/3 — removed :recover_truncated_strings option" do
-    test "the option is no longer read: a truncated string stays a parse error" do
-      # Options are not schema-validated here, so an unknown key is ignored.
-      truncated = ~s({"page_text": "hello world\\n\\n\\n\\n)
+  describe "removed options" do
+    test ":recover_truncated_strings is refused, naming the option" do
+      assert_raise ArgumentError,
+                   ~r/parse_and_validate\/3: unknown option :recover_truncated_strings/,
+                   fn ->
+                     JsonDeserializer.parse_and_validate(
+                       ~s({"page_text": "hi),
+                       %RecoveryFixture{},
+                       recover_truncated_strings: true
+                     )
+                   end
+    end
 
-      assert {:error, {:json_parse_error, _, _}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 recover_truncated_strings: true
-               )
+    test ":adapter is refused, naming the option" do
+      assert_raise ArgumentError, ~r/parse_and_validate\/3: unknown option :adapter/, fn ->
+        JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{},
+          adapter: Jason
+        )
+      end
+
+      assert_raise ArgumentError, ~r/deserialize_with_retry\/5: unknown option :adapter/, fn ->
+        JsonDeserializer.deserialize_with_retry("x", %MultiField{}, nil, @request, adapter: Jason)
+      end
     end
   end
 
@@ -425,6 +437,23 @@ defmodule Normandy.LLM.JsonDeserializerTest do
 
       assert {:error, {:json_parse_error, _, _}} = result
       assert t < 1_000_000
+    end
+
+    test "repeated unclosed brace + escaped quote in 240 KB returns within 1 s" do
+      text = String.duplicate("{ \\\" ", 48_000)
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
+    test "an escaped-quote tail before a valid object still finds the object" do
+      text = String.duplicate("{ \\\" ", 5_000) <> ~s(\n{"chat_message": "hi"})
+
+      assert {:ok, %BaseAgentOutputSchema{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})
     end
 
     test "unclosed brackets and braces mixed still find the later balanced region" do

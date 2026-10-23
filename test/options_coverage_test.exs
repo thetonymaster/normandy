@@ -23,6 +23,7 @@ defmodule Normandy.OptionsCoverageTest do
     "lib/normandy/a2a/agent_tool.ex",
     "lib/normandy/a2a/registry.ex",
     "lib/normandy/a2a/server.ex",
+    "lib/normandy/llm/json_deserializer.ex",
     "lib/normandy/agents/base_agent.ex",
     "lib/normandy/agents/base_agent/init_options.ex",
     "lib/normandy/agents/turn.ex",
@@ -91,8 +92,6 @@ defmodule Normandy.OptionsCoverageTest do
     "lib/normandy/llm/openai_compatible_adapter.ex" =>
       "per-call options Normandy builds for the Model protocol; client options are checked " <>
         "by validate_options!/1",
-    "lib/normandy/llm/json_deserializer.ex" =>
-      "parsing options built by Normandy's adapters (:max_retries, :on_retry_usage)",
     "lib/normandy/llm/json/decoder.ex" => "parsing options built by JsonDeserializer",
     "lib/normandy/schema.ex" => "field/3 macro options, read at compile time",
     "lib/normandy/tool.ex" =>

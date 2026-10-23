@@ -49,13 +49,14 @@ defmodule Normandy.LLM.JsonDeserializer do
   ### Call-site options
 
   - `:max_retries` - Maximum retry attempts (default: 2)
-  - `:on_retry_usage` - `(usage -> any)`, called with each retry call's token usage
+  - `:on_retry_usage` - `(usage -> any)`, called with each retry call's token usage as
+    that retry finishes (a billed failure included)
   - `:request_tracker` - a `Normandy.Telemetry.Request` tracker, passed to each
     retry's `converse/3` (with `request_kind: :json_retry`) so the retry's request
     span is numbered within the enclosing llm_call
   - `:max_input_bytes` - Maximum byte size of the raw content accepted before
     any parsing is attempted (default: `10_000_000`). When the content exceeds
-    this limit, `Decoder.decode/3` returns
+    this limit, the parse returns
     `{:error, {:input_too_large, actual_size, limit}}` immediately, skipping
     all JSON parsing and schema binding.
 
@@ -99,8 +100,36 @@ defmodule Normandy.LLM.JsonDeserializer do
   alias Normandy.LLM.Request
   alias Normandy.LLM.Response
   alias Normandy.LLMError
+  alias Normandy.Options
 
-  @default_max_retries 2
+  @parse_opts_schema NimbleOptions.new!(
+                       max_input_bytes: [
+                         type: :pos_integer,
+                         default: 10_000_000,
+                         doc: "Largest raw content, in bytes, parsed at all."
+                       ]
+                     )
+
+  @retry_opts_schema NimbleOptions.new!(
+                       max_retries: [type: :non_neg_integer, default: 2, doc: "Re-asks."],
+                       on_retry_usage: [
+                         type: {:fun, 1},
+                         doc: "Called with each retry call's token usage as it finishes."
+                       ],
+                       request_tracker: [
+                         type: :any,
+                         doc: "A `Normandy.Telemetry.Request` tracker, or `nil`."
+                       ],
+                       max_input_bytes: [
+                         type: :pos_integer,
+                         default: 10_000_000,
+                         doc: "Largest raw content, in bytes, parsed at all."
+                       ]
+                     )
+
+  @usage_opts_schema NimbleOptions.new!(
+                       Keyword.delete(@retry_opts_schema.schema, :on_retry_usage)
+                     )
 
   @doc """
   Parse and validate JSON content without retry.
@@ -113,7 +142,7 @@ defmodule Normandy.LLM.JsonDeserializer do
 
     - `content` - Raw string content from LLM
     - `schema` - Target schema struct to populate
-    - `opts` - Options:
+    - `opts` - Options (`:max_input_bytes`); an unknown option raises `ArgumentError`
     
   ## Returns
 
@@ -133,6 +162,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @spec parse_and_validate(String.t(), struct(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def parse_and_validate(content, schema, opts \\ []) do
+    opts = Options.validate!(opts, @parse_opts_schema, {__MODULE__, :parse_and_validate, 3})
     parse_and_populate(content, schema, opts)
   end
 
@@ -162,33 +192,43 @@ defmodule Normandy.LLM.JsonDeserializer do
   @spec deserialize_with_retry(String.t(), struct(), struct(), Request.t(), keyword()) ::
           {:ok, struct()} | {:error, term()}
   def deserialize_with_retry(content, schema, client, %Request{} = request, opts \\ []) do
-    callback = Keyword.get(opts, :on_retry_usage)
-    take_usage? = is_function(callback, 1)
+    opts = Options.validate!(opts, @retry_opts_schema, {__MODULE__, :deserialize_with_retry, 5})
 
-    {result, usages} = run(content, schema, client, request, opts, take_usage?)
-    if take_usage?, do: Enum.each(usages, callback)
+    {result, _usages} =
+      run(content, schema, client, request, opts, Keyword.get(opts, :on_retry_usage))
+
     result
   end
 
   @doc false
   # Like `deserialize_with_retry/5`, and the caller owns the usage: returns the
   # result and the token usage of every retry call, in order, an LLM failure's
-  # usage included (it is taken off the error). `:on_retry_usage` is not read.
+  # usage included (it is taken off the error). `:on_retry_usage` is not allowed.
   @spec deserialize_with_usage(String.t(), struct(), struct(), Request.t(), keyword()) ::
           {{:ok, struct()} | {:error, term()}, [map()]}
-  def deserialize_with_usage(content, schema, client, %Request{} = request, opts \\ []),
-    do: run(content, schema, client, request, opts, true)
+  def deserialize_with_usage(content, schema, client, %Request{} = request, opts \\ []) do
+    opts =
+      Options.validate!(
+        opts,
+        @usage_opts_schema,
+        {__MODULE__, :deserialize_with_usage, 5}
+      )
 
-  # `take_usage?` is whether the caller takes a billed failure's usage off the
-  # error; without it, the error keeps its usage for a direct caller to see.
-  defp run(content, schema, client, request, opts, take_usage?) do
+    run(content, schema, client, request, opts, :collect)
+  end
+
+  # `usage_sink` is how the caller takes the retries' usage: a 1-arity function
+  # called as each retry is billed, or `:collect` (returned in the list). Either
+  # way a billed failure's usage is taken off the error; with `nil`, the error
+  # keeps its usage for a direct caller to see.
+  defp run(content, schema, client, request, opts, usage_sink) do
     run = %{
       schema: schema,
       client: client,
       request: request,
       opts: opts,
-      max_retries: Keyword.get(opts, :max_retries, @default_max_retries),
-      take_usage?: take_usage?
+      max_retries: Keyword.fetch!(opts, :max_retries),
+      usage_sink: usage_sink
     }
 
     deserialize_loop(content, run, 0, [])
@@ -231,7 +271,7 @@ defmodule Normandy.LLM.JsonDeserializer do
         hand_off_failure(error, run, usages)
 
       {:ok, %Response{content: response, usage: usage}} ->
-        usages = add_usage(usages, usage)
+        usages = add_usage(usages, usage, run)
 
         case response_text(response) do
           {:ok, text} -> deserialize_loop(text, run, attempt, usages)
@@ -240,15 +280,20 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  defp hand_off_failure(error, %{take_usage?: true}, usages) do
+  defp hand_off_failure(error, %{usage_sink: nil}, usages),
+    do: {{:error, error}, Enum.reverse(usages)}
+
+  defp hand_off_failure(error, run, usages) do
     {{:error, %{error | usage: nil, usage_counts: nil}},
-     Enum.reverse(add_usage(usages, error.usage))}
+     Enum.reverse(add_usage(usages, error.usage, run))}
   end
 
-  defp hand_off_failure(error, _run, usages), do: {{:error, error}, Enum.reverse(usages)}
+  defp add_usage(usages, nil, _run), do: usages
 
-  defp add_usage(usages, nil), do: usages
-  defp add_usage(usages, usage), do: [usage | usages]
+  defp add_usage(usages, usage, %{usage_sink: sink}) do
+    if is_function(sink, 1), do: sink.(usage)
+    [usage | usages]
+  end
 
   defp response_text(response) when is_binary(response), do: {:ok, response}
 
@@ -309,7 +354,8 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # Extract content from response struct
+  # Extract content from response struct. Any Model client may have built it, not only
+  # Claudio (whose blocks are atom-keyed), so both key styles stay.
   defp extract_content_from_response(%{chat_message: text}) when is_binary(text), do: text
 
   defp extract_content_from_response(%{content: content}) when is_list(content) do

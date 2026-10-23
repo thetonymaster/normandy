@@ -3,7 +3,7 @@ defmodule Normandy.LLM.Json.DecoderTest do
 
   alias Normandy.LLM.Json.Decoder
 
-  test "decodes valid JSON " do
+  test "decodes valid JSON" do
     assert {:ok, %{"a" => 1}} = Decoder.decode(~s({"a": 1}), [])
   end
 
