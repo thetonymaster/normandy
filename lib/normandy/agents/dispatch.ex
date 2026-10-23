@@ -5,9 +5,12 @@ defmodule Normandy.Agents.Dispatch do
   `dispatch_one/3` runs one tool call through a fixed pipeline:
   toolset lookup → before-hooks → input validation → policy check → budget pre-check →
   execute → budget record → after-hooks. The behaviours are carried on a
-  `Pipeline` struct so they can be injected in tests and replaced by real
-  implementations in later phases. The default pipeline is allow-all / no-op /
-  identity, preserving current behavior.
+  `Pipeline` struct. Every agent run builds its pipeline from the agent's
+  `Normandy.Behaviours.Config` (`Normandy.Behaviours.Config.to_pipeline/1`: its policy,
+  budget, function hooks and `before_tool`/`after_tool` hook modules), with an execute step
+  wrapped in the `[:normandy, :tool, :execute]` span. `default_pipeline/0` (allow-all
+  policy, no-op budget, no hooks) is what `dispatch_one/2` and `classify/2` use when no
+  pipeline is passed.
 
   The pipeline is also exposed as two composable halves: `classify/3` (toolset lookup →
   before-hooks → input validation → policy, producing a verdict with no side effects) and
@@ -134,9 +137,9 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc """
   The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing
-  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout.
-  Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
-  to add telemetry, and later phases override the behaviour functions.
+  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout. It behaves as
+  `Normandy.Behaviours.Config.to_pipeline/1` of a default `%Normandy.Behaviours.Config{}`;
+  agent runs use that function's pipeline for the agent's own behaviours.
   """
   @spec default_pipeline() :: Pipeline.t()
   def default_pipeline do

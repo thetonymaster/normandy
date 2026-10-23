@@ -7,11 +7,12 @@ defmodule Normandy.Agents.Turn.Inline do
   # resulting event back into `step/2` until the turn reaches `:stopped` (returns
   # `{:ok, state}`) or `:failed` (returns `{:error, reason, state}`).
   #
-  # This is the library / scripted-run shell. It does NOT (yet) replace
-  # `BaseAgent.run/2`; it exists to prove the FSM core runs a real turn against a
-  # real `Dispatch` chokepoint. Compaction at the `:steering` boundary is
-  # supported via the optional `:compact` dep (default no-op); streaming,
-  # guardrails, validation, persistence and approval shells come in later phases.
+  # This is the test shell over the pure core: no lib module calls it. Tests drive the
+  # FSM core with it against a real `Dispatch` chokepoint and plain-function deps.
+  # Compaction at the `:steering` boundary is supported via the optional `:compact` dep
+  # (default no-op). The production shells are `Turn.Driver` (`BaseAgent.run/3` and
+  # `stream/3`, with their streaming, guardrails and validation handlers) and
+  # `Turn.Server` (persistence and approval).
   #
   # Lifecycle hooks (`Normandy.Behaviours.Hooks`) have no site here: this shell calls only
   # its `deps`. Tool hooks run when `:dispatch` dispatches through an agent pipeline
