@@ -19,7 +19,7 @@ defmodule Normandy.ApplicationSupervisionTest do
     end
   end
 
-  test "a breaker DynamicSupervisor crash keeps the AgentProcess ScopedRegistry registrations" do
+  test "a breaker Registry crash keeps the AgentProcess ScopedRegistry registrations" do
     handle = ScopedRegistry.new()
     session_id = "sess-#{System.unique_integer([:positive])}"
     test_pid = self()
@@ -37,12 +37,14 @@ defmodule Normandy.ApplicationSupervisionTest do
     assert_receive :registered
     assert ScopedRegistry.whereis(handle, session_id) == {:ok, holder}
 
-    # The DynamicSupervisor, not the Registry: a killed Registry supervisor leaves its
-    # partitions dying, so its own restart races them (`{:already_started, pid}`).
-    breaker_supervisor = Process.whereis(CircuitBreaker.Supervisor)
-    Process.exit(breaker_supervisor, :kill)
-    await_new_pid(CircuitBreaker.Supervisor, breaker_supervisor)
+    app_supervisor = Process.whereis(Normandy.Supervisor)
+    breaker_registry = Process.whereis(CircuitBreaker.Registry)
+    Process.exit(breaker_registry, :kill)
+    await_new_pid(CircuitBreaker.Registry, breaker_registry)
+    await_new_pid(CircuitBreaker.Supervisor, nil)
 
     assert ScopedRegistry.whereis(handle, session_id) == {:ok, holder}
+    assert Process.whereis(Normandy.Supervisor) == app_supervisor
+    assert List.keymember?(Application.started_applications(), :normandy, 0)
   end
 end
