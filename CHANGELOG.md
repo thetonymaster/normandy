@@ -90,10 +90,15 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
   until it lands, and a resume whose answer is already stored makes no model call.
 - A tool result is encoded once on every path (it was encoded up to five times).
 - Normandy compiles on Elixir 1.15 and 1.16 again (`%Duration{}` is matched only where it exists).
-- A new input after a stored paused turn continues that turn first, so the API no longer rejects every later request.
+- A new input after a stored paused turn continues that turn first, so the API no longer rejects
+  every later request.
 - A module using the `agent do` DSL compiles without warnings on Elixir 1.20.
-- A request drops a server-tool use nothing answers, except in its last message, so the next input after a continued pause is accepted.
-- A chat answer given beside a tool call survives a blank final reply instead of failing with `:invalid_output`.
+- A `Schema.Validator` type error names a `Date`, `Time`, `NaiveDateTime` or `DateTime` value
+  instead of calling it `object`.
+- A request drops a server-tool use nothing answers, except in its last message, so the next
+  input after a continued pause is accepted.
+- A chat answer given beside a tool call survives a blank final reply instead of failing with
+  `:invalid_output`.
 - Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
   `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
