@@ -29,9 +29,9 @@ defmodule Normandy.Context.WindowManager do
   ## Truncation Strategies
 
   - `:oldest_first` - Remove oldest messages first (default)
-  - `:sliding_window` - Same as `:oldest_first`: keeps the most recent messages
-    that fit
-  - `:summarize` - Summarize old messages before removing
+  - `:summarize` - Summarize old messages before removing; needs the agent's
+    `:client` (a `%BaseAgentConfig{}` always has one) and raises `ArgumentError`
+    without it
 
   The kept messages always start at a user message, so the conversation stays
   valid for the API (no leading assistant turn, no tool result without its
@@ -43,7 +43,7 @@ defmodule Normandy.Context.WindowManager do
   alias Normandy.Context.Summarizer
   alias Normandy.Options
 
-  @type strategy :: :oldest_first | :sliding_window | :summarize
+  @type strategy :: :oldest_first | :summarize
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
           reserved_tokens: non_neg_integer(),
@@ -71,7 +71,7 @@ defmodule Normandy.Context.WindowManager do
                        doc: "Tokens kept free for the response."
                      ],
                      strategy: [
-                       type: {:in, [:oldest_first, :sliding_window, :summarize]},
+                       type: {:in, [:oldest_first, :summarize]},
                        default: :oldest_first,
                        doc: "The truncation strategy."
                      ],
@@ -98,7 +98,7 @@ defmodule Normandy.Context.WindowManager do
 
   ## Example
 
-      manager = WindowManager.new(max_tokens: 200_000, strategy: :sliding_window)
+      manager = WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
   """
   @spec new(keyword() | map()) :: t()
   def new(opts \\ []) do
@@ -286,9 +286,6 @@ defmodule Normandy.Context.WindowManager do
       :oldest_first ->
         truncate_oldest_first(agent, manager)
 
-      :sliding_window ->
-        truncate_sliding_window(agent, manager)
-
       :summarize ->
         truncate_with_summary(agent, manager)
     end
@@ -323,11 +320,6 @@ defmodule Normandy.Context.WindowManager do
     end
   end
 
-  defp truncate_sliding_window(agent, manager) do
-    # Keep most recent messages that fit within limit
-    truncate_oldest_first(agent, manager)
-  end
-
   defp truncate_with_summary(agent, manager) do
     # Calculate how many recent messages to keep
     target_tokens = manager.max_tokens - manager.reserved_tokens
@@ -340,20 +332,18 @@ defmodule Normandy.Context.WindowManager do
       # and summarize the rest
       keep_messages = estimate_messages_for_tokens(agent.memory, div(target_tokens, 2))
 
-      # Get client from agent
-      client = Map.get(agent, :client)
+      client =
+        Map.get(agent, :client) ||
+          raise ArgumentError,
+                "Normandy.Context.WindowManager.truncate_conversation/2: the :summarize " <>
+                  "strategy needs the agent's :client, got #{inspect(Map.get(agent, :client))}"
 
-      if client do
-        # Use summarizer to compress conversation; a nil budget is the Summarizer's default.
-        Summarizer.compress_conversation(
-          client,
-          agent,
-          [keep_recent: keep_messages] ++ summary_budget(manager)
-        )
-      else
-        # Fall back to oldest-first if no client available
-        truncate_oldest_first(agent, manager)
-      end
+      # A nil budget is the Summarizer's default.
+      Summarizer.compress_conversation(
+        client,
+        agent,
+        [keep_recent: keep_messages] ++ summary_budget(manager)
+      )
     end
   end
 
