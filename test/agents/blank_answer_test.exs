@@ -367,7 +367,7 @@ defmodule Normandy.Agents.BlankAnswerTest do
       end)
     end
 
-    defp second_request(client) do
+    defp next_run_request(client) do
       [_, _, request] = FakeClient.requests(client.fake)
       request
     end
@@ -394,7 +394,7 @@ defmodule Normandy.Agents.BlankAnswerTest do
 
         assert {:ok, _config, %{chat_message: "You're welcome."}} = run.(config, "Thanks")
 
-        texts = request_texts(second_request(agent.client))
+        texts = request_texts(next_run_request(agent.client))
         assert Enum.count(texts, &(&1 == "Paris.")) == 1
         assert List.last(texts) == "Thanks"
       end
@@ -413,7 +413,7 @@ defmodule Normandy.Agents.BlankAnswerTest do
       assert [{:ok, %{chat_message: "Paris."}}, {:ok, %{chat_message: "You're welcome."}}] =
                turns_on(agent, sid, store, ["Capital of France?", "Thanks"])
 
-      texts = request_texts(second_request(agent.client))
+      texts = request_texts(next_run_request(agent.client))
       assert Enum.count(texts, &(&1 == "Paris.")) == 1
 
       {:ok, entries} = InMemory.history(store, sid)
