@@ -15,24 +15,25 @@ defmodule Normandy.Type do
   basic custom types and rely on parameterized types if you need
   the extra functionality.
 
-  ## External vs internal vs database representation
+  ## External vs internal vs serialized representation
 
   The core functionality of a custom type is the mapping between
-  external, internal and database representations of a value belonging
+  external, internal and serialized representations of a value belonging
   to the type.
 
-  External data comes from user input (forms, APIs, etc.), internal data
-  is the application's runtime representation, and database data is how
-  values are persisted or serialized.
+  External data comes from the model's JSON or from caller params, internal
+  data is the application's runtime representation, and serialized data is
+  the form `c:dump/1` returns: a term the JSON adapter can encode. Normandy
+  calls `c:dump/1` to check a field's `:default` when the schema compiles.
 
   ```mermaid
   stateDiagram-v2
     external: External Data
     internal: Internal Data
-    database: Database Data
+    serialized: Serialized Data
     external --> internal: cast/1
-    external --> database: dump/1
-    internal --> database: dump/1
+    external --> serialized: dump/1
+    internal --> serialized: dump/1
   ```
 
   ## Example
@@ -142,10 +143,10 @@ defmodule Normandy.Type do
     end
   end
 
-  @typedoc "An Ecto type, primitive or custom."
+  @typedoc "A field type, primitive or custom."
   @type t :: primitive | custom
 
-  @typedoc "Primitive Ecto types (handled by Ecto)."
+  @typedoc "Primitive types, handled by this module."
   @type primitive :: base | composite
 
   @typedoc "Custom types are represented by user-defined modules."
@@ -181,28 +182,24 @@ defmodule Normandy.Type do
   For example, if you want to provide your own date
   structures, the type function should return `:date`.
 
-  Note this function is not required to return Ecto primitive
-  types, the type is only required to be known by the adapter.
+  The returned type decides the field's JSON Schema type.
   """
   @callback type :: t
 
   @doc """
   Casts the given input to the custom type.
 
-  This callback is called on external input and can return any type,
-  as long as the `dump/1` function is able to convert the returned
-  value into an Ecto native type. There are two situations where
-  this callback is called:
-
-    1. When casting values by `Ecto.Changeset`
-    2. When passing arguments to `Ecto.Query`
+  This callback is called on external input (the model's JSON, caller
+  params) by `Normandy.Validate.cast/4` and can return any type, as long
+  as the `dump/1` function is able to convert the returned value into a
+  serializable one.
 
   You can return `:error` if the given term cannot be cast.
   A default error message of "is invalid" will be added to the
-  changeset.
+  validation errors.
 
   You may also return `{:error, keyword()}` to customize the
-  changeset error message and its metadata. Passing a `:message`
+  error message and its metadata. Passing a `:message`
   key, will override the default message. It is not possible to
   override the `:type` key.
 
@@ -212,18 +209,18 @@ defmodule Normandy.Type do
   @callback cast(term) :: {:ok, term} | :error | {:error, keyword()}
 
   @doc """
-  Dumps the given term into an Ecto native type.
+  Dumps the given term into its serializable form.
 
-  This callback is called with any term that was stored in the struct
-  and it needs to validate them and convert it to an Ecto native type.
+  It receives a term stored in the struct (Normandy calls it to check a
+  field's `:default` at compile time) and must validate it and convert it
+  to a term the JSON adapter can encode.
   """
   @callback dump(term) :: {:ok, term} | :error
 
   @doc """
   Checks if two terms are semantically equal.
 
-  This callback is used for determining equality of types in
-  `Ecto.Changeset`.
+  This callback is used by `Normandy.Type.equal?/3` and `include?/3`.
 
   By default the terms are compared with the equal operator `==/2`.
   """
@@ -286,8 +283,7 @@ defmodule Normandy.Type do
   Dumps a value to the given type.
 
   Opposite to casting, dumping requires the returned value
-  to be a valid Ecto type, as it will be sent to the
-  underlying data store.
+  to be a term the JSON adapter can encode.
 
       iex> dump(:string, nil)
       {:ok, nil}
@@ -363,11 +359,10 @@ defmodule Normandy.Type do
   @doc """
   Casts a value to the given type.
 
-  `cast/2` is used by the finder queries and changesets to cast outside values to
+  `cast/2` is used by `Normandy.Validate.cast/4` to cast outside values to
   specific types.
 
-  Note that nil can be cast to all primitive types as data stores allow nil to be
-  set on any column.
+  Note that nil can be cast to all primitive types: an unset field is `nil`.
 
   NaN and infinite decimals are not supported, use custom types instead.
 
@@ -522,7 +517,7 @@ defmodule Normandy.Type do
   defp dump_schema(_mod, _value), do: :error
 
   # We check for the byte size to avoid creating unnecessary large integers
-  # which would never map to a database key (u64 is 20 digits only).
+  # which no field needs (u64 is 20 digits only).
   defp cast_integer(term) when is_binary(term) and byte_size(term) < 32 do
     case Integer.parse(term) do
       {integer, ""} -> {:ok, integer}
