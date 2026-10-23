@@ -679,7 +679,7 @@ defmodule Normandy.Agents.Turn.Server do
   # A missing supplement or a failed credential lookup is reported like a store
   # fault, so the server waits :unavailable and retries instead of crashing into a
   # supervisor restart loop. Tier-2 reconstruction needs a node-local credential
-  # provider (env/vault); CredentialProvider.FromClient has no client here.
+  # provider (env/vault): there is no client to read a key from here.
   defp reconstruct_config(tmpl, {tp_mod, tp_handle}) do
     template_id = session_id_template_id(tmpl)
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
@@ -789,9 +789,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp session_id_template_id(%{template_id: id}), do: id
 
-  # FromClient needs a client carrying :api_key; env/vault providers ignore the
-  # first arg. For reconstruction the token must come from a node-local provider,
-  # so we pass a minimal provider map derived from the template's model.
+  # The token comes from a node-local provider (env/vault), which may key on the
+  # model; it gets a minimal provider map derived from the template's model.
   defp token_provider(%{model: model}), do: %{model: model}
 
   # An approval sent by a caller running an older Normandy (another node during a

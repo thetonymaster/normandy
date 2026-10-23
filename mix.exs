@@ -135,7 +135,6 @@ defmodule Normandy.MixProject do
             Normandy.Behaviours.Compactor.NoOp,
             Normandy.Behaviours.Compactor.WindowManager,
             Normandy.Behaviours.CredentialProvider,
-            Normandy.Behaviours.CredentialProvider.FromClient,
             Normandy.Behaviours.ModelCatalog,
             Normandy.Behaviours.ModelCatalog.ModelsAPI,
             Normandy.Behaviours.ModelCatalog.Static,

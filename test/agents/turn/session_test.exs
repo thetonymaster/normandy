@@ -68,6 +68,14 @@ defmodule Normandy.Agents.Turn.SessionTest do
     }
   end
 
+  # A config a session with a :template_provider accepts: it names a credential provider.
+  defp tier2_config do
+    %{
+      session_config()
+      | behaviours: %Normandy.Behaviours.Config{credential: {Normandy.Test.StubCreds, []}}
+    }
+  end
+
   # A complete option list for new/1 that starts nothing.
   defp new_opts(extra \\ []) do
     Keyword.merge(
@@ -97,6 +105,28 @@ defmodule Normandy.Agents.Turn.SessionTest do
                handlers: nil,
                server_options: []
              } = Turn.Session.new(new_opts())
+    end
+
+    # Only a session with both :config and :template_provider saves the config as a template
+    # the server rebuilds from; :config alone (Tier 0/1) runs the config as given, and
+    # :template_provider alone starts from a template already stored (checked on load).
+    test "a template-backed session without a credential provider is refused at new/1" do
+      tier2 = new_opts(template_provider: {Catalog, :cat})
+
+      error = assert_raise ArgumentError, ~r/:credential/, fn -> Turn.Session.new(tier2) end
+      assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+      assert error.message =~ "Normandy.Behaviours.CredentialProvider"
+
+      with_creds =
+        put_in(tier2[:config].behaviours, %Normandy.Behaviours.Config{
+          credential: {Normandy.Test.StubCreds, []}
+        })
+
+      assert %Turn.Session{} = Turn.Session.new(with_creds)
+      assert %Turn.Session{config: %{behaviours: nil}} = Turn.Session.new(new_opts())
+
+      assert %Turn.Session{config: nil} =
+               Turn.Session.new(Keyword.delete(tier2, :config))
     end
 
     test "keeps only the server options it was given" do
@@ -426,7 +456,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     opts = [
       session_id: "s-server-opts",
-      config: session_config(),
+      config: tier2_config(),
       store: {InMemory, store},
       registry: {Native, Native.new()},
       supervisor: self(),
@@ -454,7 +484,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     opts = [
       session_id: "s-save-fault",
-      config: session_config(),
+      config: tier2_config(),
       store: {TemplateSaveFaultStore, nil},
       registry: {Native, Native.new()},
       supervisor: self(),
@@ -475,7 +505,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       opts = [
         session_id: "s-eager",
-        config: session_config(),
+        config: tier2_config(),
         store: {InMemory, store},
         registry: {Native, Native.new()},
         supervisor: self(),

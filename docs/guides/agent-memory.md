@@ -53,13 +53,14 @@ alias Normandy.Tools.Toolset
   })
 
 # The session config carries only the namespace; the memory tool comes from the
-# supplement. (A Tier-2 config also needs a node-local CredentialProvider in its
-# `behaviours`; see distributed_sessions.md.)
+# supplement. A Tier-2 config also names a node-local CredentialProvider in its
+# `behaviours` (Session.new/1 refuses one without; see distributed_sessions.md).
 session_config =
   BaseAgent.init(%{
     client: client,
     model: "claude-opus-5-5",
-    tool_context: %{memory_namespace: "acme/user-42"}
+    tool_context: %{memory_namespace: "acme/user-42"},
+    behaviours: %Normandy.Behaviours.Config{credential: {MyApp.VaultCreds, []}}
   })
 
 session =

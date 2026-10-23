@@ -14,7 +14,13 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
   # directory) and stored as a 1.0 Postgres/Redis store kept it: term_to_binary/1.
   @fixture Path.expand("../fixtures/templates/v1_0_0_session_template.etf", __DIR__)
 
-  defp v1_template, do: @fixture |> File.read!() |> Codec.decode()
+  # The fixture names 1.0's default credential provider, CredentialProvider.FromClient,
+  # which 2.0 removed: as stored it is refused (the test below). The other tests
+  # rebuild it with a provider this node has, as a 2.0 deployment configures one.
+  defp stored_v1_template, do: @fixture |> File.read!() |> Codec.decode()
+
+  defp v1_template,
+    do: put_in(stored_v1_template().behaviours_refs.credential, {Normandy.Test.StubCreds, []})
 
   defp supplement do
     %{
@@ -39,6 +45,15 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
 
     assert tmpl.behaviours_refs.compactor ==
              {Compactor.WindowManager, [max_tokens: 200_000, strategy: :oldest_first]}
+  end
+
+  test "as stored, its credential provider (1.0's FromClient, removed in 2.0) is refused" do
+    assert {Normandy.Behaviours.CredentialProvider.FromClient, []} =
+             stored_v1_template().behaviours_refs.credential
+
+    assert_raise ArgumentError,
+                 ~r/behaviours_refs :credential must be \{module, keyword\} whose module is loaded/,
+                 fn -> rebuild(stored_v1_template()) end
   end
 
   test "it rebuilds into a working config with 2.0 defaults" do

@@ -207,6 +207,8 @@ defmodule Normandy.Agents.Turn.Session do
               "({module, handle}), got neither"
     end
 
+    :ok = check_credential!(opts[:config], opts[:template_provider], :new, 1)
+
     struct!(
       __MODULE__,
       [server_options: Keyword.take(opts, @stored_server_options)] ++
@@ -359,8 +361,10 @@ defmodule Normandy.Agents.Turn.Session do
   config it started with.
   """
   @spec put_config(t(), BaseAgentConfig.t()) :: t()
-  def put_config(%__MODULE__{} = session, %BaseAgentConfig{} = config),
-    do: %{session | config: config}
+  def put_config(%__MODULE__{} = session, %BaseAgentConfig{} = config) do
+    :ok = check_credential!(config, session.template_provider, :put_config, 2)
+    %{session | config: config}
+  end
 
   def put_config(%__MODULE__{}, other) do
     raise ArgumentError,
@@ -396,6 +400,29 @@ defmodule Normandy.Agents.Turn.Session do
   def validate_config(other),
     do:
       {:error, "expected a %Normandy.Agents.BaseAgentConfig{}, got: " <> Describe.type_of(other)}
+
+  # A session with a template provider and a config saves the config as its template, and
+  # every server start rebuilds the config from it, asking the template's credential
+  # provider for the client's token. With no provider the server could only wait
+  # :unavailable, so the session is refused here. A config alone runs as given (its client
+  # is used); a template provider alone starts from a stored template, checked on load.
+  defp check_credential!(nil, _template_provider, _fun, _arity), do: :ok
+  defp check_credential!(_config, nil, _fun, _arity), do: :ok
+
+  defp check_credential!(%BaseAgentConfig{behaviours: behaviours}, _template_provider, fun, arity) do
+    case behaviours || %Normandy.Behaviours.Config{} do
+      %{credential: {mod, opts}} when is_atom(mod) and is_list(opts) ->
+        :ok
+
+      %{credential: other} ->
+        raise ArgumentError,
+              "Normandy.Agents.Turn.Session.#{fun}/#{arity}: a session with a " <>
+                ":template_provider rebuilds its config from the stored template, which " <>
+                "needs the config's behaviours :credential slot set to a " <>
+                "Normandy.Behaviours.CredentialProvider ({module, opts}), got: " <>
+                Describe.type_of(other)
+    end
+  end
 
   defp not_a_session(fun, other) do
     "Normandy.Agents.Turn.Session.#{fun}/2: expected a %Normandy.Agents.Turn.Session{} " <>

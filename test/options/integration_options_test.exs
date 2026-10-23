@@ -165,7 +165,8 @@ defmodule Normandy.Options.IntegrationOptionsTest do
         client: %StubClient{},
         toolset: Toolset.new(),
         behaviours: %Normandy.Behaviours.Config{
-          compactor: {WindowCompactor, [context_window: 50_000, stratgy: :x]}
+          compactor: {WindowCompactor, [context_window: 50_000, stratgy: :x]},
+          credential: {Normandy.Test.StubCreds, []}
         }
       }
 

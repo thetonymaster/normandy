@@ -12,6 +12,7 @@ defmodule Normandy.Behaviours.ModelCatalogStaticTest do
   alias Normandy.Behaviours.ModelCatalog.{ModelsAPI, Static}
   alias Normandy.Test.OwnLog
   alias Normandy.Test.StubClient
+  alias Normandy.Test.StubCreds
   alias Normandy.Tools.Toolset
 
   @warning "Normandy.Behaviours.ModelCatalog.Static is deprecated and will be removed in 3.0; " <>
@@ -28,7 +29,7 @@ defmodule Normandy.Behaviours.ModelCatalogStaticTest do
     BaseAgent.init(%{
       client: %StubClient{},
       model: "m",
-      behaviours: %Config{model_catalog: {catalog, opts}}
+      behaviours: %Config{model_catalog: {catalog, opts}, credential: {StubCreds, []}}
     })
   end
 
