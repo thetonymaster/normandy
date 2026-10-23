@@ -16,7 +16,8 @@ defmodule Normandy.WatchedWorker do
   # Both processes get `$callers` as `Task` sets it (the watcher `[owner | owner's
   # callers]`, the worker `[watcher | ...]`), so ownership-based test tools (Mox,
   # `Req.Test`, Ecto's sandbox) find the owner's allowances from inside `work`.
-  # Turn.Server's run_while_server_alive/3 has the same shape; it is meant to move here.
+  #
+  # Used by Turn.Server (its turn worker) and AgentProcess (its inline and server runs).
 
   @spec start(term(), (-> term())) :: {pid(), reference()}
   def start(tag, work) when is_function(work, 0) do
