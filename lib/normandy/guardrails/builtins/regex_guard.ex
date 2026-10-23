@@ -42,10 +42,10 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
     end
 
     check_value(
-      Field.extract!(__MODULE__, value, field),
+      Field.string!(__MODULE__, value, field),
       Enum.map(patterns, &usable/1),
       mode,
-      field
+      Field.path(field)
     )
   end
 
@@ -54,70 +54,38 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
   # from the pattern's source and options.
   defp usable(regex), do: Regex.compile!(Regex.source(regex), Regex.opts(regex))
 
-  defp check_value(nil, patterns, :require, field) do
-    path = if field, do: [field], else: []
+  defp check_value(nil, _patterns, :deny, _path), do: :ok
+  defp check_value(nil, patterns, :require, path), do: {:error, [required(patterns, path)]}
 
-    {:error,
-     [
-       %{
-         guard: __MODULE__,
-         path: path,
-         message: "must match one of #{length(patterns)} required patterns",
-         constraint: :regex_require
-       }
-     ]}
-  end
-
-  defp check_value(nil, _patterns, :deny, _field), do: :ok
-
-  defp check_value(string, patterns, :deny, field) when is_binary(string) do
-    matched = Enum.filter(patterns, &Regex.match?(&1, string))
-
-    case matched do
-      [] ->
-        :ok
-
-      matched_patterns ->
-        path = if field, do: [field], else: []
-
-        violations =
-          Enum.map(matched_patterns, fn pattern ->
-            %{
-              guard: __MODULE__,
-              path: path,
-              message: "must not match pattern #{inspect(pattern)}",
-              constraint: :regex_deny,
-              pattern: pattern
-            }
-          end)
-
-        {:error, violations}
+  defp check_value(string, patterns, :deny, path) do
+    case Enum.filter(patterns, &Regex.match?(&1, string)) do
+      [] -> :ok
+      matched -> {:error, Enum.map(matched, &denied(&1, path))}
     end
   end
 
-  defp check_value(string, patterns, :require, field) when is_binary(string) do
-    if Enum.any?(patterns, &Regex.match?(&1, string)) do
-      :ok
-    else
-      path = if field, do: [field], else: []
-
-      {:error,
-       [
-         %{
-           guard: __MODULE__,
-           path: path,
-           message: "must match one of #{length(patterns)} required patterns",
-           constraint: :regex_require
-         }
-       ]}
-    end
+  defp check_value(string, patterns, :require, path) do
+    if Enum.any?(patterns, &Regex.match?(&1, string)),
+      do: :ok,
+      else: {:error, [required(patterns, path)]}
   end
 
-  defp check_value(other, _patterns, _mode, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+  defp required(patterns, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must match one of #{length(patterns)} required patterns",
+      constraint: :regex_require
+    }
   end
 
-  defp field_suffix(nil), do: ""
-  defp field_suffix(field), do: " at field #{inspect(field)}"
+  defp denied(pattern, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must not match pattern #{inspect(pattern)}",
+      constraint: :regex_deny,
+      pattern: pattern
+    }
+  end
 end
