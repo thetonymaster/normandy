@@ -29,9 +29,9 @@ defmodule Normandy.Context.WindowManager do
   ## Truncation Strategies
 
   - `:oldest_first` - Remove oldest messages first (default)
-  - `:sliding_window` - Same as `:oldest_first`: keeps the most recent messages
-    that fit
-  - `:summarize` - Summarize old messages before removing
+  - `:summarize` - Summarize old messages before removing; needs the agent's
+    `:client` (a `%BaseAgentConfig{}` always has one) and raises `ArgumentError`
+    without it
 
   The kept messages always start at a user message, so the conversation stays
   valid for the API (no leading assistant turn, no tool result without its
@@ -41,9 +41,10 @@ defmodule Normandy.Context.WindowManager do
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Context.Summarizer
+  alias Normandy.Context.TokenEstimate
   alias Normandy.Options
 
-  @type strategy :: :oldest_first | :sliding_window | :summarize
+  @type strategy :: :oldest_first | :summarize
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
           reserved_tokens: non_neg_integer(),
@@ -71,7 +72,7 @@ defmodule Normandy.Context.WindowManager do
                        doc: "Tokens kept free for the response."
                      ],
                      strategy: [
-                       type: {:in, [:oldest_first, :sliding_window, :summarize]},
+                       type: {:in, [:oldest_first, :summarize]},
                        default: :oldest_first,
                        doc: "The truncation strategy."
                      ],
@@ -98,7 +99,7 @@ defmodule Normandy.Context.WindowManager do
 
   ## Example
 
-      manager = WindowManager.new(max_tokens: 200_000, strategy: :sliding_window)
+      manager = WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
   """
   @spec new(keyword() | map()) :: t()
   def new(opts \\ []) do
@@ -123,7 +124,7 @@ defmodule Normandy.Context.WindowManager do
   Estimates token count for a message.
 
   This is a rough estimate based on character count.
-  For accurate counts, use count_tokens_api/2.
+  For accurate counts, use `Normandy.Context.TokenCounter.count_message/3`.
 
   ## Example
 
@@ -131,13 +132,7 @@ defmodule Normandy.Context.WindowManager do
       #=> ~4 tokens
   """
   @spec estimate_tokens(String.t()) :: non_neg_integer()
-  def estimate_tokens(text) when is_binary(text) do
-    # Rough estimate: ~4 characters per token
-    # More accurate for English text
-    max(1, div(String.length(text), 4))
-  end
-
-  def estimate_tokens(_), do: 0
+  defdelegate estimate_tokens(text), to: TokenEstimate
 
   @doc """
   Estimates total tokens in conversation history.
@@ -164,68 +159,7 @@ defmodule Normandy.Context.WindowManager do
       #=> ~2
   """
   @spec estimate_message_content_tokens(term()) :: non_neg_integer()
-  def estimate_message_content_tokens(content) when is_binary(content) do
-    estimate_tokens(content)
-  end
-
-  # Token estimates for opaque multimodal blocks. Anthropic documents
-  # ~1568 tokens for a 1.15-megapixel image (https://docs.anthropic.com/);
-  # round up to 1600 so we overcount rather than silently overflow. The
-  # document estimate is a conservative guess — document blocks include
-  # the full file content at Claude-side, so real costs vary wildly.
-  @image_token_estimate 1600
-  @document_token_estimate 3000
-
-  # Single ContentBlock structs — delegate to the same heuristic used for
-  # list content. Must come before the generic `is_map` clause, since
-  # structs are maps in Elixir and would otherwise hit the JSON-size
-  # fallback and undercount.
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Text{text: text})
-      when is_binary(text),
-      do: estimate_tokens(text)
-
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Image{}),
-    do: @image_token_estimate
-
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Document{}),
-    do: @document_token_estimate
-
-  def estimate_message_content_tokens(content) when is_list(content) do
-    Enum.reduce(content, 0, fn block, acc -> acc + estimate_block_tokens(block) end)
-  end
-
-  def estimate_message_content_tokens(content) when is_map(content) do
-    # For structured content, estimate based on its JSON (structs as their maps).
-    content
-    |> Normandy.JSON.encode!()
-    |> estimate_tokens()
-  end
-
-  def estimate_message_content_tokens(_), do: 0
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Text{text: text})
-       when is_binary(text),
-       do: estimate_tokens(text)
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Image{}),
-    do: @image_token_estimate
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Document{}),
-    do: @document_token_estimate
-
-  defp estimate_block_tokens(%{"type" => "text", "text" => text}) when is_binary(text),
-    do: estimate_tokens(text)
-
-  defp estimate_block_tokens(%{"type" => "image"}), do: @image_token_estimate
-  defp estimate_block_tokens(%{"type" => "document"}), do: @document_token_estimate
-
-  # Unknown / caller-provided shape — estimate from JSON size so we
-  # never silently count zero.
-  defp estimate_block_tokens(block) when is_map(block) do
-    block |> Normandy.JSON.encode!() |> estimate_tokens()
-  end
-
-  defp estimate_block_tokens(_), do: 0
+  defdelegate estimate_message_content_tokens(content), to: TokenEstimate
 
   @doc """
   Checks if current conversation is within token limit.
@@ -286,9 +220,6 @@ defmodule Normandy.Context.WindowManager do
       :oldest_first ->
         truncate_oldest_first(agent, manager)
 
-      :sliding_window ->
-        truncate_sliding_window(agent, manager)
-
       :summarize ->
         truncate_with_summary(agent, manager)
     end
@@ -323,12 +254,14 @@ defmodule Normandy.Context.WindowManager do
     end
   end
 
-  defp truncate_sliding_window(agent, manager) do
-    # Keep most recent messages that fit within limit
-    truncate_oldest_first(agent, manager)
-  end
-
   defp truncate_with_summary(agent, manager) do
+    # Checked before the budget, so a client-less agent fails whatever its size.
+    client =
+      Map.get(agent, :client) ||
+        raise ArgumentError,
+              "Normandy.Context.WindowManager.truncate_conversation/2: the :summarize " <>
+                "strategy needs the agent's :client, got #{inspect(Map.get(agent, :client))}"
+
     # Calculate how many recent messages to keep
     target_tokens = manager.max_tokens - manager.reserved_tokens
     current_tokens = estimate_conversation_tokens(agent.memory)
@@ -340,20 +273,12 @@ defmodule Normandy.Context.WindowManager do
       # and summarize the rest
       keep_messages = estimate_messages_for_tokens(agent.memory, div(target_tokens, 2))
 
-      # Get client from agent
-      client = Map.get(agent, :client)
-
-      if client do
-        # Use summarizer to compress conversation; a nil budget is the Summarizer's default.
-        Summarizer.compress_conversation(
-          client,
-          agent,
-          [keep_recent: keep_messages] ++ summary_budget(manager)
-        )
-      else
-        # Fall back to oldest-first if no client available
-        truncate_oldest_first(agent, manager)
-      end
+      # A nil budget is the Summarizer's default.
+      Summarizer.compress_conversation(
+        client,
+        agent,
+        [keep_recent: keep_messages] ++ summary_budget(manager)
+      )
     end
   end
 

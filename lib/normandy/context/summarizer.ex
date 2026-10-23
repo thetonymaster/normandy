@@ -180,15 +180,33 @@ defmodule Normandy.Context.Summarizer do
       |> Enum.map(& &1.role)
       |> AgentMemory.keep_count(keep_recent)
 
-    do_compress_conversation(
-      client,
-      agent,
-      history,
-      total_messages,
-      keep,
-      summary_role,
-      opts
-    )
+    if total_messages <= keep do
+      # Not enough messages to warrant summarization
+      {:ok, agent}
+    else
+      # Split into old (to summarize) and recent (to keep)
+      {old_messages, recent_messages} = Enum.split(history, total_messages - keep)
+
+      with {:ok, summary} <-
+             summarize_messages(
+               client,
+               agent,
+               old_messages,
+               Keyword.take(opts, [:prompt, :model, :max_tokens])
+             ) do
+        # The summary goes first, as plain text: wrapped in a schema it reached the
+        # model as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not
+        # conversation. The recent messages follow under their own ids and turns.
+        new_memory =
+          AgentMemory.keep_entries(
+            agent.memory,
+            recent_entries(agent.memory, length(recent_messages)),
+            summary: {summary_role, summary_message(summary)}
+          )
+
+        {:ok, %{agent | memory: new_memory}}
+      end
+    end
   end
 
   @doc """
@@ -332,6 +350,12 @@ defmodule Normandy.Context.Summarizer do
 
   # A final answer the structured path stored as {"chat_message": ...} JSON reads as its
   # text. Any other JSON (a custom schema's) stays as it is.
+  #
+  # Deliberately not AgentMemory.unwrap_llm_content/1, which unwraps any object with the
+  # key: that rule extracts *the answer* from a model's final text. This one feeds a
+  # transcript the summary model reads, so an object with other fields ({"chat_message":
+  # "x", "score": 1}) stays whole and the summary keeps the fields (pinned by
+  # summarizer_transcript_test.exs, "kept as JSON").
   defp unwrap_chat_message("{" <> _ = text) do
     case Normandy.JSON.decode(text) do
       {:ok, %{"chat_message" => message} = map} when map_size(map) == 1 and is_binary(message) ->
@@ -424,61 +448,21 @@ defmodule Normandy.Context.Summarizer do
   end
 
   # The summary request is an [:normandy, :agent, :llm_call] span (see
-  # Normandy.Telemetry), so its tokens count with the agent's other calls. Emitted by
-  # hand, as :telemetry.span/3 would: the returned {:error, %LLMError{}} must end it
-  # in :exception without being raised, which would also turn a raising client's
-  # LLMError into a return value.
+  # Normandy.Telemetry), so its tokens count with the agent's other calls. A returned
+  # {:error, %LLMError{}} ends it in :exception without being raised (Span.span/4).
   defp llm_call_span(metadata, tracker, fun) do
-    start_time = System.monotonic_time()
-    metadata = Map.put(metadata, :telemetry_span_context, make_ref())
-
-    :telemetry.execute(
-      [:normandy, :agent, :llm_call, :start],
-      %{monotonic_time: start_time, system_time: System.system_time()},
-      metadata
-    )
-
-    result =
-      try do
-        fun.()
-      catch
-        kind, reason ->
-          llm_call_exception(metadata, start_time, kind, reason, __STACKTRACE__)
-          :erlang.raise(kind, reason, __STACKTRACE__)
-      end
-
-    case result do
+    Span.span([:normandy, :agent, :llm_call], metadata, fun, fn
       {:ok, %Response{usage: usage, meta: meta}} ->
-        stop_time = System.monotonic_time()
+        {:ok,
+         metadata
+         |> Usage.put_raw(usage)
+         |> Map.merge(Usage.normalize(usage))
+         |> Map.merge(response_metadata(meta))
+         |> Map.merge(Request.summary(tracker))}
 
-        stop_metadata =
-          metadata
-          |> Usage.put_raw(usage)
-          |> Map.merge(Usage.normalize(usage))
-          |> Map.merge(response_metadata(meta))
-          |> Map.merge(Request.summary(tracker))
-
-        :telemetry.execute(
-          [:normandy, :agent, :llm_call, :stop],
-          %{duration: stop_time - start_time, monotonic_time: stop_time},
-          stop_metadata
-        )
-
-      {:error, %LLMError{} = error} ->
-        llm_call_exception(metadata, start_time, :error, error, [])
-    end
-
-    result
-  end
-
-  defp llm_call_exception(metadata, start_time, kind, reason, stacktrace) do
-    stop_time = System.monotonic_time()
-
-    :telemetry.execute(
-      [:normandy, :agent, :llm_call, :exception],
-      %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.merge(metadata, Span.exception_metadata(kind, reason, stacktrace))
-    )
+      {:error, %LLMError{}} = error ->
+        error
+    end)
   end
 
   defp response_metadata(meta) do
@@ -514,58 +498,5 @@ defmodule Normandy.Context.Summarizer do
   # suffix's entries are the last `count` entries.
   defp recent_entries(memory, count) do
     memory |> AgentMemory.entry_chain() |> Enum.take(-count)
-  end
-
-  # Helper function that uses pattern matching instead of conditionals
-  # to avoid dialyzer warnings about unreachable branches
-  defp do_compress_conversation(
-         _client,
-         agent,
-         _history,
-         total_messages,
-         keep_recent,
-         _summary_role,
-         _opts
-       )
-       when total_messages <= keep_recent do
-    # Not enough messages to warrant summarization
-    {:ok, agent}
-  end
-
-  defp do_compress_conversation(
-         client,
-         agent,
-         history,
-         total_messages,
-         keep_recent,
-         summary_role,
-         opts
-       ) do
-    # Split into old (to summarize) and recent (to keep)
-    {old_messages, recent_messages} = Enum.split(history, total_messages - keep_recent)
-
-    # Summarize old messages
-    case summarize_messages(
-           client,
-           agent,
-           old_messages,
-           Keyword.take(opts, [:prompt, :model, :max_tokens])
-         ) do
-      {:ok, summary} ->
-        # The summary goes first, as plain text: wrapped in a schema it reached the
-        # model as {"chat_message": ...} JSON, which Haiku 4.5 read as data, not
-        # conversation. The recent messages follow under their own ids and turns.
-        new_memory =
-          AgentMemory.keep_entries(
-            agent.memory,
-            recent_entries(agent.memory, length(recent_messages)),
-            summary: {summary_role, summary_message(summary)}
-          )
-
-        {:ok, %{agent | memory: new_memory}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
   end
 end

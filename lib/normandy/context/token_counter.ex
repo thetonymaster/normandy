@@ -8,7 +8,7 @@ defmodule Normandy.Context.TokenCounter do
   ## Example
 
       # Count tokens for a single message
-      {:ok, count} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, count} = TokenCounter.count_message(client, "Hello, world!", "claude-haiku-4-5")
 
       # Count tokens for an entire conversation
       {:ok, count} = TokenCounter.count_conversation(client, agent)
@@ -34,12 +34,14 @@ defmodule Normandy.Context.TokenCounter do
 
   ## Example
 
-      {:ok, count} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, count} = TokenCounter.count_message(client, "Hello, world!", "claude-haiku-4-5")
       #=> {:ok, %{"input_tokens" => 4}}
+
+  The model is required: tokenizers differ between model generations, so there
+  is no default to go stale.
   """
   @spec count_message(ClaudioAdapter.t(), String.t(), String.t()) ::
           {:ok, map()} | {:error, term()}
-  def count_message(client, text, model \\ "claude-haiku-4-5-20251001")
 
   def count_message(_client, text, _model) when text in [nil, ""] do
     # Empty input has no tokens; short-circuit rather than send a request the

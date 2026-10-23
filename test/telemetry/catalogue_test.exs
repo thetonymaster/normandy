@@ -9,16 +9,16 @@ defmodule Normandy.TelemetryCatalogueTest do
   # fails when a file gains or loses a dynamic call site, so a new dynamically named
   # event cannot be emitted without adding it here and to the catalogue.
   @dynamic [
-    # Request.span/5 builds `@event ++ [:start | :stop | :exception]`, three call sites.
-    {"lib/normandy/telemetry/request.ex", 3,
+    # Request.span/5 runs `Span.span(@event, ...)`: one call site, three events.
+    {"lib/normandy/telemetry/request.ex", 1,
      [
        [:normandy, :llm, :request, :start],
        [:normandy, :llm, :request, :stop],
        [:normandy, :llm, :request, :exception]
      ]},
-    # Span.span/3 builds `event_prefix ++ [:start | :stop | :exception]`, three call
-    # sites. Its callers pass literal prefixes, which the scan reads as `Span.span`
-    # calls, so these call sites add no events of their own.
+    # Span.span/3 and /4 share the emitters `event_prefix ++ [:start | :stop |
+    # :exception]`, three call sites. Their callers pass literal prefixes, which the
+    # scan reads as `Span.span` calls, so these call sites add no events of their own.
     {"lib/normandy/telemetry/span.ex", 3, []},
     # Turn.Server.stop_run_span/3 emits `[:normandy, :agent, :run, event]` with event
     # :stop or :exception (the :start is a literal elsewhere in the same file).

@@ -39,12 +39,18 @@ defmodule Normandy.Context.WindowManagerTest do
         WindowManager.new(
           max_tokens: 50_000,
           reserved_tokens: 2048,
-          strategy: :sliding_window
+          strategy: :summarize
         )
 
       assert manager.max_tokens == 50_000
       assert manager.reserved_tokens == 2048
-      assert manager.strategy == :sliding_window
+      assert manager.strategy == :summarize
+    end
+
+    test "rejects the removed :sliding_window strategy" do
+      assert_raise ArgumentError, ~r/:sliding_window/, fn ->
+        WindowManager.new(max_tokens: 100, strategy: :sliding_window)
+      end
     end
   end
 
@@ -346,28 +352,6 @@ defmodule Normandy.Context.WindowManagerTest do
     end
   end
 
-  describe "truncate_conversation/2 with :sliding_window strategy" do
-    test "keeps most recent messages" do
-      manager =
-        WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :sliding_window)
-
-      memory =
-        Enum.reduce(1..10, AgentMemory.new_memory(), fn i, mem ->
-          AgentMemory.add_message(mem, "user", "Message number #{i} with some content here")
-        end)
-
-      agent = %{memory: memory, config: %{}}
-
-      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
-
-      history = AgentMemory.history(truncated_agent.memory)
-
-      # Should keep most recent messages
-      assert history != []
-      assert length(history) < 10
-    end
-  end
-
   describe "truncate_conversation/2 with :summarize strategy" do
     test "summarizes old messages when client is available" do
       # Create a mock client
@@ -382,7 +366,7 @@ defmodule Normandy.Context.WindowManagerTest do
           AgentMemory.add_message(mem, "user", "Message number #{i} with content here")
         end)
 
-      agent = %{memory: memory, config: %{client: client, model: "test-model"}}
+      agent = %{memory: memory, client: client, model: "test-model", config: %{}}
 
       {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
 
@@ -390,11 +374,22 @@ defmodule Normandy.Context.WindowManagerTest do
 
       # Should have fewer messages than original
       assert length(history) < 15
-      # Should have at least one summary message
-      assert history != []
+
+      # The summarizer ran: its summary message leads the history
+      assert [%{content: summary} | _] = history
+      assert summary =~ "Summary of old messages"
     end
 
-    test "falls back to oldest_first when no client available" do
+    test "raises naming :client even when the conversation is under budget" do
+      manager = WindowManager.new(max_tokens: 100_000, strategy: :summarize)
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "short")
+
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WindowManager.truncate_conversation(%{memory: memory, config: %{}}, manager)
+      end
+    end
+
+    test "raises naming :client when the agent has none" do
       manager = WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :summarize)
 
       memory =
@@ -404,11 +399,9 @@ defmodule Normandy.Context.WindowManagerTest do
 
       agent = %{memory: memory, config: %{}}
 
-      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
-
-      # Should still truncate, just using oldest_first strategy
-      assert AgentMemory.count_messages(truncated_agent.memory) <
-               AgentMemory.count_messages(memory)
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WindowManager.truncate_conversation(agent, manager)
+      end
     end
   end
 

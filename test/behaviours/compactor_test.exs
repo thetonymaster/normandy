@@ -107,6 +107,18 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert Enum.map(kept, & &1.id) == before |> Enum.take(-length(kept)) |> Enum.map(& &1.id)
     end
 
+    test ":summarize with no client raises naming :client" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} in this test conversation padding"}
+      acc = %{memory: mem_with(msgs), model: "m"}
+
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WMCompactor.maybe_compact(acc, %{model: "m", window: 80},
+          strategy: :summarize,
+          reserved_tokens: 64
+        )
+      end
+    end
+
     defp history_acc(max_tokens) do
       msgs =
         for i <- 1..40,

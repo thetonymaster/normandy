@@ -1,7 +1,7 @@
 defmodule Normandy.Behaviours.Compactor.WindowManager do
   @moduledoc """
   Opt-in Compactor that wraps `Normandy.Context.WindowManager`'s truncation
-  strategies (`:oldest_first | :sliding_window | :summarize`).
+  strategies (`:oldest_first | :summarize`).
 
   Triggered at the turn's `:steering` boundary: builds a `WindowManager` sized to the
   model's context window (`ctx.window`, unless `opts` pins `:context_window`) and estimates
