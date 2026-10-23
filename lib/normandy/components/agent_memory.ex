@@ -23,7 +23,7 @@ defmodule Normandy.Components.AgentMemory do
   alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.Message
-  alias Normandy.Context.WindowManager
+  alias Normandy.Context.TokenEstimate
   alias Normandy.Options
 
   defstruct entries: %{}, head: nil, current_turn_id: nil, max_messages: nil
@@ -201,7 +201,7 @@ defmodule Normandy.Components.AgentMemory do
   def entry_wire(entry), do: Map.get(entry, :wire) || model_content(entry.content)
 
   @doc false
-  # The entry's token estimate (Context.WindowManager's, plus 10 for the message),
+  # The entry's token estimate (Context.TokenEstimate's, plus 10 for the message),
   # cached like entry_wire/1.
   @spec entry_tokens(Entry.t()) :: non_neg_integer()
   def entry_tokens(entry),
@@ -518,7 +518,7 @@ defmodule Normandy.Components.AgentMemory do
     %Entry{entry | content: content, wire: wire, tokens: estimate_tokens(wire)}
   end
 
-  defp estimate_tokens(wire), do: WindowManager.estimate_message_content_tokens(wire) + 10
+  defp estimate_tokens(wire), do: TokenEstimate.estimate_message_content_tokens(wire) + 10
 
   # An entry with its five stored fields and no cache. struct/2 reads only those keys,
   # so it also takes an entry decoded from a term written before `wire` existed.

@@ -116,38 +116,11 @@ defmodule Normandy.Telemetry.Request do
       |> Map.merge(reject_nil(metadata))
       |> Map.merge(%{attempt: attempt, request_kind: kind, telemetry_span_context: make_ref()})
 
-    start_time = System.monotonic_time()
-
-    :telemetry.execute(
-      @event ++ [:start],
-      %{monotonic_time: start_time, system_time: System.system_time()},
-      start_metadata
-    )
-
-    result =
-      try do
-        fun.()
-      catch
-        class, reason ->
-          emit_exception(start_metadata, start_time, class, reason, __STACKTRACE__)
-          :erlang.raise(class, reason, __STACKTRACE__)
+    Span.span(@event, start_metadata, fun, fn result ->
+      with {:ok, stop_metadata} <- outcome.(result) do
+        {:ok, start_metadata |> Map.merge(stop_metadata) |> Map.put(:status, :ok)}
       end
-
-    case outcome.(result) do
-      {:ok, stop_metadata} ->
-        stop_time = System.monotonic_time()
-
-        :telemetry.execute(
-          @event ++ [:stop],
-          %{duration: stop_time - start_time, monotonic_time: stop_time},
-          start_metadata |> Map.merge(stop_metadata) |> Map.put(:status, :ok)
-        )
-
-      {:error, %LLMError{} = error} ->
-        emit_exception(start_metadata, start_time, :error, error, [])
-    end
-
-    result
+    end)
   end
 
   @doc """
@@ -177,16 +150,6 @@ defmodule Normandy.Telemetry.Request do
 
     kind = kind || if :counters.get(c, @converse_calls) > 1, do: :retry, else: :initial
     {:counters.get(c, @requests), kind}
-  end
-
-  defp emit_exception(start_metadata, start_time, kind, reason, stacktrace) do
-    stop_time = System.monotonic_time()
-
-    :telemetry.execute(
-      @event ++ [:exception],
-      %{duration: stop_time - start_time, monotonic_time: stop_time},
-      Map.merge(start_metadata, Span.exception_metadata(kind, reason, stacktrace))
-    )
   end
 
   defp finish_reason_string(reason) when is_atom(reason) and reason != nil,

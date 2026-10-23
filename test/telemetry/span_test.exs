@@ -99,4 +99,51 @@ defmodule Normandy.Telemetry.SpanTest do
     assert_received {:telemetry, [:t, :stop], %{bytes: 3, duration: _, monotonic_time: _},
                      %{c: 1, telemetry_span_context: ^ctx}}
   end
+
+  describe "span/4 (outcome)" do
+    alias Normandy.LLMError
+
+    test "{:ok, stop_metadata} ends in :stop with exactly that metadata and the start's context" do
+      assert {:ok, 1} =
+               Span.span([:t], %{a: 1}, fn -> {:ok, 1} end, fn {:ok, 1} -> {:ok, %{b: 2}} end)
+
+      assert_received {:telemetry, [:t, :start], %{system_time: _},
+                       %{a: 1, telemetry_span_context: ctx}}
+
+      assert_received {:telemetry, [:t, :stop], %{duration: _, monotonic_time: _},
+                       %{b: 2, telemetry_span_context: ^ctx} = stop}
+
+      refute Map.has_key?(stop, :a)
+    end
+
+    test "a returned {:error, %LLMError{}} ends in :exception and is returned, not raised" do
+      error = %LLMError{type: :rate_limit, message: "slow down"}
+
+      assert {:error, ^error} =
+               Span.span([:t], %{a: 1}, fn -> {:error, error} end, fn {:error, e} ->
+                 {:error, e}
+               end)
+
+      assert_received {:telemetry, [:t, :start], _, %{telemetry_span_context: ctx}}
+
+      assert_received {:telemetry, [:t, :exception], %{duration: _, monotonic_time: _},
+                       %{
+                         a: 1,
+                         kind: :error,
+                         reason: ^error,
+                         stacktrace: [],
+                         telemetry_span_context: ^ctx
+                       }}
+
+      refute_received {:telemetry, [:t, :stop], _, _}
+    end
+
+    test "a raise in fun is an :exception and is re-raised" do
+      assert_raise RuntimeError, "boom", fn ->
+        Span.span([:t], %{}, fn -> raise "boom" end, fn _ -> {:ok, %{}} end)
+      end
+
+      assert_received {:telemetry, [:t, :exception], _, %{kind: :error, stacktrace: []}}
+    end
+  end
 end
