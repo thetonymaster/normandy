@@ -237,7 +237,7 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       refute_received {:agent_result, "rf4", {:error, _}}
       assert AgentMemory.count_messages(AgentProcess.get_agent(pid).memory) == 200
       assert %{run_count: 100} = AgentProcess.get_stats(pid)
-      assert %{running: nil, pending: 0} = :sys.get_state(pid)
+      assert %{engine_state: %{running: nil}, pending: 0} = :sys.get_state(pid)
     end
 
     test "update_agent/2 is not a pending run" do
@@ -301,7 +301,7 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       queued = Task.async(fn -> AgentProcess.run(pid, @secret) end)
 
       assert wait_until(fn ->
-               :queue.len(:sys.get_state(pid).queue) == 2
+               :queue.len(:sys.get_state(pid).engine_state.queue) == 2
              end)
 
       status = inspect(:sys.get_status(pid), limit: :infinity, printable_limit: :infinity)
@@ -354,7 +354,7 @@ defmodule Normandy.Coordination.AgentProcessPendingTest do
       :ok = AgentProcess.cast(pid, "go")
       assert_receive {:llm_started, 1, _turn_worker}, @wait
 
-      %{pending_runs: pending} = :sys.get_state(pid)
+      %{engine_state: %{pending_runs: pending}} = :sys.get_state(pid)
       assert [watcher] = Map.keys(pending)
       ref = Process.monitor(watcher)
 

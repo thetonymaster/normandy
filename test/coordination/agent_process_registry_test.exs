@@ -78,8 +78,12 @@ defmodule Normandy.Coordination.AgentProcessRegistryTest do
     assert {:ok, %Resp{content: "from a"}} = AgentProcess.run(a, "go")
     assert {:ok, %Resp{content: "from b"}} = AgentProcess.run(b, "go")
 
-    %{session: %{registry: {ScopedRegistry, {_name, scope_a}}}} = :sys.get_state(a)
-    %{session: %{registry: {ScopedRegistry, {_name, scope_b}}}} = :sys.get_state(b)
+    %{engine_state: %{session: %{registry: {ScopedRegistry, {_name, scope_a}}}}} =
+      :sys.get_state(a)
+
+    %{engine_state: %{session: %{registry: {ScopedRegistry, {_name, scope_b}}}}} =
+      :sys.get_state(b)
+
     assert scope_a != scope_b
   end
 
@@ -93,7 +97,7 @@ defmodule Normandy.Coordination.AgentProcessRegistryTest do
       )
 
     {:ok, _} = AgentProcess.run(pid, "go")
-    %{session: %{registry: {ScopedRegistry, handle}}} = :sys.get_state(pid)
+    %{engine_state: %{session: %{registry: {ScopedRegistry, handle}}}} = :sys.get_state(pid)
     assert {:ok, server} = ScopedRegistry.whereis(handle, "gone")
 
     ref = Process.monitor(server)

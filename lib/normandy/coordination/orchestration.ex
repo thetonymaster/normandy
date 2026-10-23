@@ -193,6 +193,16 @@ defmodule Normandy.Coordination.Orchestration do
     classify("Agent #{inspect(id)} callback", fn -> {:ok, fun.()} end)
   end
 
+  # A spec's :transform on the output, then the :on_agent_complete callback `(id, output)`
+  # on the transformed output (nil: none). Returns the transformed output.
+  @doc false
+  @spec run_callbacks(spec(), term(), (String.t(), term() -> term()) | nil) :: term()
+  def run_callbacks(spec, output, on_complete) do
+    transformed = Map.get(spec, :transform, &Function.identity/1).(output)
+    if on_complete, do: on_complete.(spec.id, transformed)
+    transformed
+  end
+
   # An exit is the exit reason; a throw nobody caught is {:nocatch, value}, as in an
   # uncaught throw's exit reason.
   defp caught(:exit, reason), do: TurnError.from_reason({:task_down, reason})

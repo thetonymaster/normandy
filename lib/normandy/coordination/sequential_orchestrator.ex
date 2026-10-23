@@ -84,20 +84,15 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
     with {:ok, output} <-
            Orchestration.run_agent_isolated(supervisor, spec.id, spec.agent, input),
          {:ok, output} <-
-           Orchestration.guard(spec.id, fn -> run_callbacks(spec, output, opts) end) do
+           Orchestration.guard(spec.id, fn ->
+             Orchestration.run_callbacks(spec, output, opts[:on_agent_complete])
+           end) do
       {:cont, {output, Map.put(results, spec.id, output), errors}}
     else
       {:error, exception} ->
         acc = {input, results, Map.put(errors, spec.id, exception)}
         halt_or_continue(Keyword.fetch!(opts, :on_error), acc)
     end
-  end
-
-  defp run_callbacks(spec, output, opts) do
-    output = Map.get(spec, :transform, &Function.identity/1).(output)
-    on_complete = opts[:on_agent_complete]
-    if on_complete, do: on_complete.(spec.id, output)
-    output
   end
 
   defp halt_or_continue(:stop, acc), do: {:halt, acc}

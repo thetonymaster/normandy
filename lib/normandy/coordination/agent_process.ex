@@ -48,8 +48,8 @@ defmodule Normandy.Coordination.AgentProcess do
 
   Pass `turn_engine: :server` to route turns through the durable
   `Normandy.Agents.Turn.Session`/`Turn.Server` engine (approval parking,
-  passivation, persistence) instead of the default synchronous `:inline`
-  `BaseAgent.run/2` path. `:inline` is the default and is unchanged.
+  passivation, persistence) instead of the default `:inline` path, which runs
+  `BaseAgent.run/3` in a worker process, one turn at a time. `:inline` is the default and is unchanged.
 
       {:ok, pid} = AgentProcess.start_link(agent: config, turn_engine: :server)
 
@@ -75,32 +75,17 @@ defmodule Normandy.Coordination.AgentProcess do
   use GenServer
   require Logger
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
-  alias Normandy.Coordination.AgentProcess.ScopedRegistry
-  alias Normandy.Coordination.Orchestration
+  alias Normandy.Coordination.AgentProcess.Engine
   alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
-  alias Normandy.WatchedWorker
 
   @agent_id_key :"$normandy_agent_id"
 
-  # The :server-mode keys go to Turn.Session.new/1 in init/1; its schema is the single
-  # source of their types (ruling P4), so a value accepted here cannot fail there and
-  # crash init/1 (Review Focus 3). Types only: Session's required/default flags do not apply.
-  @session_types Map.new(Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
-                   {key, Keyword.fetch!(spec, :type)}
-                 end)
-
-  # The session keys init/1 passes on untouched: all of Session's but the ones it builds
-  # itself (the id, the config and the infra it may start and own).
-  @session_options Map.keys(@session_types) --
-                     [:session_id, :config, :store, :registry, :supervisor]
+  @session_types Engine.Server.session_types()
 
   @type agent_id :: String.t()
   @type run_opts :: [timeout: timeout()]
@@ -131,7 +116,7 @@ defmodule Normandy.Coordination.AgentProcess do
                               type: {:in, [:inline, :server]},
                               default: :inline,
                               doc:
-                                "`:inline` runs `BaseAgent.run/2` in this process; `:server` " <>
+                                "`:inline` runs `BaseAgent.run/3` in a worker process, one turn at a time; `:server` " <>
                                   "routes turns through `Turn.Session`/`Turn.Server` (approval " <>
                                   "parking, passivation, persistence)."
                             ],
@@ -467,88 +452,33 @@ defmodule Normandy.Coordination.AgentProcess do
     agent_id = Keyword.get_lazy(opts, :agent_id, &UUID.uuid4/0)
     # Readable without a call (see agent_id_of/1), so a busy agent can be listed.
     Process.put(@agent_id_key, agent_id)
-    context_pid = Keyword.get(opts, :context_pid)
     turn_engine = Keyword.fetch!(opts, :turn_engine)
+    engine = Engine.module(turn_engine)
 
-    base = %{
-      agent: agent,
-      agent_id: agent_id,
-      context_pid: context_pid,
-      turn_engine: turn_engine,
-      # :server mode's Turn.Session handle, built once below. update_agent/2 is the only
-      # writer of :agent in :server mode, and it refreshes the session's config.
-      session: nil,
-      owned: [],
-      # :server mode: worker pid => %{ref, op, started}, one per admitted run or cast.
-      pending_runs: %{},
-      # :inline mode: the turn in flight (%{pid, ref, op, started} or nil) and the ops
-      # waiting behind it, oldest first (see enqueue/2).
-      running: nil,
-      queue: :queue.new(),
-      run_count: 0,
-      last_run: nil,
-      total_runtime_ms: 0,
-      created_at: DateTime.utc_now(),
-      max_pending_runs: Keyword.fetch!(opts, :max_pending_runs),
-      # Runs and casts admitted and not finished, both modes (see admit/2).
-      pending: 0
-    }
+    case engine.init(opts, agent, agent_id) do
+      {:ok, engine_state, owned} ->
+        {:ok,
+         %{
+           agent: agent,
+           agent_id: agent_id,
+           context_pid: Keyword.get(opts, :context_pid),
+           turn_engine: turn_engine,
+           engine: engine,
+           engine_state: engine_state,
+           # Infra pids the engine started; stopped with this process.
+           owned: owned,
+           run_count: 0,
+           last_run: nil,
+           total_runtime_ms: 0,
+           created_at: DateTime.utc_now(),
+           max_pending_runs: Keyword.fetch!(opts, :max_pending_runs),
+           # Runs and casts admitted and not finished (see admit/2).
+           pending: 0
+         }}
 
-    case turn_engine do
-      :inline ->
-        {:ok, base}
-
-      :server ->
-        case server_infra(opts) do
-          {:ok, store, registry, supervisor, owned} ->
-            session =
-              Turn.Session.new(
-                [
-                  session_id: agent_id,
-                  config: agent,
-                  store: store,
-                  registry: registry,
-                  supervisor: supervisor
-                ] ++ Keyword.take(opts, @session_options)
-              )
-
-            {:ok, %{base | session: session, owned: owned}}
-
-          {:error, reason} ->
-            {:stop, {:server_init_failed, reason}}
-        end
+      {:error, reason} ->
+        {:stop, {:server_init_failed, reason}}
     end
-  end
-
-  # Resolve session infra: use what the caller supplied, else start+own defaults.
-  # Returns {:ok, store, registry, supervisor, owned_pids} | {:error, reason}.
-  defp server_infra(opts) do
-    {store, owned_store} =
-      case Keyword.get(opts, :store) do
-        nil ->
-          store_pid = InMemory.new()
-          {{Normandy.Behaviours.SessionStore.InMemory, store_pid}, [store_pid]}
-
-        supplied ->
-          {supplied, []}
-      end
-
-    # Without a :registry, a scope in Normandy's shared registry: nothing to start or own.
-    registry = Keyword.get_lazy(opts, :registry, fn -> {ScopedRegistry, ScopedRegistry.new()} end)
-
-    {supervisor, owned_sup} =
-      case Keyword.get(opts, :supervisor) do
-        nil ->
-          {:ok, sup} = Turn.Supervisor.start_link([])
-          {sup, [sup]}
-
-        supplied ->
-          {supplied, []}
-      end
-
-    {:ok, store, registry, supervisor, owned_store ++ owned_sup}
-  rescue
-    e -> {:error, e}
   end
 
   @impl true
@@ -592,13 +522,15 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   defp status_state(%{agent_id: _} = state) do
+    %{queued: queued, in_flight: in_flight} = state.engine.load(state)
+
     %{
       agent_id: state.agent_id,
       turn_engine: state.turn_engine,
       pending: state.pending,
       run_count: state.run_count,
-      queued: :queue.len(state.queue),
-      in_flight: if(state.running, do: 1, else: 0) + map_size(state.pending_runs)
+      queued: queued,
+      in_flight: in_flight
     }
   end
 
@@ -629,13 +561,8 @@ defmodule Normandy.Coordination.AgentProcess do
   end
 
   @impl true
-  def handle_call(:get_agent, _from, %{turn_engine: :server} = state) do
-    {:reply, reconstruct_agent(state), state}
-  end
-
-  @impl true
   def handle_call(:get_agent, _from, state) do
-    {:reply, state.agent, state}
+    {:reply, state.engine.get_agent(state), state}
   end
 
   @impl true
@@ -656,57 +583,16 @@ defmodule Normandy.Coordination.AgentProcess do
     {:reply, stats, state}
   end
 
-  # A result that is not a config is refused here, before it replaces the agent: the
-  # caller raises (update_agent/2), the process keeps running with its config. The
-  # reply names only its type (a config holds the client and its credentials).
-  # :inline: queued like a run, so it sees the memory of every run before it and no run
-  # in flight overwrites it.
+  # A result that is not a config is refused by the engine, before it replaces the agent:
+  # the caller raises (update_agent/2), the process keeps running with its config.
   @impl true
-  def handle_call({:update_agent, update_fn}, from, %{turn_engine: :inline} = state) do
-    {:noreply, enqueue({:update, from, update_fn}, state)}
-  end
-
-  def handle_call({:update_agent, update_fn}, _from, state) do
-    {reply, state} = update_agent_now(update_fn, state)
-    {:reply, reply, state}
-  end
+  def handle_call({:update_agent, update_fn}, from, state),
+    do: state.engine.update_agent(update_fn, from, state)
 
   @impl true
-  def handle_call({:approve, decisions}, _from, %{turn_engine: :server} = state) do
-    {:reply, Turn.Session.approve(state.session, decisions), state}
+  def handle_call({:approve, decisions}, _from, state) do
+    {:reply, state.engine.approve(decisions, state), state}
   end
-
-  @impl true
-  def handle_call({:approve, _decisions}, _from, state) do
-    {:reply, {:error, :inline_mode}, state}
-  end
-
-  # update_agent/2's new config. In :server mode the SessionStore owns the memory, so
-  # a changed memory is ignored; the session's next server start uses the new config.
-  defp update_agent_now(update_fn, state) do
-    case update_fn.(state.agent) do
-      %BaseAgentConfig{} = updated -> {:ok, put_agent(updated, state)}
-      other -> {{:not_a_config, Describe.type_of(other)}, state}
-    end
-  end
-
-  defp put_agent(updated, %{turn_engine: :server} = state) do
-    new_agent =
-      if updated.memory != state.agent.memory do
-        Logger.warning(
-          "AgentProcess #{state.agent_id}: update_agent memory mutation ignored in :server mode " <>
-            "(SessionStore is authoritative)"
-        )
-
-        %{updated | memory: state.agent.memory}
-      else
-        updated
-      end
-
-    %{state | agent: new_agent, session: Turn.Session.put_config(state.session, new_agent)}
-  end
-
-  defp put_agent(updated, state), do: %{state | agent: updated}
 
   @impl true
   def handle_cast({:run_async, input, reply_to}, state),
@@ -718,259 +604,34 @@ defmodule Normandy.Coordination.AgentProcess do
         {:noreply, state}
 
       {:error, _} = full ->
-        notify(reply_to, state.agent_id, full)
-        {:noreply, state}
-    end
-  end
-
-  # :inline: the turn in flight finished (or its worker died); start the next op.
-  @impl true
-  def handle_info({:inline_result, pid, result}, %{running: %{pid: pid} = running} = state) do
-    Process.demonitor(running.ref, [:flush])
-    {:noreply, state |> finish_op(running, result) |> dispatch()}
-  end
-
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{running: %{ref: ref} = running} = state) do
-    error = {:error, TurnError.from_reason({:task_down, reason})}
-    {:noreply, state |> finish_op(running, error) |> dispatch()}
-  end
-
-  # :server: a turn finished (or its worker died).
-  def handle_info({:server_result, pid, result}, %{turn_engine: :server} = state) do
-    case Map.pop(state.pending_runs, pid) do
-      {nil, _pending} ->
-        {:noreply, state}
-
-      {running, pending_runs} ->
-        Process.demonitor(running.ref, [:flush])
-        {:noreply, finish_op(%{state | pending_runs: pending_runs}, running, result)}
-    end
-  end
-
-  def handle_info({:DOWN, ref, :process, pid, reason}, %{turn_engine: :server} = state) do
-    case Map.pop(state.pending_runs, pid) do
-      {%{ref: ^ref} = running, pending_runs} ->
-        error = {:error, TurnError.from_reason({:task_down, reason})}
-        {:noreply, finish_op(%{state | pending_runs: pending_runs}, running, error)}
-
-      _not_a_worker ->
+        Engine.notify(reply_to, state.agent_id, full)
         {:noreply, state}
     end
   end
 
   @impl true
   def handle_info(msg, state) do
-    Logger.debug("AgentProcess #{state.agent_id} ignoring unexpected message: #{inspect(msg)}")
-    {:noreply, state}
+    case state.engine.handle_info(msg, state) do
+      {:noreply, _state} = reply ->
+        reply
+
+      :unhandled ->
+        Logger.debug(
+          "AgentProcess #{state.agent_id} ignoring unexpected message: #{inspect(msg)}"
+        )
+
+        {:noreply, state}
+    end
   end
 
   # Private Functions
 
   # A run ({:run, from, input, otel_ctx}) or cast ({:cast, reply_to, input, otel_ctx}) is
-  # admitted while fewer than :max_pending_runs are pending: :server starts its worker at
-  # once (Turn.Server serializes the turns), :inline queues it.
+  # admitted while fewer than :max_pending_runs are pending; the engine starts it at once
+  # (:server, where Turn.Server serializes the turns) or queues it (:inline).
   defp admit(_op, %{max_pending_runs: max, pending: pending})
        when max != :infinity and pending >= max,
        do: {:error, TurnError.from_reason({:queue_full, max})}
 
-  defp admit(op, state) do
-    state = %{state | pending: state.pending + 1}
-
-    case state.turn_engine do
-      :server -> {:ok, start_server_turn(op, state)}
-      :inline -> {:ok, enqueue(op, state)}
-    end
-  end
-
-  # :inline ops run one at a time, oldest first: runs, casts and {:update, from, update_fn}.
-  defp enqueue(op, state), do: dispatch(%{state | queue: :queue.in(op, state.queue)})
-
-  # Starts queued ops while no turn is in flight: an update applies at once, a run
-  # starts a worker (and dispatching stops until it finishes).
-  defp dispatch(%{running: nil} = state) do
-    case :queue.out(state.queue) do
-      {:empty, _queue} -> state
-      {{:value, op}, queue} -> dispatch(start_op(op, %{state | queue: queue}))
-    end
-  end
-
-  defp dispatch(state), do: state
-
-  defp start_op({:update, from, update_fn}, state) do
-    {reply, state} = update_agent_now(update_fn, state)
-    GenServer.reply(from, reply)
-    state
-  end
-
-  defp start_op({:run, from, input, otel_ctx} = op, state) do
-    if caller_alive?(from),
-      do: start_turn(op, "Agent #{state.agent_id}", input, otel_ctx, state),
-      else: %{state | pending: state.pending - 1}
-  end
-
-  defp start_op({:cast, _reply_to, input, otel_ctx} = op, state),
-    do: start_turn(op, "Async agent #{state.agent_id}", input, otel_ctx, state)
-
-  # The worker gets the committed config, the input and the caller's OTel context, not
-  # the process state.
-  defp start_turn(op, who, input, otel_ctx, state) do
-    agent = state.agent
-
-    {pid, ref} =
-      WatchedWorker.start(:inline_result, fn ->
-        OtelCtx.restore(otel_ctx)
-        inline_turn(agent, input, who)
-      end)
-
-    running = %{pid: pid, ref: ref, op: op, started: System.monotonic_time(:millisecond)}
-    %{state | running: running}
-  end
-
-  defp start_server_turn({_kind, _to, input, otel_ctx} = op, state) do
-    session = state.session
-
-    who =
-      if elem(op, 0) == :run, do: "Agent #{state.agent_id}", else: "Async agent #{state.agent_id}"
-
-    {pid, ref} =
-      WatchedWorker.start(:server_result, fn ->
-        OtelCtx.restore(otel_ctx)
-        server_turn(session, Orchestration.prepare_input(input), who)
-      end)
-
-    running = %{ref: ref, op: op, started: System.monotonic_time(:millisecond)}
-    %{state | pending_runs: Map.put(state.pending_runs, pid, running)}
-  end
-
-  # A finished run or cast: an inline turn's config is committed, the result goes to the
-  # caller or reply_to, and the turn is counted whatever its outcome.
-  defp finish_op(state, running, {:ok, agent, value}),
-    do: finish_op(%{state | agent: agent}, running, {:ok, value})
-
-  defp finish_op(state, %{op: op, started: started}, result) do
-    case op do
-      {:run, from, _input, _ctx} -> GenServer.reply(from, result)
-      {:cast, reply_to, _input, _ctx} -> notify(reply_to, state.agent_id, result)
-    end
-
-    count_run(%{state | running: nil, pending: state.pending - 1}, started)
-  end
-
-  defp notify(nil, _agent_id, _result), do: :ok
-
-  defp notify(reply_to, agent_id, result) when is_pid(reply_to),
-    do: send(reply_to, {:agent_result, agent_id, result})
-
-  # A name that is not registered must not crash this process (send/2 raises for it).
-  defp notify(reply_to, agent_id, result) when is_atom(reply_to) do
-    case Process.whereis(reply_to) do
-      nil ->
-        Logger.warning(
-          "AgentProcess #{agent_id}: reply_to #{inspect(reply_to)} is not a registered " <>
-            "process; the result is dropped"
-        )
-
-      pid ->
-        send(pid, {:agent_result, agent_id, result})
-    end
-  end
-
-  # cast/3 accepts only nil, a pid or an atom, but a raw {:run_async, ...} cast (a node
-  # running older code, or code that bypasses cast/3) can carry anything ({name, node},
-  # a :via tuple). It must not crash this process with its queue: logged by type only
-  # (it can hold a name or data), and the result dropped.
-  defp notify(reply_to, agent_id, _result) do
-    Logger.warning(
-      "AgentProcess #{agent_id}: reply_to is #{Describe.type_of(reply_to)}, not a pid or " <>
-        "a registered name; the result is dropped"
-    )
-  end
-
-  defp count_run(state, started) do
-    %{
-      state
-      | run_count: state.run_count + 1,
-        last_run: DateTime.utc_now(),
-        total_runtime_ms: state.total_runtime_ms + System.monotonic_time(:millisecond) - started
-    }
-  end
-
-  # A caller that died while its run waited (a Reactive task killed past its timeout)
-  # gets no turn. Only a local pid can be checked; a remote caller's run always starts.
-  defp caller_alive?({pid, _tag}) when node(pid) == node(), do: Process.alive?(pid)
-  defp caller_alive?(_from), do: true
-
-  # One inline turn, in the worker, classified by `Orchestration.classify/2`: a Normandy
-  # error is returned; a raise (a bug) is logged (arities only) and returned bare; an exit
-  # or a throw is logged and becomes the :task_down TurnError a worker dying of it would give.
-  defp inline_turn(agent, input, who) do
-    Orchestration.classify(who, fn ->
-      case BaseAgent.run(agent, Orchestration.prepare_input(input)) do
-        {:ok, updated_agent, response} -> {:ok, updated_agent, extract_result(response)}
-        {:error, exception} -> {:error, exception}
-      end
-    end)
-  end
-
-  # One :server turn, in the worker: the Turn.Session reply, or any raise, exit or throw
-  # logged (arities only) and turned into the reply a worker dying of it would give (a
-  # domain exception bare, anything else a :task_down TurnError).
-  defp server_turn(session, user_input, who) do
-    case Turn.Session.run(session, user_input) do
-      {:ok, value} -> {:ok, extract_result(value)}
-      {:error, _} = error -> error
-    end
-  catch
-    kind, reason ->
-      Logger.error("#{who} raised " <> TurnError.format_raised(kind, reason, __STACKTRACE__))
-      {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
-  end
-
-  # The exit reason a process dies with for a caught kind and reason, so a failure caught
-  # in a worker maps like the same failure arriving as its :DOWN.
-  defp exit_reason(:error, reason), do: Exception.normalize(:error, reason)
-  defp exit_reason(:throw, value), do: {:nocatch, value}
-  defp exit_reason(:exit, reason), do: reason
-
-  defp extract_result(response) when is_map(response) do
-    Map.get(response, :chat_message) ||
-      Map.get(response, "chat_message") ||
-      response
-  end
-
-  # Store-authoritative read: rebuild config.memory from the SessionStore so callers
-  # see durable truth. On a store fault, or a history from_entries/1 refuses (a snapshot
-  # version a newer node wrote, content that cannot be encoded), log and return the
-  # template unchanged: a stored history must not crash this process and its queue.
-  defp reconstruct_agent(%{
-         session: %Turn.Session{store: {mod, handle}},
-         agent: agent,
-         agent_id: sid
-       }) do
-    case mod.history(handle, sid) do
-      {:ok, entries} ->
-        rebuild_memory(agent, sid, entries)
-
-      {:error, reason} ->
-        Logger.warning(
-          "AgentProcess #{sid}: get_agent could not read store: #{Describe.reason_tag(reason)}"
-        )
-
-        agent
-    end
-  end
-
-  defp rebuild_memory(agent, sid, entries) do
-    rebuilt = %{AgentMemory.from_entries(entries) | max_messages: agent.memory.max_messages}
-    %{agent | memory: rebuilt}
-  rescue
-    # The message names entry ids and types only (from_entries/1), never content.
-    e in ArgumentError ->
-      Logger.warning(
-        "AgentProcess #{sid}: get_agent could not rebuild the stored history: " <>
-          Exception.message(e)
-      )
-
-      agent
-  end
+  defp admit(op, state), do: {:ok, state.engine.admit(op, %{state | pending: state.pending + 1})}
 end

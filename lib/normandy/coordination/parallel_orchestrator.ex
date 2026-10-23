@@ -286,13 +286,9 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
     :ok = on_run_done.()
 
     with {:ok, output} <- outcome do
-      Orchestration.guard(spec.id, fn -> run_callbacks(spec, output, on_complete) end)
+      Orchestration.guard(spec.id, fn ->
+        Orchestration.run_callbacks(spec, output, on_complete)
+      end)
     end
-  end
-
-  defp run_callbacks(spec, output, on_complete) do
-    transformed = Map.get(spec, :transform, &Function.identity/1).(output)
-    if on_complete, do: on_complete.(spec.id, transformed)
-    transformed
   end
 end

@@ -113,10 +113,12 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
         )
 
       %{
-        session: %Normandy.Agents.Turn.Session{
-          store: {_sm, store_h},
-          registry: {ScopedRegistry, {reg_name, scope}},
-          supervisor: sup
+        engine_state: %{
+          session: %Normandy.Agents.Turn.Session{
+            store: {_sm, store_h},
+            registry: {ScopedRegistry, {reg_name, scope}},
+            supervisor: sup
+          }
         },
         owned: owned
       } = :sys.get_state(pid)
@@ -469,8 +471,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           %{a | temperature: 0.42, memory: tampered}
         end)
 
-      %{agent: agent, session: %Normandy.Agents.Turn.Session{config: session_config}} =
-        :sys.get_state(pid)
+      %{
+        agent: agent,
+        engine_state: %{session: %Normandy.Agents.Turn.Session{config: session_config}}
+      } = :sys.get_state(pid)
 
       # The held session starts the next server with the updated config.
       assert session_config == agent

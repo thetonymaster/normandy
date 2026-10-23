@@ -35,6 +35,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
   use GenServer
 
+  alias Normandy.Coordination.SharedContext
   alias Normandy.Options
 
   @type key :: String.t() | {String.t(), String.t()}
@@ -382,11 +383,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
   # Private Functions
 
-  defp normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
-    "#{namespace}:#{key}"
-  end
-
-  defp normalize_key(key) when is_binary(key), do: key
+  defp normalize_key(key), do: SharedContext.normalize_key(key)
 
   defp notify_subscribers(subscribers, key, old_value, new_value) do
     Enum.each(subscribers, fn subscriber ->

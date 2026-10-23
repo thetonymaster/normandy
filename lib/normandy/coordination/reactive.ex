@@ -127,21 +127,8 @@ defmodule Normandy.Coordination.Reactive do
     timeout = Keyword.fetch!(opts, :timeout)
     on_complete = Keyword.get(opts, :on_complete)
 
-    Orchestration.with_task_supervisor(fn supervisor ->
-      started_at = System.monotonic_time()
-      parent_otel_ctx = OtelCtx.capture()
-      ref = make_ref()
-
-      {tasks, run_marks} = start_tasks(supervisor, agents, input, on_complete, ref)
-
-      # Wait for first success or all failures
-      result = await_first_success(ref, monitors(tasks), length(agents), timeout)
-
-      # Cleanup: shutdown remaining tasks, then drop the reports they left behind
-      shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
-      :ok = drain_reports(ref)
-
-      result
+    run_race(agents, input, on_complete, fn ref, monitors ->
+      await_first_success(ref, monitors, length(agents), timeout)
     end)
   end
 
@@ -214,29 +201,24 @@ defmodule Normandy.Coordination.Reactive do
         zip_input_on_exit: true
       )
       |> Stream.map(&report_kill(&1, run_marks, timeout, parent_otel_ctx))
-      |> Enum.reduce_while({:ok, %{}}, fn
-        {:ok, {agent_id, result}}, {:ok, acc} ->
-          # Check if we should fail fast
-          case {fail_fast, result} do
-            {true, {:error, reason}} ->
-              {:halt, {:error, reason}}
-
-            _ ->
-              {:cont, {:ok, Map.put(acc, agent_id, result)}}
-          end
-
-        # Killed past :timeout, or the task died.
-        {:exit, {agent_id, reason}}, {:ok, acc} ->
-          error = TurnError.from_reason({:task_down, reason})
-
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if fail_fast do
-            {:halt, {:error, error}}
-          else
-            {:cont, {:ok, Map.put(acc, agent_id, {:error, error})}}
-          end
-      end)
+      |> Enum.reduce_while({:ok, %{}}, &collect_outcome(&1, &2, fail_fast))
     end)
+  end
+
+  defp collect_outcome({:ok, {agent_id, result}}, {:ok, acc}, fail_fast) do
+    case {fail_fast, result} do
+      {true, {:error, reason}} -> {:halt, {:error, reason}}
+      _ -> {:cont, {:ok, Map.put(acc, agent_id, result)}}
+    end
+  end
+
+  # Killed past :timeout, or the task died.
+  defp collect_outcome({:exit, {agent_id, reason}}, {:ok, acc}, fail_fast) do
+    error = TurnError.from_reason({:task_down, reason})
+
+    if fail_fast,
+      do: {:halt, {:error, error}},
+      else: {:cont, {:ok, Map.put(acc, agent_id, {:error, error})}}
   end
 
   @doc """
@@ -282,24 +264,30 @@ defmodule Normandy.Coordination.Reactive do
       raise ArgumentError,
             "Normandy.Coordination.Reactive.some/3: :count must be at most the number of " <>
               "agents (#{length(agents)}), got: #{inspect(count)}"
-    else
-      Orchestration.with_task_supervisor(fn supervisor ->
-        started_at = System.monotonic_time()
-        parent_otel_ctx = OtelCtx.capture()
-        ref = make_ref()
-
-        {tasks, run_marks} = start_tasks(supervisor, agents, input, on_complete, ref)
-
-        # Wait for N successes
-        result = await_n_successes(ref, monitors(tasks), count, length(agents), timeout)
-
-        # Cleanup: shutdown remaining tasks, then drop the reports they left behind
-        shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
-        :ok = drain_reports(ref)
-
-        result
-      end)
     end
+
+    run_race(agents, input, on_complete, fn ref, monitors ->
+      await_n_successes(ref, monitors, count, length(agents), timeout)
+    end)
+  end
+
+  # Starts every agent in its own task, waits with `await.(ref, monitors)` for the outcome
+  # the caller wants, then shuts the rest down and drops the reports they left behind.
+  defp run_race(agents, input, on_complete, await) do
+    Orchestration.with_task_supervisor(fn supervisor ->
+      started_at = System.monotonic_time()
+      parent_otel_ctx = OtelCtx.capture()
+      ref = make_ref()
+
+      {tasks, run_marks} = start_tasks(supervisor, agents, input, on_complete, ref)
+
+      result = await.(ref, monitors(tasks))
+
+      shutdown_tasks(tasks, run_marks, started_at, parent_otel_ctx)
+      :ok = drain_reports(ref)
+
+      result
+    end)
   end
 
   @doc """
