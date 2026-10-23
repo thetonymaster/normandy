@@ -191,6 +191,36 @@ defmodule NormandyTest.E2E.RunnerTest do
 
     assert table =~
              "usage (known): input=1000 output=200 cache_read=0 cache_write=0 est_cost=$0.12"
+
+    assert table =~ "(incomplete: cost unknown for 02_b)"
+  end
+
+  test "summary does not say incomplete when every ran scenario has a cost" do
+    table =
+      Runner.summary([
+        %{
+          id: "01_a",
+          status: :pass,
+          exit: 0,
+          calls: 8,
+          ms: 1_000,
+          log: "l",
+          reason: nil,
+          usage: %{input: 1, output: 1, cache_read: 0, cache_write: 0, cost: 0.01}
+        },
+        %{
+          id: "11_b",
+          status: :blocked,
+          exit: nil,
+          calls: 0,
+          ms: 0,
+          log: nil,
+          reason: "pg",
+          usage: nil
+        }
+      ])
+
+    refute table =~ "incomplete"
   end
 
   test "parse_result reads the usage block" do

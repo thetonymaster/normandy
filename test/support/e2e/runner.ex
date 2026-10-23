@@ -254,13 +254,22 @@ defmodule NormandyTest.E2E.Runner do
     known = results |> Enum.map(& &1.calls) |> Enum.filter(&is_integer/1) |> Enum.sum()
     usage = results |> Enum.map(& &1.usage) |> Enum.reject(&is_nil/1) |> Prices.sum()
 
+    # Prices.sum/1 counts an unknown cost as 0, so the total names the scenarios it misses.
+    unknown_cost =
+      for r <- results, r.status != :blocked, is_nil(r.usage) or is_nil(r.usage.cost), do: r.id
+
+    incomplete =
+      if unknown_cost == [],
+        do: "",
+        else: " (incomplete: cost unknown for #{Enum.join(unknown_cost, ", ")})"
+
     Enum.join(
       ["| scenario | result | exit | live calls | wall s | est $ |", "|---|---|---|---|---|---|"] ++
         rows ++
         [
           "",
           "total live calls (known): #{known} (suite cap #{@suite_cap})",
-          Prices.format(usage, "usage (known)")
+          Prices.format(usage, "usage (known)") <> incomplete
         ],
       "\n"
     )
