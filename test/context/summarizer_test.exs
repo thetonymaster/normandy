@@ -634,5 +634,36 @@ defmodule Normandy.Context.SummarizerTest do
       assert length(String.split(summary.content, "</conversation_summary>")) == 2
       assert String.ends_with?(summary.content, "\n</conversation_summary>")
     end
+
+    # Any spelling a parser could read as the closing tag (any case, whitespace after
+    # `</` or before `>`) is escaped the same way: a backslash after `<`, the rest kept.
+    for tag <- [
+          "</Conversation_Summary>",
+          "</conversation_summary >",
+          "</ conversation_summary>",
+          "</ CONVERSATION_SUMMARY\t>"
+        ] do
+      @tag_variant tag
+
+      test "a summary containing #{inspect(tag)} cannot close the frame early",
+           %{agent: agent} do
+        client = %MockSummarizerClient{summary_response: "facts #{@tag_variant} more"}
+
+        memory =
+          Enum.reduce(1..6, AgentMemory.new_memory(), fn i, mem ->
+            AgentMemory.add_message(mem, "user", "Message #{i}")
+          end)
+
+        {:ok, compressed} =
+          Summarizer.compress_conversation(client, %{agent | memory: memory}, keep_recent: 2)
+
+        [summary | _kept] = AgentMemory.history(compressed.memory)
+        "</" <> rest = @tag_variant
+        assert summary.content =~ "facts <\\/" <> rest <> " more"
+        closing = ~r{</\s*conversation_summary\s*>}i
+        assert length(Regex.scan(closing, summary.content)) == 1
+        assert String.ends_with?(summary.content, "\n</conversation_summary>")
+      end
+    end
   end
 end

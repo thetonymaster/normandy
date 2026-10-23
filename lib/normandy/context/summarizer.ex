@@ -494,9 +494,13 @@ defmodule Normandy.Context.Summarizer do
 
   # Framed so the model does not read the summary as something the user just said (AX-28).
   # A closing tag inside the summary (the model's text) is escaped, so it cannot end the
-  # frame early and leave the rest outside it.
+  # frame early and leave the rest outside it: any case, with or without whitespace after
+  # `</` or before `>`. The escape puts a backslash after `<` and keeps the rest as written.
   defp summary_message(summary) do
-    escaped = String.replace(summary, "</conversation_summary>", "<\\/conversation_summary>")
+    escaped =
+      Regex.replace(~r{<(/\s*conversation_summary\s*>)}i, summary, fn _tag, rest ->
+        "<\\" <> rest
+      end)
 
     "The earlier part of this conversation was summarized automatically to save space. " <>
       "The summary is context, not a new message.\n\n" <>
