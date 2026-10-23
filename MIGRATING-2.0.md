@@ -2200,6 +2200,11 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - **A resumed turn can miss the iteration-cap notice.** If `Turn.Server` stops while it appends the
   results of the last allowed tool round, the resumed turn makes its final call without the notice that
   no more tools will run. The answer is still produced.
+- **A paused turn's continuation keeps only its answer.** When `Turn.Server` continues a paused
+  MCP or server-tool turn, it stores the continuation as its answer only; the tool result (the
+  `mcp_tool_result` of the call the pause left open) is not stored, so it does not reach later
+  turns. Later requests leave that open call out, so the model sees its own summarised answer,
+  not what the tool returned.
 - **Memory-store bookkeeping.** `MemoryStore.InMemory` totals a namespace from all its documents on every
   limited write, so a write's cost grows with the namespace. `MemoryStore.Postgres` keeps a namespace's
   counter row, at zero, after its last document is deleted, until `delete_namespace/2`.
