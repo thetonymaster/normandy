@@ -179,6 +179,51 @@ defmodule Normandy.Coordination.StatefulContextTest do
       :ok = StatefulContext.update(ctx, "list", [], fn list -> list ++ [4] end)
       assert {:ok, [1, 2, 3, 4]} = StatefulContext.fetch(ctx, "list")
     end
+
+    test "a read during a slow update does not wait for it", %{context: ctx} do
+      StatefulContext.put(ctx, "k", 1)
+
+      updater =
+        Task.async(fn ->
+          StatefulContext.update(ctx, "slow", 0, fn n ->
+            Process.sleep(500)
+            n + 1
+          end)
+        end)
+
+      Process.sleep(20)
+
+      {elapsed_us, result} = :timer.tc(fn -> StatefulContext.fetch(ctx, "k") end)
+
+      assert result == {:ok, 1}
+      assert elapsed_us < 50_000, "fetch took #{div(elapsed_us, 1000)} ms behind an update"
+      assert :ok = Task.await(updater)
+      assert {:ok, 1} = StatefulContext.fetch(ctx, "slow")
+    end
+
+    test "concurrent updates of one key are not lost", %{context: ctx} do
+      1..50
+      |> Task.async_stream(fn _ ->
+        StatefulContext.update(ctx, "n", 0, fn n ->
+          Process.sleep(1)
+          n + 1
+        end)
+      end)
+      |> Stream.run()
+
+      assert {:ok, 50} = StatefulContext.fetch(ctx, "n")
+    end
+
+    test "a function that raises raises in the caller and leaves the context running",
+         %{context: ctx} do
+      StatefulContext.put(ctx, "k", 1)
+
+      assert_raise RuntimeError, "boom", fn ->
+        StatefulContext.update(ctx, "k", 0, fn _ -> raise "boom" end)
+      end
+
+      assert {:ok, 1} = StatefulContext.fetch(ctx, "k")
+    end
   end
 
   describe "to_map/1" do
