@@ -23,12 +23,12 @@ defmodule Normandy.Agents.Turn.Driver do
     @moduledoc """
     The injected side-effecting functions the driver consults per effect.
 
-    `validate` owns three things in `Normandy.Agents.BaseAgent`'s sets: the blank-answer
-    check (a blank chat answer is the `:invalid_output` `Normandy.LLMError`), a chat
-    agent's fallback to its tool round's text, and the run `:stop` `answer_source`
-    (`:tool_round` when `validate` turns a blank `chat_message` into a non-blank one). A
-    set with a custom `validate` gets none of them: a blank answer succeeds, and a
-    `validate` that fills a blank `chat_message` is reported as `:tool_round`.
+    `Normandy.Agents.BaseAgent`'s `validate` makes the blank-answer check (a blank chat
+    answer is the `:invalid_output` `Normandy.LLMError`) and a chat agent's fallback to
+    its tool round's text. A custom `validate` makes neither: a blank answer succeeds.
+    The shell (`BaseAgent.run/3`, `stream/3`, `Turn.Server`) marks the run `:stop`
+    `answer_source: :tool_round` around any `validate`, a custom one included, whenever
+    it turns a blank `chat_message` into a non-blank one.
     """
 
     @type acc :: term()
