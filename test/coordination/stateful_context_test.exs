@@ -225,16 +225,30 @@ defmodule Normandy.Coordination.StatefulContextTest do
         end)
 
       Process.sleep(10)
+      test = self()
 
       task =
         Task.async(fn ->
           StatefulContext.update(ctx, "hot", 0, fn _ ->
+            send(test, {:fun_ran_in, self()})
             Process.sleep(30)
             :updated
           end)
         end)
 
       assert :ok = Task.await(task, 5_000)
+
+      # The last run is the committed one: it ran in the context process (the fallback).
+      runs =
+        Stream.repeatedly(fn ->
+          receive do
+            {:fun_ran_in, pid} -> pid
+          after
+            0 -> nil
+          end
+        end)
+
+      assert List.last(Enum.take_while(runs, & &1)) == ctx
       Process.unlink(writer)
       Process.exit(writer, :kill)
     end

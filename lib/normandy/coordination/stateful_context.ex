@@ -184,7 +184,9 @@ defmodule Normandy.Coordination.StatefulContext do
   `fun` runs again on the new value. So `fun` can run more than once and must have
   no side effects. After #{@max_conflicts} lost races (a key written more often than
   `fun` takes) `fun` runs once inside the context process, serialized with every other
-  call, so every update finishes; a `fun` that raises there crashes the context.
+  call, so every update finishes. There a `fun` that raises crashes the context, and a `fun`
+  that calls this same context (`put/3`, `fetch/2`, `update/4`, `get_table/1`, ...) exits
+  with `:calling_self` and crashes it too.
 
   The caller reads the key from ETS directly (`get_table/1`), so `update/4` works only
   against a context on the caller's node.
