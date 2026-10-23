@@ -11,7 +11,6 @@ defmodule Normandy.Tools.Toolset do
   """
 
   alias Normandy.Components.ContentBlock.Describe
-  alias Normandy.Schema.Introspection
   alias Normandy.Schema.Wire
   alias Normandy.Tool
 
@@ -285,118 +284,6 @@ defmodule Normandy.Tools.Toolset do
         input_schema: Wire.encodable(Tool.input_schema(tool))
       }
     end)
-  end
-
-  @doc """
-  Gets metadata for a specific tool by name.
-
-  Returns detailed metadata including schema introspection if available.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator])
-      Normandy.Tools.Toolset.fetch_metadata(toolset, "calculator")
-      #=> {:ok, %{
-      #     name: "calculator",
-      #     description: "Performs arithmetic operations",
-      #     input_schema: %{...},
-      #     fields: [...]
-      #   }}
-
-  """
-  @spec fetch_metadata(t(), String.t()) :: {:ok, map()} | :error
-  def fetch_metadata(%__MODULE__{} = toolset, tool_name) do
-    case fetch(toolset, tool_name) do
-      {:ok, tool} ->
-        metadata = build_tool_metadata(tool)
-        {:ok, metadata}
-
-      :error ->
-        :error
-    end
-  end
-
-  @doc """
-  Gets metadata for all tools in the toolset.
-
-  Returns a list of metadata maps for each registered tool.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([tool1, tool2])
-      Normandy.Tools.Toolset.list_metadata(toolset)
-      #=> [%{name: "tool1", ...}, %{name: "tool2", ...}]
-
-  """
-  @spec list_metadata(t()) :: [map()]
-  def list_metadata(%__MODULE__{tools: tools}) do
-    tools
-    |> Map.values()
-    |> Enum.map(&build_tool_metadata/1)
-  end
-
-  @doc """
-  Gets schema introspection data for a tool if available.
-
-  Returns schema field information for schema-based tools, or nil for legacy tools.
-
-  ## Examples
-
-      toolset = Normandy.Tools.Toolset.new([calculator])
-      Normandy.Tools.Toolset.introspect_schema(toolset, "calculator")
-      #=> {:ok, [
-      #     %{name: :operation, type: :string, required: true, ...},
-      #     ...
-      #   ]}
-
-  """
-  @spec introspect_schema(t(), String.t()) :: {:ok, [map()]} | {:ok, nil} | :error
-  def introspect_schema(%__MODULE__{} = toolset, tool_name) do
-    case fetch(toolset, tool_name) do
-      {:ok, tool} ->
-        schema_info = get_schema_introspection(tool)
-        {:ok, schema_info}
-
-      :error ->
-        :error
-    end
-  end
-
-  # Private helper functions
-
-  defp build_tool_metadata(tool) do
-    base_metadata = %{
-      name: Tool.name(tool),
-      description: Tool.description(tool),
-      input_schema: Tool.input_schema(tool)
-    }
-
-    # Add schema introspection if available
-    case get_schema_introspection(tool) do
-      nil ->
-        base_metadata
-
-      fields ->
-        Map.put(base_metadata, :fields, fields)
-    end
-  end
-
-  # Field introspection for a tool that declared `input: Schema`; nil for a tool with a
-  # hand-written input_schema/1 map.
-  defp get_schema_introspection(%module{}) do
-    if Code.ensure_loaded?(module) and function_exported?(module, :__tool_input__, 0) do
-      input = module.__tool_input__()
-      required_fields = Introspection.get_required_fields(input)
-
-      Enum.map(Introspection.list_fields(input), fn field_name ->
-        %{
-          name: field_name,
-          type: Introspection.get_field_type(input, field_name),
-          required: field_name in required_fields,
-          metadata: Introspection.get_field_metadata(input, field_name)
-        }
-      end)
-    end
   end
 
   @doc """
