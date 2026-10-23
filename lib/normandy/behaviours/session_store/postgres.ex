@@ -24,14 +24,6 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     alias Normandy.Behaviours.SessionStore.Postgres.Schemas.{Entry, Session}
     alias Normandy.Components.AgentMemory
 
-    @doc """
-    Returns the first Repo of `config :normandy, :ecto_repos`, the handle Normandy's own
-    tests use. An application passes its Repo module as the handle instead. Raises
-    `ArgumentError` when `:ecto_repos` is not set for `:normandy`.
-    """
-    @spec new() :: module()
-    def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))
-
     @impl true
     def append_entry(repo, session_id, %{__struct__: _} = entry),
       do: backend(fn -> do_append_entry(repo, session_id, entry) end)

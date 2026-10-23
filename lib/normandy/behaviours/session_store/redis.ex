@@ -51,7 +51,8 @@ if Code.ensure_loaded?(Redix) do
                        url: [
                          type: :string,
                          type_doc: "`t:String.t/0`",
-                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                         required: true,
+                         doc: "The Redis URL."
                        ],
                        wait: [
                          type: {:tuple, [:non_neg_integer, :non_neg_integer]},
@@ -68,12 +69,16 @@ if Code.ensure_loaded?(Redix) do
                        ],
                        namespace: [
                          type: :string,
-                         doc: "The key namespace (default: a unique one)."
+                         required: true,
+                         doc: "The key namespace."
                        ]
                      )
 
     @doc """
-    Test/default handle: a Redix conn to the configured URL + a unique namespace.
+    Opens a Redix connection to `:url` and returns the store's handle: `{conn, namespace}`,
+    plus the wait settings (and the `WAIT` connections) when `:wait` asks for replicas.
+    `:url` and `:namespace` are required: a host passes its own, and `Normandy.Cluster`
+    builds the handle of the Redis combo.
 
     ## Options
 
@@ -83,16 +88,11 @@ if Code.ensure_loaded?(Redix) do
             {pid(), binary()}
             | {pid(), binary(), {non_neg_integer(), non_neg_integer()}}
             | {pid(), binary(), {pos_integer(), pos_integer()}, tuple()}
-    def new(opts \\ []) do
+    def new(opts) do
       opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
       check_wait_connections!(opts)
 
-      url =
-        Keyword.get(
-          opts,
-          :url,
-          Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
-        )
+      url = Keyword.fetch!(opts, :url)
 
       # Checked before connecting, so a bad setting starts nothing.
       _ =
@@ -100,7 +100,7 @@ if Code.ensure_loaded?(Redix) do
              do: check_wait!(wait, "SessionStore.Redis.new/1: :wait")
 
       {:ok, conn} = Redix.start_link(url)
-      ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")
+      ns = Keyword.fetch!(opts, :namespace)
 
       case Keyword.fetch(opts, :wait) do
         {:ok, {0, _timeout} = wait} ->

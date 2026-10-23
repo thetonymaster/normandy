@@ -16,10 +16,10 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
   import Normandy.Test.Eventually, only: [wait_until: 1]
 
   setup do
-    handle = Redis.new()
+    handle = Normandy.TestHandles.redis_registry()
 
     {:ok, raw} =
-      Redix.start_link(Application.get_env(:normandy, :redis_url, "redis://localhost:6379"))
+      Redix.start_link(Normandy.TestHandles.redis_url())
 
     {:ok, handle: handle, raw: raw}
   end
@@ -125,7 +125,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
   describe "an owner started with :url" do
     test "a handle fetched before the owner restarts still resolves a registered session" do
       name = :"redis_registry_restart_#{System.unique_integer([:positive])}"
-      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+      url = Normandy.TestHandles.redis_url()
       ns = "normandy_reg_#{System.unique_integer([:positive])}"
 
       start_supervised!(%{
@@ -159,7 +159,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
 
     test "an owner stopped normally and started again under its name takes the name back" do
       name = :"redis_registry_again_#{System.unique_integer([:positive])}"
-      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+      url = Normandy.TestHandles.redis_url()
 
       opts = [
         name: name,
@@ -185,7 +185,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisRefreshTest do
 
     test "a process the owner did not start, holding the derived name, is left alone and the start fails" do
       name = :"redis_registry_taken_#{System.unique_integer([:positive])}"
-      url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+      url = Normandy.TestHandles.redis_url()
       conn_name = Module.concat(name, Redix)
       holder = sleeper()
       true = Process.register(holder, conn_name)

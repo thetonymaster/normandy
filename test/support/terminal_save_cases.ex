@@ -5,7 +5,8 @@ defmodule Normandy.Test.TerminalSaveCases do
   the model again for a turn whose answer is stored.
 
   `use` it in a test module that also `use ExUnit.Case`, after any setup the backend
-  needs (the store's `new/0` must return its handle, as for the store contract):
+  needs (the store's `new/0` must return its handle, as for the store contract, or pass
+  `new: {module, function, args}` as the store contract does):
 
       use Normandy.Test.TerminalSaveCases, store: Normandy.Behaviours.SessionStore.ETS
 
@@ -66,21 +67,24 @@ defmodule Normandy.Test.TerminalSaveCases do
 
   defmacro __using__(opts) do
     store = Keyword.fetch!(opts, :store)
+    new = Keyword.get(opts, :new)
 
-    quote bind_quoted: [store: store] do
+    quote bind_quoted: [store: store, new: new] do
       alias Normandy.Agents.Turn
       alias Normandy.Behaviours.SessionRegistry.Native
       alias Normandy.Test.TerminalSaveCases
       alias Normandy.Test.TerminalSaveStore
 
       @terminal_save_backend store
+      @terminal_save_new new || {store, :new, []}
 
       describe "a refused terminal save (#{inspect(store)})" do
         # The refusals log the expected warning; keep it out of the backend's test output.
         @describetag :capture_log
 
         setup do
-          inner = {@terminal_save_backend, @terminal_save_backend.new()}
+          {mod, fun, args} = @terminal_save_new
+          inner = {@terminal_save_backend, apply(mod, fun, args)}
 
           {:ok,
            inner: inner,

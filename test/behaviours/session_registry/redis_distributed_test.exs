@@ -14,7 +14,7 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisDistributedTest do
 
   setup do
     unless Node.alive?(), do: {:ok, _} = :net_kernel.start([:"primary@127.0.0.1", :longnames])
-    url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+    url = Normandy.TestHandles.redis_url()
     ns = "reg_dist_#{System.unique_integer([:positive])}"
     {:ok, url: url, ns: ns}
   end

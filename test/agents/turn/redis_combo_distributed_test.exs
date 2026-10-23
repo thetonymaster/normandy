@@ -17,8 +17,8 @@ defmodule Normandy.Agents.Turn.RedisComboTest do
   end
 
   test "reaper starts only eager, unregistered, non-terminal sessions over Redis backends" do
-    store = Store.new()
-    reg = Reg.new()
+    store = Normandy.TestHandles.redis_session_store()
+    reg = Normandy.TestHandles.redis_registry()
 
     # eager + non-terminal + unregistered  -> SHOULD be reaped
     :ok = Store.save_config_template(store, "eager_live", %{resume_policy: :eager})

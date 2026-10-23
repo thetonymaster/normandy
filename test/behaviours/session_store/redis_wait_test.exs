@@ -11,18 +11,20 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitTest do
   alias Normandy.Components.AgentMemory.Entry
 
   setup do
-    {:ok, store: Redis.new(wait: {1, 50})}
+    {:ok, store: Normandy.TestHandles.redis_session_store(wait: {1, 50})}
   end
 
   test "new/1 keeps the wait setting and its wait connections in the handle", %{store: store} do
     assert {conn, _ns, {1, 50}, wait_conns} = store
     assert tuple_size(wait_conns) == 4
     refute conn in Tuple.to_list(wait_conns)
-    assert {_conn, _ns, {1, 50}, {_one}} = Redis.new(wait: {1, 50}, wait_connections: 1)
+
+    assert {_conn, _ns, {1, 50}, {_one}} =
+             Normandy.TestHandles.redis_session_store(wait: {1, 50}, wait_connections: 1)
   end
 
   test "a wait of 0 replicas opens no wait connections" do
-    assert {_conn, _ns, {0, 0}} = Redis.new(wait: {0, 0})
+    assert {_conn, _ns, {0, 0}} = Normandy.TestHandles.redis_session_store(wait: {0, 0})
   end
 
   test "an entry append fails when the replica wait is unmet", %{store: store} do

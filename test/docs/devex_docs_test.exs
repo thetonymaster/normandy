@@ -57,29 +57,10 @@ defmodule Normandy.Docs.DevexDocsTest do
       assert moduledoc(Normandy.Behaviours.MemoryStore.Postgres) =~
                "`{Normandy.Behaviours.MemoryStore.Postgres, MyApp.Repo}`"
     end
-
-    test "both new/0 docs say an application passes its Repo instead" do
-      for mod <- [
-            Normandy.Behaviours.SessionStore.Postgres,
-            Normandy.Behaviours.MemoryStore.Postgres
-          ] do
-        assert function_doc(mod, :new, 0) =~
-                 "An application passes its Repo module as the handle instead."
-      end
-    end
   end
 
   defp moduledoc(mod) do
     {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(mod)
     String.replace(doc, ~r/\s+/, " ")
-  end
-
-  defp function_doc(mod, name, arity) do
-    {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(mod)
-
-    Enum.find_value(docs, fn
-      {{:function, ^name, ^arity}, _, _, %{"en" => doc}, _} -> String.replace(doc, ~r/\s+/, " ")
-      _ -> nil
-    end)
   end
 end

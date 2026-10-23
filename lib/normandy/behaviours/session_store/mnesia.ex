@@ -141,19 +141,14 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   @impl true
   def fork(%{entries: et, sessions: st}, session_id, from_entry_id) do
     txn(fn ->
-      case :mnesia.read({st, session_id}) do
-        [] ->
-          :mnesia.abort(:no_such_session)
-
-        [{_, ^session_id, %{head_id: head}}] ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if on_chain?(et, head, from_entry_id) do
-            new_id = UUID.uuid4()
-            :mnesia.write({st, new_id, %{@empty_session | head_id: from_entry_id}})
-            new_id
-          else
-            :mnesia.abort(:no_such_entry)
-          end
+      with [{_, ^session_id, %{head_id: head}}] <- :mnesia.read({st, session_id}),
+           true <- on_chain?(et, head, from_entry_id) do
+        new_id = UUID.uuid4()
+        :mnesia.write({st, new_id, %{@empty_session | head_id: from_entry_id}})
+        new_id
+      else
+        [] -> :mnesia.abort(:no_such_session)
+        false -> :mnesia.abort(:no_such_entry)
       end
     end)
   end

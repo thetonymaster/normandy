@@ -150,7 +150,7 @@ defmodule Normandy.AppEnvConfigTest do
 
     test "applies to a store handle without its own wait" do
       put_env(:redis_wait, {1, 50})
-      store = Redis.new()
+      store = Normandy.TestHandles.redis_session_store()
 
       # The test Redis has no replicas, so a wait for one is never met.
       assert {:error, {:wait_unmet, 0, 1}} =

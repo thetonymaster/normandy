@@ -14,7 +14,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitPoolTest do
 
   setup do
     {:ok, raw} =
-      Redix.start_link(Application.get_env(:normandy, :redis_url, "redis://localhost:6379"))
+      Redix.start_link(Normandy.TestHandles.redis_url())
 
     {:ok, raw: raw}
   end
@@ -39,7 +39,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitPoolTest do
 
   test "a blocked WAIT holds neither reads nor another session's wait connection", %{raw: raw} do
     {conn, _ns, {1, 60_000}, {wait0, wait1}} =
-      store = Redis.new(wait: {1, 60_000}, wait_connections: 2)
+      store = Normandy.TestHandles.redis_session_store(wait: {1, 60_000}, wait_connections: 2)
 
     {blocked_sid, other_sid} = sessions_on_each_conn()
     id0 = client_id(wait0)
@@ -74,7 +74,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitPoolTest do
 
   test "one session's waited writes always use the same wait connection", %{raw: raw} do
     {_conn, _ns, {1, 60_000}, wait_conns} =
-      store = Redis.new(wait: {1, 60_000}, wait_connections: 3)
+      store = Normandy.TestHandles.redis_session_store(wait: {1, 60_000}, wait_connections: 3)
 
     expected = elem(wait_conns, :erlang.phash2("s-same", 3))
     id = client_id(expected)
@@ -92,14 +92,16 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitPoolTest do
   end
 
   test "every waited write runs wholly on the session's wait connection, never on conn" do
-    url = Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
+    url = Normandy.TestHandles.redis_url()
     {:ok, dead} = Redix.start_link(url)
     Process.unlink(dead)
     ref = Process.monitor(dead)
     :ok = GenServer.stop(dead)
     assert_receive {:DOWN, ^ref, :process, ^dead, _reason}
 
-    {_conn, ns, wait, wait_conns} = Redis.new(wait: {1, 50}, wait_connections: 2)
+    {_conn, ns, wait, wait_conns} =
+      Normandy.TestHandles.redis_session_store(wait: {1, 50}, wait_connections: 2)
+
     store = {dead, ns, wait, wait_conns}
 
     # No replica: each write reaches its WAIT on a wait connection and finds it unmet. A

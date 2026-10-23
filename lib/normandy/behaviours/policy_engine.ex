@@ -12,8 +12,8 @@ defmodule Normandy.Behaviours.PolicyEngine do
     * `{:deny, info}` — block; `info` may carry `:reason`, `:rule_id`,
       `:rationale`. The rationale is fed back into the model context by the
       chokepoint, so the model learns *why* a constraint exists.
-    * `{:needs_approval, info}` — park for human approval (interim-tagged in
-      Phase 1; real parking lands in Phase 4).
+    * `{:needs_approval, info}` — park for human approval (`Turn.Server`
+      parks the call until it is approved or rejected).
 
   The default impl `AllowAll` preserves current (allow-everything) behavior.
   """

@@ -138,5 +138,7 @@ defmodule Normandy.Behaviours.MemoryStore.PostgresTest do
     assert totals(ns) == [[5, 1]]
   end
 
-  use Normandy.Test.MemoryStoreContract, impl: Normandy.Behaviours.MemoryStore.Postgres
+  use Normandy.Test.MemoryStoreContract,
+    impl: Normandy.Behaviours.MemoryStore.Postgres,
+    new: {Normandy.TestHandles, :postgres_repo, []}
 end

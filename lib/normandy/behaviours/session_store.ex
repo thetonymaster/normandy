@@ -4,18 +4,19 @@ defmodule Normandy.Behaviours.SessionStore do
 
   The memory-backing half (`append_entry`, `history`, `fork`) persists the
   parent-linked entry graph keyed by `session_id`. The turn-state half
-  (`save_turn_state/4`, `load_turn_state/2`) round-trips an **opaque term** — defined
-  and contract-tested in Phase 3 but with no real consumer until Phase 4's
-  `%TurnState{}` (suspendable turn / passivation).
+  (`save_turn_state/4`, `load_turn_state/2`) round-trips an **opaque term**, which
+  `Turn.Server` uses to suspend and resume a turn (passivation).
 
-  `handle` is impl-specific (a pid for `InMemory`, a table for `ETS`). Each impl
-  exposes `new/0` (or `new/1`) returning a fresh handle for tests and callers.
+  `handle` is impl-specific (a pid for `InMemory`, a table for `ETS`). The in-process
+  impls expose `new/0` (or `new/1`) returning a fresh handle; `Redis.new/1` requires
+  `:url` and `:namespace`; for `Postgres` the handle is the host's Repo module (no
+  constructor).
 
   Every impl must pass the ExUnit suite `Normandy.Test.SessionStoreContract`.
 
   This seam persists the **full** entry graph: it deliberately does not apply
   `max_messages` windowing (that is a read-time / agent-runtime concern, applied
-  by the turn loop in Phase 4, not at the persistence layer).
+  by the turn loop, not at the persistence layer).
 
   Missing-session semantics are asymmetric by intent: `history/2` is lenient and
   returns `{:ok, []}` for an unknown session, while `fork/3` is strict and returns

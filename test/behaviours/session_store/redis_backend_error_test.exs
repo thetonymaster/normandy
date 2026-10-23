@@ -34,7 +34,7 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitConfigTest do
   # the connection is shared: every later command would queue behind it.
   test "new/1 rejects a replica wait with no timeout" do
     assert_raise ArgumentError, ~r/:wait .* timeout_ms must be positive/, fn ->
-      Redis.new(wait: {1, 0})
+      Normandy.TestHandles.redis_session_store(wait: {1, 0})
     end
   end
 
@@ -42,12 +42,14 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitConfigTest do
     assert_raise ArgumentError,
                  "Normandy.Behaviours.SessionStore.Redis.new/1: :wait_connections needs a " <>
                    ":wait of one replica or more, got: no :wait",
-                 fn -> Redis.new(wait_connections: 2) end
+                 fn -> Normandy.TestHandles.redis_session_store(wait_connections: 2) end
 
     assert_raise ArgumentError,
                  "Normandy.Behaviours.SessionStore.Redis.new/1: :wait_connections needs a " <>
                    ":wait of one replica or more, got: a :wait of 0 replicas",
-                 fn -> Redis.new(wait: {0, 10}, wait_connections: 2) end
+                 fn ->
+                   Normandy.TestHandles.redis_session_store(wait: {0, 10}, wait_connections: 2)
+                 end
   end
 
   test "a handle whose wait connections are not a non-empty tuple raises on the write" do

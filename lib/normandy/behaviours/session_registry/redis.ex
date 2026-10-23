@@ -70,11 +70,13 @@ if Code.ensure_loaded?(Redix) do
                        url: [
                          type: :string,
                          type_doc: "`t:String.t/0`",
-                         doc: "The Redis URL (default: `config :normandy, :redis_url`)."
+                         required: true,
+                         doc: "The Redis URL."
                        ],
                        namespace: [
                          type: :string,
-                         doc: "The key namespace (default: a unique one)."
+                         required: true,
+                         doc: "The key namespace."
                        ]
                      )
 
@@ -199,15 +201,15 @@ if Code.ensure_loaded?(Redix) do
     # --- lifecycle ---
 
     @doc """
-    Test/default handle: starts an owner GenServer with its own Redix connection and
-    returns its handle.
+    Starts an owner GenServer with its own Redix connection to `:url` and returns its
+    handle. `:url` and `:namespace` are required.
 
     ## Options
 
     #{Options.docs(@new_opts_schema)}
     """
     @spec new(keyword()) :: Handle.t()
-    def new(opts \\ []) do
+    def new(opts) do
       opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
 
       name =
@@ -215,14 +217,9 @@ if Code.ensure_loaded?(Redix) do
           :"redis_registry_#{System.unique_integer([:positive])}"
         end)
 
-      url =
-        Keyword.get(
-          opts,
-          :url,
-          Application.get_env(:normandy, :redis_url, "redis://localhost:6379")
-        )
+      url = Keyword.fetch!(opts, :url)
 
-      ns = Keyword.get(opts, :namespace, "normandy_reg_#{UUID.uuid4()}")
+      ns = Keyword.fetch!(opts, :namespace)
       {:ok, _pid} = start_link(name: name, url: url, namespace: ns)
       fetch_handle(name)
     end

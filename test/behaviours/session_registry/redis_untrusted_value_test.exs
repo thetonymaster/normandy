@@ -10,10 +10,10 @@ defmodule Normandy.Behaviours.SessionRegistry.RedisUntrustedValueTest do
 
   setup do
     ns = "normandy_reg_#{System.unique_integer([:positive])}"
-    owner = Redis.new(namespace: ns)
+    owner = Normandy.TestHandles.redis_registry(namespace: ns)
 
     {:ok, conn} =
-      Redix.start_link(Application.get_env(:normandy, :redis_url, "redis://localhost:6379"))
+      Redix.start_link(Normandy.TestHandles.redis_url())
 
     {:ok, owner: owner, conn: conn, ns: ns}
   end
