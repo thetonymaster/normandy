@@ -2,6 +2,7 @@ defmodule Normandy.Hooks.ToolHooksTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.{BaseAgent, Dispatch}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Behaviours.Config
   alias Normandy.Components.{ToolCall, ToolResult}
   alias Normandy.Test.{ContextProbe, FakeClient, TelemetryCapture}
@@ -34,7 +35,7 @@ defmodule Normandy.Hooks.ToolHooksTest do
   end
 
   defp dispatch(agent, call \\ call()),
-    do: Dispatch.dispatch_one(agent, call, BaseAgent.base_agent_pipeline(agent))
+    do: Dispatch.dispatch_one(agent, call, AgentHandlers.base_agent_pipeline(agent))
 
   defp probe(tag, opts \\ []), do: {Probe, [notify: TestHooks.sink(), tag: tag] ++ opts}
 

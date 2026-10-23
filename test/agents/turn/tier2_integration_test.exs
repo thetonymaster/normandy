@@ -3,7 +3,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
   use ExUnit.Case, async: true
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn.Session
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -34,7 +34,7 @@ defmodule Normandy.Agents.Turn.Tier2IntegrationTest do
       template_id: "k",
       resume_policy: :lazy,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Normandy.Test.TurnConfig.Resp{content: "ok"} end
       }
     ]

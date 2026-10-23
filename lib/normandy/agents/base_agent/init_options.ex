@@ -1,13 +1,21 @@
 defmodule Normandy.Agents.BaseAgent.InitOptions do
   @moduledoc false
-  # The `BaseAgent.init/1` option schema, its custom checks, and hints for option names a
-  # caller might reasonably try. `Normandy.DSL.Agent`'s generated `new/1` uses the same
-  # definition (without defaults), so both entry points accept the same options.
+  # The `BaseAgent.init/1` option schema, its custom checks, hints for option names a
+  # caller might reasonably try, and the config checks init/1 makes after the schema
+  # (check_init!/1; ConfigTemplate.rebuild/3 and AgentPool reuse them).
+  # `Normandy.DSL.Agent`'s generated `new/1` uses the same definition (without
+  # defaults), so both entry points accept the same options.
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Model
+  alias Normandy.Behaviours.Compactor.WindowManager, as: WindowCompactor
+  alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.Hooks
+  alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.OpenAICompatibleAdapter
   alias Normandy.Options
   alias Normandy.Resilience.Retry
 
@@ -319,7 +327,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   @doc false
   # The clamp is BaseAgent's (the DSL also calls it at compile time): one definition.
   def max_tool_concurrency(n) when is_integer(n),
-    do: {:ok, BaseAgent.normalize_max_tool_concurrency(n)}
+    do: {:ok, normalize_max_tool_concurrency(n)}
 
   def max_tool_concurrency(other), do: {:error, "expected an integer, got: #{inspect(other)}"}
 
@@ -382,4 +390,157 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
 
   defp option_names([key]), do: "option #{inspect(key)}"
   defp option_names(keys), do: "options #{inspect(keys)}"
+
+  @doc false
+  # Every check init/1 makes, with no side effect (no process started): the options schema,
+  # then the compaction, client-option, policy and hook checks. Returns the validated
+  # options. AgentPool.start_link/1 calls it in its caller so a bad :agent_config raises
+  # there, not inside the pool's init/1. Messages name init/1.
+  @spec check_init!(keyword() | map()) :: keyword()
+  def check_init!(opts) do
+    opts = validate!(opts)
+    client = Keyword.fetch!(opts, :client)
+    behaviours = Keyword.fetch!(opts, :behaviours)
+
+    _ =
+      validate_compaction_config!(
+        %BaseAgentConfig{client: client, behaviours: behaviours},
+        {BaseAgent, :init, 1}
+      )
+
+    _ = validate_client_options!(client)
+    :ok = validate_policy_opts!(behaviours)
+    :ok = validate_hooks!(behaviours)
+    opts
+  end
+
+  @doc false
+  # init/1 and ConfigTemplate.rebuild/3: ModelCatalog.Static logs its deprecation once
+  # per VM. Only the module is checked, never the catalog's opts.
+  @spec warn_deprecated_catalog(Config.t() | nil) :: :ok
+  def warn_deprecated_catalog(%Config{model_catalog: {ModelCatalog.Static, _opts}}),
+    do: ModelCatalog.Static.warn_deprecated()
+
+  def warn_deprecated_catalog(_behaviours), do: :ok
+
+  # Coerce inbound `:max_tool_concurrency` into the `pos_integer()` shape the
+  # struct's typespec promises (Dispatch.run_batch/3 reads it as is). Integers < 1
+  # are clamped to 1. Non-integers raise — silently coercing `"4"` or
+  # `4.0` to 1 hides a real config bug from the caller. Public so the DSL
+  # `__before_compile__` quote can reuse it for compile-time validation.
+  @doc false
+  def normalize_max_tool_concurrency(n) when is_integer(n) and n >= 1, do: n
+
+  def normalize_max_tool_concurrency(n) when is_integer(n) and n < 1, do: 1
+
+  def normalize_max_tool_concurrency(other) do
+    raise ArgumentError,
+          ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
+  end
+
+  @doc false
+  # The compactor ref of a config; Compactor.NoOp when none is set.
+  def compactor_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{compactor: ref}})
+      when not is_nil(ref),
+      do: ref
+
+  def compactor_ref(_config), do: {Normandy.Behaviours.Compactor.NoOp, []}
+
+  @doc false
+  # Fail at configuration time on an invalid adapter `client.options`, instead of
+  # on every call (where the retry policy would wait through its backoff first).
+  @spec validate_client_options!(term()) :: term()
+  def validate_client_options!(%Normandy.LLM.ClaudioAdapter{} = client),
+    do: ClaudioAdapter.validate_options!(client)
+
+  def validate_client_options!(%OpenAICompatibleAdapter{} = client),
+    do: OpenAICompatibleAdapter.validate_options!(client)
+
+  def validate_client_options!(client), do: client
+
+  # A policy whose module checks its opts (the optional
+  # PolicyEngine.validate_opts!/1) raises here, where the config is made.
+  defp validate_policy_opts!(%Config{policy: {mod, opts}}) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :validate_opts!, 1),
+      do: mod.validate_opts!(opts),
+      else: :ok
+  end
+
+  defp validate_policy_opts!(_behaviours), do: :ok
+
+  # Hook entries are checked where the config is made, like the policy's opts.
+  defp validate_hooks!(%Config{hooks: hooks}),
+    do: Hooks.validate_entries!(hooks)
+
+  defp validate_hooks!(_behaviours), do: :ok
+
+  @doc false
+  # A real compactor sizes against the model's context window. With no pinned
+  # :context_window and the default catalog (the Anthropic Models API), that lookup
+  # needs a ClaudioAdapter client; any other client makes every compaction raise
+  # mid-turn, after tools ran. Called from init/1 and ConfigTemplate.rebuild/3 so
+  # the mistake surfaces where the config is made; `entry` is that public function's
+  # {module, function, arity}, which prefixes every message. Never inspects the client
+  # value (it may hold an API key), only its struct name, nor the compactor's opts.
+  # Takes any %BaseAgentConfig{}: init/1 validates a partial one (client + behaviours only).
+  @spec validate_compaction_config!(BaseAgentConfig.partial(), {module(), atom(), arity()}) ::
+          BaseAgentConfig.partial()
+  def validate_compaction_config!(%BaseAgentConfig{} = config, {mod, fun, arity} = entry) do
+    prefix = "#{inspect(mod)}.#{fun}/#{arity}:"
+    {compactor, compactor_opts} = compactor_ref(config)
+    {catalog, _catalog_opts} = catalog_ref(config)
+
+    unless Keyword.keyword?(compactor_opts) do
+      raise ArgumentError,
+            "#{prefix} opts for compactor #{inspect(compactor)} must be a keyword list, got " <>
+              Describe.type_of(compactor_opts)
+    end
+
+    if compactor == Normandy.Behaviours.Compactor.WindowManager and
+         Keyword.has_key?(compactor_opts, :max_tokens) do
+      raise ArgumentError,
+            "#{prefix} the :max_tokens option " <>
+              "of Normandy.Behaviours.Compactor.WindowManager was renamed to :context_window " <>
+              "in 2.0; see MIGRATING-2.0.md §22"
+    end
+
+    _ =
+      if compactor == WindowCompactor,
+        do: WindowCompactor.validate_opts!(compactor_opts, entry)
+
+    needs_api_lookup? =
+      compactor != Normandy.Behaviours.Compactor.NoOp and
+        not Keyword.has_key?(compactor_opts, :context_window) and
+        catalog in [
+          Normandy.Behaviours.ModelCatalog.ModelsAPI,
+          Normandy.Behaviours.ModelCatalog.Static
+        ]
+
+    if needs_api_lookup? and not match?(%Normandy.LLM.ClaudioAdapter{}, config.client) do
+      raise ArgumentError,
+            "#{prefix} compactor #{inspect(compactor)} needs the model's " <>
+              "context window, and the model catalog #{inspect(catalog)} reads it from the " <>
+              "Anthropic Models API, which needs a Normandy.LLM.ClaudioAdapter client; got " <>
+              "#{client_kind(config.client)}. Pin the window with the compactor's :context_window " <>
+              "option, or configure a model_catalog that works with this client."
+    end
+
+    config
+  end
+
+  defp client_kind(%{__struct__: mod}), do: "a #{inspect(mod)}"
+
+  defp client_kind(nil), do: "nil"
+
+  defp client_kind(other) when is_map(other), do: "a plain map"
+
+  defp client_kind(_other), do: "a non-struct value"
+
+  @doc false
+  # The model catalog ref of a config; ModelCatalog.ModelsAPI when none is set.
+  def catalog_ref(%BaseAgentConfig{behaviours: %Normandy.Behaviours.Config{model_catalog: ref}})
+      when not is_nil(ref),
+      do: ref
+
+  def catalog_ref(_config), do: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
 end

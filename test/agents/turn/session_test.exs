@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.Turn.SessionTest do
   use ExUnit.Case, async: true
   import Normandy.Test.Eventually
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -275,7 +275,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -302,7 +302,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
         registry: {Native, reg},
         supervisor: sup,
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn c, _s, _r ->
               send(test_pid, {:llm_memory, c.memory})
               %Resp{content: "ok"}
@@ -381,7 +381,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -583,7 +583,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Horde, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -652,7 +652,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # Stub call_llm: capture the config memory at call time, reply via message.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn c, _s, _r ->
           send(test_pid, {:captured_memory, c.memory})
           %TurnConfig.Resp{content: "ok"}
@@ -709,7 +709,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
         supervisor: sup,
         template_provider: {Catalog, cat},
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %TurnConfig.Resp{content: "from template"} end
         }
       ]
@@ -753,7 +753,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # message, it answers.
     defp probe_handlers do
       %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn c, _s, _r ->
             case c.memory |> AgentMemory.messages() |> List.last() do
               %{role: "tool"} ->

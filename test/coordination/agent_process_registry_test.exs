@@ -9,7 +9,7 @@ defmodule Normandy.Coordination.AgentProcessRegistryTest do
 
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
@@ -37,7 +37,10 @@ defmodule Normandy.Coordination.AgentProcessRegistryTest do
   end
 
   defp handlers(text) do
-    %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
+    %{
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: text} end
+    }
   end
 
   defp start_run_stop do

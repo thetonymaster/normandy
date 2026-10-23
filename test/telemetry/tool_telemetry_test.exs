@@ -2,6 +2,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.{BaseAgent, Dispatch}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Components.{ToolCall, ToolResult}
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Test.FakeTool
@@ -77,7 +78,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
       attach(@span, config.name)
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "Oslo"}}
 
-      Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
+      Dispatch.dispatch_one(config, call, AgentHandlers.base_agent_pipeline(config))
 
       for phase <- [:start, :stop] do
         assert_received {:event, [:normandy, :tool, :execute, ^phase], _,
@@ -103,7 +104,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
         input: %{"operation" => "divide", "a" => 1, "b" => 0}
       }
 
-      result = Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
+      result = Dispatch.dispatch_one(config, call, AgentHandlers.base_agent_pipeline(config))
 
       assert %ToolResult{is_error: true, output: "Cannot divide by zero"} = result
 
@@ -117,7 +118,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
       call = %ToolCall{id: "c6", name: "raising_description", input: %{}}
 
       assert %ToolResult{tool_call_id: "c6", output: "ran", is_error: false} =
-               Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
+               Dispatch.dispatch_one(config, call, AgentHandlers.base_agent_pipeline(config))
 
       for phase <- [:start, :stop] do
         assert_received {:event, [:normandy, :tool, :execute, ^phase], _,
@@ -138,7 +139,7 @@ defmodule NormandyTest.Telemetry.ToolTelemetryTest do
       attach(@span, config.name)
       call = %ToolCall{id: "c3", name: "search", input: %{}}
 
-      Dispatch.dispatch_one(config, call, BaseAgent.base_agent_pipeline(config))
+      Dispatch.dispatch_one(config, call, AgentHandlers.base_agent_pipeline(config))
 
       assert_received {:event, [:normandy, :tool, :execute, :start], _,
                        %{

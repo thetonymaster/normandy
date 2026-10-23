@@ -76,7 +76,7 @@ defmodule Normandy.AppEnvConfigTest do
       assert %{"decoded_by" => "adapter"} =
                Dispatch.normalize_tool_input(~s({"a": 1}))
 
-      assert BaseAgent.unwrap_llm_content(~s({"chat_message": "x"})) ==
+      assert AgentMemory.unwrap_llm_content(~s({"chat_message": "x"})) ==
                "via adapter"
 
       events = [

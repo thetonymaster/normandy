@@ -5,6 +5,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   import ExUnit.CaptureLog
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -45,7 +46,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
   # handlers whose call_llm always returns a no-tools final response.
   defp final_handlers(text \\ "ok") do
-    %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
+    %{
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: text} end
+    }
   end
 
   # Supplied infra: a fresh store, registry, and supervisor for one test.
@@ -88,7 +92,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       end
     end
 
-    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
   end
 
   defp approval_config do
@@ -175,7 +179,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       parent = self()
 
       slow_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r ->
             send(parent, :llm_started)
             Process.sleep(500)
@@ -226,7 +230,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       infra = supplied_infra()
 
       crash_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> raise "boom" end
       }
 
@@ -382,7 +386,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       infra = supplied_infra()
 
       crash_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | # exit/1 (not raise) so the abnormal worker exit doesn't spew an
           # exception crash-report into CI output; still yields a non-normal
           # :DOWN reason and thus a :task_down TurnError.

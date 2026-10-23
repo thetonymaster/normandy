@@ -195,8 +195,9 @@ defmodule Normandy.Agents.Turn.Server do
   """
   @behaviour :gen_statem
 
-  alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
+  alias Normandy.Agents.{Dispatch, Turn}
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
@@ -611,7 +612,7 @@ defmodule Normandy.Agents.Turn.Server do
       subscriber: Keyword.get(opts, :subscriber),
       # Unwrapped: before_llm and after_compact run apart from the LLM call and the
       # compaction (call_llm_event/3, compact_event/3), so their crashes are told apart.
-      handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
+      handlers: Keyword.get(opts, :handlers) || AgentHandlers.non_streaming_handlers(),
       turn_state: turn_state,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
@@ -1154,7 +1155,7 @@ defmodule Normandy.Agents.Turn.Server do
   # TurnError, instead of crashing the session (and, through restart intensity,
   # Turn.Supervisor).
   defp admit(data, user_input) do
-    {:ok, BaseAgent.admit_input!(data.config, user_input)}
+    {:ok, AgentHandlers.admit_input!(data.config, user_input)}
   rescue
     e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
       {:rejected, e}
@@ -1181,7 +1182,7 @@ defmodule Normandy.Agents.Turn.Server do
          {:ok, repairs} <- close_batch(data, missing),
          {:ok, config} <-
            call_handler(data, :append, fn ->
-             BaseAgent.begin_turn(last_config(repairs, data.config), admitted)
+             AgentHandlers.begin_turn(last_config(repairs, data.config), admitted)
            end) do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
@@ -1221,12 +1222,12 @@ defmodule Normandy.Agents.Turn.Server do
     do: data
 
   defp paused_steering_state(data, msg) do
-    config = BaseAgent.with_default_output_schema(data.config)
+    config = AgentHandlers.with_default_output_schema(data.config)
 
     state =
       Turn.new(
         max_iterations: config.max_tool_iterations,
-        response_model: BaseAgent.turn_response_model(config),
+        response_model: AgentHandlers.turn_response_model(config),
         output_schema: config.output_schema
       )
 
@@ -1259,14 +1260,14 @@ defmodule Normandy.Agents.Turn.Server do
   # Memory must end up holding exactly what reached the store: a failed write keeps
   # the config as of the last stored result, so the next turn repairs only the rest.
   defp start_turn(from, {user_input, caller_ctx}, config, repairs, data) do
-    config = BaseAgent.with_default_output_schema(config)
+    config = AgentHandlers.with_default_output_schema(config)
 
     with {:ok, repaired} <- persist_interrupted(data, repairs),
          :ok <- persist_user_message(data, config, user_input, repaired) do
       state =
         Turn.new(
           max_iterations: config.max_tool_iterations,
-          response_model: BaseAgent.turn_response_model(config),
+          response_model: AgentHandlers.turn_response_model(config),
           output_schema: config.output_schema
         )
 
@@ -1893,9 +1894,14 @@ defmodule Normandy.Agents.Turn.Server do
   # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22),
   # unless this turn's last tool-calling response carried text (the handler's validate).
   # An answer validate took from the tool round is marked on the run's usage
-  # accumulator (BaseAgent.validate_marking_answer/4), for the run :stop's answer_source.
+  # accumulator (AgentHandlers.validate_marking_answer/4), for the run :stop's answer_source.
   defp validate_output(data, value) do
-    BaseAgent.validate_marking_answer(data.handlers.validate, data.config, value, run_usage(data))
+    AgentHandlers.validate_marking_answer(
+      data.handlers.validate,
+      data.config,
+      value,
+      run_usage(data)
+    )
   rescue
     e in Normandy.Schema.ValidationError -> {:output_invalid, e}
     e in Normandy.LLMError -> {:output_unparsed, e}
@@ -2128,7 +2134,7 @@ defmodule Normandy.Agents.Turn.Server do
   # (Dispatch.run_batch/3, with the slim task config); collect held results.
   # If any call needs approval, park the batch; else hand back ordered results.
   defp dispatch(%Data{config: config}, calls) do
-    pipeline = BaseAgent.base_agent_pipeline(config)
+    pipeline = AgentHandlers.base_agent_pipeline(config)
 
     classified =
       calls
@@ -2161,7 +2167,7 @@ defmodule Normandy.Agents.Turn.Server do
   # input validation again, deterministic, no policy). NOT re-classify — re-running
   # policy would re-park. Concurrency mirrors dispatch/2.
   defp execute_approved(%Data{config: config}, calls) do
-    pipeline = BaseAgent.base_agent_pipeline(config)
+    pipeline = AgentHandlers.base_agent_pipeline(config)
 
     Dispatch.run_batch(config, calls, fn task_config, %ToolCall{} = call ->
       Dispatch.execute_approved(task_config, call, pipeline)

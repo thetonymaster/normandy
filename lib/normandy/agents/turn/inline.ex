@@ -16,7 +16,7 @@ defmodule Normandy.Agents.Turn.Inline do
   #
   # Lifecycle hooks (`Normandy.Behaviours.Hooks`) have no site here: this shell calls only
   # its `deps`. Tool hooks run when `:dispatch` dispatches through an agent pipeline
-  # (`Dispatch.dispatch_one/3` with `BaseAgent.base_agent_pipeline/1`); no other event runs.
+  # (`Dispatch.dispatch_one/3` with `BaseAgent.Handlers.base_agent_pipeline/1`); no other event runs.
   #
   # `deps` is a map of side-effecting functions:
   #   * `:call_llm` — `fn request -> {:ok, response} | {:error, reason} end` (required)

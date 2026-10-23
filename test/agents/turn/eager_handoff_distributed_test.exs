@@ -60,7 +60,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   @moduletag :distributed
 
   alias Ecto.Adapters.SQL.Sandbox
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -194,7 +194,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
     # Stub call_llm so the resumed turn finalizes without hitting a real LLM.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: &HandoffStubs.call_llm/3
     }
 

@@ -9,6 +9,7 @@ defmodule Normandy.Test.FakeClientTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
@@ -168,7 +169,7 @@ defmodule Normandy.Test.FakeClientTest do
 
     test "Turn.Driver with the non-streaming handlers" do
       client = FakeClient.new([weather_round(), {:text, "Driven."}])
-      config = client |> tool_agent() |> BaseAgent.admit_turn_input("q")
+      config = client |> tool_agent() |> AgentHandlers.admit_turn_input("q")
 
       state =
         Turn.new(
@@ -178,7 +179,7 @@ defmodule Normandy.Test.FakeClientTest do
         )
 
       assert {_config, %Turn.State{status: :stopped, final_response: final}} =
-               Driver.drive(state, BaseAgent.non_streaming_handlers(), config)
+               Driver.drive(state, AgentHandlers.non_streaming_handlers(), config)
 
       assert %BaseAgentOutputSchema{chat_message: "Driven."} = final
       assert length(FakeClient.requests(client)) == 2
@@ -250,7 +251,7 @@ defmodule Normandy.Test.FakeClientTest do
         dispatch: fn calls ->
           Enum.map(
             calls,
-            &Dispatch.dispatch_one(config, &1, BaseAgent.base_agent_pipeline(config))
+            &Dispatch.dispatch_one(config, &1, AgentHandlers.base_agent_pipeline(config))
           )
         end
       }

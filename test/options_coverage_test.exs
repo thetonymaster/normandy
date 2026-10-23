@@ -70,6 +70,8 @@ defmodule Normandy.OptionsCoverageTest do
   ]
 
   @internal %{
+    "lib/normandy/agents/base_agent/handlers.ex" =>
+      "get_response_with_usage/3's :request_tracker, built by Normandy's own turn shells",
     "lib/normandy/behaviours/hooks.ex" =>
       "validate_entries!/2's :load comes from BaseAgent.init/1 and Turn.Server; each hook " <>
         "entry's :on_error is checked by validate_on_error!/2",

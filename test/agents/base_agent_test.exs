@@ -116,21 +116,21 @@ defmodule NormandyTest.BaseAgentsTest do
   describe "unwrap_llm_content/1" do
     test "unwraps JSON with chat_message key" do
       content = "{\"chat_message\": \"actual text\"}"
-      assert BaseAgent.unwrap_llm_content(content) == "actual text"
+      assert AgentMemory.unwrap_llm_content(content) == "actual text"
     end
 
     test "returns original content if not JSON" do
       content = "just some text"
-      assert BaseAgent.unwrap_llm_content(content) == "just some text"
+      assert AgentMemory.unwrap_llm_content(content) == "just some text"
     end
 
     test "returns original content if JSON doesn't have chat_message" do
       content = "{\"other\": \"stuff\"}"
-      assert BaseAgent.unwrap_llm_content(content) == "{\"other\": \"stuff\"}"
+      assert AgentMemory.unwrap_llm_content(content) == "{\"other\": \"stuff\"}"
     end
 
     test "returns original if not a string" do
-      assert BaseAgent.unwrap_llm_content(%{not: "a string"}) == %{not: "a string"}
+      assert AgentMemory.unwrap_llm_content(%{not: "a string"}) == %{not: "a string"}
     end
   end
 

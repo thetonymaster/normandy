@@ -7,7 +7,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
   @moduletag :capture_log
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Session
   alias Normandy.Behaviours.PolicyEngine.Ruleset
@@ -67,7 +67,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
           registry: {Native, reg},
           supervisor: sup,
           handlers: %{
-            BaseAgent.non_streaming_handlers()
+            AgentHandlers.non_streaming_handlers()
             | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
           }
         ],
@@ -132,7 +132,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
       session(store, reg, sup,
         config: config,
         resume_policy: :eager,
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm},
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm},
         subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
       )
 

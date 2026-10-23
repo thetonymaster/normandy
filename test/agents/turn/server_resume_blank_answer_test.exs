@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.Turn.ServerResumeBlankAnswerTest do
   @moduledoc """
   An eagerly resumed `Turn.Server` turn validates its final answer with the stored config,
-  which never went through `BaseAgent.with_default_output_schema/1`: a template with
+  which never went through `AgentHandlers.with_default_output_schema/1`: a template with
   `output_schema: nil` is still a chat agent. Its blank final answer is the
   `:invalid_output` failure, the tool-round fallback still applies, and the resumed run's
   `:stop` (`resumed: true`) carries `answer_source`.
