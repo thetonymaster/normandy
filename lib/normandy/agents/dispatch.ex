@@ -417,10 +417,11 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc false
   # A batch of calls run to completion (BaseAgent.run/3 and stream/3): each call is
-  # classified in the caller with the full config, the allowed ones are executed by
-  # run_batch/3, and a :needs_approval verdict is answered as dispatch_one/3 answers it.
-  # Returns the results in call order; `on_result` sees each one once, as it is made
-  # (the answered ones first, then the executed ones in completion order).
+  # classified in the caller with the full config, and a :needs_approval verdict is
+  # answered as dispatch_one/3 answers it. Every verdict then goes through run_batch/3:
+  # an allowed call is executed there, an answered one only hands its result to
+  # `on_result`, so `on_result` sees each result once, from the worker, in completion
+  # order (call order at max_tool_concurrency 1). Returns the results in call order.
   @spec dispatch_batch(map(), [ToolCall.t() | map()], Pipeline.t(), (ToolResult.t() -> any())) ::
           [ToolResult.t()]
   def dispatch_batch(config, calls, %Pipeline{} = pipeline, on_result) do
@@ -431,28 +432,21 @@ defmodule Normandy.Agents.Dispatch do
             {:execute, invocation, call}
 
           {:deny, %ToolResult{} = result} ->
-            {:answered, tap(result, on_result)}
+            {:answered, result}
 
           {:needs_approval, _invocation, call, info} ->
             result = policy_denial(config, call, info, :needs_approval)
-            {:answered, tap(answer(config, call, result, pipeline), on_result)}
+            {:answered, answer(config, call, result, pipeline)}
         end
       end)
 
-    runnable = for {:execute, invocation, call} <- verdicts, do: {invocation, call}
-
-    executed =
-      run_batch(config, runnable, fn task_config, {invocation, call} ->
+    run_batch(config, verdicts, fn
+      task_config, {:execute, invocation, call} ->
         tap(execute(task_config, invocation, call, pipeline), on_result)
-      end)
 
-    {results, []} =
-      Enum.map_reduce(verdicts, executed, fn
-        {:answered, result}, executed -> {result, executed}
-        {:execute, _invocation, _call}, [result | executed] -> {result, executed}
-      end)
-
-    results
+      _task_config, {:answered, result} ->
+        tap(result, on_result)
+    end)
   end
 
   @doc false

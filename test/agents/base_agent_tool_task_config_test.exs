@@ -65,4 +65,40 @@ defmodule Normandy.Agents.BaseAgentToolTaskConfigTest do
 
     assert_slim_batch()
   end
+
+  # The DSL's max_tool_concurrency doc: at concurrency 1, :tool_result events come in
+  # the model's call order, results answered without running (a toolset miss) included.
+  test "stream/3 at max_tool_concurrency 1 emits :tool_result in call order" do
+    calls = [
+      %ToolCall{id: "c1", name: "probe", input: %{}},
+      %ToolCall{id: "c2", name: "missing", input: %{}},
+      %ToolCall{id: "c3", name: "probe", input: %{}}
+    ]
+
+    test_pid = self()
+
+    config =
+      %{client: FakeClient.new([{:tool_calls, calls}, {:text, "done"}]), model: "test"}
+      |> BaseAgent.init()
+      |> BaseAgent.register_tool(%ContextProbe{notify: test_pid})
+
+    assert {:ok, _config, _response} =
+             BaseAgent.stream(config, %{chat_message: "go"}, fn
+               %Normandy.Components.StreamEvent{type: :tool_result, data: result} ->
+                 send(test_pid, {:tool_result, result.tool_call_id})
+
+               _event ->
+                 :ok
+             end)
+
+    assert tool_result_ids() == ["c1", "c2", "c3"]
+  end
+
+  defp tool_result_ids do
+    receive do
+      {:tool_result, id} -> [id | tool_result_ids()]
+    after
+      0 -> []
+    end
+  end
 end
