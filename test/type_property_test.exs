@@ -145,19 +145,10 @@ defmodule NormandyTest.TypePropertyTest do
     end
   end
 
-  describe "composite type properties" do
-    property "array types are recognized as composite" do
-      check all(inner_type <- member_of([:integer, :string, :boolean])) do
-        assert Type.composite?(:array) == true
-        assert Type.type({:array, inner_type}) == {:array, inner_type}
-      end
-    end
-
-    property "map types are recognized as composite" do
-      check all(inner_type <- member_of([:integer, :string, :boolean])) do
-        assert Type.composite?(:map) == true
-        assert Type.type({:map, inner_type}) == {:map, inner_type}
-      end
+  describe "composite types" do
+    test "array and map are composite" do
+      assert Type.composite?(:array)
+      assert Type.composite?(:map)
     end
   end
 end

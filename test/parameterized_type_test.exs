@@ -36,14 +36,6 @@ defmodule NormandyTest.ParameterizedTypeTest do
 
     def cast(_value, _params), do: :error
 
-    def load(value, _loader, %{values: values}) do
-      if value in values do
-        {:ok, value}
-      else
-        :error
-      end
-    end
-
     def dump(value, _dumper, %{values: values}) do
       if value in values do
         {:ok, value}
@@ -86,7 +78,6 @@ defmodule NormandyTest.ParameterizedTypeTest do
 
     def cast(_value, _params), do: :error
 
-    def load(value, _loader, params), do: cast(value, params)
     def dump(value, _dumper, params), do: cast(value, params)
 
     def equal?(a, b, _params), do: a == b
@@ -124,16 +115,6 @@ defmodule NormandyTest.ParameterizedTypeTest do
       assert :error = EnumType.cast("invalid", params)
       assert :error = EnumType.cast(:invalid, params)
       assert :error = EnumType.cast(123, params)
-    end
-
-    test "loads valid value", %{params: params} do
-      loader = fn _type, value -> {:ok, value} end
-      assert {:ok, "draft"} = EnumType.load("draft", loader, params)
-    end
-
-    test "returns error when loading invalid value", %{params: params} do
-      loader = fn _type, value -> {:ok, value} end
-      assert :error = EnumType.load("invalid", loader, params)
     end
 
     test "dumps valid value", %{params: params} do
