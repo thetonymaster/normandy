@@ -12,9 +12,11 @@ defmodule Normandy.Agents.BlankAnswerTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.ToolCallResponse
+  alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.LLMError
   alias Normandy.Test.FakeClient
   alias Normandy.Test.OwnLog
@@ -342,6 +344,97 @@ defmodule Normandy.Agents.BlankAnswerTest do
           assert Exception.message(error) =~ @message
         end
       end
+    end
+  end
+
+  # Memory stores the substituted answer twice (the tool round's text and the final
+  # answer); the next request shows the model the sentence once, and memory still ends
+  # with the answer (Turn.answered?/1).
+  describe "the next request after a tool-round answer" do
+    defp request_texts(%Normandy.LLM.Request{messages: messages}), do: texts(messages)
+
+    defp texts(messages) do
+      Enum.flat_map(messages, fn
+        %{content: text} when is_binary(text) ->
+          [text]
+
+        %{content: blocks} when is_list(blocks) ->
+          Enum.flat_map(blocks, fn
+            %{type: "text", text: text} -> [text]
+            %{"type" => "text", "text" => text} -> [text]
+            _block -> []
+          end)
+      end)
+    end
+
+    defp second_request(client) do
+      [_, _, request] = FakeClient.requests(client.fake)
+      request
+    end
+
+    for path <- [:run, :stream] do
+      @path path
+
+      test "#{path}: holds the sentence once; memory still ends answered" do
+        agent =
+          lead_text_agent(
+            [{:tool_calls, [{"record_city", %{}}]}, {:text, ""}, {:text, "You're welcome."}],
+            %{0 => "Paris."}
+          )
+
+        run =
+          case @path do
+            :run -> &BaseAgent.run/2
+            :stream -> &BaseAgent.stream(&1, &2, fn _event -> :ok end)
+          end
+
+        assert {:ok, config, %{chat_message: "Paris."}} = run.(agent, "Capital of France?")
+
+        assert Turn.answered?(AgentMemory.messages(config.memory))
+
+        assert {:ok, _config, %{chat_message: "You're welcome."}} = run.(config, "Thanks")
+
+        texts = request_texts(second_request(agent.client))
+        assert Enum.count(texts, &(&1 == "Paris.")) == 1
+        assert List.last(texts) == "Thanks"
+      end
+    end
+
+    test "server: holds the sentence once; the stored history still ends answered" do
+      agent =
+        lead_text_agent(
+          [{:tool_calls, [{"record_city", %{}}]}, {:text, ""}, {:text, "You're welcome."}],
+          %{0 => "Paris."}
+        )
+
+      sid = "s-once-#{System.unique_integer([:positive])}"
+      store = InMemory.new()
+
+      assert [{:ok, %{chat_message: "Paris."}}, {:ok, %{chat_message: "You're welcome."}}] =
+               turns_on(agent, sid, store, ["Capital of France?", "Thanks"])
+
+      texts = request_texts(second_request(agent.client))
+      assert Enum.count(texts, &(&1 == "Paris.")) == 1
+
+      {:ok, entries} = InMemory.history(store, sid)
+      memory = AgentMemory.from_entries(entries)
+
+      assert Turn.answered?(AgentMemory.messages(memory))
+
+      history = AgentMemory.history(memory)
+      assert Enum.count(texts(history), &(&1 == "Paris.")) == 2
+    end
+
+    defp turns_on(agent, sid, store, inputs) do
+      {:ok, srv} =
+        Server.start_link(
+          session_id: sid,
+          config: agent,
+          store: {InMemory, store},
+          registry: {Native, Native.new()}
+        )
+
+      Enum.map(inputs, &Server.run(srv, %{chat_message: &1}))
     end
   end
 

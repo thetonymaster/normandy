@@ -1,7 +1,9 @@
 defmodule Normandy.Context.TokenCounterTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.Messages.Request, as: ClaudioRequest
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
   alias Normandy.Context.TokenCounter
   alias Normandy.Context.WindowManager
@@ -304,6 +306,57 @@ defmodule Normandy.Context.TokenCounterTest do
 
       assert [%{"tool_use_id" => "t1"}, %{"tool_use_id" => "t2"}] =
                List.last(payload["messages"])["content"]
+    end
+  end
+
+  describe "count_conversation/2 payload, a tool-round answer" do
+    test "counts the request's messages: the repeated answer once" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.Once, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 9})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.Once}, retry: false]}
+      }
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "Capital of France?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          content: "Paris.",
+          tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "record", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "recorded"
+        })
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.BaseAgentOutputSchema{
+          chat_message: "Paris."
+        })
+        |> AgentMemory.add_message("user", "Thanks")
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 9}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      expected =
+        ClaudioRequest.new("token-count")
+        |> ClaudioModel.add_messages(
+          AgentMemory.request_messages_for(memory, 0),
+          false
+        )
+        |> Map.fetch!(:messages)
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      assert payload["messages"] == expected
+      assert [%{"type" => "tool_use", "id" => "t1"}] = Enum.at(payload["messages"], 1)["content"]
     end
   end
 

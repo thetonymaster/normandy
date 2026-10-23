@@ -179,11 +179,13 @@ defmodule Normandy.Context.TokenCounter do
 
   # The messages as a request would send them, built by the adapter's own
   # conversion: tool results become user tool_result blocks and tool calls
-  # assistant tool_use blocks (count_tokens accepts only user and assistant).
+  # assistant tool_use blocks (count_tokens accepts only user and assistant). The
+  # history is AgentMemory.request_history/1's, so a tool-round answer counts once, as
+  # the request shows it.
   defp build_messages_payload(memory) do
     messages =
       memory
-      |> AgentMemory.history()
+      |> AgentMemory.request_history()
       |> Enum.reject(&(&1.role == "system"))
       |> AgentMemory.request_messages()
 

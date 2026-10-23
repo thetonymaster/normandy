@@ -1358,7 +1358,11 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   answer with text. One exception, for a `chat_message` output schema: when the model already
   answered in this turn's last tool-calling reply (text beside the tool call) and ends the turn
   blank after the tool results, that text is the answer. The run `:stop` telemetry marks it
-  with `answer_source: :tool_round` (`:final` for any other answer).
+  with `answer_source: :tool_round` (`:final` for any other answer). Memory keeps both copies
+  (`messages/1`, `history/1` and the session store are unchanged); later requests, and
+  `TokenCounter`'s payload, send the tool-calling message without its text so the model reads
+  the sentence once. A tool-calling message that carries thinking is sent unchanged, so a
+  thinking agent still sees the sentence twice.
 
 - Schema properties reach the model in declaration order, in tool `input_schema`, the
   `# OUTPUT SCHEMA` block, JSON retry feedback and the structured-outputs schema (which was

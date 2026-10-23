@@ -2,11 +2,12 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesForTest do
   @moduledoc """
   Task 6.1b (PERF-3): `AgentMemory.request_messages_for/2` builds a request's messages in
   one walk from the cached encodings, and gives exactly what
-  `drop_stale_thinking/2 |> history/1 |> request_messages/1` gives.
+  `drop_stale_thinking/2 |> request_history/1 |> request_messages/1` gives.
   """
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.BaseIOSchema
@@ -18,7 +19,7 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesForTest do
     do:
       memory
       |> AgentMemory.drop_stale_thinking(key)
-      |> AgentMemory.history()
+      |> AgentMemory.request_history()
       |> AgentMemory.request_messages()
 
   # ── generators: the shapes Normandy stores ────────────────────────────────────
@@ -46,7 +47,13 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesForTest do
   defp tool_call_response_gen do
     gen all(
           thinking <- list_of(thinking_gen(), max_length: 2),
-          text <- one_of([constant(nil), constant(""), string(:alphanumeric, min_length: 1)]),
+          text <-
+            one_of([
+              constant(nil),
+              constant(""),
+              constant("Paris."),
+              string(:alphanumeric, min_length: 1)
+            ]),
           calls <- list_of(tool_call_gen(), max_length: 2),
           with_blocks? <- boolean(),
           key <- member_of([nil, 1, 2])
@@ -79,7 +86,12 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesForTest do
       map(string(:alphanumeric), &{"tool", %ToolResult{tool_call_id: "c", output: &1}}),
       constant({"tool", %ToolResult{tool_call_id: "c", output: %{"n" => 1}, is_error: true}}),
       map(thinking_gen(), &{"assistant", [&1, %{"type" => "text", "text" => "t"}]}),
-      constant({"user", %{"structured" => [1, 2]}})
+      constant({"user", %{"structured" => [1, 2]}}),
+      # A final chat answer, at times repeating a tool round's text (request_history/1).
+      map(
+        member_of(["a", "b", "Paris."]),
+        &{"assistant", %BaseAgentOutputSchema{chat_message: &1}}
+      )
     ])
   end
 
@@ -90,7 +102,7 @@ defmodule Normandy.Components.AgentMemory.RequestMessagesForTest do
     end
   end
 
-  property "request_messages_for/2 equals drop_stale_thinking |> history |> request_messages" do
+  property "request_messages_for/2 equals drop_stale_thinking |> request_history |> request_messages" do
     check all(
             entries <- list_of(entry_gen(), max_length: 12),
             key <- member_of([1, 2])

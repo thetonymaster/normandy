@@ -430,7 +430,7 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}` when Normandy's own checks or the model failed:
   `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
   `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
-  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer, and the run `:stop` telemetry says so with `answer_source: :tool_round` (`:final` otherwise). Any other exception (a bug in a
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer, and the run `:stop` telemetry says so with `answer_source: :tool_round` (`:final` otherwise); memory stores the sentence twice (in that response and as the answer), and later requests show it once unless that response carries thinking. Any other exception (a bug in a
   tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
   turn is lost: keep using the config you passed in.
 
@@ -959,12 +959,12 @@ defmodule Normandy.Agents.BaseAgent do
   # result is in (e2e 16 Part B). The text of this turn's last assistant response that made
   # tool calls, unwrapped as the final text is, is then the answer; anything else (a
   # non-blank answer, no such response, a blank one) is returned unchanged for
-  # ensure_answer!/1. Only the current turn counts (AgentMemory's current_turn_id), and in
-  # it only what follows its latest final answer: run(config, nil) continues under the same
-  # turn_id, so the walk stops at an assistant entry that is not a ToolCallResponse (a
-  # stored final answer is the output struct; a paused response is a ToolCallResponse with
-  # no tool calls and does not stop it). An earlier run's text never answers this one. The
-  # final response is not in memory yet (the core appends it after the output is guarded).
+  # ensure_answer!/1. The walk is AgentMemory.last_tool_round/2 from the current turn's
+  # head: only the current turn counts, and in it only what follows its latest final
+  # answer (run(config, nil) continues under the same turn_id), so an earlier run's text
+  # never answers this one. The final response is not in memory yet (the core appends it
+  # after the output is guarded). Memory then holds the sentence twice; a request shows it
+  # once (AgentMemory.request_history/1).
   # The substitution is marked on the run :stop (answer_source: :tool_round, by
   # validate_marking_answer/4) and logged at debug with the turn id only, never the text.
   defp chat_answer(config, answer) do
@@ -980,30 +980,12 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  defp last_tool_round_text(%AgentMemory{current_turn_id: turn_id} = memory)
-       when is_binary(turn_id) do
-    memory
-    |> AgentMemory.entry_chain()
-    |> Enum.reverse()
-    |> Enum.take_while(&(&1.turn_id == turn_id and not final_answer_entry?(&1)))
-    |> Enum.find_value(fn
-      %{role: "assistant", content: %ToolCallResponse{tool_calls: [_ | _], content: text}} ->
-        {:found, unwrap_llm_content(text)}
-
-      _entry ->
-        nil
-    end)
-    |> case do
-      {:found, text} when is_binary(text) -> if blank_answer?(text), do: nil, else: text
-      _none -> nil
+  defp last_tool_round_text(%AgentMemory{current_turn_id: turn_id} = memory) do
+    case AgentMemory.last_tool_round(Enum.reverse(AgentMemory.entry_chain(memory)), turn_id) do
+      {_entry, text} -> text
+      nil -> nil
     end
   end
-
-  defp last_tool_round_text(_memory), do: nil
-
-  defp final_answer_entry?(%{role: "assistant", content: %ToolCallResponse{}}), do: false
-  defp final_answer_entry?(%{role: "assistant"}), do: true
-  defp final_answer_entry?(_entry), do: false
 
   # An output that breaks its schema is an error (SEC-5): run/2 returns the
   # ValidationError. Neither the value nor the errors are logged: they can hold user data.
