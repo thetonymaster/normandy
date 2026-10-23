@@ -149,19 +149,18 @@ defmodule Normandy.Validate do
             "expected `:message` to be a function of arity 2, received: #{inspect(msg_func)}"
     end
 
-    defaults =
-      case data do
-        %{__struct__: struct} ->
-          struct.__struct__()
-          # %{} -> %{}
-      end
+    ctx = %{
+      params: params,
+      types: types,
+      data: data,
+      empty_values: empty_values,
+      defaults: struct(data.__struct__),
+      force?: force?,
+      msg_func: msg_func
+    }
 
     {changes, errors, valid?} =
-      Enum.reduce(
-        permitted,
-        {changes, [], true},
-        &process_param(&1, params, types, data, empty_values, defaults, force?, msg_func, &2)
-      )
+      Enum.reduce(permitted, {changes, [], true}, &process_param(&1, ctx, &2))
 
     %Validate{
       params: params,
@@ -180,18 +179,8 @@ defmodule Normandy.Validate do
       message: "expected params to be a :map, got: `#{inspect(params)}`"
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  defp process_param(
-         key,
-         params,
-         types,
-         data,
-         empty_values,
-         defaults,
-         force?,
-         msg_func,
-         {changes, errors, valid?}
-       ) do
+  defp process_param(key, ctx, {changes, errors, valid?}) do
+    %{types: types, data: data, msg_func: msg_func} = ctx
     {key, param_key} = cast_key(key)
     type = cast_type!(types, key)
 
@@ -201,8 +190,8 @@ defmodule Normandy.Validate do
         _ -> Map.get(data, key)
       end
 
-    case cast_field(key, param_key, type, params, current, empty_values, defaults, force?, valid?) do
-      {:ok, value, valid?} ->
+    case cast_field(key, param_key, type, current, ctx) do
+      {:ok, value} ->
         {Map.put(changes, key, value), errors, valid?}
 
       :missing ->
@@ -245,32 +234,29 @@ defmodule Normandy.Validate do
     raise ArgumentError, "cast/3 expects a list of atom keys, got key: `#{inspect(key)}`"
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-  defp cast_field(key, param_key, type, params, current, empty_values, defaults, force?, valid?) do
-    case params do
+  defp cast_field(key, param_key, type, current, ctx) do
+    case ctx.params do
       %{^param_key => value} ->
-        value = filter_empty_values(type, value, empty_values, defaults, key)
-
-        case Normandy.Type.cast(type, value) do
-          {:ok, value} ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            if not force? and Normandy.Type.equal?(type, current, value) do
-              :missing
-            else
-              {:ok, value, valid?}
-            end
-
-          :error ->
-            {:invalid, []}
-
-          {:error, custom_errors} when is_list(custom_errors) ->
-            {:invalid, custom_errors}
-        end
+        value = filter_empty_values(type, value, ctx.empty_values, ctx.defaults, key)
+        cast_result(Normandy.Type.cast(type, value), type, current, ctx.force?)
 
       _ ->
         :missing
     end
   end
+
+  # An unchanged value is :missing unless the cast is forced to record it.
+  defp cast_result({:ok, value}, type, current, force?) do
+    if not force? and Normandy.Type.equal?(type, current, value),
+      do: :missing,
+      else: {:ok, value}
+  end
+
+  defp cast_result(:error, _type, _current, _force?), do: {:invalid, []}
+
+  defp cast_result({:error, custom_errors}, _type, _current, _force?)
+       when is_list(custom_errors),
+       do: {:invalid, custom_errors}
 
   defp filter_empty_values(type, value, empty_values, defaults, key) do
     case filter_empty_values(type, value, empty_values) do
@@ -315,23 +301,22 @@ defmodule Normandy.Validate do
   defp convert_params(params) do
     case :maps.next(:maps.iterator(params)) do
       {key, _, _} when is_atom(key) ->
-        for {key, value} <- params, into: %{} do
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if is_atom(key) do
-            {Atom.to_string(key), value}
-          else
-            raise Normandy.CastError,
-              type: :map,
-              value: params,
-              message:
-                "expected params to be a map with atoms or string keys, " <>
-                  "got a map with mixed keys: #{inspect(params)}"
-          end
-        end
+        for {key, value} <- params, into: %{}, do: {string_key!(key, params), value}
 
       _ ->
         params
     end
+  end
+
+  defp string_key!(key, _params) when is_atom(key), do: Atom.to_string(key)
+
+  defp string_key!(_key, params) do
+    raise Normandy.CastError,
+      type: :map,
+      value: params,
+      message:
+        "expected params to be a map with atoms or string keys, " <>
+          "got a map with mixed keys: #{inspect(params)}"
   end
 
   @doc """
