@@ -212,43 +212,40 @@ defmodule Normandy.Tools.Memory.Commands do
         backend(reason)
 
       {:ok, doc} ->
-        again = fn -> edit(tool, loc, missing, transform, success, attempt + 1) end
-        rewrite(tool, loc, doc, {transform, success}, {attempt, again})
+        case rewrite(tool, loc, doc, transform, success, attempt) do
+          :retry -> edit(tool, loc, missing, transform, success, attempt + 1)
+          result -> result
+        end
     end
   end
 
-  defp rewrite(tool, loc, %{content: content, version: version}, {transform, success}, retry) do
-    {attempt, again} = retry
-
+  # One attempt: transform, size check, compare-and-set write. `:retry` = lost the race with
+  # attempts left. `success` renders the snippet, so it runs only after a write that landed.
+  defp rewrite(tool, loc, %{content: content, version: version}, transform, success, attempt) do
     with {:ok, updated, info} <- transform.(content),
          :ok <- fits(tool, loc, updated) do
-      cas_put(tool, loc, {content, version, updated}, {success.(updated, info), attempt}, again)
-    end
-  end
+      case store(tool, :put, [loc.namespace, loc.path, updated, version, limits(tool)]) do
+        {:ok, _} ->
+          {:ok, success.(updated, info),
+           %{
+             bytes_read: byte_size(content),
+             bytes_written: byte_size(updated),
+             cas_retries: attempt
+           }}
 
-  # The compare-and-set write of `edit/6`; a lost race re-runs it.
-  defp cas_put(tool, loc, {content, version, updated}, {text, attempt}, again) do
-    case store(tool, :put, [loc.namespace, loc.path, updated, version, limits(tool)]) do
-      {:ok, _} ->
-        {:ok, text,
-         %{
-           bytes_read: byte_size(content),
-           bytes_written: byte_size(updated),
-           cas_retries: attempt
-         }}
+        {:error, :conflict} when attempt < tool.max_cas_retries ->
+          :retry
 
-      {:error, :conflict} when attempt < tool.max_cas_retries ->
-        again.()
+        {:error, :conflict} ->
+          {:error, :conflict_exhausted,
+           "Error: #{loc.model_path} was changed by another writer #{attempt + 1} times while editing; view it and retry"}
 
-      {:error, :conflict} ->
-        {:error, :conflict_exhausted,
-         "Error: #{loc.model_path} was changed by another writer #{attempt + 1} times while editing; view it and retry"}
+        {:error, {:namespace_full, which, would_be}} ->
+          namespace_full(tool, loc, which, would_be)
 
-      {:error, {:namespace_full, which, would_be}} ->
-        namespace_full(tool, loc, which, would_be)
-
-      {:error, reason} ->
-        backend(reason)
+        {:error, reason} ->
+          backend(reason)
+      end
     end
   end
 
