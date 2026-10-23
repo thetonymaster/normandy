@@ -496,13 +496,7 @@ defmodule Normandy.Schema do
     Module.register_attribute(module, :schema_struct_fields, accumulate: true)
     Module.register_attribute(module, :schema_required_fields, accumulate: true)
 
-    context = Module.get_attribute(module, :schema_context)
-
-    meta = %Metadata{
-      state: :built,
-      context: context,
-      schema: module
-    }
+    meta = %Metadata{state: :built, schema: module}
 
     Module.put_attribute(module, :schema_struct_fields, {:__meta__, meta})
   end
