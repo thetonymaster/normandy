@@ -54,7 +54,14 @@ defmodule Normandy.Behaviours.SessionStore.RedisWaitConfigTest do
     assert_raise ArgumentError,
                  "Normandy.Behaviours.SessionStore.Redis: the handle's wait_conns must be a " <>
                    "non-empty tuple of Redix connections, got: a list",
-                 fn -> Redis.save_turn_state({:c, "ns", {1, 10}, [:c]}, "s1", :ts, false) end
+                 fn ->
+                   Redis.save_turn_state(
+                     Normandy.Test.opaque({:c, "ns", {1, 10}, [:c]}),
+                     "s1",
+                     :ts,
+                     false
+                   )
+                 end
   end
 
   test "a :redis_wait app env with replicas and no timeout raises on the write" do

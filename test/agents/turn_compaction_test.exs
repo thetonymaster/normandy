@@ -133,7 +133,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
     end
 
     test "a state persisted before 2.0 (no :tokens_compacted key) still steps" do
-      old = Map.delete(steering(3), :tokens_compacted)
+      old = Normandy.Test.opaque(Map.delete(steering(3), :tokens_compacted))
 
       {s2, effects} = Turn.step(old, {:compaction_done, %{compacted: true, tokens_removed: 30}})
 
@@ -141,10 +141,7 @@ defmodule Normandy.Agents.TurnCompactionTest do
       assert {:call_llm, %{response_model: :rm, final: false}} in effects
 
       {s3, _} =
-        Turn.step(
-          Map.delete(steering(3), :tokens_compacted),
-          {:compaction_done, %{compacted: false}}
-        )
+        Turn.step(old, {:compaction_done, %{compacted: false}})
 
       assert s3.status == :assistant_streaming
     end

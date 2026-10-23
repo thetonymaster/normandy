@@ -211,16 +211,16 @@ defmodule Normandy.Schema.Validator do
 
   defp formatted_value?(_, _, _), do: false
 
+  defp actual_type(%Date{}), do: :date
+  defp actual_type(%Time{}), do: :time
+  defp actual_type(%NaiveDateTime{}), do: :naive_datetime
+  defp actual_type(%DateTime{}), do: :datetime
   defp actual_type(data) when is_binary(data), do: :string
   defp actual_type(data) when is_integer(data), do: :integer
   defp actual_type(data) when is_float(data), do: :float
   defp actual_type(data) when is_boolean(data), do: :boolean
   defp actual_type(data) when is_list(data), do: :array
   defp actual_type(data) when is_map(data), do: :object
-  defp actual_type(%Date{}), do: :date
-  defp actual_type(%Time{}), do: :time
-  defp actual_type(%NaiveDateTime{}), do: :naive_datetime
-  defp actual_type(%DateTime{}), do: :datetime
   defp actual_type(_), do: :unknown
 
   # Required fields validation

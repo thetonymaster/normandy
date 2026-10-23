@@ -69,8 +69,8 @@ defmodule Normandy.Agents.BaseAgentRunResultTest do
   # A non-config used to loop forever in run!/3 (its old opts clause re-entered itself).
   @tag timeout: 5_000
   test "run!/2 and run/2 raise FunctionClauseError for a non-config" do
-    assert_raise FunctionClauseError, fn -> BaseAgent.run!(%{}, nil) end
-    assert_raise FunctionClauseError, fn -> BaseAgent.run(%{}, nil) end
+    assert_raise FunctionClauseError, fn -> BaseAgent.run!(Normandy.Test.opaque(%{}), nil) end
+    assert_raise FunctionClauseError, fn -> BaseAgent.run(Normandy.Test.opaque(%{}), nil) end
     assert_raise FunctionClauseError, fn -> BaseAgent.run({:ok, %{}}, %{chat_message: "x"}) end
   end
 

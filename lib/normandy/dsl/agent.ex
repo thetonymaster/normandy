@@ -83,7 +83,6 @@ defmodule Normandy.DSL.Agent do
   alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
-  alias Normandy.Components.PromptSpecification
   alias Normandy.Options
   alias Normandy.Tools.Memory
 
@@ -680,40 +679,11 @@ defmodule Normandy.DSL.Agent do
       end
 
       defp apply_system_prompt(agent) do
-        system_prompt = to_list(@agent_compile_config.system_prompt)
-        background = to_list(@agent_compile_config.background)
-        steps = to_list(@agent_compile_config.steps)
-        output_instructions = to_list(@agent_compile_config.output_instructions)
-
-        cond do
-          system_prompt != [] ->
-            # Simple system prompt
-            prompt_spec = %PromptSpecification{
-              background: system_prompt,
-              steps: [],
-              output_instructions: []
-            }
-
-            %{agent | prompt_specification: prompt_spec}
-
-          background != [] or steps != [] or output_instructions != [] ->
-            # Structured prompt
-            prompt_spec = %PromptSpecification{
-              background: background,
-              steps: steps,
-              output_instructions: output_instructions
-            }
-
-            %{agent | prompt_specification: prompt_spec}
-
-          true ->
-            agent
+        case Normandy.DSL.Agent.__prompt_specification__(@agent_compile_config) do
+          nil -> agent
+          prompt_spec -> %{agent | prompt_specification: prompt_spec}
         end
       end
-
-      defp to_list(nil), do: []
-      defp to_list(str) when is_binary(str), do: [str]
-      defp to_list(list) when is_list(list), do: list
 
       defp register_tools(agent) do
         Enum.reduce(@agent_compile_config.tools, agent, fn {tool_module, opts}, acc ->
@@ -727,4 +697,39 @@ defmodule Normandy.DSL.Agent do
       defp prepare_input(input), do: %{chat_message: to_string(input)}
     end
   end
+
+  @doc false
+  # Called from generated code. Lives here, not in the user's module, so the
+  # generated module carries no helper clause the type checker can find unused,
+  # and no comparison it can prove constant from the compile-time config.
+  @spec __prompt_specification__(map()) :: Normandy.Components.PromptSpecification.t() | nil
+  def __prompt_specification__(config) do
+    system_prompt = prompt_list(config.system_prompt)
+    background = prompt_list(config.background)
+    steps = prompt_list(config.steps)
+    output_instructions = prompt_list(config.output_instructions)
+
+    cond do
+      system_prompt != [] ->
+        %Normandy.Components.PromptSpecification{
+          background: system_prompt,
+          steps: [],
+          output_instructions: []
+        }
+
+      background != [] or steps != [] or output_instructions != [] ->
+        %Normandy.Components.PromptSpecification{
+          background: background,
+          steps: steps,
+          output_instructions: output_instructions
+        }
+
+      true ->
+        nil
+    end
+  end
+
+  defp prompt_list(nil), do: []
+  defp prompt_list(str) when is_binary(str), do: [str]
+  defp prompt_list(list) when is_list(list), do: list
 end

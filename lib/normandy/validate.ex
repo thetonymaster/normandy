@@ -27,7 +27,6 @@ defmodule Normandy.Validate do
       end
   """
 
-  require Logger
   alias __MODULE__
 
   @empty_values [&Normandy.Type.empty_trimmed_string?/1]

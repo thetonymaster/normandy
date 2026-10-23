@@ -32,7 +32,6 @@ defmodule Normandy.Coordination.StatefulContext do
   """
 
   use GenServer
-  require Logger
 
   alias Normandy.Options
 

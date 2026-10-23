@@ -32,7 +32,6 @@ defmodule Normandy.Coordination.AgentSupervisor do
   """
 
   use DynamicSupervisor
-  require Logger
 
   alias Normandy.Coordination.AgentProcess
   alias Normandy.Options

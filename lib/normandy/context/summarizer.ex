@@ -221,8 +221,7 @@ defmodule Normandy.Context.Summarizer do
     savings = original_tokens - summary_tokens
     savings_percent_raw = if original_tokens > 0, do: savings / original_tokens * 100, else: 0.0
 
-    savings_percent =
-      if is_float(savings_percent_raw), do: Float.round(savings_percent_raw, 1), else: 0.0
+    savings_percent = Float.round(savings_percent_raw, 1)
 
     {:ok,
      %{

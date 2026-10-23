@@ -45,7 +45,9 @@ defmodule Normandy.LLM.ClaudioAdapterClientOptionsTest do
 
     test "options must be a map and api_key a string" do
       assert_raise ArgumentError, ~r/options must be a map, got a list/, fn ->
-        ClaudioAdapter.validate_options!(%ClaudioAdapter{api_key: "k", options: [effort: :low]})
+        ClaudioAdapter.validate_options!(
+          Normandy.Test.opaque(%ClaudioAdapter{api_key: "k", options: [effort: :low]})
+        )
       end
 
       assert_raise ArgumentError, ~r/api_key must be a non-empty string, got: nil/, fn ->

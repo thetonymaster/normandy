@@ -7,8 +7,6 @@ defmodule NormandyTest.Agents.BaseAgentLoggingTest do
   alias Normandy.Tools.Examples.Calculator
   alias Normandy.Tools.Toolset
 
-  require Logger
-
   @handler_id :normandy_test_logger_handler
 
   defmodule NamedDSLAgent do

@@ -303,7 +303,10 @@ defmodule Normandy.Batch.ProcessorTest do
       )
 
       progress =
-        for _ <- 1..5, do: assert_receive({:progress, completed, total}) && {completed, total}
+        for _ <- 1..5 do
+          assert_receive {:progress, completed, total}
+          {completed, total}
+        end
 
       assert progress == [{1, 5}, {2, 5}, {3, 5}, {4, 5}, {5, 5}]
       refute_received {:progress, _, _}
@@ -407,7 +410,12 @@ defmodule Normandy.Batch.ProcessorTest do
           on_progress: fn completed, total -> send(parent, {:progress, completed, total}) end
         )
 
-      reports = for _ <- 1..5, do: assert_received({:progress, _, _} = report) && report
+      reports =
+        for _ <- 1..5 do
+          assert_received {:progress, _, _} = report
+          report
+        end
+
       assert reports == Enum.map(1..5, &{:progress, &1, 5})
     end
 

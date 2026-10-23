@@ -131,7 +131,10 @@ defmodule Normandy.Integration.CompactionTurnTest do
   end
 
   test "a config built under 1.x (no :resolved_context_window key) memoises without KeyError" do
-    config = Map.delete(catalog_config("claude-opus-5-5", {:ok, 80}), :resolved_context_window)
+    config =
+      Normandy.Test.opaque(
+        Map.delete(catalog_config("claude-opus-5-5", {:ok, 80}), :resolved_context_window)
+      )
 
     {config2, _} =
       BaseAgent.compact_turn_memory(config, %Turn.State{}, %{iterations_left: 3, mid_round: false})

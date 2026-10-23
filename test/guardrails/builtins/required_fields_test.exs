@@ -41,7 +41,7 @@ defmodule Normandy.Guardrails.Builtins.RequiredFieldsTest do
 
     test "raises on non-map value" do
       assert_raise ArgumentError, ~r/expected a map or struct/, fn ->
-        RequiredFields.check("not a map", fields: [:a])
+        RequiredFields.check(Normandy.Test.opaque("not a map"), fields: [:a])
       end
     end
   end

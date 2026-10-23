@@ -268,7 +268,7 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
   test "run/3 rejects any option" do
     error =
       assert_raise ArgumentError, fn ->
-        BaseAgent.run!(agent(FakeClient.new([])), "hi", max_turns: 2)
+        BaseAgent.run!(agent(FakeClient.new([])), "hi", Normandy.Test.opaque(max_turns: 2))
       end
 
     assert error.message ==
@@ -298,7 +298,7 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
     assert_raise ArgumentError,
                  "Normandy.Agents.BaseAgent.run!/3: expected options as a keyword list, got " <>
                    ":fast; run!/3 takes no options",
-                 fn -> BaseAgent.run!(agent, "hi", :fast) end
+                 fn -> BaseAgent.run!(agent, "hi", Normandy.Test.opaque(:fast)) end
   end
 
   describe "a nil output schema is the default chat schema" do
