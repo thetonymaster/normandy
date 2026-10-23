@@ -214,6 +214,31 @@ defmodule Normandy.Coordination.StatefulContextTest do
       assert {:ok, 50} = StatefulContext.fetch(ctx, "n")
     end
 
+    test "an update that keeps losing the race still finishes", %{context: ctx} do
+      writer =
+        spawn_link(fn ->
+          Stream.repeatedly(fn ->
+            StatefulContext.put(ctx, "hot", System.unique_integer())
+            Process.sleep(1)
+          end)
+          |> Stream.run()
+        end)
+
+      Process.sleep(10)
+
+      task =
+        Task.async(fn ->
+          StatefulContext.update(ctx, "hot", 0, fn _ ->
+            Process.sleep(30)
+            :updated
+          end)
+        end)
+
+      assert :ok = Task.await(task, 5_000)
+      Process.unlink(writer)
+      Process.exit(writer, :kill)
+    end
+
     test "a function that raises raises in the caller and leaves the context running",
          %{context: ctx} do
       StatefulContext.put(ctx, "k", 1)

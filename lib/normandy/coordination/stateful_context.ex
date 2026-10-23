@@ -50,6 +50,9 @@ defmodule Normandy.Coordination.StatefulContext do
                             ]
                           )
 
+  # Lost compare-and-sets after which update/4 runs its function in the context process.
+  @max_conflicts 10
+
   # Client API
 
   @doc """
@@ -179,14 +182,24 @@ defmodule Normandy.Coordination.StatefulContext do
   blocks no other caller and a `fun` that raises raises in the caller. The result
   is committed only if the key still holds the value `fun` was given; otherwise
   `fun` runs again on the new value. So `fun` can run more than once and must have
-  no side effects.
+  no side effects. After #{@max_conflicts} lost races (a key written more often than
+  `fun` takes) `fun` runs once inside the context process, serialized with every other
+  call, so every update finishes; a `fun` that raises there crashes the context.
+
+  The caller reads the key from ETS directly (`get_table/1`), so `update/4` works only
+  against a context on the caller's node.
 
   ## Example
 
       :ok = StatefulContext.update(pid, "counter", 0, fn count -> count + 1 end)
   """
   @spec update(GenServer.server(), key(), term(), (term() -> term())) :: :ok
-  def update(server, key, initial, fun) do
+  def update(server, key, initial, fun), do: update(server, key, initial, fun, @max_conflicts)
+
+  defp update(server, key, initial, fun, 0),
+    do: GenServer.call(server, {:update, key, initial, fun}, :infinity)
+
+  defp update(server, key, initial, fun, retries) do
     table = get_table(server)
     normalized_key = normalize_key(key)
 
@@ -198,9 +211,9 @@ defmodule Normandy.Coordination.StatefulContext do
 
     new_value = fun.(current)
 
-    case GenServer.call(server, {:compare_and_put, normalized_key, expected, current, new_value}) do
+    case GenServer.call(server, {:compare_and_put, normalized_key, expected, initial, new_value}) do
       :ok -> :ok
-      :conflict -> update(server, key, initial, fun)
+      :conflict -> update(server, key, initial, fun, retries - 1)
     end
   end
 
@@ -337,7 +350,7 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @impl true
-  def handle_call({:compare_and_put, key, expected, old_value, new_value}, _from, state) do
+  def handle_call({:compare_and_put, key, expected, initial, new_value}, _from, state) do
     actual =
       case :ets.lookup(state.table, key) do
         [{^key, val}] -> {:ok, val}
@@ -345,16 +358,30 @@ defmodule Normandy.Coordination.StatefulContext do
       end
 
     if actual === expected do
-      :ets.insert(state.table, {key, new_value})
+      old_value =
+        case expected do
+          {:ok, val} -> val
+          :none -> initial
+        end
 
-      if state.notify_on_change do
-        notify_subscribers(state.subscribers, key, {:ok, old_value}, new_value)
-      end
-
-      {:reply, :ok, %{state | updated_at: :os.system_time(:second)}}
+      {:reply, :ok, commit(state, key, old_value, new_value)}
     else
       {:reply, :conflict, state}
     end
+  end
+
+  # update/4's last resort: the function runs here, serialized with every other call.
+  @impl true
+  def handle_call({:update, key, initial, fun}, _from, state) do
+    normalized_key = normalize_key(key)
+
+    current =
+      case :ets.lookup(state.table, normalized_key) do
+        [{^normalized_key, val}] -> val
+        [] -> initial
+      end
+
+    {:reply, :ok, commit(state, normalized_key, current, fun.(current))}
   end
 
   @impl true
@@ -382,6 +409,16 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   # Private Functions
+
+  defp commit(state, key, old_value, new_value) do
+    :ets.insert(state.table, {key, new_value})
+
+    if state.notify_on_change do
+      notify_subscribers(state.subscribers, key, {:ok, old_value}, new_value)
+    end
+
+    %{state | updated_at: :os.system_time(:second)}
+  end
 
   defp normalize_key(key), do: SharedContext.normalize_key(key)
 
