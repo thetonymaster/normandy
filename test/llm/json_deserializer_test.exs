@@ -581,6 +581,25 @@ defmodule Normandy.LLM.JsonDeserializerTest do
     end
   end
 
+  describe "hardening — unclosed openers" do
+    test "unclosed brace in 240 KB of prose returns within 1 s" do
+      text = String.duplicate("{ word ", 40_000)
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
+    test "unclosed brackets and braces mixed still find the later balanced region" do
+      text = String.duplicate("[ {", 5_000) <> ~s( {"chat_message": "hi"})
+
+      assert {:ok, %BaseAgentOutputSchema{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})
+    end
+  end
+
   describe "hardening — size guard is not bypassed by prose extraction" do
     test "over-limit input surfaces :input_too_large at the top level without prose recovery" do
       # A 22-byte valid object embedded in prose; total ~81 bytes, well over the 30-byte limit.

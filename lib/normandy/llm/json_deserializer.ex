@@ -331,58 +331,44 @@ defmodule Normandy.LLM.JsonDeserializer do
         {:error, reason}
 
       {:error, reason} ->
-        try_extracted_regions(cleaned_content, 0, adapter, opts, schema, content, reason)
+        try_extracted_regions(cleaned_content, adapter, opts, schema, content, reason)
 
       _ ->
         {:error, {:unexpected_parse_result, content}}
     end
   end
 
-  # Walk successive balanced regions in prose, returning the first that decodes
-  # AND binds. A region is skipped when it fails to decode (e.g. a balanced but
+  # Walk the balanced regions in prose, returning the first that decodes AND
+  # binds. A region is skipped when it fails to decode (e.g. a balanced but
   # non-JSON `{note}`) or decodes as valid JSON but fails schema binding (valid
   # JSON of the wrong shape) — so a later valid object is still found. If a
   # region produced a validation error and nothing later binds, that error is
   # preserved rather than masked as a generic json_parse_error.
-  defp try_extracted_regions(cleaned_content, offset, adapter, opts, schema, content, reason) do
-    case ContentCleaner.extract_balanced(cleaned_content, offset) do
-      {:ok, extracted, start} ->
-        case Decoder.decode(extracted, adapter, opts) do
-          {:ok, parsed} when is_map(parsed) ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case SchemaBinder.bind(parsed, schema, content) do
-              {:ok, _populated} = ok ->
-                ok
+  defp try_extracted_regions(cleaned_content, adapter, opts, schema, content, reason) do
+    result =
+      cleaned_content
+      |> ContentCleaner.balanced_regions()
+      |> Enum.reduce_while(reason, fn {extracted, _start}, reason ->
+        bind_region(extracted, adapter, opts, schema, content, reason)
+      end)
 
-              {:error, bind_reason} ->
-                try_extracted_regions(
-                  cleaned_content,
-                  start + 1,
-                  adapter,
-                  opts,
-                  schema,
-                  content,
-                  bind_reason
-                )
-            end
+    case result do
+      {:ok, _populated} = ok -> ok
+      {:validation_error, _changeset, _content} = reason -> {:error, reason}
+      reason -> {:error, {:json_parse_error, reason, content}}
+    end
+  end
 
-          _ ->
-            try_extracted_regions(
-              cleaned_content,
-              start + 1,
-              adapter,
-              opts,
-              schema,
-              content,
-              reason
-            )
+  defp bind_region(extracted, adapter, opts, schema, content, reason) do
+    case Decoder.decode(extracted, adapter, opts) do
+      {:ok, parsed} when is_map(parsed) ->
+        case SchemaBinder.bind(parsed, schema, content) do
+          {:ok, _populated} = ok -> {:halt, ok}
+          {:error, bind_reason} -> {:cont, bind_reason}
         end
 
-      :error ->
-        case reason do
-          {:validation_error, _changeset, _content} -> {:error, reason}
-          _ -> {:error, {:json_parse_error, reason, content}}
-        end
+      _ ->
+        {:cont, reason}
     end
   end
 

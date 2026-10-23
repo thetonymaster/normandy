@@ -45,4 +45,16 @@ defmodule Normandy.LLM.Json.ContentCleanerTest do
     input = ~s(oops {unclosed and then {"a": 1})
     assert {:ok, ~s({"a": 1})} = ContentCleaner.extract_balanced(input)
   end
+
+  test "balanced_regions/1 yields nested and later regions in start order" do
+    input = ~s(x {"a": [1, {"b": 2}]} y [3] { open)
+
+    assert [
+             {~s({"a": [1, {"b": 2}]}), 2},
+             {~s([1, {"b": 2}]), 8},
+             {~s({"b": 2}), 12},
+             {"[3]", 25}
+           ] ==
+             input |> ContentCleaner.balanced_regions() |> Enum.to_list()
+  end
 end
