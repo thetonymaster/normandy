@@ -210,6 +210,8 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
       | engine_state: %{state.engine_state | pending_runs: fun.(state.engine_state.pending_runs)}
     }
 
+  # Not Orchestration.classify/2: a raise here must map like a :DOWN would (a domain
+  # exception bare, anything else :task_down), where classify/2 returns a raise bare.
   # One turn, in the worker: the Turn.Session reply, or any raise, exit or throw logged
   # (arities only) and turned into the reply a worker dying of it would give (a domain
   # exception bare, anything else a :task_down TurnError).
