@@ -1600,21 +1600,23 @@ defmodule Normandy.Agents.BaseAgent do
         # stream order, as the stream is consumed.
         stream = Stream.each(stream, &deliver_stream_event(&1, callback))
 
-        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-        if incremental_output_guards?(config) do
-          consume_stream_with_incremental_guards(stream, config, callback)
-        else
-          events = Enum.to_list(stream)
-
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case StreamProcessor.stream_error(events) do
-            nil -> {:ok, StreamProcessor.build_final_message(events)}
-            %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
-          end
-        end
+        if incremental_output_guards?(config),
+          do: consume_stream_with_incremental_guards(stream, config, callback),
+          else: consume_stream(stream)
 
       {:error, %LLMError{}} = error ->
         error
+    end
+  end
+
+  # Consumes a stream with no incremental output guards: the whole stream, then the
+  # final message, or the stream's error with the usage of the events it delivered.
+  defp consume_stream(stream) do
+    events = Enum.to_list(stream)
+
+    case StreamProcessor.stream_error(events) do
+      nil -> {:ok, StreamProcessor.build_final_message(events)}
+      %LLMError{} = error -> {:error, stream_error_with_usage(error, events)}
     end
   end
 
@@ -1661,58 +1663,17 @@ defmodule Normandy.Agents.BaseAgent do
   # `{:ok, final_message}`. A stream that failed (error event,
   # {:error, _} item, no message_stop) without a guardrail halt returns
   # `{:error, %LLMError{}}`; a guardrail halt is a deliberate stop, not a failure.
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp consume_stream_with_incremental_guards(stream, config, callback) do
     guards = BaseAgentConfig.guardrail(config, :output)
     chunk_size = BaseAgentConfig.guardrail(config, :chunk_size)
+    report = &report_incremental_violation(config, guards, &1, callback)
 
     initial = %{events: [], accumulated: "", since_last_check: 0, violations: [], halted?: false}
 
     final_acc =
-      Enum.reduce_while(stream, initial, fn event, acc ->
-        text_delta = extract_text_delta_for_guard(event)
-        new_accumulated = acc.accumulated <> text_delta
-        new_since = acc.since_last_check + byte_size(text_delta)
-
-        base_acc = %{
-          acc
-          | events: [event | acc.events],
-            accumulated: new_accumulated,
-            since_last_check: new_since
-        }
-
-        if text_delta != "" and new_since >= chunk_size do
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case Normandy.Guardrails.run(guards, new_accumulated) do
-            {:ok, _} ->
-              {:cont, %{base_acc | since_last_check: 0}}
-
-            {:error, violations} ->
-              report_incremental_violation(config, guards, violations, callback)
-              {:halt, %{base_acc | violations: violations, halted?: true}}
-          end
-        else
-          {:cont, base_acc}
-        end
-      end)
-
-    # Tail check: when the stream ends without crossing `chunk_size` since the
-    # last successful check, the tail bytes were never inspected. Run one
-    # final pass so short outputs (total length < chunk_size) can't bypass
-    # guards.
-    final_acc =
-      if final_acc.violations == [] and final_acc.since_last_check > 0 do
-        case Normandy.Guardrails.run(guards, final_acc.accumulated) do
-          {:ok, _} ->
-            final_acc
-
-          {:error, violations} ->
-            report_incremental_violation(config, guards, violations, callback)
-            %{final_acc | violations: violations}
-        end
-      else
-        final_acc
-      end
+      stream
+      |> Enum.reduce_while(initial, &guard_chunk_step(&1, &2, {guards, chunk_size}, report))
+      |> tail_check(guards, report)
 
     events = Enum.reverse(final_acc.events)
 
@@ -1728,6 +1689,53 @@ defmodule Normandy.Agents.BaseAgent do
         build_incremental_final_message(events, final_acc)
     end
   end
+
+  # One stream event: accumulate it, and run the output guards over the text so far
+  # once `chunk_size` bytes of text arrived since the last check. A violation halts.
+  defp guard_chunk_step(event, acc, {guards, chunk_size}, report) do
+    text_delta = extract_text_delta_for_guard(event)
+    since = acc.since_last_check + byte_size(text_delta)
+
+    acc = %{
+      acc
+      | events: [event | acc.events],
+        accumulated: acc.accumulated <> text_delta,
+        since_last_check: since
+    }
+
+    if text_delta != "" and since >= chunk_size,
+      do: check_chunk(acc, guards, report),
+      else: {:cont, acc}
+  end
+
+  defp check_chunk(acc, guards, report) do
+    case Normandy.Guardrails.run(guards, acc.accumulated) do
+      {:ok, _} ->
+        {:cont, %{acc | since_last_check: 0}}
+
+      {:error, violations} ->
+        report.(violations)
+        {:halt, %{acc | violations: violations, halted?: true}}
+    end
+  end
+
+  # Tail check: when the stream ends without crossing `chunk_size` since the
+  # last successful check, the tail bytes were never inspected. Run one
+  # final pass so short outputs (total length < chunk_size) can't bypass
+  # guards.
+  defp tail_check(%{violations: [], since_last_check: since} = acc, guards, report)
+       when since > 0 do
+    case Normandy.Guardrails.run(guards, acc.accumulated) do
+      {:ok, _} ->
+        acc
+
+      {:error, violations} ->
+        report.(violations)
+        %{acc | violations: violations}
+    end
+  end
+
+  defp tail_check(acc, _guards, _report), do: acc
 
   # The events received before a stream failed still bill: attach their usage
   # (message_start input/cache counts, message_delta output) to the error.

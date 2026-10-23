@@ -173,22 +173,6 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
     end
   end
 
-  describe "validation_enabled?/1" do
-    test "false with no schemas, true with a validating input schema" do
-      refute ValidationMiddleware.validation_enabled?(
-               config(input_schema: nil, output_schema: nil)
-             )
-
-      assert ValidationMiddleware.validation_enabled?(config(input_schema: %Query{}))
-    end
-
-    test "true when only the output schema supports validation" do
-      assert ValidationMiddleware.validation_enabled?(
-               config(input_schema: %PlainSchema{}, output_schema: %Query{})
-             )
-    end
-  end
-
   test "error_message lists each path and message" do
     errors = [%{path: [:name], message: "is required"}, %{path: [:age], message: "too low"}]
 

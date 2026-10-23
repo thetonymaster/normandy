@@ -9,12 +9,11 @@ defmodule Normandy.Agents.Turn.Start do
   #     not converged yet), or `:registration_race` — a self-registering server found
   #     the session taken by a server that then died. Route to the winner if one is
   #     now visible, else retry the start briefly. Genuine errors propagate unchanged.
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def start_server(
         sup_mod,
         sup,
         server_opts,
-        {reg_mod, reg_handle} = registry,
+        registry,
         sid,
         retries \\ 20
       ) do
@@ -28,18 +27,7 @@ defmodule Normandy.Agents.Turn.Start do
             {:ok, pid}
 
           via_race?(reason) and retries > 0 ->
-            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case reg_mod.whereis(reg_handle, sid) do
-              {:ok, pid} ->
-                {:ok, pid}
-
-              :none ->
-                Process.sleep(10)
-                start_server(sup_mod, sup, server_opts, registry, sid, retries - 1)
-
-              {:error, lookup_error} ->
-                {:error, lookup_error}
-            end
+            route_or_retry({sup_mod, sup, server_opts}, registry, sid, retries)
 
           true ->
             {:error, reason}
@@ -47,6 +35,22 @@ defmodule Normandy.Agents.Turn.Start do
 
       other ->
         other
+    end
+  end
+
+  # A via race: route to the winner if the registry shows one, else start again after
+  # a short wait.
+  defp route_or_retry({sup_mod, sup, server_opts}, {reg_mod, reg_handle} = registry, sid, retries) do
+    case reg_mod.whereis(reg_handle, sid) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      :none ->
+        Process.sleep(10)
+        start_server(sup_mod, sup, server_opts, registry, sid, retries - 1)
+
+      {:error, lookup_error} ->
+        {:error, lookup_error}
     end
   end
 
