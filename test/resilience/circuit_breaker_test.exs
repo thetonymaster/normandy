@@ -117,14 +117,15 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "transitions from open to half-open after timeout" do
-      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 1)
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 50)
 
       # Trigger open state
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
+      assert CircuitBreaker.state(cb) == :open
 
       # Wait for timeout
-      Process.sleep(5)
+      Process.sleep(60)
 
       # Next state check should transition to half-open
       assert CircuitBreaker.state(cb) == :half_open

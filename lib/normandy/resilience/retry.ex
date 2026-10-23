@@ -53,7 +53,7 @@ defmodule Normandy.Resilience.Retry do
           | {:retry_on, [atom()]}
           | {:retry_if, (term() -> boolean())}
 
-  @type retry_options :: [retry_option()]
+  @type retry_options :: [retry_option()] | %{optional(atom()) => term()}
 
   @default_max_attempts 3
   @default_base_delay 1000
@@ -146,7 +146,7 @@ defmodule Normandy.Resilience.Retry do
   unknown option or a bad value. `BaseAgent.init/1` calls it for
   `:retry`, so a mistake surfaces when the agent is built.
   """
-  @spec validate_options!(retry_options() | map()) :: :ok
+  @spec validate_options!(retry_options()) :: :ok
   def validate_options!(opts) do
     _ = Options.validate!(opts, @options_schema, {__MODULE__, :validate_options!, 1})
     :ok
@@ -355,7 +355,7 @@ defmodule Normandy.Resilience.Retry do
 
       Retry.with_retry(fn -> api_call() end, Retry.preset(:persistent))
   """
-  @spec preset(atom()) :: retry_options()
+  @spec preset(atom()) :: [retry_option()]
   def preset(:quick) do
     [
       max_attempts: 2,

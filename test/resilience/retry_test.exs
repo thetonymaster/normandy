@@ -282,7 +282,7 @@ defmodule Normandy.Resilience.RetryTest do
           end)
         end)
 
-      # With jitter the delay is 8 +- 25%, so 6..10; twelve draws are not all equal.
+      # add_jitter/1 spreads a delay by div(delay, 4) either side: 8 +- 2, so 6..10; twelve draws are not all equal.
       assert Enum.all?(delays, &(&1 in 6..10))
       assert length(Enum.uniq(delays)) > 1
     end
