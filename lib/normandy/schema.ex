@@ -356,70 +356,15 @@ defmodule Normandy.Schema do
 
   @doc false
   defmacro schema(do: block) do
-    prelude =
-      quote do
-        Normandy.Schema.__schema__(__MODULE__, __ENV__.line)
-
-        try do
-          import Normandy.Schema
-          unquote(block)
-        after
-          :ok
-        end
-      end
-
-    postlude =
-      quote unquote: false do
-        {struct_fields, bags_of_clauses} = Normandy.Schema.__schema__(__MODULE__)
-        defstruct struct_fields
-
-        def __specification__ do
-          %{unquote_splicing(Macro.escape(@schema_specification_fields))}
-        end
-
-        for clauses <- bags_of_clauses, {args, body} <- clauses do
-          def __schema__(unquote_splicing(args)), do: unquote(body)
-        end
-
-        :ok
-      end
-
-    quote do
-      unquote(prelude)
-      unquote(postlude)
-    end
+    schema_quote(nil, block, nil)
   end
 
   @doc false
-  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defmacro io_schema(source, do: block) do
-    prelude =
+    description = quote do: @description(unquote(source))
+
+    impl =
       quote do
-        Normandy.Schema.__schema__(__MODULE__, __ENV__.line)
-        source = unquote(source)
-
-        try do
-          @description source
-          import Normandy.Schema
-          unquote(block)
-        after
-          :ok
-        end
-      end
-
-    postlude =
-      quote unquote: false do
-        {struct_fields, bags_of_clauses} = Normandy.Schema.__schema__(__MODULE__)
-        defstruct struct_fields
-
-        def __specification__ do
-          %{unquote_splicing(Macro.escape(@schema_specification_fields))}
-        end
-
-        for clauses <- bags_of_clauses, {args, body} <- clauses do
-          def __schema__(unquote_splicing(args)), do: unquote(body)
-        end
-
         try do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
             def to_json(str), do: Normandy.JSON.encode!(serializable(str))
@@ -440,9 +385,44 @@ defmodule Normandy.Schema do
         end
       end
 
+    schema_quote(description, block, impl)
+  end
+
+  # The one quote behind schema/1 and io_schema/2: `before_block` runs ahead of
+  # the field block, `after_struct` after the struct and its clauses exist.
+  defp schema_quote(before_block, block, after_struct) do
+    prelude =
+      quote do
+        Normandy.Schema.__schema__(__MODULE__, __ENV__.line)
+
+        try do
+          unquote(before_block)
+          import Normandy.Schema
+          unquote(block)
+        after
+          :ok
+        end
+      end
+
+    postlude =
+      quote unquote: false do
+        {struct_fields, bags_of_clauses} = Normandy.Schema.__schema__(__MODULE__)
+        defstruct struct_fields
+
+        def __specification__ do
+          %{unquote_splicing(Macro.escape(@schema_specification_fields))}
+        end
+
+        for clauses <- bags_of_clauses, {args, body} <- clauses do
+          def __schema__(unquote_splicing(args)), do: unquote(body)
+        end
+      end
+
     quote do
       unquote(prelude)
       unquote(postlude)
+      unquote(after_struct)
+      :ok
     end
   end
 
@@ -496,13 +476,7 @@ defmodule Normandy.Schema do
     Module.register_attribute(module, :schema_struct_fields, accumulate: true)
     Module.register_attribute(module, :schema_required_fields, accumulate: true)
 
-    context = Module.get_attribute(module, :schema_context)
-
-    meta = %Metadata{
-      state: :built,
-      context: context,
-      schema: module
-    }
+    meta = %Metadata{state: :built, schema: module}
 
     Module.put_attribute(module, :schema_struct_fields, {:__meta__, meta})
   end
@@ -604,7 +578,7 @@ defmodule Normandy.Schema do
   # New function that builds complete property spec with constraints
   defp build_property_spec(name, type, description, opts) do
     base_spec = get_base_type_spec(type, description)
-    spec_with_constraints = add_constraints(base_spec, type, opts)
+    spec_with_constraints = add_constraints(base_spec, opts)
     {name, spec_with_constraints}
   end
 
@@ -645,7 +619,7 @@ defmodule Normandy.Schema do
   end
 
   # Add JSON Schema constraints based on field options
-  defp add_constraints(spec, _type, opts) do
+  defp add_constraints(spec, opts) do
     spec
     |> add_string_constraints(opts)
     |> add_number_constraints(opts)
@@ -696,113 +670,50 @@ defmodule Normandy.Schema do
     |> add_all_of(opts)
   end
 
-  defp add_any_of(spec, opts) do
-    case opts[:any_of] do
-      nil ->
-        spec
+  defp add_any_of(spec, opts), do: put_schemas(spec, :anyOf, opts[:any_of], "composition")
+  defp add_one_of(spec, opts), do: put_schemas(spec, :oneOf, opts[:one_of], "composition")
+  defp add_all_of(spec, opts), do: put_schemas(spec, :allOf, opts[:all_of], "composition")
 
-      schemas when is_list(schemas) ->
-        any_of = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :anyOf, any_of)
-    end
-  end
+  defp put_schemas(spec, _key, nil, _kind), do: spec
 
-  defp add_one_of(spec, opts) do
-    case opts[:one_of] do
-      nil ->
-        spec
+  defp put_schemas(spec, key, schemas, kind) when is_list(schemas),
+    do: Map.put(spec, key, Enum.map(schemas, &build_sub_schema(&1, kind)))
 
-      schemas when is_list(schemas) ->
-        one_of = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :oneOf, one_of)
-    end
-  end
-
-  defp add_all_of(spec, opts) do
-    case opts[:all_of] do
-      nil ->
-        spec
-
-      schemas when is_list(schemas) ->
-        all_of = Enum.map(schemas, &build_composition_schema/1)
-        Map.put(spec, :allOf, all_of)
-    end
-  end
-
-  # Build a schema for composition (handles both module references and inline specs)
-  defp build_composition_schema(schema_module) when is_atom(schema_module) do
-    if schema_module?(schema_module) do
-      inline_nested_schema(schema_module)
-    else
-      raise ArgumentError, "Module #{inspect(schema_module)} is not a valid schema in composition"
-    end
-  end
-
-  defp build_composition_schema(schema_spec) when is_map(schema_spec) do
-    # Allow inline schema specifications like %{type: :string, minLength: 5}
-    schema_spec
-  end
-
-  defp build_composition_schema(invalid) do
-    raise ArgumentError,
-          "Invalid composition schema: #{inspect(invalid)}. Expected a schema module or map."
-  end
-
-  # JSON Schema conditional constraints (if/then/else)
+  # JSON Schema conditional constraints (if/then/else): `then` and `else` need an `if`.
   defp add_conditional_constraints(spec, opts) do
-    if_schema = opts[:if_schema]
-    then_schema = opts[:then_schema]
-    else_schema = opts[:else_schema]
-
-    cond do
-      # Must have if_schema to use conditionals
-      is_nil(if_schema) ->
+    case opts[:if_schema] do
+      nil ->
         spec
 
-      # if with then and else
-      not is_nil(then_schema) and not is_nil(else_schema) ->
+      if_schema ->
         spec
-        |> Map.put(:if, build_conditional_schema(if_schema))
-        |> Map.put(:then, build_conditional_schema(then_schema))
-        |> Map.put(:else, build_conditional_schema(else_schema))
-
-      # if with then only
-      not is_nil(then_schema) ->
-        spec
-        |> Map.put(:if, build_conditional_schema(if_schema))
-        |> Map.put(:then, build_conditional_schema(then_schema))
-
-      # if with else only
-      not is_nil(else_schema) ->
-        spec
-        |> Map.put(:if, build_conditional_schema(if_schema))
-        |> Map.put(:else, build_conditional_schema(else_schema))
-
-      # if without then/else (just validation)
-      true ->
-        spec
-        |> Map.put(:if, build_conditional_schema(if_schema))
+        |> Map.put(:if, build_sub_schema(if_schema, "conditional"))
+        |> put_branch(:then, opts[:then_schema])
+        |> put_branch(:else, opts[:else_schema])
     end
   end
 
-  # Build a schema for conditionals (similar to composition but for if/then/else)
-  defp build_conditional_schema(schema_module) when is_atom(schema_module) do
+  defp put_branch(spec, _key, nil), do: spec
+
+  defp put_branch(spec, key, schema),
+    do: Map.put(spec, key, build_sub_schema(schema, "conditional"))
+
+  # A composition or conditional sub-schema: a schema module (inlined) or an
+  # inline specification such as %{type: :string, minLength: 5}. `kind` names the
+  # keyword family in the error message.
+  defp build_sub_schema(schema_module, kind) when is_atom(schema_module) do
     if schema_module?(schema_module) do
       inline_nested_schema(schema_module)
     else
-      raise ArgumentError,
-            "Module #{inspect(schema_module)} is not a valid schema in conditional"
+      raise ArgumentError, "Module #{inspect(schema_module)} is not a valid schema in #{kind}"
     end
   end
 
-  defp build_conditional_schema(schema_spec) when is_map(schema_spec) do
-    # Allow inline schema specifications
-    schema_spec
-  end
+  defp build_sub_schema(schema_spec, _kind) when is_map(schema_spec), do: schema_spec
 
-  defp build_conditional_schema(invalid) do
+  defp build_sub_schema(invalid, kind) do
     raise ArgumentError,
-          "Invalid conditional schema: #{inspect(invalid)}. Expected a schema module or map."
+          "Invalid #{kind} schema: #{inspect(invalid)}. Expected a schema module or map."
   end
 
   # Default value
@@ -844,16 +755,15 @@ defmodule Normandy.Schema do
   defp check_field_type!(_mod, name, :datetime, _opts) do
     raise ArgumentError,
           "invalid type :datetime for field #{inspect(name)}. " <>
-            "You probably meant to choose one between :naive_datetime " <>
-            "(no time zone information) or :utc_datetime (time zone is set to UTC)"
+            "Normandy has no datetime field type: use a :string field with " <>
+            ~s(format: "date-time", or a custom Normandy.Type)
   end
 
-  # Internal composites of Normandy.Type (cast helpers), with no JSON Schema form.
-  defp check_field_type!(_mod, name, {internal, _inner} = type, _opts)
-       when internal in [:try, :in] do
+  # An internal composite of Normandy.Type (a cast helper), with no JSON Schema form.
+  defp check_field_type!(_mod, name, {:try, _inner} = type, _opts) do
     raise ArgumentError,
           "invalid type #{Normandy.Type.format(type)} for field #{inspect(name)}: " <>
-            "#{inspect(internal)} is internal to Normandy.Type and is not a field type"
+            ":try is internal to Normandy.Type and is not a field type"
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity

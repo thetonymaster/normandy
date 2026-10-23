@@ -457,22 +457,59 @@ defmodule Normandy.SchemaNestedTest do
       end
     end
 
-    test "{:try, _} and {:in, _} are not field types" do
-      for type <- [{:try, :string}, {:in, :integer}] do
-        assert_raise ArgumentError, ~r/is not a field type/, fn ->
+    test "{:try, _} is not a field type" do
+      assert_raise ArgumentError, ~r/is not a field type/, fn ->
+        Code.eval_quoted(
+          quote do
+            defmodule NormandyTest.TryField do
+              use Normandy.Schema
+
+              schema do
+                field(:x, {:try, :string})
+              end
+            end
+          end
+        )
+      end
+    end
+
+    test "{:in, _} is an unknown composite, not a field type" do
+      assert_raise ArgumentError, ~r/invalid or unknown composite \{:in, :integer\}/, fn ->
+        Code.eval_quoted(
+          quote do
+            defmodule NormandyTest.InField do
+              use Normandy.Schema
+
+              schema do
+                field(:x, {:in, :integer})
+              end
+            end
+          end
+        )
+      end
+    end
+
+    test ":datetime is refused with types that exist" do
+      error =
+        assert_raise ArgumentError, fn ->
           Code.eval_quoted(
             quote do
-              defmodule unquote(Module.concat(__MODULE__, "Internal#{elem(type, 0)}")) do
+              defmodule NormandyTest.DatetimeField do
                 use Normandy.Schema
 
                 schema do
-                  field(:x, unquote(type))
+                  field(:at, :datetime)
                 end
               end
             end
           )
         end
-      end
+
+      assert error.message =~ "invalid type :datetime for field :at"
+      assert error.message =~ ~s(:string field with format: "date-time")
+      assert error.message =~ "custom Normandy.Type"
+      refute error.message =~ "utc_datetime"
+      refute error.message =~ "naive_datetime"
     end
 
     test "nested schema without io_schema works" do

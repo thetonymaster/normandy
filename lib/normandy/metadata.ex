@@ -1,19 +1,18 @@
 defmodule Normandy.Metadata do
   @moduledoc """
-  Metadata attached to schema structs.
+  The `__meta__` field of a schema struct: the schema module it was built from
+  and whether the struct is `:built` (a fresh `struct/1`) or `:loaded` (the
+  schema's `__schema__(:loaded)` prototype).
 
-  Tracks the state, source, and context information for schema instances.
-  Used internally by the Schema system to manage struct lifecycle.
+  Nothing in Normandy reads it; it is left out of every JSON encoding and out
+  of stored memory.
   """
 
-  defstruct [:state, :source, :context, :schema]
+  defstruct [:state, :schema]
 
-  @type state :: :built | :loaded | :deleted
-
-  @type context :: any
+  @type state :: :built | :loaded
 
   @type t(schema) :: %__MODULE__{
-          context: context,
           schema: schema,
           state: state
         }
@@ -23,15 +22,8 @@ defmodule Normandy.Metadata do
   defimpl Inspect do
     import Inspect.Algebra
 
-    def inspect(metadata, opts) do
-      %{source: source, state: state, context: context} = metadata
-
-      entries =
-        for entry <- [state, source, context],
-            entry != nil,
-            do: to_doc(entry, opts)
-
-      concat(["#Normandy.Metadata<"] ++ Enum.intersperse(entries, ", ") ++ [">"])
+    def inspect(%{state: state}, opts) do
+      concat(["#Normandy.Metadata<", to_doc(state, opts), ">"])
     end
   end
 end

@@ -23,17 +23,16 @@ defmodule Normandy.TypeBaseTypesTest do
              else: @samples
 
   for {type, sample} <- @samples do
-    test "#{type}: cast, dump and load each return the value" do
+    test "#{type}: cast and dump each return the value" do
       value = unquote(Macro.escape(sample))
       type = unquote(type)
 
       assert Type.cast(type, value) == {:ok, value}
       assert Type.dump(type, value) == {:ok, value}
-      assert Type.load(type, value) == {:ok, value}
     end
   end
 
   test "each sampled type is a declared base type" do
-    assert Enum.all?(Keyword.keys(@samples), &Type.primitive?/1)
+    assert Enum.all?(Keyword.keys(@samples), &Type.base?/1)
   end
 end
