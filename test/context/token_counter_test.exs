@@ -1,6 +1,8 @@
 defmodule Normandy.Context.TokenCounterTest do
   use ExUnit.Case, async: true
 
+  @model "claude-haiku-4-5-20251001"
+
   alias Claudio.Messages.Request, as: ClaudioRequest
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
@@ -39,9 +41,14 @@ defmodule Normandy.Context.TokenCounterTest do
   end
 
   describe "count_message/3" do
+    test "has no default model: count_message/2 is gone" do
+      refute function_exported?(TokenCounter, :count_message, 2)
+      assert function_exported?(TokenCounter, :count_message, 3)
+    end
+
     @tag :integration
     test "counts tokens for a simple message", %{client: client} do
-      {:ok, result} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, result} = TokenCounter.count_message(client, "Hello, world!", @model)
 
       assert is_map(result)
       assert Map.has_key?(result, "input_tokens")
@@ -56,7 +63,7 @@ defmodule Normandy.Context.TokenCounterTest do
       The token counter should accurately reflect the length of this text.
       """
 
-      {:ok, result} = TokenCounter.count_message(client, long_message)
+      {:ok, result} = TokenCounter.count_message(client, long_message, @model)
 
       assert is_map(result)
       assert result["input_tokens"] > 10
@@ -65,7 +72,7 @@ defmodule Normandy.Context.TokenCounterTest do
     @tag :integration
     test "counts tokens with custom model", %{client: client} do
       {:ok, result} =
-        TokenCounter.count_message(client, "Test message", "claude-haiku-4-5-20251001")
+        TokenCounter.count_message(client, "Test message", @model)
 
       assert is_map(result)
       assert Map.has_key?(result, "input_tokens")
@@ -73,7 +80,7 @@ defmodule Normandy.Context.TokenCounterTest do
 
     test "counts an empty message as zero tokens (no API call)", %{client: client} do
       # Empty input short-circuits to zero without hitting the endpoint.
-      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_message(client, "")
+      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_message(client, "", @model)
     end
   end
 
@@ -407,7 +414,7 @@ defmodule Normandy.Context.TokenCounterTest do
         base_url: "http://localhost:#{bypass.port}/"
       }
 
-      assert {:ok, _body} = TokenCounter.count_message(client, "hi")
+      assert {:ok, _body} = TokenCounter.count_message(client, "hi", @model)
     end
   end
 end
