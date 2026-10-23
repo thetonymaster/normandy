@@ -10,7 +10,6 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     assert {:admit_turn_input, 2} in exported
     assert {:base_agent_pipeline, 1} in exported
     assert {:turn_response_model, 1} in exported
-    assert {:unwrap_tool_task_result!, 1} in exported
   end
 
   test "non_streaming_handlers/0 returns a fully-populated Driver.Handlers struct" do

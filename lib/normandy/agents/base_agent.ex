@@ -49,7 +49,6 @@ defmodule Normandy.Agents.BaseAgent do
   alias Normandy.Behaviours.Compactor.WindowManager, as: WindowCompactor
   alias Normandy.Schema.Wire
   alias Normandy.Telemetry.Metadata
-  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
   alias Normandy.Telemetry.RunUsage
@@ -235,8 +234,8 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Coerce inbound `:max_tool_concurrency` into the `pos_integer()` shape the
-  # struct's typespec promises. Integers < 1 are clamped to 1 (matches the
-  # runtime tool-loop clamp). Non-integers raise — silently coercing `"4"` or
+  # struct's typespec promises (Dispatch.run_batch/3 reads it as is). Integers < 1
+  # are clamped to 1. Non-integers raise — silently coercing `"4"` or
   # `4.0` to 1 hides a real config bug from the caller. Public so the DSL
   # `__before_compile__` quote can reuse it for compile-time validation.
   @doc false
@@ -247,26 +246,6 @@ defmodule Normandy.Agents.BaseAgent do
     raise ArgumentError,
           ":max_tool_concurrency must be an integer >= 1, got: #{inspect(other)}"
   end
-
-  # Translate a `Task.async_stream` element into the underlying tool result.
-  # `Task.async_stream/3` (the linked variant we use) propagates worker
-  # raises to the caller via process-link before the stream yields, so the
-  # `{:exit, {exception, stacktrace}}` clause below is unreachable for raises
-  # in the current configuration. It IS reachable for `:exit` reasons that
-  # the stream catches without killing the caller — most importantly
-  # `{:exit, :timeout}` from `on_timeout: :kill_task`, and any deliberate
-  # `exit/1` from tool wrapper code. Without this helper those would hit
-  # `FunctionClauseError` against a `{:ok, _}`-only pattern, masking the
-  # underlying cause. Public (`@doc false`) so it's directly unit-testable.
-  @doc false
-  def unwrap_tool_task_result!({:ok, result}), do: result
-
-  def unwrap_tool_task_result!({:exit, {exception, stacktrace}})
-      when is_exception(exception) and is_list(stacktrace) do
-    reraise(exception, stacktrace)
-  end
-
-  def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
 
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil, keyword()) ::
           {struct(), map() | nil, map()}
@@ -830,23 +809,8 @@ defmodule Normandy.Agents.BaseAgent do
     |> Request.new()
   end
 
-  defp dispatch_turn_tools(config, calls) do
-    parent_otel_ctx = OtelCtx.capture()
-    max_concurrency = max(config.max_tool_concurrency || 1, 1)
-
-    calls
-    |> Task.async_stream(
-      fn call ->
-        OtelCtx.restore(parent_otel_ctx)
-        execute_one_tool_call(config, call)
-      end,
-      ordered: true,
-      max_concurrency: max_concurrency,
-      timeout: :infinity,
-      on_timeout: :kill_task
-    )
-    |> Enum.map(&unwrap_tool_task_result!/1)
-  end
+  defp dispatch_turn_tools(config, calls),
+    do: Dispatch.dispatch_batch(config, calls, base_agent_pipeline(config), fn _ -> :ok end)
 
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes
   # s.output_schema (== config.output_schema, seeded in run_turn and never mutated)
@@ -1422,26 +1386,11 @@ defmodule Normandy.Agents.BaseAgent do
     end
   end
 
-  # Mirror of dispatch_turn_tools with the streaming per-tool :tool_result
-  # callback. Same Task.async_stream parallelism + OtelCtx propagation.
+  # dispatch_turn_tools/2 with the streaming per-tool :tool_result callback.
   defp dispatch_stream_tools(config, calls, callback) do
-    parent_otel_ctx = OtelCtx.capture()
-    max_concurrency = max(config.max_tool_concurrency || 1, 1)
-
-    calls
-    |> Task.async_stream(
-      fn call ->
-        OtelCtx.restore(parent_otel_ctx)
-        result = execute_one_streaming_tool_call(config, call)
-        callback.(%StreamEvent{type: :tool_result, data: result})
-        result
-      end,
-      ordered: true,
-      max_concurrency: max_concurrency,
-      timeout: :infinity,
-      on_timeout: :kill_task
-    )
-    |> Enum.map(&unwrap_tool_task_result!/1)
+    Dispatch.dispatch_batch(config, calls, base_agent_pipeline(config), fn result ->
+      callback.(%StreamEvent{type: :tool_result, data: result})
+    end)
   end
 
   # Assistant turns are persisted as a %ToolCallResponse{} built from content
@@ -1989,17 +1938,6 @@ defmodule Normandy.Agents.BaseAgent do
 
       {r, stop_meta}
     end)
-  end
-
-  defp execute_one_tool_call(config, tool_call) do
-    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
-  end
-
-  # Streaming-loop variant: tool_call is a string-keyed map (raw LLM JSON).
-  # Dispatch.dispatch_one/3 normalizes it into a %ToolCall{} before running the
-  # same chokepoint pipeline as the non-streaming path.
-  defp execute_one_streaming_tool_call(config, tool_call) do
-    Dispatch.dispatch_one(config, tool_call, base_agent_pipeline(config))
   end
 
   # The API dropped a replayed thinking block because its history changed since it

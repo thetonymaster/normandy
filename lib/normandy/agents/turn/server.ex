@@ -2161,23 +2161,11 @@ defmodule Normandy.Agents.Turn.Server do
          do: {:error, repaired, reason}
   end
 
-  # The config a tool task runs with: the conversation's entries left behind, so each
-  # task's copy is small (B2). Execution, budget, after_tool and after-hooks read the
-  # agent's name, model, toolset, tool_context, behaviours and the turn id
-  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
-  # runs in the worker with the full config.
-  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
-    do: %{config | memory: AgentMemory.without_entries(memory)}
-
-  defp tool_task_config(config), do: config
-
-  # Classify every call; execute the allowed ones concurrently (mirrors
-  # BaseAgent.dispatch_turn_tools/2's Task.async_stream); collect held results.
+  # Classify every call (with the full config); execute the allowed ones concurrently
+  # (Dispatch.run_batch/3, with the slim task config); collect held results.
   # If any call needs approval, park the batch; else hand back ordered results.
   defp dispatch(%Data{config: config}, calls) do
     pipeline = BaseAgent.base_agent_pipeline(config)
-    max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = OtelCtx.capture()
 
     classified =
       calls
@@ -2189,21 +2177,11 @@ defmodule Normandy.Agents.Turn.Server do
 
     runnable = for {_call, {:execute, invocation, ncall}} <- classified, do: {invocation, ncall}
     denied = for {_call, {:deny, %_{} = result}} <- classified, do: result
-    tool_config = tool_task_config(config)
 
     executed =
-      runnable
-      |> Task.async_stream(
-        fn {invocation, ncall} ->
-          OtelCtx.restore(parent_ctx)
-          Dispatch.execute(tool_config, invocation, ncall, pipeline)
-        end,
-        ordered: true,
-        max_concurrency: max_conc,
-        timeout: :infinity,
-        on_timeout: :kill_task
-      )
-      |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+      Dispatch.run_batch(config, runnable, fn task_config, {invocation, ncall} ->
+        Dispatch.execute(task_config, invocation, ncall, pipeline)
+      end)
 
     # Back in the batch's tool_use order, as the Driver shell returns them.
     order = classified |> Enum.with_index() |> Map.new(fn {{call, _}, i} -> {call.id, i} end)
@@ -2221,21 +2199,9 @@ defmodule Normandy.Agents.Turn.Server do
   # policy would re-park. Concurrency mirrors dispatch/2.
   defp execute_approved(%Data{config: config}, calls) do
     pipeline = BaseAgent.base_agent_pipeline(config)
-    max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = OtelCtx.capture()
-    tool_config = tool_task_config(config)
 
-    calls
-    |> Task.async_stream(
-      fn %ToolCall{} = call ->
-        OtelCtx.restore(parent_ctx)
-        Dispatch.execute_approved(tool_config, call, pipeline)
-      end,
-      ordered: true,
-      max_concurrency: max_conc,
-      timeout: :infinity,
-      on_timeout: :kill_task
-    )
-    |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+    Dispatch.run_batch(config, calls, fn task_config, %ToolCall{} = call ->
+      Dispatch.execute_approved(task_config, call, pipeline)
+    end)
   end
 end

@@ -85,10 +85,12 @@ defmodule Normandy.Agents.Dispatch do
   """
 
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Telemetry.Metadata
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Input
@@ -409,6 +411,101 @@ defmodule Normandy.Agents.Dispatch do
   def dispatch_one(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
     dispatch_one(config, to_tool_call(raw_call), pipeline)
   end
+
+  @doc false
+  # A batch of calls run to completion (BaseAgent.run/3 and stream/3): each call is
+  # classified in the caller with the full config, the allowed ones are executed by
+  # run_batch/3, and a :needs_approval verdict is answered as dispatch_one/3 answers it.
+  # Returns the results in call order; `on_result` sees each one once, as it is made
+  # (the answered ones first, then the executed ones in completion order).
+  @spec dispatch_batch(map(), [ToolCall.t() | map()], Pipeline.t(), (ToolResult.t() -> any())) ::
+          [ToolResult.t()]
+  def dispatch_batch(config, calls, %Pipeline{} = pipeline, on_result) do
+    verdicts =
+      Enum.map(calls, fn call ->
+        case classify(config, call, pipeline) do
+          {:execute, invocation, call} ->
+            {:execute, invocation, call}
+
+          {:deny, %ToolResult{} = result} ->
+            {:answered, tap(result, on_result)}
+
+          {:needs_approval, _invocation, call, info} ->
+            result = policy_denial(config, call, info, :needs_approval)
+            {:answered, tap(answer(config, call, result, pipeline), on_result)}
+        end
+      end)
+
+    runnable = for {:execute, invocation, call} <- verdicts, do: {invocation, call}
+
+    executed =
+      run_batch(config, runnable, fn task_config, {invocation, call} ->
+        tap(execute(task_config, invocation, call, pipeline), on_result)
+      end)
+
+    {results, []} =
+      Enum.map_reduce(verdicts, executed, fn
+        {:answered, result}, executed -> {result, executed}
+        {:execute, _invocation, _call}, [result | executed] -> {result, executed}
+      end)
+
+    results
+  end
+
+  @doc false
+  # The concurrent tool-batch runner of every turn path (dispatch_batch/4 for BaseAgent,
+  # Turn.Server's dispatched and approved calls): `fun.(task_config, item)` runs in a task
+  # per item, at most `config.max_tool_concurrency` at once (a pos_integer after
+  # BaseAgent.init/1), with the caller's OpenTelemetry context; the results come back in
+  # item order. `task_config` is `config` with the conversation's entries left behind, so
+  # each task's copy is small (B2): execution, budget, after_tool and after-hooks read the
+  # agent's name, model, toolset, tool_context, behaviours and the turn id
+  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
+  # runs in the caller with the full config.
+  @spec run_batch(map(), [item], (map(), item -> result)) :: [result]
+        when item: term(), result: term()
+  def run_batch(config, items, fun) do
+    parent_ctx = OtelCtx.capture()
+    task_config = tool_task_config(config)
+
+    items
+    |> Task.async_stream(
+      fn item ->
+        OtelCtx.restore(parent_ctx)
+        fun.(task_config, item)
+      end,
+      ordered: true,
+      max_concurrency: config.max_tool_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
+    do: %{config | memory: AgentMemory.without_entries(memory)}
+
+  defp tool_task_config(config), do: config
+
+  # Translate a `Task.async_stream` element into the underlying tool result.
+  # `Task.async_stream/3` (the linked variant run_batch/3 uses) propagates worker
+  # raises to the caller via process-link before the stream yields, so the
+  # `{:exit, {exception, stacktrace}}` clause below is unreachable for raises
+  # in the current configuration. It IS reachable for `:exit` reasons that
+  # the stream catches without killing the caller — most importantly
+  # `{:exit, :timeout}` from `on_timeout: :kill_task`, and any deliberate
+  # `exit/1` from tool wrapper code. Without this helper those would hit
+  # `FunctionClauseError` against a `{:ok, _}`-only pattern, masking the
+  # underlying cause. Public (`@doc false`) so it's directly unit-testable.
+  @doc false
+  def unwrap_tool_task_result!({:ok, result}), do: result
+
+  def unwrap_tool_task_result!({:exit, {exception, stacktrace}})
+      when is_exception(exception) and is_list(stacktrace) do
+    reraise(exception, stacktrace)
+  end
+
+  def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
 
   defp execute_and_wrap(config, call, invocation, execute_fn) do
     case call_execute_fn(execute_fn, config, invocation, call) do
