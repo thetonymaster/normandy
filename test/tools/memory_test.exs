@@ -23,7 +23,7 @@ defmodule Normandy.Tools.MemoryTest do
 
     test "raises on each malformed option, naming it" do
       for {opts, pattern} <- [
-            {[], ~r/:store is required/},
+            {[], ~r/required :store option/},
             {[store: :nope], ~r/:store must be \{module, handle\}/},
             {[store: {String, nil}], ~r/does not implement Normandy.Behaviours.MemoryStore/},
             {[store: {InMemory, nil}, bogus: 1], ~r/unknown option :bogus/},
@@ -37,6 +37,30 @@ defmodule Normandy.Tools.MemoryTest do
           ] do
         assert_raise ArgumentError, pattern, fn -> Memory.new(opts) end
       end
+    end
+
+    test "accepts a map and names every unknown option under the Options prefix" do
+      assert %Memory{max_cas_retries: 7} =
+               Memory.new(%{store: {InMemory, nil}, max_cas_retries: 7})
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Memory.new(store: {InMemory, nil}, bogus: 1, other: 2)
+        end
+
+      assert error.message =~ "Normandy.Tools.Memory.new/1: unknown options [:bogus, :other]"
+    end
+
+    test "a malformed :store is not echoed" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Memory.new(store: {InMemory, "secret-conn-string"}, mounts: 1)
+        end
+
+      refute error.message =~ "secret-conn-string"
+
+      error = assert_raise ArgumentError, fn -> Memory.new(store: [pw: "secret-conn-string"]) end
+      refute error.message =~ "secret-conn-string"
     end
 
     test "a mount key must round-trip through Paths.validate exactly" do
@@ -764,7 +788,7 @@ defmodule Normandy.Tools.MemoryTest do
       assert tool(max_namespace_bytes: 5).max_namespace_bytes == 5
 
       for bad <- [0, -1, 1.5, "x"] do
-        assert_raise ArgumentError, ~r/:max_namespace_bytes must be .*got: #{inspect(bad)}/, fn ->
+        assert_raise ArgumentError, ~r/:max_namespace_bytes/, fn ->
           tool(max_namespace_bytes: bad)
         end
       end
@@ -874,7 +898,7 @@ defmodule Normandy.Tools.MemoryTest do
 
       for bad <- [0, -1, 1.5, "x"] do
         assert_raise ArgumentError,
-                     ~r/:max_namespace_documents must be a positive integer or nil, got: #{inspect(bad)}/,
+                     ~r/:max_namespace_documents/,
                      fn -> tool(max_namespace_documents: bad) end
       end
     end

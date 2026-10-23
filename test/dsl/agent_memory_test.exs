@@ -94,15 +94,17 @@ defmodule Normandy.DSL.AgentMemoryTest do
   test "a bad memory option raises at new/1, not at compile time" do
     store = {InMemory, InMemory.new()}
 
-    assert_raise ArgumentError, ~r/:namespace_key must be an atom, got: "not_an_atom"/, fn ->
-      BadNamespaceKeyAgent.new(client: client(), memory_store: store)
-    end
+    assert_raise ArgumentError,
+                 ~r/invalid value for :namespace_key option: expected atom, got: "not_an_atom"/,
+                 fn ->
+                   BadNamespaceKeyAgent.new(client: client(), memory_store: store)
+                 end
   end
 
   test "an unknown memory option raises at new/1" do
     store = {InMemory, InMemory.new()}
 
-    assert_raise ArgumentError, ~r/unknown option :bogus_option; allowed: :store/, fn ->
+    assert_raise ArgumentError, ~r/unknown option :bogus_option; supported: :store/, fn ->
       UnknownOptionAgent.new(client: client(), memory_store: store)
     end
   end
