@@ -82,6 +82,7 @@ defmodule Normandy.Coordination.AgentProcess do
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Coordination.AgentProcess.ScopedRegistry
+  alias Normandy.Coordination.Orchestration
   alias Normandy.Options
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
@@ -834,7 +835,7 @@ defmodule Normandy.Coordination.AgentProcess do
     {pid, ref} =
       WatchedWorker.start(:server_result, fn ->
         OtelCtx.restore(otel_ctx)
-        server_turn(session, prepare_input(input), who)
+        server_turn(session, Orchestration.prepare_input(input), who)
       end)
 
     running = %{ref: ref, op: op, started: System.monotonic_time(:millisecond)}
@@ -899,20 +900,16 @@ defmodule Normandy.Coordination.AgentProcess do
   defp caller_alive?({pid, _tag}) when node(pid) == node(), do: Process.alive?(pid)
   defp caller_alive?(_from), do: true
 
-  # One inline turn, in the worker. A Normandy error is returned; a raise (a bug) is
-  # logged (arities only) and returned bare; an exit or a throw is logged and becomes
-  # the :task_down TurnError a worker dying of it would give.
+  # One inline turn, in the worker, classified by `Orchestration.classify/2`: a Normandy
+  # error is returned; a raise (a bug) is logged (arities only) and returned bare; an exit
+  # or a throw is logged and becomes the :task_down TurnError a worker dying of it would give.
   defp inline_turn(agent, input, who) do
-    case BaseAgent.run(agent, prepare_input(input)) do
-      {:ok, updated_agent, response} -> {:ok, updated_agent, extract_result(response)}
-      {:error, exception} -> {:error, exception}
-    end
-  rescue
-    e -> TurnError.log_raised(who, e, __STACKTRACE__)
-  catch
-    kind, reason when kind in [:exit, :throw] ->
-      Logger.error("#{who} raised " <> TurnError.format_raised(kind, reason, __STACKTRACE__))
-      {:error, TurnError.from_reason({:task_down, exit_reason(kind, reason)})}
+    Orchestration.classify(who, fn ->
+      case BaseAgent.run(agent, Orchestration.prepare_input(input)) do
+        {:ok, updated_agent, response} -> {:ok, updated_agent, extract_result(response)}
+        {:error, exception} -> {:error, exception}
+      end
+    end)
   end
 
   # One :server turn, in the worker: the Turn.Session reply, or any raise, exit or throw
@@ -934,16 +931,6 @@ defmodule Normandy.Coordination.AgentProcess do
   defp exit_reason(:error, reason), do: Exception.normalize(:error, reason)
   defp exit_reason(:throw, value), do: {:nocatch, value}
   defp exit_reason(:exit, reason), do: reason
-
-  defp prepare_input(input) when is_map(input) and not is_struct(input) do
-    Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
-  end
-
-  defp prepare_input(input) when is_binary(input) do
-    %{chat_message: input}
-  end
-
-  defp prepare_input(input), do: input
 
   defp extract_result(response) when is_map(response) do
     Map.get(response, :chat_message) ||

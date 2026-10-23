@@ -3,6 +3,7 @@ defmodule Normandy.Batch.ProcessorTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
+  alias Normandy.TurnError
 
   # Mock client for testing
   defmodule MockClient do
@@ -32,8 +33,8 @@ defmodule Normandy.Batch.ProcessorTest do
     end
   end
 
-  # Fails when the input mentions "boom" and sleeps when it mentions "slow", so a
-  # test decides exactly which items fail or time out.
+  # Fails when the input mentions "boom" (raises), "quit" (exits) or "toss" (throws) and
+  # sleeps when it mentions "slow", so a test decides exactly which items fail or time out.
   defmodule PickyClient do
     use Normandy.Schema
 
@@ -46,8 +47,25 @@ defmodule Normandy.Batch.ProcessorTest do
         text = inspect(List.last(request.messages).content)
         if text =~ "slow", do: Process.sleep(client.sleep_ms)
         if text =~ "boom", do: raise("boom")
+        if text =~ "quit", do: exit(:quit)
+        if text =~ "toss", do: throw(:tossed)
         {:ok, %Normandy.LLM.Response{content: %{request.response_model | chat_message: "ok"}}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+    end
+  end
+
+  defmodule FailingClient do
+    use Normandy.Schema
+
+    schema do
+    end
+
+    defimpl Normandy.Agents.Model do
+      def converse(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :invalid_request, retryable?: false)}
 
       def stream(_client, _request, _opts),
         do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
@@ -235,7 +253,11 @@ defmodule Normandy.Batch.ProcessorTest do
       ]
 
       # Each item that runs past the timeout fails on its own.
-      assert {:ok, [{:error, {:exit, :timeout}}, {:error, {:exit, :timeout}}]} =
+      assert {:ok,
+              [
+                {:error, %TurnError{type: :task_down, reason: :timeout}},
+                {:error, %TurnError{type: :task_down, reason: :timeout}}
+              ]} =
                Processor.process_batch(agent, inputs, timeout: 100)
     end
   end
@@ -388,15 +410,36 @@ defmodule Normandy.Batch.ProcessorTest do
     test "ordered results are {:ok, r} or {:error, e}, in input order" do
       inputs = [%{chat_message: "a"}, %{chat_message: "boom"}, %{chat_message: "c"}]
 
-      assert {:ok,
-              [{:ok, %{chat_message: "ok"}}, {:error, {:exception, %RuntimeError{}, _}}, {:ok, _}]} =
+      assert {:ok, [{:ok, %{chat_message: "ok"}}, {:error, %RuntimeError{}}, {:ok, _}]} =
                Processor.process_batch(picky_agent(), inputs)
+    end
+
+    test "a raise, an exit and a throw are bare exceptions or :task_down TurnErrors, never a stacktrace" do
+      inputs = [
+        %{chat_message: "boom"},
+        %{chat_message: "quit"},
+        %{chat_message: "toss"}
+      ]
+
+      assert {:ok,
+              [
+                {:error, %RuntimeError{message: "boom"}},
+                {:error, %TurnError{type: :task_down, reason: :quit}},
+                {:error, %TurnError{type: :task_down, reason: {:nocatch, :tossed}}}
+              ]} = Processor.process_batch(picky_agent(), inputs)
+    end
+
+    test "a Normandy error is returned bare" do
+      agent = BaseAgent.init(%{client: %FailingClient{}, model: "test-model"})
+
+      assert {:ok, [{:error, %Normandy.LLMError{}}]} =
+               Processor.process_batch(agent, [%{chat_message: "a"}])
     end
 
     test "stats errors pair each error with its input" do
       boom = %{chat_message: "boom"}
 
-      assert {:ok, %{errors: [{^boom, {:exception, %RuntimeError{}, _}}], success_count: 1}} =
+      assert {:ok, %{errors: [{^boom, %RuntimeError{}}], success_count: 1}} =
                Processor.process_batch_with_stats(picky_agent(), [%{chat_message: "a"}, boom])
     end
 
@@ -422,7 +465,7 @@ defmodule Normandy.Batch.ProcessorTest do
     test "an item that exceeds :timeout fails on its own; the others still finish" do
       inputs = [%{chat_message: "a"}, %{chat_message: "slow"}]
 
-      assert {:ok, [{:ok, _}, {:error, {:exit, :timeout}}]} =
+      assert {:ok, [{:ok, _}, {:error, %TurnError{type: :task_down, reason: :timeout}}]} =
                Processor.process_batch(picky_agent(), inputs, timeout: 100)
     end
 
@@ -436,7 +479,7 @@ defmodule Normandy.Batch.ProcessorTest do
           on_error: fn input, error -> send(parent, {:on_error, input, error}) end
         )
 
-      assert_received {:on_error, ^slow, {:exit, :timeout}}
+      assert_received {:on_error, ^slow, %TurnError{type: :task_down, reason: :timeout}}
     end
   end
 

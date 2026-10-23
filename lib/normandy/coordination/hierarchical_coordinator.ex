@@ -32,13 +32,11 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
       {:ok, result} = HierarchicalCoordinator.execute(coordinator, "Analyze this dataset")
   """
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Components.BaseIOSchema
-  alias Normandy.Coordination.ParallelOrchestrator
+  alias Normandy.Coordination.{Orchestration, ParallelOrchestrator}
   alias Normandy.Options
   alias Normandy.OrchestrationError
   alias Normandy.Telemetry.WorkflowSpan
-  alias Normandy.TurnError
 
   @type delegation_strategy :: :round_robin | :broadcast | :conditional
   @type t :: %__MODULE__{
@@ -284,20 +282,9 @@ defmodule Normandy.Coordination.HierarchicalCoordinator do
     end
   end
 
-  # One manager call: {:ok, response} or {:error, exception}. A Normandy error is
-  # returned; a raise (a bug) is logged (arities only) and returned bare; an exit (a
-  # timed-out GenServer.call, say) or a throw is a :task_down TurnError.
-  defp run_manager(manager, input, call) do
-    case BaseAgent.run(manager, input) do
-      {:ok, _updated_manager, response} -> {:ok, response}
-      {:error, _exception} = error -> error
-    end
-  rescue
-    e -> TurnError.log_raised("HierarchicalCoordinator manager (#{call})", e, __STACKTRACE__)
-  catch
-    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
-    :throw, value -> {:error, TurnError.from_reason({:task_down, {:nocatch, value}})}
-  end
+  # One manager call: {:ok, response} or {:error, exception}, as `Orchestration.run_agent/3`.
+  defp run_manager(manager, input, call),
+    do: Orchestration.run_agent("HierarchicalCoordinator manager (#{call})", manager, input)
 
   defp extract_delegation_plan(response) when is_map(response) do
     # Try to extract structured plan

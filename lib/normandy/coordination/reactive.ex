@@ -43,8 +43,6 @@ defmodule Normandy.Coordination.Reactive do
   their runs end normally. See "Killed runs" in `Normandy.Telemetry`.
   """
 
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.AgentProcess
   alias Normandy.Coordination.Orchestration
   alias Normandy.Coordination.Reactive
   alias Normandy.Options
@@ -460,34 +458,10 @@ defmodule Normandy.Coordination.Reactive do
   defp report_kill(result, _run_marks, _timeout, _otel_ctx), do: result
 
   @doc false
-  # One agent's result: {:ok, output} or {:error, exception}. A raise (a bug) is logged
-  # and returned; an exit (a timed-out call, a client that exits) is a :task_down
-  # TurnError, so it never takes down the task (whose result would then be lost).
-  def execute_agent(agent, input) do
-    run_one(agent, input)
-  rescue
-    e -> TurnError.log_raised("Reactive agent", e, __STACKTRACE__)
-  catch
-    :exit, reason -> {:error, TurnError.from_reason({:task_down, reason})}
-    :throw, value -> {:error, TurnError.from_reason({:task_down, {:nocatch, value}})}
-  end
-
-  # No call timeout of its own: the race's :timeout bounds it (the task is killed past it).
-  defp run_one(pid, input) when is_pid(pid), do: AgentProcess.run(pid, input, timeout: :infinity)
-
-  defp run_one(agent, input) do
-    case BaseAgent.run(agent, prepare_input(input)) do
-      {:ok, _updated_agent, response} -> {:ok, response}
-      {:error, exception} -> {:error, exception}
-    end
-  end
-
-  defp prepare_input(input) when is_map(input) and not is_struct(input) do
-    Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
-  end
-
-  defp prepare_input(input) when is_binary(input), do: %{chat_message: input}
-  defp prepare_input(input), do: input
+  # One agent's result: {:ok, output} or {:error, exception}; see `Orchestration.run_agent/3`.
+  # A pid is an `AgentProcess` and has no call timeout of its own: the race's :timeout
+  # bounds it (the task is killed past it).
+  def execute_agent(agent, input), do: Orchestration.run_agent("Reactive agent", agent, input)
 
   defp remaining(:infinity, _start_time), do: :infinity
 

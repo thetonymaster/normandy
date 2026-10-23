@@ -309,7 +309,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
     test "process_batch emits one killed exception for an item past the timeout", %{
       name: name
     } do
-      assert {:ok, [{:error, {:exit, :timeout}}]} =
+      assert {:ok, [{:error, %TurnError{type: :task_down, reason: :timeout}}]} =
                Processor.process_batch(stuck_agent(name), [%{chat_message: "hi"}], timeout: 100)
 
       assert_one_killed(name, "stuck-model")

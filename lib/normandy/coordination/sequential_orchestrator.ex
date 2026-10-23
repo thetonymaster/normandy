@@ -147,7 +147,7 @@ defmodule Normandy.Coordination.SequentialOrchestrator do
 
         request_msg = %{current_msg | to: agent_id, type: "request"}
 
-        case Orchestration.run_agent(agent_id, agent, request_msg.payload) do
+        case Orchestration.run_agent("Agent #{inspect(agent_id)}", agent, request_msg.payload) do
           {:ok, result} ->
             [AgentMessage.reply(request_msg, result) | acc]
 

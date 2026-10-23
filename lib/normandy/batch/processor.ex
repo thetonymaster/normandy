@@ -49,10 +49,11 @@ defmodule Normandy.Batch.Processor do
 
   require Logger
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Coordination.Orchestration
   alias Normandy.Options
   alias Normandy.Telemetry.KilledRun
   alias Normandy.Telemetry.OtelCtx
+  alias Normandy.TurnError
 
   @type batch_option ::
           {:max_concurrency, pos_integer()}
@@ -94,7 +95,7 @@ defmodule Normandy.Batch.Processor do
       default: @default_timeout,
       doc:
         "Timeout per item, in ms. An item that runs past it is stopped and fails with " <>
-          "`{:exit, :timeout}`; the other items carry on."
+          "a `:task_down` `Normandy.TurnError`; the other items carry on."
     ],
     on_progress: [
       type: {:fun, 2},
@@ -151,8 +152,10 @@ defmodule Normandy.Batch.Processor do
   - With `ordered: false`: `{:ok, batch_result}`. `errors` pairs each error
     with its input, `{input, error}`; both lists are in completion order.
 
-  An error is `{:exception, exception, stacktrace}`, `{:exit, reason}` or
-  `{:throw, value}`.
+  An error is what the other coordinators return, never a stacktrace: Normandy's own
+  exception (`Normandy.LLMError`, ...), the exception a bug raised (logged with its
+  stacktrace, arities only), or a `:task_down` `Normandy.TurnError` for an exit, a throw
+  or an item stopped at `:timeout`.
 
   ## Examples
 
@@ -335,24 +338,13 @@ defmodule Normandy.Batch.Processor do
 
   # Process a single input through the agent. The per-item timeout is applied
   # by Task.async_stream, which kills a task that runs past it.
-  defp process_single(agent, input) do
-    {_updated_agent, response} = BaseAgent.run!(agent, input)
-    {:ok, response}
-  rescue
-    error ->
-      {:error, {:exception, error, __STACKTRACE__}}
-  catch
-    :exit, reason ->
-      {:error, {:exit, reason}}
-
-    thrown_value ->
-      {:error, {:throw, thrown_value}}
-  end
+  defp process_single(agent, input),
+    do: Orchestration.run_agent("Batch item", agent, input)
 
   defp item_outcome({:ok, {index, input, outcome}}), do: {index, input, outcome}
 
   defp item_outcome({:exit, {{input, index}, reason}}),
-    do: {index, input, {:error, {:exit, reason}}}
+    do: {index, input, {:error, TurnError.from_reason({:task_down, reason})}}
 
   # A task past the timeout was killed mid-run, so its run span never closed.
   defp report_kill({:exit, {_input_and_index, :timeout}}, agent, timeout, otel_ctx),

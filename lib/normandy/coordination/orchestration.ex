@@ -5,8 +5,11 @@ defmodule Normandy.Coordination.Orchestration do
   shape. Its functions are internal to the orchestrators and not part of the public API.
   """
 
+  require Logger
+
   alias Normandy.Agents.{BaseAgent, BaseAgentConfig}
   alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.Coordination.AgentProcess
   alias Normandy.OrchestrationError
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.TurnError
@@ -97,22 +100,42 @@ defmodule Normandy.Coordination.Orchestration do
 
   defp describe_fun(other), do: Describe.type_of(other)
 
-  # One agent's run: {:ok, output} or {:error, exception}, never a stacktrace. Normandy's
-  # own errors come back from BaseAgent.run/2; a raise (a bug) is logged with its
-  # stacktrace (arities only) and returned; an exit (a timed-out GenServer.call, a client
-  # that exits) is a :task_down TurnError.
+  # The one run-and-classify. `fun` returns `{:ok, _, ...}` or `{:error, exception}` and
+  # that is passed through (a Normandy error comes back from BaseAgent.run/3 as is). A
+  # raise (a bug) is logged with its stacktrace (arities only) and returned bare; an exit
+  # (a timed-out GenServer.call, a client that exits) or a throw is logged and is a
+  # :task_down TurnError. Never a stacktrace. `who` names the caller in the log line.
   @doc false
-  @spec run_agent(String.t(), BaseAgentConfig.t(), term()) ::
+  @spec classify(String.t(), (-> {:error, Exception.t()} | tuple())) ::
+          {:error, Exception.t()} | tuple()
+  def classify(who, fun) do
+    fun.()
+  rescue
+    e -> TurnError.log_raised(who, e, __STACKTRACE__)
+  catch
+    kind, reason ->
+      Logger.error("#{who} raised " <> TurnError.format_raised(kind, reason, __STACKTRACE__))
+      {:error, caught(kind, reason)}
+  end
+
+  # One agent's run: {:ok, output} or {:error, exception}, as classify/2. The agent is a
+  # config, run in this process, or the pid of an `AgentProcess` (no call timeout of its
+  # own: a caller's timeout bounds it). `who` names the agent in the log line.
+  @doc false
+  @spec run_agent(String.t(), BaseAgentConfig.t() | pid(), term()) ::
           {:ok, term()} | {:error, Exception.t()}
-  def run_agent(id, %BaseAgentConfig{} = agent, input) do
+  def run_agent(who, agent_or_pid, input) do
+    classify(who, fn -> run_one(agent_or_pid, input) end)
+  end
+
+  defp run_one(pid, input) when is_pid(pid),
+    do: AgentProcess.run(pid, input, timeout: :infinity)
+
+  defp run_one(%BaseAgentConfig{} = agent, input) do
     case BaseAgent.run(agent, prepare_input(input)) do
       {:ok, _agent, output} -> {:ok, output}
       {:error, exception} -> {:error, exception}
     end
-  rescue
-    e -> TurnError.log_raised("Agent #{inspect(id)}", e, __STACKTRACE__)
-  catch
-    kind, reason -> {:error, caught(kind, reason)}
   end
 
   # Tasks started under this supervisor are not linked to the caller: a crash in a
@@ -152,7 +175,7 @@ defmodule Normandy.Coordination.Orchestration do
     task =
       Task.Supervisor.async_nolink(supervisor, fn ->
         OtelCtx.restore(parent_otel_ctx)
-        run_agent(id, agent, input)
+        run_agent("Agent #{inspect(id)}", agent, input)
       end)
 
     case Task.yield(task, :infinity) do
@@ -167,11 +190,7 @@ defmodule Normandy.Coordination.Orchestration do
   @doc false
   @spec guard(String.t(), (-> term())) :: {:ok, term()} | {:error, Exception.t()}
   def guard(id, fun) do
-    {:ok, fun.()}
-  rescue
-    e -> TurnError.log_raised("Agent #{inspect(id)} callback", e, __STACKTRACE__)
-  catch
-    kind, reason -> {:error, caught(kind, reason)}
+    classify("Agent #{inspect(id)} callback", fn -> {:ok, fun.()} end)
   end
 
   # An exit is the exit reason; a throw nobody caught is {:nocatch, value}, as in an
@@ -185,10 +204,12 @@ defmodule Normandy.Coordination.Orchestration do
   def result(results, errors), do: {:error, %OrchestrationError{results: results, errors: errors}}
 
   # A string or a map with a chat_message is the chat message; a struct goes as is.
-  defp prepare_input(input) when is_binary(input), do: %{chat_message: input}
+  @doc false
+  @spec prepare_input(term()) :: term()
+  def prepare_input(input) when is_binary(input), do: %{chat_message: input}
 
-  defp prepare_input(input) when is_map(input) and not is_struct(input),
+  def prepare_input(input) when is_map(input) and not is_struct(input),
     do: Map.get(input, :chat_message) || Map.get(input, "chat_message") || input
 
-  defp prepare_input(input), do: input
+  def prepare_input(input), do: input
 end

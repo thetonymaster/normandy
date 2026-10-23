@@ -276,7 +276,13 @@ defmodule Normandy.Coordination.ParallelOrchestrator do
   # the caller down through the task's link.
   # `on_run_done` runs as soon as the agent's run returns, before the callbacks.
   defp run_spec(spec, input, on_complete, on_run_done) do
-    outcome = Orchestration.run_agent(spec.id, spec.agent, Map.get(spec, :input, input))
+    outcome =
+      Orchestration.run_agent(
+        "Agent #{inspect(spec.id)}",
+        spec.agent,
+        Map.get(spec, :input, input)
+      )
+
     :ok = on_run_done.()
 
     with {:ok, output} <- outcome do
