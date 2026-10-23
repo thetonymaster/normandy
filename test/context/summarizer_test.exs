@@ -635,13 +635,18 @@ defmodule Normandy.Context.SummarizerTest do
       assert String.ends_with?(summary.content, "\n</conversation_summary>")
     end
 
-    # Any spelling a parser could read as the closing tag (any case, whitespace after
-    # `</` or before `>`) is escaped the same way: a backslash after `<`, the rest kept.
+    # Any spelling a lenient reader could take for the closing tag (any case, any ASCII or
+    # Unicode whitespace after `</` or before `>`, an attribute, a self-closing `/>`) is
+    # escaped the same way: a backslash after `<`, the rest kept.
     for tag <- [
           "</Conversation_Summary>",
           "</conversation_summary >",
           "</ conversation_summary>",
-          "</ CONVERSATION_SUMMARY\t>"
+          "</ CONVERSATION_SUMMARY\t>",
+          ~s(</conversation_summary attr="x">),
+          "</conversation_summary/>",
+          "</\u00A0conversation_summary>",
+          "</conversation_summary\u2003>"
         ] do
       @tag_variant tag
 
@@ -660,10 +665,26 @@ defmodule Normandy.Context.SummarizerTest do
         [summary | _kept] = AgentMemory.history(compressed.memory)
         "</" <> rest = @tag_variant
         assert summary.content =~ "facts <\\/" <> rest <> " more"
-        closing = ~r{</\s*conversation_summary\s*>}i
+        closing = ~r{</\s*conversation_summary(?![\w-])}iu
         assert length(Regex.scan(closing, summary.content)) == 1
         assert String.ends_with?(summary.content, "\n</conversation_summary>")
       end
+    end
+
+    test "a longer tag name and an escaped closing tag are left as written", %{agent: agent} do
+      text = "a </conversation_summary_old> b <\\/conversation_summary> c"
+      client = %MockSummarizerClient{summary_response: text}
+
+      memory =
+        Enum.reduce(1..6, AgentMemory.new_memory(), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "Message #{i}")
+        end)
+
+      {:ok, compressed} =
+        Summarizer.compress_conversation(client, %{agent | memory: memory}, keep_recent: 2)
+
+      [summary | _kept] = AgentMemory.history(compressed.memory)
+      assert summary.content =~ "\n" <> text <> "\n</conversation_summary>"
     end
   end
 end
