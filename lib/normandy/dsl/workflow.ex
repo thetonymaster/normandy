@@ -142,8 +142,7 @@ defmodule Normandy.DSL.Workflow do
     agent, and `from:` references to unknown or later steps raise at compile time
   """
 
-  alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.Reactive
+  alias Normandy.DSL.Workflow.Runtime
   alias Normandy.Options
   alias Normandy.Telemetry.WorkflowSpan
 
@@ -192,13 +191,10 @@ defmodule Normandy.DSL.Workflow do
     do: {:halt, {:error, {step_name, reason}}}
 
   def __after_condition__(step_name, state, {:ok, value}),
-    do: {:cont, {:ok, put_step_result(state, step_name, value)}}
+    do: {:cont, {:ok, Runtime.put_step_result(state, step_name, value)}}
 
   def __after_condition__(step_name, state, value),
-    do: {:cont, {:ok, put_step_result(state, step_name, value)}}
-
-  defp put_step_result(state, name, value),
-    do: %{state | results: Map.put(state.results, name, value), current_input: value}
+    do: {:cont, {:ok, Runtime.put_step_result(state, step_name, value)}}
 
   defmacro __using__(_opts) do
     quote do
@@ -227,68 +223,27 @@ defmodule Normandy.DSL.Workflow do
   - `transform` - Function applied to the step's input before the agent runs
   - `when_result` - Clauses on `{:ok, result}` whose value becomes the step result
   """
-  defmacro step(name, do: block) do
-    quote do
-      var!(current_step_name) = unquote(name)
-      var!(current_step_type) = :sequential
-      var!(current_step_agents) = []
-      var!(current_step_input) = nil
-      var!(current_step_transform) = nil
-      var!(current_step_condition) = nil
-      # The block may overwrite these before they are read.
-      _ = {var!(current_step_input), var!(current_step_transform), var!(current_step_condition)}
-
-      unquote(block)
-
-      Module.put_attribute(__MODULE__, :workflow_steps, %{
-        name: var!(current_step_name),
-        type: var!(current_step_type),
-        agents: Enum.reverse(var!(current_step_agents)),
-        input: var!(current_step_input),
-        transform: var!(current_step_transform),
-        condition: var!(current_step_condition)
-      })
-    end
-  end
+  defmacro step(name, do: block), do: step_quote(name, :sequential, block)
 
   @doc """
   Defines a parallel execution step.
 
   All agents run concurrently with the same input.
   """
-  defmacro parallel(name, do: block) do
-    quote do
-      var!(current_step_name) = unquote(name)
-      var!(current_step_type) = :parallel
-      var!(current_step_agents) = []
-      var!(current_step_input) = nil
-      var!(current_step_transform) = nil
-      var!(current_step_condition) = nil
-      # The block may overwrite these before they are read.
-      _ = {var!(current_step_input), var!(current_step_transform), var!(current_step_condition)}
-
-      unquote(block)
-
-      Module.put_attribute(__MODULE__, :workflow_steps, %{
-        name: var!(current_step_name),
-        type: var!(current_step_type),
-        agents: Enum.reverse(var!(current_step_agents)),
-        input: var!(current_step_input),
-        transform: var!(current_step_transform),
-        condition: var!(current_step_condition)
-      })
-    end
-  end
+  defmacro parallel(name, do: block), do: step_quote(name, :parallel, block)
 
   @doc """
   Defines a race execution step.
 
   Returns the first successful result.
   """
-  defmacro race(name, do: block) do
+  defmacro race(name, do: block), do: step_quote(name, :race, block)
+
+  # The one quote behind step, parallel and race: they differ in the step type.
+  defp step_quote(name, type, block) do
     quote do
       var!(current_step_name) = unquote(name)
-      var!(current_step_type) = :race
+      var!(current_step_type) = unquote(type)
       var!(current_step_agents) = []
       var!(current_step_input) = nil
       var!(current_step_transform) = nil
@@ -459,7 +414,6 @@ defmodule Normandy.DSL.Workflow do
         %{step | transform: step.transform != nil, condition: step.condition != nil}
       end)
 
-    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       @doc unquote(@execute_doc)
       def execute(opts) do
@@ -473,7 +427,13 @@ defmodule Normandy.DSL.Workflow do
         metadata = %{workflow_name: __MODULE__, step_count: length(steps)}
 
         WorkflowSpan.span(:workflow, metadata, fn ->
-          execute_workflow(steps, agents_map, initial_input)
+          Runtime.run(
+            steps,
+            agents_map,
+            initial_input,
+            &__workflow_transform__/2,
+            &after_step/2
+          )
         end)
       end
 
@@ -491,128 +451,7 @@ defmodule Normandy.DSL.Workflow do
 
       unquote_splicing(condition_clauses)
 
-      defp execute_workflow(steps, agents_map, initial_input) do
-        initial_state = %{
-          results: %{},
-          current_input: initial_input
-        }
-
-        Enum.reduce_while(steps, {:ok, initial_state}, fn step, {:ok, state} ->
-          case execute_step(step, agents_map, state) do
-            {:ok, updated_state} -> after_step(step, updated_state)
-            {:error, reason} -> {:halt, {:error, {step.name, reason}}}
-          end
-        end)
-        |> case do
-          {:ok, final_state} -> {:ok, final_state.results}
-          error -> error
-        end
-      end
-
-      defp execute_step(%{type: :sequential} = step, agents_map, state) do
-        with {:ok, input} <- get_step_input(step, state),
-             {:ok, agent} <- get_agent(step.agents, agents_map),
-             {:ok, result} <- run_agent(agent, input) do
-          updated_results = Map.put(state.results, step.name, result)
-          updated_state = %{state | results: updated_results, current_input: result}
-
-          {:ok, updated_state}
-        end
-      end
-
-      defp execute_step(%{type: :parallel} = step, agents_map, state) do
-        with {:ok, input} <- get_step_input(step, state),
-             {:ok, agent_list} <- get_agents(step.agents, agents_map),
-             {:ok, results} <- Reactive.all(agent_list, input) do
-          # Convert agent results map to named results if names provided
-          named_results = name_results(results, step.agents)
-          updated_results = Map.put(state.results, step.name, named_results)
-          updated_state = %{state | results: updated_results, current_input: named_results}
-
-          {:ok, updated_state}
-        end
-      end
-
-      defp execute_step(%{type: :race} = step, agents_map, state) do
-        with {:ok, input} <- get_step_input(step, state),
-             {:ok, agent_list} <- get_agents(step.agents, agents_map),
-             {:ok, result} <- Reactive.race(agent_list, input) do
-          updated_results = Map.put(state.results, step.name, result)
-          updated_state = %{state | results: updated_results, current_input: result}
-
-          {:ok, updated_state}
-        end
-      end
-
       unquote(after_step)
-
-      defp get_step_input(step, state) do
-        with {:ok, input} <- raw_step_input(step, state) do
-          {:ok, __workflow_transform__(step.name, input)}
-        end
-      end
-
-      defp raw_step_input(%{input: [from: step_name]}, state) do
-        case Map.get(state.results, step_name) do
-          nil -> {:error, {:missing_step_result, step_name}}
-          result -> {:ok, result}
-        end
-      end
-
-      # No input: the previous step's result (or the initial input).
-      defp raw_step_input(%{input: input}, state), do: {:ok, input || state.current_input}
-
-      defp get_agent([%{module: module} | _], agents_map) do
-        case Map.get(agents_map, module) do
-          nil -> {:error, {:missing_agent, module}}
-          agent -> {:ok, agent}
-        end
-      end
-
-      defp get_agents(agent_infos, agents_map) do
-        agent_infos
-        |> Enum.reduce_while({:ok, []}, fn %{module: module}, {:ok, acc} ->
-          case Map.get(agents_map, module) do
-            nil -> {:halt, {:error, {:missing_agent, module}}}
-            agent -> {:cont, {:ok, [agent | acc]}}
-          end
-        end)
-        |> case do
-          {:ok, agents} -> {:ok, Enum.reverse(agents)}
-          error -> error
-        end
-      end
-
-      # BaseAgent.run/2 returns Normandy's failures as {:error, exception} and raises
-      # a bug; both become the step's {:error, exception} (the bug's stacktrace is
-      # logged), the same shape a parallel or race step gets from Reactive.
-      defp run_agent(agent, input) do
-        case BaseAgent.run(agent, prepare_input(input)) do
-          {:ok, _updated_agent, response} -> {:ok, response}
-          {:error, exception} -> {:error, exception}
-        end
-      rescue
-        e -> Normandy.TurnError.log_raised("Workflow agent", e, __STACKTRACE__)
-      end
-
-      defp name_results(results, agent_infos) do
-        agent_infos
-        |> Enum.with_index()
-        |> Enum.reduce(%{}, fn {%{name: name}, idx}, acc ->
-          agent_key = "agent_#{idx}"
-          result = Map.get(results, agent_key)
-
-          if name do
-            Map.put(acc, name, result)
-          else
-            Map.put(acc, String.to_atom(agent_key), result)
-          end
-        end)
-      end
-
-      defp prepare_input(input) when is_binary(input), do: %{chat_message: input}
-      defp prepare_input(input) when is_map(input), do: input
-      defp prepare_input(input), do: %{chat_message: to_string(input)}
     end
   end
 
