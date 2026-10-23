@@ -1,0 +1,63 @@
+## Principles audit: lib/normandy/behaviours/ (37 .ex files, whole modules, branch feat/claudio-0.7-migration @ 7561497)
+
+Verdict: ship with follow-ups. The store, registry and memory-store seams are well earned (5/4/5 implementations, each run against a shipped contract suite). The defects are at the edges: a default credential provider that cannot succeed at its only call site, a Compactor contract with no opts-validation hook (so BaseAgent compares module names), library constructors that read Normandy's own app env, and four moduledocs that describe phases that are already finished.
+
+### Findings (ranked)
+
+1. [composition · over] lib/normandy/behaviours/credential_provider.ex:27-34 (default set at lib/normandy/behaviours/config.ex:51). The default `CredentialProvider.FromClient` cannot return a token at its only production call site, so a template session that keeps the default fails late, at load, and keeps retrying.
+   Evidence: the only caller is `lib/normandy/agents/turn/server.ex:689` `cred_mod.get_token(token_provider(tmpl), cred_opts)`, and `server.ex:795` `defp token_provider(%{model: model}), do: %{model: model}`. That map has no `:api_key`, so the call falls through to `credential_provider.ex:33` `def get_token(_provider, _opts), do: {:error, :no_api_key}`. The moduledoc says this itself (lines 10-12: "The rebuild passes no client, so `FromClient` returns `{:error, :no_api_key}` there"). The outcome is `{:credential_unavailable, ...}`, and the server sits in `:unavailable` and retries (server.ex:679-701). `grep -rn FromClient lib/ test/` finds only the default slot, comments and its own unit test. Nothing in production calls it with a client.
+   Fix: make the `credential` slot have no default (`nil`). Refuse a template-backed session whose ref is `nil` when the config is made (`ConfigTemplate.from_config` / `Turn.Session.new/1`), naming the slot. Then delete `FromClient`, or keep it only if some path passes a client.
+   Public API: yes. It changes the `%Behaviours.Config{}` default and removes or demotes a public module. Name it in MIGRATING-2.0.md.
+
+2. [dependency-injection · under] lib/normandy/behaviours/compactor.ex:65 (the contract) → lib/normandy/agents/base_agent.ex:1132-1150, 1173. The Compactor and ModelCatalog contracts have no way for an implementation to validate its opts or declare what it needs. BaseAgent therefore branches on concrete module names.
+   Evidence: `base_agent.ex:1141` `if compactor == WindowCompactor, do: WindowCompactor.validate_opts!(compactor_opts, entry)`. Also `:1145` `compactor != Normandy.Behaviours.Compactor.NoOp`, `:1147-1150` `catalog in [ModelCatalog.ModelsAPI, ModelCatalog.Static]`, and `:1173` `defp resolve_context_window(config, Normandy.Behaviours.Compactor.NoOp, _opts)`. `PolicyEngine` (policy_engine.ex:41-42) and `Hooks` (hooks.ex:148-150) already declare an optional `validate_opts!/1` callback. `Compactor` declares one callback (`grep -c @callback compactor.ex` = 1). A host compactor therefore gets no init-time opts check: a typo surfaces mid-turn, which is the failure validate_compaction_config!/2 exists to prevent. Adding a compactor with options means editing BaseAgent.
+   Fix: add `@callback validate_opts!(keyword()) :: keyword()` as optional to `Compactor`, and have `WindowManager` implement it (today it is `@doc false validate_opts!/2`). BaseAgent then calls it when exported. To replace the `NoOp` and catalog-name checks, add an optional `needs_window?/1` (or let `NoOp` be the only one returning `false`).
+   Public API: additive. It adds optional callbacks; `WindowManager.validate_opts!/2` is `@doc false` today.
+
+3. [dependency-injection · under] lib/normandy/behaviours/session_store/redis.ex:89-95, lib/normandy/behaviours/memory_store/redis.ex:149-157, lib/normandy/behaviours/session_registry/redis.ex:217-224, lib/normandy/behaviours/session_store/postgres.ex:33, lib/normandy/behaviours/memory_store/postgres.ex:36. Five public constructors read Normandy's own application env and use test defaults (a random `normandy_test_<uuid>` namespace or prefix, `hd(:ecto_repos)`).
+   Evidence: `Application.get_env(:normandy, :redis_url, "redis://localhost:6379")` appears 3 times. `def new, do: hd(Application.fetch_env!(:normandy, :ecto_repos))` appears 2 times. `ns = Keyword.get(opts, :namespace, "normandy_test_#{UUID.uuid4()}")` is at session_store/redis.ex:102. The docs call these "Test/default handle" (session_store/redis.ex:74, memory_store/redis.ex:139), and the Postgres doc says "the handle Normandy's own tests use". The only setter is `config/test.exs:8,20`. A production caller who omits `:namespace` gets a fresh, empty namespace on every boot, with no error. The production path (`Normandy.Cluster.redis_handles/1`, `Turn.Session` `store: {Postgres, MyApp.Repo}`) does not need either default.
+   Fix: make `:url` and `:namespace`/`:prefix` required in the public `new/1`s, or move these "test handle" constructors to `Normandy.Test` (shipped) or `test/support`. Postgres `new/0` goes the same way.
+   Public API: yes. It removes or tightens public `new/0`/`new/1` defaults. MIGRATING note needed (`tools/api_diff/run.sh main` will flag it).
+
+4. [composition · false-claim] lib/normandy/behaviours/session_registry.ex:10,12; session_store.ex:7-9,17-18; policy_engine.ex:15-16; session_store/in_memory.ex:5-6. Four moduledocs describe phase-plan states that have already shipped.
+   Evidence:
+   - session_registry.ex:10 says "Distributed impls (Horde/syn) are deferred". `SessionRegistry.Horde` and `SessionRegistry.Redis` exist in this directory and run the contract (`test/behaviours/session_registry/{horde,redis}_test.exs`).
+   - session_registry.ex:12 says "Every impl must pass ... SessionRegistryContract". `Normandy.Coordination.AgentProcess.ScopedRegistry` (`@behaviour Normandy.Behaviours.SessionRegistry`) has no `use Normandy.Test.SessionRegistryContract` anywhere (`grep -rn "use Normandy.Test.SessionRegistryContract" test/` lists only Horde, Redis, Native).
+   - session_store.ex:8 says the turn state has "no real consumer until Phase 4". Turn.Server consumes it (`Turn.Server.persist_turn_state/2`).
+   - policy_engine.ex:15-16 says `:needs_approval` is "interim-tagged in Phase 1; real parking lands in Phase 4". Its own callback doc (lines 30-31) says it parks under `Turn.Server`.
+   - in_memory.ex:5-6 says "not consumed by the turn loop in Phase 3".
+   Fix: delete the phase sentences and the "deferred" clause. Either run ScopedRegistry through the contract (one test module) or say in session_registry.ex:12 that it is internal and exempt.
+   Public API: no (docs only; the contract test adds a test).
+
+5. [flat-code · under] lib/normandy/behaviours/session_store/in_memory.ex:69-90 (`fork/3`) and lib/normandy/behaviours/session_store/mnesia.ex:142-158 (`fork/3`) are at depth 4 and silenced with an inline `# credo:disable-for-next-line Credo.Check.Refactor.Nesting` (in_memory.ex:76, mnesia.ex:149). One `with` per function removes the extra level without adding a helper.
+   Evidence: `nesting_depth.py --max 3` reported "in_memory.ex:77: fork: depth 4" and "mnesia.ex:150: fork: depth 4". In-memory has `Agent.get_and_update` fn → `case Map.get(sessions)` → `case AgentMemory.fork` → body. Mnesia has `txn` fn → `case :mnesia.read` → `if on_chain?`. CLAUDE.md's rule (inline disable, no threshold change) is followed, so this is a readability lead rather than a rule breach.
+   Fix: in-memory: `with {:ok, memory} <- Map.fetch(state.sessions, session_id) |> or_no_session(), {:ok, forked} <- AgentMemory.fork(memory, from_entry_id) do ... else {:error, r} -> {{:error, r}, state} end`. Mnesia: `with [{_, ^session_id, %{head_id: head}}] <- :mnesia.read(...), true <- on_chain?(...) || :mnesia.abort(:no_such_entry) do ... else [] -> :mnesia.abort(:no_such_session) end`. Then drop both disables.
+   Public API: no.
+
+### Survived scrutiny
+- `SessionStore` behaviour: 5 implementations in lib (InMemory, ETS, Mnesia, Postgres, Redis), each `use`s `Normandy.Test.SessionStoreContract` (test/behaviours/session_store/*_test.exs).
+- `MemoryStore` behaviour: 5 implementations, each `use`s `Normandy.Test.MemoryStoreContract`.
+- `SessionRegistry` behaviour: Native, Horde and Redis, plus ScopedRegistry outside the scope. The optional `child_name/2` is used by the via implementations (`horde/via.ex`, `redis/via.ex`).
+- `MemoryStore.Rows` (internal behaviour): 2 implementations (`MemoryStore.ETS` at ets.ex:79, `MemoryStore.Mnesia.Table` at mnesia.ex:136) plus a test double (test/behaviours/memory_store/rows_test.exs:9). It shares the totals and limits rules instead of duplicating them.
+- `PolicyEngine` (AllowAll, Ruleset, test policies), `BudgetTracker` (NoOp plus test trackers in test/hooks/tool_hooks_test.exs:13 and test/behaviours/config_test.exs:42), `Compactor` (NoOp, WindowManager, test/support/keep_last_compactor.ex) and `ModelCatalog` (ModelsAPI, test catalogs): each null-object default has a real second implementation in lib or tests.
+- `AgentTemplate`: only `Catalog` ships, but test/agents/turn/server_errors_test.exs:178 injects `RaisingProvider` through it to test load faults. The seam varies in tests, which justifies it.
+- `ModelCatalog.Static` + `:persistent_term` warn-once flag (model_catalog.ex:70-92): a 1.x decode-compatibility shim. The global is a one-bit log de-dupe flag, documented as racy-but-harmless.
+- `use Normandy.Behaviours.Hooks` (hooks.ex:152-157): it injects only `@behaviour` and a `@before_compile` arity/near-miss check, with no `defoverridable` or default bodies. This is not inheritance.
+- Function hooks (`before_hooks`/`after_hooks`) beside module `hooks` in `Behaviours.Config`: two mechanisms, but they serve different persistence tiers. Functions ride the node-local supplement (agent_template.ex:21-22), and modules are persisted plain data (hooks.ex:188-202).
+- `MnesiaSetup` and `SessionStore.Codec`: shared by 2 backends each (Mnesia ×2; Postgres and Redis).
+- The `backend/1` and `txn/1` helpers are duplicated across 2 files each (postgres ×2, mnesia ×2, 4-6 lines). That is below rule-of-three, and the Mnesia variants differ (`{:ok, result}` vs bare reply).
+- Nesting leads `memory_store/postgres.ex:50 list` and `:156 rename` (depth 4): both come from an `fn` closure (`backend(fn -> ...)` / `Enum.map(fn ...)` / `rescue ... case`), not from conditions the reader must hold.
+- Measure-first: the Redis WAIT connection pool (`@default_wait_connections 4`, commit 22c8d8d "perf(...)") has measured evidence in investigations/pre-2.0-audit/wave-6-sections/6.3f-i.md:1269-1274 ("a registry `whereis` waited 622 ms behind five appends with `wait: {1, 100}`"). The `list_resumable` cost claim in session_store.ex:116-117 holds: InMemory uses a MapSet, ETS uses `:ets.match` on an `:ordered_set` key prefix (ets.ex:106,177), Postgres uses a partial index (migration_add_inflight.ex:30), Redis uses `SMEMBERS`, and the Mnesia scan is documented. `PolicyEngine.Ruleset.check/2` re-validates opts on every call (policy_engine.ex:85). That is O(rules), deliberate (never fail open), and not a hotspot.
+- Compile coupling: `mix xref graph --label compile-connected` shows behaviours/ depends at compile time only on `Normandy.Options` (docs generation). The other edge is `compactor/window_manager.ex` → `context/window_manager.ex`, which exists to read the strategy type from one source (window_manager.ex:46-50).
+
+### Not checked
+- Scope was every `.ex` under lib/normandy/behaviours/ (37 files: `find ... | sort | wc -l` = 37), not a diff. Callers in agents/turn/ and coordination/ were read only to verify claims.
+- Tools that ran and passed:
+  - `mix credo --strict` on the 37 files: "469 mods/funs, found no issues", exit 0.
+  - `nesting_depth.py --max 3` on the 37 files under bash: 4 leads, judged above.
+  - `mix dialyzer`: no warning in behaviours/. Exit 2, from one warning outside scope at lib/normandy/coordination/hierarchical_coordinator.ex:486 (BaseIOSchema impl_for test), which `mix precommit` would also hit.
+- Tests were not run (read-only audit). Postgres and Redis contract suites were excluded by instruction. No benchmark was run: none exists (`bench/` absent, no Benchee in test/), and no optimisation in scope lacked recorded evidence.
+- `mix credo explain` was not needed (credo reported nothing).
+- Noticed but outside the four principles, so not reported as findings:
+  - session_registry/horde.ex:79-89 `await_ready/2` returns `:ok` after 200 failed probes, which is a silent fallback.
+  - mnesia_setup.ex:7-12 `ensure_started!/0` ignores `:mnesia.start()`'s `{:error, _}`.
