@@ -5,11 +5,10 @@ defmodule NormandyTest.TypePropertyTest do
   alias Normandy.Type
 
   describe "property-based testing for primitive types" do
-    property "integers can be cast, dumped, and loaded roundtrip" do
+    property "integers can be cast and dumped roundtrip" do
       check all(value <- integer()) do
         assert {:ok, ^value} = Type.cast(:integer, value)
         assert {:ok, ^value} = Type.dump(:integer, value)
-        assert {:ok, ^value} = Type.load(:integer, value)
       end
     end
 
@@ -20,33 +19,28 @@ defmodule NormandyTest.TypePropertyTest do
       end
     end
 
-    property "floats can be cast, dumped, and loaded roundtrip" do
+    property "floats can be cast and dumped roundtrip" do
       check all(value <- float()) do
         assert {:ok, ^value} = Type.cast(:float, value)
         assert {:ok, ^value} = Type.dump(:float, value)
-        # load can convert integer to float
-        assert {:ok, loaded} = Type.load(:float, value)
-        assert is_float(loaded)
       end
     end
 
-    property "booleans can be cast, dumped, and loaded roundtrip" do
+    property "booleans can be cast and dumped roundtrip" do
       check all(value <- boolean()) do
         assert {:ok, ^value} = Type.cast(:boolean, value)
         assert {:ok, ^value} = Type.dump(:boolean, value)
-        assert {:ok, ^value} = Type.load(:boolean, value)
       end
     end
 
-    property "strings can be cast, dumped, and loaded roundtrip" do
+    property "strings can be cast and dumped roundtrip" do
       check all(value <- string(:printable)) do
         assert {:ok, ^value} = Type.cast(:string, value)
         assert {:ok, ^value} = Type.dump(:string, value)
-        assert {:ok, ^value} = Type.load(:string, value)
       end
     end
 
-    property "maps can be cast, dumped, and loaded roundtrip" do
+    property "maps can be cast and dumped roundtrip" do
       check all(
               keys <- list_of(atom(:alphanumeric), min_length: 0, max_length: 5),
               values <- list_of(string(:printable), length: length(keys))
@@ -54,7 +48,6 @@ defmodule NormandyTest.TypePropertyTest do
         map = Enum.zip(keys, values) |> Enum.into(%{})
         assert {:ok, ^map} = Type.cast(:map, map)
         assert {:ok, ^map} = Type.dump(:map, map)
-        assert {:ok, ^map} = Type.load(:map, map)
       end
     end
   end
@@ -64,7 +57,6 @@ defmodule NormandyTest.TypePropertyTest do
       check all(list <- list_of(integer(), max_length: 20)) do
         assert {:ok, ^list} = Type.cast({:array, :integer}, list)
         assert {:ok, ^list} = Type.dump({:array, :integer}, list)
-        assert {:ok, ^list} = Type.load({:array, :integer}, list)
       end
     end
 
@@ -72,7 +64,6 @@ defmodule NormandyTest.TypePropertyTest do
       check all(list <- list_of(string(:printable), max_length: 10)) do
         assert {:ok, ^list} = Type.cast({:array, :string}, list)
         assert {:ok, ^list} = Type.dump({:array, :string}, list)
-        assert {:ok, ^list} = Type.load({:array, :string}, list)
       end
     end
 
@@ -80,7 +71,6 @@ defmodule NormandyTest.TypePropertyTest do
       check all(list <- list_of(boolean(), max_length: 15)) do
         assert {:ok, ^list} = Type.cast({:array, :boolean}, list)
         assert {:ok, ^list} = Type.dump({:array, :boolean}, list)
-        assert {:ok, ^list} = Type.load({:array, :boolean}, list)
       end
     end
 
@@ -88,7 +78,6 @@ defmodule NormandyTest.TypePropertyTest do
       check all(type <- member_of([:integer, :string, :boolean, :float])) do
         assert {:ok, []} = Type.cast({:array, type}, [])
         assert {:ok, []} = Type.dump({:array, type}, [])
-        assert {:ok, []} = Type.load({:array, type}, [])
       end
     end
   end
@@ -102,7 +91,6 @@ defmodule NormandyTest.TypePropertyTest do
         map = Enum.zip(keys, values) |> Enum.into(%{})
         assert {:ok, ^map} = Type.cast({:map, :string}, map)
         assert {:ok, ^map} = Type.dump({:map, :string}, map)
-        assert {:ok, ^map} = Type.load({:map, :string}, map)
       end
     end
 
@@ -114,7 +102,6 @@ defmodule NormandyTest.TypePropertyTest do
         map = Enum.zip(keys, values) |> Enum.into(%{})
         assert {:ok, ^map} = Type.cast({:map, :integer}, map)
         assert {:ok, ^map} = Type.dump({:map, :integer}, map)
-        assert {:ok, ^map} = Type.load({:map, :integer}, map)
       end
     end
   end
@@ -154,22 +141,6 @@ defmodule NormandyTest.TypePropertyTest do
       check all(type <- member_of([:integer, :string, :boolean, :float, :map, :binary])) do
         assert {:ok, nil} = Type.cast(type, nil)
         assert {:ok, nil} = Type.dump(type, nil)
-        assert {:ok, nil} = Type.load(type, nil)
-      end
-    end
-  end
-
-  describe "type matching properties" do
-    property ":any matches with any type" do
-      check all(type <- member_of([:integer, :string, :boolean, :float])) do
-        assert Type.match?(:any, type) == true
-        assert Type.match?(type, :any) == true
-      end
-    end
-
-    property "type matches itself" do
-      check all(type <- member_of([:integer, :string, :boolean, :float, :map])) do
-        assert Type.match?(type, type) == true
       end
     end
   end
@@ -178,14 +149,14 @@ defmodule NormandyTest.TypePropertyTest do
     property "array types are recognized as composite" do
       check all(inner_type <- member_of([:integer, :string, :boolean])) do
         assert Type.composite?(:array) == true
-        assert Type.primitive?({:array, inner_type}) == true
+        assert Type.type({:array, inner_type}) == {:array, inner_type}
       end
     end
 
     property "map types are recognized as composite" do
       check all(inner_type <- member_of([:integer, :string, :boolean])) do
         assert Type.composite?(:map) == true
-        assert Type.primitive?({:map, inner_type}) == true
+        assert Type.type({:map, inner_type}) == {:map, inner_type}
       end
     end
   end

@@ -202,13 +202,6 @@ defmodule NormandyTest.ParameterizedTypeTest do
     end
   end
 
-  describe "default embed_as/2 implementation" do
-    test "returns :self by default" do
-      params = %{values: ["a", "b"]}
-      assert :self = EnumType.embed_as(:json, params)
-    end
-  end
-
   describe "default equal?/3 implementation" do
     test "uses == for equality" do
       params = %{min: 0, max: 100}

@@ -18,8 +18,7 @@ defmodule Normandy.ParameterizedType do
   Parameterized types are a superset of regular types. In other words,
   with parameterized types you can do everything a regular type does,
   and more. For example, parameterized types can handle `nil` values
-  in both `load` and `dump` callbacks, they can customize `cast` behavior
-  per query and per changeset, and also control how values are embedded.
+  in the `dump` callback and carry per-field parameters into `cast`.
 
   However, parameterized types are also more complex. Therefore, if
   everything you need to achieve can be done with basic types, they
@@ -44,11 +43,6 @@ defmodule Normandy.ParameterizedType do
           {:ok, cast_data}
         end
 
-        def load(data, _loader, params) do
-          ...
-          {:ok, loaded_data}
-        end
-
         def dump(data, dumper, params) do
           ...
           {:ok, dumped_data}
@@ -71,8 +65,8 @@ defmodule Normandy.ParameterizedType do
   > #### `use Normandy.ParameterizedType` {: .info}
   >
   > When you `use Normandy.ParameterizedType`, it will set
-  > `@behaviour Normandy.ParameterizedType` and define default, overridable
-  > implementations for `c:embed_as/2` and `c:equal?/3`.
+  > `@behaviour Normandy.ParameterizedType` and define a default, overridable
+  > implementation for `c:equal?/3`.
   """
 
   @typedoc """
@@ -122,7 +116,7 @@ defmodule Normandy.ParameterizedType do
               {:ok, term} | :error | {:error, keyword()}
 
   @doc """
-  Dumps the given term into an Ecto native type.
+  Dumps the given term into its serializable form.
 
   It receives a `dumper` function in case the parameterized
   type is also a composite type. In order to dump the inner
@@ -157,24 +151,12 @@ defmodule Normandy.ParameterizedType do
   """
   @callback format(params()) :: String.t()
 
-  @doc """
-  Dictates how the type should be treated inside embeds.
-
-  By default, the type is sent as itself, without calling dumping to
-  keep the higher level representation. But it can be set to `:dump`
-  so that it is dumped before being encoded.
-
-  `use Normandy.ParameterizedType` injects an overridable default that
-  returns `:self`.
-  """
-  @callback embed_as(format :: atom, params()) :: :self | :dump
-
-  @optional_callbacks format: 1, embed_as: 2
+  @optional_callbacks format: 1
 
   @doc """
   Inits a parameterized type given by `type` with `opts`.
 
-  Useful when manually initializing a type for schemaless changesets.
+  Useful when manually initializing a type outside a schema field.
   """
   def init(type, opts) do
     {:parameterized, {type, type.init(opts)}}
@@ -186,12 +168,9 @@ defmodule Normandy.ParameterizedType do
       @behaviour Normandy.ParameterizedType
 
       @doc false
-      def embed_as(_, _), do: :self
-
-      @doc false
       def equal?(term1, term2, _params), do: term1 == term2
 
-      defoverridable embed_as: 2, equal?: 3
+      defoverridable equal?: 3
     end
   end
 end
