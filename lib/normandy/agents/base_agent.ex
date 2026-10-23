@@ -430,7 +430,7 @@ defmodule Normandy.Agents.BaseAgent do
   `{:error, exception}` when Normandy's own checks or the model failed:
   `Normandy.LLMError`, `Normandy.Schema.ValidationError`,
   `Normandy.Guardrails.ViolationError`, `Normandy.HookHaltError`,
-  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer. Any other exception (a bug in a
+  `Normandy.ModelCatalogError` or `Normandy.TurnError`. An answer cut off at `max_tokens` (or the context window) or refused is `{:error, %Normandy.LLMError{type: :max_tokens}}` or `type: :refusal`, and no tool call from it runs. A blank final answer is `{:error, %Normandy.LLMError{type: :invalid_output}}`, except for a chat (`:chat_message`) agent whose last tool-calling response in this turn carried text: that text is the answer, and the run `:stop` telemetry says so with `answer_source: :tool_round` (`:final` otherwise). Any other exception (a bug in a
   tool, a hook under `on_error: :reraise`, a client) is raised. On `{:error, _}` the
   turn is lost: keep using the config you passed in.
 
@@ -689,14 +689,45 @@ defmodule Normandy.Agents.BaseAgent do
   end
 
   # Puts the run's usage accumulator on every call request, where with_llm_call_span/4
-  # finds it (Normandy.Telemetry.RunUsage).
-  defp with_run_usage(%Driver.Handlers{call_llm: call_llm} = handlers, run_usage) do
+  # finds it, and lets validate mark an answer taken from the tool round on it
+  # (validate_marking_answer/4) (Normandy.Telemetry.RunUsage).
+  defp with_run_usage(
+         %Driver.Handlers{call_llm: call_llm, validate: validate} = handlers,
+         run_usage
+       ) do
     %{
       handlers
       | call_llm: fn config, state, request ->
           call_llm.(config, state, Map.put(request, :run_usage, run_usage))
+        end,
+        validate: fn config, value ->
+          validate_marking_answer(validate, config, value, run_usage)
         end
     }
+  end
+
+  @doc false
+  # Runs a validate handler and marks the run's answer_source :tool_round on
+  # `run_usage` (Normandy.Telemetry.RunUsage) when it turned a blank chat answer into a
+  # non-blank one. Only chat_answer/2 does that, and only in validate_turn_output/2
+  # (convert_final_text/3 leaves a blank chat answer for it), so the comparison is the
+  # substitution itself. Used by run/3, stream/3 and Turn.Server.
+  @spec validate_marking_answer(
+          (map(), term() -> term()),
+          map(),
+          term(),
+          :counters.counters_ref() | nil
+        ) :: term()
+  def validate_marking_answer(validate, config, value, run_usage) do
+    validated = validate.(config, value)
+
+    with %{chat_message: before} <- value,
+         %{chat_message: answer} <- validated,
+         true <- blank_answer?(before) and not blank_answer?(answer) do
+      RunUsage.mark_tool_round_answer(run_usage)
+    end
+
+    validated
   end
 
   @doc false
@@ -861,21 +892,20 @@ defmodule Normandy.Agents.BaseAgent do
     do: convert_final_text(config, text_of.(raw), output_schema)
 
   # A final answer's text as the output schema (convert_final_output/4):
-  #   * a :chat_message schema gets the unwrapped text; an empty or whitespace-only
-  #     answer (the model ended its turn with no text, AX-32) is the text of this turn's
-  #     last tool-call response when it has some (chat_answer/2), else the :invalid_output
-  #     LLMError, never a blank success;
+  #   * a :chat_message schema gets the unwrapped text as it is; validate_turn_output/2
+  #     (the next step, always) replaces an empty or whitespace-only answer (the model
+  #     ended its turn with no text, AX-32) with the text of this turn's last tool-call
+  #     response when it has some (chat_answer/2), else raises the :invalid_output
+  #     LLMError, never a blank success. Only validate substitutes, so
+  #     validate_marking_answer/4 sees every substitution;
   #   * a schema with a JSON Schema (the one the system prompt showed,
   #     prompt_output_schema/2) gets the text parsed into it under the client's
   #     :on_parse_failure policy (ParseFailure.parse_text_output/3), so an empty
   #     answer or one that does not parse raises the :invalid_output LLMError;
   #   * any other struct has nothing to parse the text into: the :invalid_output
   #     LLMError, never the raw response presented as success.
-  defp convert_final_text(config, text, %{chat_message: _} = output_schema) do
-    answer = chat_answer(config, unwrap_llm_content(text))
-    ensure_answer!(answer)
-    Map.put(output_schema, :chat_message, answer)
-  end
+  defp convert_final_text(_config, text, %{chat_message: _} = output_schema),
+    do: Map.put(output_schema, :chat_message, unwrap_llm_content(text))
 
   defp convert_final_text(config, text, %module{} = output_schema) do
     if Normandy.Schema.json_schema(output_schema) do
@@ -902,8 +932,8 @@ defmodule Normandy.Agents.BaseAgent do
   # An empty or whitespace-only answer (the model ended its turn with no text, AX-32), or
   # none (a client that returns the output struct with chat_message: nil, decision 27 A3),
   # is the :invalid_output LLMError, never a blank success (decision 22). The one check,
-  # for the converted answer (convert_final_text/3) and the validated one
-  # (validate_turn_output/2); both first let chat_answer/2 replace a blank chat answer.
+  # made by validate_turn_output/2 after chat_answer/2 had the chance to replace a blank
+  # chat answer (a converted answer included: convert_final_text/3 leaves it to validate).
   defp ensure_answer!(answer) do
     if blank_answer?(answer) do
       raise LLMError.new(
@@ -916,6 +946,10 @@ defmodule Normandy.Agents.BaseAgent do
 
     :ok
   end
+
+  defp chat_schema?(nil), do: true
+  defp chat_schema?(%{chat_message: _}), do: true
+  defp chat_schema?(_schema), do: false
 
   defp blank_answer?(answer),
     do: is_nil(answer) or (is_binary(answer) and String.trim(answer) == "")
@@ -931,8 +965,19 @@ defmodule Normandy.Agents.BaseAgent do
   # stored final answer is the output struct; a paused response is a ToolCallResponse with
   # no tool calls and does not stop it). An earlier run's text never answers this one. The
   # final response is not in memory yet (the core appends it after the output is guarded).
+  # The substitution is marked on the run :stop (answer_source: :tool_round, by
+  # validate_marking_answer/4) and logged at debug with the turn id only, never the text.
   defp chat_answer(config, answer) do
-    if blank_answer?(answer), do: last_tool_round_text(config.memory) || answer, else: answer
+    with true <- blank_answer?(answer),
+         text when is_binary(text) <- last_tool_round_text(config.memory) do
+      log_lifecycle(:debug, "normandy agent answer taken from the tool round",
+        turn_id: config.memory.current_turn_id
+      )
+
+      text
+    else
+      _not_substituted -> answer
+    end
   end
 
   defp last_tool_round_text(%AgentMemory{current_turn_id: turn_id} = memory)
@@ -965,10 +1010,12 @@ defmodule Normandy.Agents.BaseAgent do
   # A chat answer is checked for blankness first (after chat_answer/2): a chat agent with
   # no tools answers the output schema itself, so its answer is validated here and never
   # converted; a tool loop's final response that is the output schema's own struct passes
-  # conversion unchanged.
+  # conversion unchanged; a converted chat answer arrives as it was (convert_final_text/3).
+  # A nil output schema is the default chat schema (with_default_output_schema/1): a
+  # resumed Turn.Server turn validates with its stored config.
   defp validate_turn_output(config, value) do
     value =
-      with %{chat_message: _} <- config.output_schema,
+      with true <- chat_schema?(config.output_schema),
            %{chat_message: answer} <- value do
         answer = chat_answer(config, answer)
         ensure_answer!(answer)

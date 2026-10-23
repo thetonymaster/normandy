@@ -17,8 +17,10 @@ defmodule Normandy.Agents.BlankAnswerTest do
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.LLMError
   alias Normandy.Test.FakeClient
+  alias Normandy.Test.OwnLog
   alias Normandy.Test.ReturnTool
   alias Normandy.Test.StubClient
+  alias Normandy.Test.TelemetryCapture
 
   @message "expected a final answer, got an empty one: the model ended its turn with no text"
 
@@ -340,6 +342,97 @@ defmodule Normandy.Agents.BlankAnswerTest do
           assert Exception.message(error) =~ @message
         end
       end
+    end
+  end
+
+  # The substitution above is marked on the run :stop (answer_source), on every shell;
+  # a failed run's :exception carries no answer_source.
+  describe "run :stop answer_source" do
+    for path <- [:run, :stream, :server] do
+      @path path
+
+      test "#{path}: an answer taken from the tool round is answer_source: :tool_round" do
+        name = "answer-source-#{System.unique_integer([:positive])}"
+        TelemetryCapture.attach_span([[:normandy, :agent, :run, :stop]], agent_name: name)
+
+        agent =
+          lead_text_agent(
+            [{:tool_calls, [{"record_city", %{}}]}, {:text, ""}],
+            %{0 => "Paris."},
+            %{name: name}
+          )
+
+        assert [{:ok, %{chat_message: "Paris."}}] = turns(@path, agent, ["Capital of France?"])
+        assert_receive {:span, [:normandy, :agent, :run, :stop], meta}
+        assert meta.answer_source == :tool_round
+      end
+
+      test "#{path}: a final answer is answer_source: :final" do
+        name = "answer-source-#{System.unique_integer([:positive])}"
+        TelemetryCapture.attach_span([[:normandy, :agent, :run, :stop]], agent_name: name)
+
+        agent =
+          lead_text_agent(
+            [{:tool_calls, [{"record_city", %{}}]}, {:text, "Paris it is."}],
+            %{0 => "Paris."},
+            %{name: name}
+          )
+
+        assert [{:ok, %{chat_message: "Paris it is."}}] =
+                 turns(@path, agent, ["Capital of France?"])
+
+        assert_receive {:span, [:normandy, :agent, :run, :stop], meta}
+        assert meta.answer_source == :final
+      end
+
+      test "#{path}: a failed run's :exception has no answer_source" do
+        name = "answer-source-#{System.unique_integer([:positive])}"
+        TelemetryCapture.attach_span([[:normandy, :agent, :run, :exception]], agent_name: name)
+
+        agent =
+          lead_text_agent([{:tool_calls, [{"record_city", %{}}]}, {:text, ""}], %{}, %{
+            name: name
+          })
+
+        assert [{:error, %LLMError{type: :invalid_output}}] =
+                 turns(@path, agent, ["Capital of France?"])
+
+        assert_receive {:span, [:normandy, :agent, :run, :exception], meta}
+        refute Map.has_key?(meta, :answer_source)
+      end
+    end
+
+    test "run/3: the substitution logs one debug line with the turn id and no answer text" do
+      agent =
+        lead_text_agent([{:tool_calls, [{"record_city", %{}}]}, {:text, ""}], %{
+          0 => "Secret Paris."
+        })
+
+      log =
+        OwnLog.capture([level: :debug, metadata: [:turn_id]], fn ->
+          assert [{:ok, %{chat_message: "Secret Paris."}}] =
+                   turns(:run, agent, ["Capital of France?"])
+        end)
+
+      assert [line] =
+               log
+               |> String.split("\n")
+               |> Enum.filter(&(&1 =~ "answer taken from the tool round"))
+
+      assert line =~ ~r/turn_id=[0-9a-f-]{36}/
+      refute log =~ "Secret Paris."
+    end
+
+    test "run/3: a no-tool chat agent's answer is answer_source: :final" do
+      name = "answer-source-#{System.unique_integer([:positive])}"
+      TelemetryCapture.attach_span([[:normandy, :agent, :run, :stop]], agent_name: name)
+
+      agent =
+        BaseAgent.init(%{client: FakeClient.new([{:text, "Hello"}]), model: "m", name: name})
+
+      assert {:ok, _config, %{chat_message: "Hello"}} = BaseAgent.run(agent, "hi")
+      assert_receive {:span, [:normandy, :agent, :run, :stop], meta}
+      assert meta.answer_source == :final
     end
   end
 end

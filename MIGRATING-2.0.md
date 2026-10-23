@@ -1357,7 +1357,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `chat_message` is blank. It is not retried. A test model client that answers with an empty response model must
   answer with text. One exception, for a `chat_message` output schema: when the model already
   answered in this turn's last tool-calling reply (text beside the tool call) and ends the turn
-  blank after the tool results, that text is the answer.
+  blank after the tool results, that text is the answer. The run `:stop` telemetry marks it
+  with `answer_source: :tool_round` (`:final` for any other answer).
 
 - Schema properties reach the model in declaration order, in tool `input_schema`, the
   `# OUTPUT SCHEMA` block, JSON retry feedback and the structured-outputs schema (which was

@@ -98,7 +98,8 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
 - A request drops a server-tool use nothing answers, except in its last message, so the next
   input after a continued pause is accepted.
 - A chat answer given beside a tool call survives a blank final reply instead of failing with
-  `:invalid_output`.
+  `:invalid_output`. The run `:stop` metadata marks such an answer `answer_source: :tool_round`
+  (`:final` otherwise).
 - Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
   `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.

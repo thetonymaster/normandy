@@ -1925,8 +1925,10 @@ defmodule Normandy.Agents.Turn.Server do
 
   # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22),
   # unless this turn's last tool-calling response carried text (the handler's validate).
+  # An answer validate took from the tool round is marked on the run's usage
+  # accumulator (BaseAgent.validate_marking_answer/4), for the run :stop's answer_source.
   defp validate_output(data, value) do
-    data.handlers.validate.(data.config, value)
+    BaseAgent.validate_marking_answer(data.handlers.validate, data.config, value, run_usage(data))
   rescue
     e in Normandy.Schema.ValidationError -> {:output_invalid, e}
     e in Normandy.LLMError -> {:output_unparsed, e}

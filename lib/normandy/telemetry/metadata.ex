@@ -45,7 +45,9 @@ defmodule Normandy.Telemetry.Metadata do
   the turn's final state and the run's usage accumulator (internal):
   `llm_calls` and the token totals some call reported, `iterations` (tool rounds and
   pause continuations completed), `stop_reason` (`:completed | :max_iterations`) and
-  `finish_reason` (the last response's stop reason as a string, when it has one).
+  `finish_reason` (the last response's stop reason as a string, when it has one) and
+  `answer_source` (`:tool_round` when the answer is this turn's last tool-round text,
+  else `:final`).
   """
   @spec run_stop(Turn.State.t(), :counters.counters_ref()) :: map()
   def run_stop(%Turn.State{} = state, run_usage) do
@@ -54,7 +56,8 @@ defmodule Normandy.Telemetry.Metadata do
     |> Map.merge(%{
       iterations: state.max_iterations - state.iterations_left,
       stop_reason: state.stop_reason,
-      finish_reason: finish_reason(state.last_response)
+      finish_reason: finish_reason(state.last_response),
+      answer_source: RunUsage.answer_source(run_usage)
     })
     |> reject_nil()
   end
