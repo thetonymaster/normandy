@@ -11,14 +11,7 @@ defmodule Normandy.LLM.Json.DecoderTest do
     assert {:error, _reason} = Decoder.decode("not json", Normandy.JSON, [])
   end
 
-  test "recovers a truncated top-level string when opt is enabled" do
-    truncated = ~s({"page_text": "hello\\n\\n\\n)
-
-    assert {:ok, %{"page_text" => "hello"}} =
-             Decoder.decode(truncated, Normandy.JSON, recover_truncated_strings: true)
-  end
-
-  test "without the opt, truncated content returns the adapter error" do
+  test "a truncated string is the adapter error" do
     truncated = ~s({"page_text": "hello\\n\\n\\n)
     assert {:error, _reason} = Decoder.decode(truncated, Normandy.JSON, [])
   end

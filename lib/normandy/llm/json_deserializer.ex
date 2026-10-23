@@ -2,8 +2,7 @@ defmodule Normandy.LLM.JsonDeserializer do
   @moduledoc """
   JSON deserialization helper with automatic error recovery.
 
-  It strips Markdown fences and surrounding prose, recovers a truncated top-level
-  string, decodes through the configured JSON adapter (with a `:max_input_bytes` guard),
+  It strips Markdown fences and surrounding prose, decodes through the configured JSON adapter (with a `:max_input_bytes` guard),
   casts and validates the result against the target schema, and builds the corrective
   retry prompt after a parse error.
 
@@ -56,8 +55,6 @@ defmodule Normandy.LLM.JsonDeserializer do
     retry's `converse/3` (with `request_kind: :json_retry`) so the retry's request
     span is numbered within the enclosing llm_call
   - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
-  - `:recover_truncated_strings` - Opt-in recovery from unclosed top-level
-    string truncation (default: `false`). See `parse_and_validate/3`.
   - `:max_input_bytes` - Maximum byte size of the raw content accepted before
     any parsing is attempted (default: `10_000_000`). When the content exceeds
     this limit, `Decoder.decode/3` returns
@@ -120,20 +117,6 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `schema` - Target schema struct to populate
     - `opts` - Options:
       - `:adapter` - a module with `decode/1` and `encode!/2` (default: `Normandy.JSON`)
-      - `:recover_truncated_strings` - When `true`, on adapter decode failure
-        attempt one recovery pass for the failure mode "unclosed top-level
-        string at depth 1" (e.g. Nemotron-VL `page_text` payloads that
-        exhaust max_tokens mid-string). The canonical case is a `\\n`-escape
-        runaway tail, but any unclosed depth-1 string also recovers: scan
-        truncates at the last non-`\\n`-escape position (or the byte after
-        the opening quote if none), appends `"` and the balancing object or
-        array closers, re-decodes, and emits
-        `[:normandy, :json_deserializer, :recovery]` telemetry on success
-        (no `:model`/`:agent_name`; correlate via the enclosing llm_call span,
-        same process).
-        Truncations inside nested objects or arrays are not recovered. On
-        recovery failure the original adapter error is returned unchanged.
-        Default: `false`.
 
   ## Returns
 
@@ -173,8 +156,7 @@ defmodule Normandy.LLM.JsonDeserializer do
     - `client` - LLM client
     - `request` - the `Normandy.LLM.Request` that produced `content`; a retry resends
       it with the error feedback appended to its messages
-    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:adapter`,
-      `:recover_truncated_strings` — see `parse_and_validate/3` for details)
+    - `opts` - Options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:adapter`)
 
   ## Returns
 

@@ -333,11 +333,6 @@ defmodule Normandy.Telemetry do
   The JSON parse of a model response failed and a fallback ran. Measurement `count: 1`.
   Metadata: `reason` (the failure's tag), `content_bytes`. Never the output itself.
 
-  ### `[:normandy, :json_deserializer, :recovery]`
-
-  A truncated string was repaired and the parse succeeded. Measurement `recovered: 1`.
-  Metadata: `strategy`, `byte_size_before`, `byte_size_after`.
-
   ### `[:normandy, :circuit_breaker, :state_change]`
 
   A circuit breaker changed state. Measurements: `count: 1`, `failure_count` (failures
