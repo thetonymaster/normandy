@@ -298,11 +298,11 @@ defmodule Normandy.OptionsCoverageTest do
       assert error.message =~ ":max_view_char"
     end
 
-    test "Retry.with_retry/2 (its own check)" do
+    test "Retry.with_retry/2" do
       error =
         assert_raise ArgumentError, fn -> Retry.with_retry(fn -> {:ok, 1} end, max_attemps: 2) end
 
-      assert error.message =~ ~r/^Retry\.with_retry\/2: /
+      assert error.message =~ ~r/^Normandy\.Resilience\.Retry\.with_retry\/2: /
       assert error.message =~ ":max_attemps"
     end
 
