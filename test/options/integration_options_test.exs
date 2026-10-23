@@ -34,8 +34,8 @@ defmodule Normandy.Options.IntegrationOptionsTest do
     {:stratgy, {WindowManager, :new, [[max_tokens: 1000, stratgy: :oldest_first]]}},
     {:notify_on_chnage, {StatefulContext, :start_link, [[notify_on_chnage: false]]}},
     {:paylod, {AgentMessage, :new, [[paylod: %{}]]}},
-    {:defualt, {Pattern, :ok!, [{:ok, 1}, [defualt: 2]]}},
-    {:defualt, {Pattern, :error!, [{:error, 1}, [defualt: 2]]}},
+    {:defualt, {Pattern, :ok_value, [{:ok, 1}, [defualt: 2]]}},
+    {:defualt, {Pattern, :error_reason, [{:error, 1}, [defualt: 2]]}},
     {:turnid, {AgentMemory, :add_message, [%AgentMemory{}, "user", "hi", [turnid: "t"]]}}
   ]
 
@@ -91,9 +91,9 @@ defmodule Normandy.Options.IntegrationOptionsTest do
       assert error.message =~ ":timeout"
     end
 
-    test "Pattern.ok!/2 with valid options returns the value, or the default on {:error, _}" do
-      assert Pattern.ok!({:ok, 1}, default: 2) == 1
-      assert Pattern.ok!({:error, :x}, default: 2) == 2
+    test "Pattern.ok_value/2 with valid options returns the value, or the default on {:error, _}" do
+      assert Pattern.ok_value({:ok, 1}, default: 2) == 1
+      assert Pattern.ok_value({:error, :x}, default: 2) == 2
     end
 
     test "compress_conversation/3 hands only the summary options to summarize_messages/4" do

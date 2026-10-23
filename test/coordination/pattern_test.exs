@@ -42,36 +42,36 @@ defmodule Normandy.Coordination.PatternTest do
     end
   end
 
-  describe "ok!/2" do
+  describe "ok_value/2" do
     test "extracts value from {:ok, value}" do
-      assert Pattern.ok!({:ok, "value"}) == "value"
-      assert Pattern.ok!({:ok, 123}) == 123
-      assert Pattern.ok!({:ok, nil}) == nil
+      assert Pattern.ok_value({:ok, "value"}) == "value"
+      assert Pattern.ok_value({:ok, 123}) == 123
+      assert Pattern.ok_value({:ok, nil}) == nil
     end
 
     test "returns default for {:error, reason}" do
-      assert Pattern.ok!({:error, "reason"}, default: "fallback") == "fallback"
-      assert Pattern.ok!({:error, "reason"}, default: nil) == nil
+      assert Pattern.ok_value({:error, "reason"}, default: "fallback") == "fallback"
+      assert Pattern.ok_value({:error, "reason"}, default: nil) == nil
     end
 
     test "returns nil by default for errors" do
-      assert Pattern.ok!({:error, "reason"}) == nil
+      assert Pattern.ok_value({:error, "reason"}) == nil
     end
   end
 
-  describe "error!/2" do
+  describe "error_reason/2" do
     test "extracts reason from {:error, reason}" do
-      assert Pattern.error!({:error, "reason"}) == "reason"
-      assert Pattern.error!({:error, :bad}) == :bad
+      assert Pattern.error_reason({:error, "reason"}) == "reason"
+      assert Pattern.error_reason({:error, :bad}) == :bad
     end
 
     test "returns default for {:ok, value}" do
-      assert Pattern.error!({:ok, "value"}, default: "no error") == "no error"
-      assert Pattern.error!({:ok, "value"}, default: nil) == nil
+      assert Pattern.error_reason({:ok, "value"}, default: "no error") == "no error"
+      assert Pattern.error_reason({:ok, "value"}, default: nil) == nil
     end
 
     test "returns nil by default for success" do
-      assert Pattern.error!({:ok, "value"}) == nil
+      assert Pattern.error_reason({:ok, "value"}) == nil
     end
   end
 
