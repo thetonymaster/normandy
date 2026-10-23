@@ -1725,7 +1725,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp call_llm_event(handlers, data, request) do
     with {:ok, :ok} <-
            worker_hook(data, :before_llm, fn ->
-             ServerGlue.before_llm(handlers, data.config, data.turn_state, request)
+             ServerGlue.before_llm(data.config, data.turn_state, request)
            end) do
       {:llm_response, handlers.call_llm.(data.config, data.turn_state, request)}
     end
@@ -1739,7 +1739,7 @@ defmodule Normandy.Agents.Turn.Server do
 
     with {:ok, {config, meta}} <-
            worker_hook(data, :after_compact, fn ->
-             ServerGlue.after_compact(handlers, data.config, data.turn_state, info, compacted)
+             ServerGlue.after_compact(compacted)
            end) do
       {:compact_result, config, meta}
     end
