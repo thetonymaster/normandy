@@ -27,8 +27,8 @@ defmodule Normandy.Components.ToolResult do
   # an atom, a boolean, nil) as JSON, every plain map's keys sorted (Normandy.JSON "Text
   # for the model": the same result is the same text on every node). An output JSON
   # cannot express is {:error, exception}: what sorting its keys raised (a tuple key, an
-  # improper list) or what the adapter raised (Normandy.JSON.encode/2; a misconfigured
-  # :adapter still raises). A binary is returned unchecked; Dispatch checks its UTF-8.
+  # improper list) or what Jason raised (Normandy.JSON.encode/2).
+  # A binary is returned unchecked; Dispatch checks its UTF-8.
   @spec render(term()) :: {:ok, String.t()} | {:error, Exception.t()}
   def render(output) when is_binary(output), do: {:ok, output}
   def render(output) when is_number(output), do: {:ok, to_string(output)}

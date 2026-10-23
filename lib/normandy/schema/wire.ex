@@ -24,8 +24,7 @@ defmodule Normandy.Schema.Wire do
   block and the JSON retry feedback. `__schema__(:specification)` and an io_schema's
   `get_json_schema/0` return the specification unchanged.
 
-  A custom `config :normandy, :adapter` receives `Jason.OrderedObject` structs from these
-  call sites; Jason encodes them in order.
+  These call sites hand Jason `Jason.OrderedObject` structs, which it encodes in order.
   """
 
   @dropped [:"$schema", "$schema", :title, "title"]

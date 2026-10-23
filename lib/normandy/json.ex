@@ -2,20 +2,14 @@ defmodule Normandy.JSON do
   @moduledoc """
   The one place Normandy encodes and decodes JSON.
 
-  ## Adapter
+  ## Library
 
-  The JSON library is `config :normandy, adapter: Module`, read on every call (so
-  runtime config applies), default `Jason`. Normandy calls exactly two of its
-  functions, so any module that provides them works:
-
-    * `encode!(term, opts) :: String.t()` — raises on a term it cannot encode.
-      `opts` is `[]` or `[pretty: true]`.
-    * `decode(String.t()) :: {:ok, term()} | {:error, Exception.t()}` — objects
-      decode to string-keyed maps.
+  Normandy encodes and decodes with Jason, which is a hard dependency. There is no
+  `:adapter` setting. `decode/1` returns string-keyed maps for objects.
 
   ## Structs
 
-  Before the adapter sees a term, every struct in it, at any depth, is either kept
+  Before Jason sees a term, every struct in it, at any depth, is either kept
   or replaced by a plain map:
 
     * A struct with its own `Jason.Encoder` implementation (`@derive Jason.Encoder`,
@@ -24,12 +18,8 @@ defmodule Normandy.JSON do
     * Any other struct becomes its map without `:__struct__` and `:__meta__`, and
       its values are walked the same way.
 
-  The check is `Jason.Encoder` whatever the adapter, because Jason is always a
-  Normandy dependency. With another adapter, a derived struct reaches that adapter
-  as a struct and the adapter decides how to encode it.
-
   A term JSON cannot express (a tuple, a pid, a reference, a function) is left as
-  it is: the adapter raises on it, and `encode/2` returns that exception.
+  it is: Jason raises on it, and `encode/2` returns that exception.
 
   ## Text for the model
 
@@ -41,54 +31,31 @@ defmodule Normandy.JSON do
   its fields, sorted like a plain map. A struct with its own encoder is encoded by that
   encoder, whose output is its own, and a `Jason.OrderedObject` keeps its order (the
   plain maps among its values are sorted).
-  The sorted maps reach the adapter as `Jason.OrderedObject` structs, so a custom
-  `:adapter` must encode those in order, as Jason does.
   """
 
-  alias Normandy.Components.ContentBlock.Describe
-
-  @doc "Encodes `term`; raises the adapter's exception when it cannot."
+  @doc "Encodes `term`; raises Jason's exception when it cannot."
   @spec encode!(term(), keyword()) :: String.t()
   def encode!(term, opts \\ []) when is_list(opts) do
-    adapter().encode!(normalize(term), opts)
+    Jason.encode!(normalize(term), opts)
   end
 
   @doc """
-  Encodes `term`, returning `{:error, exception}` with whatever the adapter raised
-  (for Jason, `Protocol.UndefinedError` or `Jason.EncodeError`), or what walking `term`
-  raised (an improper list). A misconfigured `:adapter` raises.
+  Encodes `term`, returning `{:error, exception}` with whatever Jason raised
+  (`Protocol.UndefinedError` or `Jason.EncodeError`), or what walking `term`
+  raised (an improper list).
   """
   @spec encode(term(), keyword()) :: {:ok, String.t()} | {:error, Exception.t()}
   def encode(term, opts \\ []) when is_list(opts) do
-    adapter = adapter()
-
-    try do
-      {:ok, adapter.encode!(normalize(term), opts)}
-    rescue
-      exception -> {:error, exception}
-    end
+    {:ok, Jason.encode!(normalize(term), opts)}
+  rescue
+    exception -> {:error, exception}
   end
 
   @doc "Decodes a JSON string; objects become string-keyed maps."
   @spec decode(String.t()) :: {:ok, term()} | {:error, Exception.t()}
-  def decode(json) when is_binary(json) do
-    adapter = adapter()
+  def decode(json) when is_binary(json), do: Jason.decode(json)
 
-    case adapter.decode(json) do
-      {:ok, _value} = ok ->
-        ok
-
-      {:error, %{__exception__: true}} = error ->
-        error
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(adapter)}.decode/1 must return {:ok, term} or {:error, exception}, " <>
-                "got: #{shape(other)}"
-    end
-  end
-
-  @doc "Decodes a JSON string; raises the adapter's exception when it is not JSON."
+  @doc "Decodes a JSON string; raises Jason's exception when it is not JSON."
   @spec decode!(String.t()) :: term()
   def decode!(json) when is_binary(json) do
     case decode(json) do
@@ -96,21 +63,6 @@ defmodule Normandy.JSON do
       {:error, exception} -> raise exception
     end
   end
-
-  defp adapter do
-    case Application.get_env(:normandy, :adapter, Jason) do
-      module when is_atom(module) and not is_nil(module) ->
-        module
-
-      other ->
-        raise ArgumentError,
-              "config :normandy, :adapter must be a module with encode!/2 and decode/1, " <>
-                "got: #{Describe.type_of(other)}"
-    end
-  end
-
-  defp shape({:error, _reason}), do: "{:error, a reason that is not an exception}"
-  defp shape(other), do: Describe.type_of(other)
 
   defp normalize(%_{} = struct) do
     if own_encoder?(struct) do
@@ -155,7 +107,7 @@ defmodule Normandy.JSON do
 
   # A key as Jason writes it: an atom by its name, anything else through String.Chars. A key
   # without a String.Chars impl (a tuple) raises Protocol.UndefinedError here, the exception
-  # the adapter raised for it before.
+  # Jason raised for it before.
   defp key_text(key) when is_atom(key), do: Atom.to_string(key)
   defp key_text(key), do: to_string(key)
 
