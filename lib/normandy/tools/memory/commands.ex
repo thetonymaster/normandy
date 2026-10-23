@@ -14,9 +14,6 @@ defmodule Normandy.Tools.Memory.Commands do
   alias Normandy.Tools.Memory
   alias Normandy.Tools.Memory.{Paths, Render}
 
-  @root "/memories"
-  @list_limit MemoryStore.list_limit()
-
   @doc false
   # The namespace `run/3` uses for the command: the mount's for a path inside a
   # mount, else the session's. A path that fails validation resolves nowhere, so the
@@ -80,9 +77,8 @@ defmodule Normandy.Tools.Memory.Commands do
 
   defp view_directory(tool, loc) do
     case store(tool, :list, [loc.namespace, loc.path]) do
-      {:ok, []} when loc.path != @root ->
-        {:error, :not_found,
-         "The path #{loc.model_path} does not exist. Please provide a valid path."}
+      {:ok, []} ->
+        empty_directory(loc)
 
       {:ok, entries} ->
         docs = Enum.map(entries, &%{path: Paths.to_model(&1.path, loc.mount), size: &1.size})
@@ -195,6 +191,16 @@ defmodule Normandy.Tools.Memory.Commands do
     end
   end
 
+  # /memories always "exists"; any other empty listing is no such path.
+  defp empty_directory(%{path: path} = loc) do
+    if path == Paths.root() do
+      {:ok, Render.directory(loc.model_path, []), %{}}
+    else
+      {:error, :not_found,
+       "The path #{loc.model_path} does not exist. Please provide a valid path."}
+    end
+  end
+
   # Read-modify-write with compare-and-set. A lost race re-reads and re-applies, up to
   # max_cas_retries extra attempts. The store checks the namespace caps on every attempt.
   defp edit(tool, loc, missing, transform, success, attempt \\ 0) do
@@ -205,33 +211,44 @@ defmodule Normandy.Tools.Memory.Commands do
       {:error, reason} ->
         backend(reason)
 
-      {:ok, %{content: content, version: version}} ->
-        with {:ok, updated, info} <- transform.(content),
-             :ok <- fits(tool, loc, updated) do
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case store(tool, :put, [loc.namespace, loc.path, updated, version, limits(tool)]) do
-            {:ok, _} ->
-              {:ok, success.(updated, info),
-               %{
-                 bytes_read: byte_size(content),
-                 bytes_written: byte_size(updated),
-                 cas_retries: attempt
-               }}
+      {:ok, doc} ->
+        again = fn -> edit(tool, loc, missing, transform, success, attempt + 1) end
+        rewrite(tool, loc, doc, {transform, success}, {attempt, again})
+    end
+  end
 
-            {:error, :conflict} when attempt < tool.max_cas_retries ->
-              edit(tool, loc, missing, transform, success, attempt + 1)
+  defp rewrite(tool, loc, %{content: content, version: version}, {transform, success}, retry) do
+    {attempt, again} = retry
 
-            {:error, :conflict} ->
-              {:error, :conflict_exhausted,
-               "Error: #{loc.model_path} was changed by another writer #{attempt + 1} times while editing; view it and retry"}
+    with {:ok, updated, info} <- transform.(content),
+         :ok <- fits(tool, loc, updated) do
+      cas_put(tool, loc, {content, version, updated}, {success.(updated, info), attempt}, again)
+    end
+  end
 
-            {:error, {:namespace_full, which, would_be}} ->
-              namespace_full(tool, loc, which, would_be)
+  # The compare-and-set write of `edit/6`; a lost race re-runs it.
+  defp cas_put(tool, loc, {content, version, updated}, {text, attempt}, again) do
+    case store(tool, :put, [loc.namespace, loc.path, updated, version, limits(tool)]) do
+      {:ok, _} ->
+        {:ok, text,
+         %{
+           bytes_read: byte_size(content),
+           bytes_written: byte_size(updated),
+           cas_retries: attempt
+         }}
 
-            {:error, reason} ->
-              backend(reason)
-          end
-        end
+      {:error, :conflict} when attempt < tool.max_cas_retries ->
+        again.()
+
+      {:error, :conflict} ->
+        {:error, :conflict_exhausted,
+         "Error: #{loc.model_path} was changed by another writer #{attempt + 1} times while editing; view it and retry"}
+
+      {:error, {:namespace_full, which, would_be}} ->
+        namespace_full(tool, loc, which, would_be)
+
+      {:error, reason} ->
+        backend(reason)
     end
   end
 
@@ -285,10 +302,11 @@ defmodule Normandy.Tools.Memory.Commands do
     end
   end
 
-  defp not_root(%{path: @root} = loc, verb),
-    do: {:error, :invalid_input, "Error: cannot #{verb} the #{loc.model_path} directory"}
-
-  defp not_root(_loc, _verb), do: :ok
+  defp not_root(%{path: path} = loc, verb) do
+    if path == Paths.root(),
+      do: {:error, :invalid_input, "Error: cannot #{verb} the #{loc.model_path} directory"},
+      else: :ok
+  end
 
   defp same_mount(%{mount: m}, %{mount: m}), do: :ok
 
@@ -344,12 +362,18 @@ defmodule Normandy.Tools.Memory.Commands do
     end
   end
 
-  defp check_moved_lengths(entries, from, to) when length(entries) >= @list_limit,
+  defp check_moved_lengths(entries, from, to) do
+    if length(entries) >= MemoryStore.list_limit(),
+      do: too_many_to_rename(from, to),
+      else: check_moved_paths(entries, from, to)
+  end
+
+  defp too_many_to_rename(from, to),
     do:
       {:error, :invalid_path,
        "Error: #{from.model_path} holds too many files to check that renaming it to #{to.model_path} keeps every path within #{Paths.max_bytes()} bytes; rename its subdirectories first"}
 
-  defp check_moved_lengths(entries, from, to) do
+  defp check_moved_paths(entries, from, to) do
     entries
     |> Enum.filter(&MemoryStore.under?(&1.path, from.path))
     |> Enum.map(&Paths.to_model(MemoryStore.reparent(&1.path, from.path, to.path), to.mount))
