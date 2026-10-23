@@ -81,6 +81,30 @@ defmodule Normandy.LLM.JsonDeserializerRetryTest do
     end
   end
 
+  test "a raise in a later retry still left the earlier retry's usage reported" do
+    client = %StubClient{
+      reply: fn nil ->
+        n = Process.get(:calls, 0)
+        Process.put(:calls, n + 1)
+
+        if n == 0,
+          do: {:ok, %Response{content: "still not json", usage: %{"input_tokens" => 7}}},
+          else: raise("boom")
+      end
+    }
+
+    test_pid = self()
+
+    assert_raise RuntimeError, "boom", fn ->
+      JsonDeserializer.deserialize_with_retry("not json", %MultiField{}, client, @request,
+        max_retries: 2,
+        on_retry_usage: &send(test_pid, {:retry_usage, &1})
+      )
+    end
+
+    assert_received {:retry_usage, %{"input_tokens" => 7}}
+  end
+
   test "a retry asks for text with response_model: nil" do
     # Valid JSON comes back as text only when the retry asks for text.
     client = %StubClient{

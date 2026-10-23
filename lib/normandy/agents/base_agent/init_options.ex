@@ -110,9 +110,15 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     enable_json_retry: [
       type: :boolean,
       default: true,
-      doc: "Asks the model again when its JSON does not parse."
+      doc:
+        "Asks the model again when its JSON does not parse. `Normandy.LLM.OpenAICompatibleAdapter` " <>
+          "never re-asks."
     ],
-    json_retry_max_attempts: [type: :pos_integer, default: 2, doc: "JSON re-asks per call."],
+    json_retry_max_attempts: [
+      type: :pos_integer,
+      default: 2,
+      doc: "JSON re-asks per call (none with `Normandy.LLM.OpenAICompatibleAdapter`)."
+    ],
     guardrails: [
       type: :keyword_list,
       default: [],

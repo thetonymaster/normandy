@@ -17,7 +17,6 @@ defmodule Normandy.Docs.DocsGroupsTest do
     Normandy.LLM.Json.ContentCleaner,
     Normandy.LLM.Json.Decoder,
     Normandy.LLM.Json.RetryFeedback,
-    Normandy.LLM.Json.Scanner,
     Normandy.LLM.Json.SchemaBinder,
     Normandy.LLM.Json.SchemaTranslator,
     Normandy.Telemetry.KilledRun,

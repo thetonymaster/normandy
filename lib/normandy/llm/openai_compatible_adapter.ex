@@ -4,8 +4,10 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   Chat Completions endpoint (OpenAI, DigitalOcean Inference, etc.).
 
   Text-completion only (v1): tool/function calling is not supported and a
-  non-empty `request.tools` raises. Structured output + prose fallback reuse the
-  same `Normandy.LLM.JsonDeserializer` path as `Normandy.LLM.ClaudioAdapter`.
+  non-empty `request.tools` raises. An answer is parsed once with
+  `Normandy.LLM.JsonDeserializer.parse_and_validate/3` and the `:on_parse_failure` policy
+  applies; there is no JSON re-ask, so `enable_json_retry` and `json_retry_max_attempts`
+  have no effect on this client (`Normandy.LLM.ClaudioAdapter` re-asks).
 
       client = %Normandy.LLM.OpenAICompatibleAdapter{
         api_key: System.get_env("OPENAI_API_KEY"),

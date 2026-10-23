@@ -272,28 +272,28 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       content = ~s({"chat_message": "Hello world", "count": 5})
 
       assert {:ok, %MultiField{chat_message: "Hello world", count: 5}} =
-               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Normandy.JSON)
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
 
     test "wrapper shape with matching inner keys is unwrapped" do
       content = ~s({"name": "extract", "arguments": {"chat_message": "hello", "count": 7}})
 
       assert {:ok, %MultiField{chat_message: "hello", count: 7}} =
-               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Normandy.JSON)
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
 
     test "wrapper shape with non-matching inner keys returns the empty struct" do
       content = ~s({"name": "extract", "arguments": {"unrelated": "data"}})
 
       assert {:ok, %MultiField{chat_message: nil, count: 0}} =
-               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Normandy.JSON)
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
 
     test "no arguments key and empty cast preserves current behavior" do
       content = ~s({"name": "extract"})
 
       assert {:ok, %MultiField{chat_message: nil, count: 0}} =
-               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Normandy.JSON)
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
 
     test "non-map arguments value falls back to empty struct (no crash)" do
@@ -301,209 +301,56 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       list_args = ~s({"name": "extract", "arguments": [1, 2, 3]})
 
       assert {:ok, %MultiField{chat_message: nil, count: 0}} =
-               JsonDeserializer.parse_and_validate(string_args, %MultiField{},
-                 adapter: Normandy.JSON
-               )
+               JsonDeserializer.parse_and_validate(string_args, %MultiField{})
 
       assert {:ok, %MultiField{chat_message: nil, count: 0}} =
-               JsonDeserializer.parse_and_validate(list_args, %MultiField{},
-                 adapter: Normandy.JSON
-               )
+               JsonDeserializer.parse_and_validate(list_args, %MultiField{})
     end
 
     test "required-field validation still fires when neither outer nor inner supplies it" do
       content = ~s({"name": "extract", "arguments": {"unrelated": "data"}})
 
       assert {:error, {:validation_error, _changeset, _content}} =
-               JsonDeserializer.parse_and_validate(content, %RequiredField{},
-                 adapter: Normandy.JSON
-               )
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
     end
 
     test "wrapper supplies required field only in inner — unwrap still succeeds" do
       content = ~s({"name": "extract", "arguments": {"chat_message": "hi"}})
 
       assert {:ok, %RequiredField{chat_message: "hi"}} =
-               JsonDeserializer.parse_and_validate(content, %RequiredField{},
-                 adapter: Normandy.JSON
-               )
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
     end
 
     test "inner cast error on a permitted key is surfaced, not masked as empty success" do
       content = ~s({"name": "extract", "arguments": {"count": "not_a_number"}})
 
       assert {:error, {:validation_error, _changeset, _content}} =
-               JsonDeserializer.parse_and_validate(content, %MultiField{}, adapter: Normandy.JSON)
+               JsonDeserializer.parse_and_validate(content, %MultiField{})
     end
   end
 
-  describe "parse_and_validate/3 — :recover_truncated_strings option" do
-    test "recovers a top-level string field truncated at a \\n-escape runaway" do
-      # Bytes: { " p a g e _ t e x t " :   " h e l l o   w o r l d \ n \ n \ n \ n
-      # No closing " and no closing }. The trailing \n sequences are the model
-      # runaway; recovery should truncate at the last position before the runaway,
-      # close the string, and close the object.
-      truncated = ~s({"page_text": "hello world\\n\\n\\n\\n)
-
-      assert {:ok, %RecoveryFixture{page_text: "hello world"}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: true
-               )
+  describe "removed options" do
+    test ":recover_truncated_strings is refused, naming the option" do
+      assert_raise ArgumentError,
+                   ~r/parse_and_validate\/3: unknown option :recover_truncated_strings/,
+                   fn ->
+                     JsonDeserializer.parse_and_validate(
+                       ~s({"page_text": "hi),
+                       %RecoveryFixture{},
+                       recover_truncated_strings: true
+                     )
+                   end
     end
 
-    test "default-off: truncated content returns the original parse error" do
-      truncated = ~s({"page_text": "hello\\n\\n\\n)
-
-      assert {:error, {:json_parse_error, _, _}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON
-               )
-    end
-
-    test "explicit false: truncated content returns the original parse error" do
-      truncated = ~s({"page_text": "hello\\n\\n\\n)
-
-      assert {:error, {:json_parse_error, _, _}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: false
-               )
-    end
-
-    test "declines recovery when truncation is inside a nested object" do
-      # Truncation is in an inner object's string value (offerings[0].name).
-      # opener_depth at EOF is 3 (outer object, array, inner object) — recovery
-      # must not fire here, because manufacturing a closer would produce a
-      # half-truthful inner record rather than an empty top-level field.
-      truncated = ~s({"offerings": [{"name": "Paq)
-
-      assert {:error, {:json_parse_error, _, _}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: true
-               )
-    end
-
-    test "declines recovery when truncation is inside a top-level array element string" do
-      # Same shape: the inner string lives at depth 2 (object → array → string).
-      truncated = ~s({"facts": ["fact one", "fact tw)
-
-      assert {:error, {:json_parse_error, _, _}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: true
-               )
-    end
-
-    test "recovers an immediately-truncated empty top-level string to \"\"" do
-      # The model emitted the opening quote of page_text and ran out of tokens
-      # right there. Recovery should produce an empty string for page_text
-      # rather than giving up.
-      truncated = ~s({"page_text": ")
-
-      assert {:ok, %RecoveryFixture{page_text: ""}} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: true
-               )
-    end
-
-    test "valid JSON with recover_truncated_strings: true behaves exactly as without" do
-      valid = ~s({"page_text": "complete", "facts": ["a", "b"]})
-
-      with_flag =
-        JsonDeserializer.parse_and_validate(
-          valid,
-          %RecoveryFixture{},
-          adapter: Normandy.JSON,
-          recover_truncated_strings: true
+    test ":adapter is refused, naming the option" do
+      assert_raise ArgumentError, ~r/parse_and_validate\/3: unknown option :adapter/, fn ->
+        JsonDeserializer.parse_and_validate(~s({"chat_message": "hi"}), %MultiField{},
+          adapter: Jason
         )
+      end
 
-      without_flag =
-        JsonDeserializer.parse_and_validate(
-          valid,
-          %RecoveryFixture{},
-          adapter: Normandy.JSON
-        )
-
-      assert {:ok, %RecoveryFixture{page_text: "complete", facts: ["a", "b"]}} = with_flag
-      assert with_flag == without_flag
-    end
-
-    test "recovers the page_text-last shape from the captured Nemotron-VL fixture" do
-      # Mirrors the captured fixture: facts populated, page_text opens, model
-      # emits some real prose, then runs away with \n escapes and EOFs without
-      # closing the string or the outer object. Recovery must:
-      #   * keep facts populated;
-      #   * truncate page_text at the last non-\n-escape position;
-      #   * close the string and the outer object.
-      truncated =
-        ~s({"facts": ["Mixology", "Premium Bar"], "page_text": "NATIVA MIXOLOGY\\n\\n\\n\\n\\n\\n\\n\\n)
-
-      assert {:ok,
-              %RecoveryFixture{
-                page_text: "NATIVA MIXOLOGY",
-                facts: ["Mixology", "Premium Bar"]
-              }} =
-               JsonDeserializer.parse_and_validate(
-                 truncated,
-                 %RecoveryFixture{},
-                 adapter: Normandy.JSON,
-                 recover_truncated_strings: true
-               )
-    end
-
-    # Handlers are global and the module is async: only this test's process.
-    def handle_recovery(name, measurements, metadata, %{test_pid: pid}) do
-      if self() == pid, do: send(pid, {:telemetry, name, measurements, metadata})
-    end
-
-    test "emits [:normandy, :json_deserializer, :recovery] on successful recovery" do
-      handler_id = "recovery-telemetry-test-#{System.unique_integer([:positive])}"
-      test_pid = self()
-
-      :telemetry.attach(
-        handler_id,
-        [:normandy, :json_deserializer, :recovery],
-        &__MODULE__.handle_recovery/4,
-        %{test_pid: test_pid}
-      )
-
-      try do
-        truncated = ~s({"page_text": "hello world\\n\\n\\n)
-
-        {:ok, _} =
-          JsonDeserializer.parse_and_validate(
-            truncated,
-            %RecoveryFixture{},
-            adapter: Normandy.JSON,
-            recover_truncated_strings: true
-          )
-
-        assert_received {:telemetry, [:normandy, :json_deserializer, :recovery], %{recovered: 1},
-                         %{
-                           strategy: :truncated_string,
-                           byte_size_before: before,
-                           byte_size_after: after_
-                         }}
-
-        assert is_integer(before) and before > 0
-        assert is_integer(after_) and after_ > 0
-      after
-        :telemetry.detach(handler_id)
+      assert_raise ArgumentError, ~r/deserialize_with_retry\/5: unknown option :adapter/, fn ->
+        JsonDeserializer.deserialize_with_retry("x", %MultiField{}, nil, @request, adapter: Jason)
       end
     end
   end
@@ -578,6 +425,66 @@ defmodule Normandy.LLM.JsonDeserializerTest do
 
       errors = Normandy.Validate.traverse_errors(changeset, fn {msg, _opts} -> msg end)
       assert Map.has_key?(errors, :chat_message)
+    end
+  end
+
+  describe "hardening — unclosed openers" do
+    test "unclosed brace in 240 KB of prose returns within 1 s" do
+      text = String.duplicate("{ word ", 40_000)
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
+    test "repeated unclosed brace + escaped quote in 240 KB returns within 1 s" do
+      text = String.duplicate("{ \\\" ", 48_000)
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
+    test "an escaped-quote tail before a valid object still finds the object" do
+      text = String.duplicate("{ \\\" ", 5_000) <> ~s(\n{"chat_message": "hi"})
+
+      assert {:ok, %BaseAgentOutputSchema{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})
+    end
+
+    for lines <- [100, 7_700] do
+      test "an answer after C code that prints escaped JSON is found (#{lines} lines)" do
+        line = ~S|  printf("{\"id\": %d}\n", x);| <> "\n"
+        text = "int main() {\n" <> String.duplicate(line, unquote(lines)) <> "}\n"
+        text = text <> ~s({"chat_message": "done"})
+
+        {t, result} =
+          :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+        assert {:ok, %BaseAgentOutputSchema{chat_message: "done"}} = result
+        assert t < 1_000_000
+      end
+    end
+
+    test "240 KB of deeply nested brackets returns within 1 s" do
+      text = String.duplicate("[", 120_000) <> String.duplicate("]", 120_000) <> " x"
+
+      {t, result} =
+        :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
+
+      assert {:error, {:json_parse_error, _, _}} = result
+      assert t < 1_000_000
+    end
+
+    test "unclosed brackets and braces mixed still find the later balanced region" do
+      text = String.duplicate("[ {", 5_000) <> ~s( {"chat_message": "hi"})
+
+      assert {:ok, %BaseAgentOutputSchema{chat_message: "hi"}} =
+               JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})
     end
   end
 

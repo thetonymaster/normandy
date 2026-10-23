@@ -1,8 +1,7 @@
 defmodule Normandy.LLM.Json.ContentCleaner do
   @moduledoc false
   # Cleans raw LLM output into a parseable JSON string: strips markdown code
-  # fences and trims. `extract_balanced/1` is the prose-extraction fallback
-  # (implemented in the hardening phase).
+  # fences and trims. `balanced_regions/1` is the prose-extraction fallback.
 
   @doc "Strip code fences and trim. Non-binary content passes through unchanged."
   def clean(content) when is_binary(content) do
@@ -16,92 +15,182 @@ defmodule Normandy.LLM.Json.ContentCleaner do
 
   def clean(content), do: content
 
-  @doc "Locate the first balanced JSON object/array within surrounding prose."
-  @spec extract_balanced(binary()) :: {:ok, binary()} | :error
-  def extract_balanced(content) when is_binary(content) do
-    case find_balanced_from(content, 0) do
-      {:ok, region, _start} -> {:ok, region}
-      :error -> :error
-    end
-  end
-
-  def extract_balanced(_content), do: :error
-
   @doc """
-  Like `extract_balanced/1` but begins scanning at byte offset `from` and also
-  returns the byte offset where the located region started. Lets a caller
-  iterate over successive balanced regions — retry the next one when a region
-  fails to decode — by passing `start + 1` as the next `from`.
+  Locates the first balanced JSON object/array at or after byte offset `from`, within
+  surrounding prose, and returns it with the byte offset where it started.
   """
   @spec extract_balanced(binary(), non_neg_integer()) ::
           {:ok, binary(), non_neg_integer()} | :error
   def extract_balanced(content, from)
       when is_binary(content) and is_integer(from) and from >= 0 do
-    find_balanced_from(content, from)
+    case next_region(content, from, new_state(content)) do
+      {{region, start}, _state} -> {:ok, region, start}
+      nil -> :error
+    end
   end
 
   def extract_balanced(_content, _from), do: :error
 
-  # Find the next balanced region at or after `from`. An opener whose region
-  # never closes is skipped and the next opener tried, so a stray unbalanced
-  # brace in prose doesn't hide a valid region later in the string.
-  defp find_balanced_from(content, from) when from >= byte_size(content), do: :error
+  @doc """
+  Every balanced `{...}`/`[...]` region of `content`, in order of the byte offset
+  it starts at, as `{region, start}`. A region nested in an earlier one is
+  yielded too, so a caller that rejects an outer region still sees the inner
+  ones. Lazy.
 
-  defp find_balanced_from(content, from) do
+  The guarantee: the scans together read at most `8 * byte_size(content) + 1024` bytes,
+  whatever the input, so the time is linear in the size. Scans share work: a scan that
+  starts at an opener settles every same-kind opener it passes outside a string, and
+  stops at a lexer state an earlier scan of that kind already crossed, when the outcome
+  there is known (that scan closed its first opener with the same number pending, or
+  never closed it with no more pending). Prose, nested code and repeated escaped-quote
+  shapes (`{ word `, `{ \\"`, `printf("{\\"id\\": %d}")` lines) stay far under the budget.
+  Some inputs still need more than it allows; then the stream ends early, and the
+  regions yielded are always a prefix of the full list in start order: a later region
+  can be missed, a wrong one never returned.
+  """
+  @spec balanced_regions(binary()) :: Enumerable.t()
+  def balanced_regions(content) when is_binary(content) do
+    Stream.unfold({0, new_state(content)}, fn {from, st} -> next_region(content, from, st) end)
+  end
+
+  # `memo`: offset of an opener already settled by a scan => `{:closed, stop}` or
+  # `:unclosed`. `seen`: `{opener, pos, in_string?, escape?}` => the fewest openers pending
+  # when a scan that never closed its first opener crossed that state. `work`: bytes
+  # the scans may still read.
+  defp new_state(content),
+    do: %{memo: %{}, seen: %{}, done: %{}, work: 8 * byte_size(content) + 1024}
+
+  # The next balanced region at or after `from`, or nil. An opener whose region never
+  # closes is skipped, so a stray brace in prose doesn't hide a valid region later in
+  # the string.
+  defp next_region(content, from, _st) when from >= byte_size(content), do: nil
+
+  defp next_region(content, from, st) do
     rest = binary_part(content, from, byte_size(content) - from)
 
     case :binary.match(rest, ["{", "["]) do
-      {rel, 1} ->
-        start = from + rel
-        opener = :binary.at(content, start)
-        closer = if opener == ?{, do: ?}, else: ?]
-
-        case scan_balanced(content, start + 1, opener, closer, 1, false, false, start) do
-          {:ok, region} -> {:ok, region, start}
-          :error -> find_balanced_from(content, start + 1)
-        end
-
-      :nomatch ->
-        :error
+      {rel, 1} -> settled_region(content, from + rel, st)
+      :nomatch -> nil
     end
   end
 
-  # scan(content, pos, opener, closer, depth, in_string?, escape?, start)
-  defp scan_balanced(content, pos, _opener, _closer, 0, _in_str, _esc, start) do
-    {:ok, binary_part(content, start, pos - start)}
+  defp settled_region(content, start, st) do
+    case settle(content, start, st) do
+      {:ok, st} -> region_at(content, start, st)
+      :exhausted -> nil
+    end
+  end
+
+  defp region_at(content, start, st) do
+    case Map.fetch!(st.memo, start) do
+      {:closed, stop} -> {{binary_part(content, start, stop - start), start}, {start + 1, st}}
+      :unclosed -> next_region(content, start + 1, st)
+    end
+  end
+
+  defp settle(_content, start, %{memo: memo} = st) when is_map_key(memo, start),
+    do: {:ok, st}
+
+  defp settle(content, start, st) do
+    opener = :binary.at(content, start)
+    closer = if opener == ?{, do: ?}, else: ?]
+    scan(content, start + 1, {opener, closer, start}, [start], 1, {false, false}, [], st)
+  end
+
+  # scan(content, pos, {opener, closer}, open_stack, depth, {in_string?, escape?}, trail, st)
+  # `open_stack` holds the offsets of the openers still unclosed, innermost first, and
+  # `depth` its length. Each closer settles the innermost one; the scan stops when the
+  # opener it began at closes, or reaches end of input (everything pending is unclosed).
+  # `trail` is the `{state, depth}` pairs crossed, kept for `seen` if the scan fails.
+  defp scan(content, pos, _kind, stack, _depth, _lex, trail, st) when pos >= byte_size(content),
+    do: {:ok, unclosed(stack, trail, st)}
+
+  defp scan(_content, _pos, _kind, _stack, _depth, _lex, _trail, %{work: work})
+       when work <= 0,
+       do: :exhausted
+
+  defp scan(content, pos, {opener, _, start} = kind, stack, depth, {in_str, esc} = lex, trail, st) do
+    key = {opener, pos, in_str, esc}
+
+    case st do
+      # An earlier scan of this kind crossed this state with this many openers pending
+      # and closed its first opener at `stop`; so does this one.
+      %{done: %{{^key, ^depth} => stop}} ->
+        {:ok, closed(start, stop, trail, st)}
+
+      _ ->
+        scan_seen(content, pos, kind, stack, depth, lex, trail, st)
+    end
+  end
+
+  defp scan_seen(content, pos, kind, stack, depth, {in_str, esc} = lex, trail, st) do
+    key = {elem(kind, 0), pos, in_str, esc}
+
+    case Map.get(st.seen, key) do
+      # An earlier unclosed scan crossed this state with `min` openers pending, so
+      # an opener with `min` or more pending at this point never closes.
+      min when is_integer(min) and depth >= min ->
+        {:ok, unclosed(Enum.drop(stack, min - 1), trail, st)}
+
+      _ ->
+        st = %{st | work: st.work - 1}
+        step(content, pos, kind, stack, depth, lex, [{key, depth} | trail], st)
+    end
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defp scan_balanced(content, pos, opener, closer, depth, in_str, esc, start)
-       when pos < byte_size(content) do
+  defp step(content, pos, {opener, closer, start} = kind, stack, depth, {in_str, esc}, trail, st) do
     byte = :binary.at(content, pos)
+    next = pos + 1
 
     cond do
       in_str and esc ->
-        scan_balanced(content, pos + 1, opener, closer, depth, true, false, start)
+        scan(content, next, kind, stack, depth, {true, false}, trail, st)
 
       in_str and byte == ?\\ ->
-        scan_balanced(content, pos + 1, opener, closer, depth, true, true, start)
+        scan(content, next, kind, stack, depth, {true, true}, trail, st)
 
       in_str and byte == ?" ->
-        scan_balanced(content, pos + 1, opener, closer, depth, false, false, start)
+        scan(content, next, kind, stack, depth, {false, false}, trail, st)
 
       in_str ->
-        scan_balanced(content, pos + 1, opener, closer, depth, true, false, start)
+        scan(content, next, kind, stack, depth, {true, false}, trail, st)
 
       byte == ?" ->
-        scan_balanced(content, pos + 1, opener, closer, depth, true, false, start)
+        scan(content, next, kind, stack, depth, {true, false}, trail, st)
 
       byte == opener ->
-        scan_balanced(content, pos + 1, opener, closer, depth + 1, false, false, start)
+        scan(content, next, kind, [pos | stack], depth + 1, {false, false}, trail, st)
 
       byte == closer ->
-        scan_balanced(content, pos + 1, opener, closer, depth - 1, false, false, start)
+        [open | outer] = stack
+        st = %{st | memo: Map.put(st.memo, open, {:closed, next})}
+
+        if outer == [],
+          do: {:ok, closed(start, next, trail, st)},
+          else: scan(content, next, kind, outer, depth - 1, {false, false}, trail, st)
 
       true ->
-        scan_balanced(content, pos + 1, opener, closer, depth, false, false, start)
+        scan(content, next, kind, stack, depth, {false, false}, trail, st)
     end
   end
 
-  defp scan_balanced(_content, _pos, _opener, _closer, _depth, _in_str, _esc, _start), do: :error
+  # The scan's first opener closed at `stop`: remember the states crossed with the
+  # depth they were crossed at. (`start` is settled by the caller's memo already
+  # when the scan closed on its own.)
+  defp closed(start, stop, trail, st) do
+    done = Enum.reduce(trail, st.done, fn {key, d}, acc -> Map.put(acc, {key, d}, stop) end)
+    %{st | done: done, memo: Map.put(st.memo, start, {:closed, stop})}
+  end
+
+  # The scan's first opener never closed: settle the openers known unclosed and
+  # remember the states crossed.
+  defp unclosed(stack, trail, st) do
+    memo = Enum.reduce(stack, st.memo, &Map.put(&2, &1, :unclosed))
+
+    seen =
+      Enum.reduce(trail, st.seen, fn {key, d}, acc -> Map.update(acc, key, d, &min(&1, d)) end)
+
+    %{st | memo: memo, seen: seen}
+  end
 end

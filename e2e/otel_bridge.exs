@@ -28,8 +28,7 @@ defmodule E2E.OtelBridge do
     [:normandy, :agent, :compaction],
     [:normandy, :agent, :guardrail, :violation],
     [:normandy, :agent, :guardrail, :decision],
-    [:normandy, :json_deserializer, :fallback],
-    [:normandy, :json_deserializer, :recovery]
+    [:normandy, :json_deserializer, :fallback]
   ]
 
   @handler "e2e-otel-bridge"

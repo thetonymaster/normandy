@@ -2,7 +2,7 @@ defmodule Normandy.LLM.StructuredOutputs do
   @moduledoc """
   Decides whether a request should use Anthropic structured outputs. Enabled
   by default; disable globally via `config :normandy, :structured_outputs,
-  false` or per-call via `client.options[:structured_outputs]`. A schema that
+  false` or per client via `client.options[:structured_outputs]`. A schema that
   the JSON Schema translator cannot express falls back (`:skip`).
   """
 
@@ -11,21 +11,12 @@ defmodule Normandy.LLM.StructuredOutputs do
   @doc """
   Returns whether `client` uses structured outputs.
 
-  The client's `options[:structured_outputs]` (map or keyword list) wins when it is not
+  The client's `options[:structured_outputs]` wins when it is not
   `nil`; otherwise `config :normandy, :structured_outputs` decides, `true` by default.
   """
   @spec enabled?(struct()) :: boolean()
   def enabled?(client) do
-    opts = client.options || %{}
-
-    override =
-      cond do
-        is_map(opts) -> Map.get(opts, :structured_outputs)
-        is_list(opts) -> Keyword.get(opts, :structured_outputs)
-        true -> nil
-      end
-
-    case override do
+    case Map.get(client.options || %{}, :structured_outputs) do
       nil -> Application.get_env(:normandy, :structured_outputs, true)
       value -> value
     end

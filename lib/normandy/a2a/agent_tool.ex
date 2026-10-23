@@ -52,14 +52,13 @@ defmodule Normandy.A2A.AgentTool do
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Context
 
-  @poll_interval 1_000
-
   @type t :: %__MODULE__{
           endpoint: String.t(),
           agent_card: Claudio.A2A.AgentCard.t(),
           prefix: String.t() | false,
           skill_id: String.t() | nil,
           auth_token: String.t() | nil,
+          poll_interval: pos_integer(),
           transport_opts: keyword()
         }
 
@@ -71,6 +70,7 @@ defmodule Normandy.A2A.AgentTool do
     :prefix,
     :skill_id,
     :auth_token,
+    poll_interval: 1_000,
     transport_opts: []
   ]
 
@@ -92,6 +92,13 @@ defmodule Normandy.A2A.AgentTool do
                        type: :string,
                        type_doc: "`t:String.t/0`",
                        doc: "A bearer token for the remote agent."
+                     ],
+                     poll_interval: [
+                       type: :pos_integer,
+                       default: 1_000,
+                       doc:
+                         "Milliseconds between status requests while the remote's task is " <>
+                           "not finished. The call's timeout is the only bound on the wait."
                      ],
                      transport_opts: [
                        type: :keyword_list,
@@ -135,6 +142,7 @@ defmodule Normandy.A2A.AgentTool do
       prefix: Keyword.fetch!(opts, :prefix),
       skill_id: Keyword.get(opts, :skill_id),
       auth_token: Keyword.get(opts, :auth_token),
+      poll_interval: Keyword.fetch!(opts, :poll_interval),
       transport_opts: Keyword.fetch!(opts, :transport_opts)
     }
   end
@@ -175,69 +183,46 @@ defmodule Normandy.A2A.AgentTool do
   end
 
   @doc false
-  # `deadline` is a monotonic time in ms, or :infinity when the executor's timeout is the
-  # only bound (run/2).
-  def poll_for_result(endpoint, task_id, opts, deadline) do
-    if deadline != :infinity and System.monotonic_time(:millisecond) >= deadline do
-      {:error, "Task timed out waiting for completion"}
-    else
-      case Client.get_task(endpoint, task_id, opts) do
-        {:ok, task} ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          if Claudio.A2A.Task.terminal?(task) do
-            extract_task_result(task)
-          else
-            Process.sleep(@poll_interval)
-            poll_for_result(endpoint, task_id, opts, deadline)
-          end
+  # Asks for the task until it is terminal, `poll_interval` ms apart. The executor's
+  # timeout (run/2) is the only bound on the wait.
+  def poll_for_result(endpoint, task_id, opts, poll_interval) do
+    case Client.get_task(endpoint, task_id, opts) do
+      {:ok, task} ->
+        if Claudio.A2A.Task.terminal?(task) do
+          extract_task_result(task)
+        else
+          Process.sleep(poll_interval)
+          poll_for_result(endpoint, task_id, opts, poll_interval)
+        end
 
-        {:error, reason} ->
-          {:error, "Failed to get task status: #{Describe.reason_tag(reason)}"}
-      end
+      {:error, reason} ->
+        {:error, "Failed to get task status: #{Describe.reason_tag(reason)}"}
     end
   end
 
   @doc false
-  def extract_task_result(%{status: %{state: state}} = task) when state in [:completed] do
-    text =
-      case task.artifacts do
-        [artifact | _] ->
-          artifact.parts
-          |> Enum.map_join("\n", fn part -> Map.get(part, :text, "") end)
+  def extract_task_result(%{status: %{state: :completed}, artifacts: [artifact | _]}),
+    do: {:ok, parts_text(artifact.parts)}
 
-        _ ->
-          case task.status do
-            %{message: %{parts: parts}} when is_list(parts) ->
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              parts |> Enum.map_join("\n", fn p -> Map.get(p, :text, "") end)
+  def extract_task_result(%{status: %{state: :completed, message: %{parts: parts}}})
+      when is_list(parts),
+      do: {:ok, parts_text(parts)}
 
-            _ ->
-              "Task completed"
-          end
-      end
+  def extract_task_result(%{status: %{state: :completed}}), do: {:ok, "Task completed"}
 
-    {:ok, text}
-  end
+  def extract_task_result(%{status: %{state: state, message: %{parts: parts}}})
+      when state in [:failed, :rejected] and is_list(parts),
+      do: {:error, parts_text(parts)}
 
-  @doc false
-  def extract_task_result(%{status: %{state: state, message: message}})
-      when state in [:failed, :rejected] do
-    error_text =
-      case message do
-        %{parts: parts} when is_list(parts) ->
-          parts |> Enum.map_join("\n", fn p -> Map.get(p, :text, "") end)
+  def extract_task_result(%{status: %{state: state, message: _}})
+      when state in [:failed, :rejected],
+      do: {:error, "Task #{state}"}
 
-        _ ->
-          "Task #{state}"
-      end
-
-    {:error, error_text}
-  end
-
-  @doc false
   def extract_task_result(%{status: %{state: state}}) do
     {:error, "Task ended in unexpected state: #{state}"}
   end
+
+  defp parts_text(parts), do: Enum.map_join(parts, "\n", &Map.get(&1, :text, ""))
 
   @impl Normandy.Tool
   def name(%__MODULE__{prefix: prefix} = tool), do: prefixed(prefix, base_name(tool))
@@ -310,10 +295,10 @@ defmodule Normandy.A2A.AgentTool do
       {:ok, %Claudio.A2A.Task{} = task} ->
         if Claudio.A2A.Task.terminal?(task),
           do: extract_task_result(task),
-          else: poll_for_result(tool.endpoint, task.id, opts, :infinity)
+          else: poll_for_result(tool.endpoint, task.id, opts, tool.poll_interval)
 
       {:ok, %Claudio.A2A.Message{} = response_msg} ->
-        {:ok, Enum.map_join(response_msg.parts, "\n", fn part -> Map.get(part, :text, "") end)}
+        {:ok, parts_text(response_msg.parts)}
 
       {:error, reason} ->
         # The reason's tag only: a transport error can carry the body the remote sent.

@@ -7,15 +7,14 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   alias Normandy.Schema.Wire
   alias Normandy.Validate
 
-  @spec build(term(), binary(), struct(), module()) :: String.t()
+  @spec build(term(), binary(), struct()) :: String.t()
   def build(
         {:validation_error, changeset, content},
         _failed_content,
-        schema,
-        adapter
+        schema
       ) do
     schema_json =
-      adapter.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
+      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     # Extract detailed field-level errors using traverse_errors
     error_details =
@@ -53,36 +52,33 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   def build(
         {:json_parse_error, reason, content},
         _failed_content,
-        schema,
-        adapter
+        schema
       ) do
     parse_feedback(
       "JSON DESERIALIZATION ERROR",
       "Your previous response could not be parsed as valid JSON.",
       format_json_error(reason),
       content,
-      schema,
-      adapter
+      schema
     )
   end
 
   # Any other failure (an answer over the size limit, JSON that is not an object) gets
   # the parse-error template with a plain description. The reason is an Elixir term,
   # never text for the model, so it is not shown.
-  def build(reason, content, schema, adapter) do
+  def build(reason, content, schema) do
     parse_feedback(
       "RESPONSE FORMAT ERROR",
       "Your previous response could not be used as the answer.",
       describe_failure(reason),
       content,
-      schema,
-      adapter
+      schema
     )
   end
 
-  defp parse_feedback(heading, summary, details, content, schema, adapter) do
+  defp parse_feedback(heading, summary, details, content, schema) do
     schema_json =
-      adapter.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
+      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     """
     # #{heading}

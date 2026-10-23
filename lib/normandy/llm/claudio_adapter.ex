@@ -221,18 +221,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
             client: client,
             request: request,
             json_retries: Keyword.get(opts, :json_retries, 2),
-            retry_usage_ref: make_ref(),
             request_tracker: Keyword.get(opts, :request_tracker)
           }
 
-          converted = convert_response_to_normandy(response, request.response_model, context)
+          {converted, retry_usages} =
+            convert_response_to_normandy(response, request.response_model, context)
 
           # The first response and any JSON retries were billed, even when the call
           # failed; on failure the usage rides on the error.
           usage =
-            ClaudioAdapter.collect_retry_usage(
-              context.retry_usage_ref,
-              ClaudioAdapter.extract_usage(response)
+            ClaudioAdapter.add_retry_usages(
+              ClaudioAdapter.extract_usage(response),
+              retry_usages
             )
 
           case converted do
@@ -402,8 +402,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # Private streaming helpers
 
     # Claudio's parse_events emits `%{event: "...", data: %{...}}`; `data` is
-    # decoded with string keys (Claudio < 0.7 used atom keys), and data_get/2
-    # reads either form. Normandy's StreamProcessor pattern-matches
+    # decoded with string keys (deps/claudio/lib/claudio/messages/stream.ex,
+    # parse_event/1), and data_get/2 reads that form. Normandy's StreamProcessor pattern-matches
     # `%{type: "...", <shaped-fields>}` directly (atom :type, atom field
     # keys, but the nested content block / delta maps stay string-keyed
     # because StreamProcessor's inner patterns use `%{"type" => ...}`).
@@ -453,11 +453,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp to_stream_processor_event(other), do: other
 
-    # Claudio historically mixes atom-keyed and string-keyed map payloads
-    # depending on decode path — read both to stay compatible.
-    defp data_get(data, key) when is_map(data) do
-      Map.get(data, key) || Map.get(data, Atom.to_string(key))
-    end
+    defp data_get(data, key) when is_map(data), do: Map.get(data, Atom.to_string(key))
 
     defp data_get(_, _), do: nil
 
@@ -801,30 +797,19 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp add_client_options(request, options, call_opts),
       do: ClaudioAdapter.__apply_client_options__(request, options, call_opts)
 
+    # {converted, usage of the JSON retries}: only a schema answer is re-asked.
     defp convert_response_to_normandy(claudio_response, response_model, context) do
-      # Extract content from Claudio response
       content = ClaudioAdapter.extract_content(claudio_response)
 
-      # If response_model has specific fields, populate them
       case response_model do
+        %Normandy.Agents.ToolCallResponse{} = schema ->
+          {populate_tool_call_response(schema, content, claudio_response), []}
+
         %{__struct__: _module} = schema ->
-          # Populate schema with response content
-          populate_schema(schema, content, claudio_response, context)
-
-        _ ->
-          # Return raw content
-          content
-      end
-    end
-
-    defp populate_schema(schema, content, claudio_response, context) do
-      # Handle ToolCallResponse specially
-      case schema do
-        %Normandy.Agents.ToolCallResponse{} ->
-          populate_tool_call_response(schema, content, claudio_response)
-
-        _ ->
           populate_standard_schema(schema, content, context)
+
+        _ ->
+          {content, []}
       end
     end
 
@@ -845,30 +830,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp populate_standard_schema(schema, content, context) do
       # Use JsonDeserializer with retry for robust parsing and validation. The request
-      # carries the tools and the task budget the retries resend.
-      %{client: client, request: request} = context
+      # carries the tools and the task budget the retries resend. Each JSON retry is a
+      # paid call: its usage comes back beside the result.
+      %{client: client, request: request, json_retries: json_retries} = context
 
-      # Each JSON retry is a paid call; its usage is sent back to this process
-      # and added to the response's usage.
-      ref = Map.get(context, :retry_usage_ref)
-      owner = self()
+      opts = [max_retries: json_retries, request_tracker: context.request_tracker]
 
-      opts = [
-        max_retries: Map.get(context, :json_retries, 2),
-        on_retry_usage: fn usage -> if ref, do: send(owner, {ref, :retry_usage, usage}) end,
-        request_tracker: Map.get(context, :request_tracker)
-      ]
-
-      case JsonDeserializer.deserialize_with_retry(content, schema, client, request, opts) do
-        {:ok, validated_schema} ->
-          validated_schema
+      case JsonDeserializer.deserialize_with_usage(content, schema, client, request, opts) do
+        {{:ok, validated_schema}, usages} ->
+          {validated_schema, usages}
 
         # An LLM failure during a parse retry is not a parse failure.
-        {:error, %LLMError{}} = error ->
-          error
+        {{:error, %LLMError{}} = error, usages} ->
+          {error, usages}
 
-        {:error, reason} ->
-          ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
+        {{:error, reason}, usages} ->
+          {ClaudioAdapter.apply_parse_failure(schema, content, reason, context), usages}
       end
     end
 
@@ -887,12 +864,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
     content_blocks
     |> content_after_last_fallback()
-    |> Enum.filter(fn block ->
-      Map.get(block, :type) == :text || Map.get(block, "type") == "text"
-    end)
-    |> Enum.map_join("\n", fn block ->
-      Map.get(block, :text) || Map.get(block, "text") || ""
-    end)
+    |> Enum.filter(&(Map.get(&1, :type) == :text))
+    |> Enum.map_join("\n", &(Map.get(&1, :text) || ""))
   end
 
   def extract_content(_response), do: ""
@@ -917,7 +890,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   defp fallback_block?(block) when is_map(block),
-    do: (Map.get(block, :type) || Map.get(block, "type")) in [:fallback, "fallback"]
+    do: Map.get(block, :type) == :fallback
 
   defp fallback_block?(_block), do: false
 
@@ -995,30 +968,22 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
     content_blocks
     |> content_after_last_fallback()
-    |> Enum.filter(fn block ->
-      (Map.get(block, :type) || Map.get(block, "type")) in [:tool_use, "tool_use"]
-    end)
+    |> Enum.filter(&(Map.get(&1, :type) == :tool_use))
     |> Enum.map(fn tool_use ->
       %Normandy.Components.ToolCall{
-        id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
-        name: Map.get(tool_use, :name) || Map.get(tool_use, "name"),
-        input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
+        id: Map.get(tool_use, :id),
+        name: Map.get(tool_use, :name),
+        input: Map.get(tool_use, :input)
       }
     end)
   end
 
   def extract_tool_uses(_), do: []
 
-  # Adds the usage of the JSON retries (messages tagged with `ref` in this
-  # process's mailbox) to the first call's usage.
+  # The first call's usage plus each JSON retry's.
   @doc false
-  def collect_retry_usage(ref, usage) do
-    receive do
-      {^ref, :retry_usage, retry_usage} -> collect_retry_usage(ref, add_usage(usage, retry_usage))
-    after
-      0 -> usage
-    end
-  end
+  def add_retry_usages(usage, retry_usages),
+    do: Enum.reduce(retry_usages, usage, &add_usage(&2, &1))
 
   defp add_usage(nil, usage), do: usage
   defp add_usage(usage, nil), do: usage
@@ -1040,37 +1005,35 @@ defmodule Normandy.LLM.ClaudioAdapter do
     if iterations_of(a) == [] and iterations_of(b) == [] do
       merged
     else
-      merged
-      |> Map.delete("iterations")
-      |> Map.put(:iterations, side_iterations(a) ++ side_iterations(b))
+      Map.put(merged, :iterations, side_iterations(a) ++ side_iterations(b))
     end
   end
 
   defp iterations_of(usage) do
-    case Map.get(usage, :iterations) || Map.get(usage, "iterations") do
+    case Map.get(usage, :iterations) do
       [_ | _] = iterations -> iterations
       _ -> []
     end
   end
 
-  # Literal atoms: a lazily loaded release has not necessarily interned these
-  # yet, so `String.to_existing_atom/1` on the names could raise.
+  # Claudio's usage keys its counts with atoms; an iteration entry is the raw
+  # API map, string-keyed.
   @iteration_count_keys [
-    {:input_tokens, "input_tokens"},
-    {:output_tokens, "output_tokens"},
-    {:cache_read_input_tokens, "cache_read_input_tokens"},
-    {:cache_creation_input_tokens, "cache_creation_input_tokens"}
+    :input_tokens,
+    :output_tokens,
+    :cache_read_input_tokens,
+    :cache_creation_input_tokens
   ]
 
   defp side_iterations(usage) do
     case iterations_of(usage) do
       [] ->
         counts =
-          for {atom_key, key} <- @iteration_count_keys,
-              n = Map.get(usage, atom_key) || Map.get(usage, key),
+          for key <- @iteration_count_keys,
+              n = Map.get(usage, key),
               is_integer(n),
               into: %{},
-              do: {key, n}
+              do: {Atom.to_string(key), n}
 
         [counts]
 
@@ -1084,7 +1047,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   @doc false
   def extract_usage(response) when is_map(response),
-    do: Map.get(response, :usage) || Map.get(response, "usage")
+    do: Map.get(response, :usage)
 
   def extract_usage(_response), do: nil
 
@@ -1427,30 +1390,25 @@ defmodule Normandy.LLM.ClaudioAdapter do
   def __incomplete_response__(%Request{response_model: response_model}, response),
     do: __response__(response_model, response, extract_usage(response))
 
+  @incomplete_stop_reasons [:max_tokens, :model_context_window_exceeded, :refusal]
+
   @doc false
   def __handle_structured_response__(response, response_model, context) do
     content = extract_content(response)
 
-    stop_reason = Map.get(response, :stop_reason) || Map.get(response, "stop_reason")
+    stop_reason = Map.get(response, :stop_reason)
 
     case stop_reason do
       # Incomplete (cut off or refused): not parsed, whatever the :on_parse_failure
       # policy; converse/3 never gets here with one (its incomplete clause), so this
       # serves direct callers.
       reason
-      when reason in [
-             :refusal,
-             "refusal",
-             :max_tokens,
-             "max_tokens",
-             :model_context_window_exceeded,
-             "model_context_window_exceeded"
-           ] ->
+      when reason in @incomplete_stop_reasons ->
         response_model
 
       _ ->
         with {:ok, parsed} when is_map(parsed) <-
-               Decoder.decode(content, Normandy.JSON, []),
+               Decoder.decode(content, []),
              {:ok, bound} <- SchemaBinder.bind(parsed, response_model, content) do
           bound
         else

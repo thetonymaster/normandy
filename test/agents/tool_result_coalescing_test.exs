@@ -8,6 +8,7 @@ defmodule Normandy.Agents.ToolResultCoalescingTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
+  alias Claudio.Messages.Response, as: ClaudioResponse
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -182,7 +183,8 @@ defmodule Normandy.Agents.ToolResultCoalescingTest do
       do: agent(client, [%FakeTool{name: "docs__search", notify: self()}])
 
     test "extract_tool_uses/1 returns only client tool_use blocks" do
-      response = %{content: [@mcp_use, @mcp_result, @weather]}
+      response =
+        ClaudioResponse.from_map(%{"content" => [@mcp_use, @mcp_result, @weather]})
 
       assert [%ToolCall{id: "t1", name: "weather"}] = ClaudioAdapter.extract_tool_uses(response)
     end
