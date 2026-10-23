@@ -2,8 +2,7 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @moduledoc """
   Process-backed in-memory `SessionStore` — the reference impl and default
   selection. Holds one `AgentMemory` per `session_id` plus an opaque turn-state
-  map, in an `Agent`. Used for tests and library/single-node runs; not consumed by
-  the turn loop in Phase 3.
+  map, in an `Agent`. Used for tests and library/single-node runs.
   """
 
   @behaviour Normandy.Behaviours.SessionStore
@@ -68,24 +67,17 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @impl true
   def fork(pid, session_id, from_entry_id) do
     Agent.get_and_update(pid, fn state ->
-      case Map.get(state.sessions, session_id) do
-        nil ->
-          {{:error, :no_such_session}, state}
-
-        %AgentMemory{} = memory ->
-          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-          case AgentMemory.fork(memory, from_entry_id) do
-            {:error, reason} ->
-              {{:error, reason}, state}
-
-            {:ok, forked} ->
-              new_id = UUID.uuid4()
-              # Only the chain the fork's head reaches: the parent's later entries stay
-              # the parent's, so deleting it removes them.
-              chain = AgentMemory.entry_chain(forked)
-              forked = %{forked | entries: Map.new(chain, &{&1.id, &1})}
-              {{:ok, new_id}, put_in(state.sessions[new_id], forked)}
-          end
+      with %AgentMemory{} = memory <- Map.get(state.sessions, session_id, :no_such_session),
+           {:ok, forked} <- AgentMemory.fork(memory, from_entry_id) do
+        new_id = UUID.uuid4()
+        # Only the chain the fork's head reaches: the parent's later entries stay
+        # the parent's, so deleting it removes them.
+        chain = AgentMemory.entry_chain(forked)
+        forked = %{forked | entries: Map.new(chain, &{&1.id, &1})}
+        {{:ok, new_id}, put_in(state.sessions[new_id], forked)}
+      else
+        :no_such_session -> {{:error, :no_such_session}, state}
+        {:error, reason} -> {{:error, reason}, state}
       end
     end)
   end
