@@ -7,7 +7,7 @@ defmodule Normandy.Behaviours.SessionRegistry do
   taking it for "no process" would start a second server for a live session.
 
   The default `Native` impl wraps Elixir's built-in `Registry` (O(1) lookup,
-  auto-unregister on owner death). Distributed impls (Horde/syn) are deferred.
+  auto-unregister on owner death). `Horde` and `Redis` are the distributed impls.
 
   Every impl must pass the ExUnit suite `Normandy.Test.SessionRegistryContract`.
   """
