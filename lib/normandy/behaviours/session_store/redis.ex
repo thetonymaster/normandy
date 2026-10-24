@@ -44,6 +44,8 @@ if Code.ensure_loaded?(Redix) do
 
     # Entries copied per pipeline by fork/3.
     @copy_chunk 1_000
+    # Entries per XREVRANGE page of history_since_compaction/2.
+    @since_page 200
 
     @default_wait_connections 4
 
@@ -169,6 +171,42 @@ if Code.ensure_loaded?(Redix) do
         {:error, reason} -> {:error, reason}
       end
     end
+
+    # Reads the stream newest first, a page at a time, down to the last "compaction"
+    # entry; only the entries from it on are decoded.
+    @impl true
+    def history_since_compaction(handle, session_id) do
+      {conn, ns} = conn_ns(handle)
+
+      case since_compaction(conn, stream_key(ns, session_id), "+", []) do
+        {:ok, raw} -> {:ok, decode_stream(raw)}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    # `acc` holds the entries already read, chronological. `from` is "+" or an exclusive
+    # "(id" below the last page.
+    defp since_compaction(conn, key, from, acc) do
+      case Redix.command(conn, ["XREVRANGE", key, from, "-", "COUNT", @since_page]) do
+        {:ok, page} ->
+          case Enum.split_while(page, &(not compaction_raw?(&1))) do
+            {newer, [snapshot | _]} ->
+              {:ok, [snapshot | Enum.reverse(newer, acc)]}
+
+            {newer, []} when length(page) < @since_page ->
+              {:ok, Enum.reverse(newer, acc)}
+
+            {newer, []} ->
+              [oldest_id, _kv] = List.last(page)
+              since_compaction(conn, key, "(" <> oldest_id, Enum.reverse(newer, acc))
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    defp compaction_raw?([_stream_id, kv]), do: kv_to_map(kv)["role"] == "compaction"
 
     @impl true
     def fork(handle, session_id, from_entry_id) do

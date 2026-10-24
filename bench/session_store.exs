@@ -1,9 +1,11 @@
 # SessionStore backends (Mnesia, Redis, Postgres; InMemory and ETS as in-process
-# baselines): reading a session's history at three sizes, then appending an entry and
-# saving and loading turn state. Redis and Postgres must be reachable (bench/README.md)
-# or left out with BENCH_STORES.
+# baselines): reading a session's history at three sizes, restoring a compacted session
+# (history/2 against SessionStore.restore_history/3), then appending an entry and saving
+# and loading turn state. Redis and Postgres must be reachable (bench/README.md) or left
+# out with BENCH_STORES.
 #
-# Two Benchee runs, saved separately (session_store_history, session_store_writes):
+# Three Benchee runs, saved separately (session_store_history, session_store_restore,
+# session_store_writes):
 # the writes do not depend on the history size, and each write scenario gets its own
 # store, so the entries it appends cannot slow the reads (an InMemory Agent holding
 # hundreds of thousands of appended entries pays major GCs on every later call).
@@ -12,10 +14,13 @@ Code.require_file("support/store_backends.exs", __DIR__)
 
 alias Bench.StoreBackends
 alias Bench.Support
+alias Normandy.Behaviours.SessionStore
+alias Normandy.Components.AgentMemory
 alias Normandy.Components.AgentMemory.Entry
 
 # Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
 history_opts = Support.run_opts("session_store_history")
+restore_opts = Support.run_opts("session_store_restore")
 writes_opts = Support.run_opts("session_store_writes")
 
 entry = %Entry{turn_id: "t", role: "user", content: String.duplicate("x", 200)}
@@ -58,6 +63,80 @@ try do
     end)
 
   Benchee.run(history_jobs, Keyword.put(history_opts, :inputs, inputs))
+
+  # Restore: a session compacted k times, as Turn.Server stores it. Each window is
+  # `window` entries, then a "compaction" snapshot holding that window; a restore needs
+  # only the last snapshot and the window after it.
+  window = 50
+
+  snapshot = fn ->
+    %Entry{
+      id: UUID.uuid4(),
+      turn_id: "t",
+      role: "compaction",
+      content: %{
+        version: 1,
+        entries:
+          for(
+            _ <- 1..window,
+            do: %{id: UUID.uuid4(), turn_id: "t", role: "user", content: entry.content}
+          )
+      }
+    }
+  end
+
+  compactions = [{"1 compaction", 1}, {"10 compactions", 10}, {"50 compactions", 50}]
+
+  restore_inputs =
+    Map.new(compactions, fn {name, k} ->
+      {name,
+       Map.new(readers, fn {backend, {mod, h} = store} ->
+         compacted = new_session.(store, "compacted")
+
+         for _ <- 1..k do
+           for _ <- 1..window,
+               do: {:ok, _} = mod.append_entry(h, compacted, %{entry | id: UUID.uuid4()})
+
+           {:ok, _} = mod.append_entry(h, compacted, snapshot.())
+         end
+
+         for _ <- 1..window,
+             do: {:ok, _} = mod.append_entry(h, compacted, %{entry | id: UUID.uuid4()})
+
+         {backend, compacted}
+       end)}
+    end)
+
+  for {backend, {mod, h}} <- readers, {name, _k} <- compactions do
+    sid = restore_inputs[name][backend]
+    {:ok, full} = mod.history(h, sid)
+    {:ok, since} = SessionStore.restore_history(mod, h, sid)
+
+    Support.assert!(
+      since |> AgentMemory.from_entries() |> AgentMemory.history() ==
+        full |> AgentMemory.from_entries() |> AgentMemory.history(),
+      "#{backend} restore_history of #{name} must rebuild the memory history/2 does"
+    )
+  end
+
+  Support.banner(
+    "SessionStore restore of a compacted session: #{Enum.join(backends, ", ")}",
+    Enum.map(compactions, &elem(&1, 0)),
+    "history/2 linear in compactions; restore_history/3 flat (InMemory trims in-process)"
+  )
+
+  restore_jobs =
+    for {backend, {mod, h}} <- readers, reduce: %{} do
+      jobs ->
+        Map.merge(jobs, %{
+          "#{backend} history" => fn input -> {:ok, _} = mod.history(h, input[backend]) end,
+          "#{backend} restore_history" => fn input ->
+            {:ok, _} = SessionStore.restore_history(mod, h, input[backend])
+          end
+        })
+    end
+
+  Benchee.run(restore_jobs, Keyword.put(restore_opts, :inputs, restore_inputs))
 
   # Writes: a store of its own per backend and scenario.
   write_jobs =

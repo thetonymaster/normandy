@@ -4,7 +4,8 @@ defmodule Normandy.Agents.Turn.ServerResumeCapTest do
   `:steering` state that counts the round, restarts from the state saved one round
   earlier. The resumed turn must count the round the history holds: past
   `max_tool_iterations` its next call is the final one (`tool_choice: :none`), after the
-  iteration-cap notice.
+  iteration-cap notice. Rounds an in-turn compaction removed count through the snapshot's
+  `turn_rounds`.
   """
   use ExUnit.Case, async: true
   @moduletag :capture_log
@@ -34,9 +35,13 @@ defmodule Normandy.Agents.Turn.ServerResumeCapTest do
   # `rounds` completed tool rounds in the stored history of turn "live", and a :steering
   # state saved with `iterations_left` of `max`.
   defp resume(rounds, iterations_left, max) do
+    stored = [{"user", "Capital of France?"} | Enum.flat_map(1..rounds//1, &tool_round("t#{&1}"))]
+    resume_stored(stored, iterations_left, max)
+  end
+
+  defp resume_stored(stored, iterations_left, max) do
     sid = "s-cap-#{System.unique_integer([:positive])}"
     store = InMemory.new()
-    stored = [{"user", "Capital of France?"} | Enum.flat_map(1..rounds//1, &tool_round("t#{&1}"))]
 
     for {role, content} <- stored do
       {:ok, _} =
@@ -101,6 +106,32 @@ defmodule Normandy.Agents.Turn.ServerResumeCapTest do
 
   test "the round the stale state does not count makes the next call the final one" do
     {client, store, sid} = resume(2, 1, 2)
+
+    assert [request] = FakeClient.requests(client)
+    assert request.tool_choice == :none
+    assert Enum.any?(texts(request), &String.starts_with?(&1, @cap_notice))
+
+    assert {:ok, %Turn.State{status: :stopped, stop_reason: :max_iterations}} =
+             InMemory.load_turn_state(store, sid)
+  end
+
+  # A compaction after round 2 kept only round 2 and recorded the two rounds in its
+  # snapshot; round 3 was then stored, but not the state that counts it.
+  test "a round in-turn compaction removed still counts toward the cap" do
+    snapshot = %{
+      version: 1,
+      turn_rounds: 2,
+      entries:
+        for {{role, content}, i} <-
+              Enum.with_index([{"user", "Capital of France?"} | tool_round("t2")]) do
+          %{id: "kept-#{i}", turn_id: "live", role: role, content: content}
+        end
+    }
+
+    stored = [{"user", "Capital of France?"}] ++ tool_round("t1") ++ tool_round("t2")
+    stored = stored ++ [{"compaction", snapshot}] ++ tool_round("t3")
+
+    {client, store, sid} = resume_stored(stored, 1, 3)
 
     assert [request] = FakeClient.requests(client)
     assert request.tool_choice == :none

@@ -2306,23 +2306,12 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   node crash, a supervisor shutdown) the session stays in the in-flight index and the next
   eager start resumes the turn: a turn whose answer was stored is only marked finished, a
   turn that failed calls the model again, with no caller waiting.
-- **Session deletion is conservative on Postgres and Mnesia.** `delete_session/2` removes the
-  session's current chain only: entries on a branch its head no longer reaches (appended
-  with an explicit `parent_id`) stay, and on Postgres two concurrent deletes of sessions that
-  share an ancestor can both keep the shared entries. No other session's history is lost;
-  the cost is entries left behind. If you must erase a user's data, check the store
-  afterwards.
 - **Every compaction stores the whole compacted conversation.** `Turn.Server` appends one
   `"compaction"` entry per compaction holding the conversation it left (up to a context
-  window), and `SessionStore.history/2` returns all of them: a restore loads and decodes
-  every snapshot to keep only the last. A session's storage and its load time therefore
-  grow with the number of compactions, not only with its last window.
-- **A resumed turn cannot see rounds that in-turn compaction removed.** A `Turn.Server` that stops
-  after it appends a tool round's results and before it saves the turn state resumes from the state
-  saved one round earlier; it counts the turn's rounds in the stored history (`Turn.resume/2`), so
-  the cap and its notice hold. A round that in-turn compaction removed from the history is not
-  counted again, so a turn compacted mid-round and stopped at that point can make one tool round
-  past `max_tool_iterations`.
+  window), so a session's storage grows with the number of compactions, not only with its
+  last window. A restore reads from the last snapshot on (`SessionStore.restore_history/3`)
+  on the ETS, Mnesia, Postgres and Redis stores; a custom store without
+  `history_since_compaction/2` still loads every snapshot.
 - **A paused turn's continuation keeps only its answer.** When `Turn.Server` continues a paused
   MCP or server-tool turn, it stores the continuation as its answer only; the tool result (the
   `mcp_tool_result` of the call the pause left open) is not stored, so it does not reach later
@@ -2335,6 +2324,25 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 
 ## New, non-breaking
 
+- `SessionStore.delete_session/2` on Postgres and Mnesia deletes every entry of the
+  session's tree that no other session's head reaches, including a branch its head left
+  (an append with an explicit `parent_id`); two concurrent Postgres deletes of sessions that
+  share an ancestor are serialised (an advisory lock on the tree's root), so neither keeps
+  the entries only the two of them reached. Run against a store that already has orphaned
+  entries, a delete also removes the orphans in its tree. No migration.
+- `Normandy.Behaviours.SessionStore` has an optional `history_since_compaction/2` callback:
+  the branch from the last `"compaction"` entry to the head. `SessionStore.restore_history/3`
+  calls it (else `history/2`); `Turn.Server` and `AgentProcess` restore through it. All five
+  built-in stores implement it. ETS, Mnesia, Postgres (its recursive query stops at the
+  snapshot) and Redis (it reads the stream backwards) read nothing older, so a session's
+  load time follows its last window, not its number of compactions; InMemory trims its
+  in-process chain. `Normandy.Test.SessionStoreContract` has three more tests
+  (19).
+- A compaction snapshot records the tool rounds its turn had made (`turn_rounds`, a new
+  key under `version: 1`, which older readers ignore). A `Turn.Server` that resumes a turn
+  after an in-turn compaction counts the rounds the compaction removed, so the turn cannot
+  make a tool round past `max_tool_iterations`. Snapshots stored before this count as
+  before.
 - `Normandy.Tools.Memory` is sent as Anthropic's native memory tool (AX-33):
   `ClaudioAdapter` sends `%{type: "memory_20250818", name: "memory"}` in place of its
   description and input schema, so the model gets the API's own memory-tool instructions

@@ -69,6 +69,11 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   end
 
   @impl Normandy.Behaviours.SessionStore
+  def history_since_compaction(pid, session_id) do
+    GenServer.call(pid, {:history_since_compaction, session_id})
+  end
+
+  @impl Normandy.Behaviours.SessionStore
   def fork(pid, session_id, from_entry_id) do
     GenServer.call(pid, {:fork, session_id, from_entry_id})
   end
@@ -116,6 +121,11 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
 
   def handle_call({:history, session_id}, _from, table) do
     {:reply, {:ok, chain(table, session_id, head(table, session_id))}, table}
+  end
+
+  def handle_call({:history_since_compaction, session_id}, _from, table) do
+    head = head(table, session_id)
+    {:reply, {:ok, chain(table, session_id, head, %{}, [], :since_compaction)}, table}
   end
 
   def handle_call({:fork, session_id, from_entry_id}, _from, table) do
@@ -197,14 +207,18 @@ defmodule Normandy.Behaviours.SessionStore.ETS do
   # The chain from `id` back to the root, chronological. Stops at a missing parent or
   # an entry already seen, as AgentMemory.entry_chain/1 does (an append may name any
   # parent_id).
-  defp chain(table, session_id, id), do: chain(table, session_id, id, %{}, [])
+  # With :since_compaction it also stops after the first "compaction" entry it meets.
+  defp chain(table, session_id, id), do: chain(table, session_id, id, %{}, [], :all)
 
-  defp chain(_table, _sid, nil, _seen, acc), do: acc
+  defp chain(_table, _sid, nil, _seen, acc, _until), do: acc
 
-  defp chain(table, session_id, id, seen, acc) do
+  defp chain(_table, _sid, _id, _seen, [%Entry{role: "compaction"} | _] = acc, :since_compaction),
+    do: acc
+
+  defp chain(table, session_id, id, seen, acc, until) do
     with false <- Map.has_key?(seen, id),
          [{_, %Entry{parent_id: parent} = entry}] <- :ets.lookup(table, {:entry, session_id, id}) do
-      chain(table, session_id, parent, Map.put(seen, id, true), [entry | acc])
+      chain(table, session_id, parent, Map.put(seen, id, true), [entry | acc], until)
     else
       _stop -> acc
     end

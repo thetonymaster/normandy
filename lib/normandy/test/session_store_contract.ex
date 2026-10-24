@@ -301,6 +301,95 @@ defmodule Normandy.Test.SessionStoreContract do
         end
       end
 
+      defp contract_snapshot(contents) do
+        %{
+          contract_entry_with_id("compaction", nil)
+          | content: %{
+              version: 1,
+              entries:
+                Enum.map(contents, &%{id: UUID.uuid4(), turn_id: "t", role: "user", content: &1})
+            }
+        }
+      end
+
+      # What a restore reads (SessionStore.restore_history/3): the store's
+      # history_since_compaction/2 when it exports one, else history/2. Either way it
+      # rebuilds the same memory as the whole history.
+      test "restore_history rebuilds the memory history/2 does, from the last snapshot on",
+           %{handle: h} do
+        alias Normandy.Behaviours.SessionStore
+        alias Normandy.Components.AgentMemory
+
+        since? =
+          Code.ensure_loaded?(@store) and function_exported?(@store, :history_since_compaction, 2)
+
+        rebuilt = fn entries -> entries |> AgentMemory.from_entries() |> AgentMemory.history() end
+
+        assert {:ok, []} = SessionStore.restore_history(@store, h, "missing")
+
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry_with_id("user", "a"))
+        {:ok, at} = @store.append_entry(h, "s1", contract_entry_with_id("assistant", "b"))
+        assert SessionStore.restore_history(@store, h, "s1") == @store.history(h, "s1")
+
+        {:ok, _} = @store.append_entry(h, "s1", contract_snapshot(["sum-1"]))
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry_with_id("user", "c"))
+        {:ok, last} = @store.append_entry(h, "s1", contract_snapshot(["sum-1", "c"]))
+        {:ok, _} = @store.append_entry(h, "s1", contract_entry_with_id("assistant", "d"))
+
+        {:ok, full} = @store.history(h, "s1")
+        assert {:ok, restored} = SessionStore.restore_history(@store, h, "s1")
+        assert rebuilt.(restored) == rebuilt.(full)
+
+        if since?,
+          do: assert([%{id: ^last, role: "compaction"}, %{content: "d"}] = restored)
+
+        # A fork from before the snapshots has none: its whole history.
+        {:ok, forked} = @store.fork(h, "s1", at)
+        assert SessionStore.restore_history(@store, h, forked) == @store.history(h, forked)
+      end
+
+      # An append with an explicit parent_id leaves the entries after that parent on a
+      # branch the head no longer reaches: they are the session's too.
+      test "deleting a session removes the branches its head left behind", %{handle: h} do
+        {:ok, a} = @store.append_entry(h, "branched", contract_entry_with_id("user", "a"))
+        {:ok, b} = @store.append_entry(h, "branched", contract_entry_with_id("assistant", "b"))
+
+        {:ok, c} =
+          @store.append_entry(h, "branched", %{
+            contract_entry_with_id("assistant", "c")
+            | parent_id: a
+          })
+
+        assert :ok = @store.delete_session(h, "branched")
+        assert {:ok, []} = @store.history(h, "branched")
+
+        case contract_stored_ids(h) do
+          nil -> :ok
+          stored -> assert Enum.filter([a, b, c], &(&1 in stored)) == []
+        end
+      end
+
+      test "deleting a branched session keeps what a fork reaches and drops the rest",
+           %{handle: h} do
+        {:ok, a} = @store.append_entry(h, "branched", contract_entry_with_id("user", "a"))
+        {:ok, b} = @store.append_entry(h, "branched", contract_entry_with_id("assistant", "b"))
+        {:ok, forked} = @store.fork(h, "branched", a)
+
+        {:ok, c} =
+          @store.append_entry(h, "branched", %{
+            contract_entry_with_id("assistant", "c")
+            | parent_id: a
+          })
+
+        assert :ok = @store.delete_session(h, "branched")
+        assert {:ok, [%{content: "a"}]} = @store.history(h, forked)
+
+        case contract_stored_ids(h) do
+          nil -> :ok
+          stored -> assert Enum.filter([b, c], &(&1 in stored)) == []
+        end
+      end
+
       test "implements the SessionStore behaviour" do
         behaviours = @store.module_info(:attributes)[:behaviour] || []
         assert Normandy.Behaviours.SessionStore in behaviours

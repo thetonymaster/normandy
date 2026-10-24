@@ -750,13 +750,37 @@ defmodule Normandy.Components.AgentMemory do
 
   @doc false
   # The content of the "compaction" entry Turn.Server stores after a compaction (see
-  # from_entries/1): the active branch as plain maps.
-  @spec compaction_content(t()) :: %{version: 1, entries: [map()]}
-  def compaction_content(%__MODULE__{} = memory) do
-    %{
+  # from_entries/1): the active branch as plain maps, and with `turn_rounds` the tool
+  # rounds the turn had made (stored_turn_rounds/1). A reader of version 1 ignores keys it
+  # does not know, so the count needs no new version.
+  @spec compaction_content(t(), non_neg_integer() | nil) :: %{
+          required(:version) => 1,
+          required(:entries) => [map()],
+          optional(:turn_rounds) => non_neg_integer()
+        }
+  def compaction_content(%__MODULE__{} = memory, turn_rounds \\ nil) do
+    content = %{
       version: 1,
       entries: Enum.map(entry_chain(memory), &Map.take(&1, [:id, :turn_id, :role, :content]))
     }
+
+    if is_integer(turn_rounds), do: Map.put(content, :turn_rounds, turn_rounds), else: content
+  end
+
+  @doc false
+  # `{turn_id, rounds}`: the tool rounds the turn the stored `entries` end in has made,
+  # when its last snapshot belongs to that turn and records them, counting the ones that
+  # snapshot's compaction removed; nil otherwise. Turn.Server resumes a turn with it
+  # (Turn.resume/3): the compacted memory no longer shows the removed rounds.
+  @spec stored_turn_rounds([Entry.t()]) :: {String.t() | nil, non_neg_integer()} | nil
+  def stored_turn_rounds(entries) when is_list(entries) do
+    with %Entry{turn_id: turn_id} <- List.last(entries),
+         {%Entry{turn_id: ^turn_id, content: %{turn_rounds: n}}, later} when is_integer(n) <-
+           split_at_last_compaction(entries) do
+      {turn_id, n + Enum.count(later, &tool_round?/1)}
+    else
+      _no_count -> nil
+    end
   end
 
   # The store's own chain: each entry keeps the parent link the store gave it.
@@ -788,6 +812,17 @@ defmodule Normandy.Components.AgentMemory do
       current_turn_id: List.last([snapshot | later]).turn_id,
       max_messages: nil
     }
+  end
+
+  @doc false
+  # The last "compaction" entry and every entry after it, or all of `entries` when none
+  # is a snapshot: what from_entries/1 reads (SessionStore.history_since_compaction/2).
+  @spec since_last_compaction([Entry.t()]) :: [Entry.t()]
+  def since_last_compaction(entries) when is_list(entries) do
+    case split_at_last_compaction(entries) do
+      :none -> entries
+      {snapshot, later} -> [snapshot | later]
+    end
   end
 
   defp split_at_last_compaction(entries) do

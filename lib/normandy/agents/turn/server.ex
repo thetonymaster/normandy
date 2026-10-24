@@ -201,6 +201,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.{Dispatch, Turn}
   alias Normandy.Behaviours.Hooks
+  alias Normandy.Behaviours.SessionStore
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
@@ -242,7 +243,8 @@ defmodule Normandy.Agents.Turn.Server do
               start_opts: nil,
               retry_ms: nil,
               unsaved_terminal: nil,
-              paused_continued_for: nil
+              paused_continued_for: nil,
+              stored_rounds: nil
   end
 
   # A turn request: {:turn, input, caller_otel_ctx}. The two-element {:turn, input}
@@ -469,9 +471,9 @@ defmodule Normandy.Agents.Turn.Server do
     with {:ok, config, template} <- start_config(opts, store, session_id),
          :ok <- check_server_options(opts, template),
          :ok <- check_hooks(config),
-         {:ok, config} <- with_stored_memory(config, store, session_id),
+         {:ok, config, stored_rounds} <- with_stored_memory(config, store, session_id),
          {:ok, turn_state} <- load_turn_state(store, session_id) do
-      {:ok, config, template, turn_state}
+      {:ok, config, template, turn_state, stored_rounds}
     end
   end
 
@@ -560,8 +562,9 @@ defmodule Normandy.Agents.Turn.Server do
   # here, inline: a caller or the retry timer triggered this, and a failure must reach
   # that caller now. The retry timer is cancelled.
   defp retry_load(%Data{start_opts: opts}) do
-    with {:ok, config, template, turn_state} <- safe_load(opts),
-         {:ok, :idle, data, actions} = init_data(opts, config, template, turn_state),
+    with {:ok, config, template, turn_state, stored_rounds} <- safe_load(opts),
+         {:ok, :idle, data, actions} =
+           init_data(opts, config, template, turn_state, stored_rounds),
          {:ok, data} <- start_session_if_new(data) do
       {:ok, {:next_state, :idle, data, [{{:timeout, :retry}, :cancel} | List.wrap(actions)]}}
     end
@@ -589,7 +592,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp with_session_id(nil, _session_id), do: nil
   defp with_session_id(config, session_id), do: %{config | session_id: session_id}
 
-  defp init_data(opts, config, template, turn_state) do
+  defp init_data(opts, config, template, turn_state, stored_rounds) do
     store = Keyword.fetch!(opts, :store)
     registry = Keyword.fetch!(opts, :registry)
     session_id = Keyword.fetch!(opts, :session_id)
@@ -615,6 +618,7 @@ defmodule Normandy.Agents.Turn.Server do
       # compaction (call_llm_event/3, compact_event/3), so their crashes are told apart.
       handlers: Keyword.get(opts, :handlers) || AgentHandlers.non_streaming_handlers(),
       turn_state: turn_state,
+      stored_rounds: stored_rounds,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
       idle_timeout_ms: timeouts.idle_timeout_ms,
@@ -728,16 +732,18 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Rebuild the conversation from the store's history, keeping the configured
-  # memory cap (from_entries/1 builds an uncapped memory).
-  defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil}
+  # memory cap (from_entries/1 builds an uncapped memory). Also returns the tool rounds
+  # the stored history records for its last turn, compacted rounds included
+  # (AgentMemory.stored_turn_rounds/1), for a resume of that turn.
+  defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil, nil}
 
   defp with_stored_memory(config, {mod, handle}, session_id) do
-    case store_call(fn -> mod.history(handle, session_id) end) do
+    case store_call(fn -> SessionStore.restore_history(mod, handle, session_id) end) do
       {:ok, entries} ->
         max_messages = config.memory && config.memory.max_messages
 
-        {:ok,
-         %{config | memory: %{AgentMemory.from_entries(entries) | max_messages: max_messages}}}
+        memory = %{AgentMemory.from_entries(entries) | max_messages: max_messages}
+        {:ok, %{config | memory: memory}, AgentMemory.stored_turn_rounds(entries)}
 
       {:error, reason} ->
         {:error, store_reason(reason)}
@@ -811,8 +817,8 @@ defmodule Normandy.Agents.Turn.Server do
   # session shares. So a failed or crashed load sends the server :unavailable, retrying.
   def handle_event(:internal, :load, :loading, %Data{start_opts: opts}) do
     case safe_load(opts) do
-      {:ok, config, template, turn_state} ->
-        opts |> init_data(config, template, turn_state) |> with_session_start()
+      {:ok, config, template, turn_state, stored_rounds} ->
+        opts |> init_data(config, template, turn_state, stored_rounds) |> with_session_start()
 
       {:error, reason} ->
         {data, actions} = unavailable_data(opts, reason)
@@ -1511,7 +1517,7 @@ defmodule Normandy.Agents.Turn.Server do
     case close_resumed_batch(data) do
       {:ok, data} ->
         messages = AgentMemory.messages(data.config.memory)
-        {state, effects} = Turn.resume(data.turn_state, messages)
+        {state, effects} = Turn.resume(data.turn_state, messages, data.stored_rounds)
         interpret(effects, %{data | turn_state: state})
 
       {:error, data, reason} ->
@@ -2087,11 +2093,15 @@ defmodule Normandy.Agents.Turn.Server do
   # full history. A failed write is logged by its tag and the turn goes on: every message
   # is still stored, and a restart then rebuilds from the last compaction that was stored
   # (the full history when there is none), followed by every message stored after it.
-  defp persist_compaction(%Data{store: {mod, handle}, session_id: sid}, config, %{compacted: true}) do
+  defp persist_compaction(
+         %Data{store: {mod, handle}, session_id: sid} = data,
+         config,
+         %{compacted: true}
+       ) do
     entry = %AgentMemory.Entry{
       turn_id: current_turn_id(config),
       role: "compaction",
-      content: AgentMemory.compaction_content(config.memory)
+      content: AgentMemory.compaction_content(config.memory, turn_rounds(data.turn_state))
     }
 
     case store_call(fn -> mod.append_entry(handle, sid, entry) end) do
@@ -2107,6 +2117,14 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   defp persist_compaction(_data, _config, _meta), do: :ok
+
+  # The tool rounds the turn has made, which the snapshot records: a resume cannot count
+  # the ones the compaction removed from the history.
+  defp turn_rounds(%Turn.State{max_iterations: max, iterations_left: left})
+       when is_integer(max) and is_integer(left),
+       do: max(max - left, 0)
+
+  defp turn_rounds(_state), do: nil
 
   # The id of the entry `after_config`'s memory gained over `before`'s; nil when the
   # append handler added none (the store then assigns one).

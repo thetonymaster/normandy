@@ -117,4 +117,40 @@ defmodule Normandy.Components.AgentMemoryCompactionTest do
       refute error.message =~ "secret"
     end
   end
+
+  describe "stored_turn_rounds/1" do
+    alias Normandy.Agents.ToolCallResponse
+    alias Normandy.Components.ToolCall
+
+    defp tool_round(id, turn_id),
+      do: [
+        stored(
+          "a-" <> id,
+          "assistant",
+          %ToolCallResponse{
+            tool_calls: [%ToolCall{id: id, name: "t", input: %{}}]
+          },
+          turn_id
+        ),
+        stored("r-" <> id, "tool", "ok", turn_id)
+      ]
+
+    defp counted(id, rounds, turn_id),
+      do: stored(id, "compaction", %{version: 1, entries: [], turn_rounds: rounds}, turn_id)
+
+    test "the snapshot's count plus the rounds stored after it" do
+      history = [stored("u", "user", "q", "t2"), counted("c", 3, "t2")] ++ tool_round("x", "t2")
+      assert AgentMemory.stored_turn_rounds(history) == {"t2", 4}
+    end
+
+    test "nil without a count, for another turn's snapshot, or with no snapshot" do
+      assert AgentMemory.stored_turn_rounds([snapshot("c", [])] ++ tool_round("x", "t2")) == nil
+
+      assert AgentMemory.stored_turn_rounds([counted("c", 3, "t1")] ++ tool_round("x", "t2")) ==
+               nil
+
+      assert AgentMemory.stored_turn_rounds(tool_round("x", "t2")) == nil
+      assert AgentMemory.stored_turn_rounds([]) == nil
+    end
+  end
 end

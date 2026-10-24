@@ -55,6 +55,19 @@ defmodule Normandy.Behaviours.SessionStore do
   """
   @callback history(handle(), session_id()) :: {:ok, [Entry.t()]} | {:error, term()}
   @doc """
+  Optional. Returns `{:ok, entries}`, the session's active branch from its last
+  `"compaction"` entry to the head, or the whole branch when it has none.
+
+  `Turn.Server` stores a snapshot of the whole conversation at each compaction, and
+  `AgentMemory.from_entries/1` reads only the last one and what follows it, so this is all
+  a restore needs: a store that reads nothing older than that entry lets a session's load
+  time follow its last context window rather than its number of compactions. `restore_history/3` calls it, and
+  falls back to `c:history/2` for a store that does not export it. An unknown session is
+  `{:ok, []}`; a failure is `{:error, reason}`, as for `c:history/2`.
+  """
+  @callback history_since_compaction(handle(), session_id()) ::
+              {:ok, [Entry.t()]} | {:error, term()}
+  @doc """
   Creates a new session whose history is the branch of `session_id` up to `from_entry_id`,
   and returns `{:ok, new_session_id}`.
 
@@ -121,13 +134,30 @@ defmodule Normandy.Behaviours.SessionStore do
 
   @doc """
   Deletes a session: its turn state, its config template, its membership of the
-  in-flight index and the entries of its history that no other session reaches.
+  in-flight index and the entries it wrote that no other session reaches, including a
+  branch its head left (an append with an explicit `parent_id`).
 
   Idempotent: deleting a missing session is `:ok`. A fork keeps its history: on the
   backends that copy a fork's entries (InMemory, ETS, Redis) the session's own copy goes;
   on those that share ancestor entries between forks (Postgres, Mnesia) an entry stays
-  while another session's history still reaches it. Deleting does not stop a live
+  while another session's history still reaches it, and concurrent deletes of sessions
+  that share entries must not both keep them. Deleting does not stop a live
   `Turn.Server`; `Normandy.Agents.Turn.Session.delete/1` does both.
   """
   @callback delete_session(handle(), session_id()) :: :ok | {:error, term()}
+
+  @optional_callbacks history_since_compaction: 2
+
+  @doc """
+  The entries a restore rebuilds a session's memory from (`AgentMemory.from_entries/1`):
+  `store`'s `c:history_since_compaction/2` when it exports one, else `c:history/2`. Both
+  rebuild the same memory. `Turn.Server` and `Normandy.Coordination.AgentProcess` call it.
+  """
+  @spec restore_history(module(), handle(), session_id()) ::
+          {:ok, [Entry.t()]} | {:error, term()}
+  def restore_history(store, handle, session_id) when is_atom(store) do
+    if Code.ensure_loaded?(store) and function_exported?(store, :history_since_compaction, 2),
+      do: store.history_since_compaction(handle, session_id),
+      else: store.history(handle, session_id)
+  end
 end

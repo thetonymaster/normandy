@@ -139,6 +139,16 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   end
 
   @impl true
+  def history_since_compaction(%{entries: et, sessions: st}, session_id) do
+    txn(fn ->
+      case :mnesia.read({st, session_id}) do
+        [{_, ^session_id, %{head_id: head}}] -> chain(et, head, [], :since_compaction)
+        [] -> []
+      end
+    end)
+  end
+
+  @impl true
   def fork(%{entries: et, sessions: st}, session_id, from_entry_id) do
     txn(fn ->
       with [{_, ^session_id, %{head_id: head}}] <- :mnesia.read({st, session_id}),
@@ -208,7 +218,8 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
   end
 
   @doc """
-  Deletes the session's row and the entries of its chain that no other session reaches
+  Deletes the session's row and every entry of its tree that no other session reaches:
+  its chain and any branch it left with an explicit `parent_id`
   (`c:Normandy.Behaviours.SessionStore.delete_session/2`).
 
   Forks share ancestor entries here, and an entry's parent link sits inside its data, so
@@ -227,7 +238,7 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
             :ok
 
           [{_, ^session_id, %{head_id: head}}] ->
-            et |> unshared_chain(st, session_id, head) |> Enum.each(&:mnesia.delete({et, &1}))
+            et |> unreached(st, session_id, head) |> Enum.each(&:mnesia.delete({et, &1}))
             :mnesia.delete({st, session_id})
         end
       end)
@@ -236,47 +247,52 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
 
   # --- private ---
 
-  # The ids on the chain from `head` up to the first one another session reaches
-  # (another session's head, or an entry with a child off this chain), oldest first: the
-  # walk starts at `head` and prepends. Every ancestor of a reached entry is reached too,
-  # so the walk stops there.
-  defp unshared_chain(et, st, session_id, head) do
-    other_heads =
+  # The entries of `head`'s tree (every descendant of its root) that no other session's
+  # head reaches. The tables are write-locked, so the scans see every entry and head.
+  defp unreached(_et, _st, _session_id, nil), do: []
+
+  defp unreached(et, st, session_id, head) do
+    parents =
+      :mnesia.foldl(fn {_, id, %{parent_id: p}}, acc -> Map.put(acc, id, p) end, %{}, et)
+
+    children =
+      Enum.reduce(parents, %{}, fn
+        {_id, nil}, acc -> acc
+        {id, p}, acc -> Map.update(acc, p, [id], &[id | &1])
+      end)
+
+    reached =
       :mnesia.foldl(
         fn
-          {_, sid, %{head_id: h}}, acc when sid != session_id and h != nil -> MapSet.put(acc, h)
+          {_, sid, %{head_id: h}}, acc when sid != session_id -> ancestors(parents, h, acc)
           _, acc -> acc
         end,
         MapSet.new(),
         st
       )
 
-    children =
-      :mnesia.foldl(
-        fn
-          {_, id, %{parent_id: p}}, acc when p != nil -> Map.update(acc, p, [id], &[id | &1])
-          _, acc -> acc
-        end,
-        %{},
-        et
-      )
-
-    walk_unshared(et, head, nil, other_heads, children, [])
+    parents
+    |> root(head)
+    |> descendants(children, [])
+    |> Enum.reject(&MapSet.member?(reached, &1))
   end
 
-  defp walk_unshared(_et, nil, _child, _heads, _children, acc), do: acc
+  # `id` and its ancestors into `seen`; stops at one already there (its ancestors are too).
+  defp ancestors(parents, id, seen) do
+    if is_nil(id) or MapSet.member?(seen, id),
+      do: seen,
+      else: ancestors(parents, Map.get(parents, id), MapSet.put(seen, id))
+  end
 
-  defp walk_unshared(et, id, child, heads, children, acc) do
-    shared? =
-      MapSet.member?(heads, id) or Enum.any?(Map.get(children, id, []), &(&1 != child))
-
-    with false <- shared?,
-         [{_, ^id, %{parent_id: parent}}] <- :mnesia.read({et, id}) do
-      walk_unshared(et, parent, id, heads, children, [id | acc])
-    else
-      _stop -> acc
+  defp root(parents, id) do
+    case Map.get(parents, id) do
+      nil -> id
+      parent -> root(parents, parent)
     end
   end
+
+  defp descendants(id, children, acc),
+    do: Enum.reduce(Map.get(children, id, []), [id | acc], &descendants(&1, children, &2))
 
   defp read_session(st, session_id) do
     case :mnesia.read({st, session_id}) do
@@ -285,10 +301,14 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
     end
   end
 
-  # Walk head -> root, accumulating oldest-first (prepend) => chronological.
-  defp chain(_et, nil, acc), do: acc
+  # Walk head -> root, accumulating oldest-first (prepend) => chronological. With
+  # :since_compaction it stops after the first "compaction" entry it meets.
+  defp chain(et, id, acc, until \\ :all)
 
-  defp chain(et, id, acc) do
+  defp chain(_et, nil, acc, _until), do: acc
+  defp chain(_et, _id, [%Entry{role: "compaction"} | _] = acc, :since_compaction), do: acc
+
+  defp chain(et, id, acc, until) do
     case :mnesia.read({et, id}) do
       [{_, ^id, d}] ->
         entry = %Entry{
@@ -299,7 +319,7 @@ defmodule Normandy.Behaviours.SessionStore.Mnesia do
           content: d.content
         }
 
-        chain(et, d.parent_id, [entry | acc])
+        chain(et, d.parent_id, [entry | acc], until)
 
       # A missing entry (a table still loading, an unsynced replica) would hand
       # the model a conversation with a hole in it; fail instead.
