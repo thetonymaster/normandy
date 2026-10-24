@@ -6,7 +6,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   @moduletag :postgres
 
   alias Ecto.Adapters.SQL.Sandbox
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.Postgres
@@ -46,7 +46,10 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   end
 
   defp final_handlers(text) do
-    %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
+    %{
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: text} end
+    }
   end
 
   test "a turn persists to Postgres and rehydrates with no data loss" do

@@ -53,15 +53,16 @@ defmodule Normandy.Coordination.AgentProcess.Engine do
   Applies `update_fn` to the agent: a result that is not a config is refused here, before
   it replaces the agent (the caller raises, the process keeps its config). The reply names
   only its type (a config holds the client and its credentials). `put_fun.(config, state)`
-  stores an accepted config.
+  stores an accepted config and returns `{reply, state}`: `{:ok, state}`, or
+  `{{:error, exception}, state}` when the engine refuses it (the process keeps its config).
   """
   @spec update_agent_now((BaseAgentConfig.t() -> term()), state(), (BaseAgentConfig.t(),
                                                                     state() ->
-                                                                      state())) ::
+                                                                      {term(), state()})) ::
           {term(), state()}
   def update_agent_now(update_fn, state, put_fun) do
     case update_fn.(state.agent) do
-      %BaseAgentConfig{} = updated -> {:ok, put_fun.(updated, state)}
+      %BaseAgentConfig{} = updated -> put_fun.(updated, state)
       other -> {{:not_a_config, Describe.type_of(other)}, state}
     end
   end

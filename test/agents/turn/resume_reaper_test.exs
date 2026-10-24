@@ -15,10 +15,14 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
   # instead of really starting a Turn.Server. The "supervisor" handle is the test pid.
   defmodule RecordingSup do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(test_pid, opts) when is_pid(test_pid) do
       send(test_pid, {:reaper_started, Keyword.fetch!(opts, :session_id), opts})
       {:ok, spawn(fn -> :ok end)}
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   # An eager session whose turn-state load reports a backend fault.
@@ -41,6 +45,30 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
       )
 
     pid
+  end
+
+  defmodule StartOnlySup do
+    @moduledoc false
+    def start_server(_sup, _opts), do: {:error, :unused}
+  end
+
+  test "a :supervisor_mod without the ServerSupervisor callbacks is refused, as Session.new/1 does" do
+    {:ok, cat} = Catalog.start_link([])
+
+    error =
+      assert_raise ArgumentError, fn ->
+        ResumeReaper.start_link(
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          supervisor: self(),
+          supervisor_mod: StartOnlySup,
+          template_provider: {Catalog, cat}
+        )
+      end
+
+    assert error.message =~ "Normandy.Agents.Turn.ResumeReaper.start_link/1: "
+    assert error.message =~ ":supervisor_mod"
+    assert error.message =~ "Normandy.Agents.Turn.ServerSupervisor"
   end
 
   test "on :nodedown reaps only eager + unregistered + non-terminal sessions" do
@@ -204,11 +232,15 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
   # start_server/2 and whereis/2 and counts the start calls.
   defmodule ScriptedSup do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(agent, _opts) do
       Agent.get_and_update(agent, fn %{starts: [reply | rest], calls: n} = st ->
         {reply, %{st | starts: rest, calls: n + 1}}
       end)
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   defmodule ScriptedRegistry do
@@ -255,10 +287,14 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
   # Starts a real, unlinked Turn.Server, so its start-up log is the reaper's to capture.
   defmodule ServerSup do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(_handle, opts) do
       {:ok, pid} = :gen_statem.start(Turn.Server, opts, [])
       {:ok, pid}
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   # Decision 6: a resumed session whose credential provider fails is logged by the
@@ -363,10 +399,13 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     # sweep that started sessions one at a time would wait at the first start for good.
     defmodule GatedSup do
       @moduledoc false
+      @behaviour Normandy.Agents.Turn.ServerSupervisor
+
       use GenServer
 
       def start_link({test_pid, n}), do: GenServer.start_link(__MODULE__, {test_pid, n})
 
+      @impl Normandy.Agents.Turn.ServerSupervisor
       def start_server(gate, opts),
         do: GenServer.call(gate, {:arrive, Keyword.fetch!(opts, :session_id)}, :infinity)
 
@@ -385,12 +424,17 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
           {:noreply, %{state | waiting: waiting}}
         end
       end
+
+      @impl Normandy.Agents.Turn.ServerSupervisor
+      def stop_server(_sup, _pid), do: {:error, :not_found}
     end
 
     # start_server/2 raises for "s-raises" and records every other start. The
     # "supervisor" handle is the test pid.
     defmodule RaisingSup do
       @moduledoc false
+      @behaviour Normandy.Agents.Turn.ServerSupervisor
+
       def start_server(test_pid, opts) do
         case Keyword.fetch!(opts, :session_id) do
           "s-raises" -> raise ArgumentError, "SECRET-START-BUG"
@@ -399,6 +443,8 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
 
         {:ok, self()}
       end
+
+      def stop_server(_sup, _pid), do: {:error, :not_found}
     end
 
     defp eager_sessions(sids) do

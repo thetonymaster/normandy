@@ -141,7 +141,10 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
   end
 
   # In :server mode the SessionStore owns the memory, so a changed memory is ignored; the
-  # session's next server start uses the new config.
+  # session's next server start uses the new config. A config the session refuses
+  # (Turn.Session.put_config/2 raises ArgumentError, e.g. a template-backed session whose
+  # new config has no credential provider) is replied as {:error, exception}; the process
+  # keeps its config.
   defp put_agent(updated, state) do
     new_agent =
       if updated.memory != state.agent.memory do
@@ -155,8 +158,19 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
         updated
       end
 
-    session = Turn.Session.put_config(state.engine_state.session, new_agent)
-    %{state | agent: new_agent, engine_state: %{state.engine_state | session: session}}
+    case put_session_config(state.engine_state.session, new_agent) do
+      {:ok, session} ->
+        {:ok, %{state | agent: new_agent, engine_state: %{state.engine_state | session: session}}}
+
+      {:error, _exception} = error ->
+        {error, state}
+    end
+  end
+
+  defp put_session_config(session, config) do
+    {:ok, Turn.Session.put_config(session, config)}
+  rescue
+    e in ArgumentError -> {:error, e}
   end
 
   @impl true

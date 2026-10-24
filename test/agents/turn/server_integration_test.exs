@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.Turn.ServerIntegrationTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -62,7 +62,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       end
     end
 
-    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
   end
 
   # Poll until Native.whereis returns :none, up to ~1s in 20ms increments.

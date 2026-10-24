@@ -555,7 +555,7 @@ defmodule Normandy.DSL.Agent do
             Normandy.Agents.BaseAgentConfig.default_max_tokens()
           ),
         max_tool_concurrency:
-          Normandy.Agents.BaseAgent.normalize_max_tool_concurrency(
+          Normandy.Agents.BaseAgent.InitOptions.normalize_max_tool_concurrency(
             Module.get_attribute(__MODULE__, :agent_max_tool_concurrency, 1)
           ),
         max_messages: Module.get_attribute(__MODULE__, :agent_max_messages),

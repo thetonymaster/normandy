@@ -235,41 +235,12 @@ defmodule Normandy.Agents.ValidationMiddleware do
     end
   end
 
-  @doc """
-  Formats validation errors into user-friendly messages.
-
-  ## Examples
-
-      errors = [%{path: [:name], message: "is required", constraint: :required}]
-      ValidationMiddleware.format_validation_errors("Input", errors)
-      #=> [%{
-      #     type: "Input validation error",
-      #     path: [:name],
-      #     message: "is required",
-      #     constraint: :required
-      #   }]
-  """
-  @spec format_validation_errors(String.t(), list()) :: list()
-  def format_validation_errors(context, errors) when is_list(errors) do
+  # Tags each error with the side it came from ("Input validation error").
+  defp format_validation_errors(context, errors) when is_list(errors) do
     Enum.map(errors, fn error ->
       Map.put(error, :type, "#{context} validation error")
     end)
   end
-
-  @doc """
-  Checks if validation is enabled for the agent configuration.
-
-  Validation is considered enabled if the agent has schemas with validation support.
-
-  ## Examples
-
-      config = %BaseAgentConfig{input_schema: %MySchema{}}
-      ValidationMiddleware.validation_enabled?(config)
-      #=> true
-  """
-  @spec validation_enabled?(BaseAgentConfig.t()) :: boolean()
-  def validation_enabled?(%BaseAgentConfig{input_schema: input, output_schema: output}),
-    do: validating_schema?(input) or validating_schema?(output)
 
   # JSON and form params arrive string-keyed, and struct/2 and the validator look
   # up atom fields. A string key that names a field becomes that field's atom;
@@ -305,8 +276,6 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   defp present_fields(list) when is_list(list), do: Enum.map(list, &present_fields/1)
   defp present_fields(other), do: other
-
-  defp validating_schema?(nil), do: false
 
   defp validating_schema?(%mod{}),
     do: Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)

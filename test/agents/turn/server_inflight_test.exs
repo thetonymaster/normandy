@@ -8,7 +8,7 @@ defmodule Normandy.Agents.Turn.ServerInflightTest do
   @moduletag :capture_log
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.PolicyEngine.Ruleset
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -31,7 +31,7 @@ defmodule Normandy.Agents.Turn.ServerInflightTest do
         else: %Resp{content: "done", tool_calls: nil}
     end
 
-    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
   end
 
   defp config do

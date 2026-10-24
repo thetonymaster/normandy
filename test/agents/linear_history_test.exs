@@ -20,6 +20,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
   import Normandy.Test.Eventually
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
@@ -241,7 +242,10 @@ defmodule Normandy.Agents.LinearHistoryTest do
         end
       end,
       dispatch: fn calls ->
-        Enum.map(calls, &Dispatch.dispatch_one(config, &1, BaseAgent.base_agent_pipeline(config)))
+        Enum.map(
+          calls,
+          &Dispatch.dispatch_one(config, &1, AgentHandlers.base_agent_pipeline(config))
+        )
       end,
       append: fn role, content ->
         Agent.update(memory, &AgentMemory.add_message(&1, role, content))

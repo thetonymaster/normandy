@@ -8,6 +8,7 @@ defmodule Normandy.Telemetry.RunTotalsTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.Config
@@ -168,7 +169,7 @@ defmodule Normandy.Telemetry.RunTotalsTest do
 
       srv =
         server(config, "s-run-totals-custom",
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       assert {:ok, _} = Server.run(srv, "go")

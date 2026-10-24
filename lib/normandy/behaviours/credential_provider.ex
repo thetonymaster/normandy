@@ -7,9 +7,23 @@ defmodule Normandy.Behaviours.CredentialProvider do
   `client_builder`. Nothing else consumes it: a config built with `BaseAgent.init/1` keeps
   its client.
 
-  The default impl `FromClient` reads a binary `:api_key` off the struct it is given. The
-  rebuild passes no client, so `FromClient` returns `{:error, :no_api_key}` there: a session
-  rebuilt from a template needs a provider that returns the credential itself.
+  There is no default implementation: the rebuild has no client to read a key from, so a
+  provider returns the credential itself (from the environment, a vault, ...). The
+  `credential` slot of `Normandy.Behaviours.Config` is `nil` until set, and
+  `Turn.Session.new/1` refuses a session with a `:template_provider` whose config leaves it
+  unset.
+
+      defmodule MyApp.EnvCredentials do
+        @behaviour Normandy.Behaviours.CredentialProvider
+
+        @impl true
+        def get_token(_provider, _opts) do
+          case System.fetch_env("ANTHROPIC_API_KEY") do
+            {:ok, token} -> {:ok, token}
+            :error -> {:error, :no_api_key}
+          end
+        end
+      end
   """
 
   @doc """
@@ -23,13 +37,4 @@ defmodule Normandy.Behaviours.CredentialProvider do
   """
   @callback get_token(provider :: term(), opts :: keyword()) ::
               {:ok, String.t()} | {:error, term()}
-
-  defmodule FromClient do
-    @moduledoc "Default CredentialProvider: reads the binary api_key off the client."
-    @behaviour Normandy.Behaviours.CredentialProvider
-
-    @impl true
-    def get_token(%{api_key: key}, _opts) when is_binary(key), do: {:ok, key}
-    def get_token(_provider, _opts), do: {:error, :no_api_key}
-  end
 end

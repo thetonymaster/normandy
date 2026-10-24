@@ -33,10 +33,12 @@ defmodule Normandy.Agents.Turn.Session do
               doc: "The supervisor that starts the session's `Turn.Server`: a pid or a name."
             ],
             supervisor_mod: [
-              type: :atom,
+              type: {:custom, __MODULE__, :validate_supervisor_mod, []},
+              type_doc: "`t:module/0`",
               default: Supervisor,
               doc:
-                "The module whose `start_server/2` starts the server " <>
+                "A `Normandy.Agents.Turn.ServerSupervisor`: the module whose " <>
+                  "`start_server/2` starts the server and whose `stop_server/2` stops it " <>
                   "(`Normandy.Agents.Turn.Supervisor.Horde` in a cluster)."
             ],
             store: [
@@ -207,6 +209,8 @@ defmodule Normandy.Agents.Turn.Session do
               "({module, handle}), got neither"
     end
 
+    :ok = check_credential!(opts[:config], opts[:template_provider], :new, 1)
+
     struct!(
       __MODULE__,
       [server_options: Keyword.take(opts, @stored_server_options)] ++
@@ -316,9 +320,9 @@ defmodule Normandy.Agents.Turn.Session do
       The server is already stopped; calling again finishes the job. A store that raises
       raises.
 
-  The handle's `:supervisor_mod` must export `stop_server/2`
-  (`Normandy.Agents.Turn.Supervisor` and `Normandy.Agents.Turn.Supervisor.Horde` do);
-  another module raises `ArgumentError` naming it.
+  `new/1` checks that the handle's `:supervisor_mod` exports `stop_server/2`
+  (`Normandy.Agents.Turn.ServerSupervisor`); a handle whose struct was edited to another
+  module raises `ArgumentError` naming it.
 
   Nothing stops a new turn from starting the session again: a `run/2` that starts after
   the server stopped (or a `ResumeReaper` restart between the stop and the delete) gets
@@ -359,8 +363,10 @@ defmodule Normandy.Agents.Turn.Session do
   config it started with.
   """
   @spec put_config(t(), BaseAgentConfig.t()) :: t()
-  def put_config(%__MODULE__{} = session, %BaseAgentConfig{} = config),
-    do: %{session | config: config}
+  def put_config(%__MODULE__{} = session, %BaseAgentConfig{} = config) do
+    :ok = check_credential!(config, session.template_provider, :put_config, 2)
+    %{session | config: config}
+  end
 
   def put_config(%__MODULE__{}, other) do
     raise ArgumentError,
@@ -391,11 +397,52 @@ defmodule Normandy.Agents.Turn.Session do
     do: {:error, "expected a non-empty string, got: " <> Describe.type_of(other)}
 
   @doc false
+  # The ServerSupervisor callbacks, checked by export (a host's module need not declare
+  # the behaviour).
+  @spec validate_supervisor_mod(term()) :: {:ok, module()} | {:error, String.t()}
+  def validate_supervisor_mod(mod) when is_atom(mod) and mod != nil do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :start_server, 2) and
+         function_exported?(mod, :stop_server, 2) do
+      {:ok, mod}
+    else
+      {:error,
+       "expected a module that implements Normandy.Agents.Turn.ServerSupervisor " <>
+         "(exports start_server/2 and stop_server/2), got: #{inspect(mod)}"}
+    end
+  end
+
+  def validate_supervisor_mod(other),
+    do: {:error, "expected a module, got: " <> Describe.type_of(other)}
+
+  @doc false
   def validate_config(%BaseAgentConfig{} = config), do: {:ok, config}
 
   def validate_config(other),
     do:
       {:error, "expected a %Normandy.Agents.BaseAgentConfig{}, got: " <> Describe.type_of(other)}
+
+  # A session with a template provider and a config saves the config as its template, and
+  # every server start rebuilds the config from it, asking the template's credential
+  # provider for the client's token. With no provider the server could only wait
+  # :unavailable, so the session is refused here. A config alone runs as given (its client
+  # is used); a template provider alone starts from a stored template, checked on load.
+  defp check_credential!(nil, _template_provider, _fun, _arity), do: :ok
+  defp check_credential!(_config, nil, _fun, _arity), do: :ok
+
+  defp check_credential!(%BaseAgentConfig{behaviours: behaviours}, _template_provider, fun, arity) do
+    case behaviours || %Normandy.Behaviours.Config{} do
+      %{credential: {mod, opts}} when is_atom(mod) and is_list(opts) ->
+        :ok
+
+      %{credential: other} ->
+        raise ArgumentError,
+              "Normandy.Agents.Turn.Session.#{fun}/#{arity}: a session with a " <>
+                ":template_provider rebuilds its config from the stored template, which " <>
+                "needs the config's behaviours :credential slot set to a " <>
+                "Normandy.Behaviours.CredentialProvider ({module, opts}), got: " <>
+                Describe.type_of(other)
+    end
+  end
 
   defp not_a_session(fun, other) do
     "Normandy.Agents.Turn.Session.#{fun}/2: expected a %Normandy.Agents.Turn.Session{} " <>

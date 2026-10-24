@@ -4,6 +4,7 @@ defmodule Normandy.Agents.ToolResultCapTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -334,7 +335,7 @@ defmodule Normandy.Agents.ToolResultCapTest do
           config: config,
           store: {InMemory, store},
           registry: {Native, Native.new()},
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       assert {:ok, %Resp{content: "done"}} = Turn.Server.run(srv, "go")

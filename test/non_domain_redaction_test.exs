@@ -7,6 +7,7 @@ defmodule Normandy.NonDomainRedactionTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -135,7 +136,7 @@ defmodule Normandy.NonDomainRedactionTest do
           config: config(),
           store: {InMemory, store},
           registry: {Native, Native.new()},
-          handlers: Map.merge(BaseAgent.non_streaming_handlers(), handlers)
+          handlers: Map.merge(AgentHandlers.non_streaming_handlers(), handlers)
         )
 
       TelemetryCapture.attach_span([[:normandy, :agent, :run, :exception]], session_id: sid)

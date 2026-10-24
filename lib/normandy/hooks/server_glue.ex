@@ -6,7 +6,6 @@ defmodule Normandy.Hooks.ServerGlue do
 
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
-  alias Normandy.Agents.Turn.Driver
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Hooks.Handlers, as: HookHandlers
@@ -45,31 +44,19 @@ defmodule Normandy.Hooks.ServerGlue do
   end
 
   @doc """
-  Runs `before_llm` for one LLM call: `Normandy.Hooks.Handlers` wrapped around the
-  server's `handlers` with a `call_llm` that does nothing, so the server calls the LLM
-  apart from it and can tell a hook's crash from the client's. Returns `:ok`; a halt
-  raises `Normandy.HookHaltError`.
+  Runs `before_llm` for one LLM call, apart from the call itself, so the server can tell a
+  hook's crash from the client's. Returns `:ok`; a halt raises `Normandy.HookHaltError`.
   """
-  @spec before_llm(Driver.Handlers.t(), map(), Turn.State.t(), map()) :: :ok
-  def before_llm(handlers, config, state, request) do
-    %{handlers | call_llm: fn _config, _state, _request -> :ok end}
-    |> HookHandlers.wrap(config)
-    |> then(& &1.call_llm.(config, state, request))
-  end
+  @spec before_llm(map(), Turn.State.t(), map()) :: :ok
+  def before_llm(config, state, request), do: HookHandlers.before_llm!(config, state, request)
 
   @doc """
   Runs `after_compact` on a finished compaction (`compacted`, the compact handler's
-  `{config, meta}`): `Normandy.Hooks.Handlers` wrapped around the server's `handlers` with
-  a `compact` that returns it, so a hook's crash is told apart from the compactor's.
-  Returns `{config, meta}` with any injected texts in the config's memory.
+  `{config, meta}`), apart from the compactor, so a hook's crash is told apart from the
+  compactor's. Returns `{config, meta}` with any injected texts in the config's memory.
   """
-  @spec after_compact(Driver.Handlers.t(), map(), Turn.State.t(), map(), {map(), map()}) ::
-          {map(), map()}
-  def after_compact(handlers, config, state, info, compacted) do
-    %{handlers | compact: fn _config, _state, _info -> compacted end}
-    |> HookHandlers.wrap(config)
-    |> then(& &1.compact.(config, state, info))
-  end
+  @spec after_compact({map(), map()}) :: {map(), map()}
+  def after_compact({config, meta}), do: {HookHandlers.after_compact(config, meta), meta}
 
   @doc """
   Runs `after_tool` on a result the server built (an interrupted result). `call` may be a

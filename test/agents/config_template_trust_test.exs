@@ -3,7 +3,7 @@ defmodule Normandy.Agents.ConfigTemplateTrustTest do
   # supplement's :pinned fixes the security settings a store writer could swap.
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -167,7 +167,7 @@ defmodule Normandy.Agents.ConfigTemplateTrustTest do
   describe "Turn.Server" do
     defp handlers do
       %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %TurnConfig.Resp{content: "hi", tool_calls: nil} end
       }
     end

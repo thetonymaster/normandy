@@ -7,6 +7,8 @@ defmodule Normandy.Agents.Turn.Supervisor do
   """
   use DynamicSupervisor
 
+  @behaviour Normandy.Agents.Turn.ServerSupervisor
+
   alias Normandy.Agents.Turn.Server
   alias Normandy.Options
 
@@ -83,6 +85,7 @@ defmodule Normandy.Agents.Turn.Supervisor do
 
   The options of `Normandy.Agents.Turn.Server.start_link/1`.
   """
+  @impl Normandy.Agents.Turn.ServerSupervisor
   @spec start_server(:gen_statem.server_ref() | pid(), keyword()) ::
           DynamicSupervisor.on_start_child()
   def start_server(sup, server_opts) do
@@ -107,6 +110,7 @@ defmodule Normandy.Agents.Turn.Supervisor do
   `{:error, :not_found}` when `pid` is not a child of `sup` (it already exited, or another
   supervisor started it). Used by `Normandy.Agents.Turn.Session.delete/1`.
   """
+  @impl Normandy.Agents.Turn.ServerSupervisor
   @spec stop_server(:gen_statem.server_ref() | pid(), pid()) :: :ok | {:error, :not_found}
   def stop_server(sup, pid) when is_pid(pid), do: DynamicSupervisor.terminate_child(sup, pid)
 

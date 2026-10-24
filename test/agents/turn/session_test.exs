@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.Turn.SessionTest do
   use ExUnit.Case, async: true
   import Normandy.Test.Eventually
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -49,10 +49,14 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
   # A supervisor stand-in that reports the server opts Session built, then refuses.
   defmodule CapturingSupervisor do
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(test_pid, opts) do
       send(test_pid, {:server_opts, opts})
       {:error, :captured}
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   defp session_config do
@@ -65,6 +69,14 @@ defmodule Normandy.Agents.Turn.SessionTest do
       prompt_specification: %Normandy.Components.PromptSpecification{},
       initial_memory: AgentMemory.new_memory(),
       toolset: nil
+    }
+  end
+
+  # A config a session with a :template_provider accepts: it names a credential provider.
+  defp tier2_config do
+    %{
+      session_config()
+      | behaviours: %Normandy.Behaviours.Config{credential: {Normandy.Test.StubCreds, []}}
     }
   end
 
@@ -97,6 +109,61 @@ defmodule Normandy.Agents.Turn.SessionTest do
                handlers: nil,
                server_options: []
              } = Turn.Session.new(new_opts())
+    end
+
+    # Only a session with both :config and :template_provider saves the config as a template
+    # the server rebuilds from; :config alone (Tier 0/1) runs the config as given, and
+    # :template_provider alone starts from a template already stored (checked on load).
+    test "a template-backed session without a credential provider is refused at new/1" do
+      tier2 = new_opts(template_provider: {Catalog, :cat})
+
+      error = assert_raise ArgumentError, ~r/:credential/, fn -> Turn.Session.new(tier2) end
+      assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+      assert error.message =~ "Normandy.Behaviours.CredentialProvider"
+
+      with_creds =
+        put_in(tier2[:config].behaviours, %Normandy.Behaviours.Config{
+          credential: {Normandy.Test.StubCreds, []}
+        })
+
+      assert %Turn.Session{} = Turn.Session.new(with_creds)
+      assert %Turn.Session{config: %{behaviours: nil}} = Turn.Session.new(new_opts())
+
+      assert %Turn.Session{config: nil} =
+               Turn.Session.new(Keyword.delete(tier2, :config))
+    end
+
+    defmodule StartOnlySupervisor do
+      def start_server(_sup, _opts), do: {:error, :unused}
+    end
+
+    test "a :supervisor_mod that does not export the ServerSupervisor callbacks is refused" do
+      for mod <- [StartOnlySupervisor, NoSuchSupervisorModule] do
+        error =
+          assert_raise ArgumentError, fn -> Turn.Session.new(new_opts(supervisor_mod: mod)) end
+
+        assert error.message =~ "Normandy.Agents.Turn.Session.new/1: "
+        assert error.message =~ ":supervisor_mod"
+        assert error.message =~ "Normandy.Agents.Turn.ServerSupervisor"
+      end
+
+      assert %Turn.Session{supervisor_mod: Turn.Supervisor.Horde} =
+               Turn.Session.new(new_opts(supervisor_mod: Turn.Supervisor.Horde))
+    end
+
+    test "put_config/2 refuses a config without a credential provider on a template-backed session" do
+      session =
+        Turn.Session.new(Keyword.delete(new_opts(template_provider: {Catalog, :cat}), :config))
+
+      error =
+        assert_raise ArgumentError, ~r/:credential/, fn ->
+          Turn.Session.put_config(session, session_config())
+        end
+
+      assert error.message =~ "Normandy.Agents.Turn.Session.put_config/2: "
+
+      assert %Turn.Session{} =
+               Turn.Session.put_config(Turn.Session.new(new_opts()), session_config())
     end
 
     test "keeps only the server options it was given" do
@@ -223,7 +290,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -250,7 +317,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
         registry: {Native, reg},
         supervisor: sup,
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn c, _s, _r ->
               send(test_pid, {:llm_memory, c.memory})
               %Resp{content: "ok"}
@@ -329,7 +396,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Native, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -364,7 +431,11 @@ defmodule Normandy.Agents.Turn.SessionTest do
   end
 
   defmodule NoStartSupervisor do
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(_sup, _opts), do: raise("no server should be started")
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   test "a registry lookup that fails is run/2's and approve/2's error; no server starts" do
@@ -426,7 +497,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     opts = [
       session_id: "s-server-opts",
-      config: session_config(),
+      config: tier2_config(),
       store: {InMemory, store},
       registry: {Native, Native.new()},
       supervisor: self(),
@@ -454,7 +525,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     opts = [
       session_id: "s-save-fault",
-      config: session_config(),
+      config: tier2_config(),
       store: {TemplateSaveFaultStore, nil},
       registry: {Native, Native.new()},
       supervisor: self(),
@@ -475,7 +546,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
       opts = [
         session_id: "s-eager",
-        config: session_config(),
+        config: tier2_config(),
         store: {InMemory, store},
         registry: {Native, Native.new()},
         supervisor: self(),
@@ -527,7 +598,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
       registry: {Horde, reg},
       supervisor: sup,
       handlers: %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
       }
     ]
@@ -596,7 +667,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
 
     # Stub call_llm: capture the config memory at call time, reply via message.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn c, _s, _r ->
           send(test_pid, {:captured_memory, c.memory})
           %TurnConfig.Resp{content: "ok"}
@@ -653,7 +724,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
         supervisor: sup,
         template_provider: {Catalog, cat},
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %TurnConfig.Resp{content: "from template"} end
         }
       ]
@@ -697,7 +768,7 @@ defmodule Normandy.Agents.Turn.SessionTest do
     # message, it answers.
     defp probe_handlers do
       %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn c, _s, _r ->
             case c.memory |> AgentMemory.messages() |> List.last() do
               %{role: "tool"} ->

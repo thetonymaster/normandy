@@ -195,8 +195,9 @@ defmodule Normandy.Agents.Turn.Server do
   """
   @behaviour :gen_statem
 
-  alias Normandy.Agents.{BaseAgent, Dispatch, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
+  alias Normandy.Agents.{Dispatch, Turn}
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
@@ -209,6 +210,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Telemetry.RunUsage
   alias Normandy.Telemetry.Span
   alias Normandy.TurnError
+  alias Normandy.WatchedWorker
 
   require Logger
 
@@ -222,6 +224,7 @@ defmodule Normandy.Agents.Turn.Server do
               subscriber: nil,
               handlers: nil,
               task_ref: nil,
+              task_pid: nil,
               task_kind: nil,
               pending_reply: nil,
               approval_timeout_ms: 300_000,
@@ -609,7 +612,7 @@ defmodule Normandy.Agents.Turn.Server do
       subscriber: Keyword.get(opts, :subscriber),
       # Unwrapped: before_llm and after_compact run apart from the LLM call and the
       # compaction (call_llm_event/3, compact_event/3), so their crashes are told apart.
-      handlers: Keyword.get(opts, :handlers) || BaseAgent.non_streaming_handlers(),
+      handlers: Keyword.get(opts, :handlers) || AgentHandlers.non_streaming_handlers(),
       turn_state: turn_state,
       approval_timeout_ms: timeouts.approval_timeout_ms,
       on_approval_timeout: timeouts.on_approval_timeout,
@@ -679,7 +682,7 @@ defmodule Normandy.Agents.Turn.Server do
   # A missing supplement or a failed credential lookup is reported like a store
   # fault, so the server waits :unavailable and retries instead of crashing into a
   # supervisor restart loop. Tier-2 reconstruction needs a node-local credential
-  # provider (env/vault); CredentialProvider.FromClient has no client here.
+  # provider (env/vault): there is no client to read a key from here.
   defp reconstruct_config(tmpl, {tp_mod, tp_handle}) do
     template_id = session_id_template_id(tmpl)
     {cred_mod, cred_opts} = tmpl.behaviours_refs.credential
@@ -789,9 +792,8 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp session_id_template_id(%{template_id: id}), do: id
 
-  # FromClient needs a client carrying :api_key; env/vault providers ignore the
-  # first arg. For reconstruction the token must come from a node-local provider,
-  # so we pass a minimal provider map derived from the template's model.
+  # The token comes from a node-local provider (env/vault), which may key on the
+  # model; it gets a minimal provider map derived from the template's model.
   defp token_provider(%{model: model}), do: %{model: model}
 
   # An approval sent by a caller running an older Normandy (another node during a
@@ -922,26 +924,32 @@ defmodule Normandy.Agents.Turn.Server do
     end
   end
 
-  # :running — a monitored Task delivered the outcome of a blocking effect.
-  # Compact result carries the updated config alongside the meta; thread both.
+  # :running — the turn worker (spawn_task/3) delivered the outcome of a blocking
+  # effect, keyed by its watcher's pid; the watcher's :DOWN (:normal) that follows is
+  # flushed. Compact result carries the updated config alongside the meta; thread both.
   def handle_event(
         :info,
-        {task_ref, {:compact_result, config2, meta}},
+        {:turn_task, task_pid, {:compact_result, config2, meta}},
         :running,
-        %Data{task_ref: task_ref} = data
+        %Data{task_pid: task_pid} = data
       )
-      when is_reference(task_ref) do
-    Process.demonitor(task_ref, [:flush])
+      when is_pid(task_pid) do
+    Process.demonitor(data.task_ref, [:flush])
     persist_compaction(data, config2, meta)
     {state, effects} = Turn.step(data.turn_state, {:compaction_done, meta})
-    interpret(effects, %{data | turn_state: state, task_ref: nil, config: config2})
+    interpret(effects, %{data | turn_state: state, task_ref: nil, task_pid: nil, config: config2})
   end
 
-  def handle_event(:info, {task_ref, event}, :running, %Data{task_ref: task_ref} = data)
-      when is_reference(task_ref) do
-    Process.demonitor(task_ref, [:flush])
+  def handle_event(
+        :info,
+        {:turn_task, task_pid, event},
+        :running,
+        %Data{task_pid: task_pid} = data
+      )
+      when is_pid(task_pid) do
+    Process.demonitor(data.task_ref, [:flush])
     {state, effects} = Turn.step(data.turn_state, event)
-    interpret(effects, %{data | turn_state: state, task_ref: nil})
+    interpret(effects, %{data | turn_state: state, task_ref: nil, task_pid: nil})
   end
 
   # A monitored Task died (an exit or a throw; a raise is the worker's own error event,
@@ -956,7 +964,7 @@ defmodule Normandy.Agents.Turn.Server do
     event = {error_event(data.task_kind), TurnError.task_down(reason)}
 
     {state, effects} = Turn.step(data.turn_state, event)
-    interpret(effects, %{data | turn_state: state, task_ref: nil, task_kind: nil})
+    interpret(effects, %{data | turn_state: state, task_ref: nil, task_pid: nil, task_kind: nil})
   end
 
   # :awaiting_approval — out-of-band approval decisions for a parked turn.
@@ -1073,19 +1081,11 @@ defmodule Normandy.Agents.Turn.Server do
     {:keep_state_and_data, :postpone}
   end
 
-  # Anything else that lands in the mailbox: a late result from a task whose ref was
-  # already cleared, an unrelated :DOWN or :EXIT, a stray send/2. Drop it with a log
-  # line instead of raising FunctionClauseError (which would crash the server). A
-  # late `{ref, _}` result also drops the monitor it was never matched against.
+  # Anything else that lands in the mailbox: a late result from a worker already
+  # cleared (its watcher's :DOWN follows and lands here too), an unrelated :DOWN or
+  # :EXIT, a stray send/2. Drop it with a log line instead of raising
+  # FunctionClauseError (which would crash the server).
   def handle_event(:info, msg, state, data) do
-    case msg do
-      {ref, _result} when is_reference(ref) and ref != data.task_ref ->
-        Process.demonitor(ref, [:flush])
-
-      _ ->
-        :ok
-    end
-
     Logger.debug(
       "Turn.Server #{inspect(data.session_id)} ignored a stray message in #{inspect(state)}: " <>
         inspect(msg, limit: 5, printable_limit: 100)
@@ -1155,7 +1155,7 @@ defmodule Normandy.Agents.Turn.Server do
   # TurnError, instead of crashing the session (and, through restart intensity,
   # Turn.Supervisor).
   defp admit(data, user_input) do
-    {:ok, BaseAgent.admit_input!(data.config, user_input)}
+    {:ok, AgentHandlers.admit_input!(data.config, user_input)}
   rescue
     e in [Normandy.Schema.ValidationError, Normandy.Guardrails.ViolationError] ->
       {:rejected, e}
@@ -1182,7 +1182,7 @@ defmodule Normandy.Agents.Turn.Server do
          {:ok, repairs} <- close_batch(data, missing),
          {:ok, config} <-
            call_handler(data, :append, fn ->
-             BaseAgent.begin_turn(last_config(repairs, data.config), admitted)
+             AgentHandlers.begin_turn(last_config(repairs, data.config), admitted)
            end) do
       start_turn(from, {user_input, caller_ctx}, config, repairs, data)
     else
@@ -1222,12 +1222,12 @@ defmodule Normandy.Agents.Turn.Server do
     do: data
 
   defp paused_steering_state(data, msg) do
-    config = BaseAgent.with_default_output_schema(data.config)
+    config = AgentHandlers.with_default_output_schema(data.config)
 
     state =
       Turn.new(
         max_iterations: config.max_tool_iterations,
-        response_model: BaseAgent.turn_response_model(config),
+        response_model: AgentHandlers.turn_response_model(config),
         output_schema: config.output_schema
       )
 
@@ -1260,14 +1260,14 @@ defmodule Normandy.Agents.Turn.Server do
   # Memory must end up holding exactly what reached the store: a failed write keeps
   # the config as of the last stored result, so the next turn repairs only the rest.
   defp start_turn(from, {user_input, caller_ctx}, config, repairs, data) do
-    config = BaseAgent.with_default_output_schema(config)
+    config = AgentHandlers.with_default_output_schema(config)
 
     with {:ok, repaired} <- persist_interrupted(data, repairs),
          :ok <- persist_user_message(data, config, user_input, repaired) do
       state =
         Turn.new(
           max_iterations: config.max_tool_iterations,
-          response_model: BaseAgent.turn_response_model(config),
+          response_model: AgentHandlers.turn_response_model(config),
           output_schema: config.output_schema
         )
 
@@ -1726,7 +1726,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp call_llm_event(handlers, data, request) do
     with {:ok, :ok} <-
            worker_hook(data, :before_llm, fn ->
-             ServerGlue.before_llm(handlers, data.config, data.turn_state, request)
+             ServerGlue.before_llm(data.config, data.turn_state, request)
            end) do
       {:llm_response, handlers.call_llm.(data.config, data.turn_state, request)}
     end
@@ -1740,7 +1740,7 @@ defmodule Normandy.Agents.Turn.Server do
 
     with {:ok, {config, meta}} <-
            worker_hook(data, :after_compact, fn ->
-             ServerGlue.after_compact(handlers, data.config, data.turn_state, info, compacted)
+             ServerGlue.after_compact(compacted)
            end) do
       {:compact_result, config, meta}
     end
@@ -1758,12 +1758,12 @@ defmodule Normandy.Agents.Turn.Server do
       {:llm_error, crash}
   end
 
-  # Spawn a MONITORED, UNLINKED task that computes its event and sends it back
-  # as {ref, event} where ref is the monitor reference; transition to :running.
-  # Unlinked + monitored means a Task crash delivers {:DOWN, ref, ...} (handled
-  # by the :running :DOWN clause → fails the turn gracefully) WITHOUT taking
-  # down this gen_statem. The spawned process waits for the monitor ref before
-  # replying so the result is tagged with the same ref the :DOWN would carry.
+  # Run the blocking effect's work in a Normandy.WatchedWorker and transition to
+  # :running. The watcher is monitored and unlinked, so a worker crash delivers its
+  # :DOWN (handled by the :running :DOWN clause, which fails the turn gracefully)
+  # without taking down this gen_statem; the result arrives as
+  # {:turn_task, watcher, event}. If this server dies, the worker is killed, so an LLM
+  # call or tool does not run on unseen (and run again by the restarted server).
   #
   # The worker gets this process's OTel context (the run span's, when a bridge
   # made it current at run :start), so its llm_call and tool spans nest under run.
@@ -1772,30 +1772,17 @@ defmodule Normandy.Agents.Turn.Server do
   # worker reads (call_llm_event/3, compact_event/3, dispatch/2, execute_approved/2,
   # worker_hook/3), not the start options' second config, the spans or the caller.
   defp spawn_task(data, kind, fun) do
-    server = self()
     handlers = data.handlers
     current = %Data{config: data.config, turn_state: data.turn_state, session_id: data.session_id}
     otel_ctx = OtelCtx.capture()
-    callers = [server | Process.get(:"$callers", [])]
 
-    pid =
-      spawn(fn ->
-        Process.put(:"$callers", callers)
-
-        ref =
-          receive do
-            {:monitor_ref, r} -> r
-          end
-
-        run_while_server_alive(server, ref, fn ->
-          OtelCtx.restore(otel_ctx)
-          worker_event(kind, fun, handlers, current)
-        end)
+    {pid, ref} =
+      WatchedWorker.start(:turn_task, fn ->
+        OtelCtx.restore(otel_ctx)
+        worker_event(kind, fun, handlers, current)
       end)
 
-    ref = Process.monitor(pid)
-    send(pid, {:monitor_ref, ref})
-    {:next_state, :running, %{data | task_ref: ref, task_kind: kind}}
+    {:next_state, :running, %{data | task_ref: ref, task_pid: pid, task_kind: kind}}
   end
 
   # A raise in the LLM call, the compactor or the tool dispatch fails the turn with
@@ -1818,30 +1805,6 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp error_event(:tools), do: :tool_error
   defp error_event(_llm_or_compact), do: :llm_error
-
-  # The work runs in a linked worker while this process watches the server: if
-  # the server dies, the worker is killed, so an LLM call or tool does not run
-  # on unseen (and run again by the restarted server). A worker crash exits
-  # this process with the same reason, which the server sees as {:DOWN, ...}.
-  # Both processes carry `$callers` (server first), as a Task would.
-  defp run_while_server_alive(server, ref, work) do
-    server_ref = Process.monitor(server)
-    Process.flag(:trap_exit, true)
-    watcher = self()
-    callers = [watcher | Process.get(:"$callers", [])]
-
-    worker =
-      spawn_link(fn ->
-        Process.put(:"$callers", callers)
-        send(watcher, {:task_result, work.()})
-      end)
-
-    receive do
-      {:task_result, result} -> send(server, {ref, result})
-      {:EXIT, ^worker, reason} -> exit(reason)
-      {:DOWN, ^server_ref, :process, _pid, _reason} -> Process.exit(worker, :kill)
-    end
-  end
 
   # The shell-level bypass to the terminal :fail effect (used when an append/persist
   # side-effect fails mid-turn, NOT via Turn.step). Force the turn_state to :failed so
@@ -1931,9 +1894,14 @@ defmodule Normandy.Agents.Turn.Server do
   # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22),
   # unless this turn's last tool-calling response carried text (the handler's validate).
   # An answer validate took from the tool round is marked on the run's usage
-  # accumulator (BaseAgent.validate_marking_answer/4), for the run :stop's answer_source.
+  # accumulator (AgentHandlers.validate_marking_answer/4), for the run :stop's answer_source.
   defp validate_output(data, value) do
-    BaseAgent.validate_marking_answer(data.handlers.validate, data.config, value, run_usage(data))
+    AgentHandlers.validate_marking_answer(
+      data.handlers.validate,
+      data.config,
+      value,
+      run_usage(data)
+    )
   rescue
     e in Normandy.Schema.ValidationError -> {:output_invalid, e}
     e in Normandy.LLMError -> {:output_unparsed, e}
@@ -2162,23 +2130,11 @@ defmodule Normandy.Agents.Turn.Server do
          do: {:error, repaired, reason}
   end
 
-  # The config a tool task runs with: the conversation's entries left behind, so each
-  # task's copy is small (B2). Execution, budget, after_tool and after-hooks read the
-  # agent's name, model, toolset, tool_context, behaviours and the turn id
-  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
-  # runs in the worker with the full config.
-  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
-    do: %{config | memory: AgentMemory.without_entries(memory)}
-
-  defp tool_task_config(config), do: config
-
-  # Classify every call; execute the allowed ones concurrently (mirrors
-  # BaseAgent.dispatch_turn_tools/2's Task.async_stream); collect held results.
+  # Classify every call (with the full config); execute the allowed ones concurrently
+  # (Dispatch.run_batch/3, with the slim task config); collect held results.
   # If any call needs approval, park the batch; else hand back ordered results.
   defp dispatch(%Data{config: config}, calls) do
-    pipeline = BaseAgent.base_agent_pipeline(config)
-    max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = OtelCtx.capture()
+    pipeline = AgentHandlers.base_agent_pipeline(config)
 
     classified =
       calls
@@ -2190,21 +2146,11 @@ defmodule Normandy.Agents.Turn.Server do
 
     runnable = for {_call, {:execute, invocation, ncall}} <- classified, do: {invocation, ncall}
     denied = for {_call, {:deny, %_{} = result}} <- classified, do: result
-    tool_config = tool_task_config(config)
 
     executed =
-      runnable
-      |> Task.async_stream(
-        fn {invocation, ncall} ->
-          OtelCtx.restore(parent_ctx)
-          Dispatch.execute(tool_config, invocation, ncall, pipeline)
-        end,
-        ordered: true,
-        max_concurrency: max_conc,
-        timeout: :infinity,
-        on_timeout: :kill_task
-      )
-      |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+      Dispatch.run_batch(config, runnable, fn task_config, {invocation, ncall} ->
+        Dispatch.execute(task_config, invocation, ncall, pipeline)
+      end)
 
     # Back in the batch's tool_use order, as the Driver shell returns them.
     order = classified |> Enum.with_index() |> Map.new(fn {{call, _}, i} -> {call.id, i} end)
@@ -2221,22 +2167,10 @@ defmodule Normandy.Agents.Turn.Server do
   # input validation again, deterministic, no policy). NOT re-classify — re-running
   # policy would re-park. Concurrency mirrors dispatch/2.
   defp execute_approved(%Data{config: config}, calls) do
-    pipeline = BaseAgent.base_agent_pipeline(config)
-    max_conc = max(config.max_tool_concurrency || 1, 1)
-    parent_ctx = OtelCtx.capture()
-    tool_config = tool_task_config(config)
+    pipeline = AgentHandlers.base_agent_pipeline(config)
 
-    calls
-    |> Task.async_stream(
-      fn %ToolCall{} = call ->
-        OtelCtx.restore(parent_ctx)
-        Dispatch.execute_approved(tool_config, call, pipeline)
-      end,
-      ordered: true,
-      max_concurrency: max_conc,
-      timeout: :infinity,
-      on_timeout: :kill_task
-    )
-    |> Enum.map(&BaseAgent.unwrap_tool_task_result!/1)
+    Dispatch.run_batch(config, calls, fn task_config, %ToolCall{} = call ->
+      Dispatch.execute_approved(task_config, call, pipeline)
+    end)
   end
 end

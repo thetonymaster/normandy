@@ -7,7 +7,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
   @moduletag :capture_log
   import Normandy.Test.Eventually
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Session
   alias Normandy.Behaviours.PolicyEngine.Ruleset
@@ -46,6 +46,8 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
   # A supervisor whose stop_server/2 never finds the child.
   defmodule ForeignSupervisor do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(_sup, _opts), do: {:error, :unused}
     def stop_server(_sup, _pid), do: {:error, :not_found}
   end
@@ -65,7 +67,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
           registry: {Native, reg},
           supervisor: sup,
           handlers: %{
-            BaseAgent.non_streaming_handlers()
+            AgentHandlers.non_streaming_handlers()
             | call_llm: fn _c, _s, _r -> %Resp{content: "ok"} end
           }
         ],
@@ -130,7 +132,7 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
       session(store, reg, sup,
         config: config,
         resume_policy: :eager,
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm},
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm},
         subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
       )
 
@@ -240,9 +242,11 @@ defmodule Normandy.Agents.Turn.SessionDeleteTest do
     assert_raise RuntimeError, "store bug", fn -> Session.delete(session) end
   end
 
+  # new/1 refuses such a module (Turn.ServerSupervisor); a handle edited after it is
+  # still caught here.
   test "a :supervisor_mod without stop_server/2 raises, naming it" do
     {store, reg, _sup} = setup_infra()
-    session = session(store, reg, :unused, supervisor_mod: NoStopSupervisor)
+    session = %{session(store, reg, :unused) | supervisor_mod: NoStopSupervisor}
 
     assert_raise ArgumentError,
                  "Normandy.Agents.Turn.Session.delete/1: the :supervisor_mod " <>

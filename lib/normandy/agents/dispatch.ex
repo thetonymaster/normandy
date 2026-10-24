@@ -5,9 +5,12 @@ defmodule Normandy.Agents.Dispatch do
   `dispatch_one/3` runs one tool call through a fixed pipeline:
   toolset lookup → before-hooks → input validation → policy check → budget pre-check →
   execute → budget record → after-hooks. The behaviours are carried on a
-  `Pipeline` struct so they can be injected in tests and replaced by real
-  implementations in later phases. The default pipeline is allow-all / no-op /
-  identity, preserving current behavior.
+  `Pipeline` struct. Every agent run builds its pipeline from the agent's
+  `Normandy.Behaviours.Config` (`Normandy.Behaviours.Config.to_pipeline/1`: its policy,
+  budget, function hooks and `before_tool`/`after_tool` hook modules), with an execute step
+  wrapped in the `[:normandy, :tool, :execute]` span. `default_pipeline/0` (allow-all
+  policy, no-op budget, no hooks) is what `dispatch_one/2` and `classify/2` use when no
+  pipeline is passed.
 
   The pipeline is also exposed as two composable halves: `classify/3` (toolset lookup →
   before-hooks → input validation → policy, producing a verdict with no side effects) and
@@ -85,10 +88,12 @@ defmodule Normandy.Agents.Dispatch do
   """
 
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Telemetry.Metadata
+  alias Normandy.Telemetry.OtelCtx
   alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
   alias Normandy.Tools.Input
@@ -132,9 +137,9 @@ defmodule Normandy.Agents.Dispatch do
 
   @doc """
   The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing
-  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout.
-  Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
-  to add telemetry, and later phases override the behaviour functions.
+  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout. It behaves as
+  `Normandy.Behaviours.Config.to_pipeline/1` of a default `%Normandy.Behaviours.Config{}`;
+  agent runs use that function's pipeline for the agent's own behaviours.
   """
   @spec default_pipeline() :: Pipeline.t()
   def default_pipeline do
@@ -409,6 +414,95 @@ defmodule Normandy.Agents.Dispatch do
   def dispatch_one(config, raw_call, %Pipeline{} = pipeline) when is_map(raw_call) do
     dispatch_one(config, to_tool_call(raw_call), pipeline)
   end
+
+  @doc false
+  # A batch of calls run to completion (BaseAgent.run/3 and stream/3): each call is
+  # classified in the caller with the full config, and a :needs_approval verdict is
+  # answered as dispatch_one/3 answers it. Every verdict then goes through run_batch/3:
+  # an allowed call is executed there, an answered one only hands its result to
+  # `on_result`, so `on_result` sees each result once, from the worker, in completion
+  # order (call order at max_tool_concurrency 1). Returns the results in call order.
+  @spec dispatch_batch(map(), [ToolCall.t() | map()], Pipeline.t(), (ToolResult.t() -> any())) ::
+          [ToolResult.t()]
+  def dispatch_batch(config, calls, %Pipeline{} = pipeline, on_result) do
+    verdicts =
+      Enum.map(calls, fn call ->
+        case classify(config, call, pipeline) do
+          {:execute, invocation, call} ->
+            {:execute, invocation, call}
+
+          {:deny, %ToolResult{} = result} ->
+            {:answered, result}
+
+          {:needs_approval, _invocation, call, info} ->
+            result = policy_denial(config, call, info, :needs_approval)
+            {:answered, answer(config, call, result, pipeline)}
+        end
+      end)
+
+    run_batch(config, verdicts, fn
+      task_config, {:execute, invocation, call} ->
+        tap(execute(task_config, invocation, call, pipeline), on_result)
+
+      _task_config, {:answered, result} ->
+        tap(result, on_result)
+    end)
+  end
+
+  @doc false
+  # The concurrent tool-batch runner of every turn path (dispatch_batch/4 for BaseAgent,
+  # Turn.Server's dispatched and approved calls): `fun.(task_config, item)` runs in a task
+  # per item, at most `config.max_tool_concurrency` at once (a pos_integer after
+  # BaseAgent.init/1), with the caller's OpenTelemetry context; the results come back in
+  # item order. `task_config` is `config` with the conversation's entries left behind, so
+  # each task's copy is small (B2): execution, budget, after_tool and after-hooks read the
+  # agent's name, model, toolset, tool_context, behaviours and the turn id
+  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
+  # runs in the caller with the full config.
+  @spec run_batch(map(), [item], (map(), item -> result)) :: [result]
+        when item: term(), result: term()
+  def run_batch(config, items, fun) do
+    parent_ctx = OtelCtx.capture()
+    task_config = tool_task_config(config)
+
+    items
+    |> Task.async_stream(
+      fn item ->
+        OtelCtx.restore(parent_ctx)
+        fun.(task_config, item)
+      end,
+      ordered: true,
+      max_concurrency: config.max_tool_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
+    do: %{config | memory: AgentMemory.without_entries(memory)}
+
+  defp tool_task_config(config), do: config
+
+  # Translate a `Task.async_stream` element into the underlying tool result.
+  # `Task.async_stream/3` (the linked variant run_batch/3 uses) propagates worker
+  # raises to the caller via process-link before the stream yields, so the
+  # `{:exit, {exception, stacktrace}}` clause below is unreachable for raises
+  # in the current configuration. It IS reachable for `:exit` reasons that
+  # the stream catches without killing the caller — most importantly
+  # `{:exit, :timeout}` from `on_timeout: :kill_task`, and any deliberate
+  # `exit/1` from tool wrapper code. Without this helper those would hit
+  # `FunctionClauseError` against a `{:ok, _}`-only pattern, masking the
+  # underlying cause. Public (`@doc false`) so it's directly unit-testable.
+  @doc false
+  def unwrap_tool_task_result!({:ok, result}), do: result
+
+  def unwrap_tool_task_result!({:exit, {exception, stacktrace}})
+      when is_exception(exception) and is_list(stacktrace) do
+    reraise(exception, stacktrace)
+  end
+
+  def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
 
   defp execute_and_wrap(config, call, invocation, execute_fn) do
     case call_execute_fn(execute_fn, config, invocation, call) do

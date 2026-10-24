@@ -65,7 +65,11 @@ defmodule Normandy.Agents.BaseAgentMaxTokensTest do
       client_builder: fn _token -> %CapturingClient{pid: self()} end
     }
 
-    tmpl = config |> ConfigTemplate.from_config("t") |> Map.put(:max_tokens, nil)
+    tmpl =
+      config
+      |> ConfigTemplate.from_config("t")
+      |> Map.put(:max_tokens, nil)
+      |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
 
     assert ConfigTemplate.rebuild(tmpl, supp, "TOKEN").max_tokens == 16_000
   end

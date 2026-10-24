@@ -2,7 +2,7 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
   @moduledoc "Eager auto-resume on (re)start from a persisted :steering state, no caller."
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -39,7 +39,7 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
 
     # Stub call_llm so the resumed turn finalizes instead of hitting a nil client.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req ->
           %Normandy.Test.TurnConfig.Resp{content: "resumed-done", tool_calls: nil}
         end

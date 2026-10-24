@@ -400,8 +400,10 @@ defmodule Normandy.Coordination.AgentProcess do
   Updates the agent config: `update_fn` gets the current
   `%Normandy.Agents.BaseAgentConfig{}` and returns the new one.
 
-  Raises `ArgumentError` when `update_fn` returns anything else; the process keeps its
-  config.
+  Raises `ArgumentError` when `update_fn` returns anything else, and in `:server` mode
+  when the session refuses the new config (`Normandy.Agents.Turn.Session.put_config/2`:
+  a session with a `:template_provider` needs a `credential` provider); the process keeps
+  its config.
 
   In `:inline` mode the update is queued behind the turn in flight and any runs before it
   (see "Inline turns"), so it sees their memory; the call waits for it.
@@ -434,6 +436,10 @@ defmodule Normandy.Coordination.AgentProcess do
         raise ArgumentError,
               "Normandy.Coordination.AgentProcess.update_agent/3: the function must " <>
                 "return a %Normandy.Agents.BaseAgentConfig{}, got: #{type}"
+
+      # The :server session refused the new config (Turn.Session.put_config/2).
+      {:error, %ArgumentError{} = exception} ->
+        raise exception
     end
   end
 
