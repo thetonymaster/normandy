@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.1.0](https://github.com/thetonymaster/normandy/compare/c15da39d93036430599f99243e790429995acdf2..v2.1.0) - 2026-10-24
+#### Features
+- send the memory tool as Anthropic's native memory_20250818 (AX-33) (#55) - ([4798893](https://github.com/thetonymaster/normandy/commit/4798893bfae0157adf5eb740ab51a31b8ae8cea2)) - Antonio Cabrera
+- close the medium tier of 2.0 known limits (#52) - ([792fe79](https://github.com/thetonymaster/normandy/commit/792fe792afefec9a0635c3945ef4da06b5d9ba2c)) - Antonio Cabrera
+- close five more 2.0 known limits (#51) - ([eaa26b8](https://github.com/thetonymaster/normandy/commit/eaa26b8dc60399b344fe35d0e59fbb140665a0d2)) - Antonio Cabrera
+#### Bug Fixes
+- JSON prose extraction no longer records every byte after a stray brace (#54) - ([372e08d](https://github.com/thetonymaster/normandy/commit/372e08d99047f33e8fb06a2a8d036f9aae99568e)) - Antonio Cabrera
+- close four 2.0 known limits (#49) - ([c15da39](https://github.com/thetonymaster/normandy/commit/c15da39d93036430599f99243e790429995acdf2)) - Antonio Cabrera
+#### Miscellaneous Chores
+- cite the bench result for Type's @compile inline (#53) - ([200866b](https://github.com/thetonymaster/normandy/commit/200866be3bbb17889d278ef27fe08e8da112d955)) - Antonio Cabrera
+- add Benchee benchmarks (mix bench) - ([a1426a7](https://github.com/thetonymaster/normandy/commit/a1426a79144b30138fc420e5bd538cee9286ffab)) - Antonio Cabrera
+
+- - -
+
 ## [v2.0.0](https://github.com/thetonymaster/normandy/compare/cf8fd089cc4a393f852db77571de2a21ed07ada0..v2.0.0) - 2026-10-24
 #### Features
 - ![BREAKING](https://img.shields.io/badge/BREAKING-red) Normandy 2.0 - ([95bd480](https://github.com/thetonymaster/normandy/commit/95bd480f0d124c3df18e115a16d8db04c61a90d7)) - Antonio Cabrera
