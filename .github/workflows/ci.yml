@@ -8,8 +8,8 @@ on:
 
 env:
   MIX_ENV: test
-  ELIXIR_VERSION: '1.17'
-  OTP_VERSION: '27'
+  ELIXIR_VERSION: '1.20'
+  OTP_VERSION: '29'
 
 jobs:
   test:
@@ -18,14 +18,16 @@ jobs:
 
     strategy:
       matrix:
-        # Elixir 1.17+ (mix.exs); OTP 26 left with 1.15/1.16 (test-only cowlib 2.20 needs OTP 27).
+        # The three latest Elixir minors, each on its newest OTP pairing here (test-only cowlib
+        # 2.20 needs OTP 27+). 1.17 left: ExUnit 1.17's capture_log on OTP 27 lost the logger's
+        # :default handler under the async suite (Logger.flush/0 {:not_found, ...}).
         include:
-          - elixir: '1.17'
-            otp: '27'
           - elixir: '1.18'
             otp: '27'
           - elixir: '1.19'
             otp: '28'
+          - elixir: '1.20'
+            otp: '29'
 
     steps:
       - name: Checkout code
@@ -57,7 +59,7 @@ jobs:
 
       - name: Check formatting
         run: mix format --check-formatted
-        if: matrix.elixir == '1.17' && matrix.otp == '27'
+        if: matrix.elixir == '1.20' && matrix.otp == '29'
 
       - name: Compile project (warnings as errors)
         run: mix compile --warnings-as-errors
@@ -73,7 +75,7 @@ jobs:
 
       - name: Generate coverage report
         run: mix test --cover
-        if: matrix.elixir == '1.17' && matrix.otp == '27'
+        if: matrix.elixir == '1.20' && matrix.otp == '29'
 
   integration-tests:
     name: Integration Tests

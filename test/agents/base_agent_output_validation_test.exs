@@ -52,14 +52,17 @@ defmodule Normandy.Agents.BaseAgentOutputValidationTest do
              BaseAgent.run(agent("approve"), %{chat_message: "x"})
   end
 
-  test "an output outside its schema is {:error, %ValidationError{}}, with nothing on stderr" do
+  test "an output outside its schema is {:error, %ValidationError{}}, never printed to stderr" do
     stderr =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         send(self(), {:result, BaseAgent.run(agent("delete_everything"), %{chat_message: "x"})})
       end)
 
     assert_received {:result, {:error, %ValidationError{errors: [_ | _]}}}
-    assert stderr == ""
+    # :stderr is captured globally, so another async test's compile warning can land in
+    # it; nothing of this run's output (the rejected value, the field) may.
+    refute stderr =~ "delete_everything"
+    refute stderr =~ "action"
   end
 
   test "Turn.Server replies the ValidationError and does not save the answer" do
