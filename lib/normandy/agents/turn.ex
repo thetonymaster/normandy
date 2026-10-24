@@ -25,9 +25,14 @@ defmodule Normandy.Agents.Turn do
   or MCP-connector turn) and that has no tool calls is appended and sent back as it
   is, with no user message after it, for the model to continue; it spends one
   iteration, like a tool batch. A paused final call (after the iteration cap) is continued the same way as the final call, at most three times; a fourth pause fails the turn with `{:error, %Normandy.LLMError{type: :pause_turn}}`.
+
+  A final response that carries server-tool results (a paused turn's continuation with
+  its `mcp_tool_result`, a web search) is appended right before the answer, so later
+  turns send what the tools returned.
   """
 
   alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn.State
   alias Normandy.Components.Message
   alias Normandy.Components.ToolCall
@@ -189,9 +194,17 @@ defmodule Normandy.Agents.Turn do
     {s, [{:guard_output, validated}]}
   end
 
+  # A final response that carries server-tool results (an MCP connector's
+  # mcp_tool_result, a web search's results) is appended before the answer, so later
+  # turns see what the tools returned, not only the answer the model wrote from it.
   def step(%State{status: :finalizing} = s, {:output_guarded, value}) do
+    results =
+      if ToolCallResponse.server_results?(s.last_response),
+        do: [{:append_message, "assistant", s.last_response}],
+        else: []
+
     {%{s | status: :stopped, final_response: value},
-     [{:append_message, "assistant", value}, {:finalize, value}]}
+     results ++ [{:append_message, "assistant", value}, {:finalize, value}]}
   end
 
   def step(%State{status: :tool_dispatch} = s, {:tool_results, results}) do
@@ -442,7 +455,9 @@ defmodule Normandy.Agents.Turn do
   call and is not a paused turn (`stop_reason` `pause_turn`, sent back for the model to
   continue). A turn's history ends this way only once the answer is appended (the
   `:output_guarded` step); after a tool batch it ends with the results, or the
-  iteration-cap notice.
+  iteration-cap notice. A final response with server-tool results is appended right
+  before the answer; a history that ends with it (the answer's append never happened)
+  ends with the model's final response, so it counts as answered too.
 
   `Turn.Server` reads it before it resumes a saved `:steering` turn: a server that
   stopped after the answer's append and before its `:stopped` save must not ask the
@@ -615,10 +630,9 @@ defmodule Normandy.Agents.Turn do
     {s2, [{:append_message, "assistant", resp} | effects]}
   end
 
-  # Map.get: the response may be any term a call_llm handler returned, and a struct
-  # without :stop_reason (a test double, a pre-2.0 ToolCallResponse) is not paused.
-  defp paused?(%{} = resp), do: Map.get(resp, :stop_reason) in [:pause_turn, "pause_turn"]
-  defp paused?(_resp), do: false
+  # The response may be any term a call_llm handler returned: a test double or a
+  # pre-2.0 ToolCallResponse without :stop_reason is not paused.
+  defp paused?(resp), do: ToolCallResponse.paused?(resp)
 
   # Reorder a merged result list to match the original batch (`pending_calls`) by
   # tool_call_id, so the next user turn presents tool_result blocks in API order.

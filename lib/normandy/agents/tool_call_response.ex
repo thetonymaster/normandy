@@ -53,6 +53,32 @@ defmodule Normandy.Agents.ToolCallResponse do
   end
 
   @doc """
+  Whether `response` is a paused turn: its `stop_reason` is `pause_turn` (`:pause_turn`
+  or `"pause_turn"`). Takes any map, since a streamed message reaches the turn as one
+  and a struct stored before `:stop_reason` existed has no key; anything else is not paused.
+  """
+  @spec paused?(term()) :: boolean()
+  def paused?(%{} = response), do: Map.get(response, :stop_reason) in [:pause_turn, "pause_turn"]
+  def paused?(_response), do: false
+
+  @doc """
+  Whether `response` carries server-tool results: a content block with a `"tool_use_id"`
+  (an MCP connector's `mcp_tool_result`, a `web_search_tool_result`). Reads
+  `:content_blocks`, or `:content` when it is a list (a streamed message's blocks).
+  """
+  @spec server_results?(term()) :: boolean()
+  def server_results?(response) do
+    blocks =
+      case response do
+        %{content_blocks: [_ | _] = blocks} -> blocks
+        %{content: [_ | _] = blocks} -> blocks
+        _other -> []
+      end
+
+    Enum.any?(blocks, &match?(%{"tool_use_id" => _}, &1))
+  end
+
+  @doc """
   `:content_blocks` for a response's content blocks given as maps (a streamed message's
   string-keyed blocks): `Claudio.Messages.Response.to_assistant_content/1` of them, so a
   streamed turn is replayed in the same shape as a non-streamed one.

@@ -53,6 +53,30 @@ defmodule Normandy.Agents.PauseTurnTest do
       |> ClaudioResponse.from_map()
       |> ClaudioResponse.to_assistant_content()
 
+  defp paused_sse,
+    do:
+      WireScript.message(
+        "msg_0",
+        WireScript.block(0, %{"type" => "text", "text" => ""}, [
+          %{"type" => "text_delta", "text" => "Searching."}
+        ]) ++
+          WireScript.block(1, %{@search | "input" => %{}}, [
+            %{"type" => "input_json_delta", "partial_json" => ~s({"query": "paris weather"})}
+          ]),
+        "pause_turn"
+      )
+
+  defp continued_sse,
+    do:
+      WireScript.message(
+        "msg_1",
+        WireScript.block(0, @result, []) ++
+          WireScript.block(1, %{"type" => "text", "text" => ""}, [
+            %{"type" => "text_delta", "text" => "Sunny."}
+          ]),
+        "end_turn"
+      )
+
   # The continuation: the user turn, then the paused assistant turn as it came, last.
   defp assert_continued do
     assert_received {:wire_body, 1, body}
@@ -156,7 +180,10 @@ defmodule Normandy.Agents.PauseTurnTest do
       assert_continued()
       refute_received {:tool_ran, _}
 
-      assert [%ToolCallResponse{stop_reason: :pause_turn}] =
+      assert [
+               %ToolCallResponse{stop_reason: :pause_turn},
+               %ToolCallResponse{tool_calls: [], content_blocks: [@result, @sunny]}
+             ] =
                for(
                  %{role: "assistant", content: %ToolCallResponse{} = r} <-
                    AgentMemory.messages(config.memory),
@@ -165,29 +192,7 @@ defmodule Normandy.Agents.PauseTurnTest do
     end
 
     test "stream/3 sends it back unchanged and returns the continued answer" do
-      paused =
-        WireScript.message(
-          "msg_0",
-          WireScript.block(0, %{"type" => "text", "text" => ""}, [
-            %{"type" => "text_delta", "text" => "Searching."}
-          ]) ++
-            WireScript.block(1, %{@search | "input" => %{}}, [
-              %{"type" => "input_json_delta", "partial_json" => ~s({"query": "paris weather"})}
-            ]),
-          "pause_turn"
-        )
-
-      continued =
-        WireScript.message(
-          "msg_1",
-          WireScript.block(0, @result, []) ++
-            WireScript.block(1, %{"type" => "text", "text" => ""}, [
-              %{"type" => "text_delta", "text" => "Sunny."}
-            ]),
-          "end_turn"
-        )
-
-      client = WireScript.client([{:sse, paused}, {:sse, continued}])
+      client = WireScript.client([{:sse, paused_sse()}, {:sse, continued_sse()}])
 
       assert {:ok, _config, %{chat_message: "Sunny."}} =
                BaseAgent.stream(tool_agent(client), "weather?", fn _ -> :ok end)
@@ -217,8 +222,11 @@ defmodule Normandy.Agents.PauseTurnTest do
 
       assert {:ok, entries} = InMemory.history(store, "s-pause")
 
-      assert [%ToolCallResponse{stop_reason: :pause_turn}, _final] =
-               for(%{role: "assistant", content: c} <- entries, do: c)
+      assert [
+               %ToolCallResponse{stop_reason: :pause_turn},
+               %ToolCallResponse{tool_calls: [], content_blocks: [@result, @sunny]},
+               %{chat_message: "Sunny."}
+             ] = for(%{role: "assistant", content: c} <- entries, do: c)
     end
   end
 
@@ -263,7 +271,22 @@ defmodule Normandy.Agents.PauseTurnTest do
       assert_continued()
     end
 
-    test "a second run after a continued paused turn sends no unanswered server-tool use" do
+    # The next turn's request: the paused turn whole, then the continuation's tool result
+    # (its text goes once, as the answer), then the answer and the new input. Each
+    # server-tool use is answered by a later block.
+    defp assert_result_kept(body) do
+      assert [
+               %{"role" => "user"},
+               %{"role" => "assistant", "content" => [@searching, @search]},
+               %{"role" => "assistant", "content" => [@result]},
+               %{"role" => "assistant", "content" => answer},
+               %{"role" => "user"}
+             ] = body["messages"]
+
+      assert answer in ["Sunny.", [%{"type" => "text", "text" => "Sunny."}]]
+    end
+
+    test "a second run after a continued paused turn sends the tool result it got" do
       client =
         WireScript.client([
           {:json, @paused, "pause_turn"},
@@ -275,21 +298,62 @@ defmodule Normandy.Agents.PauseTurnTest do
       assert {:ok, _config, %{chat_message: "Sunny."}} = BaseAgent.run(config, "and tomorrow?")
 
       assert_received {:wire_body, 2, body}
+      assert_result_kept(body)
+    end
 
-      assert [%{"role" => "user"}, %{"role" => "assistant"}, %{"role" => "assistant"}, last] =
-               body["messages"]
+    test "a second stream after a continued paused turn sends the tool result it got" do
+      client =
+        WireScript.client([
+          {:sse, paused_sse()},
+          {:sse, continued_sse()},
+          {:sse,
+           WireScript.message(
+             "msg_2",
+             WireScript.block(0, %{"type" => "text", "text" => ""}, [
+               %{"type" => "text_delta", "text" => "Sunny."}
+             ]),
+             "end_turn"
+           )}
+        ])
 
-      assert last["role"] == "user"
-      assert [_user, %{"content" => [@searching]}, _, _] = body["messages"]
+      {:ok, config, _} = BaseAgent.stream(mcp_agent(client), "weather?", fn _ -> :ok end)
 
-      for %{"role" => "assistant", "content" => blocks} <- body["messages"], is_list(blocks) do
-        answered = for %{"tool_use_id" => id} <- blocks, do: id
+      assert {:ok, _config, %{chat_message: "Sunny."}} =
+               BaseAgent.stream(config, "and tomorrow?", fn _ -> :ok end)
 
-        for %{"type" => type, "id" => id} <- blocks,
-            type in ["server_tool_use", "mcp_tool_use"] do
-          assert id in answered
-        end
+      assert_received {:wire_body, 2, body}
+      assert_result_kept(body)
+    end
+
+    test "Turn.Server stores the continuation's tool result for the next turn" do
+      client =
+        WireScript.client([
+          {:json, @paused, "pause_turn"},
+          {:json, [@result, @sunny], "end_turn"},
+          {:json, [@sunny], "end_turn"}
+        ])
+
+      store = {InMemory, InMemory.new()}
+
+      # A second server on the same store: the next turn reads the stored history.
+      start = fn ->
+        Server.start_link(
+          session_id: "s-pause-keep",
+          config: mcp_agent(client),
+          store: store,
+          registry: {Native, Native.new()}
+        )
       end
+
+      {:ok, first} = start.()
+      assert {:ok, %{chat_message: "Sunny."}} = Server.run(first, "weather?")
+      :ok = GenServer.stop(first)
+
+      {:ok, second} = start.()
+      assert {:ok, %{chat_message: "Sunny."}} = Server.run(second, "and tomorrow?")
+
+      assert_received {:wire_body, 2, body}
+      assert_result_kept(body)
     end
 
     test "Turn.Server continues a paused connector turn" do

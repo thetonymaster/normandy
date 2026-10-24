@@ -1,11 +1,11 @@
 defmodule Normandy.Agents.Turn.ServerPausedThinkingTest do
   @moduledoc """
-  Final review M2 (a7f5621): a paused turn whose blocks are `[thinking, mcp_tool_use]`,
-  stamped with the current prefix key (same model, prompt and tools, so its thinking is
-  not stale), is trimmed to `[thinking]` once it is no longer the last message (the use
-  has no result in memory: the continuation is stored as its answer only). A message
-  left with only thinking is dropped, so the next request carries neither a
-  thinking-only assistant message nor the unanswered server-tool use.
+  Final review M2 (a7f5621), revised when the continuation's tool result began to be
+  stored: a paused turn whose blocks are `[thinking, mcp_tool_use]`, stamped with the
+  current prefix key (same model, prompt and tools, so its thinking is not stale), is
+  followed in memory by the continuation's `mcp_tool_result`, so the use is answered and
+  the paused turn reaches the next request whole. The continuation goes whole too (its
+  text beside the answer): the thinking before it in the same wire turn is signed.
   """
   use ExUnit.Case, async: true
   @moduletag :capture_log
@@ -34,10 +34,7 @@ defmodule Normandy.Agents.Turn.ServerPausedThinkingTest do
   @found %{"type" => "text", "text" => "Found it."}
   @answer_two %{"type" => "text", "text" => "Answer two."}
 
-  @thinking_types ["thinking", "redacted_thinking"]
-  @server_use_types ["server_tool_use", "mcp_tool_use"]
-
-  test "a trimmed paused turn left with only thinking never reaches the next request" do
+  test "a paused turn with thinking reaches the next request whole once its result is stored" do
     client =
       WireScript.client(
         [
@@ -73,31 +70,30 @@ defmodule Normandy.Agents.Turn.ServerPausedThinkingTest do
     assert %{"role" => "assistant", "content" => [@thinking, @mcp_use]} =
              List.last(continuation["messages"])
 
-    # The new input: the paused message is no longer last, so its unanswered use is
-    # trimmed, and what is left (only thinking) is dropped.
+    # The new input: the paused message is no longer last, and its use is answered by
+    # the stored continuation, so both go as they came.
     assert {:ok, %BaseAgentOutputSchema{chat_message: "Answer two."}} =
              Turn.Server.run(srv, "q2")
 
     assert_received {:wire_body, 2, body}
     messages = body["messages"]
 
-    assistant_blocks =
-      for %{"role" => "assistant", "content" => content} <- messages, do: blocks(content)
-
-    refute Enum.any?(assistant_blocks, fn blocks ->
-             blocks != [] and Enum.all?(blocks, &(&1["type"] in @thinking_types))
-           end),
-           "an assistant message holds only thinking: #{inspect(messages)}"
-
-    all_blocks = Enum.flat_map(messages, &blocks(&1["content"]))
-    refute Enum.any?(all_blocks, &(&1["type"] in @server_use_types))
-    refute Enum.any?(all_blocks, &(&1["type"] in @thinking_types))
+    assert [
+             %{"role" => "user"},
+             %{"role" => "assistant", "content" => [@thinking, @mcp_use]},
+             %{
+               "role" => "assistant",
+               "content" => [
+                 %{"type" => "mcp_tool_result", "tool_use_id" => "mcptoolu_1"},
+                 @found
+               ]
+             },
+             %{"role" => "assistant"},
+             %{"role" => "user"}
+           ] = messages
 
     assert %{"role" => "user", "content" => q2} = List.last(messages)
     assert inspect(q2) =~ "q2"
     assert inspect(messages) =~ "Found it."
   end
-
-  defp blocks(content) when is_list(content), do: content
-  defp blocks(_text), do: []
 end
