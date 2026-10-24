@@ -259,9 +259,8 @@ defmodule Normandy.Agents.ValidationMiddleware do
   end
 
   # A schema struct as the validator reads decoded JSON: a struct has every key, so a
-  # nil field is an absent one. It descends into fields that are schema structs or lists,
-  # not into plain maps: a schema struct inside a plain map is left as it is, as are
-  # other values (dates, other structs).
+  # nil field is an absent one. It descends into schema structs, lists and plain maps
+  # (a `{:map, Schema}` field's values); other structs (dates) are left as they are.
   defp present_fields(%_{} = struct) do
     if validating_schema?(struct) do
       struct
@@ -274,6 +273,10 @@ defmodule Normandy.Agents.ValidationMiddleware do
   end
 
   defp present_fields(list) when is_list(list), do: Enum.map(list, &present_fields/1)
+
+  defp present_fields(%{} = map),
+    do: Map.new(map, fn {key, value} -> {key, present_fields(value)} end)
+
   defp present_fields(other), do: other
 
   defp validating_schema?(%mod{}),

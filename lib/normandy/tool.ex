@@ -15,6 +15,8 @@ defmodule Normandy.Tool do
     * `c:input_schema/1`: the JSON Schema object of the input.
     * `c:run/2`: runs the tool. `context.input` is the validated input. Returns
       `{:ok, result}` or `{:error, reason}`; either reaches the model as the tool result.
+    * `c:check_context!/2` (optional): checks the agent's `tool_context` when the agent is
+      built or the tool is registered.
 
   ## `use Normandy.Tool`
 
@@ -82,6 +84,17 @@ defmodule Normandy.Tool do
   and so does running past the tool's timeout.
   """
   @callback run(tool :: struct(), Context.t()) :: {:ok, term()} | {:error, term()}
+  @doc """
+  Optional. Checks the agent's `tool_context` values (`BaseAgentConfig.tool_context`) when
+  the tool and the context first meet: `BaseAgent.init/1`, `BaseAgent.register_tool/3` and
+  `Normandy.Agents.ConfigTemplate.rebuild/3` (a `Turn.Session` built from a stored template).
+  Returns `:ok` or raises `ArgumentError`, so a misconfiguration fails when the agent is
+  built rather than on the model's first call. A context replaced for one call (as
+  `Normandy.A2A.Server` does) is not checked here; `c:run/2` still sees it.
+  """
+  @callback check_context!(tool :: struct(), values :: map()) :: :ok
+
+  @optional_callbacks check_context!: 2
 
   @use_options [:name, :description, :input]
 
@@ -197,6 +210,17 @@ defmodule Normandy.Tool do
   """
   @spec input_schema(struct()) :: map() | nil
   def input_schema(%module{} = tool), do: module.input_schema(tool)
+
+  @doc """
+  Checks `values` (a `tool_context`) through the module's `c:check_context!/2`; `:ok` when
+  the module defines none.
+  """
+  @spec check_context!(struct(), map()) :: :ok
+  def check_context!(%module{} = tool, values) when is_map(values) do
+    if function_exported?(module, :check_context!, 2),
+      do: :ok = module.check_context!(tool, values),
+      else: :ok
+  end
 
   @doc "Runs the tool through its module's `c:run/2`."
   @spec run(struct(), Context.t()) :: {:ok, term()} | {:error, term()}

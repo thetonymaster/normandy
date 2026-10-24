@@ -377,6 +377,51 @@ defmodule Normandy.Agents.Turn do
   end
 
   @doc """
+  `resume/1` for a shell that holds the turn's stored history (`messages`, oldest
+  first). A `:steering` state is saved after its batch's results are appended, so a shell
+  that stopped between the two restarts from the state saved one round earlier. The
+  turn's tool rounds in `messages` (assistant tool calls with the last message's
+  `turn_id`) count too: `iterations_left` never exceeds `max_iterations` minus them, and a
+  turn they bring to the cap appends the iteration-cap notice (unless it is already the
+  last message) before its final call. Rounds removed by in-turn compaction are not in
+  `messages`; the saved count stands for them. Pure.
+  """
+  @spec resume(State.t(), [Message.t()]) :: {State.t(), [tuple()]}
+  def resume(%State{status: :steering} = s, messages) when is_list(messages) do
+    left = max(s.max_iterations - turn_rounds(messages), 0)
+
+    if left < s.iterations_left do
+      {s, effects} = resume(%{s | iterations_left: left})
+      {s, missing_cap_notice(left, messages) ++ effects}
+    else
+      resume(s)
+    end
+  end
+
+  def resume(%State{} = s, messages) when is_list(messages), do: resume(s)
+
+  # The tool rounds of the turn `messages` end in.
+  defp turn_rounds([]), do: 0
+
+  defp turn_rounds(messages) do
+    %Message{turn_id: turn_id} = List.last(messages)
+
+    messages
+    |> Enum.reverse()
+    |> Enum.take_while(&(&1.turn_id == turn_id))
+    |> Enum.count(&(&1.role == "assistant" and tool_calls(&1.content) != []))
+  end
+
+  defp missing_cap_notice(0, messages) do
+    case List.last(messages) do
+      %Message{role: "user", content: @cap_notice} -> []
+      _other -> [{:append_message, "user", @cap_notice}]
+    end
+  end
+
+  defp missing_cap_notice(_left, _messages), do: []
+
+  @doc """
   Whether `messages` end with a turn's answer: an assistant message that makes no tool
   call and is not a paused turn (`stop_reason` `pause_turn`, sent back for the model to
   continue). A turn's history ends this way only once the answer is appended (the

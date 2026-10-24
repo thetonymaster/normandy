@@ -181,7 +181,9 @@ defmodule Normandy.Agents.Turn.Server do
   memory. A crash in the `:emit` handler while re-announcing a resumed parked turn
   fails that turn (no caller is waiting), and the next turn closes its batch with
   interrupted results. An eagerly resumed `:steering` turn closes the batch the same
-  way before its next LLM call; a resumed parked turn is left alone, since its
+  way before its next LLM call, and counts the tool rounds its stored history holds
+  (`Normandy.Agents.Turn.resume/2`), so a round appended after the last state save still
+  counts against `max_tool_iterations`; a resumed parked turn is left alone, since its
   unanswered calls await a decision.
 
   A turn that fails or is killed after the API paused it (`stop_reason` `pause_turn`, a
@@ -1508,7 +1510,8 @@ defmodule Normandy.Agents.Turn.Server do
   defp resume_turn(data) do
     case close_resumed_batch(data) do
       {:ok, data} ->
-        {state, effects} = Turn.resume(data.turn_state)
+        messages = AgentMemory.messages(data.config.memory)
+        {state, effects} = Turn.resume(data.turn_state, messages)
         interpret(effects, %{data | turn_state: state})
 
       {:error, data, reason} ->

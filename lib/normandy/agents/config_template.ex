@@ -261,6 +261,7 @@ defmodule Normandy.Agents.ConfigTemplate do
     |> Map.update!(:initial_memory, &memory_cache(&1, :fill))
     |> struct(node_local_fields!(tmpl, supplement))
     |> InitOptions.validate_compaction_config!({__MODULE__, :rebuild, 3})
+    |> InitOptions.check_tool_context!()
     |> validate_client_options!()
     |> tap(&InitOptions.warn_deprecated_catalog(&1.behaviours))
   end

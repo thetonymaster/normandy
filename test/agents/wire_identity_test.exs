@@ -14,7 +14,8 @@ defmodule Normandy.Agents.WireIdentityTest do
 
   To record (once, on the code before Task 6.1a):
   `NORMANDY_RECORD_WIRE=1 mix test test/agents/wire_identity_test.exs`. A recording run
-  writes the fixtures and fails on purpose, so it can never pass a gate.
+  writes the fixtures and fails on purpose, so it can never pass a gate. Re-recorded once
+  since, for the system prompt's `# INPUT SCHEMA` section (AX-29): only `system` changed.
   """
   use ExUnit.Case, async: true
   @moduletag :capture_log

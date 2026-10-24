@@ -14,7 +14,7 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   turn state is still **non-terminal** (this guards against an index member a crash left
   behind). A deleted session (`Turn.Session.delete/1`) is never listed. It is restarted as a thin spec
   under the supervisor; the started `Turn.Server` reconstructs config from the
-  persisted template and `Turn.resume/1`s the in-flight turn — no inbound request.
+  persisted template and `Turn.resume/2`s the in-flight turn — no inbound request.
 
   The restarted server restores the plain-data options saved with the template
   (`:approval_timeout_ms`, `:on_approval_timeout`, `:idle_timeout_ms`). Functions

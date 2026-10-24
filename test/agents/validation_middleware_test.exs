@@ -13,6 +13,26 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
     end
   end
 
+  defmodule Entry do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "an entry" do
+      field(:name, :string, description: "name", required: true)
+      field(:note, :string, description: "optional note")
+    end
+  end
+
+  defmodule Entries do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "entries in a list and by key" do
+      field(:listed, {:array, Entry}, description: "entries")
+      field(:by_key, {:map, Entry}, description: "entries by key")
+    end
+  end
+
   # A struct schema with no Normandy validation support.
   defmodule PlainSchema do
     @moduledoc false
@@ -140,6 +160,19 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
     test "a valid map becomes the schema struct" do
       assert {:ok, %Query{query: "a"}} =
                ValidationMiddleware.validate_output(config(output_schema: %Query{}), %{query: "a"})
+    end
+
+    test "a schema struct inside a plain map is checked like one inside a list" do
+      cfg = config(output_schema: %Entries{})
+      entry = %Entry{name: "a"}
+
+      for output <- [%Entries{listed: [entry]}, %Entries{by_key: %{"k" => entry}}] do
+        assert {:ok, ^output} = ValidationMiddleware.validate_output(cfg, output)
+      end
+
+      for output <- [%Entries{listed: [%Entry{}]}, %Entries{by_key: %{"k" => %Entry{}}}] do
+        assert {:error, [_ | _]} = ValidationMiddleware.validate_output(cfg, output)
+      end
     end
 
     test "an invalid map is an output validation error" do

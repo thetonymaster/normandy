@@ -146,6 +146,15 @@ defmodule Normandy.Telemetry.UsageTest do
                %{input_tokens: 7, service_tier: "b"}
     end
 
+    test "a string-keyed (wire) side adds to an atom-keyed one" do
+      assert Usage.sum(%{input_tokens: 10, output_tokens: 5}, %{
+               "input_tokens" => 3,
+               "output_tokens" => 2,
+               "not_a_usage_key_anywhere" => 1
+             }) ==
+               %{"not_a_usage_key_anywhere" => 1, input_tokens: 13, output_tokens: 7}
+    end
+
     test "accepts a struct side" do
       sum = Usage.sum(struct(UsageStruct, input_tokens: 2), %{input_tokens: 5})
       assert sum.input_tokens == 7

@@ -216,6 +216,23 @@ defmodule Normandy.Resilience.RetryTest do
     end
   end
 
+  describe "run/2" do
+    test "a success returns the errors of the attempts that failed first, in order" do
+      {:ok, attempts} = Agent.start_link(fn -> 0 end)
+
+      fun = fn ->
+        case Agent.get_and_update(attempts, &{&1, &1 + 1}) do
+          n when n < 2 -> {:error, {:try, n}}
+          _ -> {:ok, :done}
+        end
+      end
+
+      opts = [base_delay: 0, jitter: false, retry_if: fn _ -> true end]
+      assert Retry.run(fun, opts) == {:ok, :done, [{:try, 0}, {:try, 1}]}
+      assert Retry.run(fn -> {:ok, :first} end, opts) == {:ok, :first, []}
+    end
+  end
+
   describe "preset/1" do
     test "quick preset has correct values" do
       opts = Retry.preset(:quick)

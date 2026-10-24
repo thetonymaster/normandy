@@ -90,6 +90,58 @@ defmodule Normandy.Tools.MemoryMountNamespaceTest do
     refute text =~ "acme/kb"
   end
 
+  describe "when the agent is built" do
+    alias Normandy.Agents.BaseAgent
+    alias Normandy.Test.FakeClient
+    alias Normandy.Tools.Toolset
+
+    defp agent(opts),
+      do: BaseAgent.init(Map.merge(%{client: FakeClient.new([]), model: "m"}, opts))
+
+    test "init/1 refuses a session namespace equal to a mount's", %{tool: tool} do
+      assert_raise ArgumentError, ~r/equals the namespace of mount \/memories\/org/, fn ->
+        agent(%{toolset: Toolset.new([tool]), tool_context: %{memory_namespace: "acme/kb"}})
+      end
+    end
+
+    test "register_tool/3 refuses it too", %{tool: tool} do
+      config = agent(%{tool_context: %{memory_namespace: "acme/kb"}})
+
+      assert_raise ArgumentError, ~r/equals the namespace of mount \/memories\/org/, fn ->
+        BaseAgent.register_tool(config, tool)
+      end
+    end
+
+    test "ConfigTemplate.rebuild/3 refuses it too", %{tool: tool} do
+      alias Normandy.Agents.ConfigTemplate
+
+      base = agent(%{tool_context: %{memory_namespace: "acme/kb"}})
+
+      tmpl =
+        base
+        |> ConfigTemplate.from_config("k", :eager)
+        |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
+
+      supplement = %{
+        toolset: Toolset.new([tool]),
+        before_hooks: [],
+        after_hooks: [],
+        client_builder: fn _ -> base.client end
+      }
+
+      assert_raise ArgumentError, ~r/equals the namespace of mount \/memories\/org/, fn ->
+        ConfigTemplate.rebuild(tmpl, supplement, "token")
+      end
+    end
+
+    test "another namespace, or none yet (supplied per call), is accepted", %{tool: tool} do
+      for context <- [%{memory_namespace: "acme/u"}, %{}] do
+        assert %{} = agent(%{toolset: Toolset.new([tool]), tool_context: context})
+        assert %{} = BaseAgent.register_tool(agent(%{tool_context: context}), tool)
+      end
+    end
+  end
+
   describe "new/1" do
     test "two mounts of one namespace with different access are refused" do
       error =

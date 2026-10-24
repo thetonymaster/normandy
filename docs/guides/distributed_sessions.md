@@ -107,7 +107,7 @@ Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-age
 - **Node loss, eager.** For sessions started with `resume_policy: :eager`, a
   per-node `Turn.ResumeReaper` watches `:nodedown` and auto-resumes them on a
   surviving node — no inbound request — by reconstructing config and continuing the
-  in-flight turn (`Turn.resume/1`). Concurrent reapers are safe (registry
+  in-flight turn (`Turn.resume/2`). Concurrent reapers are safe (registry
   atomicity). See "Eager handoff" below.
 
 ## Credentials: never moved between nodes

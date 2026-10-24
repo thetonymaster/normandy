@@ -2299,9 +2299,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   block with one cache breakpoint, and the output schema follows the providers. A provider
   whose text changes (a date, per-user data) invalidates the cached system prompt and
   everything after it, and drops replayed thinking.
-- **A custom input schema reaches the model as bare JSON** (AX-29). The user message is the
-  input's JSON; nothing in the system prompt describes its fields. Describe them in
-  `background` or `steps` if the model needs them.
 - **The memory tool is a custom tool** (AX-33). `Normandy.Tools.Memory` matches the
   Anthropic memory-tool commands but is sent as a custom tool, not the native
   `memory_20250818` type.
@@ -2325,14 +2322,12 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   window), and `SessionStore.history/2` returns all of them: a restore loads and decodes
   every snapshot to keep only the last. A session's storage and its load time therefore
   grow with the number of compactions, not only with its last window.
-- **A custom `retry_if` that retries a billed failure drops its usage.** The default `retry:`
-  policy retries only failures that bill nothing (rate limits, overload, server and transport
-  errors). A `retry_if` that also retries `:invalid_output`, `:max_tokens` or `:refusal`
-  reports only the final attempt's tokens in `[:normandy, :agent, :llm_call, :stop]` and the
-  run totals; the retried attempts' usage is dropped.
-- **A resumed turn can miss the iteration-cap notice.** If `Turn.Server` stops while it appends the
-  results of the last allowed tool round, the resumed turn makes its final call without the notice that
-  no more tools will run. The answer is still produced.
+- **A resumed turn cannot see rounds that in-turn compaction removed.** A `Turn.Server` that stops
+  after it appends a tool round's results and before it saves the turn state resumes from the state
+  saved one round earlier; it counts the turn's rounds in the stored history (`Turn.resume/2`), so
+  the cap and its notice hold. A round that in-turn compaction removed from the history is not
+  counted again, so a turn compacted mid-round and stopped at that point can make one tool round
+  past `max_tool_iterations`.
 - **A paused turn's continuation keeps only its answer.** When `Turn.Server` continues a paused
   MCP or server-tool turn, it stores the continuation as its answer only; the tool result (the
   `mcp_tool_result` of the call the pause left open) is not stored, so it does not reach later
@@ -2342,12 +2337,24 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   prose with a work budget of `8n + 1024` bytes for an `n`-byte answer (it was quadratic on unclosed
   braces: 30 s on 240 KB). A reply that spends the budget before its real answer, such as deeply nested
   JSON at nine or more levels spanning the content, is a `json_parse_error`; the retry path re-asks.
-- **A schema struct inside a plain-map field is not validated.** Validation descends into fields that
-  are schema structs or lists of them, not into plain maps.
-- **The memory tool checks its mounts on its first call.** A session namespace that equals a mount's
-  raises on the first `memory` tool call, not when the agent is built.
 
 ## New, non-breaking
+
+- A custom input schema is described in the system prompt: a `# INPUT SCHEMA` section with its
+  JSON Schema, before `# OUTPUT SCHEMA` (AX-29). The default input schema (sent as plain text)
+  adds none. The system prompt of an agent with a custom input schema therefore changes once,
+  and so does its prompt-cache prefix.
+- `Normandy.Tool` has an optional `check_context!/2` callback, called by `BaseAgent.init/1` and
+  `BaseAgent.register_tool/3` with the agent's `tool_context`. `Normandy.Tools.Memory` uses it
+  to refuse a session namespace equal to a mount's when the agent is built (it raised on the
+  first call).
+- An llm_call retried by `retry:` reports every attempt's usage: the failed attempts' tokens
+  (a custom `retry_if` that retries `:max_tokens`, `:invalid_output` or `:refusal`) are summed
+  into `[:normandy, :agent, :llm_call, :stop]`, the run totals and the final error's `usage`.
+  `Normandy.Telemetry.Usage.sum/2` reads string keys as atoms, so wire usage adds to adapter
+  usage.
+- Output validation reads a schema struct inside a `{:map, Schema}` field like one in a list:
+  its `nil` fields are absent, not `null` (a valid nested struct was refused).
 
 - `[:normandy, :workflow, :run, :stop]` carries `status: :ok | :error` (`:error` when the
   orchestrator or workflow returned `{:error, _}`).
