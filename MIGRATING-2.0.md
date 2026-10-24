@@ -2281,24 +2281,22 @@ code you wrote against 1.x must follow the changes below.
 
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.
 
-- **The context budget undercounts the prompt** (AX-12). The compactor's estimate
-  (`Normandy.Context.WindowManager`) counts the history only, at about four characters per
-  token; the system prompt and the tool definitions are not counted. Compaction can
-  therefore start late, and an API "prompt is too long" error is still possible near the
-  window. With a long system prompt or many tools, leave headroom: pin a smaller
-  `:context_window` or pass a larger `:reserved_tokens` in the compactor opts (the reserve
-  defaults to the agent's `max_tokens`).
-- **The structured-output path has no corrective retry** (AX-18). Constraints the API drops
-  (`pattern`, lengths, ranges, item counts) are stated in the property description, but an
-  answer that breaks one is not re-asked. The legacy parse-retry path still re-asks with
-  feedback.
-- **The output schema is sent twice under structured outputs** (AX-19). The system prompt's
-  `# OUTPUT SCHEMA` block is kept beside `output_config.format`, which costs its tokens on
-  every call.
-- **Context providers sit inside the cached system block** (AX-20). The system prompt is one
-  block with one cache breakpoint, and the output schema follows the providers. A provider
-  whose text changes (a date, per-user data) invalidates the cached system prompt and
-  everything after it, and drops replayed thinking.
+- **The context budget is an estimate** (AX-12). `Compactor.WindowManager` counts the history,
+  the system prompt and the tool definitions at about four characters per token, so near the
+  window an API "prompt is too long" error is still possible; leave headroom with a larger
+  `:reserved_tokens`. `Normandy.Context.WindowManager` used on its own (`within_limit?/2`,
+  `ensure_within_limit/2`) counts the history only.
+- **Only a direct answer is re-asked when it breaks a constraint** (AX-18). An answer that
+  parses but breaks a constraint the API does not enforce (`pattern`, lengths, ranges, item
+  counts) is re-asked with the errors when the call's answer is the output schema itself (an
+  agent without tools), on the structured and the legacy path. A tool-using turn's final
+  answer and a streamed answer are validated but not re-asked; they fail with
+  `ValidationError`.
+- **A changing context provider still drops replayed thinking** (AX-20). The context
+  providers' section is sent last, in a system block of its own after the cached one, so a
+  provider whose text changes keeps the rest of the system prompt cached; the conversation
+  after it is still re-read, and thinking replayed from before the change is left out (the
+  prefix key covers the whole system prompt).
 - **The memory tool is a custom tool** (AX-33). `Normandy.Tools.Memory` matches the
   Anthropic memory-tool commands but is sent as a custom tool, not the native
   `memory_20250818` type.
@@ -2339,6 +2337,27 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   JSON at nine or more levels spanning the content, is a `json_parse_error`; the retry path re-asks.
 
 ## New, non-breaking
+
+- The output schema is sent once (AX-19). `Normandy.LLM.Request` carries it apart, in
+  `:output_schema_prompt` (the `# OUTPUT SCHEMA` section), and the context providers' section
+  in `:context_prompt`; `:system` holds neither. `Request.system_prompt/1` joins the three, in
+  that order. `ClaudioAdapter` leaves the schema out of a call it constrains with
+  `output_config.format` and sends it on the legacy path, a JSON retry and the fallback after
+  a 400; `OpenAICompatibleAdapter` always sends it. **A `Normandy.Agents.Model` implementation
+  that sent `request.system` must send `Request.system_prompt/1`**, or its model no longer
+  sees the output schema or the context.
+- The system prompt's sections are reordered: the context providers' `# Context` section is
+  last, after `# INPUT SCHEMA` and `# OUTPUT SCHEMA` (it came before them), and
+  `ClaudioAdapter` sends it as a second system block with no cache breakpoint (AX-20).
+  `SystemPromptGenerator.generate_parts/1` returns the two parts; `generate_prompt/1` is
+  unchanged.
+- An answer that breaks a schema constraint is re-asked (AX-18): on a call whose answer is the
+  output schema, the validation errors go back to the model as a user message, up to
+  `json_retry_max_attempts` times (`enable_json_retry: false` turns it off); the retries'
+  usage is the call's.
+- `Compactor.WindowManager` counts the system prompt and tool definitions against the window
+  (AX-12): the compactor `ctx` carries `:prompt_tokens`, their estimate. Compaction starts
+  earlier for an agent with a long prompt or many tools.
 
 - A custom input schema is described in the system prompt: a `# INPUT SCHEMA` section with its
   JSON Schema, before `# OUTPUT SCHEMA` (AX-29). The default input schema (sent as plain text)

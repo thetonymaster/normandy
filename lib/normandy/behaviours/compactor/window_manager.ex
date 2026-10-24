@@ -14,6 +14,9 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   estimates again, and a compaction strips the kept messages' thinking (see "Compacting
   mid-round" in `Normandy.Behaviours.Compactor`).
 
+  The budget for the history is the window minus `:reserved_tokens` minus `ctx.prompt_tokens`
+  (the estimated system prompt and tool definitions of the next call).
+
   Options: `:context_window` pins the window (and skips the model catalog lookup);
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
   at or above the window raises `ArgumentError`; `:strategy` goes to
@@ -85,8 +88,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   def needs_window?(_opts), do: true
 
   @impl true
-  def maybe_compact(acc, %{window: window}, opts) do
-    case build_manager(window, opts, acc) do
+  def maybe_compact(acc, %{window: window} = ctx, opts) do
+    case build_manager(window, opts, acc, Map.get(ctx, :prompt_tokens, 0)) do
       nil ->
         {acc, %{compacted: false, reason: :no_window}}
 
@@ -99,13 +102,18 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   # there is nothing to size against, so the compactor skips. The answer's room is the
   # agent's max_tokens unless opts pins :reserved_tokens; it is read only when a manager
   # is actually built.
-  defp build_manager(window, opts, acc) do
+  defp build_manager(window, opts, acc, prompt_tokens) do
     :ok = reject_max_tokens!(opts)
 
     case Keyword.fetch(opts, :context_window) do
-      {:ok, pinned} -> checked_manager(pinned, Keyword.delete(opts, :context_window), acc)
-      :error when is_integer(window) -> checked_manager(window, opts, acc)
-      :error -> nil
+      {:ok, pinned} ->
+        checked_manager(pinned, Keyword.delete(opts, :context_window), acc, prompt_tokens)
+
+      :error when is_integer(window) ->
+        checked_manager(window, opts, acc, prompt_tokens)
+
+      :error ->
+        nil
     end
   end
 
@@ -121,7 +129,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     :ok
   end
 
-  defp checked_manager(window, opts, acc) do
+  defp checked_manager(window, opts, acc, prompt_tokens) do
     unless is_integer(window) and window > 0 do
       raise ArgumentError,
             "Compactor.WindowManager: :context_window must be a positive integer (the " <>
@@ -143,8 +151,11 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
               ":reserved_tokens in the compactor opts"
     end
 
+    # The system prompt and tool definitions the next call sends share the window with
+    # the history (ctx.prompt_tokens, AX-12). A prompt that leaves no room keeps the
+    # budget at one token, so the strategy keeps only what it must.
     WM.new(
-      [max_tokens: window, reserved_tokens: reserved] ++
+      [max_tokens: window, reserved_tokens: min(reserved + prompt_tokens, window - 1)] ++
         Keyword.take(opts, [:strategy, :summary_max_tokens])
     )
   end

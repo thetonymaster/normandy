@@ -8,6 +8,7 @@ defmodule Normandy.Agents.BaseAgentOutputValidationTest do
   alias Normandy.Agents.ValidationMiddleware
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.LLM.Request
   alias Normandy.LLMError
   alias Normandy.Schema.ValidationError
   alias Normandy.Test.StubClient
@@ -116,7 +117,8 @@ defmodule Normandy.Agents.BaseAgentOutputValidationTest do
       {:ok, _config, _out} =
         BaseAgent.run(tool_agent(~s({"action": "deny"})), %{chat_message: "x"})
 
-      assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
+      assert_receive {:converse, %Normandy.LLM.Request{} = prompt_request, _}
+      prompt = Request.system_prompt(prompt_request)
       assert prompt =~ "# OUTPUT SCHEMA"
       assert prompt =~ ~s("action")
       refute prompt =~ "tool_calls"

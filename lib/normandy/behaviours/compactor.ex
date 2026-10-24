@@ -14,6 +14,9 @@ defmodule Normandy.Behaviours.Compactor do
     * `:window` — the model's context window: the compactor opts' `:context_window`
       when pinned, otherwise resolved through the configured `ModelCatalog`
       (memoised on the agent). `nil` only for the `NoOp` compactor
+    * `:prompt_tokens` — the estimated tokens of the system prompt and tool definitions
+      the next call sends (about four characters per token), which share the window with
+      the history; `0` when there is no window
     * `:mid_round` — `false` at the start of a turn, `true` at the boundary after a
       tool batch. There the model's tool round is still open: the next request
       continues it, and its assistant turns go back with their thinking.
@@ -51,7 +54,12 @@ defmodule Normandy.Behaviours.Compactor do
   boundary, and its strategies strip the kept messages' thinking.
   """
 
-  @type ctx :: %{model: String.t() | nil, window: pos_integer() | nil, mid_round: boolean()}
+  @type ctx :: %{
+          model: String.t() | nil,
+          window: pos_integer() | nil,
+          mid_round: boolean(),
+          prompt_tokens: non_neg_integer()
+        }
 
   @doc """
   Shrinks the conversation in `acc` when it needs to, and returns `{acc, meta}`.

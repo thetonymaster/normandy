@@ -9,6 +9,10 @@ defprotocol Normandy.Agents.Model do
       events"). A client that can't stream returns
       `{:error, %Normandy.LLMError{type: :unsupported, retryable?: false}}`.
 
+  The system prompt to send is `Normandy.LLM.Request.system_prompt/1`: `request.system`
+  holds no output schema, which is in `request.output_schema_prompt` so that an adapter
+  that constrains the answer to it can leave it out.
+
   Both return `{:error, %Normandy.LLMError{}}` when the call failed. Set `retryable?` to
   true only when resending the same request can succeed (rate limit, overload, 5xx,
   transport). Normandy raises `ArgumentError` for any other return value.

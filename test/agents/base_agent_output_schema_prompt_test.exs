@@ -6,6 +6,7 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.LLM.Request
   alias Normandy.Test.FakeClient
   alias Normandy.Test.StubClient
 
@@ -58,7 +59,8 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
       })
 
     BaseAgent.run!(agent, "hi")
-    assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
+    assert_receive {:converse, %Normandy.LLM.Request{} = prompt_request, _}
+    prompt = Request.system_prompt(prompt_request)
     prompt
   end
 
@@ -83,7 +85,8 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
         })
 
       BaseAgent.run!(agent, input)
-      assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
+      assert_receive {:converse, %Normandy.LLM.Request{} = prompt_request, _}
+      prompt = Request.system_prompt(prompt_request)
       prompt
     end
 
@@ -117,7 +120,8 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
 
     {_agent, response} = BaseAgent.run!(agent, "hi")
 
-    assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
+    assert_receive {:converse, %Normandy.LLM.Request{} = prompt_request, _}
+    prompt = Request.system_prompt(prompt_request)
     refute prompt =~ "tool_calls"
     refute prompt =~ "prefix_key"
     assert response.chat_message == "plain answer"
@@ -129,14 +133,16 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
     agent = BaseAgent.init(%{client: stub, model: "m", output_schema: %Ordered{}})
 
     assert {:ok, _agent, %Ordered{value: "v"}} = BaseAgent.run(agent, "hi")
-    assert_receive {:converse, %Normandy.LLM.Request{system: synced}, _}
+    assert_receive {:converse, %Normandy.LLM.Request{} = synced_request, _}
+    synced = Request.system_prompt(synced_request)
 
     streaming = FakeClient.new([{:text, ~s({"value":"v"})}])
 
     assert {:ok, _agent, %Ordered{value: "v"}} =
              BaseAgent.stream(%{agent | client: streaming}, "hi", fn _ -> :ok end)
 
-    assert [%Normandy.LLM.Request{system: streamed}] = FakeClient.requests(streaming)
+    assert [%Normandy.LLM.Request{} = streamed_request] = FakeClient.requests(streaming)
+    streamed = Request.system_prompt(streamed_request)
 
     {:ok, srv} =
       Turn.Server.start_link(
@@ -147,7 +153,8 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
       )
 
     assert {:ok, %Ordered{value: "v"}} = Turn.Server.run(srv, "hi")
-    assert_receive {:converse, %Normandy.LLM.Request{system: served}, _}
+    assert_receive {:converse, %Normandy.LLM.Request{} = served_request, _}
+    served = Request.system_prompt(served_request)
 
     for prompt <- [synced, streamed, served] do
       assert schema_keys(prompt) == order

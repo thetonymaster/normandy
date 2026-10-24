@@ -118,13 +118,17 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       type: :boolean,
       default: true,
       doc:
-        "Asks the model again when its JSON does not parse. `Normandy.LLM.OpenAICompatibleAdapter` " <>
-          "never re-asks."
+        "Asks the model again when its JSON does not parse (`Normandy.LLM.ClaudioAdapter`; " <>
+          "`Normandy.LLM.OpenAICompatibleAdapter` does not) or, on any client, when a direct " <>
+          "answer breaks a schema constraint."
     ],
     json_retry_max_attempts: [
       type: :pos_integer,
       default: 2,
-      doc: "JSON re-asks per call (none with `Normandy.LLM.OpenAICompatibleAdapter`)."
+      doc:
+        "Re-asks per call: for JSON that does not parse (none with " <>
+          "`Normandy.LLM.OpenAICompatibleAdapter`), then for a broken constraint; a constraint " <>
+          "re-ask makes no parse re-asks of its own."
     ],
     guardrails: [
       type: :keyword_list,

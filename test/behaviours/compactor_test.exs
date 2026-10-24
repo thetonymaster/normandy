@@ -229,6 +229,39 @@ defmodule Normandy.Behaviours.CompactorTest do
       assert AgentMemory.history(result.memory) == AgentMemory.history(acc.memory)
     end
 
+    test "the system prompt and tools the next call sends count against the window (AX-12)" do
+      msgs = for i <- 1..10, do: {"user", "message number #{i} padding"}
+      acc = %{memory: mem_with(msgs)}
+      before = Normandy.Context.WindowManager.estimate_conversation_tokens(acc.memory)
+      window = before + 100
+
+      ctx = %{model: "m", window: window}
+
+      assert {_, %{compacted: false}} =
+               WMCompactor.maybe_compact(acc, Map.put(ctx, :prompt_tokens, 50),
+                 reserved_tokens: 16
+               )
+
+      assert {result, %{compacted: true} = meta} =
+               WMCompactor.maybe_compact(acc, Map.put(ctx, :prompt_tokens, 150),
+                 reserved_tokens: 16
+               )
+
+      assert meta.tokens_after <= window - 16 - 150
+      assert length(AgentMemory.history(result.memory)) < length(msgs)
+    end
+
+    test "a prompt larger than the window leaves the newest message" do
+      acc = %{memory: mem_with(for i <- 1..5, do: {"user", "message #{i}"})}
+
+      assert {result, %{compacted: true}} =
+               WMCompactor.maybe_compact(acc, %{model: "m", window: 100, prompt_tokens: 500},
+                 reserved_tokens: 16
+               )
+
+      assert [_ | _] = AgentMemory.history(result.memory)
+    end
+
     test "conversation over the window is truncated (oldest_first default)" do
       # ~25 chars each → ~6 tokens/msg + 10 overhead; 40 messages well exceeds a
       # tiny 80-token window minus 64 reserved.

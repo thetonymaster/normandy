@@ -3,6 +3,7 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
 
   alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema}
   alias Normandy.Components.StreamEvent
+  alias Normandy.LLM.Request
   alias Normandy.LLMError
   alias Normandy.Test.FakeClient
 
@@ -151,7 +152,9 @@ defmodule Normandy.Agents.BaseAgentStreamTest do
     BaseAgent.stream(agent(client, %{output_schema: %Answer{}}), "q", collect())
     BaseAgent.stream(agent(client), "q", collect())
 
-    assert [%{system: answer_prompt}, %{system: chat_prompt}] = FakeClient.requests(client)
+    assert [answer_request, chat_request] = FakeClient.requests(client)
+    answer_prompt = Request.system_prompt(answer_request)
+    chat_prompt = Request.system_prompt(chat_request)
     assert answer_prompt =~ "# OUTPUT SCHEMA"
     refute chat_prompt =~ "# OUTPUT SCHEMA"
   end
