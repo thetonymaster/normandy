@@ -20,6 +20,19 @@ measurement.
 | `json_regions.exs` | `JsonDeserializer.parse_and_validate/3` region extraction, balanced and adversarial, 1–240 KB |
 | `output_guards.exs` | `BaseAgent.stream/3` with output guards, `:incremental` vs `:accumulate` vs none, 16–256 KB |
 | `request_messages.exs` | `AgentMemory.request_messages_for/2` on 10 to 5k messages |
+| `session_store.exs` | SessionStore `append_entry`, `history` (10/100/1k entries), `save_turn_state` + `load_turn_state` per backend |
+| `memory_store.exs` | MemoryStore `put` (one document, overwritten), `get`, `list` over 100 documents per backend |
+
+### Store backends
+
+The two store scripts run InMemory, ETS, Mnesia, Redis and Postgres. Redis and
+Postgres must be running: `REDIS_URL` (default `redis://localhost:6379`) and
+`POSTGRES_URL` (default `ecto://postgres:postgres@localhost:55432/normandy_bench`).
+An unreachable backend fails the run and names it. `BENCH_STORES=in_memory,mnesia`
+runs only the listed backends. Postgres uses its own `normandy_bench` database, created
+and migrated on first use. Redis keys go under a random `normandy_bench*` prefix and
+Mnesia into a temp dir. Every session and namespace a run creates is deleted
+afterwards, even when a scenario raises.
 
 ## Compare two commits
 
