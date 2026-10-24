@@ -6,16 +6,17 @@ defmodule Normandy.Test.OwnLog do
   under test then fails on a line that test never wrote.
 
   `capture/2` captures the same way but keeps only the events logged by the
-  calling process, each as `"<metadata>[<level>] <message>"`. Use it only when the
-  code under test logs in the caller's process; a refute over a log written by
-  another process belongs in an `async: false` module instead.
+  calling process, each as `"<metadata>[<level>] <message>"`. `pid: pid` keeps the
+  events of that process instead (a server the test started, which logs its own
+  crashes). A refute over a log written by a process the test cannot name belongs in
+  an `async: false` module instead.
 
       log = Normandy.Test.OwnLog.capture([metadata: :all], fn -> ... end)
       refute log =~ "secret"
 
-  `opts` are `ExUnit.CaptureLog.capture_log/2`'s, except `:format`: the capture sets its
-  own format to tell events and their pids apart, so a caller's `:format` raises
-  `ArgumentError`.
+  The other `opts` are `ExUnit.CaptureLog.capture_log/2`'s, except `:format`: the
+  capture sets its own format to tell events and their pids apart, so a caller's
+  `:format` raises `ArgumentError`.
   """
 
   # Separators no log message is expected to contain: one opens an event, the
@@ -30,7 +31,8 @@ defmodule Normandy.Test.OwnLog do
             "Normandy.Test.OwnLog.capture/2 sets its own :format; drop the :format option"
     end
 
-    pid_token = "pid=" <> List.to_string(:erlang.pid_to_list(self()))
+    {pid, opts} = Keyword.pop(opts, :pid, self())
+    pid_token = "pid=" <> List.to_string(:erlang.pid_to_list(pid))
 
     opts
     |> Keyword.put(:format, @event <> "$metadata" <> @meta_end <> "[$level] $message\n")

@@ -41,6 +41,29 @@ defmodule Normandy.Test.OwnLogTest do
     refute log =~ "other-process"
   end
 
+  test "capture/2 with :pid keeps that process's events, not the caller's" do
+    test_pid = self()
+
+    other =
+      spawn(fn ->
+        receive do
+          :log -> Logger.warning("theirs")
+        end
+
+        send(test_pid, :logged)
+      end)
+
+    log =
+      OwnLog.capture([pid: other], fn ->
+        Logger.warning("mine")
+        send(other, :log)
+        assert_receive :logged
+      end)
+
+    assert log =~ "[warning] theirs"
+    refute log =~ "mine"
+  end
+
   # 6.6a review: the capture's own format would silently replace a caller's.
   test "capture/2 refuses a caller's :format" do
     assert_raise ArgumentError, ~r/sets its own :format/, fn ->
