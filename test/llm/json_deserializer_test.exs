@@ -429,24 +429,28 @@ defmodule Normandy.LLM.JsonDeserializerTest do
   end
 
   describe "hardening — unclosed openers" do
-    test "unclosed brace in 240 KB of prose returns within 1 s" do
+    # The quadratic versions of these inputs took 30-60 s; linear work takes well under 1 s
+    # locally. 5 s keeps the check meaningful on a slow, shared CI runner.
+    @linear_budget_us 5_000_000
+
+    test "unclosed brace in 240 KB of prose returns within the linear budget" do
       text = String.duplicate("{ word ", 40_000)
 
       {t, result} =
         :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
 
       assert {:error, {:json_parse_error, _, _}} = result
-      assert t < 1_000_000
+      assert t < @linear_budget_us
     end
 
-    test "repeated unclosed brace + escaped quote in 240 KB returns within 1 s" do
+    test "repeated unclosed brace + escaped quote in 240 KB returns within the linear budget" do
       text = String.duplicate("{ \\\" ", 48_000)
 
       {t, result} =
         :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
 
       assert {:error, {:json_parse_error, _, _}} = result
-      assert t < 1_000_000
+      assert t < @linear_budget_us
     end
 
     test "an escaped-quote tail before a valid object still finds the object" do
@@ -466,18 +470,18 @@ defmodule Normandy.LLM.JsonDeserializerTest do
           :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
 
         assert {:ok, %BaseAgentOutputSchema{chat_message: "done"}} = result
-        assert t < 1_000_000
+        assert t < @linear_budget_us
       end
     end
 
-    test "240 KB of deeply nested brackets returns within 1 s" do
+    test "240 KB of deeply nested brackets returns within the linear budget" do
       text = String.duplicate("[", 120_000) <> String.duplicate("]", 120_000) <> " x"
 
       {t, result} =
         :timer.tc(fn -> JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{}) end)
 
       assert {:error, {:json_parse_error, _, _}} = result
-      assert t < 1_000_000
+      assert t < @linear_budget_us
     end
 
     test "unclosed brackets and braces mixed still find the later balanced region" do
