@@ -205,6 +205,7 @@ defmodule Normandy.Agents.Turn.Server do
   alias Normandy.Hooks.Runner
   alias Normandy.Hooks.ServerGlue
   alias Normandy.Options
+  alias Normandy.Schema.LegacyMeta
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.OtelCtx
   alias Normandy.Telemetry.RunUsage
@@ -745,7 +746,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp load_turn_state({mod, handle}, sid) do
     case store_call(fn -> mod.load_turn_state(handle, sid) end) do
-      {:ok, ts} -> {:ok, ts}
+      {:ok, ts} -> {:ok, LegacyMeta.strip(ts)}
       :error -> {:ok, nil}
       {:error, reason} -> {:error, store_reason(reason)}
     end

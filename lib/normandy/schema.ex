@@ -269,7 +269,8 @@ defmodule Normandy.Schema do
   end
 
   @doc false
-  # What an io_schema's to_json encodes: every
+  # What an io_schema's to_json encodes: `__meta__` (a foreign struct's, such as Ecto's,
+  # whose encoder raises, or a legacy one) and every
   # redact: true field removed, at every depth, so a nested schema hides its
   # secrets too. The struct rule is Normandy.JSON's: a struct with its own
   # Jason.Encoder impl stays a struct and the impl picks the fields, so a schema
@@ -279,7 +280,7 @@ defmodule Normandy.Schema do
   @spec __serializable__(term()) :: term()
   def __serializable__(%mod{} = struct) do
     schema? = Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)
-    hidden = if schema?, do: mod.__schema__(:redact_fields), else: []
+    hidden = if schema?, do: [:__meta__ | mod.__schema__(:redact_fields)], else: [:__meta__]
 
     cond do
       not Normandy.JSON.own_encoder?(struct) ->

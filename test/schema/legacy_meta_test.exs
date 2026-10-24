@@ -41,7 +41,9 @@ defmodule Normandy.Schema.LegacyMetaTest do
     """
 
     args = Enum.flat_map(:code.get_path(), &["-pa", to_string(&1)])
-    {out, status} = System.cmd("elixir", args ++ ["-e", script], stderr_to_stdout: true)
+    elixir = Path.expand("../../bin/elixir", Application.app_dir(:elixir))
+    elixir = if File.exists?(elixir), do: elixir, else: System.find_executable("elixir")
+    {out, status} = System.cmd(elixir, args ++ ["-e", script], stderr_to_stdout: true)
 
     assert status == 0, out
     assert String.trim(out) =~ ~s([false, false, false, false, "x"])

@@ -1,6 +1,7 @@
 defmodule Normandy.Agents.ConfigTemplateV1Test do
   # Review Focus #1: a session template saved by Normandy 1.0.0, rebuilt under 2.0.
   use ExUnit.Case, async: true
+  @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig

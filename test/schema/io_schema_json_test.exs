@@ -34,4 +34,39 @@ defmodule Normandy.Schema.IoSchemaJsonTest do
 
     assert Jason.decode!(json) == %{"shown" => "a"}
   end
+
+  defmodule Boom do
+    defstruct []
+
+    defimpl Jason.Encoder do
+      def encode(_, _), do: raise("cannot encode metadata")
+    end
+  end
+
+  defmodule Foreign do
+    defstruct [:id, __meta__: %Boom{}]
+  end
+
+  defmodule Holder do
+    use Normandy.Schema
+
+    io_schema "holds anything" do
+      field(:user, :any)
+    end
+  end
+
+  test "to_json leaves out the __meta__ of a nested foreign struct whose encoder raises" do
+    json = BaseIOSchema.to_json(%Holder{user: %Foreign{id: 1}})
+
+    assert Jason.decode!(json) == %{"user" => %{"id" => 1}}
+  end
+
+  test "to_json leaves out a nested legacy Normandy.Metadata" do
+    legacy = %{__struct__: Normandy.Metadata, state: :built, schema: Holder}
+    user = %Foreign{id: 2} |> Map.put(:__meta__, legacy)
+
+    json = BaseIOSchema.to_json(%Holder{user: user})
+
+    refute json =~ "__meta__"
+  end
 end

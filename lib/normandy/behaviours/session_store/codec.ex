@@ -18,7 +18,12 @@ defmodule Normandy.Behaviours.SessionStore.Codec do
 
   @spec decode(binary()) :: term()
   def decode(bin) when is_binary(bin) do
-    bin |> safe_decode() |> LegacyMeta.strip()
+    term = safe_decode(bin)
+
+    # Only data written before `__meta__` was dropped names the legacy module.
+    if :binary.match(bin, "Elixir.Normandy.Metadata") == :nomatch,
+      do: term,
+      else: LegacyMeta.strip(term)
   end
 
   defp safe_decode(bin) do
