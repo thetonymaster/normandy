@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.3.0](https://github.com/thetonymaster/normandy/compare/cf334dca081877488dffdf1b2b9e16e9a2ca3a6f..v2.3.0) - 2026-10-24
+#### Features
+- store a final response's server-tool results before its answer (#58) - ([cf334dc](https://github.com/thetonymaster/normandy/commit/cf334dca081877488dffdf1b2b9e16e9a2ca3a6f)) - Antonio Cabrera
+
+- - -
+
 ## [v2.2.0](https://github.com/thetonymaster/normandy/compare/a97c30d13e2697087fef8157ba5ca98d0d636646..v2.2.0) - 2026-10-24
 #### Features
 - delete sessions by reachability; restore from the last compaction (#57) - ([342bec6](https://github.com/thetonymaster/normandy/commit/342bec65aa306622e86d123a31063c134bb2d903)) - Antonio Cabrera
