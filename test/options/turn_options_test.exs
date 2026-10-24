@@ -163,6 +163,27 @@ defmodule Normandy.Options.TurnOptionsTest do
       assert error.message =~ "dispatch_tools"
     end
 
+    test "another BaseAgent.Handlers function as dispatch_tools is refused too" do
+      handlers = %{
+        Handlers.default()
+        | dispatch_tools: &Normandy.Agents.BaseAgent.Handlers.admit_turn_input/2
+      }
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(
+            session_id: "s-other-agent-fun",
+            registry: {Native, nil},
+            supervisor: self(),
+            store: {InMemory, nil},
+            config: %BaseAgentConfig{},
+            handlers: handlers
+          )
+        end
+
+      assert error.message =~ "dispatch_tools"
+    end
+
     test "the default set and a set with a nil dispatch_tools are accepted" do
       for handlers <- [
             Handlers.default(),

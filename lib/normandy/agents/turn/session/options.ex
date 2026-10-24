@@ -160,13 +160,12 @@ defmodule Normandy.Agents.Turn.Session.Options do
   @doc false
   # No shell runs a set's dispatch_tools: Turn.Server sends tool calls through
   # Normandy.Agents.Dispatch (policy, approval, budget, hooks), so a custom one would be
-  # ignored. nil or one of BaseAgent's own (a function of @agent_handlers) passes; the field
-  # goes in 3.0. Calling Handlers.default/0 here would put this leaf back in the
-  # compile-connected cycle, so the default is recognised by the module its function is in.
+  # ignored. nil or the default's (BaseAgent.Handlers.dispatch_turn_tools/2) passes; the
+  # field goes in 3.0. Calling Handlers.default/0 or capturing that function here would put
+  # this leaf back in the compile-connected cycle, so the default is recognised by name.
   @spec validate_handlers(term()) :: {:ok, struct()} | {:error, String.t()}
   def validate_handlers(%{__struct__: @handlers, dispatch_tools: dispatch} = handlers) do
-    if dispatch == nil or
-         (is_function(dispatch) and Function.info(dispatch, :module) == {:module, @agent_handlers}) do
+    if dispatch == nil or default_dispatch?(dispatch) do
       {:ok, handlers}
     else
       {:error,
@@ -178,6 +177,15 @@ defmodule Normandy.Agents.Turn.Session.Options do
 
   def validate_handlers(other),
     do: {:error, "expected #{inspect(@handlers)}, got: " <> Describe.type_of(other)}
+
+  defp default_dispatch?(fun) when is_function(fun, 2) do
+    info = Function.info(fun)
+
+    info[:type] == :external and info[:module] == @agent_handlers and
+      info[:name] == :dispatch_turn_tools
+  end
+
+  defp default_dispatch?(_other), do: false
 
   @doc false
   def validate_config(%{__struct__: @base_agent_config} = config), do: {:ok, config}
