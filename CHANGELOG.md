@@ -74,6 +74,7 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
 
 ### Changed
 
+- Requires Elixir 1.17 or later (was 1.15); CI tests Elixir 1.17-1.19 on OTP 27 and 28.
 - Breaking changes are listed, with what to do, in `MIGRATING-2.0.md` (sections 1–47). The bullets below
   are the telemetry and rolling-deploy changes; MIGRATING has the rest.
 - `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `approve/2` casts `{:approval, decisions, ctx}`.
@@ -115,7 +116,6 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
   turn's last save: it keeps the result, retries the save, refuses new turns with `:persist_failed`
   until it lands, and a resume whose answer is already stored makes no model call.
 - A tool result is encoded once on every path (it was encoded up to five times).
-- Normandy compiles on Elixir 1.15 and 1.16 again (`%Duration{}` is matched only where it exists).
 - A new input after a stored paused turn continues that turn first, so the API no longer rejects
   every later request.
 - A module using the `agent do` DSL compiles without warnings on Elixir 1.20.

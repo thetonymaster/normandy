@@ -4,6 +4,9 @@ Normandy 2.0 moves to Claudio 0.7 and makes its defaults work on Claude Opus 4.7
 which reject sampling parameters and `budget_tokens` thinking. Each breaking change below
 says what to do.
 
+Normandy 2.0 requires Elixir 1.17 or later (1.x supported 1.15 and 1.16) and is tested on
+OTP 27 and 28.
+
 ## Who is affected
 
 Find the rows that describe you and read the sections they list. Every section is listed at least once.

@@ -8,8 +8,8 @@ on:
 
 env:
   MIX_ENV: test
-  ELIXIR_VERSION: '1.15'
-  OTP_VERSION: '26'
+  ELIXIR_VERSION: '1.17'
+  OTP_VERSION: '27'
 
 jobs:
   test:
@@ -18,15 +18,10 @@ jobs:
 
     strategy:
       matrix:
-        elixir: ['1.15', '1.16', '1.17']
-        otp: ['26', '27']
-        exclude:
-          # OTP 27 requires Elixir 1.17+
-          - elixir: '1.15'
-            otp: '27'
-          - elixir: '1.16'
-            otp: '27'
+        # Elixir 1.17+ (mix.exs); OTP 26 left with 1.15/1.16 (test-only cowlib 2.20 needs OTP 27).
         include:
+          - elixir: '1.17'
+            otp: '27'
           - elixir: '1.18'
             otp: '27'
           - elixir: '1.19'

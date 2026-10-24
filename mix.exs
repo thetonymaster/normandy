@@ -7,25 +7,17 @@ defmodule Normandy.MixProject do
     [
       app: :normandy,
       version: @version,
-      elixir: "~> 1.15",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
       consolidate_protocols: Mix.env() != :test,
       elixirc_paths: elixirc_paths(Mix.env()),
       dialyzer: dialyzer(),
-      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy). 43966 and 43969 have no fix in
-      # any release; 43971 is fixed in 2.20.0, which is pinned out (see deps/0: OTP 26).
-      # decimal arrives only with the optional ecto/postgrex deps and the test-only ex_mcp; its
-      # fix (3.0.0) is blocked by ex_json_schema 0.11.3 (via ex_mcp), which requires `decimal ~> 2.0`.
-      # Hex warns once an entry no longer matches the lock.
+      # cowlib is test-only (Bypass -> plug_cowboy -> cowboy, and ex_mcp); 43966 has no fix in
+      # any release. Hex warns once an entry no longer matches the lock.
       hex: [
-        ignore_advisories: [
-          "EEF-CVE-2026-43966",
-          "EEF-CVE-2026-43969",
-          "EEF-CVE-2026-43971",
-          "EEF-CVE-2026-32686"
-        ]
+        ignore_advisories: ["EEF-CVE-2026-43966"]
       ],
       test_coverage: [summary: [threshold: 60]],
       # test/fixtures holds data and the script that generates it, not tests: without this,
@@ -290,11 +282,6 @@ defmodule Normandy.MixProject do
       # Option schemas for every public entry point (Normandy.Options).
       {:nimble_options, "~> 1.1"},
       {:bypass, "~> 2.1", only: :test},
-      # Bypass's server. cowlib 2.20.0 uses `maybe` without enabling the feature, so it
-      # fails to compile on OTP 26, which CI still tests. Lift these pins when OTP 26 leaves
-      # the matrix.
-      {:cowboy, "~> 2.18.0", only: :test},
-      {:cowlib, "~> 2.19.0", only: :test},
       # Tier-1/2 session infra. Optional: Tier-0 (default) users pull in none of these.
       # The Postgres/Horde modules are conditionally compiled on their presence.
       {:ecto_sql, "~> 3.12", optional: true},
@@ -317,13 +304,7 @@ defmodule Normandy.MixProject do
   end
 
   # Live e2e scenario 12 talks to a real stdio MCP server through Claudio's ExMCP adapter.
-  # ex_mcp requires Elixir ~> 1.17; on older toolchains (CI's 1.15/1.16 legs) it is left
-  # out and only that scenario is unavailable.
-  defp e2e_deps do
-    if Version.match?(System.version(), "~> 1.17"),
-      do: [{:ex_mcp, "~> 1.5", only: :test}],
-      else: []
-  end
+  defp e2e_deps, do: [{:ex_mcp, "~> 1.7", only: :test}]
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).
   def cli do
