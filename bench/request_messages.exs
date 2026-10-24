@@ -72,7 +72,7 @@ Support.assert!(length(plain) == 100, "100 plain messages must give 100 request 
 rich = AgentMemory.request_messages_for(inputs["100 msgs"].rich, prefix_key)
 
 Support.assert!(
-  rich != [] and Enum.all?(rich, &match?(%{role: _, content: _}, &1)),
+  rich != [] and Enum.all?(rich, &match?(%Normandy.Components.Message{}, &1)),
   "the rich memory must give request messages"
 )
 

@@ -128,7 +128,8 @@ Q asked to also measure Redis, Postgres and Mnesia. Scope as approved:
 - **Isolation:**
   - Postgres: a script-local Repo on its own `normandy_bench` database, created if missing and migrated on start.
   - Redis: a random `normandy_bench:<id>` namespace.
-  - Mnesia: a temp dir.
+  - Mnesia: a temp dir. (Changed after review: dev already runs Mnesia, so its dir can't be moved. The stores use
+    `ram_copies` on the RAM schema, which write nothing to disk, and the bench refuses to run on a disc schema.)
   - Everything is deleted at the end of the run, and `git status` stays clean.
 - The same rules as the other scripts apply: a banner, one path assertion per backend before measuring, and fixed
   scenario names (`"<backend> <operation>"`).

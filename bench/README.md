@@ -30,9 +30,10 @@ Postgres must be running: `REDIS_URL` (default `redis://localhost:6379`) and
 `POSTGRES_URL` (default `ecto://postgres:postgres@localhost:55432/normandy_bench`).
 An unreachable backend fails the run and names it. `BENCH_STORES=in_memory,mnesia`
 runs only the listed backends. Postgres uses its own `normandy_bench` database, created
-and migrated on first use. Redis keys go under a random `normandy_bench*` prefix and
-Mnesia into a temp dir. Every session and namespace a run creates is deleted
-afterwards, even when a scenario raises.
+and migrated on first use. Redis keys go under a random `normandy_bench*` prefix.
+Mnesia tables are `ram_copies` in the Mnesia that dev already runs, and a disc schema
+is refused. Every session and namespace a run creates is deleted afterwards, even when
+a scenario raises.
 
 ## Compare two commits
 

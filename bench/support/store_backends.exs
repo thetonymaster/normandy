@@ -65,7 +65,7 @@ defmodule Bench.StoreBackends do
   def session_store(:ets), do: {SessionStore.ETS, SessionStore.ETS.new()}
 
   def session_store(:mnesia) do
-    mnesia_dir!()
+    ram_mnesia!()
     {SessionStore.Mnesia, SessionStore.Mnesia.new()}
   end
 
@@ -84,7 +84,7 @@ defmodule Bench.StoreBackends do
   def memory_store(:ets), do: {MemoryStore.ETS, MemoryStore.ETS.new()}
 
   def memory_store(:mnesia) do
-    mnesia_dir!()
+    ram_mnesia!()
     {MemoryStore.Mnesia, MemoryStore.Mnesia.new()}
   end
 
@@ -105,7 +105,7 @@ defmodule Bench.StoreBackends do
   @spec track_namespace({module(), term()}, String.t()) :: String.t()
   def track_namespace(store, ns), do: track({:namespace, store, ns}, ns)
 
-  @doc "Deletes every tracked session and namespace, then the Mnesia temp dir."
+  @doc "Deletes every tracked session and namespace and restores the trap_exit flag."
   @spec cleanup!() :: :ok
   def cleanup! do
     for item <- Process.get(:bench_tracked, []) do
@@ -116,16 +116,6 @@ defmodule Bench.StoreBackends do
     end
 
     Process.delete(:bench_tracked)
-
-    with {dir, previous} <- Process.delete(:bench_mnesia_dir) do
-      :stopped = :mnesia.stop()
-      File.rm_rf!(dir)
-
-      case previous do
-        {:ok, value} -> Application.put_env(:mnesia, :dir, value)
-        :error -> Application.delete_env(:mnesia, :dir)
-      end
-    end
 
     with flag when is_boolean(flag) <- Process.delete(:bench_trap_exit) do
       Process.flag(:trap_exit, flag)
@@ -150,18 +140,13 @@ defmodule Bench.StoreBackends do
     end
   end
 
-  # Mnesia writes under its :dir; point it at a temp dir before it starts.
-  defp mnesia_dir! do
-    unless Process.get(:bench_mnesia_dir) do
-      dir =
-        Path.join(
-          System.tmp_dir!(),
-          "normandy_bench_mnesia_#{System.unique_integer([:positive])}"
-        )
-
-      # The earlier :dir is put back by cleanup!/0.
-      Process.put(:bench_mnesia_dir, {dir, Application.fetch_env(:mnesia, :dir)})
-      Application.put_env(:mnesia, :dir, String.to_charlist(dir))
+  # Mnesia is already running in dev (mix.exs extra_applications), so its :dir cannot be
+  # moved here. The stores make ram_copies tables, which write nothing while the schema
+  # is in RAM; a disc schema would put bench tables in the developer's Mnesia dir.
+  defp ram_mnesia! do
+    if :mnesia.system_info(:use_dir) do
+      raise "mnesia has a disc schema in #{:mnesia.system_info(:directory)}; " <>
+              "the bench only runs on a RAM schema, set BENCH_STORES to leave mnesia out"
     end
   end
 
