@@ -33,3 +33,6 @@ normandy-*.tar
 
 # Mnesia directory created by tests
 /Mnesia.*
+
+# Saved `mix bench` runs (BENCH_SAVE); local only, see bench/README.md
+/bench/results/
