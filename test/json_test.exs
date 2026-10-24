@@ -31,7 +31,8 @@ defmodule Normandy.JSONTest do
              }
     end
 
-    test "a struct's :__meta__ is left out" do
+    test "a schema struct has no :__meta__ key" do
+      refute Map.has_key?(%WithMeta{}, :__meta__)
       assert Jason.decode!(Normandy.JSON.encode!(%WithMeta{name: "x"})) == %{"name" => "x"}
     end
 

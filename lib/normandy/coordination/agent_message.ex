@@ -23,7 +23,6 @@ defmodule Normandy.Coordination.AgentMessage do
   alias Normandy.Options
 
   @type t :: %__MODULE__{
-          __meta__: Normandy.Metadata.t(),
           id: String.t(),
           from: String.t(),
           to: String.t(),

@@ -70,8 +70,7 @@ defmodule Normandy.MixProject do
             Normandy.Type,
             Normandy.Validate,
             Normandy.ParameterizedType,
-            Normandy.JSON,
-            Normandy.Metadata
+            Normandy.JSON
           ],
           Agents: [
             Normandy.Agents.BaseAgent,

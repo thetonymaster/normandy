@@ -21,8 +21,10 @@ defmodule Normandy.Schema.IoSchemaJsonTest do
     end
   end
 
-  test "to_json leaves out the internal __meta__ field" do
+  test "a struct has no __meta__ key and its JSON has none" do
+    refute Map.has_key?(%Plain{}, :__meta__)
     json = BaseIOSchema.to_json(%Plain{verdict: "approve"})
+    refute json =~ "__meta__"
 
     assert Jason.decode!(json) == %{"verdict" => "approve"}
   end
