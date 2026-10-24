@@ -85,7 +85,12 @@ defmodule Normandy.Coordination.AgentProcess do
 
   @agent_id_key :"$normandy_agent_id"
 
-  @session_types Engine.Server.session_types()
+  # The :server-mode keys go to Turn.Session.new/1 (Engine.Server.init/3); its schema is the
+  # single source of their types (ruling P4), so a value accepted here cannot fail there and
+  # crash init/1. Types only: Session's required/default flags do not apply.
+  @session_types Map.new(Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
+                   {key, Keyword.fetch!(spec, :type)}
+                 end)
 
   @type agent_id :: String.t()
   @type run_opts :: [timeout: timeout()]
