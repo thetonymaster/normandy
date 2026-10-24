@@ -9,7 +9,7 @@
     ],
     "model": "claude-opus-5-5",
     "stream": true,
-    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one",
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
     "tools": [
       {
         "description": "returns its configured output",
@@ -88,7 +88,7 @@
     ],
     "model": "claude-opus-5-5",
     "stream": true,
-    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one",
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
     "tools": [
       {
         "description": "returns its configured output",
@@ -170,7 +170,7 @@
     ],
     "model": "claude-opus-5-5",
     "stream": true,
-    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
     "tools": [
       {
         "description": "returns its configured output",
@@ -281,7 +281,7 @@
     ],
     "model": "claude-opus-5-5",
     "stream": true,
-    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
     "tools": [
       {
         "description": "returns its configured output",
@@ -347,7 +347,7 @@
     ],
     "model": "claude-opus-5-5",
     "stream": true,
-    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two",
+    "system": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
     "tools": [
       {
         "description": "returns its configured output",

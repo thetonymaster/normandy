@@ -120,6 +120,18 @@ defmodule Normandy.Resilience.Retry do
   @spec with_retry(function(), retry_options()) ::
           {:ok, term()} | {:error, {term(), pos_integer(), [term()]}}
   def with_retry(fun, opts \\ []) when is_function(fun, 0) do
+    case run(fun, opts) do
+      {:ok, result, _failed} -> {:ok, result}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc false
+  # with_retry/2 that also returns, on success, the errors of the attempts that failed
+  # first, in order (BaseAgent sums the usage those attempts billed).
+  @spec run(function(), retry_options()) ::
+          {:ok, term(), [term()]} | {:error, {term(), pos_integer(), [term()]}}
+  def run(fun, opts \\ []) when is_function(fun, 0) do
     do_retry(fun, retry_config!(opts), 1, [])
   end
 
@@ -181,7 +193,7 @@ defmodule Normandy.Resilience.Retry do
           Logger.debug("Retry succeeded on attempt #{attempt}")
         end
 
-        {:ok, result}
+        {:ok, result, Enum.reverse(errors)}
 
       {:error, error} ->
         retry_or_fail(fun, config, attempt, errors, error)

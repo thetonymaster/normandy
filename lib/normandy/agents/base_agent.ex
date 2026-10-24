@@ -73,6 +73,7 @@ defmodule Normandy.Agents.BaseAgent do
       guardrails: Keyword.fetch!(opts, :guardrails),
       behaviours: behaviours
     }
+    |> InitOptions.check_tool_context!()
   end
 
   @doc """
@@ -333,8 +334,11 @@ defmodule Normandy.Agents.BaseAgent do
   def register_tool(%BaseAgentConfig{toolset: nil} = config, tool, opts),
     do: register_tool(%{config | toolset: Toolset.new()}, tool, opts)
 
-  def register_tool(%BaseAgentConfig{toolset: %Toolset{} = toolset} = config, tool, opts),
-    do: %{config | toolset: Toolset.register(toolset, tool, opts)}
+  def register_tool(%BaseAgentConfig{toolset: %Toolset{} = toolset} = config, tool, opts) do
+    toolset = Toolset.register(toolset, tool, opts)
+    :ok = Normandy.Tool.check_context!(tool, config.tool_context)
+    %{config | toolset: toolset}
+  end
 
   @doc """
   Looks up a registered tool by name: `{:ok, tool}` or `:error` (also when no tool is

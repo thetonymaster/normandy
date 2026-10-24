@@ -12,6 +12,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.ValidationMiddleware
@@ -125,7 +126,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   @spec get_response_with_usage(BaseAgentConfig.t(), struct() | nil, keyword()) ::
           {struct(), map() | nil, map()}
   defp get_response_with_usage(
-         %BaseAgentConfig{prompt_specification: prompt_specification} = config,
+         %BaseAgentConfig{} = config,
          response_model,
          extra_opts
        ) do
@@ -136,12 +137,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         Map.get(config, :output_schema)
       end
 
-    # Generate system prompt and add output schema specification
-    system_prompt = SystemPromptGenerator.generate_prompt(prompt_specification)
-
-    # Add output schema if available
-    system_prompt_with_schema =
-      with_output_schema(system_prompt, prompt_output_schema(response_model, config))
+    system_prompt_with_schema = system_prompt(config, response_model)
 
     tool_schemas =
       if BaseAgent.has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
@@ -224,7 +220,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     retryable_call =
       if config.retry do
         retry_opts = retry_options(config.retry, may_retry?)
-        fn -> Retry.with_retry(call, retry_opts) end
+        fn -> retry_billed(call, retry_opts) end
       else
         call
       end
@@ -234,6 +230,40 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       key -> CircuitBreaker.run(key, retryable_call, failure_if: &endpoint_failure?/1)
     end
   end
+
+  # A failed attempt that billed tokens (one a custom retry_if retries: :max_tokens,
+  # :invalid_output) still cost them, but Retry's outcome is the last attempt's. The failed
+  # attempts' usage is summed into it, so the llm_call span and the run totals count every
+  # attempt. A final raise (`{:exception, ...}`) is re-raised as it is: it has no usage to
+  # carry the earlier attempts' tokens.
+  defp retry_billed(call, retry_opts) do
+    case Retry.run(call, retry_opts) do
+      {:ok, result, failed} ->
+        {:ok, add_billed(result, billed_usage(failed))}
+
+      {:error, {%LLMError{} = last, attempts, errors}} ->
+        {:error, {put_billed(last, billed_usage(errors)), attempts, errors}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp put_billed(error, nil), do: error
+
+  defp put_billed(error, billed),
+    do: %{error | usage: billed, usage_counts: Usage.normalize(billed)}
+
+  defp billed_usage(errors) do
+    for %LLMError{usage: usage} <- errors, usage != nil, reduce: nil do
+      sum -> Usage.sum(sum, usage)
+    end
+  end
+
+  defp add_billed(result, nil), do: result
+
+  defp add_billed(%{} = result, billed),
+    do: Map.update(result, :usage, billed, &Usage.sum(billed, &1))
 
   defp retry_options(retry_options, may_retry?) do
     retry_options
@@ -1123,21 +1153,46 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   defp request_output_format(_response_model, _config), do: nil
 
-  # Appends the response schema's JSON Schema to the system prompt. A struct with
-  # no schema adds nothing; an encoding failure raises rather than silently
-  # sending the prompt without its schema.
-  defp with_output_schema(system_prompt, nil), do: system_prompt
+  # The system prompt every call sends: the prompt specification's sections, then the
+  # input schema and the output schema `response_model` shows (prompt_output_schema/2).
+  defp system_prompt(config, response_model) do
+    config.prompt_specification
+    |> SystemPromptGenerator.generate_prompt()
+    |> with_input_schema(config.input_schema)
+    |> with_schema_section(
+      "OUTPUT SCHEMA",
+      "Respond with a JSON object that matches this schema, using exactly these field names and no others:",
+      prompt_output_schema(response_model, config)
+    )
+  end
 
-  defp with_output_schema(system_prompt, response_model) do
-    case Normandy.Schema.json_schema(response_model) do
+  # A custom input schema reaches the model as the user message's JSON, so the system
+  # prompt describes its fields (AX-29). The default schema's one chat_message is sent
+  # as plain text and needs none.
+  defp with_input_schema(system_prompt, %BaseAgentInputSchema{}), do: system_prompt
+
+  defp with_input_schema(system_prompt, input_schema),
+    do:
+      with_schema_section(
+        system_prompt,
+        "INPUT SCHEMA",
+        "Each new user input is a JSON object that matches this schema (tool results are not):",
+        input_schema
+      )
+
+  # Appends a schema struct's JSON Schema under `heading`. A struct with no schema (or
+  # nil) adds nothing; an encoding failure raises rather than silently sending the
+  # prompt without its schema.
+  defp with_schema_section(system_prompt, _heading, _intro, nil), do: system_prompt
+
+  defp with_schema_section(system_prompt, heading, intro, schema_struct) do
+    case Normandy.Schema.json_schema(schema_struct) do
       nil ->
         system_prompt
 
       schema ->
         schema_json = Normandy.JSON.encode!(Wire.encodable(schema), pretty: true)
-
-        system_prompt <>
-          "\n\n# OUTPUT SCHEMA\nRespond with a JSON object that matches this schema, using exactly these field names and no others:\n```json\n#{schema_json}\n```"
+        system_prompt <> "\n\n# #{heading}\n#{intro}\n```json\n#{schema_json}\n```"
     end
   end
 
@@ -1148,10 +1203,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   # (prompt_output_schema/2): the streamed text is parsed into it. A chat schema
   # streams plain text, so it shows none.
   defp build_stream_request(config) do
-    system_prompt =
-      config.prompt_specification
-      |> SystemPromptGenerator.generate_prompt()
-      |> with_output_schema(prompt_output_schema(%ToolCallResponse{}, config))
+    system_prompt = system_prompt(config, %ToolCallResponse{})
 
     tool_schemas =
       if BaseAgent.has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []

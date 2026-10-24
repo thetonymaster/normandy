@@ -136,6 +136,8 @@ defmodule Normandy.Telemetry.UsageTest do
       assert Usage.sum(nil, %{input_tokens: 1}) == %{input_tokens: 1}
       assert Usage.sum(%{input_tokens: 1}, nil) == %{input_tokens: 1}
       assert Usage.sum(nil, nil) == nil
+      assert Usage.sum(nil, %{"input_tokens" => 4}) == %{input_tokens: 4}
+      assert Usage.sum(%{"input_tokens" => 4}, nil) == %{input_tokens: 4}
     end
 
     test "sums integer counts and lets the later side win for other values" do
@@ -144,6 +146,15 @@ defmodule Normandy.Telemetry.UsageTest do
                service_tier: "b"
              }) ==
                %{input_tokens: 7, service_tier: "b"}
+    end
+
+    test "a string-keyed (wire) side adds to an atom-keyed one" do
+      assert Usage.sum(%{input_tokens: 10, output_tokens: 5}, %{
+               "input_tokens" => 3,
+               "output_tokens" => 2,
+               "not_a_usage_key_anywhere" => 1
+             }) ==
+               %{"not_a_usage_key_anywhere" => 1, input_tokens: 13, output_tokens: 7}
     end
 
     test "accepts a struct side" do

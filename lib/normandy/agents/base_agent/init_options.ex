@@ -16,6 +16,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   alias Normandy.LLM.OpenAICompatibleAdapter
   alias Normandy.Options
   alias Normandy.Resilience.Retry
+  alias Normandy.Tools.Toolset
 
   @guard_spec {:or, [:atom, {:tuple, [:atom, :keyword_list]}]}
 
@@ -480,6 +481,18 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     do: Hooks.validate_entries!(hooks)
 
   defp validate_hooks!(_behaviours), do: :ok
+
+  @doc false
+  # Each registered tool checks the config's tool_context (Normandy.Tool.check_context!/2),
+  # where a tool and a context first meet: init/1, register_tool/3 and
+  # ConfigTemplate.rebuild/3.
+  @spec check_tool_context!(BaseAgentConfig.t()) :: BaseAgentConfig.t()
+  def check_tool_context!(%BaseAgentConfig{toolset: nil} = config), do: config
+
+  def check_tool_context!(%BaseAgentConfig{toolset: toolset, tool_context: values} = config) do
+    Enum.each(Toolset.list(toolset), &Normandy.Tool.check_context!(&1, values))
+    config
+  end
 
   @doc false
   # A real compactor sizes against the model's context window. With no pinned

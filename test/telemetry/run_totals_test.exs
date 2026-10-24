@@ -14,6 +14,8 @@ defmodule Normandy.Telemetry.RunTotalsTest do
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.LLMError
+  alias Normandy.Test.FakeClient
   alias Normandy.Test.FakeTool
   alias Normandy.Test.Hooks, as: TestHooks
   alias Normandy.Test.Hooks.Probe
@@ -107,6 +109,72 @@ defmodule Normandy.Telemetry.RunTotalsTest do
 
     refute Map.has_key?(meta, :cache_read_input_tokens)
     refute Map.has_key?(meta, :cache_write_input_tokens)
+  end
+
+  describe "a retried failure that billed tokens" do
+    @llm_stop [:normandy, :agent, :llm_call, :stop]
+    @llm_exception [:normandy, :agent, :llm_call, :exception]
+
+    # A cut-off answer bills its tokens; the default retry policy never retries one.
+    defp billed_cutoff do
+      error = LLMError.new(type: :max_tokens, retryable?: false)
+      {:error, LLMError.with_usage(error, %{input_tokens: 10, output_tokens: 5})}
+    end
+
+    defp retry_everything,
+      do: [max_attempts: 2, base_delay: 0, jitter: false, retry_if: fn _ -> true end]
+
+    test "a call that succeeds on retry counts the failed attempt's tokens" do
+      client =
+        FakeClient.new([
+          billed_cutoff(),
+          {:text, "ok", usage: %{input_tokens: 3, output_tokens: 2}}
+        ])
+
+      {name, config} = agent(client, %{retry: retry_everything()})
+      TelemetryCapture.attach_span([@llm_stop, @run_stop], agent_name: name)
+
+      assert {:ok, _config, %{chat_message: "ok"}} = BaseAgent.run(config, "go")
+
+      assert_received {:span, @llm_stop, %{input_tokens: 13, output_tokens: 7}}
+      assert_received {:span, @run_stop, %{llm_calls: 1, input_tokens: 13, output_tokens: 7}}
+    end
+
+    test "a stream that succeeds on retry counts the failed attempt's tokens" do
+      client =
+        FakeClient.new([
+          billed_cutoff(),
+          {:text, "ok", usage: %{input_tokens: 3, output_tokens: 2}}
+        ])
+
+      {name, config} = agent(client, %{retry: retry_everything()})
+      TelemetryCapture.attach_span([@llm_stop], agent_name: name)
+
+      assert {:ok, _config, %{chat_message: "ok"}} =
+               BaseAgent.stream(config, "go", fn _event -> :ok end)
+
+      assert_received {:span, @llm_stop, %{input_tokens: 13, output_tokens: 7}}
+    end
+
+    test "a call whose every attempt fails reports every attempt's tokens" do
+      {name, config} =
+        agent(FakeClient.new([billed_cutoff(), billed_cutoff()]), %{retry: retry_everything()})
+
+      TelemetryCapture.attach_span([@llm_exception], agent_name: name)
+
+      assert {:error, %LLMError{type: :max_tokens} = error} = BaseAgent.run(config, "go")
+      assert %{input_tokens: 20, output_tokens: 10} = error.usage_counts
+      assert_received {:span, @llm_exception, %{reason: %LLMError{usage_counts: counts}}}
+      assert %{input_tokens: 20, output_tokens: 10} = counts
+    end
+
+    test "without retries the error keeps its own usage" do
+      {_name, config} = agent(FakeClient.new([billed_cutoff()]), %{retry: retry_everything()})
+      config = %{config | retry: nil}
+
+      assert {:error, %LLMError{usage_counts: %{input_tokens: 10, output_tokens: 5}}} =
+               BaseAgent.run(config, "go")
+    end
   end
 
   describe "run :stop totals" do

@@ -33,6 +33,16 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
     end
   end
 
+  defmodule Ticket do
+    @moduledoc false
+    use Normandy.Schema
+
+    io_schema "a support ticket" do
+      field(:subject, :string, description: "the customer's one-line summary", required: true)
+      field(:priority, :integer, description: "1 (urgent) to 4")
+    end
+  end
+
   defp schema_keys(prompt) do
     [_, json] = Regex.run(~r/# OUTPUT SCHEMA\n.*```json\n(.*)\n```/s, prompt)
     properties = Jason.decode!(json, objects: :ordered_objects)["properties"]
@@ -60,6 +70,38 @@ defmodule Normandy.Agents.BaseAgentOutputSchemaPromptTest do
     assert prompt =~ ~s("required")
     assert prompt =~ ~s("verdict")
     assert prompt =~ ~s("number")
+  end
+
+  describe "the input schema block (AX-29)" do
+    defp prompt_for(input_schema, input) do
+      agent =
+        BaseAgent.init(%{
+          client: %StubClient{notify: self(), reply: fn rm -> %{rm | verdict: "approve"} end},
+          model: "test-model",
+          input_schema: input_schema,
+          output_schema: %Answer{}
+        })
+
+      BaseAgent.run!(agent, input)
+      assert_receive {:converse, %Normandy.LLM.Request{system: prompt}, _}
+      prompt
+    end
+
+    test "a custom input schema is described before the output schema" do
+      prompt = prompt_for(%Ticket{}, %{subject: "login fails", priority: 1})
+
+      [_, json] = Regex.run(~r/# INPUT SCHEMA\n.*?```json\n(.*?)\n```/s, prompt)
+
+      assert %{"subject" => %{"description" => "the customer's one-line summary"}} =
+               Jason.decode!(json)["properties"]
+
+      [before_output, _] = String.split(prompt, "# OUTPUT SCHEMA")
+      assert before_output =~ "# INPUT SCHEMA"
+    end
+
+    test "the default input schema, sent as plain text, is not described" do
+      refute prompt_for(nil, "hi") =~ "# INPUT SCHEMA"
+    end
   end
 
   test "a tool-using agent is not told to answer in the internal ToolCallResponse shape" do

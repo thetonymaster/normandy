@@ -91,7 +91,8 @@ defmodule Normandy.Telemetry.Usage do
 
   @doc """
   Adds two raw provider usage maps (or structs), the one rule for combining the usage of
-  several calls. A `nil` side returns the other. Integer counts are summed and any other
+  several calls. A `nil` side returns the other (as a map). Keys are atoms in the result, so a
+  string-keyed (wire) side adds to an atom-keyed one. Integer counts are summed and any other
   value is the later side's. When either side carries `iterations`, the result's
   `iterations` are both sides' entries in order (a side without them contributes one entry
   built from its top-level counts), so `normalize/1` bills their sum and not the top-level
@@ -106,8 +107,9 @@ defmodule Normandy.Telemetry.Usage do
       %{input_tokens: 4}
   """
   @spec sum(map() | struct() | nil, map() | struct() | nil) :: map() | struct() | nil
-  def sum(nil, usage), do: usage
-  def sum(usage, nil), do: usage
+  def sum(nil, nil), do: nil
+  def sum(nil, usage), do: plain(usage)
+  def sum(usage, nil), do: plain(usage)
 
   def sum(%{} = a, %{} = b) do
     a = plain(a)
@@ -128,8 +130,18 @@ defmodule Normandy.Telemetry.Usage do
     end
   end
 
-  defp plain(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__)
-  defp plain(usage), do: usage
+  defp plain(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__) |> plain()
+  defp plain(usage), do: Map.new(usage, fn {key, value} -> {atom_key(key), value} end)
+
+  # Wire usage (a stream's final message) has string keys, an adapter's atom keys; a
+  # string with no existing atom is no count normalize/1 reads, so it stays a string.
+  defp atom_key(key) when is_binary(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
+  end
+
+  defp atom_key(key), do: key
 
   defp iterations_of(usage) do
     case Map.get(usage, :iterations) do

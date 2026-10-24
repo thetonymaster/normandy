@@ -34,8 +34,9 @@ defmodule Normandy.Tools.Memory do
   reaches the agent. Never store secrets in memory.
 
   A mount's access holds only while no session can write its namespace directly, so a
-  session namespace equal to a mount's namespace raises (the call fails; the model sees
-  the mount path, not the namespace), and two mounts of one namespace with different
+  session namespace equal to a mount's namespace raises: when the agent is built
+  (`check_context!/2`), and on a call whose context was
+  replaced (the call fails; the model sees the mount path, not the namespace), and two mounts of one namespace with different
   access raise in `new/1`. Never build a namespace from a user-controlled string (a
   username, an org slug) without a fixed prefix that mount namespaces do not use, such as
   `"users/" <> user_id` beside `"shared/org-kb"`.
@@ -162,6 +163,24 @@ defmodule Normandy.Tools.Memory do
            Map.merge(stop_meta, %{status: :error, error_type: type})}
       end
     end)
+  end
+
+  @impl Normandy.Tool
+  @doc """
+  Refuses a `tool_context` whose session namespace equals a mount's namespace, when the
+  agent is built. A context without the namespace passes: one can be supplied per call
+  (`Normandy.A2A.Server`'s `:tool_context`), and `run/2` checks it there.
+  """
+  @spec check_context!(t(), map()) :: :ok
+  def check_context!(%__MODULE__{namespace_key: key} = tool, values) do
+    case Map.get(values, key) do
+      ns when is_binary(ns) and ns != "" ->
+        _ns = not_a_mount!(tool, ns)
+        :ok
+
+      _absent ->
+        :ok
+    end
   end
 
   @impl Normandy.Tool
