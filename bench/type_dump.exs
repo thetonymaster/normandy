@@ -47,7 +47,7 @@ Support.banner(
 )
 
 # One scalar dump takes a few ns, under Benchee's reliable resolution, so each scalar
-# scenario times 1000 calls.
+# scenario times 1000 calls; "loop x1000 baseline" is the loop alone, to subtract.
 scalar_jobs =
   Map.new(values, fn {type, value} ->
     {"dump #{inspect(type)} x1000",
@@ -56,6 +56,7 @@ scalar_jobs =
 
 jobs =
   Map.merge(scalar_jobs, %{
+    "loop x1000 baseline" => fn -> Enum.each(1..1_000, fn _ -> {:ok, array} end) end,
     "dump {:array, :integer} 1k" => fn -> Type.dump({:array, :integer}, array) end,
     "cast :integer x1000" => fn -> Enum.each(1..1_000, fn _ -> Type.cast(:integer, 42) end) end,
     "cast {:array, :integer} 1k" => fn -> Type.cast({:array, :integer}, array) end

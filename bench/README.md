@@ -65,6 +65,10 @@ look at absolute numbers. For example, 4x the input should cost about 4x the tim
 the banner says linear. Before measuring, each script asserts once that its input reaches
 the path it claims to measure, and it stops if it doesn't.
 
+Benchee's memory column counts only the calling process. Work done in another process
+(the InMemory Agent, the ETS and Mnesia owners, Redix, Postgrex) is not in it, so the
+store scripts' memory figures compare unlike things across backends.
+
 ## Adding a script
 
 - Put it in `bench/<name>.exs` and start it with `Code.require_file("support.exs", __DIR__)`.

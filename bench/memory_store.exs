@@ -1,5 +1,5 @@
 # MemoryStore backends (Mnesia, Redis, Postgres; InMemory and ETS as in-process
-# baselines): writing a new document under limits, reading one, and listing a
+# baselines): overwriting one document under limits, reading one, and listing a
 # namespace of 100. Redis and Postgres must be reachable (bench/README.md) or left out
 # with BENCH_STORES.
 Code.require_file("support.exs", __DIR__)
