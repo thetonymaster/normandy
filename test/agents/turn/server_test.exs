@@ -1527,8 +1527,6 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     defp drive_once(config) do
-      alias Normandy.Agents.BaseAgent
-
       config = AgentHandlers.admit_turn_input(config, "go")
 
       state =
