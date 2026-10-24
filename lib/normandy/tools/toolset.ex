@@ -29,7 +29,7 @@ defmodule Normandy.Tools.Toolset do
           }
   end
 
-  @type t :: %__MODULE__{tools: %{String.t() => Entry.t()}}
+  @type t :: %__MODULE__{tools: %{String.t() => struct()}}
 
   defstruct tools: %{}
 

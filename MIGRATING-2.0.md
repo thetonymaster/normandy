@@ -159,8 +159,16 @@ error); in 1.x it was `type: :unknown`.
 `WindowManager.for_model/2` and the `:model_limits` field are removed. Pass the window:
 
 ```elixir
-WindowManager.new(max_tokens: 200_000, strategy: :sliding_window)
+WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
 ```
+
+- The `:sliding_window` strategy is removed: it was `:oldest_first` under another name. `WindowManager.new/1`
+  raises `ArgumentError` for it; use `:oldest_first`.
+- `WindowManager.truncate_conversation/2` and `ensure_within_limit/2` with `strategy: :summarize` raise
+  `ArgumentError` naming `:client` when the agent has none; 1.x ran `:oldest_first` silently. A
+  `%BaseAgentConfig{}` always has a client; only a hand-built agent map is affected.
+- `TokenCounter.count_message/2` is removed (it counted against a default model that
+  went stale): pass the model, `count_message(client, text, model)`.
 
 ## 7. The summarizer requires a model
 
@@ -231,6 +239,10 @@ EEF-CVE-2026-58225. Run `mix deps.update postgrex`.
 - API errors (401, 429, 529, 5xx, ...) and transport errors used to come back as an empty
   response. They now return `{:error, %Normandy.LLMError{}}` from the adapter and from
   `run/2` (`run!/2` raises it). `on_parse_failure: :error` returns `type: :invalid_output`.
+- `OpenAICompatibleAdapter` classifies a status like `ClaudioAdapter`: HTTP 529 is an `:overloaded`
+  `LLMError` (it was `:server`), and a status above 599 is a retryable `:server` error (it was a
+  non-retryable `:unknown`). A custom `retry_on` that lists `:server` no longer matches a 529: add
+  `:overloaded`.
 - `stream/3` returns `{:error, %Normandy.LLMError{}}` when the stream fails (see §20). 1.x's
   `stream_response/3` and `stream_with_tools/3` returned `{config, %{error: reason}}`. A
   stream that ends without `message_stop` is now a failure, not a complete message.
@@ -435,6 +447,13 @@ keep it whole. `error.type` for such a run is now `task_down`, not the exception
   `after_compact` hooks. `AgentMemory.add_message/4` accepts `:id`.
 - `Dispatch.Pipeline` gains `after_tool` (default `nil`). The function `after_hooks` are
   unchanged: they still see only results of tools that ran.
+- **Behaviour change:** `run/3` and `stream/3` run a tool batch as `Turn.Server` does. The
+  classification of each call (toolset lookup, before-hooks, input validation, policy) runs in the
+  caller, one call after another, with the whole config; only the execution (budget, the tool,
+  `after_tool`, the after-hooks) runs in the concurrent tasks, with a config whose memory has no
+  entries (the turn id stays). A slow function before-hook or policy no longer runs concurrently
+  across calls; a before-hook that raises raises in the caller instead of crashing a linked task;
+  with `max_tool_concurrency: 1` the `:tool_result` stream events still come in call order.
 
 ## 17. `max_tokens` defaults to 16_000
 
@@ -656,21 +675,17 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   required field, an unknown `behaviours_refs` slot, or a `max_tokens` that is neither `nil` nor
   a positive integer (a stored `0` or `false` used to pass through).
 
-## 23. JSON goes through `Normandy.JSON`; Jason is the default and Poison is gone
+## 23. JSON goes through `Normandy.JSON`; Jason is the only encoder and Poison is gone
 
-- Normandy no longer depends on Poison. `config :normandy, :adapter` is optional and
-  defaults to `Jason`. Remove `adapter: Poison` from your config, or keep it and add
-  `{:poison, "~> 6.0"}` to your own deps.
-- An adapter is any module with `encode!(term, opts)` (opts is `[]` or `[pretty: true]`)
-  and `decode(json)` returning `{:ok, term}` or `{:error, exception}`. Normandy calls
-  nothing else. A `decode/1` that returns `{:error, reason}` with a reason that is not an
-  exception raises `ArgumentError`.
+- Normandy no longer depends on Poison, and `config :normandy, :adapter` is removed: Normandy
+  encodes and decodes JSON with Jason (a hard dependency) and ignores the setting. Delete
+  `adapter:` from your config. `Normandy.JSON` stays (`encode/2`, `encode!/2`, `decode/1`,
+  `decode!/1`, `sort_keys/1`); `decode/1` returns `{:error, %Jason.DecodeError{}}`.
 - Structs: a struct with its own `Jason.Encoder` implementation is encoded by it; any
   other struct is encoded as its map without `:__struct__` and `:__meta__`, at any depth.
   Normandy no longer looks at `Poison.Encoder`: replace `@derive {Poison.Encoder, ...}`
   with `@derive {Jason.Encoder, ...}`. On an `io_schema`, a derived encoder that lists a
-  `redact: true` field encodes it as `null`, and a bare `@derive Jason.Encoder` encodes
-  `"__meta__": null`; derive with `only:` (or `except: [:__meta__]`).
+  `redact: true` field encodes it as `null`.
 - Tool results: an atom, a boolean or `nil` output reaches the model as JSON (`"ok"`,
   `true`, `null`), not as `inspect/1` text (`:ok`, `nil`). An output JSON cannot express
   (a tuple, a pid) is now an `is_error: true` result, "the tool ran, but its output
@@ -679,8 +694,17 @@ anything. In 1.x it took only a map and ignored any key it did not know.
   error reason JSON cannot express (`{:error, {:http, 503}}`) is still sent as its
   `inspect/1` text; an exception as the reason (`{:error, %RuntimeError{}}`) is sent as its
   `Exception.message/1`.
-- `get_json_adapter/0` (removed from `Normandy.LLM.JsonDeserializer`) is gone. The `:adapter` option
-  of `parse_and_validate/3` and `deserialize_with_retry/5` defaults to `Normandy.JSON`.
+- `Normandy.LLM.JsonDeserializer`: `get_json_adapter/0` and the `:adapter` option of
+  `parse_and_validate/3` and `deserialize_with_retry/5` are gone (JSON goes through
+  `Normandy.JSON`). So is the `:recover_truncated_strings` option, with the
+  `[:normandy, :json_deserializer, :recovery]` event and `Normandy.LLM.Json.Scanner`: no agent path
+  used it, because an answer cut off at `max_tokens` is refused before it is parsed. Recover the
+  string yourself before `parse_and_validate/3` if you need it.
+- `parse_and_validate/3`, `deserialize_with_retry/5` and `deserialize_with_usage/5` check their
+  options (§30): an unknown key, including the three removed ones, raises `ArgumentError` naming it
+  (1.x ignored it); `:max_input_bytes` must be a positive integer, and `max_retries: nil` and
+  `on_retry_usage: nil`, which used to pass, raise. `:on_retry_usage` is now called as each billed
+  retry finishes, failed ones included.
 
 ## 24. The example tools are no longer in the package
 
@@ -699,13 +723,16 @@ fixtures, and `Weather` made live HTTP calls. If you used one, copy it from the
 | `Normandy.Tools.Registry` | `Normandy.Tools.Toolset` (same functions unless listed here) |
 | `Registry.get(registry, name)` | `Toolset.fetch(toolset, name)` → `{:ok, tool}` / `:error` |
 | `Registry.get!(registry, name)` (raised `RuntimeError`) | `Toolset.fetch!(toolset, name)` (raises `Normandy.ToolNotFoundError`, which names the registered tools) |
-| `Registry.get_metadata(registry, name)` | `Toolset.fetch_metadata(toolset, name)` |
+| `Registry.get_metadata(registry, name)` | `Toolset.fetch(toolset, name)`, then `Tool.name/1`, `Tool.description/1` and `Tool.input_schema/1` on the tool |
 | `BaseAgentConfig.tool_registry`, `init(%{tool_registry: ...})`, DSL `new(override: [tool_registry: ...])` | `toolset` |
 | `AgentTemplate` supplement key `:tool_registry` | `:toolset` |
 | `BaseAgent.register_tool(agent, tool)` | unchanged; `register_tool(agent, tool, opts)` passes `opts` to `Toolset.register/3` |
 
 - `Toolset.register/3` raises `ArgumentError` on an unknown or mistyped option (1.x ignored
   them).
+- The `%Toolset{}` struct holds one map, `tools: %{name => %Toolset.Entry{}}` (`Entry` is
+  internal): do not build or match it by hand; read it with `fetch/2`, `timeout/2`,
+  `max_result_chars/2` and `list/1`.
 - `Toolset.register/3` (and `BaseAgent.register_tool/3`) raises `ArgumentError` for a tool name
   the API rejects, one outside `^[a-zA-Z0-9_-]{1,64}$` (a dot, or more than 64 characters); 1.x
   registered it and the first request failed with a 400. MCP and A2A discovery return
@@ -808,6 +835,20 @@ session = Turn.Session.new(session_id: sid, config: config, store: store, regist
   :session_unavailable, reason: :no_session}}` (was `{:error, :no_session}`); a registry that
   cannot answer gives the same `TurnError` with the registry's reason (was the bare reason).
   `AgentProcess.approve/2` returns what `Turn.Session.approve/2` returns.
+- A session with a `:template_provider` rebuilds its config from the stored template, which needs a
+  credential: `new/1` (and `put_config/2`) raise `ArgumentError` naming `:credential` unless the
+  config's `behaviours` set `credential: {module, opts}`, a `Normandy.Behaviours.CredentialProvider`
+  that returns the token itself (environment, vault). `Behaviours.Config`'s `credential` has no
+  default and `CredentialProvider.FromClient` is removed: a rebuild has no client, so it could only
+  return `{:error, :no_api_key}`. A template stored by 1.x names `FromClient` and is refused at load
+  (`{:invalid_template, ...}`, "removed in 2.0") until it is saved again from a config with a
+  provider; it never rebuilt under 1.x either. A `:config` alone (no `:template_provider`) needs
+  nothing. `AgentProcess.update_agent/3` in `:server` mode raises the same `ArgumentError` in the
+  caller and keeps its old config.
+- `:supervisor_mod` must export `start_server/2` and `stop_server/2`; implement
+  `Normandy.Agents.Turn.ServerSupervisor`. `Turn.Session.new/1`, `AgentProcess` and `ResumeReaper`
+  raise `ArgumentError` naming `:supervisor_mod` otherwise (a missing `stop_server/2` used to raise at
+  the first `delete/1`).
 - `Turn.Session.put_config/2` sets the config a later server start uses. A live server keeps
   the config it started with, as before.
 - A `:resume_policy` other than `:lazy` or `:eager` raises in `new/1`, not in `run/2`.
@@ -986,8 +1027,8 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `:max_summary_tokens` now raises. `:summary_role` must be `"user"` or `"assistant"`.
 - `A2A.Registry.from_agent_card/3` used to drop keys it did not use (including `:timeout`,
   which only `discover_and_register/3` reads, as the registration timeout); they now raise.
-- `Context.WindowManager.new/1`: `:strategy` must be `:oldest_first`, `:sliding_window` or
-  `:summarize`, and `:reserved_tokens` a non-negative integer. A
+- `Context.WindowManager.new/1`: `:strategy` must be `:oldest_first` or
+  `:summarize` (`:sliding_window` is removed, §6), and `:reserved_tokens` a non-negative integer. A
   `Compactor.WindowManager` compactor's opts (`:context_window`, `:reserved_tokens`,
   `:strategy`) are checked when the agent is built and when its template is rebuilt; the error
   starts with `Normandy.Agents.BaseAgent.init/1: ` or, during a rebuild,
@@ -997,7 +1038,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   (a `nil` `:type` was stored as `""`), and a `:metadata` that is not a plain map (each was
   stored as given).
 - `AgentMemory.add_message/4`'s message for an unknown option now names the function.
-- `Coordination.Pattern.ok!/2` and `error!/2` check their options on every call, including
+- `Coordination.Pattern.ok_value/2` and `error_reason/2` (§42) check their options on every call, including
   when the result matches.
 - More value types that are now checked: `A2A.AgentTool.new/3`'s and the A2A registry's
   `:auth_token` and `:skill_id` are strings and `:transport_opts` a keyword list;
@@ -1034,6 +1075,16 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   `api_key` raises `ArgumentError`; 1.x accepted them. `:timeout` and `options[:base_url]`,
   documented in 1.x but never read, now reach the HTTP client, as does the new `:recv_timeout`:
   check the values you set.
+
+- `Resilience.Retry.with_retry/2` and `Retry.validate_options!/1` take a keyword list or a map and
+  validate it through `Normandy.Options`. The message reads
+  `Normandy.Resilience.Retry.with_retry/2: invalid value for :max_attempts option: expected positive
+  integer, got: 0`, and an option given twice is reported as "given more than once". `BaseAgent.init/1`'s
+  `:retry` still takes a keyword list.
+- `Tools.Memory.new/1` takes a keyword list or a map and validates through `Normandy.Options`: every
+  unknown option is reported (`unknown options [...]; supported: ...`), and a bad value reads like
+  NimbleOptions' (`required :store option not found`, `invalid value for :k option: expected positive
+  integer, got: 0`); a malformed `:store` is no longer echoed.
 
 ## 31. Circuit breakers are shared and supervised by Normandy
 
@@ -1381,8 +1432,7 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
 - `Normandy.Tools.Toolset.to_tool_schemas/1` returns `input_schema` without `"$schema"` and
   `"title"`, and a Normandy schema's `properties` as a `Jason.OrderedObject` (use
   `properties[:name]`, not `Map.get/2`). The `# OUTPUT SCHEMA` block and retry feedback drop
-  `"$schema"` and `"title"` too. A custom `config :normandy, :adapter` receives
-  `Jason.OrderedObject` structs from these call sites.
+  `"$schema"` and `"title"` too.
 - Because the system prompt's headings (above), tool `input_schema`s and the
   `# OUTPUT SCHEMA` block change shape (declaration order, no empty descriptions, no
   `"$schema"` or `"title"`), thinking stored before the upgrade no longer matches its
@@ -1583,9 +1633,7 @@ tool = Normandy.A2A.AgentTool.new(url, card, prefix: "a2a")
   miss the prompt cache. Values and list order are unchanged. A struct without its own
   `Jason.Encoder` is written as its fields, sorted like a map; one with its own encoder is
   encoded by that encoder, unchanged. A `Jason.OrderedObject` keeps its
-  order: return one from a tool whose key order means something to the model. A custom
-  `config :normandy, :adapter` now receives `Jason.OrderedObject` structs in this text and must
-  encode them in order, as Jason does.
+  order: return one from a tool whose key order means something to the model.
 - `ClaudioAdapter` raises `ArgumentError`, naming the position and turn id, for a `"system"`
   message anywhere but first in the history; 1.x let it replace the agent's system prompt
   silently. Store summaries and notes in memory as `"user"` or `"assistant"` messages.
@@ -1698,6 +1746,8 @@ code you wrote against 1.x must follow the changes below.
 | 1.x | 2.0 |
 |---|---|
 | `SessionStore.Redis.fork/3` named the new session `"fork_<n>"`, an integer unique only on the node that forked | A UUID, as every other store returns |
+| `SessionStore.Redis.new/0`, `MemoryStore.Redis.new/0` and `SessionRegistry.Redis.new/0` read `config :normandy, :redis_url` and invented a random namespace | `new/1` requires `:url` and `:namespace` (`:prefix` for the memory store); there is no default and no app-env read, and a missing key raises `ArgumentError` naming it |
+| `SessionStore.Postgres.new/0` and `MemoryStore.Postgres.new/0` | Removed: the handle is your Repo module, `{SessionStore.Postgres, MyApp.Repo}` |
 | `@callback save_turn_state(handle, session_id, state)` | `@callback save_turn_state(handle, session_id, state, inflight?)`. `Turn.Server` passes `inflight?: true` while an `:eager` session's turn has not ended (status other than `:stopped`/`:failed`); the store writes it with the state |
 | `list_resumable/1`: every session whose config template is `:eager`, whatever its turn state | The sessions whose last `save_turn_state/4` had `inflight?: true`. A template alone no longer lists a session |
 | `SessionStore.Redis`: the eager set `"<namespace>:resumable"`, filled by `save_config_template/3` and never emptied | `"<namespace>:inflight"`, kept by `save_turn_state/4`. `"<namespace>:resumable"` is no longer read; delete it after the upgrade |
@@ -2006,6 +2056,30 @@ code you wrote against 1.x must follow the changes below.
 - `Batch.Processor.process_batch_chunked/3` with `ordered: false` returns `{:ok, batch_result}`, one
   map merged over every chunk; 1.x returned `{:ok, list}` of the successes only and dropped the
   errors. Read `batch_result.success` for the list, and `batch_result.errors` for what 1.x dropped.
+- `Coordination.Pattern.ok/1` and `error/1` are removed (they returned their argument).
+  `ok!/2` is now `ok_value/2` and `error!/2` is `error_reason/2`; they take the same `default:`
+  and never raise.
+- `HierarchicalCoordinator`: the `:shared_context` option of `new/1`, `execute/3` and
+  `execute_with_tasks/3`, and the struct field, are removed (nothing read them). `SharedContext`
+  stays.
+- `Batch.Processor.process_batch/3`, `process_batch_with_stats/3` and `process_batch_chunked/3`
+  report an item's error as the other coordinators do: Normandy's exception bare, the exception a bug
+  raised bare, or `%Normandy.TurnError{type: :task_down}` for an exit, a throw or a `:timeout` kill.
+  1.x gave `{:exception, e, stacktrace}`, `{:exit, reason}` or `{:throw, value}`. Match
+  `{:error, %Normandy.TurnError{type: :task_down, reason: :timeout}}` where you matched
+  `{:error, {:exit, :timeout}}`. A string item is wrapped as `%{chat_message: s}`; a map or struct
+  item reaches the agent unchanged.
+- A map input to `SequentialOrchestrator`, `ParallelOrchestrator`, `Reactive`, `HierarchicalCoordinator`,
+  `Batch.Processor` and `AgentProcess` reaches the agent whole; these used to collapse a map with a
+  `:chat_message` key to that one value, which dropped the other fields of a custom input schema.
+  Only a binary is wrapped.
+- Every coordinator now logs an agent's exit or throw, as `AgentProcess` did; the orchestrators
+  returned them silently.
+- `StatefulContext.update/4` runs its function in the caller and commits by compare-and-set, so a
+  slow update no longer blocks reads and the function **may run more than once**: keep it pure. A
+  function that raises raises in the caller and the context survives. After 10 lost commits the
+  function runs inside the context process so the update always finishes (a raise there crashes the
+  context, and a function that calls its own context exits with `:calling_self`).
 
 ## 43. Turn.Server terminal saves and blank answers
 
@@ -2053,7 +2127,7 @@ code you wrote against 1.x must follow the changes below.
   Normandy.Agents.ValidationMiddleware, Normandy.Telemetry.KilledRun,
   Normandy.Telemetry.Metadata, Normandy.Telemetry.OtelCtx, Normandy.Telemetry.Provider,
   Normandy.Telemetry.WorkflowSpan, Normandy.LLM.Json.ContentCleaner,
-  Normandy.LLM.Json.Decoder, Normandy.LLM.Json.RetryFeedback, Normandy.LLM.Json.Scanner,
+  Normandy.LLM.Json.Decoder, Normandy.LLM.Json.RetryFeedback,
   Normandy.LLM.Json.SchemaBinder, Normandy.LLM.Json.SchemaTranslator,
   Normandy.Behaviours.SessionRegistry.Horde.Via and
   Normandy.Behaviours.SessionRegistry.Redis.Via. `Normandy.Agents.Turn.Driver.Handlers`,
@@ -2065,10 +2139,19 @@ code you wrote against 1.x must follow the changes below.
   - `Turn.Driver`, `Turn.Inline`: run turns with `BaseAgent.run/3`, `stream/3` or
     `Turn.Session`. `Turn.Driver.Handlers` stays public.
   - `ValidationMiddleware`: input and output validation run inside every turn.
-  - `Json.ContentCleaner`, `Decoder`, `RetryFeedback`, `Scanner`, `SchemaBinder`,
+  - `Json.ContentCleaner`, `Decoder`, `RetryFeedback`, `SchemaBinder`,
     `SchemaTranslator`: use `Normandy.LLM.JsonDeserializer`.
   - `OtelCtx`: trace context is carried for you (see `Normandy.Telemetry`).
   - `Redis.Via`: pass the registry handle (`SessionRegistry.Redis.handle/1`).
+  - `BaseAgent`'s `@doc false` functions (`non_streaming_handlers/0`, `streaming_handlers/1`,
+    `base_agent_pipeline/1`, `compact_turn_memory/3`, `admit_turn_input/2`, `admit_input!/2`,
+    `begin_turn/2`, `turn_response_model/1`, `with_default_output_schema/1`,
+    `validate_marking_answer/4`, `check_init!/1`, `normalize_max_tool_concurrency/1`,
+    `validate_client_options!/1`, `validate_compaction_config!/2`, `warn_deprecated_catalog/1` and
+    `unwrap_llm_content/1`) moved to the internal `BaseAgent.Handlers` and `BaseAgent.InitOptions`;
+    `BaseAgent` is the public facade only. A custom `Turn.Server` `:handlers` set built from
+    `BaseAgent.non_streaming_handlers()` has no public replacement yet; omit `:handlers` to get the
+    default set.
 - To test a hook under the library's rules (ordering, `:on_error`, return contracts), run
   it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The
   hooks guide's "Testing a hook" section shows it. Calling the hook runner directly is no
@@ -2088,7 +2171,7 @@ code you wrote against 1.x must follow the changes below.
   `SessionRegistry` runs the tests Normandy's own backends pass:
   `use Normandy.Test.SessionStoreContract, impl: MyApp.Store` inside a module that has
   `use ExUnit.Case`. `new: {module, function, args}` builds each test's handle (default
-  `{impl, :new, []}`); the session store's optional `stored_entry_ids: {m, f, a}` (called
+  `{impl, :new, []}`, which the Redis and Postgres stores no longer have, §40: pass `new:`); the session store's optional `stored_entry_ids: {m, f, a}` (called
   with the handle appended) adds storage-level checks to the two delete tests. Options are
   checked when the test module compiles. Each moduledoc says what a handle must provide
   (empty per test) and when the test module must be `async: false`.
@@ -2112,8 +2195,11 @@ code you wrote against 1.x must follow the changes below.
   It was accepted and never reached a step. Pass what a step needs in its input or its agent's
   config.
 - `Toolset.filter_by_required_params/2`, `Toolset.filter_by_param_type/2` and
-  `Toolset.tools_with_constraint/2` are removed; nothing in Normandy called them. Filter
-  `Toolset.list_metadata/1` (each entry has `:input_schema`) or `Toolset.list/1` yourself.
+  `Toolset.tools_with_constraint/2` are removed, and so are `fetch_metadata/2`, `list_metadata/1` and
+  `introspect_schema/2`; nothing in Normandy called them. Filter `Toolset.to_tool_schemas/1` (each
+  entry has `:input_schema`) or `Toolset.list/1` yourself, and build a tool's metadata from
+  `Tool.name/1`, `Tool.description/1` and `Tool.input_schema/1` (field introspection:
+  `Normandy.Schema.Introspection` on the module's `__tool_input__/0`).
 - The repository's `examples/customer_support_app` and `examples/agent_horde` applications are
   removed: they used the 1.x API (`Normandy.Tools.BaseTool`) and no longer compiled. They were
   never in the Hex package. `examples/README.md` now points at the guides;
@@ -2152,6 +2238,35 @@ code you wrote against 1.x must follow the changes below.
 - The `Normandy.Type` optional callback `autogenerate/0` is gone; nothing calls it. Delete it from a
   custom type (an `@impl true` on it warns at compile time).
 - `Normandy`'s generated placeholder `hello/0` is gone.
+- `Normandy.Type` drops Ecto's database and embed API: `embed_as/1` (callback) and `embed_as/2`,
+  `embedded_dump/3`, `embedded_load/3`, `Type.match?/2`, `Type.primitive?/1`, `Type.load/2`,
+  `Type.load/3` and the `Type.load/1` callback. A custom type that still defines `embed_as/1` or
+  `load/1` compiles (nothing calls them); `use Normandy.Type` no longer injects `embed_as/1`.
+  `Type.cast/2` no longer accepts `:id`, `:binary_id`, `:time_usec`, `:naive_datetime(_usec)`,
+  `:utc_datetime(_usec)`, `{:supertype, :datetime}`, `{:in, t}` or `{:splice, t}` (`field/3` never
+  did; they raise `ArgumentError`). `Normandy.ParameterizedType` drops the `embed_as/2` callback.
+  `dump/1` is documented as the check of a field's `:default` at compile time.
+- `%Normandy.Validate{}` drops the fields `Validate.constraints`, `Validate.filters` and
+  `Validate.prepare` (never read or written); `changes` defaults to `%{}`. The unknown-field error no
+  longer mentions associations. `field :x, :datetime` still raises; its message now names a `:string`
+  field with `format: "date-time"` or a custom type.
+- Schema and `io_schema` structs no longer carry `__meta__`, and `Normandy.Metadata` is removed
+  (the field was `BaseAgentConfig`, `BaseAgentInputSchema`, `BaseAgentOutputSchema`,
+  `ToolCallResponse`, `Message`, `PromptSpecification`, `ToolCall`, `ToolResult`, `AgentMessage`,
+  `ClaudioAdapter`, `OpenAICompatibleAdapter` and the content blocks `Text`, `Image` and `Document`
+  all had): code that matched `%{__meta__: _}` or read `struct.__meta__` drops it. Stored data from
+  1.x and earlier 2.0 builds (session templates, entries, compaction snapshots, memory dumps, turn
+  states on Postgres, Redis, Mnesia, ETS) still loads, and the key is dropped. A foreign struct's
+  `__meta__` (Ecto's) is still stripped when Normandy encodes it. The default input schema rejects
+  a `__meta__` key in input as unknown, and `AgentMessage.reply/2`'s spec lost the `__meta__` type.
+- `Behaviours.Compactor` gains the optional callbacks `validate_opts!/2` (`opts, entry`; checked at
+  `BaseAgent.init/1` and `ConfigTemplate.rebuild/3`) and `needs_window?/1` (default `true`; `NoOp`
+  says `false`); `Behaviours.ModelCatalog` gains the optional `needs_claudio_client?/1` (default
+  `false`). `BaseAgent` no longer branches on a compactor's or catalog's module name, so a host
+  implementation needs no edit to the library. `validate_opts!/2` takes the entry point, unlike
+  `Hooks` and `PolicyEngine` (`validate_opts!/1`), so its messages name `BaseAgent.init/1` or
+  `ConfigTemplate.rebuild/3` (pass `entry` to `Normandy.Options.validate!/3`); a compactor that
+  exports only `validate_opts!/1` raises at init.
 
 ## Known limits of 2.0
 
@@ -2214,6 +2329,10 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   `mcp_tool_result` of the call the pause left open) is not stored, so it does not reach later
   turns. Later requests leave that open call out, so the model sees its own summarised answer,
   not what the tool returned.
+- **Pathological model output can hide a later answer.** `JsonDeserializer` finds JSON regions in
+  prose with a work budget of `8n + 1024` bytes for an `n`-byte answer (it was quadratic on unclosed
+  braces: 30 s on 240 KB). A reply that spends the budget before its real answer, such as deeply nested
+  JSON at nine or more levels spanning the content, is a `json_parse_error`; the retry path re-asks.
 - **Memory-store bookkeeping.** `MemoryStore.InMemory` totals a namespace from all its documents on every
   limited write, so a write's cost grows with the namespace. `MemoryStore.Postgres` keeps a namespace's
   counter row, at zero, after its last document is deleted, until `delete_namespace/2`.
@@ -2277,6 +2396,14 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   the field and listing the options (it named neither). A second `schema`/`io_schema` in
   one module raises `ArgumentError` instead of a bare `RuntimeError`.
 - The Hex package includes MIGRATING-2.0.md.
+- `Normandy.Components.ContentBlock.Protocol` (`to_claudio/1`, `estimate_tokens/1`, `label/1`) is the one
+  place a content block type is described; a custom block implements it to be accepted by the Claudio
+  adapter, the token counter and the summarizer.
+- `Normandy.Agents.Turn.ServerSupervisor` is the behaviour for `:supervisor_mod` (§26).
+- `Normandy.Telemetry.Usage.sum/2` adds two usage maps; `Normandy.Telemetry.Span.span/4` takes an
+  `outcome` function so a returned `{:error, %LLMError{}}` ends the span in `:exception`.
+- `A2A.AgentTool.new/3` takes `:poll_interval` (positive integer ms, default 1_000); `A2A.Registry`
+  passes it on.
 - The README quickstart and the guides use `claude-opus-5-5`; the quickstart reads
   `response.chat_message` and handles `{:error, exception}`.
 - `ClaudioAdapter` `client.options[:thinking_block_binding]` (`:error | :drop_block`) sets what the

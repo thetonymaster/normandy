@@ -57,6 +57,10 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
 - `[:normandy, :tool, :denied]` for every call answered without running its tool.
 - `[:normandy, :turn, :approval, :start | :stop]` per approval park (`outcome`), and an `approval_wait`
   measurement on `Turn.Server`'s run `:stop`/`:exception`. The run stays one span.
+- `Normandy.Components.ContentBlock.Protocol`, `Normandy.Agents.Turn.ServerSupervisor`,
+  `Telemetry.Usage.sum/2`, `Telemetry.Span.span/4`, `A2A.AgentTool` `:poll_interval`, and optional
+  `Compactor.validate_opts!/2`, `Compactor.needs_window?/1` and `ModelCatalog.needs_claudio_client?/1`
+  callbacks (a host compactor or catalog no longer needs a `BaseAgent` edit).
 - `[:normandy, :workflow, :run]` around `Workflow.execute/1` and the orchestrators' entry points.
 - `[:normandy, :a2a, :request]` around `A2A.Server.handle_message/3`.
 - Trace context: `Turn.Server`, `AgentProcess` and the coordinators carry the caller's OpenTelemetry
@@ -82,6 +86,26 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
 - The `normandy llm call stop` log line's `input_tokens` is now the normalized count (Anthropic:
   input plus cache read and write), matching the span's normalized `input_tokens`. Log parsers that
   summed the old value on Anthropic will see larger numbers when prompt caching is on.
+- Breaking, from the principles audit (what to do is in `MIGRATING-2.0.md`):
+  - A `Turn.Session` with a `:template_provider` needs a credential provider in the config's
+    `behaviours` (`credential` has no default; `CredentialProvider.FromClient` is removed) (§26).
+  - `config :normandy, :adapter` is removed: Normandy encodes JSON with Jason. `JsonDeserializer` drops
+    `:adapter`, `:recover_truncated_strings` and the `:recovery` event, and now refuses unknown options (§23).
+  - The Redis store, memory store and registry constructors require `:url` and `:namespace` (`:prefix`);
+    the two Postgres `new/0` are removed (§40).
+  - `Coordination.Pattern`: `ok/1` and `error/1` removed, `ok!/2` and `error!/2` are `ok_value/2` and
+    `error_reason/2`; `HierarchicalCoordinator` drops `:shared_context`; `Batch.Processor` errors are
+    bare exceptions or `:task_down` `TurnError`s; a map input reaches the agent whole (§42).
+  - `TokenCounter.count_message/2` removed (pass the model); `WindowManager` drops `:sliding_window`
+    and `:summarize` without a client raises (§6).
+  - `Normandy.Type` drops Ecto's `embed_as`, `embedded_dump/load`, `match?`, `primitive?`, `load`;
+    `%Validate{}` drops `constraints`, `filters`, `prepare`; schema structs drop `__meta__` and
+    `Normandy.Metadata` is removed (stored data still loads) (§47).
+  - `Toolset` keeps one `Toolset.Entry` per tool; `Memory.new/1` and `Retry` validate through
+    `Normandy.Options` (§25, §30).
+  - OpenAI-compatible adapter: HTTP 529 is `:overloaded`, a status above 599 a retryable `:server` (§11).
+  - `BaseAgent`'s `@doc false` functions moved to internal modules (§45); `run/3` and `stream/3` classify
+    tool calls in the caller, as `Turn.Server` does (§16).
 
 ### Fixed
 
@@ -104,6 +128,16 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
   message is sent without its text, which rewrites the prompt cache from that message once. It
   is sent whole when it, or a later message of that turn before the answer, carries thinking
   the request sends, or when its text carries citations.
+- JSON region extraction is linear on unclosed `{` and `[` (a 240 KB reply took 30 s) and bounded by a
+  work budget; `JsonDeserializer` reports each retry's usage as it finishes.
+- `StatefulContext` reads no longer wait behind a slow `update/4` (it commits by compare-and-set).
+- A killed breaker `Registry` restarts instead of stopping the application, and a breaker crash no longer
+  drops `AgentProcess` registrations.
+- A host guard whose module sits under `Normandy.Guardrails.Builtins.` no longer gets built-in
+  `:on_error` handling.
+- `Normandy.Cluster.redis_child_specs/1` and `redis_handles/1` read `:redis_wait` and compute the store
+  plan once per call.
+- `Turn.Server` runs its worker through `Normandy.WatchedWorker`; a result from another worker is dropped.
 - Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
   `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
   can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
