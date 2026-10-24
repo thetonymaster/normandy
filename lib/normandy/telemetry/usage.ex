@@ -71,6 +71,33 @@ defmodule Normandy.Telemetry.Usage do
   end
 
   @doc """
+  The size of the request the returned call sent, as the provider counted it: input,
+  cache reads and cache writes of the top-level counts, or `nil` when `usage` reports
+  none. Unlike `normalize/1` it ignores `iterations` (earlier fallback attempts were
+  billed, but the returned call is the one whose request this measures).
+
+  ## Examples
+
+      iex> Normandy.Telemetry.Usage.request_input_tokens(%{
+      ...>   input_tokens: 10,
+      ...>   cache_read_input_tokens: 100,
+      ...>   iterations: [%{input_tokens: 500}, %{input_tokens: 10}]
+      ...> })
+      110
+
+      iex> Normandy.Telemetry.Usage.request_input_tokens(%{output_tokens: 3})
+      nil
+  """
+  @spec request_input_tokens(term()) :: non_neg_integer() | nil
+  def request_input_tokens(usage) do
+    usage
+    |> to_map()
+    |> Map.drop([:iterations, "iterations"])
+    |> normalize()
+    |> Map.get(:input_tokens)
+  end
+
+  @doc """
   Puts the raw provider `usage` under `:usage` in `metadata` when it is a non-empty map,
   and returns `metadata` unchanged otherwise, so a call whose provider reported no usage
   has no `:usage` key (never `usage: nil`).

@@ -27,6 +27,12 @@ defmodule Normandy.Agents.ToolCallResponse do
   `:stop_reason` is why the model stopped (`t:Normandy.LLM.Response.stop_reason/0`), or
   `nil` when the client did not say. The turn continues a `:pause_turn` response. It is
   never sent to the API.
+
+  `:input_tokens` is the size of the request that produced the response as the provider
+  counted it (input, cache reads and cache writes of the returned call), and
+  `:estimated_input_tokens` Normandy's estimate of that request when it was sent; `nil`
+  when unknown. `Normandy.Behaviours.Compactor.WindowManager` calibrates its estimate
+  with their ratio (AX-12). Neither is sent to the API.
   """
 
   use Normandy.Schema
@@ -40,7 +46,9 @@ defmodule Normandy.Agents.ToolCallResponse do
           thinking: [map()],
           prefix_key: integer() | nil,
           content_blocks: [map()],
-          stop_reason: Normandy.LLM.Response.stop_reason() | nil
+          stop_reason: Normandy.LLM.Response.stop_reason() | nil,
+          input_tokens: non_neg_integer() | nil,
+          estimated_input_tokens: non_neg_integer() | nil
         }
 
   schema do
@@ -50,6 +58,8 @@ defmodule Normandy.Agents.ToolCallResponse do
     field(:prefix_key, :integer, default: nil)
     field(:content_blocks, {:array, :map}, default: [])
     field(:stop_reason, :any, default: nil)
+    field(:input_tokens, :integer, default: nil)
+    field(:estimated_input_tokens, :integer, default: nil)
   end
 
   @doc """

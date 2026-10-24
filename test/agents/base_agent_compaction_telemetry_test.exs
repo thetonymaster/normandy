@@ -101,7 +101,8 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
              compacted: true,
              mid_round: false,
              error: nil,
-             reason: nil
+             reason: nil,
+             token_ratio: nil
            }
   end
 

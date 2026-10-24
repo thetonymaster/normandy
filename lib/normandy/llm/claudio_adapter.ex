@@ -862,6 +862,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
         Claudio.Messages.Response.to_assistant_content(claudio_response)
       )
       |> Map.put(:stop_reason, claudio_response.stop_reason)
+      |> Map.put(:input_tokens, Usage.request_input_tokens(claudio_response.usage))
     end
 
     defp populate_standard_schema(schema, content, context) do

@@ -11,7 +11,7 @@ defmodule Normandy.Test.WireScript do
 
   A reply is one of:
 
-    * `{:json, content_blocks, stop_reason}` - a Messages API response body
+    * `{:json, content_blocks, stop_reason}` (or with a fourth element, its `usage`) - a Messages API response body
     * `{:sse, events}` - a streamed response; build `events` with `message/3` and `block/3`
     * `{:status, status, body}` - an error response, `body` encoded as JSON
   """
@@ -42,9 +42,12 @@ defmodule Normandy.Test.WireScript do
     }
   end
 
-  @doc "A streamed message: `message_start`, `blocks`, `message_delta` with `stop`, `message_stop`."
-  @spec message(String.t(), [map()], String.t()) :: [map()]
-  def message(id, blocks, stop) do
+  @doc """
+  A streamed message: `message_start` (with `usage`), `blocks`, `message_delta` with
+  `stop`, `message_stop`.
+  """
+  @spec message(String.t(), [map()], String.t(), map()) :: [map()]
+  def message(id, blocks, stop, usage \\ %{"input_tokens" => 1, "output_tokens" => 0}) do
     [
       %{
         "type" => "message_start",
@@ -54,7 +57,7 @@ defmodule Normandy.Test.WireScript do
           "role" => "assistant",
           "model" => "claude-opus-5-5",
           "content" => [],
-          "usage" => %{"input_tokens" => 1, "output_tokens" => 0}
+          "usage" => usage
         }
       }
     ] ++
@@ -77,7 +80,10 @@ defmodule Normandy.Test.WireScript do
       [%{"type" => "content_block_stop", "index" => index}]
   end
 
-  defp respond(conn, n, {:json, content, stop}) do
+  defp respond(conn, n, {:json, content, stop}),
+    do: respond(conn, n, {:json, content, stop, %{"input_tokens" => 1, "output_tokens" => 1}})
+
+  defp respond(conn, n, {:json, content, stop, usage}) do
     body = %{
       "id" => "msg_#{n}",
       "type" => "message",
@@ -85,7 +91,7 @@ defmodule Normandy.Test.WireScript do
       "model" => "claude-opus-5-5",
       "content" => content,
       "stop_reason" => stop,
-      "usage" => %{"input_tokens" => 1, "output_tokens" => 1}
+      "usage" => usage
     }
 
     send_json(conn, 200, body)

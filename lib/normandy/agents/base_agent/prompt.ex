@@ -10,6 +10,7 @@ defmodule Normandy.Agents.BaseAgent.Prompt do
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Context.TokenEstimate
+  alias Normandy.Context.WindowManager
   alias Normandy.LLM.Request
   alias Normandy.Schema.Wire
   alias Normandy.Tools.Toolset
@@ -31,12 +32,23 @@ defmodule Normandy.Agents.BaseAgent.Prompt do
   # The part of a request that is not history (AX-12): its system prompt and tool
   # definitions, estimated like the history.
   @spec estimate(map(), struct() | nil) :: non_neg_integer()
-  def estimate(config, response_model) do
-    prompt = config |> parts(response_model) |> Request.system_prompt()
+  def estimate(config, response_model),
+    do: estimate_parts(parts(config, response_model), tool_schemas(config))
 
-    TokenEstimate.estimate_tokens(prompt) +
-      TokenEstimate.estimate_tokens(Normandy.JSON.encode!(tool_schemas(config)))
+  # estimate/2 of prompt parts and tool schemas already built for a request.
+  @spec estimate_parts(map(), [map()]) :: non_neg_integer()
+  def estimate_parts(parts, tool_schemas) do
+    TokenEstimate.estimate_tokens(Request.system_prompt(parts)) +
+      TokenEstimate.estimate_tokens(Normandy.JSON.encode!(tool_schemas))
   end
+
+  # The whole request a call sent, from the parts and tool schemas that built it (a
+  # context provider's text can change from call to call) and the memory's cached entry
+  # estimates: what Compactor.WindowManager compares, stamped on a tool-loop response
+  # beside the size the provider counted (ToolCallResponse.estimated_input_tokens, AX-12).
+  @spec estimate_request(map(), [map()], map()) :: non_neg_integer()
+  def estimate_request(parts, tool_schemas, memory),
+    do: estimate_parts(parts, tool_schemas) + WindowManager.estimate_conversation_tokens(memory)
 
   # The system prompt every call sends, as the Request fields `system`,
   # `output_schema_prompt` and `context_prompt`: the prompt specification's static
