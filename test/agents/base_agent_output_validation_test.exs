@@ -59,7 +59,10 @@ defmodule Normandy.Agents.BaseAgentOutputValidationTest do
       end)
 
     assert_received {:result, {:error, %ValidationError{errors: [_ | _]}}}
-    assert stderr == ""
+    # :stderr is captured globally, so another async test's compile warning can land in
+    # it; nothing of this run's output (the rejected value, the field) may.
+    refute stderr =~ "delete_everything"
+    refute stderr =~ "action"
   end
 
   test "Turn.Server replies the ValidationError and does not save the answer" do
