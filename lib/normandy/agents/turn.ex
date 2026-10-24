@@ -172,11 +172,19 @@ defmodule Normandy.Agents.Turn do
   # The re-asked answer replaces the rejected one: converted and validated the same way,
   # its tool calls never dispatched (it was asked with tool_choice :none), the turn's
   # stop_reason kept. A paused re-ask answer is not continued (continuing appends it,
-  # and the feedback it answers is in no memory): it is converted like any answer, and
-  # an incomplete one is rejected again.
+  # and the feedback it answers is in no memory) and never accepted, even when its text
+  # parses: the turn fails with :pause_turn, as a final call still paused does.
   def step(%State{status: :assistant_streaming, reasking: true} = s, {:llm_response, resp}) do
-    s = %{s | status: :finalizing, reasking: false, last_response: resp}
-    {s, [finish_effect(s, resp)]}
+    if paused?(resp) do
+      fail_paused_final(
+        %{s | reasking: false},
+        resp,
+        "the re-asked final answer was paused (stop_reason pause_turn)"
+      )
+    else
+      s = %{s | status: :finalizing, reasking: false, last_response: resp}
+      {s, [finish_effect(s, resp)]}
+    end
   end
 
   # The final call ran with tool_choice :none, so tool calls in its response are not
@@ -198,7 +206,12 @@ defmodule Normandy.Agents.Turn do
         |> continue_paused(resp)
 
       true ->
-        fail_paused_final(s, resp)
+        fail_paused_final(
+          s,
+          resp,
+          "the final call after max_tool_iterations was still paused (stop_reason " <>
+            "pause_turn) after #{@max_final_continuations} continuations"
+        )
     end
   end
 
@@ -649,18 +662,16 @@ defmodule Normandy.Agents.Turn do
     {s, [finish_effect(s, resp)]}
   end
 
-  # A final call still paused after @max_final_continuations continuations: an
-  # incomplete answer is never a success (decision 23). The reason is the stop reason,
-  # never model text; usage is the response's own, when it carries any.
-  defp fail_paused_final(s, resp) do
+  # A final call still paused after @max_final_continuations continuations, or a paused
+  # re-ask: an incomplete answer is never a success (decision 23). The reason is the stop
+  # reason, never model text; usage is the response's own, when it carries any.
+  defp fail_paused_final(s, resp, detail) do
     error =
       [
         type: :pause_turn,
         retryable?: false,
         reason: {:stop_reason, :pause_turn},
-        detail:
-          "the final call after max_tool_iterations was still paused (stop_reason " <>
-            "pause_turn) after #{@max_final_continuations} continuations"
+        detail: detail
       ]
       |> LLMError.new()
       |> LLMError.with_usage(Map.get(resp, :usage))

@@ -13,6 +13,7 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.LLMError
   alias Normandy.Schema.ValidationError
   alias Normandy.Test.{FakeClient, FakeTool}
   alias Normandy.Tools.Toolset
@@ -132,6 +133,14 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
 
       assert {%{status: :finalizing, reasking: false}, [_finish]} =
                Turn.step(s, {:llm_response, resp})
+    end
+
+    test "a paused re-ask answer fails the turn with :pause_turn, even when it parses" do
+      {s, _} = Turn.step(finalizing(1), {:output_invalid, @error})
+      paused = %ToolCallResponse{content: @good, tool_calls: [], stop_reason: :pause_turn}
+
+      assert {%{status: :failed, reasking: false}, [{:fail, %LLMError{type: :pause_turn}}]} =
+               Turn.step(s, {:llm_response, paused})
     end
 
     test "without re-asks left the turn fails with {:rejected, error}" do

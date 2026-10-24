@@ -575,8 +575,7 @@ and the `[:normandy, :json_deserializer, :fallback]` metadata `reason` is the fa
   `:guardrail_violation` event and `[:normandy, :agent, :guardrail, :violation]` telemetry.
 - A client that can't stream gives `{:error, %LLMError{type: :unsupported}}`.
 - `stream/3` parses the answer into a non-chat output schema once: `enable_json_retry`
-  doesn't re-ask the model, as for `run/3`'s answer after a tool loop (a `run/3` without
-  tools still re-asks).
+  doesn't re-ask the model (`run/3` re-asks, with or without a tool loop, AX-18).
 - `StreamProcessor.process_with_callback/2` (arity-2 callbacks) is gone; `stream/3` is the
   one streaming path.
 
