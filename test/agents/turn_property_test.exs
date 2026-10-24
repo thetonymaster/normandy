@@ -31,6 +31,8 @@ defmodule Normandy.Agents.TurnPropertyTest do
       constant({:output_converted, :c}),
       constant({:output_validated, :v}),
       constant({:output_guarded, :g}),
+      constant({:output_failed, Normandy.LLMError.new(type: :invalid_output, retryable?: false)}),
+      constant({:output_rejected, %Normandy.Guardrails.ViolationError{message: "no"}}),
       constant({:llm_error, :boom}),
       constant({:tool_error, :crash}),
       constant(

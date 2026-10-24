@@ -29,6 +29,11 @@ defmodule Normandy.Agents.Turn do
   A final answer the shell rejects (`{:output_invalid, error}`, a broken schema
   constraint) is asked again while `:max_constraint_reasks` lasts: a `final: true` call whose
   request carries `reask: %{response:, error:}`; then the turn fails with `{:rejected, error}`.
+  The shell reports the other ways an answer can fail and the core decides, with no re-ask:
+  `{:output_failed, %Normandy.LLMError{}}` (convert or validate raised it: the answer does
+  not parse, is blank, or a retry inside convert failed) fails the turn with that error, and
+  `{:output_rejected, %Normandy.Guardrails.ViolationError{}}` (an output guardrail blocked it)
+  with `{:rejected, error}`.
 
   A final response that carries server-tool results (a paused turn's continuation with
   its `mcp_tool_result`, a web search) is appended right before the answer, so later
@@ -256,6 +261,18 @@ defmodule Normandy.Agents.Turn do
         reason = {:rejected, error}
         {%{s | status: :failed, error: reason}, [{:fail, reason}]}
     end
+  end
+
+  # The answer failed for a model reason (convert or validate raised an LLMError: it does
+  # not parse, it is blank, or a retry inside convert failed). Not re-asked.
+  def step(%State{status: :finalizing} = s, {:output_failed, %LLMError{} = error}) do
+    {%{s | status: :failed, error: error}, [{:fail, error}]}
+  end
+
+  # An output guardrail blocked the answer. Not re-asked.
+  def step(%State{status: :finalizing} = s, {:output_rejected, error}) do
+    reason = {:rejected, error}
+    {%{s | status: :failed, error: reason}, [{:fail, reason}]}
   end
 
   # A final response that carries server-tool results (an MCP connector's
