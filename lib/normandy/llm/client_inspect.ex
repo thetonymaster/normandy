@@ -14,7 +14,6 @@ defmodule Normandy.LLM.ClientInspect do
   @spec inspect(struct(), Inspect.Opts.t()) :: Inspect.Algebra.t()
   def inspect(%mod{} = client, opts) do
     fields = [
-      __meta__: client.__meta__,
       base_url: url(client.base_url),
       options: redact(client.options),
       finch: client.finch

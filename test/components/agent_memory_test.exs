@@ -664,6 +664,29 @@ defmodule NormandyTest.Components.AgentMemoryTest do
                Turn.unanswered_tool_calls(AgentMemory.messages(open))
     end
 
+    test "a dump that still carries __meta__ in a tagged struct loads, ignoring the key" do
+      dump = AgentMemory.dump(tool_turn(true))
+
+      with_meta =
+        dump
+        |> Jason.decode!()
+        |> inject_meta()
+        |> Jason.encode!()
+
+      assert dump |> AgentMemory.load() |> contents() ==
+               with_meta |> AgentMemory.load() |> contents()
+    end
+
+    defp inject_meta(%{"$normandy_struct" => _, "data" => %{} = data} = tagged),
+      do: %{
+        tagged
+        | "data" => data |> inject_meta() |> Map.put("__meta__", %{"state" => "built"})
+      }
+
+    defp inject_meta(map) when is_map(map), do: Map.new(map, fn {k, v} -> {k, inject_meta(v)} end)
+    defp inject_meta(list) when is_list(list), do: Enum.map(list, &inject_meta/1)
+    defp inject_meta(other), do: other
+
     test "a dump written before nested structs were tagged raises at load, naming the entry" do
       legacy =
         Jason.encode!(%{

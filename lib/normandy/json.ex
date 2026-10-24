@@ -15,8 +15,8 @@ defmodule Normandy.JSON do
     * A struct with its own `Jason.Encoder` implementation (`@derive Jason.Encoder`,
       a `defimpl`, or one Jason ships: `Date`, `DateTime`, `Decimal`, ...) is kept,
       and that implementation decides its fields. Its fields are not walked.
-    * Any other struct becomes its map without `:__struct__` and `:__meta__`, and
-      its values are walked the same way.
+    * Any other struct becomes its map without `:__struct__` and `:__meta__` (an Ecto
+      schema's, whose encoder raises), and its values are walked the same way.
 
   A term JSON cannot express (a tuple, a pid, a reference, a function) is left as
   it is: Jason raises on it, and `encode/2` returns that exception.

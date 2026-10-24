@@ -75,6 +75,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   alias Normandy.Behaviours.Hooks
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.Schema.LegacyMeta
   alias Normandy.Tools.Toolset
 
   # Plain-data config fields carried as-is. A 1.0 template lacks them, so
@@ -225,7 +226,7 @@ defmodule Normandy.Agents.ConfigTemplate do
           BaseAgentConfig.t()
   def rebuild(tmpl, supplement, token) when is_map(tmpl) do
     :ok = check_loaded!(tmpl)
-    tmpl = translate!(tmpl)
+    tmpl = tmpl |> LegacyMeta.strip() |> translate!()
     :ok = pinned!(tmpl, supplement)
     refs = tmpl.behaviours_refs
     :ok = Hooks.validate_entries!(Map.get(refs, :hooks, []), load: false)

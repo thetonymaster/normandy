@@ -279,7 +279,7 @@ defmodule Normandy.Schema.Validator do
       properties = spec[:properties] || %{}
 
       data
-      |> Map.drop([:__struct__, :__meta__ | Map.keys(properties)])
+      |> Map.drop([:__struct__ | Map.keys(properties)])
       |> Enum.reduce(errors, fn {key, value}, acc ->
         validate_other_property(acc, key, value, pattern_properties, additional, path ++ [key])
       end)

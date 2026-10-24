@@ -11,11 +11,22 @@ defmodule Normandy.Behaviours.SessionStore.Codec do
   # that exists get created, and a term with truly unknown atoms still raises.
   # Releases in embedded mode load every module at boot and never hit the retry.
 
+  alias Normandy.Schema.LegacyMeta
+
   @spec encode(term()) :: binary()
   def encode(term), do: :erlang.term_to_binary(term)
 
   @spec decode(binary()) :: term()
   def decode(bin) when is_binary(bin) do
+    term = safe_decode(bin)
+
+    # Only data written before `__meta__` was dropped names the legacy module.
+    if :binary.match(bin, "Elixir.Normandy.Metadata") == :nomatch,
+      do: term,
+      else: LegacyMeta.strip(term)
+  end
+
+  defp safe_decode(bin) do
     :erlang.binary_to_term(bin, [:safe])
   rescue
     ArgumentError ->

@@ -54,7 +54,7 @@ defmodule Normandy.Schema.RedactTest do
 
   @secret "hunter2-secret"
 
-  test "nested schemas lose their redacted fields and __meta__ too" do
+  test "nested schemas lose their redacted fields too" do
     person = %Person{
       name: "ana",
       home: %Address{street: "Main", pin: @secret},
@@ -86,7 +86,7 @@ defmodule Normandy.Schema.RedactTest do
       assert Jason.decode!(json) == %{"name" => "ana", "password" => nil}
     end
 
-    test "a bare @derive encodes __meta__ as null and still hides nested redacted fields" do
+    test "a bare @derive still hides nested redacted fields" do
       json =
         BaseIOSchema.to_json(%DerivedAll{
           name: "ana",
@@ -95,8 +95,7 @@ defmodule Normandy.Schema.RedactTest do
 
       assert Jason.decode!(json) == %{
                "name" => "ana",
-               "home" => %{"street" => "Main"},
-               "__meta__" => nil
+               "home" => %{"street" => "Main"}
              }
     end
   end

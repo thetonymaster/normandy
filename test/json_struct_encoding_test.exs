@@ -1,7 +1,7 @@
 defmodule Normandy.JSONStructEncodingTest do
   @moduledoc """
   Review Focus 4: a struct Jason has no encoder for, inside a tool result, a memory
-  dump or a context-window estimate, is encoded as its map without __meta__ —
+  dump or a context-window estimate, is encoded as its map —
   never a Protocol.UndefinedError and never inspect/1 output sent to the model.
   """
   use ExUnit.Case, async: true

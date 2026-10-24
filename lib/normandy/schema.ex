@@ -16,7 +16,6 @@ defmodule Normandy.Schema do
   - Default value support
   - Field-level validation with JSON Schema constraints
   - Automatic struct generation
-  - Metadata tracking
   - Field redaction: a `redact: true` field is left out of `inspect/1`, of the
     JSON an `io_schema` sends to the model (`to_json/1`) and of
     `Normandy.InvalidChangesetError` messages. Do not
@@ -213,8 +212,6 @@ defmodule Normandy.Schema do
   - `:unique_items` - Whether items must be unique
   """
 
-  alias Normandy.Metadata
-
   @field_opts [
     :default,
     :redact,
@@ -252,7 +249,7 @@ defmodule Normandy.Schema do
     :examples
   ]
 
-  @type schema :: %{optional(atom) => any, __struct__: atom, __meta__: Metadata.t()}
+  @type schema :: %{optional(atom) => any, __struct__: atom}
   @type t :: schema
 
   @doc false
@@ -272,12 +269,13 @@ defmodule Normandy.Schema do
   end
 
   @doc false
-  # What an io_schema's to_json encodes: __meta__ (internal bookkeeping) and every
+  # What an io_schema's to_json encodes: `__meta__` (a foreign struct's, such as Ecto's,
+  # whose encoder raises, or a legacy one) and every
   # redact: true field removed, at every depth, so a nested schema hides its
   # secrets too. The struct rule is Normandy.JSON's: a struct with its own
   # Jason.Encoder impl stays a struct and the impl picks the fields, so a schema
   # one keeps every key (a derived impl matches on all the fields it encodes)
-  # with __meta__ and the redacted fields set to nil; any other struct becomes a
+  # with the redacted fields set to nil; any other struct becomes a
   # plain map without them.
   @spec __serializable__(term()) :: term()
   def __serializable__(%mod{} = struct) do
@@ -369,7 +367,7 @@ defmodule Normandy.Schema do
           defimpl Normandy.Components.BaseIOSchema, for: __MODULE__ do
             def to_json(str), do: Normandy.JSON.encode!(serializable(str))
 
-            # Neither __meta__ nor a redact: true field goes to the model or out,
+            # No redact: true field goes to the model or out,
             # in this struct or any schema nested in it.
             defp serializable(str), do: Normandy.Schema.__serializable__(str)
 
@@ -475,10 +473,6 @@ defmodule Normandy.Schema do
     Module.register_attribute(module, :schema_specification_fields, accumulate: true)
     Module.register_attribute(module, :schema_struct_fields, accumulate: true)
     Module.register_attribute(module, :schema_required_fields, accumulate: true)
-
-    meta = %Metadata{state: :built, schema: module}
-
-    Module.put_attribute(module, :schema_struct_fields, {:__meta__, meta})
   end
 
   @doc false
@@ -498,11 +492,7 @@ defmodule Normandy.Schema do
       Module.put_attribute(module, :derive, {Inspect, except: redacted_fields})
     end
 
-    loaded =
-      case Map.new([{:__struct__, module} | struct_fields]) do
-        %{__meta__: meta} = struct -> %{struct | __meta__: Map.put(meta, :state, :loaded)}
-        struct -> struct
-      end
+    loaded = Map.new([{:__struct__, module} | struct_fields])
 
     dump =
       for {name, {type, _description, _opts}} <- fields do

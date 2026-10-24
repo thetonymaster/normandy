@@ -25,6 +25,7 @@ defmodule Normandy.Components.AgentMemory do
   alias Normandy.Components.Message
   alias Normandy.Context.TokenEstimate
   alias Normandy.Options
+  alias Normandy.Schema.LegacyMeta
 
   defstruct entries: %{}, head: nil, current_turn_id: nil, max_messages: nil
 
@@ -739,6 +740,8 @@ defmodule Normandy.Components.AgentMemory do
   def from_entries([]), do: new_memory()
 
   def from_entries(entries) when is_list(entries) do
+    entries = LegacyMeta.strip(entries)
+
     case split_at_last_compaction(entries) do
       :none -> stored_chain(entries)
       {snapshot, later} -> compacted_chain(snapshot, later)
@@ -1028,8 +1031,9 @@ defmodule Normandy.Components.AgentMemory do
 
   # Nested Normandy schema structs (e.g. the %ToolCall{}s inside a ToolCallResponse)
   # are tagged with their module so load/1 can rebuild them; JSON alone would bring
-  # them back as string-keyed maps. `__meta__` is dropped: the struct default
-  # restores it on load.
+  # them back as string-keyed maps. A dump from a build that still had `__meta__`
+  # loads: decode_struct drops that key
+  # (a stored term is cleaned by Normandy.Schema.LegacyMeta instead).
   @struct_tag "$normandy_struct"
 
   defp encode_content(content) when is_struct(content) do
@@ -1052,6 +1056,7 @@ defmodule Normandy.Components.AgentMemory do
   defp encode_value(value), do: value
 
   defp encode_fields(struct) do
+    # A foreign struct (Ecto) keeps no `__meta__`: its encoder raises.
     struct |> Map.from_struct() |> Map.delete(:__meta__) |> encode_value()
   end
 
