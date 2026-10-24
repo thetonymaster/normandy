@@ -1,10 +1,15 @@
 defmodule NormandyTest.Components.AgentMemoryTest do
   use ExUnit.Case, async: true
 
-  alias NormandyTest.IOTest
+  alias Normandy.Agents.ToolCallResponse
+  alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
   alias Normandy.Components.Message
+  alias Normandy.Components.ToolCall
+  alias Normandy.Components.ToolResult
+  alias Normandy.Test.CountingContent
+  alias NormandyTest.IOTest
   doctest Normandy.Components.AgentMemory
 
   test "new_memory builds an empty entry graph" do
@@ -61,6 +66,50 @@ defmodule NormandyTest.Components.AgentMemoryTest do
 
     assert AgentMemory.count_messages(memory) == 1
     assert [%Message{role: "secondary"}] = AgentMemory.messages(memory)
+  end
+
+  describe "max_messages keeps a window the API accepts" do
+    defp roles(memory), do: memory |> AgentMemory.messages() |> Enum.map(& &1.role)
+
+    test "the kept window starts at a user message" do
+      memory =
+        AgentMemory.new_memory(3)
+        |> AgentMemory.add_message("user", "u1")
+        |> AgentMemory.add_message("assistant", "a1")
+        |> AgentMemory.add_message("user", "u2")
+        |> AgentMemory.add_message("assistant", "a2")
+
+      assert roles(memory) == ["user", "assistant"]
+    end
+
+    test "a tool loop is not cut between a tool_use and its result" do
+      memory =
+        AgentMemory.new_memory(3)
+        |> AgentMemory.add_message("user", "u1")
+        |> AgentMemory.add_message("assistant", "a1 tool_use")
+        |> AgentMemory.add_message("tool", "t1")
+        |> AgentMemory.add_message("assistant", "a2")
+
+      # No user message fits in 3, so the window keeps the whole turn.
+      assert roles(memory) == ["user", "assistant", "tool", "assistant"]
+    end
+  end
+
+  test "history gives the default chat input and output to the model as their plain text" do
+    history =
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", %Normandy.Agents.BaseAgentInputSchema{
+        chat_message: "My locker number is 4417."
+      })
+      |> AgentMemory.add_message("assistant", %Normandy.Agents.BaseAgentOutputSchema{
+        chat_message: "Noted."
+      })
+      |> AgentMemory.history()
+
+    assert history == [
+             %{role: "user", content: "My locker number is 4417."},
+             %{role: "assistant", content: "Noted."}
+           ]
   end
 
   test "history reconstructs the chronological role/content view" do
@@ -192,9 +241,9 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     memory = AgentMemory.delete_turn(memory, other_turn_id)
     assert AgentMemory.count_messages(memory) == 0
 
-    assert_raise Normandy.NonExistentTurn, fn ->
-      AgentMemory.delete_turn(memory, other_turn_id)
-    end
+    assert_raise Normandy.TurnNotFoundError,
+                 "no turn #{inspect(other_turn_id)} in this AgentMemory",
+                 fn -> AgentMemory.delete_turn(memory, other_turn_id) end
   end
 
   test "delete_turn re-links survivors around a deleted middle turn" do
@@ -295,7 +344,478 @@ defmodule NormandyTest.Components.AgentMemoryTest do
     # a and b are gone; c survives. Its parent walked up into the cycle, so no
     # surviving ancestor exists -> nil.
     assert AgentMemory.count_messages(result) == 1
-    assert AgentMemory.get_entry(result, "c").parent_id == nil
+    assert AgentMemory.fetch_entry!(result, "c").parent_id == nil
     assert result.head == "c"
+  end
+
+  describe "delete_turn/2 on large and corrupt memories (PERF-15)" do
+    # One entry per turn, in a chain: e1 <- e2 <- ... <- en.
+    defp chain(n) do
+      entries =
+        Map.new(1..n, fn i ->
+          parent = if i == 1, do: nil, else: "e#{i - 1}"
+
+          {"e#{i}",
+           %Entry{
+             id: "e#{i}",
+             parent_id: parent,
+             turn_id: "t#{i}",
+             role: "user",
+             content: "m#{i}"
+           }}
+        end)
+
+      %AgentMemory{entries: entries, head: "e#{n}", current_turn_id: "t#{n}"}
+    end
+
+    test "deleting the first turn of a 20_000-entry chain is linear" do
+      # The walk-to-root version takes ~12 s here (quadratic); a linear one, milliseconds.
+      task = Task.async(fn -> AgentMemory.delete_turn(chain(20_000), "t1") end)
+      memory = Task.await(task, 5_000)
+
+      assert AgentMemory.count_messages(memory) == 19_999
+      assert AgentMemory.fetch_entry!(memory, "e2").parent_id == nil
+      assert memory.head == "e20000"
+    end
+
+    test "survivors without thinking keep their cached term (nothing re-encoded)" do
+      ref = CountingContent.counter()
+
+      memory =
+        Enum.reduce(1..3, AgentMemory.new_memory(), fn i, m ->
+          m
+          |> AgentMemory.initialize_turn()
+          |> AgentMemory.add_message("user", CountingContent.new(ref, "m#{i}"))
+        end)
+
+      [first | _] = AgentMemory.entry_chain(memory)
+      deleted = AgentMemory.delete_turn(memory, first.turn_id)
+
+      assert CountingContent.count(ref) == 3
+      assert Enum.map(AgentMemory.entry_chain(deleted), & &1.wire) == ["m2", "m3"]
+    end
+
+    test "a parent cycle among the survivors does not hang" do
+      # x is deleted; y <-> z is a corrupt cycle that never reaches x.
+      x = %Entry{id: "x", parent_id: nil, turn_id: "T", role: "user", content: "x"}
+      y = %Entry{id: "y", parent_id: "z", turn_id: "U", role: "user", content: "y"}
+      z = %Entry{id: "z", parent_id: "y", turn_id: "U", role: "assistant", content: "z"}
+
+      memory = %AgentMemory{
+        entries: %{"x" => x, "y" => y, "z" => z},
+        head: "y",
+        current_turn_id: "U"
+      }
+
+      result = Task.await(Task.async(fn -> AgentMemory.delete_turn(memory, "T") end), 2_000)
+
+      assert Map.keys(result.entries) |> Enum.sort() == ["y", "z"]
+      assert AgentMemory.fetch_entry!(result, "y").parent_id == "z"
+      assert AgentMemory.fetch_entry!(result, "z").parent_id == "y"
+    end
+
+    test "a parent_id that names no entry does not raise" do
+      x = %Entry{id: "x", parent_id: nil, turn_id: "T", role: "user", content: "x"}
+      y = %Entry{id: "y", parent_id: "missing", turn_id: "U", role: "user", content: "y"}
+
+      memory = %AgentMemory{entries: %{"x" => x, "y" => y}, head: "y", current_turn_id: "U"}
+      result = AgentMemory.delete_turn(memory, "T")
+
+      assert Map.keys(result.entries) == ["y"]
+      assert AgentMemory.fetch_entry!(result, "y").parent_id == "missing"
+    end
+  end
+
+  describe "history edits drop the thinking they invalidate" do
+    # A thinking block is valid only after the exact history that produced it, so
+    # an edit that removes earlier messages must drop the thinking it invalidated.
+    @thinking [%{"type" => "thinking", "thinking" => "plan", "signature" => "s"}]
+
+    defp tool_round(memory, id) do
+      memory
+      |> AgentMemory.add_message("user", "go #{id}")
+      |> AgentMemory.add_message("assistant", %ToolCallResponse{
+        thinking: @thinking,
+        tool_calls: [%ToolCall{id: id, name: "weather", input: %{}}]
+      })
+      |> AgentMemory.add_message("tool", %ToolResult{tool_call_id: id, output: "x"})
+    end
+
+    defp thinking_by_call(memory) do
+      for %Message{content: %ToolCallResponse{tool_calls: [call], thinking: t}} <-
+            AgentMemory.messages(memory),
+          do: {call.id, t}
+    end
+
+    test "without an edit, every round keeps its thinking" do
+      memory = AgentMemory.new_memory(10) |> tool_round("a") |> tool_round("b")
+      assert thinking_by_call(memory) == [{"a", @thinking}, {"b", @thinking}]
+    end
+
+    test "a max_messages trim drops the thinking of every kept message" do
+      memory = AgentMemory.new_memory(4) |> tool_round("a") |> tool_round("b")
+      assert thinking_by_call(memory) == [{"b", []}]
+    end
+
+    test "delete_turn drops thinking after the deleted turn and keeps it before" do
+      memory = AgentMemory.new_memory()
+      memory = tool_round(memory, "a")
+      memory = AgentMemory.initialize_turn(memory)
+      memory = tool_round(memory, "b")
+      second_turn = memory.current_turn_id
+      memory = AgentMemory.initialize_turn(memory)
+      memory = tool_round(memory, "c")
+
+      memory = AgentMemory.delete_turn(memory, second_turn)
+
+      assert thinking_by_call(memory) == [{"a", @thinking}, {"c", []}]
+    end
+
+    test "delete_turn drops the thinking of the entry right after the deleted turn" do
+      # u (turn 1) <- a2 (turn 2, deleted) <- a3 (turn 3, directly after it).
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "go")
+        |> AgentMemory.initialize_turn()
+
+      deleted_turn = memory.current_turn_id
+
+      memory =
+        memory
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @thinking,
+          tool_calls: [%ToolCall{id: "a", name: "weather", input: %{}}]
+        })
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @thinking,
+          tool_calls: [%ToolCall{id: "b", name: "weather", input: %{}}]
+        })
+
+      memory = AgentMemory.delete_turn(memory, deleted_turn)
+
+      assert thinking_by_call(memory) == [{"b", []}]
+    end
+
+    test "drop_thinking/1 removes thinking blocks from a block list and a ToolCallResponse" do
+      blocks = [
+        %{"type" => "thinking", "thinking" => "p", "signature" => "s"},
+        %{type: "redacted_thinking", data: "d"},
+        %{type: "tool_use", id: "t1", name: "w", input: %{}}
+      ]
+
+      assert [%{type: "tool_use"}] = AgentMemory.drop_thinking(blocks)
+
+      assert %ToolCallResponse{thinking: []} =
+               AgentMemory.drop_thinking(%ToolCallResponse{thinking: @thinking})
+
+      assert AgentMemory.drop_thinking("text") == "text"
+    end
+  end
+
+  describe "drop_stale_thinking/2" do
+    # A thinking block is valid only under the system prompt and tools it was
+    # produced with (prefix_key). Earlier thinking blocks are not part of a block's
+    # prefix, so a leading run can go; removing one after a kept block breaks the
+    # chain for every later block.
+    @t [%{"type" => "thinking", "thinking" => "p", "signature" => "s"}]
+
+    defp stamped(keys) do
+      Enum.reduce(Enum.with_index(keys), AgentMemory.new_memory(), fn {key, i}, mem ->
+        mem
+        |> AgentMemory.add_message("user", "go #{i}")
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          thinking: @t,
+          prefix_key: key,
+          tool_calls: [%ToolCall{id: "c#{i}", name: "w", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %ToolResult{tool_call_id: "c#{i}", output: "x"})
+      end)
+    end
+
+    defp kept(memory) do
+      for %Message{content: %ToolCallResponse{thinking: t}} <- AgentMemory.messages(memory),
+          do: t != []
+    end
+
+    test "blocks produced under the current prefix are kept" do
+      assert stamped([1, 1]) |> AgentMemory.drop_stale_thinking(1) |> kept() == [true, true]
+    end
+
+    test "a leading run under an old prefix is dropped and later blocks stay" do
+      assert stamped([1, 1, 2]) |> AgentMemory.drop_stale_thinking(2) |> kept() ==
+               [false, false, true]
+    end
+
+    test "a stale block after a kept one drops every later block" do
+      assert stamped([2, 1, 2]) |> AgentMemory.drop_stale_thinking(2) |> kept() ==
+               [true, false, false]
+    end
+
+    test "unstamped blocks (from before prefix_key existed) are left as they are" do
+      assert stamped([nil, nil]) |> AgentMemory.drop_stale_thinking(2) |> kept() == [true, true]
+    end
+  end
+
+  describe "add_message/4" do
+    test "id: gives the entry that id instead of a new one" do
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", id: "entry-1")
+
+      assert [%Entry{id: "entry-1", content: "x"}] = AgentMemory.entry_chain(memory)
+      assert memory.head == "entry-1"
+    end
+
+    test "an id already in the memory raises instead of overwriting the entry" do
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", id: "entry-1")
+
+      assert_raise ArgumentError, ~r/entry id "entry-1" is already in the memory/, fn ->
+        AgentMemory.add_message(memory, "assistant", "y", id: "entry-1")
+      end
+    end
+
+    test "turn_id: stores the message under the given turn, not the current one" do
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", "old", turn_id: "turn-old")
+        |> AgentMemory.add_message("user", "new")
+
+      [old, new] = AgentMemory.messages(memory)
+      assert old.turn_id == "turn-old"
+      assert new.turn_id == AgentMemory.get_current_turn_id(memory)
+      refute new.turn_id == "turn-old"
+    end
+
+    test "an unknown option raises" do
+      assert_raise ArgumentError, fn ->
+        AgentMemory.add_message(AgentMemory.new_memory(), "user", "x", turn: "t")
+      end
+    end
+  end
+
+  describe "dump/load with nested structs" do
+    defp tool_turn(answered?) do
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "go")
+        |> AgentMemory.add_message("assistant", %ToolCallResponse{
+          content: "",
+          tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{"city" => "Lima"}}]
+        })
+
+      if answered?,
+        do: AgentMemory.add_message(memory, "tool", %ToolResult{tool_call_id: "t1", output: "x"}),
+        else: memory
+    end
+
+    defp contents(memory), do: memory |> AgentMemory.messages() |> Enum.map(& &1.content)
+
+    test "tool calls inside a ToolCallResponse come back as %ToolCall{} structs" do
+      memory = tool_turn(true)
+      loaded = memory |> AgentMemory.dump() |> AgentMemory.load()
+
+      assert contents(loaded) == contents(memory)
+    end
+
+    test "thinking blocks inside a ToolCallResponse come back unchanged" do
+      thinking = [
+        %{"type" => "thinking", "thinking" => "plan", "signature" => "sig1"},
+        %{"type" => "redacted_thinking", "data" => "opaque"}
+      ]
+
+      memory =
+        AgentMemory.add_message(AgentMemory.new_memory(), "assistant", %ToolCallResponse{
+          thinking: thinking,
+          tool_calls: [%ToolCall{id: "t1", name: "weather", input: %{}}]
+        })
+
+      assert [%ToolCallResponse{thinking: ^thinking}] =
+               memory |> AgentMemory.dump() |> AgentMemory.load() |> contents()
+    end
+
+    test "a ToolCallResponse dumped before :thinking existed loads with no thinking" do
+      old_dump =
+        tool_turn(false)
+        |> AgentMemory.dump()
+        |> Jason.decode!()
+        |> Map.update!("entries", fn entries ->
+          Enum.map(entries, fn entry ->
+            update_in(entry, ["content", "data"], fn
+              data when is_map(data) -> Map.delete(data, "thinking")
+              data -> data
+            end)
+          end)
+        end)
+        |> Jason.encode!()
+
+      refute old_dump =~ "thinking"
+
+      assert ["go", %ToolCallResponse{thinking: []}] =
+               old_dump |> AgentMemory.load() |> contents()
+    end
+
+    test "an answered batch stays answered and an open one stays open after a round trip" do
+      answered = tool_turn(true) |> AgentMemory.dump() |> AgentMemory.load()
+      open = tool_turn(false) |> AgentMemory.dump() |> AgentMemory.load()
+
+      assert Turn.unanswered_tool_calls(AgentMemory.messages(answered)) == []
+
+      assert [%ToolCall{id: "t1", name: "weather"}] =
+               Turn.unanswered_tool_calls(AgentMemory.messages(open))
+    end
+
+    test "a dump that still carries __meta__ in a tagged struct loads, ignoring the key" do
+      dump = AgentMemory.dump(tool_turn(true))
+
+      with_meta =
+        dump
+        |> Jason.decode!()
+        |> inject_meta()
+        |> Jason.encode!()
+
+      assert dump |> AgentMemory.load() |> contents() ==
+               with_meta |> AgentMemory.load() |> contents()
+    end
+
+    defp inject_meta(%{"$normandy_struct" => _, "data" => %{} = data} = tagged),
+      do: %{
+        tagged
+        | "data" => data |> inject_meta() |> Map.put("__meta__", %{"state" => "built"})
+      }
+
+    defp inject_meta(map) when is_map(map), do: Map.new(map, fn {k, v} -> {k, inject_meta(v)} end)
+    defp inject_meta(list) when is_list(list), do: Enum.map(list, &inject_meta/1)
+    defp inject_meta(other), do: other
+
+    test "a dump written before nested structs were tagged raises at load, naming the entry" do
+      legacy =
+        Jason.encode!(%{
+          version: 1,
+          max_messages: nil,
+          current_turn_id: "turn",
+          head: "e1",
+          entries: [
+            %{
+              id: "e1",
+              parent_id: nil,
+              turn_id: "turn",
+              role: "assistant",
+              content: %{
+                type: "Elixir.Normandy.Agents.ToolCallResponse",
+                data: %{
+                  "__meta__" => %{"state" => "built"},
+                  "content" => "",
+                  "tool_calls" => [%{"id" => "t1", "name" => "weather", "input" => %{}}]
+                }
+              }
+            }
+          ]
+        })
+
+      # Its tool call decodes as a plain map, which the model cannot be sent: the entry's
+      # encoding is computed at load (Task 6.1a), so the dump is refused here.
+      assert_raise ArgumentError,
+                   ~s|AgentMemory.load/1: entry "e1" has content that cannot be encoded | <>
+                     "for the model (KeyError)",
+                   fn -> AgentMemory.load(legacy) end
+    end
+  end
+
+  describe "dump/load of content blocks and untrusted dumps" do
+    alias Normandy.Components.ContentBlock.{Document, Image, Text}
+
+    defp round_trip(content) do
+      AgentMemory.new_memory()
+      |> AgentMemory.add_message("user", content)
+      |> AgentMemory.dump()
+      |> AgentMemory.load()
+      |> AgentMemory.messages()
+      |> hd()
+      |> Map.get(:content)
+    end
+
+    test "a single base64 image comes back usable" do
+      image = %Image{source: :base64, data: "aGk=", media_type: "image/png"}
+
+      assert %Image{source: :base64} = loaded = round_trip(image)
+      assert Image.to_claudio(loaded) == Image.to_claudio(image)
+    end
+
+    test "a multimodal list comes back as the same blocks" do
+      blocks = [
+        %Text{text: "look"},
+        %Image{source: :url, url: "https://example.com/a.png"},
+        %Document{source: :file_id, file_id: "file_1"}
+      ]
+
+      assert round_trip(blocks) == blocks
+    end
+
+    defp dump_naming(type) do
+      Jason.encode!(%{
+        version: 1,
+        max_messages: nil,
+        current_turn_id: "t",
+        head: "e1",
+        entries: [
+          %{
+            id: "e1",
+            parent_id: nil,
+            turn_id: "t",
+            role: "user",
+            content: %{type: type, data: %{}}
+          }
+        ]
+      })
+    end
+
+    test "load refuses a struct that is not a Normandy schema" do
+      assert_raise ArgumentError, ~r/not a Normandy schema: "Elixir.URI"/, fn ->
+        AgentMemory.load(dump_naming("Elixir.URI"))
+      end
+    end
+
+    test "load refuses a dump version it does not know" do
+      dump = Jason.encode!(%{version: 99, entries: []})
+
+      assert_raise ArgumentError, ~r/unsupported dump version 99/, fn ->
+        AgentMemory.load(dump)
+      end
+    end
+  end
+
+  test "fetch_entry/2 and fetch_entry!/2" do
+    memory =
+      AgentMemory.new_memory()
+      |> AgentMemory.initialize_turn()
+      |> AgentMemory.add_message("user", %{c: "a"})
+
+    id = memory.head
+
+    assert {:ok, %Normandy.Components.AgentMemory.Entry{role: "user"}} =
+             AgentMemory.fetch_entry(memory, id)
+
+    assert :error = AgentMemory.fetch_entry(memory, "missing")
+
+    assert %Normandy.Components.AgentMemory.Entry{role: "user"} =
+             AgentMemory.fetch_entry!(memory, id)
+
+    assert_raise KeyError, ~s(no entry "missing" in this AgentMemory), fn ->
+      AgentMemory.fetch_entry!(memory, "missing")
+    end
+  end
+
+  test "without_entries/1 drops the entries and keeps head, turn id and cap" do
+    memory =
+      AgentMemory.new_memory(5)
+      |> AgentMemory.add_message("user", "a")
+      |> AgentMemory.add_message("assistant", "b")
+
+    slim = AgentMemory.without_entries(memory)
+
+    assert slim.entries == %{}
+    assert slim.head == memory.head
+    assert slim.current_turn_id == memory.current_turn_id
+    assert slim.max_messages == 5
   end
 end

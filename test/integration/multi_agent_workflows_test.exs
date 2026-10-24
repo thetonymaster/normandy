@@ -1,14 +1,8 @@
 defmodule Normandy.Integration.MultiAgentWorkflowsTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
-  alias Normandy.Agents.BaseAgent
-
-  alias Normandy.Coordination.{
-    SequentialOrchestrator,
-    ParallelOrchestrator,
-    AgentProcess,
-    AgentSupervisor
-  }
+  alias Normandy.Coordination.{ParallelOrchestrator, SequentialOrchestrator}
 
   alias NormandyTest.Support.IntegrationHelper
 
@@ -44,7 +38,7 @@ defmodule Normandy.Integration.MultiAgentWorkflowsTest do
       agents = [agent1, agent2]
       input = %{chat_message: "Start with number 10"}
 
-      {:ok, final_result} = SequentialOrchestrator.execute(agents, input)
+      {:ok, %{"agent_1" => final_result}} = SequentialOrchestrator.execute(agents, input)
 
       # Should have processed through both agents
       assert is_map(final_result)
@@ -84,9 +78,8 @@ defmodule Normandy.Integration.MultiAgentWorkflowsTest do
       {:ok, results} = ParallelOrchestrator.execute(agents, input)
 
       # Should have results from all agents
-      assert is_list(results)
-      assert length(results) == 3
-      assert Enum.all?(results, fn r -> Map.has_key?(r, :chat_message) end)
+      assert map_size(results) == 3
+      assert Enum.all?(Map.values(results), &match?(%{chat_message: _}, &1))
     end
   end
 end

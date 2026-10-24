@@ -14,6 +14,8 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
   see the full set of offending phrases.
   """
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
@@ -27,55 +29,33 @@ defmodule Normandy.Guardrails.Builtins.ForbiddenSubstrings do
             "#{inspect(__MODULE__)} :terms must be a non-empty list of strings, got: #{inspect(terms)}"
     end
 
-    case extract(value, field) do
-      nil ->
-        :ok
-
-      string when is_binary(string) ->
-        haystack = if case_sensitive, do: string, else: String.downcase(string)
-        needles = if case_sensitive, do: terms, else: Enum.map(terms, &String.downcase/1)
-
-        matched =
-          terms
-          |> Enum.zip(needles)
-          |> Enum.filter(fn {_original, needle} -> String.contains?(haystack, needle) end)
-          |> Enum.map(fn {original, _needle} -> original end)
-
-        case matched do
-          [] ->
-            :ok
-
-          matched_terms ->
-            path = if field, do: [field], else: []
-
-            violations =
-              Enum.map(matched_terms, fn term ->
-                %{
-                  guard: __MODULE__,
-                  path: path,
-                  message: "must not contain forbidden term #{inspect(term)}",
-                  constraint: :forbidden_substring,
-                  term: term
-                }
-              end)
-
-            {:error, violations}
-        end
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+    case Field.string!(__MODULE__, value, field) do
+      nil -> :ok
+      string -> violations(string, terms, case_sensitive, Field.path(field))
     end
   end
 
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
+  defp violations(string, terms, case_sensitive, path) do
+    haystack = if case_sensitive, do: string, else: String.downcase(string)
 
-  defp extract(value, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a map or struct when using :field #{inspect(field)}, got: #{inspect(value)}"
+    matched =
+      Enum.filter(terms, fn term ->
+        String.contains?(haystack, if(case_sensitive, do: term, else: String.downcase(term)))
+      end)
+
+    case matched do
+      [] -> :ok
+      _ -> {:error, Enum.map(matched, &violation(&1, path))}
+    end
   end
 
-  defp field_suffix(nil), do: ""
-  defp field_suffix(field), do: " at field #{inspect(field)}"
+  defp violation(term, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must not contain forbidden term #{inspect(term)}",
+      constraint: :forbidden_substring,
+      term: term
+    }
+  end
 end

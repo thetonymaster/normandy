@@ -1,38 +1,51 @@
 defmodule Normandy.Agents.Turn.Inline do
-  @moduledoc """
-  Inline (synchronous) interpreter for the pure `Normandy.Agents.Turn` core.
-
-  Drives a turn to completion in the calling process: it feeds `:start` into
-  `Turn.step/2`, performs each returned effect's side-effect, and feeds the
-  resulting event back into `step/2` until the turn reaches `:stopped` (returns
-  `{:ok, state}`) or `:failed` (returns `{:error, reason, state}`).
-
-  This is the library / scripted-run shell. It does NOT (yet) replace
-  `BaseAgent.run/2`; it exists to prove the FSM core runs a real turn against a
-  real `Dispatch` chokepoint. Compaction at the `:steering` boundary is
-  supported via the optional `:compact` dep (default no-op); streaming,
-  guardrails, validation, persistence and approval shells come in later phases.
-
-  `deps` is a map of side-effecting functions:
-    * `:call_llm` — `fn request -> {:ok, response} | {:error, reason} end` (required)
-    * `:dispatch` — `fn calls -> [%ToolResult{}] end` (required)
-    * `:append`   — `fn role, content -> any end` (optional, defaults to no-op)
-    * `:emit`     — `fn name, meta -> any end` (optional, defaults to no-op)
-    * `:convert`  — `fn raw, response_model -> converted end` (optional, defaults to identity:
-                    returns `raw` unchanged)
-    * `:validate` — `fn value -> validated end` (optional, defaults to identity: returns `value`
-                    unchanged)
-    * `:guard`    — `fn value -> any end` (optional, defaults to no-op: side-effecting, return
-                    is ignored and the input `value` is fed forward via `{:output_guarded, value}`)
-    * `:compact`  — `fn info -> any end` (optional, defaults to no-op). Invoked at the
-                    `:steering` boundary; the inline shell does not thread memory, so
-                    a real impl must compact external state by side effect.
-
-  By design, `step/2` always places the single blocking/terminal effect
-  (`:call_llm`, `:dispatch_tools`, `:finalize`, `:fail`) last in its effect list,
-  so the interpreter performs the leading `:append_message` / `:emit_event`
-  effects in order and then acts on the terminal one.
-  """
+  @moduledoc false
+  # Inline (synchronous) interpreter for the pure `Normandy.Agents.Turn` core.
+  #
+  # Drives a turn to completion in the calling process: it feeds `:start` into
+  # `Turn.step/2`, performs each returned effect's side-effect, and feeds the
+  # resulting event back into `step/2` until the turn reaches `:stopped` (returns
+  # `{:ok, state}`) or `:failed` (returns `{:error, reason, state}`).
+  #
+  # This is the test shell over the pure core: no lib module calls it. Tests drive the
+  # FSM core with it against a real `Dispatch` chokepoint and plain-function deps.
+  # Compaction at the `:steering` boundary is supported via the optional `:compact` dep
+  # (default no-op). The production shells are `Turn.Driver` (`BaseAgent.run/3` and
+  # `stream/3`, with their streaming, guardrails and validation handlers) and
+  # `Turn.Server` (persistence and approval).
+  #
+  # Lifecycle hooks (`Normandy.Behaviours.Hooks`) have no site here: this shell calls only
+  # its `deps`. Tool hooks run when `:dispatch` dispatches through an agent pipeline
+  # (`Dispatch.dispatch_one/3` with `BaseAgent.Handlers.base_agent_pipeline/1`); no other event runs.
+  #
+  # `deps` is a map of side-effecting functions:
+  #   * `:call_llm` — `fn request -> {:ok, response} | {:error, reason} end` (required)
+  #   * `:dispatch` — `fn calls -> [%ToolResult{}] end` (required)
+  #   * `:append`   — `fn role, content -> any end` (optional, defaults to no-op)
+  #   * `:emit`     — `fn name, meta -> any end` (optional, defaults to no-op)
+  #   * `:convert`  — `fn raw, response_model -> converted end` (optional, defaults to identity:
+  #                   returns `raw` unchanged)
+  #   * `:validate` — `fn value -> validated end` (optional, defaults to identity: returns `value`
+  #                   unchanged)
+  #   * `:guard`    — `fn value -> any end` (optional, defaults to no-op: side-effecting, return
+  #                   is ignored and the input `value` is fed forward via `{:output_guarded, value}`)
+  #   * `:compact`  — `fn info -> any end` (optional, defaults to no-op). Invoked at the
+  #                   `:steering` boundary with `%{iterations_left: n, mid_round: boolean}`
+  #                   (see `Normandy.Agents.Turn`); the inline shell does not thread memory, so
+  #                   a real impl must compact external state by side effect.
+  #
+  # ## Telemetry
+  #
+  # This shell emits no telemetry of its own: spans and events come from the
+  # `deps` it is given (`:emit` is a no-op by default). `BaseAgent` does not use
+  # this interpreter (it drives the turn through `Turn.Driver`, whose handlers
+  # open the run, llm_call and tool spans), so a caller of `Inline.run/2` that
+  # wants spans wraps them inside its own `:call_llm`, `:dispatch` and `:emit`.
+  #
+  # By design, `step/2` always places the single blocking/terminal effect
+  # (`:call_llm`, `:dispatch_tools`, `:finalize`, `:fail`) last in its effect list,
+  # so the interpreter performs the leading `:append_message` / `:emit_event`
+  # effects in order and then acts on the terminal one.
 
   alias Normandy.Agents.Turn
 
@@ -57,6 +70,7 @@ defmodule Normandy.Agents.Turn.Inline do
 
   defp process(state, [], _deps), do: {:ok, state}
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp process(state, [effect | rest], deps) do
     case effect do
       {:emit_event, name, meta} ->

@@ -1,6 +1,16 @@
 defmodule Normandy.Schema.IntrospectionTest do
   use ExUnit.Case, async: true
 
+  # Used by more than one describe block: a module defined inside a describe is
+  # aliased only within that block, so this one lives at the top.
+  defmodule PlainSchema do
+    use Normandy.Schema
+
+    schema do
+      field(:name, :string)
+    end
+  end
+
   alias Normandy.Schema.Introspection
 
   describe "list_fields/1" do
@@ -131,6 +141,7 @@ defmodule Normandy.Schema.IntrospectionTest do
         field(:name, :string)
         field(:computed, :string, virtual: true)
         field(:hidden, :string, virtual: true, include_in_json_schema: false)
+        field(:listed, :string, virtual: true, include_in_json_schema: true)
       end
     end
 
@@ -140,6 +151,10 @@ defmodule Normandy.Schema.IntrospectionTest do
 
     test "returns false for non-virtual fields" do
       assert Introspection.virtual_field?(VirtualSchema, :name) == false
+    end
+
+    test "returns true for a virtual field that is still in the JSON schema" do
+      assert Introspection.virtual_field?(VirtualSchema, :listed) == true
     end
   end
 
@@ -242,14 +257,6 @@ defmodule Normandy.Schema.IntrospectionTest do
   end
 
   describe "has_composition?/1" do
-    defmodule PlainSchema do
-      use Normandy.Schema
-
-      schema do
-        field(:name, :string)
-      end
-    end
-
     defmodule CompositionSchema do
       use Normandy.Schema
 
@@ -268,14 +275,6 @@ defmodule Normandy.Schema.IntrospectionTest do
   end
 
   describe "has_conditionals?/1" do
-    defmodule PlainSchema do
-      use Normandy.Schema
-
-      schema do
-        field(:name, :string)
-      end
-    end
-
     defmodule ConditionalSchema do
       use Normandy.Schema
 

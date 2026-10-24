@@ -21,7 +21,7 @@ defmodule Normandy.Coordination.AgentPool do
         name: :my_pool,
         agent_config: my_agent_config,
         size: 10,
-        overflow: 5,
+        max_overflow: 5,
         strategy: :fifo
       )
 
@@ -44,7 +44,10 @@ defmodule Normandy.Coordination.AgentPool do
   require Logger
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.InitOptions
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Coordination.AgentSupervisor
+  alias Normandy.Options
 
   @type strategy :: :lifo | :fifo
   @type pool_stat :: %{
@@ -67,22 +70,74 @@ defmodule Normandy.Coordination.AgentPool do
       in_use: MapSet.new(),
       overflow_count: 0,
       waiting: :queue.new(),
-      monitors: %{}
+      # agent pid => monitor ref, for every agent the pool started
+      agents: %{},
+      # client monitor ref => {the agent that client holds, the client pid}
+      clients: %{}
     ]
   end
 
   # Client API
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the pool."],
+                            agent_config: [
+                              type:
+                                {:or,
+                                 [{:custom, Normandy.Options, :plain_map, []}, :keyword_list]},
+                              required: true,
+                              type_doc: "a map or keyword list of `BaseAgent.init/1` options",
+                              doc:
+                                "The `BaseAgent.init/1` config every pooled agent is built from."
+                            ],
+                            size: [
+                              type: :pos_integer,
+                              default: 10,
+                              doc: "Agents started up front."
+                            ],
+                            max_overflow: [
+                              type: :non_neg_integer,
+                              default: 5,
+                              doc: "Extra agents started while every pooled agent is checked out."
+                            ],
+                            strategy: [
+                              type: {:in, [:lifo, :fifo]},
+                              default: :lifo,
+                              doc:
+                                "Which free agent a checkout gets: the most (`:lifo`) or least " <>
+                                  "(`:fifo`) recently returned."
+                            ]
+                          )
+
+  @transaction_opts_schema NimbleOptions.new!(
+                             timeout: [
+                               type: :timeout,
+                               default: 5000,
+                               doc: "How long to wait for a free agent, in ms."
+                             ]
+                           )
+
+  @checkout_opts_schema NimbleOptions.new!(
+                          timeout: [
+                            type: :timeout,
+                            default: 5000,
+                            doc: "How long to wait for a free agent, in ms (blocking checkout)."
+                          ],
+                          block: [
+                            type: :boolean,
+                            default: true,
+                            doc:
+                              "`false` returns `{:error, :no_agents}` at once when every agent " <>
+                                "is in use and the overflow limit is reached."
+                          ]
+                        )
 
   @doc """
   Starts an agent pool.
 
   ## Options
 
-  - `:name` - Register the pool with a name (required for named access)
-  - `:agent_config` - BaseAgent configuration map (required)
-  - `:size` - Pool size (default: 10)
-  - `:max_overflow` - Maximum overflow workers (default: 5)
-  - `:strategy` - Checkout strategy `:lifo` or `:fifo` (default: `:lifo`)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Examples
 
@@ -90,8 +145,7 @@ defmodule Normandy.Coordination.AgentPool do
         name: :research_pool,
         agent_config: %{
           client: client,
-          model: "claude-3-5-sonnet-20241022",
-          temperature: 0.7
+          model: "claude-opus-5-5"
         },
         size: 10,
         max_overflow: 5,
@@ -100,12 +154,12 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    name = Keyword.get(opts, :name)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
+    :ok = check_agent_config!(Keyword.fetch!(opts, :agent_config))
 
-    if name do
-      GenServer.start_link(__MODULE__, opts, name: name)
-    else
-      GenServer.start_link(__MODULE__, opts)
+    case Keyword.get(opts, :name) do
+      nil -> GenServer.start_link(__MODULE__, opts)
+      name -> GenServer.start_link(__MODULE__, opts, name: name)
     end
   end
 
@@ -113,11 +167,11 @@ defmodule Normandy.Coordination.AgentPool do
   Executes a function with an agent from the pool.
 
   Automatically checks out an agent, executes the function, and checks it back in.
-  Handles errors gracefully and ensures the agent is always returned to the pool.
+  The agent is returned to the pool even when the function raises.
 
   ## Options
 
-  - `:timeout` - Checkout timeout in ms (default: 5000)
+  #{Options.docs(@transaction_opts_schema)}
 
   ## Examples
 
@@ -132,17 +186,21 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Returns
 
-  - `{:ok, result}` - Function result
-  - `{:error, :timeout}` - Checkout timeout
-  - `{:error, :pool_exhausted}` - No agents available and max overflow reached
-  - `{:error, reason}` - Function raised an error
+  - `{:ok, result}` - the function's return value, whatever it is: a function
+    that returns `{:error, reason}` gives `{:ok, {:error, reason}}`
+  - `{:error, :timeout}` - no agent became available within `:timeout`
+  - `{:error, :failed_to_start_agent}` - the pool tried to start an overflow
+    agent and could not
+
+  A function that raises or exits is not caught: the error propagates to the
+  caller after the agent is checked back in.
   """
   @spec transaction(GenServer.server(), keyword(), (pid() -> term())) ::
           {:ok, term()} | {:error, term()}
   def transaction(pool, opts \\ [], fun) when is_function(fun, 1) do
-    timeout = Keyword.get(opts, :timeout, 5000)
+    opts = Options.validate!(opts, @transaction_opts_schema, {__MODULE__, :transaction, 3})
 
-    case checkout(pool, timeout: timeout) do
+    case checkout(pool, timeout: Keyword.fetch!(opts, :timeout)) do
       {:ok, agent_pid} ->
         try do
           result = fun.(agent_pid)
@@ -161,8 +219,15 @@ defmodule Normandy.Coordination.AgentPool do
 
   ## Options
 
-  - `:timeout` - Maximum time to wait in ms (default: 5000)
-  - `:block` - Whether to block if no agents available (default: true)
+  #{Options.docs(@checkout_opts_schema)}
+
+  ## Returns
+
+  - `{:ok, agent_pid}`
+  - `{:error, :timeout}` - blocking, and no agent became available within `:timeout`
+  - `{:error, :no_agents}` - non-blocking, and every agent is in use with the
+    overflow limit reached
+  - `{:error, :failed_to_start_agent}` - the pool could not start an overflow agent
 
   ## Examples
 
@@ -178,14 +243,23 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec checkout(GenServer.server(), keyword()) :: {:ok, pid()} | {:error, term()}
   def checkout(pool, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5000)
-    block = Keyword.get(opts, :block, true)
+    opts = Options.validate!(opts, @checkout_opts_schema, {__MODULE__, :checkout, 2})
 
-    GenServer.call(pool, {:checkout, block}, timeout)
+    # The pool enforces the timeout and always replies, so a caller never exits
+    # on a busy pool and an agent is never handed to a caller that gave up.
+    GenServer.call(
+      pool,
+      {:checkout, Keyword.fetch!(opts, :block), Keyword.fetch!(opts, :timeout)},
+      :infinity
+    )
   end
 
   @doc """
   Returns an agent to the pool.
+
+  Only the process that checked the agent out can return it. A checkin from any
+  other process, such as a late second checkin after the agent was lent again, is
+  ignored with a warning; an agent whose holder exits comes back on its own.
 
   ## Examples
 
@@ -195,7 +269,7 @@ defmodule Normandy.Coordination.AgentPool do
   """
   @spec checkin(GenServer.server(), pid()) :: :ok
   def checkin(pool, agent_pid) do
-    GenServer.cast(pool, {:checkin, agent_pid})
+    GenServer.cast(pool, {:checkin, agent_pid, self()})
   end
 
   @doc """
@@ -232,14 +306,30 @@ defmodule Normandy.Coordination.AgentPool do
     GenServer.stop(pool, :normal)
   end
 
+  # init/1 builds every pooled agent with BaseAgent.init/1; a bad config must raise here,
+  # in the caller, not crash init/1. Only the option check runs (no agent is built).
+  defp check_agent_config!(agent_config) do
+    _ = InitOptions.check_init!(agent_config)
+    :ok
+  rescue
+    e in ArgumentError ->
+      reraise ArgumentError,
+              [
+                message:
+                  "#{inspect(__MODULE__)}.start_link/1: invalid :agent_config: " <>
+                    Exception.message(e)
+              ],
+              __STACKTRACE__
+  end
+
   # Server Callbacks
 
   @impl true
   def init(opts) do
     agent_config = Keyword.fetch!(opts, :agent_config)
-    size = Keyword.get(opts, :size, 10)
-    max_overflow = Keyword.get(opts, :max_overflow, 5)
-    strategy = Keyword.get(opts, :strategy, :lifo)
+    size = Keyword.fetch!(opts, :size)
+    max_overflow = Keyword.fetch!(opts, :max_overflow)
+    strategy = Keyword.fetch!(opts, :strategy)
 
     # Start supervisor for agents
     {:ok, supervisor} = AgentSupervisor.start_link()
@@ -260,21 +350,21 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   @impl true
-  def handle_call({:checkout, block}, from, state) do
+  def handle_call({:checkout, block, timeout}, {client, _tag} = from, state) do
     case do_checkout(state) do
       {:ok, agent_pid, new_state} ->
-        # Monitor the checking out process
-        ref = Process.monitor(agent_pid)
-        new_state = put_in(new_state.monitors[ref], agent_pid)
-
-        {:reply, {:ok, agent_pid}, new_state}
+        emit_checkout(:ok, 0, new_state.overflow_count > state.overflow_count)
+        {:reply, {:ok, agent_pid}, lend(agent_pid, client, new_state)}
 
       {:error, :no_agents} when block ->
-        # Add to waiting queue
-        new_state = %{state | waiting: :queue.in(from, state.waiting)}
-        {:noreply, new_state}
+        # Watch the waiter, so one that dies is dropped instead of being handed an agent.
+        mref = Process.monitor(client)
+        timer = start_checkout_timer(from, timeout)
+        waiter = {from, timer, mref, System.monotonic_time()}
+        {:noreply, %{state | waiting: :queue.in(waiter, state.waiting)}}
 
       {:error, reason} ->
+        emit_checkout(reason, 0, false)
         {:reply, {:error, reason}, state}
     end
   end
@@ -294,29 +384,48 @@ defmodule Normandy.Coordination.AgentPool do
   end
 
   @impl true
-  def handle_cast({:checkin, agent_pid}, state) do
-    # Check if agent is still alive
-    if Process.alive?(agent_pid) do
-      new_state = do_checkin(agent_pid, state)
-      {:noreply, new_state}
-    else
-      # Agent died, remove from in_use and potentially create new one
-      new_state = handle_agent_death(agent_pid, state)
-      {:noreply, new_state}
+  def handle_cast({:checkin, agent_pid, caller}, state) do
+    case release(agent_pid, caller, state) do
+      # Not checked out (a second checkin, or a pid the pool never lent): ignore it.
+      :not_lent ->
+        {:noreply, state}
+
+      # Lent to someone else: a stale checkin must not release their loan.
+      :not_holder ->
+        Logger.warning(
+          "AgentPool ignored a checkin of #{inspect(agent_pid)}: not held by the caller " <>
+            "#{inspect(caller)}"
+        )
+
+        {:noreply, state}
+
+      # A dead agent is left in use; its :DOWN removes and replaces it.
+      {:ok, state} ->
+        {:noreply, if(Process.alive?(agent_pid), do: do_checkin(agent_pid, state), else: state)}
     end
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    # Agent process died
-    case Map.pop(state.monitors, ref) do
-      {nil, _monitors} ->
-        {:noreply, state}
+  def handle_info({:checkout_timeout, from}, state) do
+    # A waiter served just before its timer fired is no longer in the queue.
+    {gone, waiting} =
+      split_waiters(state.waiting, fn {waiter, _timer, _mref, _queued_at} -> waiter == from end)
 
-      {agent_pid, monitors} ->
-        new_state = %{state | monitors: monitors}
-        new_state = handle_agent_death(agent_pid, new_state)
-        {:noreply, new_state}
+    Enum.each(gone, fn {_from, _timer, mref, queued_at} ->
+      Process.demonitor(mref, [:flush])
+      emit_checkout(:timeout, System.monotonic_time() - queued_at, false)
+      GenServer.reply(from, {:error, :timeout})
+    end)
+
+    {:noreply, %{state | waiting: waiting}}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    cond do
+      Map.get(state.agents, pid) == ref -> {:noreply, agent_down(pid, state)}
+      Map.has_key?(state.clients, ref) -> {:noreply, client_down(ref, state)}
+      true -> {:noreply, waiter_down(ref, state)}
     end
   end
 
@@ -330,37 +439,94 @@ defmodule Normandy.Coordination.AgentPool do
   # Private Functions
 
   defp start_agents(state, count) do
-    pids =
-      1..count
-      |> Enum.map(fn _ ->
-        start_agent(state)
-      end)
-      |> Enum.filter(&(&1 != nil))
-
-    %{state | available: pids}
+    Enum.reduce(1..count, state, fn _, state ->
+      case start_agent(state) do
+        {:ok, pid, state} -> %{state | available: state.available ++ [pid]}
+        :error -> state
+      end
+    end)
   end
 
+  # The pool owns replacement, so agents are :temporary: a supervisor restart
+  # would add an agent the pool doesn't know about.
   defp start_agent(state) do
     agent = BaseAgent.init(state.agent_config)
 
-    case AgentSupervisor.start_agent(state.supervisor, agent: agent) do
+    case AgentSupervisor.start_agent(state.supervisor, agent: agent, restart: :temporary) do
       {:ok, pid} ->
-        pid
+        {:ok, pid, put_in(state.agents[pid], Process.monitor(pid))}
 
       {:error, reason} ->
-        Logger.error("Failed to start agent in pool: #{inspect(reason)}")
-        nil
+        Logger.error("Failed to start agent in pool: #{Describe.reason_tag(reason)}")
+        :error
     end
+  end
+
+  defp stop_agent(agent_pid, state) do
+    {ref, agents} = Map.pop(state.agents, agent_pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    _ = AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
+    %{state | agents: agents}
+  end
+
+  # Record that `client` holds `agent_pid`, so the agent comes back if the client dies.
+  defp lend(agent_pid, client, state) do
+    put_in(state.clients[Process.monitor(client)], {agent_pid, client})
+  end
+
+  # Ends the loan of `agent_pid`. With a `caller`, only the holder may end it.
+  defp release(agent_pid, caller \\ :any, state) do
+    case Enum.find(state.clients, fn {_ref, {pid, _client}} -> pid == agent_pid end) do
+      nil ->
+        :not_lent
+
+      {_ref, {_pid, client}} when caller != :any and client != caller ->
+        :not_holder
+
+      {ref, _} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, %{state | clients: Map.delete(state.clients, ref)}}
+    end
+  end
+
+  defp agent_down(agent_pid, state) do
+    state = %{state | agents: Map.delete(state.agents, agent_pid)}
+
+    state =
+      case release(agent_pid, state) do
+        {:ok, state} -> state
+        :not_lent -> state
+      end
+
+    handle_agent_death(agent_pid, state)
+  end
+
+  defp client_down(ref, state) do
+    {{agent_pid, _client}, clients} = Map.pop(state.clients, ref)
+    do_checkin(agent_pid, %{state | clients: clients})
+  end
+
+  defp waiter_down(ref, state) do
+    {gone, waiting} =
+      split_waiters(state.waiting, fn {_from, _timer, mref, _queued_at} -> mref == ref end)
+
+    Enum.each(gone, fn {_from, timer, _mref, _queued_at} -> cancel_checkout_timer(timer) end)
+    %{state | waiting: waiting}
+  end
+
+  defp split_waiters(queue, fun) do
+    {gone, kept} = Enum.split_with(:queue.to_list(queue), fun)
+    {gone, :queue.from_list(kept)}
   end
 
   defp do_checkout(%State{available: []} = state) do
     # No available agents, check if we can create overflow
     if state.overflow_count < state.max_overflow do
       case start_agent(state) do
-        nil ->
+        :error ->
           {:error, :failed_to_start_agent}
 
-        agent_pid ->
+        {:ok, agent_pid, state} ->
           new_state = %{
             state
             | in_use: MapSet.put(state.in_use, agent_pid),
@@ -374,11 +540,12 @@ defmodule Normandy.Coordination.AgentPool do
     end
   end
 
+  # `available` is newest first: a checkin puts the returned agent at its head.
   defp do_checkout(%State{available: available, strategy: strategy} = state) do
     {agent_pid, remaining} =
       case strategy do
-        :lifo -> {List.last(available), Enum.drop(available, -1)}
-        :fifo -> {List.first(available), Enum.drop(available, 1)}
+        :lifo -> {hd(available), tl(available)}
+        :fifo -> {List.last(available), Enum.drop(available, -1)}
       end
 
     new_state = %{
@@ -397,23 +564,20 @@ defmodule Normandy.Coordination.AgentPool do
     # Check if this is an overflow agent
     is_overflow = length(new_state.available) >= state.size
 
-    cond do
-      # There are waiting checkouts
-      not :queue.is_empty(new_state.waiting) ->
-        {{:value, from}, new_waiting} = :queue.out(new_state.waiting)
-        GenServer.reply(from, {:ok, agent_pid})
-
-        %{new_state | waiting: new_waiting, in_use: MapSet.put(new_state.in_use, agent_pid)}
-
-      # Return to pool if not overflow
-      not is_overflow ->
-        %{new_state | available: [agent_pid | new_state.available]}
-
-      # Overflow agent, terminate it
-      true ->
-        _ = AgentSupervisor.terminate_agent(state.supervisor, agent_pid)
-        %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
+    if is_overflow and :queue.is_empty(new_state.waiting) do
+      # Overflow agent nobody waits for: terminate it
+      new_state = stop_agent(agent_pid, new_state)
+      %{new_state | overflow_count: max(0, new_state.overflow_count - 1)}
+    else
+      offer(agent_pid, new_state)
     end
+  end
+
+  # An idle agent: a waiting checkout gets it, else it goes to `available`.
+  defp offer(agent_pid, state) do
+    if :queue.is_empty(state.waiting),
+      do: %{state | available: [agent_pid | state.available]},
+      else: hand_to_waiter(agent_pid, state, false)
   end
 
   defp handle_agent_death(agent_pid, state) do
@@ -428,26 +592,68 @@ defmodule Normandy.Coordination.AgentPool do
     total_agents = length(state.available) + MapSet.size(state.in_use)
 
     if total_agents < state.size do
-      # Start replacement agent
-      case start_agent(state) do
-        nil ->
-          Logger.warning("Failed to start replacement agent")
-          state
-
-        new_pid ->
-          # Check if there are waiting checkouts
-          if not :queue.is_empty(state.waiting) do
-            {{:value, from}, new_waiting} = :queue.out(state.waiting)
-            GenServer.reply(from, {:ok, new_pid})
-
-            %{state | waiting: new_waiting, in_use: MapSet.put(state.in_use, new_pid)}
-          else
-            %{state | available: [new_pid | state.available]}
-          end
-      end
+      replace_agent(state)
     else
-      # It was an overflow agent
-      %{state | overflow_count: max(0, state.overflow_count - 1)}
+      # It was an overflow agent; its slot can serve a waiting checkout.
+      serve_waiter(%{state | overflow_count: max(0, state.overflow_count - 1)})
     end
+  end
+
+  defp replace_agent(state) do
+    case start_agent(state) do
+      :error ->
+        Logger.warning("Failed to start replacement agent")
+        state
+
+      {:ok, new_pid, state} ->
+        offer(new_pid, state)
+    end
+  end
+
+  # Hands the first waiter an agent if one can be had (a new overflow agent).
+  defp serve_waiter(state) do
+    with false <- :queue.is_empty(state.waiting),
+         {:ok, agent_pid, new_state} <- do_checkout(state) do
+      hand_to_waiter(agent_pid, new_state, new_state.overflow_count > state.overflow_count)
+    else
+      _ -> state
+    end
+  end
+
+  # [:normandy, :agent_pool, :checkout], emitted where the checkout's reply is sent. `wait`
+  # is the time the caller waited in the queue (0 when answered at once).
+  defp emit_checkout(outcome, wait, overflow?) do
+    :telemetry.execute(
+      [:normandy, :agent_pool, :checkout],
+      %{wait: wait},
+      %{pool: self(), outcome: outcome, overflow: overflow?}
+    )
+  end
+
+  # A waiter with timeout: :infinity has no timer.
+  defp start_checkout_timer(_from, :infinity), do: nil
+
+  defp start_checkout_timer(from, timeout),
+    do: Process.send_after(self(), {:checkout_timeout, from}, timeout)
+
+  defp cancel_checkout_timer(nil), do: :ok
+
+  defp cancel_checkout_timer(timer) do
+    _ = Process.cancel_timer(timer)
+    :ok
+  end
+
+  # `overflow?`: the agent was started as an overflow agent for this waiter.
+  defp hand_to_waiter(agent_pid, state, overflow?) do
+    {{:value, {{client, _tag} = from, timer, mref, queued_at}}, waiting} =
+      :queue.out(state.waiting)
+
+    cancel_checkout_timer(timer)
+    Process.demonitor(mref, [:flush])
+    emit_checkout(:ok, System.monotonic_time() - queued_at, overflow?)
+    GenServer.reply(from, {:ok, agent_pid})
+
+    state = %{state | waiting: waiting, in_use: MapSet.put(state.in_use, agent_pid)}
+    lend(agent_pid, client, state)
   end
 end

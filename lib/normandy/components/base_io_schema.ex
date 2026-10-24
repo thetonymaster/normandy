@@ -1,61 +1,34 @@
 defprotocol Normandy.Components.BaseIOSchema do
   @moduledoc """
-  Protocol for schema serialization and representation.
-
-  Provides functions for converting schemas to various string formats
-  including plain text, rich text, and JSON.
+  How a value goes to the model: `to_json/1` encodes it (a string, or a list of content
+  blocks), and `get_schema/1` returns its schema. Implemented for strings, maps, lists,
+  content blocks and every `io_schema` struct.
   """
 
   @dialyzer {:nowarn_function, __protocol__: 1}
-  @fallback_to_any ""
-
-  @doc "Converts the struct to a plain string representation"
-  @spec __str__(struct()) :: String.t()
-  def __str__(struct)
-
-  @doc "Converts the struct to a rich/formatted string representation"
-  @spec __rich__(struct()) :: String.t()
-  def __rich__(struct)
 
   @doc "Converts the struct to a JSON string"
-  @spec to_json(struct()) :: String.t() | list()
+  @spec to_json(t()) :: String.t() | list()
   def to_json(struct)
 
   @doc "Returns the schema definition for the struct"
-  @spec get_schema(struct()) :: term()
+  @spec get_schema(t()) :: term()
   def get_schema(struct)
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: BitString do
-  def __str__(str), do: str
-  def __rich__(str), do: str
   def to_json(str), do: str
   def get_schema(_), do: %{}
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: Map do
-  def __str__(map), do: inspect(map)
-  def __rich__(map), do: inspect(map)
-
-  def to_json(map) do
-    # Convert map to JSON string using the configured JSON adapter
-    adapter = Application.get_env(:normandy, :adapter, Poison)
-    adapter.encode!(map)
-  end
+  # Keys sorted at every depth (Normandy.JSON "Text for the model").
+  def to_json(map), do: map |> Normandy.JSON.sort_keys() |> Normandy.JSON.encode!()
 
   def get_schema(_map), do: %{}
 end
 
 defimpl Normandy.Components.BaseIOSchema, for: List do
-  def __str__(list), do: inspect(list)
-  def __rich__(list), do: inspect(list)
   def to_json(list), do: list
   def get_schema(_list), do: %{}
-end
-
-defimpl Normandy.Components.BaseIOSchema, for: Any do
-  def __str__(_), do: ""
-  def __rich__(_), do: ""
-  def to_json(_), do: ""
-  def get_schema(_struct), do: ""
 end

@@ -1,7 +1,42 @@
 defmodule Normandy.Resilience.RetryTest do
   use ExUnit.Case, async: true
 
+  @moduletag :capture_log
+
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Resilience.Retry
+
+  # The `delay_ms` of every [:normandy, :retry, :attempt] event `fun` emits, in order.
+  defp attempt_delays(fun) do
+    id = {__MODULE__, make_ref()}
+    test_pid = self()
+
+    :telemetry.attach(
+      id,
+      [:normandy, :retry, :attempt],
+      fn _event, %{delay_ms: delay}, _meta, _config ->
+        # Other async tests retry too; only this process's events count.
+        if self() == test_pid, do: send(test_pid, {:retry_delay, id, delay})
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+    after
+      :telemetry.detach(id)
+    end
+
+    drain_delays(id, [])
+  end
+
+  defp drain_delays(id, acc) do
+    receive do
+      {:retry_delay, ^id, delay} -> drain_delays(id, [delay | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
 
   describe "with_retry/2" do
     test "returns success on first attempt" do
@@ -69,8 +104,8 @@ defmodule Normandy.Resilience.RetryTest do
       assert error == :network_error
       assert attempts == 3
 
-      # Should not retry validation_error
-      {:error, :validation_error} =
+      # Should not retry validation_error; the failure has the same shape
+      {:error, {:validation_error, 1, [:validation_error]}} =
         Retry.with_retry(
           fn -> {:error, :validation_error} end,
           max_attempts: 3,
@@ -106,7 +141,7 @@ defmodule Normandy.Resilience.RetryTest do
     end
 
     test "does not retry on non-retryable error with custom retry_if" do
-      {:error, %{status: 400}} =
+      {:error, {%{status: 400}, 1, [%{status: 400}]}} =
         Retry.with_retry(
           fn -> {:error, %{status: 400}} end,
           max_attempts: 3,
@@ -165,34 +200,19 @@ defmodule Normandy.Resilience.RetryTest do
     end
 
     test "calculates exponential backoff delays" do
-      {:ok, agent} = Agent.start_link(fn -> [] end)
+      delays =
+        attempt_delays(fn ->
+          Retry.with_retry(fn -> {:error, :network_error} end,
+            max_attempts: 3,
+            base_delay: 1,
+            backoff_factor: 2.0,
+            jitter: false
+          )
+        end)
 
-      Retry.with_retry(
-        fn ->
-          Agent.update(agent, fn times -> [System.monotonic_time(:millisecond) | times] end)
-          {:error, :network_error}
-        end,
-        max_attempts: 3,
-        base_delay: 100,
-        backoff_factor: 2.0,
-        jitter: false
-      )
-
-      times = Agent.get(agent, & &1) |> Enum.reverse()
-
-      # First attempt is immediate
-      # Second attempt after ~100ms
-      # Third attempt after ~200ms (100 * 2^1)
-      if length(times) == 3 do
-        delay1 = Enum.at(times, 1) - Enum.at(times, 0)
-        delay2 = Enum.at(times, 2) - Enum.at(times, 1)
-
-        # Allow some tolerance for timing
-        assert delay1 >= 80 and delay1 <= 300
-        assert delay2 >= 160 and delay2 <= 600
-      end
-
-      Agent.stop(agent)
+      # The first attempt is immediate; the second follows base_delay, the third
+      # base_delay * 2.
+      assert delays == [1, 2]
     end
   end
 
@@ -221,9 +241,10 @@ defmodule Normandy.Resilience.RetryTest do
       assert opts[:base_delay] == 2_000
     end
 
-    test "unknown preset defaults to standard" do
-      opts = Retry.preset(:unknown)
-      assert opts[:max_attempts] == 3
+    test "an unknown preset raises instead of becoming :standard" do
+      assert_raise ArgumentError, ~r/unknown preset :persistant/, fn ->
+        Retry.preset(:persistant)
+      end
     end
 
     test "can use preset in with_retry" do
@@ -250,33 +271,136 @@ defmodule Normandy.Resilience.RetryTest do
 
   describe "jitter" do
     test "adds randomness to delays when enabled" do
-      {:ok, delay_agent} = Agent.start_link(fn -> [] end)
+      delays =
+        Enum.flat_map(1..12, fn _ ->
+          attempt_delays(fn ->
+            Retry.with_retry(fn -> {:error, :network_error} end,
+              max_attempts: 2,
+              base_delay: 8,
+              jitter: true
+            )
+          end)
+        end)
 
-      for _ <- 1..5 do
-        {:ok, agent} = Agent.start_link(fn -> [] end)
+      # add_jitter/1 spreads a delay by div(delay, 4) either side: 8 +- 2, so 6..10; twelve draws are not all equal.
+      assert Enum.all?(delays, &(&1 in 6..10))
+      assert length(Enum.uniq(delays)) > 1
+    end
 
+    test "retries with a delay under 4ms when enabled" do
+      {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+      result =
         Retry.with_retry(
           fn ->
-            Agent.update(agent, fn times -> [System.monotonic_time(:millisecond) | times] end)
-            {:error, :network_error}
+            case Agent.get_and_update(agent, &{&1, &1 + 1}) do
+              0 -> {:error, :network_error}
+              _ -> {:ok, :done}
+            end
           end,
           max_attempts: 2,
-          base_delay: 100,
+          base_delay: 1,
           jitter: true
         )
 
-        times = Agent.get(agent, & &1) |> Enum.reverse()
-        delay = if length(times) == 2, do: Enum.at(times, 1) - Enum.at(times, 0), else: 0
-        Agent.update(delay_agent, fn delays -> [delay | delays] end)
-        Agent.stop(agent)
+      assert result == {:ok, :done}
+      Agent.stop(agent)
+    end
+  end
+
+  describe "add_jitter/1" do
+    use ExUnitProperties
+
+    property "stays within ±25% of the delay" do
+      check all(delay <- integer(0..100_000)) do
+        range = div(delay, 4)
+        jittered = Retry.add_jitter(delay)
+        assert jittered >= delay - range
+        assert jittered <= delay + range
+      end
+    end
+
+    test "reaches both ends of the range" do
+      results = MapSet.new(1..2_000, fn _ -> Retry.add_jitter(8) end)
+      assert results == MapSet.new(6..10)
+    end
+  end
+
+  describe "option checks" do
+    test "an unknown option raises, naming it" do
+      assert_raise ArgumentError, ~r/Retry.with_retry\/2: unknown option :max_attemps/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, max_attemps: 5)
+      end
+    end
+
+    test "options may be a map" do
+      assert {:error, {:network_error, 2, _}} =
+               Retry.with_retry(fn -> {:error, :network_error} end, %{
+                 max_attempts: 2,
+                 base_delay: 1,
+                 jitter: false
+               })
+
+      assert_raise ArgumentError, ~r/Retry.with_retry\/2: unknown option :max_attemps/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, %{max_attemps: 5})
+      end
+    end
+
+    test "an option given twice raises, naming it" do
+      assert_raise ArgumentError, ~r/option :max_attempts given more than once/, fn ->
+        Retry.with_retry(fn -> {:ok, 1} end, max_attempts: 2, max_attempts: 3)
       end
 
-      delays = Agent.get(delay_agent, & &1)
+      assert_raise ArgumentError, ~r/Retry.validate_options!\/1: option :jitter given more/, fn ->
+        Retry.validate_options!(jitter: true, jitter: false)
+      end
+    end
 
-      # With jitter, delays should vary
-      unique_delays = Enum.uniq(delays)
-      assert length(unique_delays) > 1
-      Agent.stop(delay_agent)
+    test "BaseAgent.init checks :retry when the agent is built" do
+      assert_raise ArgumentError, ~r/unknown option :max_attemps/, fn ->
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "m",
+          retry: [max_attemps: 3]
+        })
+      end
+    end
+
+    test "an invalid value raises, naming the option and value" do
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_attempts option: expected positive integer, got: 0/,
+                   fn ->
+                     Retry.with_retry(fn -> {:ok, 1} end, max_attempts: 0)
+                   end
+
+      assert_raise ArgumentError,
+                   ~r/invalid value for :base_delay option: expected non negative integer, got: -1/,
+                   fn ->
+                     Retry.with_retry(fn -> {:ok, 1} end, base_delay: -1)
+                   end
+    end
+  end
+
+  describe "return shapes" do
+    test "a non-tuple return is a failure in the same {reason, attempts, errors} shape" do
+      assert {:error, {{:unexpected_return, :weird}, 1, [{:unexpected_return, :weird}]}} =
+               Retry.with_retry(fn -> :weird end, max_attempts: 3, base_delay: 1)
+    end
+  end
+
+  describe "option errors" do
+    test "a container value is shown by its type, never echoed" do
+      assert_raise ArgumentError,
+                   "Normandy.Resilience.Retry.with_retry/2: invalid value for :retry_if option: " <>
+                     "expected a 1-arity function or nil, got: a map",
+                   fn -> Retry.with_retry(fn -> {:ok, 1} end, retry_if: %{api_key: "sk-LEAK"}) end
+    end
+
+    test "a scalar value is shown as is" do
+      assert_raise ArgumentError,
+                   "Normandy.Resilience.Retry.with_retry/2: invalid value for :max_attempts option: " <>
+                     "expected positive integer, got: 0",
+                   fn -> Retry.with_retry(fn -> {:ok, 1} end, max_attempts: 0) end
     end
   end
 end

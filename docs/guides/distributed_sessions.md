@@ -28,8 +28,10 @@ defmodule MyApp.Repo.Migrations.AddNormandySessions do
     Normandy.Behaviours.SessionStore.Postgres.Migration.up()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate.up()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy.up()
+    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight.up()
   end
   def down do
+    Normandy.Behaviours.SessionStore.Postgres.MigrationAddInflight.down()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddResumePolicy.down()
     Normandy.Behaviours.SessionStore.Postgres.MigrationAddTemplate.down()
     Normandy.Behaviours.SessionStore.Postgres.Migration.down()
@@ -37,13 +39,14 @@ defmodule MyApp.Repo.Migrations.AddNormandySessions do
 end
 ```
 
-> The `MigrationAddTemplate` / `MigrationAddResumePolicy` columns are only *used* by
-> Tier 2 (template-based reconstruction + eager resume). They're nullable and inert
-> under Tier 1, but including them now means a later Tier-2 upgrade needs no extra
-> migration. A strictly Tier-1 deployment may run only `Migration.up()` / `.down()`.
+> The `MigrationAddTemplate`, `MigrationAddResumePolicy` and `MigrationAddInflight` columns are
+> only *used* by Tier 2 (template-based reconstruction + eager resume). They're inert under Tier 1,
+> but including them now means a later Tier-2 upgrade needs no extra migration. A strictly Tier-1
+> deployment may run only `Migration.up()` / `.down()`. Upgrading from 1.x: add a migration that
+> runs `MigrationAddInflight.up()` and apply it before 2.0 serves traffic.
 
-Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to the
-session opts. The store holds the conversation graph, suspended turn state, and a
+Then pass `store: {Normandy.Behaviours.SessionStore.Postgres, MyApp.Repo}` to
+`Turn.Session.new/1`. The store holds the conversation graph, suspended turn state, and a
 non-secret config template — all as opaque Erlang terms.
 
 ## Tier 2 — distributed, cluster-aware
@@ -80,7 +83,7 @@ Register a supplement per agent kind at boot (same on every node):
 
 ```elixir
 Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-agent", %{
-  tool_registry: MyApp.Tools.support_registry(),
+  toolset: MyApp.Tools.support_registry(),
   before_hooks: [],
   after_hooks: [],
   client_builder: fn token -> %Claudio.ClaudioAdapter{api_key: token, ...} end
@@ -92,7 +95,10 @@ Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-age
 - **Discovery + routing.** `Turn.Session` resolves `session_id → pid` via
   `SessionRegistry.Horde` from any node; calls to a session on another node are
   transparent cross-node `:gen_statem` messages.
-- **Atomic placement.** Servers start under a `{:via, Horde.Registry, …}` name, so
+- **Atomic placement.** Servers start under a
+  `{:via, Normandy.Behaviours.SessionRegistry.Horde.Via, {registry, session_id}}` name
+  (`SessionRegistry.Horde.child_name/2`; the module wraps `Horde.Registry` so a
+  `:gen_statem` start always sees its own registration), so
   two concurrent starts for one `session_id` cannot both win — the loser gets
   `{:error, {:already_started, pid}}` and routes to the winner.
 - **Node loss, lazy (default).** The session's process dies with its node; the next
@@ -107,14 +113,47 @@ Normandy.Behaviours.AgentTemplate.Catalog.put(MyApp.AgentTemplates, "support-age
 ## Credentials: never moved between nodes
 
 Credentials are **never persisted and never replicated**. Only a non-secret config
-template (model, behaviour refs, prompt spec, tool-registry name, `resume_policy`)
+template (model, behaviour refs, prompt spec, `resume_policy`)
 is stored. On any node, a session reconstructs its full config from that template +
 the node-local `AgentTemplate` supplement + a **node-local `CredentialProvider`**.
 
-For Tier 2 you must therefore use an env/vault-backed `CredentialProvider` (NOT
-`CredentialProvider.FromClient`, which assumes the secret is already on an
-in-memory client) and register your tools by name on every node (true by default —
-same code per node).
+For Tier 2 you must therefore set the config's `behaviours` `credential` slot to an
+env/vault-backed `CredentialProvider` (the slot has no default, and `Turn.Session.new/1`
+refuses a session with a `:template_provider` whose config leaves it unset) and register
+your tools by name on every node (true by default — same code per node).
+
+## The session store is a trust boundary
+
+The template is non-secret, but it is not harmless: it names the policy, the guardrails,
+the hooks, the credential provider, `tool_context` (the memory namespace) and the
+`template_id` that picks the node's supplement and toolset, and the store also holds the
+turn state (a call parked for approval, with its input) and the history. **Write access
+to the session store is as powerful as a code deploy.** Keep the store single-tenant, or
+give Normandy its own database role or ACL'd Redis key prefix; never share it with a
+service you trust less than your code.
+
+Every node checks a template before using it (`ConfigTemplate.check_loaded!/1`: plain
+data only, behaviour modules that implement their behaviour), and a supplement can pin the
+security settings so a tampered store cannot swap them:
+
+```elixir
+Catalog.put(cat, "support", %{
+  toolset: toolset,
+  before_hooks: [],
+  after_hooks: [],
+  client_builder: &MyApp.LLM.client/1,
+  pinned: [
+    policy: {Normandy.Behaviours.PolicyEngine.Ruleset, rules: rules, default_action: :deny},
+    guardrails: guardrails,
+    credential: {MyApp.VaultCreds, []}
+  ]
+})
+```
+
+A template that fails either check is never used: the server stays `:unavailable` and
+`run/2` replies `{:error, %TurnError{type: :session_unavailable, reason: {:invalid_template,
+message}}}`, without calling the template's credential provider. `tool_context`,
+`template_id`, turn state and history cannot be pinned, and templates are not signed.
 
 ## Eager handoff (`resume_policy: :eager`)
 
@@ -128,8 +167,21 @@ must keep working after a node dies with no external trigger.
 > `restart`-based eager/lazy selectivity is impossible. Normandy instead ships
 > `Turn.ResumeReaper`: a per-node watcher that, on `:nodedown`, restarts only the
 > eager, unregistered, non-terminal sessions (found via
-> `SessionStore.list_resumable/1`). `Normandy.Cluster.child_specs/1` starts one
+> `SessionStore.list_resumable/1`, which lists only the sessions whose turn is in flight:
+> `Turn.Server` saves that flag with every turn state, so the list does not grow with the
+> number of sessions stored). `Normandy.Cluster.child_specs/1` starts one
 > automatically when you pass `:store` + `:template_provider`.
+
+## Deleting a session
+
+`Turn.Session.delete(session)` stops the session's live server through its supervisor (a turn in
+flight is not resumed; a `run/2` waiting on it exits), then calls the store's
+`delete_session/2`: the turn state, the config template, the in-flight index membership and the
+history go. On Postgres and Mnesia a fork shares its parent's history up to the fork point, so
+the entries a fork still reaches stay; deleting the fork later removes them. `delete/1` is
+idempotent. It does not stop new turns: stop routing to a session before deleting it, or a
+`run/2` (or `ResumeReaper`, for an eager session in flight) may start it again. A custom
+`:supervisor_mod` must export `stop_server/2`.
 
 ## Cluster formation (libcluster, optional)
 
@@ -193,18 +245,40 @@ children =
   )
 ```
 
+The store and registry are chosen here, in the child specs; `Normandy.Behaviours.Config` has
+no session slots (the two 1.x slots were never read and are gone in 2.0).
+`Normandy.Cluster.redis_handles/1`, given the same options, returns the registry and store
+to pass to `Turn.Session.new/1`:
+
 ```elixir
-# then in Config:
-%Normandy.Behaviours.Config{
-  session_store: {Normandy.Behaviours.SessionStore.Redis, {MyApp.SessionRedix, "normandy"}},
-  session_registry: {Normandy.Behaviours.SessionRegistry.Redis, MyApp.SessionRegistry}
-}
+%{registry: registry, store: store} = Normandy.Cluster.redis_handles(same_opts)
+Normandy.Agents.Turn.Session.new(session_id: id, registry: registry, store: store, ...)
 ```
 
-> Note: `redis_child_specs/1` shares a single Redix connection across the store, registry, and reaper. Under high throughput, give the registry its own connection (pass a separate `:conn`) to avoid a single-mailbox bottleneck.
+The registry's handle is a `%Normandy.Behaviours.SessionRegistry.Redis.Handle{}` (not the
+owner's name). Lookups (`whereis`) run in the caller on the Redix connection, so they never
+queue behind the registry owner; registrations go through the owner.
+
+The registry, the reaper and the store share the `:redix` connection. A replica wait
+(`config :normandy, :redis_wait`, read when the specs are built) would block that
+connection on every write, so the combo then also starts a pool of `:wait_connections`
+(default 4) Redix connections, and each session's waited writes and their `WAIT` run on
+one of them. To give the store a connection of its own instead (for every command and
+every `WAIT`), pass `store_redix: [name: MyApp.StoreRedix, ...]`; share it with nothing.
+`:wait_connections` given while `:redis_wait` asks for no replicas raises `ArgumentError`.
+
+Set `:redis_wait` before you build the specs and the handles (in `config/runtime.exs`), and
+never change it at runtime: `redis_child_specs/1` and `redis_handles/1` read it once, to
+decide whether the pool starts and what the store's handle holds, while a store handle built
+without a wait of its own reads it again on every write. A change after boot leaves the two
+disagreeing.
 
 **Durability ladder.** Strongest: Postgres / `Mnesia(disc_copies)`. Mostly-durable:
-Redis with AOF enabled + `config :normandy, :redis_wait, {numreplicas, timeout_ms}` to
-block boundary writes on replica acks (fail-closed). Ephemeral: `Mnesia(ram_copies)`,
+Redis with AOF enabled + a replica wait to block every write (entries, turn state,
+template) on replica acks (fail-closed): per store with
+`SessionStore.Redis.new(url: ..., namespace: ..., wait: ...)`, which runs each waited write on a pool of its own, or for
+all Redis stores with `config :normandy, :redis_wait, {numreplicas, timeout_ms}`. A handle
+`{conn, namespace, {numreplicas, timeout_ms}}` waits on `conn` itself: give it a connection
+nothing else uses, since a `WAIT` blocks every other command on its connection. Ephemeral: `Mnesia(ram_copies)`,
 `ETS`, `InMemory`. Redis can lose recent writes on a hard crash — durable, not bulletproof;
 do not use it for audit-grade history.

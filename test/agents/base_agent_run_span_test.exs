@@ -2,22 +2,22 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
   @moduledoc """
   Locks in the contract: EXACTLY ONE `[:normandy, :agent, :run]` span is emitted
   per agent invocation, regardless of which public entry point is used
-  (`run/2`, `run/3` streaming, or `run_with_tools/2` directly).
+  (`run/2`, `run!/2` or `stream/3`, with or without tools).
 
   Downstream OTel consumers map this span to the GenAI semantic-convention
-  `gen_ai.operation.name = "invoke_agent"`. A missing span (consumer calls
-  `run_with_tools/2` directly) drops `invoke_agent` from traces; a duplicated
+  `gen_ai.operation.name = "invoke_agent"`. A missing span drops `invoke_agent`
+  from traces; a duplicated
   span (double-wrap) corrupts agent timing. Both failure modes are asserted here.
 
-  `async: false` because `:telemetry` handlers are global — a concurrent test
-  emitting `[:normandy, :agent, :run]` would contaminate the exact-count
-  assertions (the `refute_receive` for a second span).
+  `:telemetry` handlers are global, so each run gets an agent name no other
+  test uses and the handler counts only that agent's spans; the exact-count
+  assertions then hold while other tests run concurrently.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   # Minimal tools-capable client: returns a final response with no tool calls
   # (the idiomatic "I'm done" shape for a tools turn), so a tool registry forces
@@ -30,25 +30,22 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, _request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: %Normandy.Agents.ToolCallResponse{
+             content: config.final_response,
+             tool_calls: []
+           }
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        %Normandy.Agents.ToolCallResponse{content: config.final_response, tool_calls: []}
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
-  # Minimal streaming client so `run/3` (stream: true) drives `stream_response`
+  # Minimal streaming client so `stream/3` drives a stream
   # to a clean stop. Event sequence mirrors the proven mock in
   # base_agent_streaming_test.exs.
   defmodule StreamingClient do
@@ -59,17 +56,10 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      def stream_converse(_client, _model, _temperature, _max_tokens, _messages, _rm, opts \\ []) do
-        callback = Keyword.get(opts, :callback)
-
+      def stream(_client, _request, _opts) do
         events = [
           %{
             type: "message_start",
@@ -93,34 +83,23 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
           %{type: "message_stop"}
         ]
 
-        if callback do
-          Enum.each(events, fn
-            %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-              callback.(:text_delta, text)
-
-            %{type: "message_start", message: message} ->
-              callback.(:message_start, message)
-
-            %{type: "message_stop"} ->
-              callback.(:message_stop, %{})
-
-            _ ->
-              :ok
-          end)
-        end
-
         {:ok, Stream.map(events, & &1)}
       end
     end
   end
 
-  # Runs `fun` with a temporary handler forwarding every `agent.run` start/stop
-  # to the test process, then asserts EXACTLY ONE of each was emitted. The run is
-  # synchronous, so by the time `fun` returns every span event is already in the
-  # mailbox. Detaches in `after` so a failing assertion still removes the global
-  # handler.
-  defp assert_exactly_one_run_span(fun) do
+  def handle_span(event, _measurements, metadata, {parent, name, ref}) do
+    if metadata[:agent_name] == name, do: send(parent, {ref, event})
+  end
+
+  # Runs `fun` on `agent` (renamed uniquely) with a temporary handler forwarding
+  # that agent's `agent.run` start/stop to the test process, then asserts EXACTLY
+  # ONE of each was emitted. The run is synchronous, so by the time `fun` returns
+  # every span event is already in the mailbox. Detaches in `after` so a failing
+  # assertion still removes the global handler.
+  defp assert_exactly_one_run_span(agent, fun) do
     handler_id = "run-span-count-#{System.unique_integer([:positive])}"
+    name = "run-span-#{System.unique_integer([:positive])}"
     parent = self()
     ref = make_ref()
 
@@ -130,12 +109,12 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         [:normandy, :agent, :run, :start],
         [:normandy, :agent, :run, :stop]
       ],
-      fn event, _measurements, _metadata, _ -> send(parent, {ref, event}) end,
-      nil
+      &__MODULE__.handle_span/4,
+      {parent, name, ref}
     )
 
     try do
-      fun.()
+      fun.(%{agent | name: name})
     after
       :telemetry.detach(handler_id)
     end
@@ -147,7 +126,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
     refute_receive {^ref, [:normandy, :agent, :run, :stop]}
   end
 
-  test "run_with_tools/2 called directly emits exactly one agent.run span" do
+  test "run!/2 without tools emits exactly one agent.run span" do
     agent =
       BaseAgent.init(%{
         client: %NormandyTest.Support.ModelMockup{},
@@ -155,7 +134,7 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         temperature: 0.7
       })
 
-    assert_exactly_one_run_span(fn -> BaseAgent.run_with_tools(agent, "hello") end)
+    assert_exactly_one_run_span(agent, &BaseAgent.run!(&1, "hello"))
   end
 
   test "run/2 with a tool registry emits exactly one agent.run span (no double-wrap)" do
@@ -164,14 +143,14 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         client: %FinalOnlyToolClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{}]),
         max_tool_iterations: 5
       })
 
-    assert_exactly_one_run_span(fn -> BaseAgent.run(agent, %{text: "hi"}) end)
+    assert_exactly_one_run_span(agent, &BaseAgent.run!(&1, %{chat_message: "hi"}))
   end
 
-  test "run/3 streaming emits exactly one agent.run span" do
+  test "stream/3 emits exactly one agent.run span" do
     agent =
       BaseAgent.init(%{
         client: %StreamingClient{},
@@ -179,10 +158,24 @@ defmodule NormandyTest.Agents.BaseAgentRunSpanTest do
         temperature: 0.7
       })
 
-    callback = fn _type, _payload -> :ok end
+    assert_exactly_one_run_span(agent, fn agent ->
+      {:ok, _agent, _response} =
+        BaseAgent.stream(agent, %{chat_message: "Hello"}, fn _event -> :ok end)
+    end)
+  end
 
-    assert_exactly_one_run_span(fn ->
-      BaseAgent.run(agent, %{chat_message: "Hello"}, stream: true, on_chunk: callback)
+  test "stream/3 with a tool registry emits exactly one agent.run span" do
+    agent =
+      BaseAgent.init(%{
+        client: %StreamingClient{},
+        model: "claude-3",
+        temperature: 0.7,
+        toolset: Toolset.new([%Calculator{}])
+      })
+
+    assert_exactly_one_run_span(agent, fn agent ->
+      {:ok, _agent, _response} =
+        BaseAgent.stream(agent, %{chat_message: "Hello"}, fn _event -> :ok end)
     end)
   end
 end

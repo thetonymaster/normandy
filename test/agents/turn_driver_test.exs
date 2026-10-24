@@ -45,6 +45,20 @@ defmodule Normandy.Agents.Turn.DriverTest do
     end
   end
 
+  test "drive/3 raises when a dispatch leaves a tool call unanswered" do
+    handlers = %{
+      recording_handlers(self())
+      | call_llm: fn _acc, _state, _req -> %{content: nil, tool_calls: [%{id: "c1"}]} end,
+        dispatch_tools: fn _acc, _calls -> [] end
+    }
+
+    state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :rm)
+
+    assert_raise RuntimeError,
+                 ~s(Turn FSM reached :failed unexpectedly: {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c1"]}}),
+                 fn -> Driver.drive(state, handlers, []) end
+  end
+
   test "drive/3 runs a tool loop: dispatches, converts, threads acc across iterations" do
     # Scripted call_llm: first response carries a tool call, second has none.
     {:ok, responses} =
@@ -63,7 +77,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
       end,
       dispatch_tools: fn _acc, calls ->
         send(pid, {:dispatched, length(calls)})
-        Enum.map(calls, fn _ -> %{result: :ok} end)
+        Enum.map(calls, fn call -> %{tool_call_id: call.id, result: :ok} end)
       end,
       convert: fn _acc, raw, output_schema ->
         send(pid, {:convert, output_schema})
@@ -89,6 +103,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
 
   test "drive/3 runs the compact handler at the steering boundary and threads acc" do
     # Drive a real turn from :provisioning (via Turn.new) where:
+    # - :start parks in :steering → {:maybe_compact} → compact handler fires → first call
     # - first LLM response carries a tool call  →  :tool_dispatch → :steering → {:maybe_compact}
     #   → compact handler fires → {:compaction_done} → :assistant_streaming (iteration 2)
     # - second LLM response has no tool calls  →  :finalizing → :stopped
@@ -108,7 +123,9 @@ defmodule Normandy.Agents.Turn.DriverTest do
       call_llm: fn _acc, _s, _r ->
         Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
       end,
-      dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{ok: true} end) end,
+      dispatch_tools: fn _acc, calls ->
+        Enum.map(calls, fn call -> %{tool_call_id: call.id, ok: true} end)
+      end,
       convert: fn _acc, raw, _os -> raw end,
       validate: fn _acc, v -> v end,
       guard: fn _acc, _v -> :ok end,
@@ -124,9 +141,33 @@ defmodule Normandy.Agents.Turn.DriverTest do
     {acc, final} = Driver.drive(state, handlers, [])
 
     assert final.status == :stopped
-    # compact handler ran exactly once, between the tool result and the next call
+    # compact handler ran twice: before the first call, and between the tool result
+    # and the next call
+    assert_received {:compacted, %{iterations_left: 5}}
     assert_received {:compacted, %{iterations_left: 4}}
     refute_received {:compacted, _}
     assert :compacted in acc
+  end
+
+  test "drive/3 lets a compact-handler exception (e.g. ModelCatalogError) propagate" do
+    {:ok, responses} =
+      Agent.start_link(fn ->
+        [%{content: nil, tool_calls: [%{id: "c1"}]}, %{content: "final", tool_calls: []}]
+      end)
+
+    handlers = %{
+      recording_handlers(self())
+      | call_llm: fn _acc, _state, _req ->
+          Agent.get_and_update(responses, fn [h | t] -> {h, t} end)
+        end,
+        dispatch_tools: fn _acc, calls -> Enum.map(calls, fn _ -> %{result: :ok} end) end,
+        compact: fn _acc, _state, _info ->
+          raise Normandy.ModelCatalogError, model: "m", reason: :boom
+        end
+    }
+
+    assert_raise Normandy.ModelCatalogError, ~r/model catalog lookup failed for "m": :boom/, fn ->
+      Driver.drive(Turn.new(response_model: :rm, output_schema: :rm), handlers, [])
+    end
   end
 end

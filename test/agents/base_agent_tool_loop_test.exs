@@ -25,10 +25,12 @@ end
 defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, ToolCallResponse}
-  alias Normandy.Components.{ToolCall, AgentMemory}
+  alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, Dispatch, ToolCallResponse}
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
+  alias NormandyTest.Agents.SleepyProbe
 
   defmodule MockToolCallClient do
     @moduledoc """
@@ -42,19 +44,17 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: respond(config, request.messages, request.response_model)
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            response_model,
-            _opts \\ []
-          ) do
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+      defp respond(config, messages, response_model) do
         # Count tool messages in history to determine if we should make tool calls
         tool_message_count =
           Enum.count(messages, fn msg ->
@@ -90,16 +90,16 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
   end
 
-  describe "BaseAgent.run_with_tools/2" do
+  describe "BaseAgent.run!/2 with tools" do
     setup do
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      calc = %Calculator{}
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockToolCallClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
@@ -108,8 +108,8 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     test "executes tool and returns final response", %{agent: agent} do
-      user_input = %{text: "What is 5 + 3?"}
-      {updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      user_input = %{chat_message: "What is 5 + 3?"}
+      {updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       # Should return the final output schema (BaseAgentOutputSchema)
       assert %BaseAgentOutputSchema{} = response
@@ -129,14 +129,14 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}]),
+        toolset: Toolset.new([%Calculator{}]),
         max_tool_iterations: 1
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "Calculate something"}
+      user_input = %{chat_message: "Calculate something"}
 
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       assert response != nil
     end
@@ -146,14 +146,16 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
       config = Map.put(base, :max_tool_iterations, 0)
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(config)
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: 0/,
+                   fn ->
+                     BaseAgent.init(config)
+                   end
     end
 
     test "init/1 rejects negative max_tool_iterations" do
@@ -161,12 +163,14 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, -1))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: -1/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, -1))
+                   end
     end
 
     test "init/1 rejects non-integer max_tool_iterations (float)" do
@@ -174,12 +178,14 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, 1.5))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: 1\.5/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, 1.5))
+                   end
     end
 
     test "init/1 rejects non-integer max_tool_iterations (string)" do
@@ -187,34 +193,36 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
         client: %MockToolCallClient{final_response: "Stopped due to limit"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: Registry.new([%Calculator{operation: "add", a: 0, b: 0}])
+        toolset: Toolset.new([%Calculator{}])
       }
 
-      assert_raise ArgumentError, ~r/max_tool_iterations must be an integer >= 1/, fn ->
-        BaseAgent.init(Map.put(base, :max_tool_iterations, "5"))
-      end
+      assert_raise ArgumentError,
+                   ~r/invalid value for :max_tool_iterations option: expected positive integer, got: "5"/,
+                   fn ->
+                     BaseAgent.init(Map.put(base, :max_tool_iterations, "5"))
+                   end
     end
 
     test "works without user_input (continuing conversation)" do
       # First run with user input
-      calc = %Calculator{operation: "multiply", a: 0, b: 0}
-      registry = Registry.new([calc])
+      calc = %Calculator{}
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockToolCallClient{},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "First message"}
+      user_input = %{chat_message: "First message"}
 
-      {agent, _response} = BaseAgent.run_with_tools(agent, user_input)
+      {agent, _response} = BaseAgent.run!(agent, user_input)
 
       # Now run without user input
-      {updated_agent, response} = BaseAgent.run_with_tools(agent, nil)
+      {updated_agent, response} = BaseAgent.run!(agent, nil)
 
       assert response != nil
       assert updated_agent.memory != nil
@@ -223,39 +231,34 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
   describe "Tool execution error handling" do
     defmodule BrokenCalculator do
-      defstruct [:operation, :a, :b]
+      use Normandy.Tool, name: "broken_calculator", description: "A calculator that always fails"
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "broken_calculator"
-        def tool_description(_), do: "A calculator that always fails"
+      defstruct []
 
-        def input_schema(_) do
-          %{type: "object"}
-        end
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object"}
 
-        def run(_) do
-          {:error, "Calculator is broken"}
-        end
-      end
+      @impl Normandy.Tool
+      def run(_tool, _context), do: {:error, "Calculator is broken"}
     end
 
     test "handles tool execution errors gracefully" do
-      broken_calc = %BrokenCalculator{operation: "add", a: 1, b: 2}
-      registry = Registry.new([broken_calc])
+      broken_calc = %BrokenCalculator{}
+      registry = Toolset.new([broken_calc])
 
       config = %{
         client: %MockToolCallClient{final_response: "Handled error"},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "Test error"}
+      user_input = %{chat_message: "Test error"}
 
       # Should not crash, should handle error
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
 
       assert response != nil
       assert response.chat_message == "Handled error"
@@ -273,7 +276,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
     test "passes through {:ok, result} unchanged" do
       result = %{some: "value"}
-      assert BaseAgent.unwrap_tool_task_result!({:ok, result}) == result
+      assert Dispatch.unwrap_tool_task_result!({:ok, result}) == result
     end
 
     test "re-raises {:exit, {exception, stacktrace}} with original stack" do
@@ -283,9 +286,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       err =
         assert_raise RuntimeError, "boom", fn ->
-          BaseAgent.unwrap_tool_task_result!(
-            {:exit, {%RuntimeError{message: "boom"}, stacktrace}}
-          )
+          Dispatch.unwrap_tool_task_result!({:exit, {%RuntimeError{message: "boom"}, stacktrace}})
         end
 
       assert err.message == "boom"
@@ -296,7 +297,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       pid =
         spawn_link(fn ->
-          BaseAgent.unwrap_tool_task_result!({:exit, :timeout})
+          Dispatch.unwrap_tool_task_result!({:exit, :timeout})
         end)
 
       assert_receive {:EXIT, ^pid, :timeout}, 500
@@ -305,9 +306,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
   describe "Tool input atom-table hardening" do
     # Mock client that emits a tool_use whose `input` map mixes valid binary
-    # keys with a canary key (one that does NOT correspond to any field on
-    # the tool). This exercises the binary-key path of the per-call helper
-    # `normalize_tool_field_key/2` — the path that previously called
+    # keys with a canary key (one that does NOT correspond to any field of
+    # the tool's input schema). This exercises the binary-key path of
+    # Normandy.Tools.Input.validate/2; a 1.x helper on that path called
     # `String.to_atom/1` and could be coerced into exhausting the BEAM atom
     # table by attacker-controlled LLM input.
     defmodule MockHostileToolClient do
@@ -318,17 +319,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_, _, _, _, _, response_model), do: response_model
+        def converse(config, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: respond(config, request.messages)}}
 
-        def converse(
-              config,
-              _model,
-              _temperature,
-              _max_tokens,
-              messages,
-              _response_model,
-              _opts \\ []
-            ) do
+        def stream(_client, _request, _opts),
+          do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+        defp respond(config, messages) do
           tool_message_count =
             Enum.count(messages, fn msg -> msg.role == "tool" end)
 
@@ -355,7 +352,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
     end
 
-    test "drops unknown input keys without registering them as atoms" do
+    test "refuses unknown input keys without registering them as atoms" do
       # Build a canary string at runtime so its bytes are unique per test
       # run. If any atom equal to this string exists in the BEAM atom table
       # before the test runs, the assertion below would falsely pass — the
@@ -364,27 +361,27 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
 
-      calc = %Calculator{operation: "add", a: 0, b: 0}
-      registry = Registry.new([calc])
+      calc = %Calculator{}
+      registry = Toolset.new([calc])
 
       config = %{
         client: %MockHostileToolClient{canary_key: canary},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5
       }
 
       agent = BaseAgent.init(config)
-      user_input = %{text: "trigger hostile tool call"}
+      user_input = %{chat_message: "trigger hostile tool call"}
 
-      {_updated_agent, response} = BaseAgent.run_with_tools(agent, user_input)
+      {_updated_agent, response} = BaseAgent.run!(agent, user_input)
       assert response != nil
 
       # If the legacy `String.to_atom/1` reducer had still been in place,
       # the canary key would now be a registered atom and this call would
-      # succeed. With `normalize_tool_field_key/2` the unknown key is
-      # silently dropped before any atom-table interaction.
+      # succeed. Normandy.Tools.Input matches keys against the declared field
+      # names, so the unknown key is refused without touching the atom table.
       assert_raise ArgumentError, fn -> String.to_existing_atom(canary) end
     end
   end
@@ -394,33 +391,28 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     # a deterministic stand-in for I/O-bound tools (HTTP, DB, search) so the
     # parallelism speedup shows up as a wall-clock difference.
     defmodule SleepyTool do
-      use Normandy.Schema
+      use Normandy.Tool, name: "sleepy", description: "Sleeps then returns its label."
 
-      schema do
-        field(:sleep_ms, :integer, default: 200)
-        field(:label, :string, default: "")
+      alias Normandy.Tools.Context
+      alias NormandyTest.Agents.SleepyProbe
+
+      defstruct []
+
+      @impl Normandy.Tool
+      def input_schema(_tool) do
+        %{
+          type: "object",
+          properties: %{sleep_ms: %{type: "integer"}, label: %{type: "string"}},
+          required: ["sleep_ms", "label"]
+        }
       end
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "sleepy"
-        def tool_description(_), do: "Sleeps then returns its label."
-
-        def input_schema(_) do
-          %{
-            type: "object",
-            properties: %{
-              sleep_ms: %{type: "integer"},
-              label: %{type: "string"}
-            }
-          }
-        end
-
-        def run(%{sleep_ms: ms, label: label}) do
-          NormandyTest.Agents.SleepyProbe.enter()
-          :timer.sleep(ms)
-          NormandyTest.Agents.SleepyProbe.leave()
-          {:ok, label}
-        end
+      @impl Normandy.Tool
+      def run(_tool, %Context{input: %{"sleep_ms" => ms, "label" => label}}) do
+        SleepyProbe.enter()
+        :timer.sleep(ms)
+        SleepyProbe.leave()
+        {:ok, label}
       end
     end
 
@@ -435,17 +427,13 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_, _, _, _, _, response_model), do: response_model
+        def converse(config, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: respond(config, request.messages)}}
 
-        def converse(
-              config,
-              _model,
-              _temperature,
-              _max_tokens,
-              messages,
-              _response_model,
-              _opts \\ []
-            ) do
+        def stream(_client, _request, _opts),
+          do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+
+        defp respond(config, messages) do
           tool_messages = Enum.count(messages, &(&1.role == "tool"))
 
           if tool_messages == 0 do
@@ -480,15 +468,15 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     defp run_with_concurrency(concurrency, n, sleep_ms) do
       # Reset again so the parallel test's two back-to-back runs each measure
       # their own peak concurrency in isolation.
-      NormandyTest.Agents.SleepyProbe.reset()
+      SleepyProbe.reset()
 
-      registry = Registry.new([%SleepyTool{}])
+      registry = Toolset.new([%SleepyTool{}])
 
       config = %{
         client: %MockSleepyClient{n: n, sleep_ms: sleep_ms},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5,
         max_tool_concurrency: concurrency
       }
@@ -496,9 +484,9 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
       agent = BaseAgent.init(config)
 
       {elapsed_us, {_agent, response}} =
-        :timer.tc(fn -> BaseAgent.run_with_tools(agent, %{text: "fan out"}) end)
+        :timer.tc(fn -> BaseAgent.run!(agent, %{chat_message: "fan out"}) end)
 
-      {elapsed_us, response, NormandyTest.Agents.SleepyProbe.max_observed()}
+      {elapsed_us, response, SleepyProbe.max_observed()}
     end
 
     test "max_tool_concurrency: 1 runs tools sequentially" do
@@ -536,23 +524,23 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
     end
 
     test "tool results stay in LLM-supplied call order under parallelism" do
-      registry = Registry.new([%SleepyTool{}])
+      registry = Toolset.new([%SleepyTool{}])
 
       config = %{
         client: %MockSleepyClient{n: 3, sleep_ms: 50},
         model: "test-model",
         temperature: 0.7,
-        tool_registry: registry,
+        toolset: registry,
         max_tool_iterations: 5,
         max_tool_concurrency: 3
       }
 
       agent = BaseAgent.init(config)
-      {agent, _response} = BaseAgent.run_with_tools(agent, %{text: "fan out"})
+      {agent, _response} = BaseAgent.run!(agent, %{chat_message: "fan out"})
 
       # AgentMemory.messages/1 returns the conversation chronological.
       tool_msgs =
-        Normandy.Components.AgentMemory.messages(agent.memory)
+        AgentMemory.messages(agent.memory)
         |> Enum.filter(&(&1.role == "tool"))
 
       assert length(tool_msgs) == 3

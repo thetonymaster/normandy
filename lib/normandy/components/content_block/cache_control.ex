@@ -1,6 +1,8 @@
 defmodule Normandy.Components.ContentBlock.CacheControl do
   @moduledoc false
 
+  alias Normandy.Components.ContentBlock.Describe
+
   # Internal helper shared by ContentBlock.{Text,Image,Document}.to_claudio/1.
   # Anthropic's wire shape uses string keys; callers may pass atom keys for
   # ergonomics. We stringify the top level (`:type` -> `"type"`, `:ttl` ->
@@ -19,7 +21,7 @@ defmodule Normandy.Components.ContentBlock.CacheControl do
   def maybe_attach(_block, cache_control) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.CacheControl: cache_control must be a " <>
-            "plain map. Got: #{inspect(cache_control)}"
+            "plain map. Got: #{Describe.type_of(cache_control)}"
   end
 
   @spec normalize_keys(map()) :: map()
@@ -45,6 +47,6 @@ defmodule Normandy.Components.ContentBlock.CacheControl do
   def normalize_keys(other) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.CacheControl: cache_control must be a " <>
-            "plain map. Got: #{inspect(other)}"
+            "plain map. Got: #{Describe.type_of(other)}"
   end
 end

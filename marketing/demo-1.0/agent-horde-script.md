@@ -1,3 +1,5 @@
+> Written for Normandy 1.0. The `examples/agent_horde` app it records was removed in Normandy 2.0 (it used the 1.x API); see `examples/README.md`.
+
 # Normandy Agent Horde — Screen-Recording Script
 
 A shot-by-shot guide for recording the multi-agent "horde" demo. You drive the

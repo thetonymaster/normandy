@@ -35,6 +35,68 @@ defmodule Normandy.Components.StreamProcessorTest do
     end
   end
 
+  describe "build_final_message/1 input_transformations" do
+    @dropped %{"type" => "thinking_dropped", "path" => "messages.1.content.0"}
+
+    test "usage merges message_start's counts with message_delta's, a nil never erasing one" do
+      events = [
+        %{
+          type: "message_start",
+          message: %{
+            "id" => "m",
+            "usage" => %{
+              "input_tokens" => 10,
+              "output_tokens" => 1,
+              "cache_read_input_tokens" => 100
+            }
+          }
+        },
+        %{
+          type: "message_delta",
+          delta: %{"stop_reason" => "end_turn"},
+          usage: %{"output_tokens" => 7, "cache_read_input_tokens" => nil}
+        }
+      ]
+
+      assert StreamProcessor.build_final_message(events).usage == %{
+               "input_tokens" => 10,
+               "output_tokens" => 7,
+               "cache_read_input_tokens" => 100
+             }
+    end
+
+    test "keeps the input_transformations reported in message_start" do
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [@dropped]
+    end
+
+    test "a message_delta's input_transformations replace the message_start ones" do
+      later = %{@dropped | "path" => "messages.3.content.0"}
+
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_delta", delta: %{}, usage: nil, input_transformations: [later]},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [later]
+    end
+
+    test "a message_delta without them keeps the message_start ones" do
+      events = [
+        %{type: "message_start", message: %{"id" => "m", "input_transformations" => [@dropped]}},
+        %{type: "message_delta", delta: %{"stop_reason" => "end_turn"}, usage: nil},
+        %{type: "message_stop"}
+      ]
+
+      assert StreamProcessor.build_final_message(events).input_transformations == [@dropped]
+    end
+  end
+
   describe "build_final_message/1" do
     test "builds complete message from text events" do
       events = [
@@ -153,66 +215,155 @@ defmodule Normandy.Components.StreamProcessorTest do
     end
   end
 
-  describe "process_with_callback/2" do
-    test "invokes callback for text deltas" do
-      events = [
-        %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "Hello"}},
-        %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => " world"}}
-      ]
+  describe "stream_error/1" do
+    @complete [
+      %{type: "message_start", message: %{"id" => "m"}},
+      %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => "hi"}, index: 0},
+      %{type: "message_stop"}
+    ]
 
-      callback = fn
-        :text_delta, text -> send(self(), {:text, text})
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:text, "Hello"}
-      assert_received {:text, " world"}
+    test "nil for a complete stream" do
+      assert StreamProcessor.stream_error(@complete) == nil
     end
 
-    test "invokes callback for tool use start" do
+    test "an error event becomes a :stream LLMError carrying the API message" do
+      events = [
+        %{type: "message_start", message: %{}},
+        %{type: "error", error: %{"type" => "overloaded_error", "message" => "Overloaded"}}
+      ]
+
+      assert %Normandy.LLMError{
+               type: :stream,
+               retryable?: false,
+               message: message,
+               reason: reason
+             } =
+               StreamProcessor.stream_error(events)
+
+      assert message == "LLM call failed: stream: Overloaded"
+      assert reason == %{"type" => "overloaded_error", "message" => "Overloaded"}
+    end
+
+    test "an {:error, reason} item becomes a :stream LLMError" do
+      assert %Normandy.LLMError{type: :stream, reason: :closed} =
+               StreamProcessor.stream_error([
+                 %{type: "message_start", message: %{}},
+                 {:error, :closed}
+               ])
+    end
+
+    test "a stream that ends without message_stop is an error" do
+      assert %Normandy.LLMError{
+               type: :stream,
+               message: "LLM call failed: stream: stream ended before message_stop"
+             } =
+               StreamProcessor.stream_error(Enum.drop(@complete, -1))
+    end
+  end
+
+  describe "content the final message keeps" do
+    test "a tool_use input is decoded once its block stops" do
       events = [
         %{
           type: "content_block_start",
-          content_block: %{"type" => "tool_use", "name" => "calculator"}
-        }
+          content_block: %{"type" => "tool_use", "id" => "t", "input" => %{}},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "input_json_delta", "partial_json" => "{\"a\":"},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "input_json_delta", "partial_json" => "5}"},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
       ]
 
-      callback = fn
-        :tool_use_start, tool -> send(self(), {:tool, tool["name"]})
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:tool, "calculator"}
+      assert %{content: [%{"input" => %{"a" => 5}}]} = StreamProcessor.build_final_message(events)
     end
 
-    test "invokes callback for message lifecycle" do
-      events = [
-        %{type: "message_start", message: %{"id" => "msg_123"}},
-        %{type: "message_stop"}
-      ]
-
-      callback = fn
-        :message_start, msg -> send(self(), {:start, msg["id"]})
-        :message_stop, _ -> send(self(), :stop)
-        _, _ -> :ok
-      end
-
-      {:ok, _result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert_received {:start, "msg_123"}
-      assert_received :stop
-    end
-
-    test "returns final accumulated message" do
+    test "a tool_use with no input deltas has an empty object input" do
       events = [
         %{
-          type: "message_start",
-          message: %{"id" => "msg_123", "model" => "claude-3", "role" => "assistant"}
+          type: "content_block_start",
+          content_block: %{"type" => "tool_use", "id" => "t", "input" => %{}},
+          index: 0
         },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{content: [%{"input" => %{}}]} = StreamProcessor.build_final_message(events)
+    end
+
+    test "thinking text and its signature are accumulated" do
+      events = [
+        %{
+          type: "content_block_start",
+          content_block: %{"type" => "thinking", "thinking" => ""},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "thinking_delta", "thinking" => "Let me "},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "thinking_delta", "thinking" => "think."},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "signature_delta", "signature" => "sig"},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
+      ]
+
+      assert %{
+               content: [
+                 %{"type" => "thinking", "thinking" => "Let me think.", "signature" => "sig"}
+               ]
+             } =
+               StreamProcessor.build_final_message(events)
+    end
+
+    test "server_tool_use and mcp_tool_use inputs are accumulated and decoded" do
+      events =
+        for {type, index} <- [{"server_tool_use", 0}, {"mcp_tool_use", 1}],
+            event <- [
+              %{
+                type: "content_block_start",
+                content_block: %{"type" => type, "id" => "s#{index}", "input" => %{}},
+                index: index
+              },
+              %{
+                type: "content_block_delta",
+                delta: %{"type" => "input_json_delta", "partial_json" => ~s({"q":)},
+                index: index
+              },
+              %{
+                type: "content_block_delta",
+                delta: %{"type" => "input_json_delta", "partial_json" => ~s("x"})},
+                index: index
+              },
+              %{type: "content_block_stop", index: index}
+            ],
+            do: event
+
+      assert %{
+               content: [
+                 %{"type" => "server_tool_use", "input" => %{"q" => "x"}},
+                 %{"type" => "mcp_tool_use", "input" => %{"q" => "x"}}
+               ]
+             } = StreamProcessor.build_final_message(events)
+    end
+
+    test "citations deltas are kept on their text block, in order" do
+      events = [
         %{
           type: "content_block_start",
           content_block: %{"type" => "text", "text" => ""},
@@ -220,17 +371,31 @@ defmodule Normandy.Components.StreamProcessorTest do
         },
         %{
           type: "content_block_delta",
-          delta: %{"type" => "text_delta", "text" => "Hello"},
+          delta: %{"type" => "citations_delta", "citation" => %{"cited_text" => "a"}},
           index: 0
-        }
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "text_delta", "text" => "Sunny."},
+          index: 0
+        },
+        %{
+          type: "content_block_delta",
+          delta: %{"type" => "citations_delta", "citation" => %{"cited_text" => "b"}},
+          index: 0
+        },
+        %{type: "content_block_stop", index: 0}
       ]
 
-      callback = fn _, _ -> :ok end
-
-      {:ok, result} = StreamProcessor.process_with_callback(events, callback)
-
-      assert result.id == "msg_123"
-      assert length(result.content) == 1
+      assert %{
+               content: [
+                 %{
+                   "type" => "text",
+                   "text" => "Sunny.",
+                   "citations" => [%{"cited_text" => "a"}, %{"cited_text" => "b"}]
+                 }
+               ]
+             } = StreamProcessor.build_final_message(events)
     end
   end
 end

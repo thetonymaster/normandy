@@ -12,21 +12,23 @@ defmodule Normandy.MCP.ServerConfig do
 
       server = ServerConfig.new("my_server", "https://mcp.example.com/sse")
       |> ServerConfig.set_auth_token("bearer-token")
-      |> ServerConfig.allow_tools(["search_*", "fetch_data"])
+      |> ServerConfig.allow_tools(["search_events", "fetch_data"])
 
       agent = BaseAgent.add_mcp_server(agent, server)
 
   """
 
+  alias Claudio.MCP.ServerConfig, as: ClaudioServerConfig
+
   @type t :: %__MODULE__{
           name: String.t(),
           url: String.t(),
           authorization_token: String.t() | nil,
-          tool_configuration: map() | nil
+          allowed_tools: [String.t()] | nil
         }
 
   @derive {Inspect, except: [:authorization_token]}
-  defstruct [:name, :url, :authorization_token, :tool_configuration]
+  defstruct [:name, :url, :authorization_token, :allowed_tools]
 
   @doc """
   Creates a new MCP server configuration.
@@ -45,13 +47,22 @@ defmodule Normandy.MCP.ServerConfig do
   end
 
   @doc """
-  Sets which tools are allowed from this MCP server.
+  Allowlists tools from this MCP server by **exact name**; every other tool is
+  disabled. A later call replaces the allowlist.
 
-  Accepts glob-style patterns.
+  Raises `ArgumentError` on a name containing `*` or `?`: the connector matches
+  names literally, so a pattern would enable no tools at all.
   """
   @spec allow_tools(t(), [String.t()]) :: t()
-  def allow_tools(%__MODULE__{} = config, patterns) when is_list(patterns) do
-    %{config | tool_configuration: %{"allowed_tools" => patterns, "enabled" => true}}
+  def allow_tools(%__MODULE__{} = config, names) when is_list(names) do
+    # Validate now, where the mistake is, rather than when the request is built.
+    _ =
+      ClaudioServerConfig.allow_tools(
+        ClaudioServerConfig.new(config.name, config.url),
+        names
+      )
+
+    %{config | allowed_tools: names}
   end
 
   @doc """
@@ -59,17 +70,17 @@ defmodule Normandy.MCP.ServerConfig do
   """
   @spec to_claudio(t()) :: Claudio.MCP.ServerConfig.t()
   def to_claudio(%__MODULE__{} = config) do
-    claudio_config = Claudio.MCP.ServerConfig.new(config.name, config.url)
+    claudio_config = ClaudioServerConfig.new(config.name, config.url)
 
     claudio_config =
       if config.authorization_token do
-        Claudio.MCP.ServerConfig.set_auth_token(claudio_config, config.authorization_token)
+        ClaudioServerConfig.set_auth_token(claudio_config, config.authorization_token)
       else
         claudio_config
       end
 
-    if config.tool_configuration do
-      %{claudio_config | tool_configuration: config.tool_configuration}
+    if config.allowed_tools do
+      ClaudioServerConfig.allow_tools(claudio_config, config.allowed_tools)
     else
       claudio_config
     end

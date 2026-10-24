@@ -2,17 +2,14 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
   use ExUnit.Case, async: true
   doctest Normandy.Components.SystemPromptGenerator
 
-  alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Components.SystemPromptGenerator
   alias NormandyTest.Support.ContextProvider
 
   test "with empty specification" do
     prompt = """
-    # IDENTITY and PURPOSE
-    - This is a conversation with a helpful and friendly AI assistant.
-    # OUTPUT INSTRUCTIONS
-    - Always respond using the proper JSON schema.
-    - Always use the available additional information and context to enhance the response.
+    # Role
+    - You are a helpful assistant.
     """
 
     spec = %PromptSpecification{}
@@ -30,18 +27,16 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
     }
 
     prompt = """
-    # IDENTITY and PURPOSE
+    # Role
     - you are a helpful assistant
     - you assist me in assisting
-    # INTERNAL ASSISTANT STEPS
+    # How to work
     - step 1
     - step 2
     - step 3
-    # OUTPUT INSTRUCTIONS
+    # Output
     - print the result
     - as a result
-    - Always respond using the proper JSON schema.
-    - Always use the available additional information and context to enhance the response.
     """
 
     result = SystemPromptGenerator.generate_prompt(spec)
@@ -63,19 +58,18 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
     }
 
     prompt = """
-    # IDENTITY and PURPOSE
+    # Role
     - you are a helpful assistant
     - you assist me in assisting
-    # INTERNAL ASSISTANT STEPS
+    # How to work
     - step 1
     - step 2
     - step 3
-    # OUTPUT INSTRUCTIONS
+    # Output
     - print the result
     - as a result
-    - Always respond using the proper JSON schema.
-    - Always use the available additional information and context to enhance the response.
-    # EXTRA INFORMATION AND CONTEXT
+    # Context
+    Use this information where it is relevant to the request.
     ## title a
     some stuff
     ## title b
@@ -84,5 +78,18 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
 
     result = SystemPromptGenerator.generate_prompt(spec)
     assert String.trim(prompt) == result
+  end
+
+  test "generate_prompt/2 no longer exists (tools go through the API tools parameter)" do
+    # function_exported?/3 is false for a module that isn't loaded yet (mix test
+    # loads lazily), which would make this pass before the change.
+    Code.ensure_loaded!(SystemPromptGenerator)
+    refute function_exported?(SystemPromptGenerator, :generate_prompt, 2)
+  end
+
+  test "no context line without context providers" do
+    result = SystemPromptGenerator.generate_prompt(%PromptSpecification{})
+    refute result =~ "# Context"
+    refute result =~ "Use this information"
   end
 end

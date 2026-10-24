@@ -12,26 +12,33 @@ defmodule Normandy.CastError do
   end
 end
 
-defmodule Normandy.NonExistentTurn do
-  defexception [:message, :value]
+defmodule Normandy.TurnNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Components.AgentMemory.delete_turn/2` when no entry in the memory
+  belongs to the turn. `:turn_id` is the id that was asked for.
+  """
+  defexception [:turn_id]
 
-  def exception(opts) do
-    value = Keyword.fetch!(opts, :value)
+  @type t :: %__MODULE__{turn_id: String.t()}
 
-    msg = opts[:message] || "turn #{inspect(value)} does not exist"
-    %__MODULE__{message: msg, value: value}
-  end
+  @impl true
+  def message(%__MODULE__{turn_id: turn_id}),
+    do: "no turn #{inspect(turn_id)} in this AgentMemory"
 end
 
-defmodule Normandy.NonExistentContextProvider do
-  defexception [:message, :value]
+defmodule Normandy.ContextProviderNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Agents.BaseAgent.fetch_context_provider!/2` when the agent's prompt
+  specification has no context provider under the name. `:name` is the name that was
+  asked for; `:registered` lists the names that exist, sorted.
+  """
+  defexception [:name, registered: []]
 
-  def exception(opts) do
-    value = Keyword.fetch!(opts, :value)
+  @type t :: %__MODULE__{name: atom(), registered: [atom()]}
 
-    msg = opts[:message] || "context provider #{inspect(value)} does not exist"
-    %__MODULE__{message: msg, value: value}
-  end
+  @impl true
+  def message(%__MODULE__{name: name, registered: registered}),
+    do: "no context provider #{inspect(name)}; registered: #{inspect(registered)}"
 end
 
 defmodule Normandy.InvalidChangesetError do
@@ -41,7 +48,9 @@ defmodule Normandy.InvalidChangesetError do
   """
   defexception [:action, :changeset]
 
+  @impl true
   def message(%{action: action, changeset: changeset}) do
+    changeset = redact(changeset)
     changes = extract_changes(changeset)
     errors = Normandy.Validate.traverse_errors(changeset, & &1)
 
@@ -66,6 +75,33 @@ defmodule Normandy.InvalidChangesetError do
     """
   end
 
+  # Exception messages reach logs and error trackers: a redact: true field's
+  # value is replaced in the params and changes before anything is printed.
+  defp redact(%{data: %mod{}} = changeset) do
+    fields =
+      if function_exported?(mod, :__schema__, 1), do: mod.__schema__(:redact_fields), else: []
+
+    %{
+      changeset
+      | params: redact_keys(changeset.params, fields),
+        changes: redact_keys(changeset.changes, fields)
+    }
+  end
+
+  defp redact(changeset), do: changeset
+
+  defp redact_keys(map, []), do: map
+
+  defp redact_keys(map, fields) when is_map(map) do
+    names = MapSet.new(fields, &Atom.to_string/1)
+
+    Map.new(map, fn {key, value} ->
+      if to_string(key) in names, do: {key, "**redacted**"}, else: {key, value}
+    end)
+  end
+
+  defp redact_keys(other, _fields), do: other
+
   defp pretty(term) do
     inspect(term, pretty: true)
     |> String.split("\n")
@@ -89,4 +125,63 @@ defmodule Normandy.InvalidChangesetError do
 
   defp extract_changes(other),
     do: other
+end
+
+defmodule Normandy.ModelCatalogError do
+  @moduledoc """
+  Raised when the model catalog can't produce a context window for a turn that
+  needs one (an agent with a real compactor and no pinned `:context_window`). The
+  turn fails; nothing is memoised, so the next turn retries the lookup.
+  """
+  defexception [:model, :reason]
+
+  @impl true
+  def message(%__MODULE__{model: model, reason: reason}) do
+    "model catalog lookup failed for #{inspect(model)}: #{inspect(reason)}. " <>
+      "Compaction needs the model's context window; pin it with the compactor's " <>
+      ":context_window option to skip the lookup (required for non-Claude clients)."
+  end
+end
+
+defmodule Normandy.HookHaltError do
+  @moduledoc """
+  An `on_prompt` or `before_llm` hook halted the turn. `BaseAgent.run/2,3` returns
+  `{:error, e}` (`run!/2,3` and the streaming paths raise it), and `Turn.Server` replies
+  `{:error, e}` for both. `outcome/1` is what `on_turn_end` hooks receive in both shells:
+  `{:rejected, e}` for `on_prompt` and `{:error, e}` for `before_llm`.
+  """
+  defexception [:event, :hook, :reason]
+
+  @type t :: %__MODULE__{event: atom(), hook: module(), reason: String.t()}
+
+  @impl true
+  def message(%__MODULE__{event: event, hook: hook, reason: reason}) do
+    "hook #{inspect(hook)} halted #{event}: #{reason}"
+  end
+
+  @doc """
+  An `on_prompt` halt is a rejection (the input never became a turn, nothing is stored):
+  `{:rejected, e}`. A `before_llm` halt fails a started turn: `{:error, e}`.
+  """
+  @spec outcome(t()) :: {:rejected, t()} | {:error, t()}
+  def outcome(%__MODULE__{event: :on_prompt} = e), do: {:rejected, e}
+  def outcome(%__MODULE__{} = e), do: {:error, e}
+end
+
+defmodule Normandy.ToolNotFoundError do
+  @moduledoc """
+  Raised by `Normandy.Tools.Toolset.fetch!/2` when no tool is registered under a name.
+
+  `:name` is the name asked for; `:registered` lists the names the toolset holds, sorted.
+  """
+  defexception [:name, registered: []]
+
+  @impl true
+  def message(%__MODULE__{name: name, registered: []}),
+    do: "no tool named #{inspect(name)} in the toolset; it has no tools"
+
+  def message(%__MODULE__{name: name, registered: registered}),
+    do:
+      "no tool named #{inspect(name)} in the toolset; registered: " <>
+        Enum.map_join(registered, ", ", &inspect/1)
 end

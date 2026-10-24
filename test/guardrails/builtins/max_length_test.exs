@@ -54,7 +54,7 @@ defmodule Normandy.Guardrails.Builtins.MaxLengthTest do
 
   describe "check/2 argument validation" do
     test "raises without :limit" do
-      assert_raise KeyError, fn ->
+      assert_raise KeyError, ~r/key :limit not found/, fn ->
         MaxLength.check("x", [])
       end
     end

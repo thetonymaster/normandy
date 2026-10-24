@@ -12,7 +12,7 @@ defmodule Normandy.Schema.Validator do
         use Normandy.Schema
 
         schema do
-          field :name, :string, required: true, minLength: 1
+          field :name, :string, required: true, min_length: 1
           field :age, :integer, minimum: 0, maximum: 150
           field :email, :string, format: "email"
         end
@@ -35,34 +35,52 @@ defmodule Normandy.Schema.Validator do
   This validator supports the following JSON Schema validations:
 
   - **Type validation** - Ensures values match their declared types
+    (`:date`, `:time` and `:duration` fields are JSON strings with a `format`;
+    the matching `Date`, `Time` or `Duration` value is accepted too)
   - **Required fields** - Validates required fields are present
   - **String constraints**
     - `minLength` / `min_length` - Minimum string length
     - `maxLength` / `max_length` - Maximum string length
     - `pattern` - Regular expression pattern matching
-    - `format` - String format validation (email, uri, uuid, date-time, ipv4, ipv6)
+    - `format` - String format validation (email, uri, uuid, date-time, date, time,
+      duration, hostname, ipv4, ipv6)
   - **Number constraints**
     - `minimum` - Minimum value (inclusive)
     - `maximum` - Maximum value (inclusive)
     - `exclusiveMinimum` - Minimum value (exclusive)
     - `exclusiveMaximum` - Maximum value (exclusive)
+    - `multipleOf` / `multiple_of` - Value must be a multiple of the number
   - **Array constraints**
     - `minItems` / `min_items` - Minimum array length
     - `maxItems` / `max_items` - Maximum array length
     - `uniqueItems` / `unique_items` - Ensures array items are unique
+  - **Object constraints**
+    - `additionalProperties` - `false` rejects keys outside `properties`; a
+      schema checks their values (a `{:map, inner}` field emits this)
+    - `patternProperties` - Checks the values of keys matching a regex
   - **Enum validation** - Ensures values are in allowed list
+  - **`const`** - Value must equal the given value
   - **Composition** - anyOf, oneOf, allOf for complex type unions and intersections
+  - **`not`** - Value must not match the schema
   - **Conditionals** - if/then/else schemas for context-dependent validation
   - **Nested schemas** - Validates nested objects and arrays recursively
 
+  Every keyword applies at every level: the root, each field, array items, and
+  each composition or conditional sub-schema.
+
   ### Format Validation
 
-  The validator supports the following string formats:
+  The validator supports the following ten string formats (any other `format` is
+  not checked):
 
   - `email` - RFC 5322 email addresses (simplified)
   - `uri` - Uniform Resource Identifiers
   - `uuid` - UUID (Universally Unique Identifier) format
   - `date-time` - ISO 8601 date-time format
+  - `date` - ISO 8601 calendar date
+  - `time` - ISO 8601 time of day
+  - `duration` - ISO 8601 duration (`P1Y2M3W4DT5H6M7.5S`; at least one part)
+  - `hostname` - RFC 1123 hostname
   - `ipv4` - IPv4 address format
   - `ipv6` - IPv6 address format (simplified)
 
@@ -85,11 +103,11 @@ defmodule Normandy.Schema.Validator do
 
   ## Examples
 
-      iex> validate(MySchema, %{name: "Alice"})
-      {:ok, %{name: "Alice"}}
+      validate(MySchema, %{name: "Alice"})
+      #=> {:ok, %{name: "Alice"}}
 
-      iex> validate(MySchema, %{age: -1})
-      {:error, [%{path: [:age], message: "must be >= 0", constraint: :minimum}]}
+      validate(MySchema, %{age: -1})
+      #=> {:error, [%{path: [:age], message: "must be >= 0", constraint: :minimum}]}
   """
   def validate(schema_module, data) when is_atom(schema_module) do
     spec = schema_module.__schema__(:specification)
@@ -104,11 +122,11 @@ defmodule Normandy.Schema.Validator do
 
   ## Examples
 
-      iex> validate!(MySchema, %{name: "Alice"})
-      %{name: "Alice"}
+      validate!(MySchema, %{name: "Alice"})
+      #=> %{name: "Alice"}
 
-      iex> validate!(MySchema, %{age: -1})
-      ** (Normandy.Schema.ValidationError) Validation failed: age must be >= 0
+      validate!(MySchema, %{age: -1})
+      #=> ** (Normandy.Schema.ValidationError) Validation failed: age must be >= 0
   """
   def validate!(schema_module, data) do
     case validate(schema_module, data) do
@@ -124,19 +142,29 @@ defmodule Normandy.Schema.Validator do
 
   # Validate data against a schema specification
   defp validate_against_spec(data, spec, path) do
-    errors =
-      []
-      |> validate_type(data, spec, path)
-      |> validate_required_fields(data, spec, path)
-      |> validate_properties(data, spec, path)
-      |> validate_composition(data, spec, path)
-      |> validate_conditionals(data, spec, path)
-
-    if errors == [] do
-      {:ok, data}
-    else
-      {:error, errors}
+    case validate_schema([], data, spec, path) do
+      [] -> {:ok, data}
+      errors -> {:error, errors}
     end
+  end
+
+  # Every keyword, at every level: the root spec, a field's spec, an array's
+  # items, and each composition or conditional sub-schema. A keyword that does
+  # not apply to the value's type is skipped.
+  defp validate_schema(errors, data, spec, path) do
+    errors
+    |> validate_type(data, spec, path)
+    |> validate_const(data, spec, path)
+    |> validate_enum(data, spec, path)
+    |> validate_string_constraints(data, spec, path)
+    |> validate_number_constraints(data, spec, path)
+    |> validate_array_constraints(data, spec, path)
+    |> validate_required_fields(data, spec, path)
+    |> validate_properties(data, spec, path)
+    |> validate_other_properties(data, spec, path)
+    |> validate_composition(data, spec, path)
+    |> validate_not(data, spec, path)
+    |> validate_conditionals(data, spec, path)
   end
 
   # Type validation
@@ -147,7 +175,7 @@ defmodule Normandy.Schema.Validator do
       is_nil(type) ->
         errors
 
-      valid_type?(data, type) ->
+      valid_type?(data, type) or formatted_value?(data, type, spec[:format]) ->
         errors
 
       true ->
@@ -177,16 +205,28 @@ defmodule Normandy.Schema.Validator do
   defp valid_type?(%DateTime{}, :datetime), do: true
   defp valid_type?(_, _), do: false
 
+  # `:date`, `:time` and `:duration` fields are JSON strings with a format; the
+  # data may hold the Elixir value itself rather than its string form.
+  defp formatted_value?(%Date{}, :string, "date"), do: true
+  defp formatted_value?(%Time{}, :string, "time"), do: true
+
+  # Duration ships with Elixir 1.17; on 1.15 and 1.16 the struct pattern would not compile.
+  if Code.ensure_loaded?(Duration) do
+    defp formatted_value?(%Duration{}, :string, "duration"), do: true
+  end
+
+  defp formatted_value?(_, _, _), do: false
+
+  defp actual_type(%Date{}), do: :date
+  defp actual_type(%Time{}), do: :time
+  defp actual_type(%NaiveDateTime{}), do: :naive_datetime
+  defp actual_type(%DateTime{}), do: :datetime
   defp actual_type(data) when is_binary(data), do: :string
   defp actual_type(data) when is_integer(data), do: :integer
   defp actual_type(data) when is_float(data), do: :float
   defp actual_type(data) when is_boolean(data), do: :boolean
   defp actual_type(data) when is_list(data), do: :array
   defp actual_type(data) when is_map(data), do: :object
-  defp actual_type(%Date{}), do: :date
-  defp actual_type(%Time{}), do: :time
-  defp actual_type(%NaiveDateTime{}), do: :naive_datetime
-  defp actual_type(%DateTime{}), do: :datetime
   defp actual_type(_), do: :unknown
 
   # Required fields validation
@@ -217,8 +257,7 @@ defmodule Normandy.Schema.Validator do
 
     Enum.reduce(properties, errors, fn {field, field_spec}, acc ->
       if Map.has_key?(data, field) do
-        value = Map.get(data, field)
-        validate_value(acc, value, field_spec, path ++ [field])
+        validate_schema(acc, Map.get(data, field), field_spec, path ++ [field])
       else
         acc
       end
@@ -227,15 +266,78 @@ defmodule Normandy.Schema.Validator do
 
   defp validate_properties(errors, _data, _spec, _path), do: errors
 
-  # Validate individual value against field spec
-  defp validate_value(errors, value, field_spec, path) do
-    errors
-    |> validate_type(value, field_spec, path)
-    |> validate_string_constraints(value, field_spec, path)
-    |> validate_number_constraints(value, field_spec, path)
-    |> validate_array_constraints(value, field_spec, path)
-    |> validate_enum(value, field_spec, path)
-    |> validate_nested_object(value, field_spec, path)
+  # Keys outside `properties`: a `patternProperties` entry whose regex matches
+  # the key checks the value; any other key is checked against
+  # `additionalProperties` (false rejects it, a schema checks the value).
+  defp validate_other_properties(errors, data, spec, path) when is_map(data) do
+    pattern_properties = spec[:patternProperties] || spec[:pattern_properties] || %{}
+    additional = Map.get(spec, :additionalProperties, spec[:additional_properties])
+
+    if pattern_properties == %{} and additional in [nil, true] do
+      errors
+    else
+      properties = spec[:properties] || %{}
+
+      data
+      |> Map.drop([:__struct__ | Map.keys(properties)])
+      |> Enum.reduce(errors, fn {key, value}, acc ->
+        validate_other_property(acc, key, value, pattern_properties, additional, path ++ [key])
+      end)
+    end
+  end
+
+  defp validate_other_properties(errors, _data, _spec, _path), do: errors
+
+  defp validate_other_property(errors, key, value, pattern_properties, additional, path) do
+    case matching_pattern_schemas(pattern_properties, key) do
+      [] -> validate_additional(errors, value, additional, path)
+      schemas -> Enum.reduce(schemas, errors, &validate_schema(&2, value, &1, path))
+    end
+  end
+
+  defp matching_pattern_schemas(pattern_properties, key) do
+    for {pattern, schema} <- pattern_properties,
+        Regex.match?(Regex.compile!(pattern), to_string(key)),
+        do: schema
+  end
+
+  defp validate_additional(errors, _value, additional, _path) when additional in [nil, true],
+    do: errors
+
+  defp validate_additional(errors, _value, false, path) do
+    [
+      %{path: path, message: "is not an allowed property", constraint: :additional_properties}
+      | errors
+    ]
+  end
+
+  defp validate_additional(errors, value, schema, path) when is_map(schema),
+    do: validate_schema(errors, value, schema, path)
+
+  defp validate_const(errors, data, spec, path) do
+    case Map.fetch(spec, :const) do
+      {:ok, ^data} ->
+        errors
+
+      {:ok, expected} ->
+        [%{path: path, message: "must be #{inspect(expected)}", constraint: :const} | errors]
+
+      :error ->
+        errors
+    end
+  end
+
+  defp validate_not(errors, data, spec, path) do
+    case spec[:not] do
+      nil ->
+        errors
+
+      schema ->
+        case validate_schema([], data, schema, path) do
+          [] -> [%{path: path, message: "must not match the schema", constraint: :not} | errors]
+          _ -> errors
+        end
+    end
   end
 
   # String constraints
@@ -320,6 +422,8 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
+  # A flat table, one clause per format.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp validate_format(errors, value, spec, path) do
     case spec[:format] do
       nil -> errors
@@ -327,6 +431,10 @@ defmodule Normandy.Schema.Validator do
       "uri" -> validate_uri_format(errors, value, path)
       "uuid" -> validate_uuid_format(errors, value, path)
       "date-time" -> validate_datetime_format(errors, value, path)
+      "date" -> check_format(errors, path, "date", match?({:ok, _}, Date.from_iso8601(value)))
+      "time" -> check_format(errors, path, "time", match?({:ok, _}, Time.from_iso8601(value)))
+      "duration" -> check_format(errors, path, "duration", Regex.match?(duration_regex(), value))
+      "hostname" -> check_format(errors, path, "hostname", Regex.match?(hostname_regex(), value))
       "ipv4" -> validate_ipv4_format(errors, value, path)
       "ipv6" -> validate_ipv6_format(errors, value, path)
       _ -> errors
@@ -389,6 +497,23 @@ defmodule Normandy.Schema.Validator do
         | errors
       ]
     end
+  end
+
+  # ISO 8601 durations (P1Y2M3W4DT5H6M7.5S; at least one part) and RFC 1123 hostnames.
+  defp duration_regex,
+    do: ~r/^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/
+
+  defp hostname_regex,
+    do:
+      ~r/^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+
+  defp check_format(errors, _path, _format, true), do: errors
+
+  defp check_format(errors, path, format, false) do
+    [
+      %{path: path, message: "must be a valid #{format}", constraint: :format, format: format}
+      | errors
+    ]
   end
 
   # ISO 8601 date-time format validation (simplified)
@@ -457,9 +582,36 @@ defmodule Normandy.Schema.Validator do
     |> validate_maximum(value, spec, path)
     |> validate_exclusive_minimum(value, spec, path)
     |> validate_exclusive_maximum(value, spec, path)
+    |> validate_multiple_of(value, spec, path)
   end
 
   defp validate_number_constraints(errors, _value, _spec, _path), do: errors
+
+  defp validate_multiple_of(errors, value, spec, path) do
+    case spec[:multipleOf] || spec[:multiple_of] do
+      nil ->
+        errors
+
+      factor ->
+        if multiple_of?(value, factor) do
+          errors
+        else
+          [
+            %{path: path, message: "must be a multiple of #{factor}", constraint: :multiple_of}
+            | errors
+          ]
+        end
+    end
+  end
+
+  defp multiple_of?(value, factor) when is_integer(value) and is_integer(factor),
+    do: rem(value, factor) == 0
+
+  # Floats: 0.3 / 0.1 is 2.9999999999999996, so compare with a tolerance.
+  defp multiple_of?(value, factor) do
+    quotient = value / factor
+    abs(quotient - round(quotient)) < 1.0e-9
+  end
 
   defp validate_minimum(errors, value, spec, path) do
     case spec[:minimum] do
@@ -637,7 +789,7 @@ defmodule Normandy.Schema.Validator do
         value
         |> Enum.with_index()
         |> Enum.reduce(errors, fn {item, index}, acc ->
-          validate_value(acc, item, items_spec, path ++ [index])
+          validate_schema(acc, item, items_spec, path ++ [index])
         end)
     end
   end
@@ -664,21 +816,6 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
-  # Nested object validation
-  defp validate_nested_object(errors, value, spec, path) when is_map(value) do
-    if spec[:properties] do
-      # Recursively validate the nested object against its spec
-      case validate_against_spec(value, spec, path) do
-        {:ok, _} -> errors
-        {:error, nested_errors} -> nested_errors ++ errors
-      end
-    else
-      errors
-    end
-  end
-
-  defp validate_nested_object(errors, _value, _spec, _path), do: errors
-
   # Composition validation (anyOf, oneOf, allOf)
   defp validate_composition(errors, data, spec, path) do
     errors
@@ -694,25 +831,10 @@ defmodule Normandy.Schema.Validator do
 
       schemas ->
         # At least one schema must validate
-        valid? =
-          Enum.any?(schemas, fn schema ->
-            case validate_against_spec(data, schema, path) do
-              {:ok, _} -> true
-              {:error, _} -> false
-            end
-          end)
-
-        if valid? do
+        if Enum.any?(schemas, &matches?(data, &1, path)) do
           errors
         else
-          [
-            %{
-              path: path,
-              message: "must match at least one schema",
-              constraint: :anyOf
-            }
-            | errors
-          ]
+          [%{path: path, message: "must match at least one schema", constraint: :anyOf} | errors]
         end
     end
   end
@@ -724,33 +846,15 @@ defmodule Normandy.Schema.Validator do
 
       schemas ->
         # Exactly one schema must validate
-        valid_count =
-          Enum.count(schemas, fn schema ->
-            case validate_against_spec(data, schema, path) do
-              {:ok, _} -> true
-              {:error, _} -> false
-            end
-          end)
-
-        cond do
-          valid_count == 1 ->
+        case Enum.count(schemas, &matches?(data, &1, path)) do
+          1 ->
             errors
 
-          valid_count == 0 ->
+          count ->
             [
               %{
                 path: path,
-                message: "must match exactly one schema (matched 0)",
-                constraint: :oneOf
-              }
-              | errors
-            ]
-
-          true ->
-            [
-              %{
-                path: path,
-                message: "must match exactly one schema (matched #{valid_count})",
+                message: "must match exactly one schema (matched #{count})",
                 constraint: :oneOf
               }
               | errors
@@ -759,70 +863,38 @@ defmodule Normandy.Schema.Validator do
     end
   end
 
+  # All schemas must validate: each one adds its errors to the accumulator.
   defp validate_all_of(errors, data, spec, path) do
-    case spec[:allOf] do
+    Enum.reduce(spec[:allOf] || [], errors, &validate_schema(&2, data, &1, path))
+  end
+
+  # Conditional validation (if/then/else): the branch the `if` selects is
+  # checked, a missing branch passes.
+  defp validate_conditionals(errors, data, spec, path) do
+    case spec[:if] do
       nil ->
         errors
 
-      schemas ->
-        # All schemas must validate
-        Enum.reduce(schemas, errors, fn schema, acc ->
-          case validate_against_spec(data, schema, path) do
-            {:ok, _} ->
-              acc
-
-            {:error, schema_errors} ->
-              schema_errors ++ acc
-          end
-        end)
+      if_schema ->
+        branch = if matches?(data, if_schema, path), do: spec[:then], else: spec[:else]
+        validate_branch(errors, data, branch, path)
     end
   end
 
-  # Conditional validation (if/then/else)
-  defp validate_conditionals(errors, data, spec, path) do
-    if_schema = spec[:if]
-    then_schema = spec[:then]
-    else_schema = spec[:else]
+  defp validate_branch(errors, _data, nil, _path), do: errors
 
-    cond do
-      is_nil(if_schema) ->
-        errors
+  defp validate_branch(errors, data, schema, path),
+    do: validate_schema(errors, data, schema, path)
 
-      true ->
-        case validate_against_spec(data, if_schema, path) do
-          {:ok, _} ->
-            # If condition passed, validate against then schema
-            if then_schema do
-              case validate_against_spec(data, then_schema, path) do
-                {:ok, _} -> errors
-                {:error, then_errors} -> then_errors ++ errors
-              end
-            else
-              errors
-            end
-
-          {:error, _} ->
-            # If condition failed, validate against else schema
-            if else_schema do
-              case validate_against_spec(data, else_schema, path) do
-                {:ok, _} -> errors
-                {:error, else_errors} -> else_errors ++ errors
-              end
-            else
-              errors
-            end
-        end
-    end
-  end
+  defp matches?(data, schema, path), do: validate_schema([], data, schema, path) == []
 
   # Format errors for display
   defp format_errors(errors) do
     errors
-    |> Enum.map(fn error ->
+    |> Enum.map_join(", ", fn error ->
       path_str = format_path(error.path)
       "#{path_str}#{error.message}"
     end)
-    |> Enum.join(", ")
   end
 
   defp format_path([]), do: ""

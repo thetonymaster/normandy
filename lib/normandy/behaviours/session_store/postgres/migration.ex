@@ -11,6 +11,13 @@ if Code.ensure_loaded?(Ecto.Migration) do
     """
     use Ecto.Migration
 
+    @doc """
+    Creates `normandy_session_entries` (`id`, `parent_id`, `turn_id`, `role`, `content`,
+    `inserted_at`; an index on `parent_id`) and `normandy_sessions` (`session_id`,
+    `head_id`, `current_turn_id`, `turn_state`, timestamps).
+
+    Run it first; the `MigrationAdd*` modules alter `normandy_sessions`.
+    """
     def up do
       create table(:normandy_session_entries, primary_key: false) do
         add(:id, :binary_id, primary_key: true)
@@ -32,6 +39,7 @@ if Code.ensure_loaded?(Ecto.Migration) do
       end
     end
 
+    @doc "Drops `normandy_sessions` and `normandy_session_entries` with their rows."
     def down do
       drop(table(:normandy_sessions))
       drop(table(:normandy_session_entries))

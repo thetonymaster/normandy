@@ -1,8 +1,12 @@
 defmodule Normandy.Coordination.AgentProcessTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Test.StubClient
 
   setup do
     config = %{
@@ -22,8 +26,11 @@ defmodule Normandy.Coordination.AgentProcessTest do
     end
 
     test "starts a named agent process", %{agent: agent} do
-      assert {:ok, _pid} = AgentProcess.start_link(agent: agent, name: :test_agent)
-      assert Process.whereis(:test_agent) != nil
+      # A unique name, so no other test can hold it.
+      name = :"test_agent_#{System.unique_integer([:positive])}"
+
+      assert {:ok, _pid} = AgentProcess.start_link(agent: agent, name: name)
+      assert Process.whereis(name) != nil
     end
 
     test "assigns agent_id", %{agent: agent} do
@@ -44,20 +51,18 @@ defmodule Normandy.Coordination.AgentProcessTest do
     test "executes agent synchronously", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
-      assert {:ok, result} = AgentProcess.run(pid, "Test input")
-      assert is_map(result)
+      # A chat answer is returned as its text.
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, "Test input")
     end
 
     test "handles different input formats", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       # String input
-      assert {:ok, result1} = AgentProcess.run(pid, "text")
-      assert is_map(result1)
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, "text")
 
       # Map input
-      assert {:ok, result2} = AgentProcess.run(pid, %{chat_message: "text"})
-      assert is_map(result2)
+      assert {:ok, "stub answer"} = AgentProcess.run(pid, %{chat_message: "text"})
     end
 
     test "updates run statistics", %{agent: agent} do
@@ -81,14 +86,73 @@ defmodule Normandy.Coordination.AgentProcessTest do
     end
   end
 
+  describe "inline failures" do
+    defp raising_agent do
+      BaseAgent.init(%{
+        client: %Normandy.Test.StubClient{reply: fn _rm -> raise "client bug" end},
+        model: "m"
+      })
+    end
+
+    test "run/3 replies a Normandy failure as the bare exception", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+
+      capture_log(fn ->
+        assert {:error, %Normandy.Schema.ValidationError{}} =
+                 AgentProcess.run(pid, %{custom: "data"})
+      end)
+
+      assert Process.alive?(pid)
+    end
+
+    test "run/3 replies a raised bug as the bare exception and logs arities only" do
+      {:ok, pid} = AgentProcess.start_link(agent: raising_agent(), agent_id: "buggy")
+
+      log =
+        capture_log(fn ->
+          assert {:error, %RuntimeError{message: "client bug"}} = AgentProcess.run(pid, "go")
+        end)
+
+      assert log =~ "Agent buggy raised RuntimeError"
+      assert log =~ ~r/Normandy\.Agents\.BaseAgent\.\S+\/\d+/
+      assert Process.alive?(pid)
+    end
+
+    test "cast/3 sends a Normandy failure as the bare exception", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent, agent_id: "async_invalid")
+
+      capture_log(fn ->
+        :ok = AgentProcess.cast(pid, %{custom: "data"}, reply_to: self())
+
+        assert_receive {:agent_result, "async_invalid",
+                        {:error, %Normandy.Schema.ValidationError{}}},
+                       1000
+      end)
+    end
+
+    test "cast/3 sends a raised bug as the bare exception and logs it" do
+      {:ok, pid} = AgentProcess.start_link(agent: raising_agent(), agent_id: "async_buggy")
+
+      log =
+        capture_log(fn ->
+          :ok = AgentProcess.cast(pid, "go", reply_to: self())
+
+          assert_receive {:agent_result, "async_buggy",
+                          {:error, %RuntimeError{message: "client bug"}}},
+                         1000
+        end)
+
+      assert log =~ "Async agent async_buggy raised RuntimeError"
+    end
+  end
+
   describe "cast/3" do
     test "executes agent asynchronously", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent, agent_id: "async_agent")
 
       assert :ok = AgentProcess.cast(pid, "Test input", reply_to: self())
 
-      assert_receive {:agent_result, "async_agent", {:ok, result}}, 1000
-      assert is_map(result)
+      assert_receive {:agent_result, "async_agent", {:ok, "stub answer"}}, 1000
     end
 
     test "does not send message if no reply_to", %{agent: agent} do
@@ -105,11 +169,8 @@ defmodule Normandy.Coordination.AgentProcessTest do
       AgentProcess.cast(pid, "Test 1")
       AgentProcess.cast(pid, "Test 2")
 
-      # Give tasks time to complete
-      Process.sleep(50)
-
-      stats = AgentProcess.get_stats(pid)
-      assert stats.run_count == 2
+      # The casts run asynchronously; wait for both to be counted.
+      assert wait_until(fn -> AgentProcess.get_stats(pid).run_count == 2 end)
     end
   end
 
@@ -157,7 +218,6 @@ defmodule Normandy.Coordination.AgentProcessTest do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       AgentProcess.run(pid, "Test 1")
-      Process.sleep(10)
       AgentProcess.run(pid, "Test 2")
 
       stats = AgentProcess.get_stats(pid)
@@ -195,14 +255,36 @@ defmodule Normandy.Coordination.AgentProcessTest do
     end
   end
 
+  describe "update_agent/2 with a function that does not return an agent config" do
+    test "raises in the caller and keeps the process and its agent", %{agent: agent} do
+      {:ok, pid} = AgentProcess.start_link(agent: agent)
+
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.AgentProcess.update_agent/3: the function must " <>
+                     "return a %Normandy.Agents.BaseAgentConfig{}, got: a map",
+                   fn -> AgentProcess.update_agent(pid, fn a -> Map.from_struct(a) end) end
+
+      # One name for both arities, the one option errors use (6.5c re-review).
+      assert_raise ArgumentError,
+                   ~r"^Normandy.Coordination.AgentProcess.update_agent/3: the",
+                   fn ->
+                     AgentProcess.update_agent(pid, fn a -> Map.from_struct(a) end,
+                       timeout: 1_000
+                     )
+                   end
+
+      assert Process.alive?(pid)
+      assert AgentProcess.get_agent(pid) == agent
+    end
+  end
+
   describe "stop/1" do
     test "stops agent process gracefully", %{agent: agent} do
       {:ok, pid} = AgentProcess.start_link(agent: agent)
 
       assert Process.alive?(pid)
+      # GenServer.stop/2 returns once the process has terminated.
       assert :ok = AgentProcess.stop(pid)
-
-      Process.sleep(10)
       refute Process.alive?(pid)
     end
   end
@@ -228,22 +310,52 @@ defmodule Normandy.Coordination.AgentProcessTest do
       assert stats.run_count == 10
     end
 
-    test "async execution doesn't block GenServer", %{agent: agent} do
-      {:ok, pid} = AgentProcess.start_link(agent: agent, agent_id: "nonblocking")
+    # Every cast's LLM call is held until the test releases it, so the reads below
+    # happen while a run is in flight and 19 more wait behind it (no wall-clock bound).
+    test "async execution doesn't block GenServer" do
+      {:ok, pid} = AgentProcess.start_link(agent: gated_agent(), agent_id: "nonblocking")
 
-      # Send many async requests
       for i <- 1..20 do
         AgentProcess.cast(pid, "Async #{i}", reply_to: self())
       end
 
-      # GenServer should still respond quickly to sync calls
-      start_time = System.monotonic_time(:millisecond)
-      stats = AgentProcess.get_stats(pid)
-      end_time = System.monotonic_time(:millisecond)
+      assert_receive {:llm_started, 1, worker}, 5_000
 
-      # Stats call should be fast (< 10ms) even with async work happening
-      assert end_time - start_time < 10
+      # A blocking implementation exits each of these with {:timeout, _} after 5 s.
+      stats = AgentProcess.get_stats(pid)
       assert stats.agent_id == "nonblocking"
+      assert stats.run_count == 0
+      assert :queue.len(:sys.get_state(pid).engine_state.queue) == 19
+
+      send(worker, {:release, 1})
+      assert_receive {:agent_result, "nonblocking", {:ok, "answer 1"}}, 5_000
+
+      for n <- 2..20 do
+        assert_receive {:llm_started, ^n, worker}, 5_000
+        send(worker, {:release, n})
+        assert_receive {:agent_result, "nonblocking", {:ok, answer}}, 5_000
+        assert answer == "answer #{n}"
+      end
+
+      assert AgentProcess.get_stats(pid).run_count == 20
+    end
+
+    # A client whose call `n` sends `{:llm_started, n, worker}` and blocks in the
+    # worker until the test sends it `{:release, n}`.
+    defp gated_agent do
+      parent = self()
+      calls = :atomics.new(1, [])
+
+      reply = fn response_model ->
+        n = :atomics.add_get(calls, 1, 1)
+        send(parent, {:llm_started, n, self()})
+
+        receive do
+          {:release, ^n} -> %{response_model | chat_message: "answer #{n}"}
+        end
+      end
+
+      BaseAgent.init(%{client: %StubClient{reply: reply}, model: "m"})
     end
   end
 end

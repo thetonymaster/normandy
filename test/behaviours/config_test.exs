@@ -1,31 +1,18 @@
 defmodule Normandy.Behaviours.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Behaviours.Config
-  alias Normandy.Behaviours.PolicyEngine
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Dispatch.Pipeline
+  alias Normandy.Behaviours.Config
+  alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
-  alias Normandy.Tools.Registry
-
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Behaviours.ConfigTest.FakeTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
-  end
+  alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
 
   defp config_with_tools(tools) do
-    %{name: "test-agent", model: "claude-3-5-sonnet-20241022", tool_registry: Registry.new(tools)}
+    %{name: "test-agent", model: "claude-3-5-sonnet-20241022", toolset: Toolset.new(tools)}
   end
 
   describe "default bundle" do
@@ -35,24 +22,50 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert b.budget == {Normandy.Behaviours.BudgetTracker.NoOp, []}
       assert b.before_hooks == []
       assert b.after_hooks == []
-      assert b.credential == {Normandy.Behaviours.CredentialProvider.FromClient, []}
-      assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.Static, []}
-      assert b.session_store == {Normandy.Behaviours.SessionStore.InMemory, []}
+      assert b.credential == nil
+      assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
     end
 
-    test "default bundle carries the Native session_registry slot" do
-      assert %Normandy.Behaviours.Config{}.session_registry ==
-               {Normandy.Behaviours.SessionRegistry.Native, []}
+    test "has no session_store or session_registry slot (Turn.Server takes :store and :registry)" do
+      refute Map.has_key?(%Config{}, :session_store)
+      refute Map.has_key?(%Config{}, :session_registry)
     end
 
     test "default bundle carries the NoOp compactor slot" do
       b = %Config{}
       assert b.compactor == {Normandy.Behaviours.Compactor.NoOp, []}
     end
+  end
 
-    test "to_pipeline/1 ignores session_registry (not a dispatch-path concern)" do
-      pipeline = Normandy.Behaviours.Config.to_pipeline(%Normandy.Behaviours.Config{})
-      refute Map.has_key?(Map.from_struct(pipeline), :session_registry)
+  # Reports what the pipeline hands it, including the ref's opts.
+  defmodule RecordingTracker do
+    @behaviour Normandy.Behaviours.BudgetTracker
+
+    @impl true
+    def check(scope, call, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:check, scope, call.name, opts[:limit]})
+      :ok
+    end
+
+    @impl true
+    def record(scope, call, result, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:record, scope, call.name, result, opts[:limit]})
+      :ok
+    end
+  end
+
+  describe "budget tracker opts" do
+    test "check and record receive the {module, opts} ref's opts and the call" do
+      bundle = %Config{budget: {RecordingTracker, test_pid: self(), limit: 5}}
+      p = Config.to_pipeline(bundle)
+      config = %{name: "agent", model: "m"}
+      call = %ToolCall{name: "search"}
+
+      assert :ok = p.budget_check_fn.(config, call)
+      assert :ok = p.budget_record_fn.(config, call, :result)
+
+      assert_received {:check, %{agent: "agent", model: "m"}, "search", 5}
+      assert_received {:record, %{agent: "agent", model: "m"}, "search", :result, 5}
     end
   end
 
@@ -64,7 +77,8 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert %Pipeline{} = p
       assert p.before_hooks == d.before_hooks
       assert p.after_hooks == d.after_hooks
-      assert p.policy_fn.(%{}, %ToolCall{name: "x"}, %{}) == {:allow, %{}}
+      invocation = %Dispatch.Invocation{tool: %FakeTool{}, input: %{}, timeout: 30_000}
+      assert p.policy_fn.(%{}, %ToolCall{name: "x"}, invocation) == {:allow, %{}}
       assert p.budget_check_fn.(%{}, %ToolCall{name: "x"}) == :ok
       assert p.budget_record_fn.(%{}, %ToolCall{name: "x"}, %{}) == :ok
     end
@@ -125,7 +139,7 @@ defmodule Normandy.Behaviours.ConfigTest do
       }
 
       config =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
           model: "claude-3-5-sonnet-20241022",
           temperature: 0.0,
@@ -137,7 +151,7 @@ defmodule Normandy.Behaviours.ConfigTest do
 
     test "init/1 defaults behaviours to nil (resolved to defaults at pipeline build)" do
       config =
-        Normandy.Agents.BaseAgent.init(%{
+        BaseAgent.init(%{
           client: %Normandy.LLM.ClaudioAdapter{api_key: "sk-test"},
           model: "claude-3-5-sonnet-20241022",
           temperature: 0.0

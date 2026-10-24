@@ -78,7 +78,7 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
     defmodule ComputedFields do
       use Normandy.Schema
 
-      defp compute_total(%{price: price, tax_rate: rate}) do
+      def compute_total(%{price: price, tax_rate: rate}) do
         price * (1 + rate)
       end
 
@@ -104,11 +104,18 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
       refute :total_price in properties
     end
 
-    test "computed fields exist in the struct" do
-      schema = %ComputedFields{price: 100.0, tax_rate: 0.2, total_price: 120.0}
-      assert schema.price == 100.0
-      assert schema.tax_rate == 0.2
-      assert schema.total_price == 120.0
+    test "Schema.compute/1 fills computed fields from the other fields" do
+      computed = Normandy.Schema.compute(%ComputedFields{price: 100.0, tax_rate: 0.2})
+      assert_in_delta computed.total_price, 120.0, 1.0e-9
+    end
+
+    test "casting and applying changes computes the field" do
+      result =
+        %ComputedFields{}
+        |> Normandy.Validate.cast(%{"price" => 50.0}, [:price, :tax_rate])
+        |> Normandy.Validate.apply_changes()
+
+      assert_in_delta result.total_price, 55.0, 1.0e-9
     end
   end
 
@@ -116,7 +123,7 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
     defmodule ComputedIncludedInSchema do
       use Normandy.Schema
 
-      defp compute_full_name(%{first_name: first, last_name: last}) do
+      def compute_full_name(%{first_name: first, last_name: last}) do
         "#{first} #{last}"
       end
 
@@ -160,6 +167,21 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
             field(:name, :string)
             field(:status, :string, virtual: true, required: true)
           end
+        end
+      end
+    end
+
+    test "compute: needs virtual: true (it is never applied otherwise)" do
+      assert_raise ArgumentError, ~r/field `total` has compute: but is not virtual/, fn ->
+        defmodule InvalidComputeNotVirtual do
+          use Normandy.Schema
+
+          schema do
+            field(:price, :float)
+            field(:total, :float, compute: &__MODULE__.total/1)
+          end
+
+          def total(s), do: s.price
         end
       end
     end
@@ -231,7 +253,7 @@ defmodule NormandyTest.SchemaVirtualFieldsTest do
     defmodule MultipleVirtual do
       use Normandy.Schema
 
-      defp compute_value(_), do: 3.14
+      def compute_value(_), do: 3.14
 
       schema do
         field(:id, :string, required: true)

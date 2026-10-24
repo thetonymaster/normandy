@@ -1,8 +1,9 @@
 defmodule Normandy.Batch.ProcessorTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Batch.Processor
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Batch.Processor
+  alias Normandy.TurnError
 
   # Mock client for testing
   defmodule MockClient do
@@ -14,11 +15,7 @@ defmodule Normandy.Batch.ProcessorTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
-
-      def converse(client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
+      def converse(client, request, _opts) do
         # Simulate processing delay
         if client.delay > 0, do: Process.sleep(client.delay)
 
@@ -27,9 +24,56 @@ defmodule Normandy.Batch.ProcessorTest do
           raise "Simulated failure"
         end
 
-        %{response_model | chat_message: "Response"}
+        {:ok,
+         %Normandy.LLM.Response{content: %{request.response_model | chat_message: "Response"}}}
       end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
+  end
+
+  # Fails when the input mentions "boom" (raises), "quit" (exits) or "toss" (throws) and
+  # sleeps when it mentions "slow", so a test decides exactly which items fail or time out.
+  defmodule PickyClient do
+    use Normandy.Schema
+
+    schema do
+      field(:sleep_ms, :integer, default: 500)
+    end
+
+    defimpl Normandy.Agents.Model do
+      def converse(client, request, _opts) do
+        text = inspect(List.last(request.messages).content)
+        if text =~ "slow", do: Process.sleep(client.sleep_ms)
+        if text =~ "boom", do: raise("boom")
+        if text =~ "quit", do: exit(:quit)
+        if text =~ "toss", do: throw(:tossed)
+        {:ok, %Normandy.LLM.Response{content: %{request.response_model | chat_message: "ok"}}}
+      end
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+    end
+  end
+
+  defmodule FailingClient do
+    use Normandy.Schema
+
+    schema do
+    end
+
+    defimpl Normandy.Agents.Model do
+      def converse(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :invalid_request, retryable?: false)}
+
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
+    end
+  end
+
+  defp picky_agent do
+    BaseAgent.init(%{client: %PickyClient{}, model: "test-model"})
   end
 
   setup do
@@ -55,8 +99,7 @@ defmodule Normandy.Batch.ProcessorTest do
 
       {:ok, results} = Processor.process_batch(agent, inputs)
 
-      assert length(results) == 3
-      assert Enum.all?(results, fn result -> result.chat_message == "Response" end)
+      assert [{:ok, %{chat_message: "Response"}}, {:ok, _}, {:ok, _}] = results
     end
 
     test "preserves order with ordered: true", %{agent: agent} do
@@ -68,8 +111,7 @@ defmodule Normandy.Batch.ProcessorTest do
       {:ok, results} = Processor.process_batch(agent, inputs, ordered: true)
 
       assert length(results) == 10
-      # All results should be in order (all have same response in our mock)
-      assert Enum.all?(results, fn result -> result.chat_message == "Response" end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: "Response"}}, &1))
     end
 
     test "returns stats with ordered: false", %{agent: agent} do
@@ -85,7 +127,7 @@ defmodule Normandy.Batch.ProcessorTest do
       assert stats.success_count == 2
       assert stats.error_count == 0
       assert length(stats.success) == 2
-      assert length(stats.errors) == 0
+      assert stats.errors == []
     end
 
     test "handles empty input list", %{agent: agent} do
@@ -210,10 +252,13 @@ defmodule Normandy.Batch.ProcessorTest do
         %{chat_message: "Message 2"}
       ]
 
-      # Short timeout (100ms) should cause the stream to exit with timeout error
-      # This is the expected behavior of Task.async_stream when timeout occurs
-      assert catch_exit(Processor.process_batch(agent, inputs, timeout: 100)) ==
-               {:timeout, {Task.Supervised, :stream, [100]}}
+      # Each item that runs past the timeout fails on its own.
+      assert {:ok,
+              [
+                {:error, %TurnError{type: :task_down, reason: :timeout}},
+                {:error, %TurnError{type: :task_down, reason: :timeout}}
+              ]} =
+               Processor.process_batch(agent, inputs, timeout: 100)
     end
   end
 
@@ -231,7 +276,7 @@ defmodule Normandy.Batch.ProcessorTest do
       assert stats.success_count == 3
       assert stats.error_count == 0
       assert length(stats.success) == 3
-      assert length(stats.errors) == 0
+      assert stats.errors == []
     end
 
     test "tracks failures in stats", %{client: client} do
@@ -268,6 +313,25 @@ defmodule Normandy.Batch.ProcessorTest do
         )
 
       assert length(results) == 100
+    end
+
+    test "on_progress counts across chunks against the whole batch", %{agent: agent} do
+      inputs = Enum.map(1..5, fn i -> %{chat_message: "Message #{i}"} end)
+      test_pid = self()
+
+      Processor.process_batch_chunked(agent, inputs,
+        chunk_size: 2,
+        on_progress: fn completed, total -> send(test_pid, {:progress, completed, total}) end
+      )
+
+      progress =
+        for _ <- 1..5 do
+          assert_receive {:progress, completed, total}
+          {completed, total}
+        end
+
+      assert progress == [{1, 5}, {2, 5}, {3, 5}, {4, 5}, {5, 5}]
+      refute_received {:progress, _, _}
     end
 
     test "applies delay between chunks", %{agent: agent} do
@@ -339,6 +403,119 @@ defmodule Normandy.Batch.ProcessorTest do
 
       {:ok, results} = Processor.process_batch(agent, inputs)
       assert length(results) == 3
+    end
+  end
+
+  describe "results that say which items failed" do
+    test "ordered results are {:ok, r} or {:error, e}, in input order" do
+      inputs = [%{chat_message: "a"}, %{chat_message: "boom"}, %{chat_message: "c"}]
+
+      assert {:ok, [{:ok, %{chat_message: "ok"}}, {:error, %RuntimeError{}}, {:ok, _}]} =
+               Processor.process_batch(picky_agent(), inputs)
+    end
+
+    test "a raise, an exit and a throw are bare exceptions or :task_down TurnErrors, never a stacktrace" do
+      inputs = [
+        %{chat_message: "boom"},
+        %{chat_message: "quit"},
+        %{chat_message: "toss"}
+      ]
+
+      assert {:ok,
+              [
+                {:error, %RuntimeError{message: "boom"}},
+                {:error, %TurnError{type: :task_down, reason: :quit}},
+                {:error, %TurnError{type: :task_down, reason: {:nocatch, :tossed}}}
+              ]} = Processor.process_batch(picky_agent(), inputs)
+    end
+
+    test "a Normandy error is returned bare" do
+      agent = BaseAgent.init(%{client: %FailingClient{}, model: "test-model"})
+
+      assert {:ok, [{:error, %Normandy.LLMError{}}]} =
+               Processor.process_batch(agent, [%{chat_message: "a"}])
+    end
+
+    test "stats errors pair each error with its input" do
+      boom = %{chat_message: "boom"}
+
+      assert {:ok, %{errors: [{^boom, %RuntimeError{}}], success_count: 1}} =
+               Processor.process_batch_with_stats(picky_agent(), [%{chat_message: "a"}, boom])
+    end
+
+    test "on_progress receives the number of completed items" do
+      parent = self()
+      # The first item finishes last, so an index-based report would end with 1.
+      inputs = [%{chat_message: "slow"} | Enum.map(2..5, &%{chat_message: "m#{&1}"})]
+
+      {:ok, _} =
+        Processor.process_batch(picky_agent(), inputs,
+          on_progress: fn completed, total -> send(parent, {:progress, completed, total}) end
+        )
+
+      reports =
+        for _ <- 1..5 do
+          assert_received {:progress, _, _} = report
+          report
+        end
+
+      assert reports == Enum.map(1..5, &{:progress, &1, 5})
+    end
+
+    test "an item that exceeds :timeout fails on its own; the others still finish" do
+      inputs = [%{chat_message: "a"}, %{chat_message: "slow"}]
+
+      assert {:ok, [{:ok, _}, {:error, %TurnError{type: :task_down, reason: :timeout}}]} =
+               Processor.process_batch(picky_agent(), inputs, timeout: 100)
+    end
+
+    test "on_error is called for a timed-out item" do
+      parent = self()
+      slow = %{chat_message: "slow"}
+
+      {:ok, _} =
+        Processor.process_batch(picky_agent(), [slow],
+          timeout: 100,
+          on_error: fn input, error -> send(parent, {:on_error, input, error}) end
+        )
+
+      assert_received {:on_error, ^slow, %TurnError{type: :task_down, reason: :timeout}}
+    end
+  end
+
+  describe "process_batch_chunked/3 results" do
+    test "ordered chunked results keep failures in place" do
+      inputs = [%{chat_message: "a"}, %{chat_message: "boom"}, %{chat_message: "c"}]
+
+      assert {:ok, [{:ok, _}, {:error, _}, {:ok, _}]} =
+               Processor.process_batch_chunked(picky_agent(), inputs, chunk_size: 2)
+    end
+
+    test "unordered chunked results are stats that include the errors" do
+      inputs = [%{chat_message: "a"}, %{chat_message: "boom"}, %{chat_message: "c"}]
+
+      assert {:ok,
+              %{
+                total: 3,
+                success_count: 2,
+                error_count: 1,
+                errors: [{%{chat_message: "boom"}, _}]
+              }} =
+               Processor.process_batch_chunked(picky_agent(), inputs,
+                 chunk_size: 2,
+                 ordered: false
+               )
+    end
+
+    test "there is no delay after the last chunk" do
+      inputs = Enum.map(1..4, &%{chat_message: "m#{&1}"})
+      start = System.monotonic_time(:millisecond)
+
+      {:ok, _} =
+        Processor.process_batch_chunked(picky_agent(), inputs, chunk_size: 2, chunk_delay: 300)
+
+      # Two chunks: one delay (300 ms), not two (600 ms).
+      assert System.monotonic_time(:millisecond) - start < 550
     end
   end
 end

@@ -2,7 +2,7 @@ defmodule Normandy.Guardrails.Builtins.RequiredFields do
   @moduledoc """
   Rejects a struct or map when any of the named fields are `nil`.
 
-  Intended for **output** guardrails: Normandy's `ValidationMiddleware` already
+  Intended for **output** guardrails: Normandy's schema validation already
   enforces schema-level `required` constraints, but this guard lets callers
   assert on fields whose "must be populated" requirement is runtime (for
   example, a response schema where `result` is optional in the spec but must be
@@ -19,6 +19,7 @@ defmodule Normandy.Guardrails.Builtins.RequiredFields do
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def check(value, opts) do
     fields = Keyword.fetch!(opts, :fields)
 

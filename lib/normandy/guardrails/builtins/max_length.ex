@@ -14,6 +14,8 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
   configuration bug, not a runtime violation.
   """
 
+  alias Normandy.Guardrails.Builtins.Field
+
   @behaviour Normandy.Guardrails.Guard
 
   @impl true
@@ -26,38 +28,26 @@ defmodule Normandy.Guardrails.Builtins.MaxLength do
             "#{inspect(__MODULE__)} :limit must be a positive integer, got: #{inspect(limit)}"
     end
 
-    case extract(value, field) do
-      nil ->
-        :ok
-
-      string when is_binary(string) ->
-        if String.length(string) > limit do
-          path = if field, do: [field], else: []
-
-          {:error,
-           [
-             %{
-               guard: __MODULE__,
-               path: path,
-               message: "must be at most #{limit} characters",
-               constraint: :max_length,
-               limit: limit
-             }
-           ]}
-        else
-          :ok
-        end
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+    case Field.string!(__MODULE__, value, field) do
+      nil -> :ok
+      string -> too_long(string, limit, field)
     end
   end
 
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
-  defp extract(_value, _field), do: nil
-
-  defp field_suffix(nil), do: ""
-  defp field_suffix(field), do: " at field #{inspect(field)}"
+  defp too_long(string, limit, field) do
+    if String.length(string) > limit do
+      {:error,
+       [
+         %{
+           guard: __MODULE__,
+           path: Field.path(field),
+           message: "must be at most #{limit} characters",
+           constraint: :max_length,
+           limit: limit
+         }
+       ]}
+    else
+      :ok
+    end
+  end
 end

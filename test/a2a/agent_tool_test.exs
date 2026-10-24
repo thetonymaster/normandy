@@ -1,18 +1,21 @@
 defmodule Normandy.A2A.AgentToolTest do
   use ExUnit.Case, async: true
 
+  alias Claudio.A2A.AgentCard
+  alias Claudio.A2A.Part
   alias Normandy.A2A.AgentTool
-  alias Normandy.Tools.BaseTool
+  alias Normandy.Tool
+  alias Normandy.Tools.Toolset
 
   setup do
-    card = Claudio.A2A.AgentCard.new("Research Agent", "Helps find information")
+    card = AgentCard.new("Research Agent", "Helps find information")
 
     card_with_skills =
       card
-      |> Claudio.A2A.AgentCard.add_skill("web_search", "Search the web", tags: ["search"])
-      |> Claudio.A2A.AgentCard.add_skill("summarize", "Summarize text", tags: ["nlp"])
+      |> AgentCard.add_skill("web_search", "Search the web", tags: ["search"])
+      |> AgentCard.add_skill("summarize", "Summarize text", tags: ["nlp"])
 
-    tool = AgentTool.new("https://agent.example.com/a2a", card)
+    tool = AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a")
 
     {:ok, card: card, card_with_skills: card_with_skills, tool: tool}
   end
@@ -23,28 +26,31 @@ defmodule Normandy.A2A.AgentToolTest do
       assert tool.agent_card.name == "Research Agent"
       assert tool.skill_id == nil
       assert tool.auth_token == nil
-      assert tool.timeout == 60_000
-      assert tool.input == %{}
+      refute Map.has_key?(tool, :timeout)
+      refute Map.has_key?(tool, :input)
     end
 
     test "creates tool with options", %{card: card} do
       tool =
         AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
           skill_id: "web_search",
-          auth_token: "my-token",
-          timeout: 30_000
+          auth_token: "my-token"
         )
 
       assert tool.skill_id == "web_search"
       assert tool.auth_token == "my-token"
-      assert tool.timeout == 30_000
     end
-  end
 
-  describe "prepare_input/2" do
-    test "stores raw input", %{tool: tool} do
-      updated = AgentTool.prepare_input(tool, %{"message" => "Find elixir docs"})
-      assert updated.input == %{"message" => "Find elixir docs"}
+    test ":timeout is a registration option now", %{card: card} do
+      error =
+        assert_raise ArgumentError, fn ->
+          AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a", timeout: 30_000)
+        end
+
+      assert error.message ==
+               "Normandy.A2A.AgentTool.new/3: :timeout is a registration option in 2.0; pass it " <>
+                 "to BaseAgent.register_tool/3 or Normandy.Tools.Toolset.register/3"
     end
   end
 
@@ -56,45 +62,63 @@ defmodule Normandy.A2A.AgentToolTest do
     end
   end
 
-  describe "BaseTool protocol" do
+  describe "Normandy.Tool callbacks" do
     test "tool_name without skill", %{tool: tool} do
-      assert BaseTool.tool_name(tool) == "a2a__research_agent"
+      assert Tool.name(tool) == "a2a__research_agent"
     end
 
     test "tool_name with skill", %{card: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
-      assert BaseTool.tool_name(tool) == "a2a__research_agent__web_search"
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "web_search")
+      assert Tool.name(tool) == "a2a__research_agent__web_search"
     end
 
     test "tool_description without skill", %{tool: tool} do
-      desc = BaseTool.tool_description(tool)
-      assert desc == "Remote A2A agent: Helps find information"
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent and returns its reply. " <>
+                 "It describes itself as: Helps find information"
     end
 
     test "tool_description with matching skill", %{card_with_skills: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "web_search")
-      desc = BaseTool.tool_description(tool)
-      assert desc == "Research Agent - Search the web"
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "web_search")
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent (skill web_search) and " <>
+                 "returns its reply. It describes itself as: Search the web"
     end
 
     test "tool_description with non-matching skill", %{card: card} do
-      tool = AgentTool.new("https://example.com/a2a", card, skill_id: "unknown")
-      desc = BaseTool.tool_description(tool)
-      assert desc =~ "skill: unknown"
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a", skill_id: "unknown")
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Research Agent (skill unknown) and " <>
+                 "returns its reply. It describes itself as: Helps find information"
+    end
+
+    test "the card's text is cut to 1_000 characters" do
+      card = AgentCard.new("Chatty", String.duplicate("é", 1_200))
+      tool = AgentTool.new("https://example.com/a2a", card, prefix: "a2a")
+
+      assert Tool.description(tool) ==
+               "Sends a message to the remote agent Chatty and returns its reply. " <>
+                 "It describes itself as: " <> String.duplicate("é", 1_000) <> "..."
     end
 
     test "input_schema has message field", %{tool: tool} do
-      schema = BaseTool.input_schema(tool)
+      schema = Tool.input_schema(tool)
       assert schema["type"] == "object"
       assert schema["properties"]["message"]["type"] == "string"
       assert schema["required"] == ["message"]
+
+      assert schema["properties"]["message"]["description"] ==
+               "Message to send to Research Agent. It cannot see this conversation, " <>
+                 "so include every detail it needs."
     end
   end
 
   describe "tool registry integration" do
     test "can be registered", %{tool: tool} do
-      registry = Normandy.Tools.Registry.new([tool])
-      assert {:ok, ^tool} = Normandy.Tools.Registry.get(registry, "a2a__research_agent")
+      registry = Toolset.new([tool])
+      assert {:ok, ^tool} = Toolset.fetch(registry, "a2a__research_agent")
     end
   end
 
@@ -106,7 +130,7 @@ defmodule Normandy.A2A.AgentToolTest do
         artifacts: [
           %Claudio.A2A.Artifact{
             artifact_id: "a1",
-            parts: [Claudio.A2A.Part.text("Hello world")]
+            parts: [Part.text("Hello world")]
           }
         ]
       }
@@ -119,7 +143,7 @@ defmodule Normandy.A2A.AgentToolTest do
         id: "task-1",
         status: %{
           state: :completed,
-          message: %{parts: [Claudio.A2A.Part.text("Done!")]}
+          message: %{parts: [Part.text("Done!")]}
         },
         artifacts: []
       }
@@ -142,7 +166,7 @@ defmodule Normandy.A2A.AgentToolTest do
         id: "task-1",
         status: %{
           state: :failed,
-          message: %{parts: [Claudio.A2A.Part.text("Something broke")]}
+          message: %{parts: [Part.text("Something broke")]}
         }
       }
 
@@ -175,7 +199,7 @@ defmodule Normandy.A2A.AgentToolTest do
         artifacts: [
           %Claudio.A2A.Artifact{
             artifact_id: "a1",
-            parts: [Claudio.A2A.Part.data("binary-data")]
+            parts: [Part.data("binary-data")]
           }
         ]
       }
@@ -184,14 +208,54 @@ defmodule Normandy.A2A.AgentToolTest do
     end
   end
 
-  describe "poll_for_result/4" do
-    test "returns timeout error when deadline passed" do
-      # Deadline in the past
-      deadline = System.monotonic_time(:millisecond) - 1000
+  describe "polling a task that is not finished" do
+    defmodule PollTransport do
+      alias Claudio.A2A.Artifact
+      alias Claudio.A2A.Task, as: A2ATask
 
-      result = AgentTool.poll_for_result("https://example.com/a2a", "task-1", [], deadline)
-      assert {:error, msg} = result
-      assert msg =~ "timed out"
+      def send_message(_endpoint, _message, _opts),
+        do: {:ok, %A2ATask{id: "t1", status: %{state: :working}}}
+
+      def get_task(_endpoint, "t1", opts) do
+        send(Keyword.fetch!(opts, :test_pid), :polled)
+        n = Process.get(:polls, 0)
+        Process.put(:polls, n + 1)
+
+        if n == 0 do
+          {:ok, %A2ATask{id: "t1", status: %{state: :working}}}
+        else
+          {:ok,
+           %A2ATask{
+             id: "t1",
+             status: %{state: :completed},
+             artifacts: [%Artifact{artifact_id: "a", parts: [Part.text("done")]}]
+           }}
+        end
+      end
+    end
+
+    test "polls again after :poll_interval until the task completes", %{card: card} do
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
+          poll_interval: 1,
+          transport_opts: [transport: PollTransport, test_pid: self()]
+        )
+
+      context = %Normandy.Tools.Context{tool_call_id: "c1", input: %{"message" => "go"}}
+
+      {t, result} = :timer.tc(fn -> Tool.run(tool, context) end)
+
+      assert {:ok, "done"} = result
+      assert_received :polled
+      assert_received :polled
+      assert t < 500_000
+    end
+
+    test ":poll_interval must be a positive integer", %{card: card} do
+      assert_raise ArgumentError, ~r/poll_interval/, fn ->
+        AgentTool.new("https://agent.example.com/a2a", card, prefix: "a2a", poll_interval: 0)
+      end
     end
   end
 
@@ -199,6 +263,7 @@ defmodule Normandy.A2A.AgentToolTest do
     test "does not leak auth_token in inspect output", %{card: card} do
       tool =
         AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
           auth_token: "bearer-secret-leak-canary"
         )
 
@@ -209,7 +274,11 @@ defmodule Normandy.A2A.AgentToolTest do
     end
 
     test "still allows direct auth_token access after redaction", %{card: card} do
-      tool = AgentTool.new("https://agent.example.com/a2a", card, auth_token: "bearer-x")
+      tool =
+        AgentTool.new("https://agent.example.com/a2a", card,
+          prefix: "a2a",
+          auth_token: "bearer-x"
+        )
 
       assert tool.auth_token == "bearer-x"
       assert Map.get(tool, :auth_token) == "bearer-x"

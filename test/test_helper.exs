@@ -13,6 +13,13 @@ if postgres? do
   Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :manual)
 end
 
+# Horde 0.10's DynamicSupervisorImpl logs "Starting ..." at :info in init/1 before it
+# traps exits, and has no handle_info/2 clause for {:EXIT, _, _}. ExUnit's capture_log
+# handler runs in the logging process and links a Task to it; a Task that exits :normal
+# after the impl traps exits crashes the impl and its Horde supervisor. No handler runs
+# for that line at :warning (Task 7.0e, test/agents/turn/horde_init_log_test.exs).
+:ok = Logger.put_module_level(Horde.DynamicSupervisorImpl, :warning)
+
 base_exclude = [:integration, :normandy_integration, :postgres, :distributed, :redis]
 ExUnit.start(exclude: base_exclude)
 

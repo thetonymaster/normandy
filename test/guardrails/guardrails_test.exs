@@ -3,6 +3,13 @@ defmodule Normandy.GuardrailsTest do
 
   alias Normandy.Guardrails
 
+  # Fails on the guarded value: KeyError's message inspects it.
+  defmodule KeyErrorOnInput do
+    @behaviour Normandy.Guardrails.Guard
+    @impl true
+    def check(value, _opts), do: Map.fetch!(value, :missing)
+  end
+
   defmodule AlwaysPass do
     @behaviour Normandy.Guardrails.Guard
 
@@ -37,6 +44,13 @@ defmodule Normandy.GuardrailsTest do
       send(self(), {__MODULE__, value, opts})
       :ok
     end
+  end
+
+  defmodule ReturnsSecret do
+    @behaviour Normandy.Guardrails.Guard
+
+    @impl true
+    def check(_value, _opts), do: {:error, "SECRET-in-return"}
   end
 
   defmodule ReturnsGarbage do
@@ -95,6 +109,14 @@ defmodule Normandy.GuardrailsTest do
       assert_received {RecordsOpts, :value, [tag: :b]}
     end
 
+    test "a malformed guard return is described by its shape, not its contents" do
+      error =
+        assert_raise ArgumentError, fn -> Guardrails.run([ReturnsSecret], "x") end
+
+      assert error.message =~ "got: {:error, a string (16 bytes)}"
+      refute error.message =~ "SECRET"
+    end
+
     test "raises on malformed guard return" do
       assert_raise ArgumentError, ~r/expected .*check\/2 to return :ok/, fn ->
         Guardrails.run([ReturnsGarbage], "x")
@@ -139,12 +161,37 @@ defmodule Normandy.GuardrailsTest do
       assert Guardrails.run([{RaisesError, on_error: :open}], "x") == {:ok, "x"}
     end
 
+    test "a built-in guard's config error raises whatever :on_error says" do
+      value = %Normandy.Agents.BaseAgentOutputSchema{chat_message: "hello"}
+
+      for policy <- [:open, :closed] do
+        field_typo =
+          {Normandy.Guardrails.Builtins.MaxLength, limit: 3, field: :typo, on_error: policy}
+
+        assert_raise ArgumentError, ~r/:field :typo is not a field/, fn ->
+          Guardrails.run([field_typo], value)
+        end
+
+        # :max instead of the required :limit
+        option_typo = {Normandy.Guardrails.Builtins.MaxLength, max: 3, on_error: policy}
+        assert_raise KeyError, fn -> Guardrails.run([option_typo], "hello") end
+      end
+    end
+
     test ":closed converts a crashing guard into a :guard_error violation" do
       assert {:error, [violation]} =
                Guardrails.run([{RaisesError, on_error: :closed}], "x")
 
       assert violation.constraint == :guard_error
       assert violation.guard == RaisesError
+    end
+
+    test ":closed names the crashed guard's exception module, never its message" do
+      assert {:error, [violation]} =
+               Guardrails.run([{KeyErrorOnInput, on_error: :closed}], %{token: "SECRET-in"})
+
+      assert violation.message == "guard #{inspect(KeyErrorOnInput)} crashed: KeyError"
+      refute inspect(violation, limit: :infinity, printable_limit: :infinity) =~ "SECRET-in"
     end
 
     test "rejects an invalid :on_error value" do

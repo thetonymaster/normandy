@@ -8,7 +8,7 @@ defmodule Normandy.Context.TokenCounter do
   ## Example
 
       # Count tokens for a single message
-      {:ok, count} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, count} = TokenCounter.count_message(client, "Hello, world!", "claude-haiku-4-5")
 
       # Count tokens for an entire conversation
       {:ok, count} = TokenCounter.count_conversation(client, agent)
@@ -17,8 +17,14 @@ defmodule Normandy.Context.TokenCounter do
       {:ok, details} = TokenCounter.count_detailed(client, agent)
   """
 
-  alias Normandy.LLM.ClaudioAdapter
+  alias Claudio.Messages.Request
+  alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock
+  alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.Components.ContentBlock.Protocol
+  alias Normandy.Context.WindowManager
+  alias Normandy.LLM.ClaudioAdapter
 
   @doc """
   Counts tokens for a single text message.
@@ -27,12 +33,14 @@ defmodule Normandy.Context.TokenCounter do
 
   ## Example
 
-      {:ok, count} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, count} = TokenCounter.count_message(client, "Hello, world!", "claude-haiku-4-5")
       #=> {:ok, %{"input_tokens" => 4}}
+
+  The model is required: tokenizers differ between model generations, so there
+  is no default to go stale.
   """
   @spec count_message(ClaudioAdapter.t(), String.t(), String.t()) ::
           {:ok, map()} | {:error, term()}
-  def count_message(client, text, model \\ "claude-haiku-4-5-20251001")
 
   def count_message(_client, text, _model) when text in [nil, ""] do
     # Empty input has no tokens; short-circuit rather than send a request the
@@ -65,33 +73,45 @@ defmodule Normandy.Context.TokenCounter do
   @spec count_conversation(ClaudioAdapter.t(), struct()) ::
           {:ok, map()} | {:error, term()}
   def count_conversation(client, agent) do
-    try do
-      model = Map.get(agent, :model, "claude-haiku-4-5-20251001")
-      messages = build_messages_payload(agent.memory)
+    model = agent_model!(agent)
+    messages = build_messages_payload(agent_memory!(agent))
 
-      if messages == [] do
-        # No messages → no tokens; short-circuit rather than send a request the
-        # count_tokens endpoint rejects ("at least one message is required").
-        {:ok, %{"input_tokens" => 0}}
-      else
-        # `max_tokens` intentionally omitted: the count_tokens endpoint rejects it.
-        payload = %{
-          "model" => model,
-          "messages" => messages
-        }
+    if messages == [] do
+      # No messages → no tokens; short-circuit rather than send a request the
+      # count_tokens endpoint rejects ("at least one message is required").
+      {:ok, %{"input_tokens" => 0}}
+    else
+      # `max_tokens` intentionally omitted: the count_tokens endpoint rejects it.
+      payload = %{
+        "model" => model,
+        "messages" => messages
+      }
 
-        # Add system prompt if present
-        payload =
-          case get_system_prompt(agent) do
-            nil -> payload
-            system -> Map.put(payload, "system", system)
-          end
+      # Add system prompt if present
+      payload =
+        case get_system_prompt(agent) do
+          nil -> payload
+          system -> Map.put(payload, "system", system)
+        end
 
-        count_tokens(client, payload)
-      end
-    rescue
-      e -> {:error, {:malformed_agent, e}}
+      count_tokens(client, payload)
     end
+  end
+
+  # Tokenizers differ between model generations, so the count needs the agent's
+  # own model; a malformed agent is a caller bug and raises before any request.
+  defp agent_model!(%{model: model}) when is_binary(model) and model != "", do: model
+
+  defp agent_model!(_agent) do
+    raise ArgumentError,
+          "TokenCounter.count_conversation/2: agent has no :model (a non-empty string)"
+  end
+
+  defp agent_memory!(%{memory: %AgentMemory{} = memory}), do: memory
+
+  defp agent_memory!(_agent) do
+    raise ArgumentError,
+          "TokenCounter.count_conversation/2: agent has no :memory (a %Normandy.Components.AgentMemory{})"
   end
 
   @doc """
@@ -123,7 +143,7 @@ defmodule Normandy.Context.TokenCounter do
         message_details =
           Enum.map(history, fn msg ->
             estimated =
-              Normandy.Context.WindowManager.estimate_message_content_tokens(msg.content)
+              WindowManager.estimate_message_content_tokens(msg.content)
 
             %{
               role: msg.role,
@@ -135,7 +155,7 @@ defmodule Normandy.Context.TokenCounter do
         system_tokens =
           case get_system_prompt(agent) do
             nil -> 0
-            system -> Normandy.Context.WindowManager.estimate_tokens(system)
+            system -> WindowManager.estimate_tokens(system)
           end
 
         {:ok,
@@ -154,35 +174,34 @@ defmodule Normandy.Context.TokenCounter do
   # Private helpers
 
   defp count_tokens(%ClaudioAdapter{} = client, payload) do
-    # Build Claudio client - use same format as ClaudioAdapter
-    # Claudio.Client.new expects a map with :token and :version keys
-    claudio_client =
-      Claudio.Client.new(%{
-        token: client.api_key,
-        version: "2023-06-01"
-      })
-
-    # Use Claudio's count_tokens function
+    claudio_client = ClaudioAdapter.to_claudio_client(client)
     Claudio.Messages.count_tokens(claudio_client, payload)
   end
 
+  # The messages as a request would send them, built by the adapter's own
+  # conversion: tool results become user tool_result blocks and tool calls
+  # assistant tool_use blocks (count_tokens accepts only user and assistant). The
+  # history is AgentMemory.request_history/1's, so a tool-round answer counts once, as
+  # the request shows it. Stale thinking is not dropped (the prefix key needs the
+  # request's system prompt and tools), so the payload equals the request's messages only
+  # when no thinking is stale.
   defp build_messages_payload(memory) do
-    history = AgentMemory.history(memory)
+    messages =
+      memory
+      |> AgentMemory.request_history()
+      |> Enum.reject(&(&1.role == "system"))
+      |> AgentMemory.request_messages()
 
-    Enum.map(history, fn msg ->
-      %{
-        "role" => msg.role,
-        "content" => format_content(msg.content)
-      }
-    end)
-    |> Enum.reject(&(&1["role"] == "system"))
+    Request.new("token-count")
+    |> ClaudioModel.add_messages(messages, false)
+    |> Map.fetch!(:messages)
   end
 
   defp format_content(content) when is_binary(content), do: content
 
   defp format_content(content) when is_map(content) do
-    # For structured content, convert to JSON
-    Poison.encode!(content)
+    # For structured content, convert to JSON (a text rendering; structs as their maps)
+    Normandy.JSON.encode!(content)
   end
 
   defp format_content(content) when is_list(content) do
@@ -192,18 +211,15 @@ defmodule Normandy.Context.TokenCounter do
     Enum.map(content, &block_to_claudio_map/1)
   end
 
-  defp format_content(_), do: ""
+  defp format_content(other) do
+    raise ArgumentError,
+          "TokenCounter: cannot count message content of type " <>
+            Describe.type_of(other)
+  end
 
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Text{} = b),
-    do: Normandy.Components.ContentBlock.Text.to_claudio(b)
-
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Image{} = b),
-    do: Normandy.Components.ContentBlock.Image.to_claudio(b)
-
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Document{} = b),
-    do: Normandy.Components.ContentBlock.Document.to_claudio(b)
-
-  defp block_to_claudio_map(%{} = raw), do: raw
+  defp block_to_claudio_map(%{} = block) do
+    if ContentBlock.block?(block), do: Protocol.to_claudio(block), else: block
+  end
 
   defp get_system_prompt(agent) do
     # Try to extract system prompt from agent's prompt_specification or memory
@@ -240,7 +256,7 @@ defmodule Normandy.Context.TokenCounter do
 
   defp get_content_preview(content) when is_map(content) do
     content
-    |> Poison.encode!()
+    |> Normandy.JSON.encode!()
     |> get_content_preview()
   end
 
@@ -249,9 +265,7 @@ defmodule Normandy.Context.TokenCounter do
     # view in `count_detailed/2` doesn't silently blank out.
     parts =
       Enum.map(content, fn
-        %Normandy.Components.ContentBlock.Text{text: t} -> truncate(t, 40)
-        %Normandy.Components.ContentBlock.Image{} -> "[image]"
-        %Normandy.Components.ContentBlock.Document{} -> "[document]"
+        %{__struct__: _} = block -> block_preview(block)
         %{"type" => "text", "text" => t} when is_binary(t) -> truncate(t, 40)
         %{"type" => type} -> "[#{type}]"
         _ -> "[block]"
@@ -261,6 +275,10 @@ defmodule Normandy.Context.TokenCounter do
   end
 
   defp get_content_preview(_), do: ""
+
+  defp block_preview(block) do
+    if ContentBlock.block?(block), do: truncate(Protocol.label(block), 40), else: "[block]"
+  end
 
   defp truncate(s, n) when is_binary(s) do
     if String.length(s) > n, do: String.slice(s, 0, n - 3) <> "...", else: s

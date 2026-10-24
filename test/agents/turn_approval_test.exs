@@ -32,7 +32,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert effects == [
                {:persist, s2},
-               {:emit_event, :awaiting_approval, %{parked: 1}}
+               {:emit_event, :awaiting_approval, %{parked: 1, resumed: false}}
              ]
     end
   end
@@ -72,18 +72,25 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool",
-                %ToolResult{tool_call_id: "p1", is_error: true, output: %{denied: true}}},
-               {:emit_event, :steering, %{iterations_left: 4}},
+                %ToolResult{tool_call_id: "p1", is_error: true, output: rejected}},
                {:persist, ^s2},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
+
+      assert rejected == %{
+               error:
+                 "The approver rejected this call; the tool was not run. " <>
+                   "Do not retry it; tell the user it was rejected.",
+               denied: true
+             }
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
 
       assert s3.status == :assistant_streaming
 
       assert effects2 == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -168,9 +175,9 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
                {:append_message, "tool", %ToolResult{tool_call_id: "p1", output: "charged"}},
-               {:emit_event, :steering, %{iterations_left: 4}},
                {:persist, ^s2},
-               {:maybe_compact, %{iterations_left: 4}}
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
              ] = effects
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -178,7 +185,7 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s3.status == :assistant_streaming
 
       assert effects2 == [
-               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4}},
+               {:emit_event, :iteration, %{iteration: 2, iterations_left: 4, final: false}},
                {:call_llm, %{response_model: :rm, final: false}}
              ]
     end
@@ -207,9 +214,10 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       assert [
                {:append_message, "tool", %ToolResult{tool_call_id: "p1"}},
-               {:emit_event, :steering, %{iterations_left: 0}},
+               {:append_message, "user", "You have used all available tool calls" <> _},
                {:persist, ^s2},
-               {:maybe_compact, %{iterations_left: 0}}
+               {:emit_event, :steering, %{iterations_left: 0}},
+               {:maybe_compact, %{iterations_left: 0, mid_round: true}}
              ] = effects
 
       {s3, effects2} = Turn.step(s2, {:compaction_done, %{}})
@@ -217,7 +225,10 @@ defmodule Normandy.Agents.TurnApprovalTest do
       assert s3.status == :assistant_streaming
       assert s3.awaiting_final == true
 
-      assert effects2 == [{:call_llm, %{response_model: :os, final: true}}]
+      assert effects2 == [
+               {:emit_event, :iteration, %{iteration: 6, iterations_left: 0, final: true}},
+               {:call_llm, %{response_model: :rm, final: true}}
+             ]
     end
 
     test "mixed approve+reject across a 2-parked batch resolves in batch order" do
@@ -273,6 +284,99 @@ defmodule Normandy.Agents.TurnApprovalTest do
 
       {s4, _effects2} = Turn.step(s3, {:compaction_done, %{}})
       assert s4.status == :assistant_streaming
+    end
+  end
+
+  describe "step/2 approval expiry (:awaiting_approval + :approval_expired)" do
+    setup do
+      pending = [
+        %ToolCall{id: "a1", name: "weather", input: %{}},
+        %ToolCall{id: "p1", name: "billing", input: %{}}
+      ]
+
+      s = %State{
+        status: :awaiting_approval,
+        iterations_left: 5,
+        max_iterations: 5,
+        response_model: :rm,
+        output_schema: :os,
+        pending_calls: pending,
+        held_results: [%ToolResult{tool_call_id: "a1", output: "sunny", is_error: false}],
+        parked_calls: [%ToolCall{id: "p1", name: "billing", input: %{}}]
+      }
+
+      {:ok, s: s}
+    end
+
+    test ":continue appends expired results in batch order after the event, then steers",
+         %{s: s} do
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :continue, timeout_ms: 50}})
+
+      assert s2.status == :steering
+      assert s2.iterations_left == 4
+      assert s2.parked_calls == []
+      assert s2.held_results == []
+
+      assert [
+               {:emit_event, :approval_expired, %{expired: 1, mode: :continue}},
+               {:append_message, "tool", %ToolResult{tool_call_id: "a1", output: "sunny"}},
+               {:append_message, "tool",
+                %ToolResult{tool_call_id: "p1", is_error: true, output: output}},
+               {:persist, ^s2},
+               {:emit_event, :steering, %{iterations_left: 4}},
+               {:maybe_compact, %{iterations_left: 4, mid_round: true}}
+             ] = effects
+
+      assert output == %{
+               error:
+                 "No approver answered within 50ms, so the tool was not run. " <>
+                   "Do not retry it; tell the user the approval did not arrive.",
+               denied: true,
+               expired: true
+             }
+    end
+
+    test ":fail completes the batch, then emits and fails with {:approval_timeout, ids}",
+         %{s: s} do
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :fail, timeout_ms: 50}})
+
+      assert s2.status == :failed
+      assert s2.error == {:approval_timeout, ["p1"]}
+      assert s2.pending_calls == []
+      assert s2.parked_calls == []
+      assert s2.held_results == []
+
+      assert [
+               {:append_message, "tool", %ToolResult{tool_call_id: "a1"}},
+               {:append_message, "tool",
+                %ToolResult{tool_call_id: "p1", is_error: true, output: %{expired: true}}},
+               {:emit_event, :approval_expired, %{expired: 1, mode: :fail}},
+               {:fail, {:approval_timeout, ["p1"]}}
+             ] = effects
+    end
+
+    test "expiry with no parked calls is an unexpected event", %{s: s} do
+      s = %{s | parked_calls: []}
+      reason = {:unexpected_event, :awaiting_approval, :approval_expired_without_parked_calls}
+
+      {s2, effects} = Turn.step(s, {:approval_expired, %{mode: :continue, timeout_ms: 50}})
+
+      assert s2.status == :failed
+      assert s2.error == reason
+      assert effects == [{:fail, reason}]
+    end
+  end
+
+  describe "rejected_calls/2" do
+    test "every parked call not explicitly :approve is rejected, in parked order" do
+      parked =
+        for id <- ["a", "r", "m", "x"], do: %ToolCall{id: id, name: "billing", input: %{}}
+
+      decisions = %{"a" => :approve, "r" => :reject, "x" => :maybe}
+
+      assert Enum.map(Turn.rejected_calls(parked, decisions), & &1.id) == ["r", "m", "x"]
+      assert Turn.rejected_calls(parked, Map.new(parked, &{&1.id, :approve})) == []
+      assert Turn.rejected_calls([], %{}) == []
     end
   end
 end

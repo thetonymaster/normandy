@@ -7,15 +7,16 @@ defmodule Normandy.Integration.AgentProcessServerLiveTest do
   it runs only with a real key (`API_KEY` / `ANTHROPIC_API_KEY`) and is excluded
   from the default `mix test` run.
   """
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   @moduletag :integration
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.AgentProcess
-  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.Coordination.AgentProcess
   alias NormandyTest.Support.NormandyIntegrationHelper, as: H
 
   defp supplied_infra do
@@ -48,9 +49,15 @@ defmodule Normandy.Integration.AgentProcessServerLiveTest do
     agent = AgentProcess.get_agent(pid)
     contents = Enum.map(AgentMemory.entry_chain(agent.memory), & &1.content)
 
-    assert Enum.any?(contents, fn c ->
-             c == %{chat_message: "Reply with exactly the single word: pong"}
-           end),
+    assert Enum.any?(
+             contents,
+             &match?(
+               %Normandy.Agents.BaseAgentInputSchema{
+                 chat_message: "Reply with exactly the single word: pong"
+               },
+               &1
+             )
+           ),
            "expected the user message to be reconstructed from the store; got: #{inspect(contents)}"
 
     :ok = AgentProcess.stop(pid)

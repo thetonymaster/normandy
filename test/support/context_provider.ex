@@ -1,4 +1,5 @@
 defmodule NormandyTest.Support.ContextProvider do
+  @moduledoc false
   use Normandy.Schema
 
   schema do

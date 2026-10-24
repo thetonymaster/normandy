@@ -1,7 +1,9 @@
 defmodule Normandy.Integration.LLMCachingIntegrationTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Components.AgentMemory
   alias NormandyTest.Support.IntegrationHelper
 
   @moduletag :integration
@@ -32,7 +34,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       assert agent.client.options.enable_caching == true
 
       # Run a request
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "What is 2+2?"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "What is 2+2?"})
 
       assert is_binary(response.chat_message)
     end
@@ -42,7 +44,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       assert agent.client.options.enable_caching == false
 
       # Run a request
-      {_agent, response} = BaseAgent.run(agent, %{chat_message: "What is 3+3?"})
+      {_agent, response} = BaseAgent.run!(agent, %{chat_message: "What is 3+3?"})
 
       assert is_binary(response.chat_message)
     end
@@ -50,7 +52,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
     test "repeated messages with caching", %{agent_with_cache: agent} do
       # First request - cache miss
       start1 = System.monotonic_time(:millisecond)
-      {agent, response1} = BaseAgent.run(agent, %{chat_message: "Tell me about caching"})
+      {agent, response1} = BaseAgent.run!(agent, %{chat_message: "Tell me about caching"})
       duration1 = System.monotonic_time(:millisecond) - start1
 
       assert is_binary(response1.chat_message)
@@ -60,7 +62,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
 
       # Second similar request - might hit cache
       start2 = System.monotonic_time(:millisecond)
-      {_agent, response2} = BaseAgent.run(agent, %{chat_message: "Tell me about caching"})
+      {_agent, response2} = BaseAgent.run!(agent, %{chat_message: "Tell me about caching"})
       duration2 = System.monotonic_time(:millisecond) - start2
 
       assert is_binary(response2.chat_message)
@@ -85,13 +87,13 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
 
       # First request
       {agent_with_system, r1} =
-        BaseAgent.run(agent_with_system, %{chat_message: "Question 1"})
+        BaseAgent.run!(agent_with_system, %{chat_message: "Question 1"})
 
       assert r1.chat_message != nil
 
       # Second request - should reuse cached system message
       {_agent_with_system, r2} =
-        BaseAgent.run(agent_with_system, %{chat_message: "Question 2"})
+        BaseAgent.run!(agent_with_system, %{chat_message: "Question 2"})
 
       assert r2.chat_message != nil
     end
@@ -108,12 +110,12 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       }
 
       {agent_with_system, r1} =
-        BaseAgent.run(agent_with_system, %{chat_message: "What is 10 + 15?"})
+        BaseAgent.run!(agent_with_system, %{chat_message: "What is 10 + 15?"})
 
       assert r1.chat_message != nil
 
       {_agent_with_system, r2} =
-        BaseAgent.run(agent_with_system, %{chat_message: "What is 20 * 3?"})
+        BaseAgent.run!(agent_with_system, %{chat_message: "What is 20 * 3?"})
 
       assert r2.chat_message != nil
 
@@ -128,7 +130,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       agent =
         Enum.reduce(1..5, agent, fn i, acc_agent ->
           {updated_agent, _response} =
-            BaseAgent.run(acc_agent, %{chat_message: "Statement number #{i}"})
+            BaseAgent.run!(acc_agent, %{chat_message: "Statement number #{i}"})
 
           updated_agent
         end)
@@ -137,7 +139,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       start_time = System.monotonic_time(:millisecond)
 
       {_agent, response} =
-        BaseAgent.run(agent, %{chat_message: "Summarize our conversation"})
+        BaseAgent.run!(agent, %{chat_message: "Summarize our conversation"})
 
       duration = System.monotonic_time(:millisecond) - start_time
 
@@ -156,16 +158,16 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       # First run
       agent1 =
         Enum.reduce(pattern, agent, fn msg, acc ->
-          {updated, _r} = BaseAgent.run(acc, %{chat_message: msg})
+          {updated, _r} = BaseAgent.run!(acc, %{chat_message: msg})
           updated
         end)
 
-      assert Normandy.Components.AgentMemory.count_messages(agent1.memory) >= 6
+      assert AgentMemory.count_messages(agent1.memory) >= 6
 
       # Second run with fresh agent but similar pattern
       _agent2 =
         Enum.reduce(pattern, agent, fn msg, acc ->
-          {updated, _r} = BaseAgent.run(acc, %{chat_message: msg})
+          {updated, _r} = BaseAgent.run!(acc, %{chat_message: msg})
           updated
         end)
 
@@ -179,11 +181,11 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       agent = BaseAgent.register_tool(agent, calculator)
 
       # First tool use
-      {agent, r1} = BaseAgent.run(agent, %{chat_message: "Calculate 5 + 3"})
+      {agent, r1} = BaseAgent.run!(agent, %{chat_message: "Calculate 5 + 3"})
       assert r1.chat_message != nil
 
       # Second tool use - tool definition should be cached
-      {_agent, r2} = BaseAgent.run(agent, %{chat_message: "Calculate 10 * 2"})
+      {_agent, r2} = BaseAgent.run!(agent, %{chat_message: "Calculate 10 * 2"})
       assert r2.chat_message != nil
     end
 
@@ -198,12 +200,12 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
 
       # Use both tools
       {agent, r1} =
-        BaseAgent.run(agent, %{chat_message: "Calculate 5+5 and uppercase the word 'hello'"})
+        BaseAgent.run!(agent, %{chat_message: "Calculate 5+5 and uppercase the word 'hello'"})
 
       assert r1.chat_message != nil
 
       # Use again - both tool definitions should be cached
-      {_agent, r2} = BaseAgent.run(agent, %{chat_message: "Calculate 3*3 and lowercase 'WORLD'"})
+      {_agent, r2} = BaseAgent.run!(agent, %{chat_message: "Calculate 3*3 and lowercase 'WORLD'"})
       assert r2.chat_message != nil
     end
   end
@@ -213,7 +215,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       measurements =
         for _i <- 1..3 do
           start = System.monotonic_time(:millisecond)
-          {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+          {_agent, _response} = BaseAgent.run!(agent, %{chat_message: "Quick test"})
           duration = System.monotonic_time(:millisecond) - start
           duration
         end
@@ -229,7 +231,7 @@ defmodule Normandy.Integration.LLMCachingIntegrationTest do
       measurements =
         for _i <- 1..3 do
           start = System.monotonic_time(:millisecond)
-          {agent, _response} = BaseAgent.run(agent, %{chat_message: "Quick test"})
+          {_agent, _response} = BaseAgent.run!(agent, %{chat_message: "Quick test"})
           duration = System.monotonic_time(:millisecond) - start
           duration
         end

@@ -11,8 +11,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
   import ExUnit.Assertions
 
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
+  alias Normandy.LLM.ClaudioAdapter
 
   @default_model "claude-haiku-4-5-20251001"
 
@@ -84,7 +84,6 @@ defmodule NormandyTest.Support.IntegrationHelper do
 
   - `:enable_caching` - Enable prompt caching (default: true)
   - `:timeout` - Request timeout in ms (default: 60_000)
-  - `:max_retries` - Max retry attempts (default: 3)
 
   ## Example
 
@@ -101,8 +100,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
       api_key: api_key,
       options: %{
         timeout: Keyword.get(opts, :timeout, 60_000),
-        enable_caching: Keyword.get(opts, :enable_caching, true),
-        max_retries: Keyword.get(opts, :max_retries, 3)
+        enable_caching: Keyword.get(opts, :enable_caching, true)
       }
     }
   end
@@ -115,8 +113,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
   - `:model` - Model to use (default: "claude-haiku-4-5-20251001")
   - `:temperature` - Temperature (default: 0.7)
   - `:enable_caching` - Enable prompt caching (default: true)
-  - `:retry_options` - Retry configuration
-  - `:enable_circuit_breaker` - Enable circuit breaker (default: false)
+  - `:retry` - Retry configuration
+  - `:circuit_breaker` - Circuit breaker options; starts one (default: nil, none)
 
   ## Example
 
@@ -134,9 +132,8 @@ defmodule NormandyTest.Support.IntegrationHelper do
       model: Keyword.get(opts, :model, default_model()),
       temperature: Keyword.get(opts, :temperature, 0.7),
       max_tokens: Keyword.get(opts, :max_tokens, 1024),
-      retry_options: Keyword.get(opts, :retry_options),
-      enable_circuit_breaker: Keyword.get(opts, :enable_circuit_breaker, false),
-      circuit_breaker_options: Keyword.get(opts, :circuit_breaker_options, [])
+      retry: Keyword.get(opts, :retry),
+      circuit_breaker: Keyword.get(opts, :circuit_breaker)
     }
 
     BaseAgent.init(config)
@@ -148,13 +145,11 @@ defmodule NormandyTest.Support.IntegrationHelper do
   Returns {:ok, response} or {:error, reason}.
   """
   def verify_api_connection do
-    try do
-      agent = create_real_agent()
-      {_updated_agent, response} = BaseAgent.run(agent, %{chat_message: "Hello"})
-      {:ok, response}
-    rescue
-      e -> {:error, e}
-    end
+    agent = create_real_agent()
+    {_updated_agent, response} = BaseAgent.run!(agent, %{chat_message: "Hello"})
+    {:ok, response}
+  rescue
+    e -> {:error, e}
   end
 
   @doc """
@@ -218,7 +213,7 @@ defmodule NormandyTest.Support.IntegrationHelper do
   ## Example
 
       {duration, response} = measure_time(fn ->
-        BaseAgent.run(agent, input)
+        BaseAgent.run!(agent, input)
       end)
   """
   def measure_time(fun) do
@@ -232,32 +227,13 @@ defmodule NormandyTest.Support.IntegrationHelper do
   Creates a simple calculator tool for testing.
   """
   def create_calculator_tool do
-    %Normandy.Tools.Examples.Calculator{
-      operation: "add",
-      a: 0,
-      b: 0
-    }
+    %Normandy.Tools.Examples.Calculator{}
   end
 
   @doc """
   Creates a string manipulator tool for testing.
   """
   def create_string_tool do
-    %Normandy.Tools.Examples.StringManipulator{
-      operation: "uppercase",
-      text: ""
-    }
-  end
-
-  @doc """
-  Creates a weather tool for testing.
-
-  This tool fetches real weather data, ensuring models must use it
-  as they cannot know current weather conditions.
-  """
-  def create_weather_tool do
-    %Normandy.Tools.Examples.Weather{
-      city: ""
-    }
+    %Normandy.Tools.Examples.StringManipulator{}
   end
 end

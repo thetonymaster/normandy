@@ -1,16 +1,22 @@
 defmodule Normandy.Context.TokenCounterTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Context.TokenCounter
-  alias Normandy.LLM.ClaudioAdapter
-  alias Normandy.Components.AgentMemory
+  @model "claude-haiku-4-5-20251001"
+
+  alias Claudio.Messages.Request, as: ClaudioRequest
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Context.TokenCounter
+  alias Normandy.Context.WindowManager
+  alias Normandy.LLM.ClaudioAdapter
   alias NormandyTest.Support.IntegrationHelper
 
   setup do
     # Real Claudio client — these tests exercise the live count_tokens endpoint.
     client = %ClaudioAdapter{
-      api_key: IntegrationHelper.get_api_key(),
+      # A placeholder when no key is set: the tests that run without one make no API call.
+      api_key: IntegrationHelper.get_api_key() || "no-api-key-set",
       base_url: nil,
       options: %{}
     }
@@ -35,9 +41,16 @@ defmodule Normandy.Context.TokenCounterTest do
   end
 
   describe "count_message/3" do
+    test "has no default model: count_message/2 is gone" do
+      # function_exported?/3 is false for a module not loaded yet.
+      Code.ensure_loaded!(TokenCounter)
+      refute function_exported?(TokenCounter, :count_message, 2)
+      assert function_exported?(TokenCounter, :count_message, 3)
+    end
+
     @tag :integration
     test "counts tokens for a simple message", %{client: client} do
-      {:ok, result} = TokenCounter.count_message(client, "Hello, world!")
+      {:ok, result} = TokenCounter.count_message(client, "Hello, world!", @model)
 
       assert is_map(result)
       assert Map.has_key?(result, "input_tokens")
@@ -52,7 +65,7 @@ defmodule Normandy.Context.TokenCounterTest do
       The token counter should accurately reflect the length of this text.
       """
 
-      {:ok, result} = TokenCounter.count_message(client, long_message)
+      {:ok, result} = TokenCounter.count_message(client, long_message, @model)
 
       assert is_map(result)
       assert result["input_tokens"] > 10
@@ -61,7 +74,7 @@ defmodule Normandy.Context.TokenCounterTest do
     @tag :integration
     test "counts tokens with custom model", %{client: client} do
       {:ok, result} =
-        TokenCounter.count_message(client, "Test message", "claude-haiku-4-5-20251001")
+        TokenCounter.count_message(client, "Test message", @model)
 
       assert is_map(result)
       assert Map.has_key?(result, "input_tokens")
@@ -69,7 +82,7 @@ defmodule Normandy.Context.TokenCounterTest do
 
     test "counts an empty message as zero tokens (no API call)", %{client: client} do
       # Empty input short-circuits to zero without hitting the endpoint.
-      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_message(client, "")
+      assert {:ok, %{"input_tokens" => 0}} = TokenCounter.count_message(client, "", @model)
     end
   end
 
@@ -213,10 +226,155 @@ defmodule Normandy.Context.TokenCounterTest do
         memory: "not-a-valid-memory"
       }
 
-      result = TokenCounter.count_conversation(client, malformed_agent)
+      # A malformed agent is a caller bug: it raises rather than reaching the API.
+      assert_raise ArgumentError, fn ->
+        TokenCounter.count_conversation(client, malformed_agent)
+      end
+    end
+  end
 
-      # Should handle gracefully
-      assert match?({:error, _}, result) or match?({:ok, _}, result)
+  describe "count_conversation/2 payload" do
+    test "a tool round is sent as the API expects: no \"tool\" role" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.ToolRound, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 42})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.ToolRound}, retry: false]}
+      }
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "weather?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "weather", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "sunny"
+        })
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 42}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      assert Enum.map(payload["messages"], & &1["role"]) == ["user", "assistant", "user"]
+      assert [%{"type" => "tool_use", "id" => "t1"}] = Enum.at(payload["messages"], 1)["content"]
+
+      assert [%{"type" => "tool_result", "tool_use_id" => "t1"}] =
+               Enum.at(payload["messages"], 2)["content"]
+    end
+  end
+
+  describe "count_conversation/2 payload, parallel tool results" do
+    test "a batch of tool results is counted as one user message, as a request sends it" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.Batch, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 7})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.Batch}, retry: false]}
+      }
+
+      calls =
+        for id <- ["t1", "t2"],
+            do: %Normandy.Components.ToolCall{id: id, name: "weather", input: %{}}
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "weather?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          tool_calls: calls
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "sunny"
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t2",
+          output: "rainy"
+        })
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 7}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      assert Enum.map(payload["messages"], & &1["role"]) == ["user", "assistant", "user"]
+
+      assert [%{"tool_use_id" => "t1"}, %{"tool_use_id" => "t2"}] =
+               List.last(payload["messages"])["content"]
+    end
+  end
+
+  describe "count_conversation/2 payload, a tool-round answer" do
+    test "counts the request's messages: the repeated answer once" do
+      test_pid = self()
+
+      Req.Test.stub(__MODULE__.Once, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:payload, Jason.decode!(body)})
+        Req.Test.json(conn, %{"input_tokens" => 9})
+      end)
+
+      client = %ClaudioAdapter{
+        api_key: "k",
+        options: %{req_options: [plug: {Req.Test, __MODULE__.Once}, retry: false]}
+      }
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "Capital of France?")
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+          content: "Paris.",
+          tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "record", input: %{}}]
+        })
+        |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+          tool_call_id: "t1",
+          output: "recorded"
+        })
+        |> AgentMemory.add_message("assistant", %Normandy.Agents.BaseAgentOutputSchema{
+          chat_message: "Paris."
+        })
+        |> AgentMemory.add_message("user", "Thanks")
+
+      agent = %{BaseAgent.init(%{client: client, model: "claude-haiku-4-5"}) | memory: memory}
+
+      assert {:ok, %{"input_tokens" => 9}} = TokenCounter.count_conversation(client, agent)
+      assert_received {:payload, payload}
+
+      expected =
+        ClaudioRequest.new("token-count")
+        |> ClaudioModel.add_messages(
+          AgentMemory.request_messages_for(memory, 0),
+          false
+        )
+        |> Map.fetch!(:messages)
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      assert payload["messages"] == expected
+      assert [%{"type" => "tool_use", "id" => "t1"}] = Enum.at(payload["messages"], 1)["content"]
+    end
+  end
+
+  describe "count_conversation/2 input checks" do
+    test "an agent without a model raises instead of being counted against a default model",
+         %{client: client, agent: agent} do
+      assert_raise ArgumentError, ~r/agent has no :model/, fn ->
+        TokenCounter.count_conversation(client, %{agent | model: nil})
+      end
     end
   end
 
@@ -226,7 +384,7 @@ defmodule Normandy.Context.TokenCounterTest do
       # use compatible formats (even though actual counts differ)
 
       text = "Hello, this is a test message."
-      estimated = Normandy.Context.WindowManager.estimate_tokens(text)
+      estimated = WindowManager.estimate_tokens(text)
 
       # Estimate should be roughly in the right ballpark
       # ~4 chars per token = ~8 tokens for 32 chars
@@ -236,10 +394,29 @@ defmodule Normandy.Context.TokenCounterTest do
 
     test "message content estimation works with maps" do
       content = %{chat_message: "Test message with structured content"}
-      estimated = Normandy.Context.WindowManager.estimate_message_content_tokens(content)
+      estimated = WindowManager.estimate_message_content_tokens(content)
 
       # Should convert to JSON and estimate
       assert estimated > 0
+    end
+  end
+
+  describe "client construction" do
+    test "count_message sends to the adapter's base_url (not api.anthropic.com)" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "POST", "/messages/count_tokens", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"input_tokens" => 7}))
+      end)
+
+      client = %Normandy.LLM.ClaudioAdapter{
+        api_key: "test-key",
+        base_url: "http://localhost:#{bypass.port}/"
+      }
+
+      assert {:ok, _body} = TokenCounter.count_message(client, "hi", @model)
     end
   end
 end

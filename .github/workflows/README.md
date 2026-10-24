@@ -8,49 +8,43 @@ The main CI workflow runs on every push and pull request to `main` and `develop`
 
 ### Jobs
 
-#### 1. **Test** (Matrix Build)
-Runs unit tests across multiple Elixir and OTP versions to ensure compatibility:
-- **Elixir versions**: 1.15, 1.16, 1.17
-- **OTP versions**: 26, 27
-- **Excludes**: Invalid combinations (e.g., Elixir 1.15 with OTP 27)
-
-**Steps**:
-- Checkout code
-- Set up Elixir/OTP
-- Cache dependencies and build artifacts
-- Install and compile dependencies
-- Check code formatting (on latest version only)
-- Compile with warnings as errors
-- Run the default test suite (`mix test`, which excludes `integration` and `normandy_integration` by default)
-- Generate coverage report (on latest version only)
+#### 1. **Test** (matrix)
+Elixir/OTP 1.15/26, 1.16/26, 1.17/26, 1.17/27, 1.18/27 and 1.19/28 — the declared floor
+(`elixir: "~> 1.15"`) through the newest. Each leg compiles with warnings as errors and runs
+`mix test --warnings-as-errors`; the 1.17/27 leg also checks formatting and coverage (threshold in
+`mix.exs`).
 
 #### 2. **Integration Tests**
-Runs integration tests that require API access:
-- Only runs if unit tests pass
-- **Requires**: `ANTHROPIC_API_KEY` repository secret
-- Gracefully skips if API key is not configured
+Pushes to `main` only, Elixir 1.15/OTP 26, after the test matrix passes:
+`mix test --only integration --only normandy_integration` against the live API when the
+`ANTHROPIC_API_KEY` secret is set (skipped otherwise).
 
-**Steps**:
-- Runs all tests tagged with `integration` or `normandy_integration`
-- Uses the `API_KEY` environment variable from secrets
+#### 3. **Code Quality**
+Elixir 1.19/OTP 28: unused-dependency check, `mix hex.audit`, `mix hex.outdated` (informational),
+compile without optional dependencies, `mix credo --strict`, `mix dialyzer`, and
+`MIX_ENV=dev mix docs --warnings-as-errors`.
 
-#### 3. **Dialyzer** (Type Checking)
-Performs static type analysis:
-- Caches PLT (Persistent Lookup Table) for faster runs
-- Reports type errors and inconsistencies
-- Uses GitHub-friendly output format
+#### 4. **Test with unlocked dependencies**
+Elixir 1.19/OTP 28: `mix deps.unlock --all`, then compile and test against the newest versions
+`mix.exs` allows.
 
-#### 4. **Dependency Audit**
-Checks dependency health:
-- Verifies no unused dependencies
-- Lists outdated dependencies (informational)
+#### 5. **Postgres, Redis and Distributed**
+The test files `mix test` excludes, against service containers (Elixir 1.19/OTP 28):
+- **Postgres**: `mix test.postgres`
+- **Redis**: `mix test.redis`
+- **Distributed**: starts `epmd`, then `NORMANDY_REDIS=true mix test.postgres --only distributed`
+  with both services, for the multi-node (`:peer`) tests
 
-#### 5. **All Checks Complete**
-Final validation job that:
-- Waits for all other jobs
-- Fails if any required check failed
-- Allows integration tests to be skipped
-- Provides clear pass/fail status
+#### 6. **All Checks Passed**
+Fails unless every job above succeeded; Integration Tests may also be skipped.
+
+## Release workflow (`release.yml`)
+
+Runs after CI succeeds on a push to `main`. `.github/scripts/release-version.sh` asks
+`cog bump --auto --dry-run` for the next version and releases only when cog names one: a merge with
+only `docs:`, `ci:`, `chore:` or `test:` commits since the last tag publishes nothing. A release bumps
+`@version`, writes the CHANGELOG section and tags (`cog bump --auto`), publishes to Hex, pushes the bump
+commit and the tag, and creates the GitHub release. If `cog` itself fails, the job fails.
 
 ### Caching Strategy
 

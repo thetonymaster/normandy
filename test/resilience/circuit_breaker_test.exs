@@ -1,6 +1,8 @@
 defmodule Normandy.Resilience.CircuitBreakerTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Resilience.CircuitBreaker
 
   describe "start_link/1" do
@@ -23,8 +25,11 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "can be started with a name" do
-      {:ok, cb} = CircuitBreaker.start_link(name: :test_breaker)
-      assert CircuitBreaker.state(:test_breaker) == :closed
+      # A unique name, so no other test can hold it.
+      name = :"test_breaker_#{System.unique_integer([:positive])}"
+
+      {:ok, cb} = CircuitBreaker.start_link(name: name)
+      assert CircuitBreaker.state(name) == :closed
       GenServer.stop(cb)
     end
   end
@@ -53,6 +58,17 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
 
       assert result == {:error, :some_error}
       assert CircuitBreaker.state(cb) == :closed
+      GenServer.stop(cb)
+    end
+
+    test "an exit or a throw is a recorded failure, returned as an error" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2)
+
+      assert {:error, {:exit, :boom}} = CircuitBreaker.call(cb, fn -> exit(:boom) end)
+      assert CircuitBreaker.metrics(cb).failure_count == 1
+
+      assert {:error, {:throw, :nope}} = CircuitBreaker.call(cb, fn -> throw(:nope) end)
+      assert CircuitBreaker.state(cb) == :open
       GenServer.stop(cb)
     end
 
@@ -101,7 +117,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "transitions from open to half-open after timeout" do
-      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 100)
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 200)
 
       # Trigger open state
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
@@ -109,7 +125,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert CircuitBreaker.state(cb) == :open
 
       # Wait for timeout
-      Process.sleep(150)
+      Process.sleep(250)
 
       # Next state check should transition to half-open
       assert CircuitBreaker.state(cb) == :half_open
@@ -202,21 +218,20 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       # Open the circuit
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
 
-      # Wait for half-open
-      Process.sleep(100)
-      assert CircuitBreaker.state(cb) == :half_open
+      assert wait_until(fn -> CircuitBreaker.state(cb) == :half_open end)
 
-      # First call should be allowed
+      # First call is allowed, and holds the only half-open slot until released
+      test_pid = self()
+
       task1 =
         Task.async(fn ->
           CircuitBreaker.call(cb, fn ->
-            Process.sleep(50)
-            {:ok, "first"}
+            send(test_pid, {:first_running, self()})
+            receive do: (:release -> {:ok, "first"})
           end)
         end)
 
-      # Give first task time to start
-      Process.sleep(10)
+      assert_receive {:first_running, first}
 
       # Second call should be rejected (circuit is half-open with max 1 call)
       result2 =
@@ -226,7 +241,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
 
       assert result2 == {:error, :open}
 
-      # Wait for first task
+      send(first, :release)
       assert Task.await(task1) == {:ok, "first"}
 
       GenServer.stop(cb)
@@ -355,6 +370,282 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
 
       assert successes + failures == 20
       assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+  end
+
+  describe "a non-tuple return" do
+    test "counts as a failure, as Retry treats it" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 5)
+
+      assert {:error, {:unexpected_return, :weird}} = CircuitBreaker.call(cb, fn -> :weird end)
+      assert %{failure_count: 1} = CircuitBreaker.metrics(cb)
+    end
+  end
+
+  # The open window is 1 ms; sleeping 2 ms only lets it elapse. Which result lands in
+  # which generation is decided by messages, not by timing.
+  defp open_then_half_open(cb) do
+    :ok = CircuitBreaker.trip(cb)
+    Process.sleep(2)
+    assert CircuitBreaker.state(cb) == :half_open
+  end
+
+  # A caller admitted now whose function blocks until it gets {:finish, result}.
+  defp blocked_caller(cb) do
+    test_pid = self()
+
+    task =
+      Task.async(fn ->
+        CircuitBreaker.call(cb, fn ->
+          send(test_pid, {:admitted, self()})
+          receive do: ({:finish, result} -> result)
+        end)
+      end)
+
+    assert_receive {:admitted, caller}
+    {task, caller}
+  end
+
+  describe "a killed half-open probe (PERF-1)" do
+    test "frees its slot and reopens the breaker" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      open_then_half_open(cb)
+
+      {task, probe} = blocked_caller(cb)
+      assert CircuitBreaker.metrics(cb).half_open_calls == 1
+
+      Process.unlink(task.pid)
+      Process.exit(probe, :kill)
+
+      assert wait_until(fn -> CircuitBreaker.metrics(cb).half_open_calls == 0 end)
+      assert CircuitBreaker.metrics(cb).state == :open
+
+      # The next window admits a new probe, and its success closes the breaker.
+      Process.sleep(2)
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end) == {:ok, 1}
+      assert CircuitBreaker.call(cb, fn -> {:ok, 2} end) == {:ok, 2}
+      assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+
+    test "a probe that returns normally releases its monitor" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 2)
+      open_then_half_open(cb)
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, :fine} end) == {:ok, :fine}
+
+      # One of two successes: still half-open, so only release_probe/2 can have freed the slot.
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+
+      GenServer.stop(cb)
+    end
+  end
+
+  describe "a breaker that dies while the function runs" do
+    test "the caller still gets the function's result and one warning is logged" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CircuitBreaker.call(cb, fn ->
+                   Process.unlink(cb)
+                   ref = Process.monitor(cb)
+                   Process.exit(cb, :kill)
+                   assert_receive {:DOWN, ^ref, :process, _, :killed}
+                   {:ok, :done}
+                 end) == {:ok, :done}
+        end)
+
+      assert log =~ "Circuit breaker did not record a call's outcome (exit: noproc)"
+    end
+  end
+
+  describe "stale results (PERF-9)" do
+    test "a success admitted while closed does not count as a probe success" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      open_then_half_open(cb)
+
+      send(caller, {:finish, {:ok, :late}})
+      assert Task.await(task) == {:ok, :late}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.success_count == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "a failure admitted while closed does not reopen a half-open breaker" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, failure_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      open_then_half_open(cb)
+
+      send(caller, {:finish, {:error, :late}})
+      assert Task.await(task) == {:error, :late}
+
+      assert CircuitBreaker.state(cb) == :half_open
+
+      GenServer.stop(cb)
+    end
+
+    test "a result admitted before reset/1 does not count after it" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+
+      {task, caller} = blocked_caller(cb)
+      :ok = CircuitBreaker.reset(cb)
+
+      send(caller, {:finish, {:error, :late}})
+      assert Task.await(task) == {:error, :late}
+
+      assert CircuitBreaker.state(cb) == :closed
+      assert CircuitBreaker.metrics(cb).failure_count == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "every state change bumps the generation" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, success_threshold: 1)
+      assert CircuitBreaker.metrics(cb).generation == 0
+
+      :ok = CircuitBreaker.trip(cb)
+      assert CircuitBreaker.metrics(cb).generation == 1
+
+      Process.sleep(2)
+      assert CircuitBreaker.state(cb) == :half_open
+      assert CircuitBreaker.metrics(cb).generation == 2
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end) == {:ok, 1}
+      assert CircuitBreaker.metrics(cb).generation == 3
+
+      :ok = CircuitBreaker.reset(cb)
+      assert CircuitBreaker.metrics(cb).generation == 4
+
+      GenServer.stop(cb)
+    end
+  end
+
+  describe "admission" do
+    test "an open breaker admits nothing, even with no probe running" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 60_000)
+      :ok = CircuitBreaker.trip(cb)
+
+      assert CircuitBreaker.call(cb, fn -> flunk("must not run") end) == {:error, :open}
+      assert CircuitBreaker.metrics(cb).half_open_calls == 0
+
+      GenServer.stop(cb)
+    end
+
+    test "a result recorded after the breaker stopped is still returned" do
+      {:ok, cb} = CircuitBreaker.start_link()
+      Process.unlink(cb)
+
+      result =
+        CircuitBreaker.call(cb, fn ->
+          GenServer.stop(cb)
+          {:ok, :done}
+        end)
+
+      assert result == {:ok, :done}
+    end
+  end
+
+  describe "failure_if" do
+    test "a failure the classifier rejects is not counted" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      not_counted = fn {:error, reason} -> reason != :caller_error end
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end, failure_if: not_counted) ==
+               {:error, :caller_error}
+
+      assert CircuitBreaker.state(cb) == :closed
+      assert CircuitBreaker.metrics(cb).failure_count == 0
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :down} end, failure_if: not_counted) ==
+               {:error, :down}
+
+      assert CircuitBreaker.state(cb) == :open
+
+      GenServer.stop(cb)
+    end
+
+    test "the classifier sees raises as {:error, {:exception, e}}" do
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 1)
+      test_pid = self()
+
+      classifier = fn result ->
+        send(test_pid, {:classified, result})
+        false
+      end
+
+      assert {:error, {:exception, %RuntimeError{}}} =
+               CircuitBreaker.call(cb, fn -> raise "boom" end, failure_if: classifier)
+
+      assert_received {:classified, {:error, {:exception, %RuntimeError{message: "boom"}}}}
+      assert CircuitBreaker.state(cb) == :closed
+
+      GenServer.stop(cb)
+    end
+
+    test "an ignored half-open probe frees its slot and leaves the breaker half-open" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      :ok = CircuitBreaker.trip(cb)
+      Process.sleep(2)
+      assert CircuitBreaker.state(cb) == :half_open
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :caller_error} end,
+               failure_if: fn _ -> false end
+             ) == {:error, :caller_error}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.state == :half_open
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+
+      GenServer.stop(cb)
+    end
+
+    test "a classifier that raises counts the failure and frees the probe slot" do
+      {:ok, cb} = CircuitBreaker.start_link(timeout: 1, half_open_max_calls: 1)
+      :ok = CircuitBreaker.trip(cb)
+      Process.sleep(5)
+      assert CircuitBreaker.state(cb) == :half_open
+
+      assert CircuitBreaker.call(cb, fn -> {:error, :down} end,
+               failure_if: fn _ -> raise "classifier bug" end
+             ) == {:error, :down}
+
+      metrics = CircuitBreaker.metrics(cb)
+      assert metrics.half_open_calls == 0
+      assert {:monitors, []} = Process.info(cb, :monitors)
+      assert metrics.state == :open
+
+      GenServer.stop(cb)
+    end
+
+    test "success is never classified" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_if: fn _ -> flunk("called") end) ==
+               {:ok, 1}
+
+      GenServer.stop(cb)
+    end
+
+    test "an unknown option raises in the house style" do
+      {:ok, cb} = CircuitBreaker.start_link()
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy.Resilience.CircuitBreaker.call\/3: unknown option :failure_iff/,
+                   fn -> CircuitBreaker.call(cb, fn -> {:ok, 1} end, failure_iff: & &1) end
 
       GenServer.stop(cb)
     end

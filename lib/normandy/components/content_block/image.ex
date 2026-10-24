@@ -22,6 +22,7 @@ defmodule Normandy.Components.ContentBlock.Image do
   use Normandy.Schema
 
   alias Normandy.Components.ContentBlock.CacheControl
+  alias Normandy.Components.ContentBlock.Describe
 
   @type source :: :base64 | :url
 
@@ -105,10 +106,11 @@ defmodule Normandy.Components.ContentBlock.Image do
     |> CacheControl.maybe_attach(cache_control)
   end
 
-  def to_claudio(%__MODULE__{source: :base64} = block) do
+  def to_claudio(%__MODULE__{source: :base64, data: data, media_type: media_type}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Image: invalid base64 image — " <>
-            "data and media_type must be non-empty strings. Got: #{inspect(block)}"
+            "data and media_type must be non-empty strings. Got data: #{Describe.type_of(data)}, " <>
+            "media_type: #{Describe.type_of(media_type)}"
   end
 
   def to_claudio(%__MODULE__{source: :url, url: url, cache_control: cache_control})
@@ -123,15 +125,30 @@ defmodule Normandy.Components.ContentBlock.Image do
     |> CacheControl.maybe_attach(cache_control)
   end
 
-  def to_claudio(%__MODULE__{source: :url} = block) do
+  def to_claudio(%__MODULE__{source: :url, url: url}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Image: invalid url image — " <>
-            "url must be a non-empty string. Got: #{inspect(block)}"
+            "url must be a non-empty string. Got url: #{Describe.type_of(url)}"
   end
 
   def to_claudio(%__MODULE__{source: source}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Image: unsupported image source #{inspect(source)}. " <>
             "Expected :base64 or :url."
+  end
+
+  defimpl Normandy.Components.ContentBlock.Protocol do
+    alias Normandy.Components.ContentBlock
+
+    def to_claudio(block), do: @for.to_claudio(block)
+    def estimate_tokens(_block), do: ContentBlock.image_tokens()
+    def label(_block), do: "[image]"
+  end
+
+  # A single content block is sent as a one-block list, the same shape as
+  # multimodal list content, which the adapter turns into wire blocks.
+  defimpl Normandy.Components.BaseIOSchema do
+    def to_json(block), do: [block]
+    def get_schema(_block), do: %{}
   end
 end

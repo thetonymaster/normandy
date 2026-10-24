@@ -15,25 +15,25 @@ defmodule Normandy.Type do
   basic custom types and rely on parameterized types if you need
   the extra functionality.
 
-  ## External vs internal vs database representation
+  ## External vs internal vs serialized representation
 
   The core functionality of a custom type is the mapping between
-  external, internal and database representations of a value belonging
+  external, internal and serialized representations of a value belonging
   to the type.
 
-  External data comes from user input (forms, APIs, etc.), internal data
-  is the application's runtime representation, and database data is how
-  values are persisted or serialized.
+  External data comes from the model's JSON or from caller params, internal
+  data is the application's runtime representation, and serialized data is
+  the form `c:dump/1` returns: a term the JSON adapter can encode. Normandy
+  calls `c:dump/1` to check a field's `:default` when the schema compiles.
 
   ```mermaid
   stateDiagram-v2
     external: External Data
     internal: Internal Data
-    database: Database Data
+    serialized: Serialized Data
     external --> internal: cast/1
-    external --> database: dump/1
-    internal --> database: dump/1
-    database --> internal: load/1
+    external --> serialized: dump/1
+    internal --> serialized: dump/1
   ```
 
   ## Example
@@ -44,7 +44,7 @@ defmodule Normandy.Type do
 
   The custom type needs to handle the conversion from external data to
   runtime data (`c:cast/1`) as well as transforming that runtime data
-  into a serializable format and back (`c:dump/1` and `c:load/1`).
+  into a serializable format (`c:dump/1`).
 
       defmodule URIType do
         use Normandy.Type
@@ -61,16 +61,6 @@ defmodule Normandy.Type do
 
         # Everything else is a failure though
         def cast(_), do: :error
-
-        # When loading data, as long as it's a map,
-        # we just put the data back into a URI struct.
-        def load(data) when is_map(data) do
-          data =
-            for {key, val} <- data do
-              {String.to_existing_atom(key), val}
-            end
-          {:ok, struct!(URI, data)}
-        end
 
         # When dumping data, we *expect* a URI struct
         # but any value could be inserted into the schema struct at runtime,
@@ -95,7 +85,7 @@ defmodule Normandy.Type do
   > #### `use Normandy.Type` {: .info}
   >
   > When you `use Normandy.Type`, it will set `@behaviour Normandy.Type` and define
-  > default, overridable implementations for `c:embed_as/1` and `c:equal?/2`.
+  > a default, overridable implementation for `c:equal?/2`.
 
   ## Custom types with validation
 
@@ -125,10 +115,6 @@ defmodule Normandy.Type do
           end
         end
 
-        def load(id) when is_integer(id) do
-          {:ok, encode_id(id)}
-        end
-
         defp encode_id(id) do
           id
           |> Integer.to_string()
@@ -148,22 +134,19 @@ defmodule Normandy.Type do
       end
   """
 
-  import Kernel, except: [match?: 2]
-
   @doc false
   defmacro __using__(_opts) do
     quote location: :keep do
       @behaviour Normandy.Type
-      def embed_as(_), do: :self
       def equal?(term1, term2), do: term1 == term2
-      defoverridable embed_as: 1, equal?: 2
+      defoverridable equal?: 2
     end
   end
 
-  @typedoc "An Ecto type, primitive or custom."
+  @typedoc "A field type, primitive or custom."
   @type t :: primitive | custom
 
-  @typedoc "Primitive Ecto types (handled by Ecto)."
+  @typedoc "Primitive types, handled by this module."
   @type primitive :: base | composite
 
   @typedoc "Custom types are represented by user-defined modules."
@@ -185,14 +168,13 @@ defmodule Normandy.Type do
 
   @type composite :: {:array, t} | {:map, t} | private_composite
 
-  @typep private_composite :: {:try, t} | {:in, t} | {:supertype, :datetime}
+  @typep private_composite :: {:try, t}
 
   @base ~w(
     integer float boolean string bitstring map binary any
     date time duration any struct
   )a
-  @composite ~w(array map try in param)a
-  @variadic ~w(in splice)a
+  @composite ~w(array map try param)a
 
   @doc """
   Returns the underlying schema type for the custom type.
@@ -200,28 +182,24 @@ defmodule Normandy.Type do
   For example, if you want to provide your own date
   structures, the type function should return `:date`.
 
-  Note this function is not required to return Ecto primitive
-  types, the type is only required to be known by the adapter.
+  The returned type decides the field's JSON Schema type.
   """
   @callback type :: t
 
   @doc """
   Casts the given input to the custom type.
 
-  This callback is called on external input and can return any type,
-  as long as the `dump/1` function is able to convert the returned
-  value into an Ecto native type. There are two situations where
-  this callback is called:
-
-    1. When casting values by `Ecto.Changeset`
-    2. When passing arguments to `Ecto.Query`
+  This callback is called on external input (the model's JSON, caller
+  params) by `Normandy.Validate.cast/4` and can return any type, as long
+  as the `dump/1` function is able to convert the returned value into a
+  serializable one.
 
   You can return `:error` if the given term cannot be cast.
   A default error message of "is invalid" will be added to the
-  changeset.
+  validation errors.
 
   You may also return `{:error, keyword()}` to customize the
-  changeset error message and its metadata. Passing a `:message`
+  error message and its metadata. Passing a `:message`
   key, will override the default message. It is not possible to
   override the `:type` key.
 
@@ -231,74 +209,29 @@ defmodule Normandy.Type do
   @callback cast(term) :: {:ok, term} | :error | {:error, keyword()}
 
   @doc """
-  Dumps the given term into an Ecto native type.
+  Dumps the given term into its serializable form.
 
-  This callback is called with any term that was stored in the struct
-  and it needs to validate them and convert it to an Ecto native type.
+  It receives a term stored in the struct (Normandy calls it to check a
+  field's `:default` at compile time) and must validate it and convert it
+  to a term the JSON adapter can encode.
   """
   @callback dump(term) :: {:ok, term} | :error
 
   @doc """
   Checks if two terms are semantically equal.
 
-  This callback is used for determining equality of types in
-  `Ecto.Changeset`.
+  This callback is used by `Normandy.Type.equal?/3` and `include?/3`.
 
   By default the terms are compared with the equal operator `==/2`.
   """
   @callback equal?(term, term) :: boolean
 
-  @doc """
-  Dictates how the type should be treated inside embeds.
-
-  By default, the type is sent as itself, without calling
-  dumping to keep the higher level representation. But
-  it can be set to `:dump` so that it is dumped before
-  being encoded.
-  """
-  @callback embed_as(format :: atom) :: :self | :dump
-
-  @doc """
-  Generates a loaded version of the data.
-
-  This is callback is invoked when a custom type is given
-  to `field` with the `:autogenerate` flag.
-  """
-  @callback autogenerate() :: term()
-
-  @doc """
-  Loads the given term into the custom type, the inverse of `c:dump/1`.
-
-  This callback is called with a term coming from a serialized
-  representation and is expected to convert it back into the runtime
-  type produced by `c:cast/1`.
-  """
-  @callback load(term) :: {:ok, term} | :error
-
-  @optional_callbacks autogenerate: 0, load: 1
-
   ## Functions
 
   @doc """
-  Checks if we have a primitive type.
-
-      iex> primitive?(:string)
-      true
-      iex> primitive?(Another)
-      false
-
-      iex> primitive?({:array, :string})
-      true
-      iex> primitive?({:array, Another})
-      true
-
+  Returns `true` when `type` is the initialized parameterized type of `module`
+  (`{:parameterized, {module, params}}`), and `false` for any other type.
   """
-  @spec primitive?(t) :: boolean
-  def primitive?({:parameterized, _}), do: true
-  def primitive?({composite, _}) when composite in @composite, do: true
-  def primitive?(base) when base in @base, do: true
-  def primitive?(_), do: false
-
   @spec parameterized?(t, module) :: boolean
   def parameterized?({:parameterized, {module, _}}, module), do: true
   def parameterized?(_, _), do: false
@@ -330,57 +263,6 @@ defmodule Normandy.Type do
   def base?(atom), do: atom in @base
 
   @doc """
-  Gets how the type is treated inside embeds for the given format.
-
-  See `c:embed_as/1`.
-  """
-  def embed_as({:parameterized, {module, params}}, format), do: module.embed_as(format, params)
-  def embed_as({composite, type}, format) when composite in @composite, do: embed_as(type, format)
-  def embed_as(base, _format) when base in @base, do: :self
-
-  def embed_as(mod, format) do
-    mod.embed_as(format)
-  end
-
-  @doc """
-  Dumps the `value` for `type` considering it will be embedded in `format`.
-
-  ## Examples
-
-      iex> Normandy.Type.embedded_dump(:string, "1", :json)
-      {:ok, "1"}
-
-  """
-  def embedded_dump(type, value, format) do
-    case embed_as(type, format) do
-      :self -> {:ok, value}
-      :dump -> dump(type, value, &embedded_dump(&1, &2, format))
-    end
-  end
-
-  @doc """
-  Loads the `value` for `type` considering it was embedded in `format`.
-
-  ## Examples
-
-      iex> Normandy.Type.embedded_load(:string, "1", :json)
-      {:ok, "1"}
-
-  """
-  def embedded_load(type, value, format) do
-    case embed_as(type, format) do
-      :self ->
-        case cast(type, value) do
-          {:ok, _} = ok -> ok
-          _ -> :error
-        end
-
-      :dump ->
-        load(type, value, &embedded_load(&1, &2, format))
-    end
-  end
-
-  @doc """
   Retrieves the underlying schema type for the given, possibly custom, type.
 
       iex> type({:array, :string})
@@ -398,48 +280,10 @@ defmodule Normandy.Type do
   def type(type), do: type
 
   @doc """
-  Checks if a given type matches with a primitive type
-  that can be found in queries.
-
-      iex> match?(:string, :any)
-      true
-      iex> match?(:any, :string)
-      true
-      iex> match?(:string, :string)
-      true
-
-      iex> match?({:array, :string}, {:array, :any})
-      true
-
-  """
-  @spec match?(t, primitive) :: boolean
-  def match?(schema_type, query_type) do
-    if primitive?(schema_type) do
-      do_match?(schema_type, query_type)
-    else
-      do_match?(schema_type.type(), query_type)
-    end
-  end
-
-  defp do_match?(_left, :any), do: true
-  defp do_match?(:any, _right), do: true
-  defp do_match?({outer, left}, {outer, right}), do: match?(left, right)
-  defp do_match?(:decimal, type) when type in [:float, :integer], do: true
-  defp do_match?(:binary_id, :binary), do: true
-  defp do_match?(:id, :integer), do: true
-  defp do_match?(type, type), do: true
-  defp do_match?(:naive_datetime, {:supertype, :datetime}), do: true
-  defp do_match?(:naive_datetime_usec, {:supertype, :datetime}), do: true
-  defp do_match?(:utc_datetime, {:supertype, :datetime}), do: true
-  defp do_match?(:utc_datetime_usec, {:supertype, :datetime}), do: true
-  defp do_match?(_, _), do: false
-
-  @doc """
   Dumps a value to the given type.
 
   Opposite to casting, dumping requires the returned value
-  to be a valid Ecto type, as it will be sent to the
-  underlying data store.
+  to be a term the JSON adapter can encode.
 
       iex> dump(:string, nil)
       {:ok, nil}
@@ -483,13 +327,6 @@ defmodule Normandy.Type do
     end
   end
 
-  def dump({qual, type}, value, dumper) when qual in @variadic do
-    case dump({:array, type}, value, dumper) do
-      {:ok, value} -> {:ok, {qual, value}}
-      :error -> :error
-    end
-  end
-
   def dump({:array, {:parameterized, _} = type}, value, dumper),
     do: array_with_type(value, type, dumper, false, [])
 
@@ -503,10 +340,15 @@ defmodule Normandy.Type do
   def dump(:map, value, _dumper), do: same_map(value)
   def dump(:string, value, _dumper), do: same_binary(value)
   def dump(:binary, value, _dumper), do: same_binary(value)
+  def dump(:bitstring, value, _dumper), do: cast_bitstring(value)
   def dump(:date, value, _dumper), do: same_date(value)
   def dump(:time, value, _dumper), do: dump_time(value)
   def dump(:duration, value, _dumper), do: same_duration(value)
-  def dump(mod, value, _dumper) when is_atom(mod), do: mod.dump(value)
+  def dump(:struct, value, _dumper), do: cast_struct(value)
+
+  def dump(mod, value, _dumper) when is_atom(mod) do
+    if schema_module?(mod), do: dump_schema(mod, value), else: mod.dump(value)
+  end
 
   defp dump_float(term) when is_float(term), do: {:ok, term}
   defp dump_float(_), do: :error
@@ -515,68 +357,12 @@ defmodule Normandy.Type do
   defp dump_time(_), do: :error
 
   @doc """
-  Loads a value with the given type.
-
-      iex> load(:string, nil)
-      {:ok, nil}
-      iex> load(:string, "foo")
-      {:ok, "foo"}
-
-      iex> load(:integer, 1)
-      {:ok, 1}
-      iex> load(:integer, "10")
-      :error
-
-  """
-  @spec load(t, term) :: {:ok, term} | :error
-  @spec load(t, term, (t, term -> {:ok, term} | :error)) :: {:ok, term} | :error
-  def load(type, value, loader \\ &load/2)
-
-  def load({:parameterized, {module, params}}, value, loader) do
-    module.load(value, loader, params)
-  end
-
-  def load(_type, nil, _loader) do
-    {:ok, nil}
-  end
-
-  def load({:try, type}, value, loader) do
-    case load(type, value, loader) do
-      {:ok, _} = ok -> ok
-      :error -> {:ok, value}
-    end
-  end
-
-  def load({:array, {:parameterized, _} = type}, value, loader),
-    do: array_with_type(value, type, loader, false, [])
-
-  def load({:array, type}, value, loader), do: array_with_type(value, type, loader, true, [])
-  def load({:map, type}, value, loader), do: map(value, type, loader, false, %{})
-
-  def load(:integer, value, _loader), do: same_integer(value)
-  def load(:float, value, _loader), do: load_float(value)
-  def load(:boolean, value, _loader), do: same_boolean(value)
-  def load(:map, value, _loader), do: same_map(value)
-  def load(:string, value, _loader), do: same_binary(value)
-  def load(:date, value, _loader), do: same_date(value)
-  def load(:time, value, _loader), do: load_time(value)
-  def load(mod, value, _loader), do: mod.load(value)
-
-  defp load_float(term) when is_float(term), do: {:ok, term}
-  defp load_float(term) when is_integer(term), do: {:ok, :erlang.float(term)}
-  defp load_float(_), do: :error
-
-  defp load_time(%Time{} = time), do: {:ok, truncate_usec(time)}
-  defp load_time(_), do: :error
-
-  @doc """
   Casts a value to the given type.
 
-  `cast/2` is used by the finder queries and changesets to cast outside values to
+  `cast/2` is used by `Normandy.Validate.cast/4` to cast outside values to
   specific types.
 
-  Note that nil can be cast to all primitive types as data stores allow nil to be
-  set on any column.
+  Note that nil can be cast to all primitive types: an unset field is `nil`.
 
   NaN and infinite decimals are not supported, use custom types instead.
 
@@ -593,13 +379,6 @@ defmodule Normandy.Type do
       iex> cast(:integer, "1")
       {:ok, 1}
       iex> cast(:integer, "1.0")
-      :error
-
-      iex> cast(:id, 1)
-      {:ok, 1}
-      iex> cast(:id, "1")
-      {:ok, 1}
-      iex> cast(:id, "1.0")
       :error
 
       iex> cast(:float, 1.0)
@@ -639,17 +418,9 @@ defmodule Normandy.Type do
       iex> cast(:string, [1, 2, 3])
       :error
 
-      iex> cast(:utc_datetime, "2014-04-17T14:00:00Z")
-      {:ok, ~U[2014-04-17 14:00:00Z]}
-      iex> cast(:utc_datetime, "2014-04-17T14:00:00.030Z")
-      {:ok, ~U[2014-04-17 14:00:00Z]}
-      iex> cast(:utc_datetime, "2014-04-17T12:00:00-02:00")
-      {:ok, ~U[2014-04-17 14:00:00Z]}
-
   """
   @spec cast(t, term) :: {:ok, term} | {:error, keyword()} | :error
   def cast({:parameterized, {type, params}}, value), do: type.cast(value, params)
-  def cast({:in, _type}, nil), do: :error
   def cast(_type, nil), do: {:ok, nil}
 
   def cast({:try, type}, value) do
@@ -670,20 +441,11 @@ defmodule Normandy.Type do
   defp cast_fun(:string), do: &cast_binary/1
   defp cast_fun(:binary), do: &cast_binary/1
   defp cast_fun(:bitstring), do: &cast_bitstring/1
-  defp cast_fun(:id), do: &cast_integer/1
-  defp cast_fun(:binary_id), do: &cast_binary/1
   defp cast_fun(:any), do: &{:ok, &1}
   defp cast_fun(:date), do: &cast_date/1
   defp cast_fun(:time), do: &maybe_truncate_usec(cast_time(&1))
-  defp cast_fun(:time_usec), do: &maybe_pad_usec(cast_time(&1))
-  defp cast_fun(:naive_datetime), do: &maybe_truncate_usec(cast_naive_datetime(&1))
-  defp cast_fun(:naive_datetime_usec), do: &maybe_pad_usec(cast_naive_datetime(&1))
-  defp cast_fun(:utc_datetime), do: &maybe_truncate_usec(cast_utc_datetime(&1))
-  defp cast_fun(:utc_datetime_usec), do: &maybe_pad_usec(cast_utc_datetime(&1))
   defp cast_fun(:duration), do: &cast_duration/1
-  defp cast_fun({:supertype, :datetime}), do: &cast_any_datetime(&1)
   defp cast_fun({:parameterized, {mod, params}}), do: &mod.cast(&1, params)
-  defp cast_fun({qual, type}) when qual in @variadic, do: cast_fun({:array, type})
 
   defp cast_fun({:array, {:parameterized, _} = type}) do
     fun = cast_fun(type)
@@ -705,15 +467,57 @@ defmodule Normandy.Type do
     &map(&1, fun, true, %{})
   end
 
+  defp cast_fun(:struct), do: &cast_struct/1
+
   defp cast_fun(mod) when is_atom(mod) do
-    fn
-      nil -> {:ok, nil}
-      value -> mod.cast(value)
+    cond do
+      schema_module?(mod) ->
+        &cast_schema(mod, &1)
+
+      Code.ensure_loaded?(mod) and function_exported?(mod, :cast, 1) ->
+        fn
+          nil -> {:ok, nil}
+          value -> mod.cast(value)
+        end
+
+      true ->
+        raise ArgumentError,
+              "Normandy.Type.cast/2: #{inspect(mod)} is neither a Normandy.Type (no cast/1) " <>
+                "nor a Normandy schema, so it cannot be used as a field type"
     end
   end
 
+  defp schema_module?(mod),
+    do: Code.ensure_loaded?(mod) and function_exported?(mod, :__schema__, 1)
+
+  defp cast_struct(value) when is_struct(value), do: {:ok, value}
+  defp cast_struct(_), do: :error
+
+  # A nested schema field: accept the struct itself, or cast a map into it with
+  # the nested schema's own field types and required fields.
+  defp cast_schema(mod, %mod{} = value), do: {:ok, value}
+
+  defp cast_schema(mod, value) when is_map(value) and not is_struct(value) do
+    data = struct(mod)
+    fields = Map.keys(mod.__specification__())
+
+    data
+    |> Normandy.Validate.cast(value, fields)
+    |> Normandy.Validate.validate_required(mod.__schema__(:required) || [])
+    |> Normandy.Validate.apply_action(:cast)
+    |> case do
+      {:ok, struct} -> {:ok, struct}
+      {:error, _changeset} -> :error
+    end
+  end
+
+  defp cast_schema(_mod, _value), do: :error
+
+  defp dump_schema(mod, %mod{} = value), do: {:ok, value}
+  defp dump_schema(_mod, _value), do: :error
+
   # We check for the byte size to avoid creating unnecessary large integers
-  # which would never map to a database key (u64 is 20 digits only).
+  # which no field needs (u64 is 20 digits only).
   defp cast_integer(term) when is_binary(term) and byte_size(term) < 32 do
     case Integer.parse(term) do
       {integer, ""} -> {:ok, integer}
@@ -794,8 +598,6 @@ defmodule Normandy.Type do
             same_binary: 1,
             same_date: 1,
             same_duration: 1,
-            of_base_type?: 2,
-            primitive?: 1,
             composite?: 1,
             base?: 1}
 
@@ -824,53 +626,6 @@ defmodule Normandy.Type do
   def empty_trimmed_string?(value) do
     is_binary(value) and String.trim_leading(value) == ""
   end
-
-  ## Adapter related
-
-  @doc false
-  def adapter_autogenerate(adapter, type) do
-    type
-    |> type()
-    |> adapter.autogenerate()
-  end
-
-  @doc false
-  def adapter_load(adapter, type, value) do
-    if of_base_type?(type, value) do
-      {:ok, value}
-    else
-      process_loaders(adapter.loaders(type(type), type), {:ok, value}, adapter)
-    end
-  end
-
-  defp process_loaders(_, :error, _adapter),
-    do: :error
-
-  defp process_loaders([fun | t], {:ok, value}, adapter) when is_function(fun),
-    do: process_loaders(t, fun.(value), adapter)
-
-  defp process_loaders([type | t], {:ok, value}, adapter),
-    do: process_loaders(t, load(type, value, &adapter_load(adapter, &1, &2)), adapter)
-
-  defp process_loaders([], {:ok, _} = acc, _adapter),
-    do: acc
-
-  @doc false
-  def adapter_dump(adapter, type, value) do
-    process_dumpers(adapter.dumpers(type(type), type), {:ok, value}, adapter)
-  end
-
-  defp process_dumpers(_, :error, _adapter),
-    do: :error
-
-  defp process_dumpers([fun | t], {:ok, value}, adapter) when is_function(fun),
-    do: process_dumpers(t, fun.(value), adapter)
-
-  defp process_dumpers([type | t], {:ok, value}, adapter),
-    do: process_dumpers(t, dump(type, value, &adapter_dump(adapter, &1, &2)), adapter)
-
-  defp process_dumpers([], {:ok, _} = acc, _adapter),
-    do: acc
 
   ## Date
 
@@ -981,119 +736,6 @@ defmodule Normandy.Type do
     :error
   end
 
-  defp cast_any_datetime(%DateTime{} = datetime), do: cast_utc_datetime(datetime)
-  defp cast_any_datetime(other), do: cast_naive_datetime(other)
-
-  ## Naive datetime
-
-  defp cast_naive_datetime("-" <> rest) do
-    with {:ok, naive_datetime} <- cast_naive_datetime(rest) do
-      {:ok, %{naive_datetime | year: naive_datetime.year * -1}}
-    end
-  end
-
-  defp cast_naive_datetime(
-         <<year::4-bytes, ?-, month::2-bytes, ?-, day::2-bytes, sep, hour::2-bytes, ?:,
-           minute::2-bytes>>
-       )
-       when sep in [?\s, ?T] do
-    case NaiveDateTime.new(to_i(year), to_i(month), to_i(day), to_i(hour), to_i(minute), 0) do
-      {:ok, _} = ok -> ok
-      _ -> :error
-    end
-  end
-
-  defp cast_naive_datetime(binary) when is_binary(binary) do
-    case NaiveDateTime.from_iso8601(binary) do
-      {:ok, _} = ok -> ok
-      {:error, _} -> :error
-    end
-  end
-
-  defp cast_naive_datetime(%{
-         "year" => empty,
-         "month" => empty,
-         "day" => empty,
-         "hour" => empty,
-         "minute" => empty
-       })
-       when empty in ["", nil],
-       do: {:ok, nil}
-
-  defp cast_naive_datetime(%{year: empty, month: empty, day: empty, hour: empty, minute: empty})
-       when empty in ["", nil],
-       do: {:ok, nil}
-
-  defp cast_naive_datetime(%{} = map) do
-    with {:ok, %Date{} = date} <- cast_date(map),
-         {:ok, %Time{} = time} <- cast_time(map) do
-      NaiveDateTime.new(date, time)
-    else
-      _ -> :error
-    end
-  end
-
-  defp cast_naive_datetime(_) do
-    :error
-  end
-
-  ## UTC datetime
-
-  defp cast_utc_datetime("-" <> rest) do
-    with {:ok, utc_datetime} <- cast_utc_datetime(rest) do
-      {:ok, %{utc_datetime | year: utc_datetime.year * -1}}
-    end
-  end
-
-  defp cast_utc_datetime(
-         <<year::4-bytes, ?-, month::2-bytes, ?-, day::2-bytes, sep, hour::2-bytes, ?:,
-           minute::2-bytes>>
-       )
-       when sep in [?\s, ?T] do
-    case NaiveDateTime.new(to_i(year), to_i(month), to_i(day), to_i(hour), to_i(minute), 0) do
-      {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-      _ -> :error
-    end
-  end
-
-  defp cast_utc_datetime(binary) when is_binary(binary) do
-    case DateTime.from_iso8601(binary) do
-      {:ok, datetime, _offset} ->
-        {:ok, datetime}
-
-      {:error, :missing_offset} ->
-        case NaiveDateTime.from_iso8601(binary) do
-          {:ok, naive_datetime} -> {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-          {:error, _} -> :error
-        end
-
-      {:error, _} ->
-        :error
-    end
-  end
-
-  defp cast_utc_datetime(%DateTime{time_zone: "Etc/UTC"} = datetime), do: {:ok, datetime}
-
-  defp cast_utc_datetime(%DateTime{} = datetime) do
-    case datetime |> DateTime.to_unix(:microsecond) |> DateTime.from_unix(:microsecond) do
-      {:ok, _} = ok -> ok
-      {:error, _} -> :error
-    end
-  end
-
-  defp cast_utc_datetime(value) do
-    case cast_naive_datetime(value) do
-      {:ok, %NaiveDateTime{} = naive_datetime} ->
-        {:ok, DateTime.from_naive!(naive_datetime, "Etc/UTC")}
-
-      {:ok, _} = ok ->
-        ok
-
-      :error ->
-        :error
-    end
-  end
-
   @doc """
   Checks if two terms are equal.
 
@@ -1136,12 +778,7 @@ defmodule Normandy.Type do
     end
   end
 
-  defp equal_fun(t) when t in [:time, :time_usec], do: &equal_time?/2
-  defp equal_fun(t) when t in [:utc_datetime, :utc_datetime_usec], do: &equal_utc_datetime?/2
-
-  defp equal_fun(t) when t in [:naive_datetime, :naive_datetime_usec],
-    do: &equal_naive_datetime?/2
-
+  defp equal_fun(:time), do: &equal_time?/2
   defp equal_fun(t) when t in @base, do: nil
 
   defp equal_fun({:array, type}) do
@@ -1160,19 +797,13 @@ defmodule Normandy.Type do
     &mod.equal?(&1, &2, params)
   end
 
-  defp equal_fun(mod) when is_atom(mod), do: &mod.equal?/2
+  defp equal_fun(mod) when is_atom(mod) do
+    # A nested schema compares structurally (nil = use ==).
+    if schema_module?(mod), do: nil, else: &mod.equal?/2
+  end
 
   defp equal_time?(%Time{} = a, %Time{} = b), do: Time.compare(a, b) == :eq
   defp equal_time?(_, _), do: false
-
-  defp equal_utc_datetime?(%DateTime{} = a, %DateTime{} = b), do: DateTime.compare(a, b) == :eq
-  defp equal_utc_datetime?(_, _), do: false
-
-  defp equal_naive_datetime?(%NaiveDateTime{} = a, %NaiveDateTime{} = b),
-    do: NaiveDateTime.compare(a, b) == :eq
-
-  defp equal_naive_datetime?(_, _),
-    do: false
 
   defp equal_list?(fun, [nil | xs], [nil | ys]), do: equal_list?(fun, xs, ys)
   defp equal_list?(fun, [x | xs], [y | ys]), do: fun.(x, y) and equal_list?(fun, xs, ys)
@@ -1213,8 +844,8 @@ defmodule Normandy.Type do
   Format type for error messaging and logs.
   """
   def format({:parameterized, {type, params}}) do
-    if function_exported?(type, :format, 1) do
-      apply(type, :format, [params])
+    if Code.ensure_loaded?(type) and function_exported?(type, :format, 1) do
+      type.format(params)
     else
       "##{inspect(type)}<#{inspect(params)}>"
     end
@@ -1227,18 +858,6 @@ defmodule Normandy.Type do
   def format(type), do: inspect(type)
 
   ## Helpers
-
-  # Checks if a value is of the given primitive type.
-  defp of_base_type?(:any, _), do: true
-  defp of_base_type?(:id, term), do: is_integer(term)
-  defp of_base_type?(:float, term), do: is_float(term)
-  defp of_base_type?(:integer, term), do: is_integer(term)
-  defp of_base_type?(:boolean, term), do: is_boolean(term)
-  defp of_base_type?(:binary, term), do: is_binary(term)
-  defp of_base_type?(:string, term), do: is_binary(term)
-  defp of_base_type?(:map, term), do: is_map(term) and not Map.has_key?(term, :__struct__)
-  defp of_base_type?(:date, value), do: Kernel.match?(%Date{}, value)
-  defp of_base_type?(_, _), do: false
 
   defp array_with_index([nil | t], fun, true, index, acc) do
     array_with_index(t, fun, true, index + 1, [nil | acc])
@@ -1352,18 +971,9 @@ defmodule Normandy.Type do
   defp maybe_truncate_usec({:ok, struct}), do: {:ok, truncate_usec(struct)}
   defp maybe_truncate_usec(:error), do: :error
 
-  defp maybe_pad_usec({:ok, struct}), do: {:ok, pad_usec(struct)}
-  defp maybe_pad_usec(:error), do: :error
-
   defp truncate_usec(nil), do: nil
   defp truncate_usec(%{microsecond: {0, 0}} = struct), do: struct
   defp truncate_usec(struct), do: %{struct | microsecond: {0, 0}}
-
-  defp pad_usec(nil), do: nil
-  defp pad_usec(%{microsecond: {_, 6}} = struct), do: struct
-
-  defp pad_usec(%{microsecond: {microsecond, _}} = struct),
-    do: %{struct | microsecond: {microsecond, 6}}
 
   defp check_no_usec!(%{microsecond: {0, 0}} = datetime, _kind), do: datetime
 

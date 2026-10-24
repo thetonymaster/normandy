@@ -1,8 +1,13 @@
 defmodule Normandy.Behaviours.AgentTemplate do
   @moduledoc """
   Resolves the **node-local, non-serializable** half of an agent's config from a
-  stable `template_id`: the tool registry, before/after hooks, and a
+  stable `template_id`: the toolset, before/after hooks, and a
   `client_builder` that turns a credential token into an LLM client struct.
+  Optionally `:mcp_servers` (which may carry authorization tokens);
+  `ConfigTemplate.rebuild/3` requires it when the original config had it set.
+  Optionally `:pinned`: the security settings this node fixes for the template,
+  `[policy: ref, guardrails: list, credential: ref, ...]`. A stored template whose value
+  differs is refused (see `Normandy.Agents.ConfigTemplate`'s "Trust boundary").
 
   The host registers a supplement per `template_id` on **every node** at boot
   (same code → same supplement). Combined with the persisted non-secret template
@@ -12,12 +17,23 @@ defmodule Normandy.Behaviours.AgentTemplate do
   """
 
   @type supplement :: %{
-          tool_registry: term(),
-          before_hooks: [term()],
-          after_hooks: [term()],
-          client_builder: (String.t() -> struct())
+          required(:toolset) => Normandy.Tools.Toolset.t() | nil,
+          required(:before_hooks) => [term()],
+          required(:after_hooks) => [term()],
+          required(:client_builder) => (String.t() -> struct()),
+          optional(:mcp_servers) => [term()],
+          optional(:pinned) => keyword()
         }
 
+  @doc """
+  Returns `{:ok, supplement}`, the node-local half of the config registered under
+  `template_id`, or `:error` when there is none.
+
+  `Turn.Server` calls it when it rebuilds a session's config from its stored template.
+  `:error` is reported like a store fault: the server waits `:unavailable` and retries, and
+  `run/2` replies with a `:session_unavailable` `Normandy.TurnError` whose reason is
+  `{:no_template_supplement, template_id}`.
+  """
   @callback fetch(handle :: term(), template_id :: String.t()) :: {:ok, supplement()} | :error
 
   defmodule Catalog do
@@ -26,16 +42,41 @@ defmodule Normandy.Behaviours.AgentTemplate do
 
     use Agent
 
+    alias Normandy.Options
+
+    @start_link_opts_schema NimbleOptions.new!(
+                              name: [type: :any, doc: "A `t:GenServer.name/0` for the catalog."],
+                              templates: [
+                                type: {:custom, Normandy.Options, :plain_map, []},
+                                type_doc: "`t:map/0`",
+                                default: %{},
+                                doc: "The initial `template_id => supplement` map."
+                              ]
+                            )
+
+    @doc """
+    Starts the catalog.
+
+    ## Options
+
+    #{Options.docs(@start_link_opts_schema)}
+    """
     @spec start_link(keyword()) :: Agent.on_start()
     def start_link(opts) do
+      opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
       name = Keyword.get(opts, :name)
-      init = Keyword.get(opts, :templates, %{})
+      init = Keyword.fetch!(opts, :templates)
 
       if name,
         do: Agent.start_link(fn -> init end, name: name),
         else: Agent.start_link(fn -> init end)
     end
 
+    @doc """
+    Registers `supplement` under `template_id` and returns `:ok`.
+
+    It replaces a supplement already registered under that id.
+    """
     @spec put(Agent.agent(), String.t(), Normandy.Behaviours.AgentTemplate.supplement()) :: :ok
     def put(cat, template_id, supplement),
       do: Agent.update(cat, &Map.put(&1, template_id, supplement))

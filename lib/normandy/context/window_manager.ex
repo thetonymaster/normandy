@@ -8,107 +8,131 @@ defmodule Normandy.Context.WindowManager do
   ## Features
 
   - Token counting for messages and conversations
-  - Configurable context window limits per model
+  - Context window passed in by the caller (no built-in model table)
   - Multiple truncation strategies (oldest-first, sliding window, summarization)
   - Automatic context management with AgentMemory integration
 
   ## Example
 
-      # Create a window manager with 100k token limit
-      manager = WindowManager.new(max_tokens: 100_000)
+      # Create a window manager with the model's context window
+      manager = WindowManager.new(max_tokens: 200_000)
 
       # Check if we're within limits
       {:ok, within_limit?} = WindowManager.within_limit?(manager, agent)
 
       # Automatically truncate if needed
-      {:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
+      case WindowManager.ensure_within_limit(agent, manager) do
+        {:ok, updated_agent} -> updated_agent
+        {:error, reason} -> handle_summary_failure(agent, reason)
+      end
 
   ## Truncation Strategies
 
   - `:oldest_first` - Remove oldest messages first (default)
-  - `:sliding_window` - Keep most recent N messages
-  - `:summarize` - Summarize old messages before removing
+  - `:summarize` - Summarize old messages before removing; needs the agent's
+    `:client` (a `%BaseAgentConfig{}` always has one) and raises `ArgumentError`
+    without it
+
+  The kept messages always start at a user message, so the conversation stays
+  valid for the API (no leading assistant turn, no tool result without its
+  tool use). If the newest messages alone exceed the limit, their whole turn is
+  kept rather than an empty history.
   """
 
   alias Normandy.Components.AgentMemory
+  alias Normandy.Context.Summarizer
+  alias Normandy.Context.TokenEstimate
+  alias Normandy.Options
 
-  @type strategy :: :oldest_first | :sliding_window | :summarize
+  @type strategy :: :oldest_first | :summarize
   @type t :: %__MODULE__{
           max_tokens: pos_integer(),
-          reserved_tokens: pos_integer(),
+          reserved_tokens: non_neg_integer(),
           strategy: strategy(),
-          model_limits: map()
+          summary_max_tokens: pos_integer() | nil
         }
 
-  defstruct max_tokens: 100_000,
+  defstruct max_tokens: nil,
             reserved_tokens: 4096,
             strategy: :oldest_first,
-            model_limits: Normandy.Behaviours.ModelCatalog.Static.limits()
+            summary_max_tokens: nil
+
+  @new_opts_schema NimbleOptions.new!(
+                     max_tokens: [
+                       type: :pos_integer,
+                       doc:
+                         "**Required.** The model's context window in tokens. Inside an agent the " <>
+                           "compactor passes the window resolved through the configured " <>
+                           "`Normandy.Behaviours.ModelCatalog`; standalone, take it from " <>
+                           "`Claudio.Models.get/2` (`\"max_input_tokens\"`)."
+                     ],
+                     reserved_tokens: [
+                       type: :non_neg_integer,
+                       default: 4096,
+                       doc: "Tokens kept free for the response."
+                     ],
+                     strategy: [
+                       type: {:in, [:oldest_first, :summarize]},
+                       default: :oldest_first,
+                       doc: "The truncation strategy."
+                     ],
+                     summary_max_tokens: [
+                       type: {:or, [:pos_integer, nil]},
+                       default: nil,
+                       doc:
+                         "`max_tokens` of the `:summarize` strategy's summary call; `nil` is " <>
+                           "`Normandy.Context.Summarizer`'s default (the agent's `max_tokens`, " <>
+                           "else 16_000)."
+                     ]
+                   )
+
+  @doc false
+  # The compactor (Behaviours.Compactor.WindowManager) takes :strategy's type from here.
+  def __opts_schema__(:new), do: @new_opts_schema
 
   @doc """
-  Creates a new WindowManager with optional configuration.
+  Creates a new WindowManager.
 
   ## Options
 
-  - `:max_tokens` - Maximum tokens for context window (default: 100,000)
-  - `:reserved_tokens` - Tokens to reserve for response (default: 4096)
-  - `:strategy` - Truncation strategy (default: :oldest_first)
+  #{Options.docs(@new_opts_schema)}
 
   ## Example
 
-      manager = WindowManager.new(max_tokens: 50_000, strategy: :sliding_window)
+      manager = WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
   """
-  @spec new(keyword()) :: t()
+  @spec new(keyword() | map()) :: t()
   def new(opts \\ []) do
-    max_tokens = Keyword.get(opts, :max_tokens, 100_000)
-    reserved_tokens = Keyword.get(opts, :reserved_tokens, 4096)
-    strategy = Keyword.get(opts, :strategy, :oldest_first)
+    opts = Options.validate!(opts, @new_opts_schema, {__MODULE__, :new, 1})
+
+    unless Keyword.has_key?(opts, :max_tokens) do
+      raise ArgumentError,
+            "Normandy.Context.WindowManager.new/1: requires :max_tokens (the model's context " <>
+              "window in tokens); Normandy no longer ships a static model table. Use the " <>
+              "agent's resolved window or Claudio.Models.get/2 \"max_input_tokens\"."
+    end
 
     %__MODULE__{
-      max_tokens: max_tokens,
-      reserved_tokens: reserved_tokens,
-      strategy: strategy
+      max_tokens: Keyword.fetch!(opts, :max_tokens),
+      reserved_tokens: Keyword.fetch!(opts, :reserved_tokens),
+      strategy: Keyword.fetch!(opts, :strategy),
+      summary_max_tokens: Keyword.fetch!(opts, :summary_max_tokens)
     }
-  end
-
-  @doc """
-  Creates a WindowManager configured for a specific model.
-
-  Uses the model's known context window limit.
-
-  ## Example
-
-      manager = WindowManager.for_model("claude-3-5-sonnet-20241022")
-  """
-  @spec for_model(String.t(), keyword()) :: t()
-  def for_model(model, opts \\ []) do
-    manager = new(opts)
-
-    model_limit =
-      Normandy.Behaviours.ModelCatalog.Static.context_window(model) || manager.max_tokens
-
-    %{manager | max_tokens: model_limit}
   end
 
   @doc """
   Estimates token count for a message.
 
   This is a rough estimate based on character count.
-  For accurate counts, use count_tokens_api/2.
+  For accurate counts, use `Normandy.Context.TokenCounter.count_message/3`.
 
   ## Example
 
       tokens = WindowManager.estimate_tokens("Hello, world!")
       #=> ~4 tokens
   """
-  @spec estimate_tokens(String.t()) :: pos_integer()
-  def estimate_tokens(text) when is_binary(text) do
-    # Rough estimate: ~4 characters per token
-    # More accurate for English text
-    max(1, div(String.length(text), 4))
-  end
-
-  def estimate_tokens(_), do: 0
+  @spec estimate_tokens(String.t()) :: non_neg_integer()
+  defdelegate estimate_tokens(text), to: TokenEstimate
 
   @doc """
   Estimates total tokens in conversation history.
@@ -117,15 +141,13 @@ defmodule Normandy.Context.WindowManager do
 
       tokens = WindowManager.estimate_conversation_tokens(agent.memory)
   """
-  @spec estimate_conversation_tokens(map()) :: pos_integer()
+  @spec estimate_conversation_tokens(AgentMemory.t()) :: non_neg_integer()
   def estimate_conversation_tokens(memory) do
-    history = AgentMemory.history(memory)
-
-    Enum.reduce(history, 0, fn msg, acc ->
-      content_tokens = estimate_message_content_tokens(msg.content)
-      # Add overhead for role and structure (~10 tokens per message)
-      acc + content_tokens + 10
-    end)
+    # Each message's estimate (its content plus ~10 tokens for role and structure) is
+    # computed when the message is stored (AgentMemory.Entry's `tokens`).
+    memory
+    |> AgentMemory.entry_chain()
+    |> Enum.reduce(0, fn entry, acc -> acc + AgentMemory.entry_tokens(entry) end)
   end
 
   @doc """
@@ -136,69 +158,8 @@ defmodule Normandy.Context.WindowManager do
       tokens = WindowManager.estimate_message_content_tokens("Hello")
       #=> ~2
   """
-  @spec estimate_message_content_tokens(term()) :: pos_integer()
-  def estimate_message_content_tokens(content) when is_binary(content) do
-    estimate_tokens(content)
-  end
-
-  # Token estimates for opaque multimodal blocks. Anthropic documents
-  # ~1568 tokens for a 1.15-megapixel image (https://docs.anthropic.com/);
-  # round up to 1600 so we overcount rather than silently overflow. The
-  # document estimate is a conservative guess — document blocks include
-  # the full file content at Claude-side, so real costs vary wildly.
-  @image_token_estimate 1600
-  @document_token_estimate 3000
-
-  # Single ContentBlock structs — delegate to the same heuristic used for
-  # list content. Must come before the generic `is_map` clause, since
-  # structs are maps in Elixir and would otherwise hit the JSON-size
-  # fallback and undercount.
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Text{text: text})
-      when is_binary(text),
-      do: estimate_tokens(text)
-
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Image{}),
-    do: @image_token_estimate
-
-  def estimate_message_content_tokens(%Normandy.Components.ContentBlock.Document{}),
-    do: @document_token_estimate
-
-  def estimate_message_content_tokens(content) when is_list(content) do
-    Enum.reduce(content, 0, fn block, acc -> acc + estimate_block_tokens(block) end)
-  end
-
-  def estimate_message_content_tokens(content) when is_map(content) do
-    # For structured content, estimate based on JSON representation
-    content
-    |> Poison.encode!()
-    |> estimate_tokens()
-  end
-
-  def estimate_message_content_tokens(_), do: 0
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Text{text: text})
-       when is_binary(text),
-       do: estimate_tokens(text)
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Image{}),
-    do: @image_token_estimate
-
-  defp estimate_block_tokens(%Normandy.Components.ContentBlock.Document{}),
-    do: @document_token_estimate
-
-  defp estimate_block_tokens(%{"type" => "text", "text" => text}) when is_binary(text),
-    do: estimate_tokens(text)
-
-  defp estimate_block_tokens(%{"type" => "image"}), do: @image_token_estimate
-  defp estimate_block_tokens(%{"type" => "document"}), do: @document_token_estimate
-
-  # Unknown / caller-provided shape — estimate from JSON size so we
-  # never silently count zero.
-  defp estimate_block_tokens(block) when is_map(block) do
-    block |> Poison.encode!() |> estimate_tokens()
-  end
-
-  defp estimate_block_tokens(_), do: 0
+  @spec estimate_message_content_tokens(term()) :: non_neg_integer()
+  defdelegate estimate_message_content_tokens(content), to: TokenEstimate
 
   @doc """
   Checks if current conversation is within token limit.
@@ -222,12 +183,14 @@ defmodule Normandy.Context.WindowManager do
   Ensures agent's conversation stays within context window limit.
 
   Automatically truncates history if needed using the configured strategy.
+  Returns `{:error, reason}` when the `:summarize` strategy's summarization
+  fails, leaving the agent unchanged.
 
   ## Example
 
       {:ok, updated_agent} = WindowManager.ensure_within_limit(agent, manager)
   """
-  @spec ensure_within_limit(struct(), t()) :: {:ok, struct()}
+  @spec ensure_within_limit(struct(), t()) :: {:ok, struct()} | {:error, term()}
   def ensure_within_limit(agent, %__MODULE__{} = manager) do
     case within_limit?(manager, agent) do
       {:ok, true} ->
@@ -241,18 +204,21 @@ defmodule Normandy.Context.WindowManager do
   @doc """
   Truncates conversation history using the configured strategy.
 
+  Returns `{:error, reason}` when the `:summarize` strategy's summarization
+  fails, leaving the agent unchanged.
+
   ## Example
 
-      {:ok, updated_agent} = WindowManager.truncate_conversation(agent, manager)
+      case WindowManager.truncate_conversation(agent, manager) do
+        {:ok, updated_agent} -> updated_agent
+        {:error, reason} -> handle_summary_failure(agent, reason)
+      end
   """
-  @spec truncate_conversation(struct(), t()) :: {:ok, struct()}
+  @spec truncate_conversation(struct(), t()) :: {:ok, struct()} | {:error, term()}
   def truncate_conversation(agent, %__MODULE__{strategy: strategy} = manager) do
     case strategy do
       :oldest_first ->
         truncate_oldest_first(agent, manager)
-
-      :sliding_window ->
-        truncate_sliding_window(agent, manager)
 
       :summarize ->
         truncate_with_summary(agent, manager)
@@ -268,22 +234,34 @@ defmodule Normandy.Context.WindowManager do
     if current_tokens <= target_tokens do
       {:ok, agent}
     else
-      # Remove oldest messages until under limit
-      history = AgentMemory.history(agent.memory)
-      {keep_messages, _removed} = split_to_fit(history, target_tokens)
+      # Remove oldest messages until under limit, reading each message's cached
+      # estimate (AgentMemory.Entry's `tokens`).
+      entries = AgentMemory.entry_chain(agent.memory)
 
-      # Rebuild memory with kept messages
-      new_memory = rebuild_memory(keep_messages, agent.memory)
+      # Start the kept window at a user message (see AgentMemory.keep_count/2);
+      # a newest message larger than the target keeps its turn rather than
+      # emptying the memory.
+      keep =
+        entries
+        |> Enum.reverse()
+        |> Enum.map(& &1.role)
+        |> AgentMemory.keep_count(max(newest_fitting(entries, target_tokens), 1))
+
+      # Each kept message stays under its entry id (a compactor reports what it dropped
+      # by entry id) and turn, with its stored content.
+      new_memory = AgentMemory.keep_entries(agent.memory, Enum.take(entries, -keep))
       {:ok, %{agent | memory: new_memory}}
     end
   end
 
-  defp truncate_sliding_window(agent, manager) do
-    # Keep most recent messages that fit within limit
-    truncate_oldest_first(agent, manager)
-  end
-
   defp truncate_with_summary(agent, manager) do
+    # Checked before the budget, so a client-less agent fails whatever its size.
+    client =
+      Map.get(agent, :client) ||
+        raise ArgumentError,
+              "Normandy.Context.WindowManager.truncate_conversation/2: the :summarize " <>
+                "strategy needs the agent's :client, got #{inspect(Map.get(agent, :client))}"
+
     # Calculate how many recent messages to keep
     target_tokens = manager.max_tokens - manager.reserved_tokens
     current_tokens = estimate_conversation_tokens(agent.memory)
@@ -295,75 +273,35 @@ defmodule Normandy.Context.WindowManager do
       # and summarize the rest
       keep_messages = estimate_messages_for_tokens(agent.memory, div(target_tokens, 2))
 
-      # Get client from agent
-      client = Map.get(agent, :client)
-
-      if client do
-        # Use summarizer to compress conversation
-        Normandy.Context.Summarizer.compress_conversation(
-          client,
-          agent,
-          keep_recent: keep_messages
-        )
-      else
-        # Fall back to oldest-first if no client available
-        truncate_oldest_first(agent, manager)
-      end
+      # A nil budget is the Summarizer's default.
+      Summarizer.compress_conversation(
+        client,
+        agent,
+        [keep_recent: keep_messages] ++ summary_budget(manager)
+      )
     end
   end
 
-  defp estimate_messages_for_tokens(memory, target_tokens) do
-    history = AgentMemory.history(memory)
+  defp summary_budget(%__MODULE__{summary_max_tokens: nil}), do: []
+  defp summary_budget(%__MODULE__{summary_max_tokens: n}), do: [max_tokens: n]
 
-    # Count from newest to oldest
-    history
+  # Keep at least 5 messages.
+  defp estimate_messages_for_tokens(memory, target_tokens),
+    do: memory |> AgentMemory.entry_chain() |> newest_fitting(target_tokens) |> max(5)
+
+  # How many of the newest entries fit in `target_tokens` together (cached estimates).
+  defp newest_fitting(entries, target_tokens) do
+    entries
     |> Enum.reverse()
-    |> Enum.reduce_while({0, 0}, fn msg, {count, tokens} ->
-      msg_tokens = estimate_message_content_tokens(msg.content) + 10
+    |> Enum.reduce_while({0, 0}, fn entry, {count, tokens} ->
+      entry_tokens = AgentMemory.entry_tokens(entry)
 
-      if tokens + msg_tokens <= target_tokens do
-        {:cont, {count + 1, tokens + msg_tokens}}
+      if tokens + entry_tokens <= target_tokens do
+        {:cont, {count + 1, tokens + entry_tokens}}
       else
         {:halt, {count, tokens}}
       end
     end)
     |> elem(0)
-    # Keep at least 5 messages
-    |> max(5)
-  end
-
-  defp split_to_fit(messages, target_tokens) do
-    # Reverse to process from newest to oldest
-    messages
-    |> Enum.reverse()
-    |> Enum.reduce_while({[], 0}, fn msg, {keep, tokens} ->
-      msg_tokens = estimate_message_content_tokens(msg.content) + 10
-
-      if tokens + msg_tokens <= target_tokens do
-        {:cont, {[msg | keep], tokens + msg_tokens}}
-      else
-        {:halt, {keep, tokens}}
-      end
-    end)
-    |> then(fn {keep, _tokens} ->
-      removed_count = length(messages) - length(keep)
-      {keep, removed_count}
-    end)
-  end
-
-  defp rebuild_memory(messages, original_memory) do
-    max_messages = Map.get(original_memory, :max_messages)
-    turn_id = Map.get(original_memory, :current_turn_id)
-
-    # Start from a fresh entry-graph memory, preserving the active turn id so the
-    # rebuilt entries stay grouped exactly as before.
-    memory = %{AgentMemory.new_memory(max_messages) | current_turn_id: turn_id}
-
-    # Add messages in chronological order
-    # (add_message appends to the active branch; iterating chronologically gives the correct chain order)
-    messages
-    |> Enum.reduce(memory, fn msg, mem ->
-      AgentMemory.add_message(mem, msg.role, msg.content)
-    end)
   end
 end

@@ -1,11 +1,14 @@
 defmodule Normandy.Behaviours.SessionStore.PostgresContractTest do
   @moduledoc "Run with `mix test --include postgres`. Requires Postgres."
+  # async: false — the Postgres sandbox runs in shared mode (one connection for every process).
   use ExUnit.Case, async: false
   @moduletag :postgres
 
+  alias Ecto.Adapters.SQL.Sandbox
+
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, {:shared, self()})
+    :ok = Sandbox.checkout(Normandy.TestRepo)
+    Sandbox.mode(Normandy.TestRepo, {:shared, self()})
 
     # Start each contract test from an empty sessions table. list_resumable/1 is a
     # GLOBAL query, so rows committed by non-sandboxed suites (e.g. the distributed
@@ -15,5 +18,17 @@ defmodule Normandy.Behaviours.SessionStore.PostgresContractTest do
     :ok
   end
 
-  use Normandy.SessionStoreContract, impl: Normandy.Behaviours.SessionStore.Postgres
+  use Normandy.Test.SessionStoreContract,
+    impl: Normandy.Behaviours.SessionStore.Postgres,
+    new: {Normandy.TestHandles, :postgres_repo, []},
+    stored_entry_ids: {__MODULE__, :stored_entry_ids, []}
+
+  use Normandy.Test.TerminalSaveCases,
+    store: Normandy.Behaviours.SessionStore.Postgres,
+    new: {Normandy.TestHandles, :postgres_repo, []}
+
+  def stored_entry_ids(repo) do
+    %{rows: rows} = repo.query!("SELECT id FROM normandy_session_entries")
+    Enum.map(rows, fn [id] -> Ecto.UUID.load!(id) end)
+  end
 end

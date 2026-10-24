@@ -28,31 +28,31 @@ defmodule Normandy.DSL.AgentStreamingGuardrailsTest do
 
   describe "streaming_mode / streaming_chunk_size macros" do
     test "wire incremental mode and chunk size into the agent config" do
-      {:ok, agent} = IncrementalAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = IncrementalAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
-      assert agent.output_guardrails_streaming_mode == :incremental
-      assert agent.output_guardrails_chunk_size == 128
+      assert agent.guardrails[:streaming_mode] == :incremental
+      assert agent.guardrails[:chunk_size] == 128
     end
 
     test "defaults apply when macros are omitted" do
-      {:ok, agent} = DefaultStreamingAgent.new(client: %NormandyTest.Support.ModelMockup{})
+      agent = DefaultStreamingAgent.new(client: %NormandyTest.Support.ModelMockup{})
 
-      assert agent.output_guardrails_streaming_mode == :accumulate
-      assert agent.output_guardrails_chunk_size == 200
+      assert agent.guardrails[:streaming_mode] == :accumulate
+      assert agent.guardrails[:chunk_size] == 200
     end
 
     test "config/0 exposes streaming guardrail settings" do
       config = IncrementalAgent.config()
 
-      assert config.output_guardrails_streaming_mode == :incremental
-      assert config.output_guardrails_chunk_size == 128
+      assert config.guardrails[:streaming_mode] == :incremental
+      assert config.guardrails[:chunk_size] == 128
     end
 
     test "config/0 defaults are exposed when macros omitted" do
       config = DefaultStreamingAgent.config()
 
-      assert config.output_guardrails_streaming_mode == :accumulate
-      assert config.output_guardrails_chunk_size == 200
+      assert config.guardrails[:streaming_mode] == :accumulate
+      assert config.guardrails[:chunk_size] == 200
     end
   end
 end

@@ -1,33 +1,33 @@
 defmodule Normandy.Coordination.AgentProcessServerTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+  @moduletag :capture_log
 
   import ExUnit.CaptureLog
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Coordination.AgentProcess.ScopedRegistry
+  alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
+  alias Normandy.TurnError
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
   defmodule Resp do
     defstruct content: "", tool_calls: nil
   end
 
-  # A configurable fake billing tool used by the approval test (Task 4).
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:name, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Coordination.AgentProcessServerTest.FakeTool do
-    def tool_name(t), do: t.name
-    def tool_description(_), do: "fake billing tool"
-    def input_schema(_), do: %{}
-    def run(_t), do: {:ok, "charged"}
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
   end
 
   # A plain BaseAgentConfig template (client is nil; the fake LLM is injected via handlers).
@@ -37,10 +37,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
-      tool_registry: nil
+      initial_memory: AgentMemory.new_memory(),
+      toolset: nil
     }
 
     Map.merge(base, extra)
@@ -48,7 +48,10 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
   # handlers whose call_llm always returns a no-tools final response.
   defp final_handlers(text \\ "ok") do
-    %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
+    %{
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: text} end
+    }
   end
 
   # Supplied infra: a fresh store, registry, and supervisor for one test.
@@ -91,12 +94,12 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       end
     end
 
-    %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
   end
 
   defp approval_config do
     server_config(%{
-      tool_registry: Normandy.Tools.Registry.new([%FakeTool{name: "billing"}]),
+      toolset: Toolset.new([%FakeTool{name: "billing"}]),
       behaviours: %Normandy.Behaviours.Config{
         policy:
           {Normandy.Behaviours.PolicyEngine.Ruleset,
@@ -115,13 +118,23 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           handlers: final_handlers()
         )
 
-      %{store: {_sm, store_h}, registry: {_rm, reg_name}, supervisor: sup, owned: owned} =
-        :sys.get_state(pid)
+      %{
+        engine_state: %{
+          session: %Normandy.Agents.Turn.Session{
+            store: {_sm, store_h},
+            registry: {ScopedRegistry, {reg_name, scope}},
+            supervisor: sup
+          }
+        },
+        owned: owned
+      } = :sys.get_state(pid)
 
       assert is_pid(store_h)
-      assert is_atom(reg_name)
+      # A scope in Normandy's shared registry: nothing to start or own.
+      assert reg_name == ScopedRegistry.registry_name()
+      assert is_reference(scope)
       assert is_pid(sup)
-      assert owned != []
+      assert Enum.sort(owned) == Enum.sort([store_h, sup])
       assert Enum.all?(owned, &Process.alive?/1)
 
       :ok = AgentProcess.stop(pid)
@@ -170,7 +183,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       parent = self()
 
       slow_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r ->
             send(parent, :llm_started)
             Process.sleep(500)
@@ -221,7 +234,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       infra = supplied_infra()
 
       crash_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _c, _s, _r -> raise "boom" end
       }
 
@@ -257,7 +270,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert {:error, :inline_mode} = AgentProcess.approve(pid, %{"pk1" => :approve})
     end
 
-    test "unknown session returns {:error, :no_session}" do
+    test "unknown session returns a :session_unavailable TurnError" do
       infra = supplied_infra()
 
       {:ok, pid} =
@@ -265,7 +278,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           [agent: server_config(), turn_engine: :server, handlers: final_handlers()] ++ infra
         )
 
-      assert {:error, :no_session} = AgentProcess.approve(pid, %{"pk1" => :approve})
+      assert {:error, %Normandy.TurnError{type: :session_unavailable, reason: :no_session}} =
+               AgentProcess.approve(pid, %{"pk1" => :approve})
     end
 
     test "park → stays responsive → approve → resume → original caller gets final result" do
@@ -301,6 +315,27 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     end
   end
 
+  describe ":server approval expiry" do
+    test "forwards :on_approval_timeout; :fail surfaces an :approval_timeout TurnError" do
+      infra = supplied_infra()
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: approval_config(),
+            turn_engine: :server,
+            agent_id: "approval-expiry",
+            handlers: approval_handlers(),
+            approval_timeout_ms: 50,
+            on_approval_timeout: :fail
+          ] ++ infra
+        )
+
+      assert {:error, %TurnError{type: :approval_timeout, reason: ["pk1"]}} =
+               AgentProcess.run(pid, "please charge")
+    end
+  end
+
   describe ":server get_agent/1" do
     test "reconstructs config.memory from the SessionStore after a turn" do
       infra = supplied_infra()
@@ -314,7 +349,7 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert {:ok, _} = AgentProcess.run(pid, "first message")
 
       agent = AgentProcess.get_agent(pid)
-      contents = Enum.map(Normandy.Components.AgentMemory.entry_chain(agent.memory), & &1.content)
+      contents = Enum.map(AgentMemory.entry_chain(agent.memory), & &1.content)
 
       # The user message persisted to the store is reflected back through get_agent.
       # :server mode wraps input via prepare_input/1, so the persisted content is the map form.
@@ -351,14 +386,14 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
   end
 
   describe ":server worker-crash contract" do
-    test ":server run/3 returns {:error, {:task_down, _}} when the turn worker crashes" do
+    test ":server run/3 returns a :task_down TurnError when the turn worker crashes" do
       infra = supplied_infra()
 
       crash_handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | # exit/1 (not raise) so the abnormal worker exit doesn't spew an
           # exception crash-report into CI output; still yields a non-normal
-          # :DOWN reason and thus {:task_down, _}.
+          # :DOWN reason and thus a :task_down TurnError.
           call_llm: fn _c, _s, _r -> exit(:boom) end
       }
 
@@ -367,9 +402,57 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           [agent: server_config(), turn_engine: :server, handlers: crash_handlers] ++ infra
         )
 
-      assert {:error, {:task_down, _reason}} = AgentProcess.run(pid, "go")
+      assert {:error, %TurnError{type: :task_down, reason: :boom}} = AgentProcess.run(pid, "go")
       # GenServer survived the worker crash:
       assert %{agent_id: _} = AgentProcess.get_stats(pid)
+    end
+
+    defmodule ThrowingRegistry do
+      def whereis(_handle, _sid), do: throw(:registry_gone)
+    end
+
+    test "a run worker that dies replies a :task_down TurnError without its stacktrace" do
+      infra = Keyword.put(supplied_infra(), :registry, {ThrowingRegistry, nil})
+
+      {:ok, pid} =
+        AgentProcess.start_link([agent: server_config(), turn_engine: :server] ++ infra)
+
+      # The worker's exit reason is {{:nocatch, :registry_gone}, stacktrace}.
+      assert {:error, %TurnError{type: :task_down, reason: {:nocatch, :registry_gone}}} =
+               AgentProcess.run(pid, "go")
+
+      assert %{agent_id: _} = AgentProcess.get_stats(pid)
+    end
+
+    defmodule RaisingRegistry do
+      def whereis(_handle, _sid), do: raise("registry bug")
+    end
+
+    defmodule LLMErrorRegistry do
+      def whereis(_handle, _sid),
+        do: raise(Normandy.LLMError.new(type: :overloaded, retryable?: true))
+    end
+
+    for {name, registry, expected} <- [
+          {"a raised bug", RaisingRegistry,
+           quote(do: %TurnError{type: :task_down, reason: %RuntimeError{message: "registry bug"}})},
+          {"a raised domain exception", LLMErrorRegistry,
+           quote(do: %Normandy.LLMError{type: :overloaded})},
+          {"a throw", ThrowingRegistry,
+           quote(do: %TurnError{type: :task_down, reason: {:nocatch, :registry_gone}})}
+        ] do
+      test "run/3 and cast/3 reply the same exception for #{name}" do
+        infra = Keyword.put(supplied_infra(), :registry, {unquote(registry), nil})
+
+        {:ok, pid} =
+          AgentProcess.start_link([agent: server_config(), turn_engine: :server] ++ infra)
+
+        assert {:error, unquote(expected) = sync} = AgentProcess.run(pid, "go")
+
+        :ok = AgentProcess.cast(pid, "go", reply_to: self())
+        assert_receive {:agent_result, _id, {:error, async}}, 2_000
+        assert async == sync
+      end
     end
   end
 
@@ -383,8 +466,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
         )
 
       tampered =
-        Normandy.Components.AgentMemory.add_message(
-          Normandy.Components.AgentMemory.new_memory(),
+        AgentMemory.add_message(
+          AgentMemory.new_memory(),
           "user",
           "injected"
         )
@@ -394,11 +477,95 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
           %{a | temperature: 0.42, memory: tampered}
         end)
 
-      %{agent: agent} = :sys.get_state(pid)
+      %{
+        agent: agent,
+        engine_state: %{session: %Normandy.Agents.Turn.Session{config: session_config}}
+      } = :sys.get_state(pid)
+
+      # The held session starts the next server with the updated config.
+      assert session_config == agent
       # Non-memory change applied:
       assert agent.temperature == 0.42
       # Memory mutation discarded (still the empty template, not the injected one):
-      assert Normandy.Components.AgentMemory.entry_chain(agent.memory) == []
+      assert AgentMemory.entry_chain(agent.memory) == []
+    end
+
+    # A template-backed session refuses a config without a credential provider
+    # (Turn.Session.put_config/2 raises); the AgentProcess raises it in the caller and
+    # keeps running with its config.
+    test "a config without a credential provider is refused; the process lives" do
+      creds = %Config{credential: {Normandy.Test.StubCreds, []}}
+      {:ok, catalog} = Catalog.start_link([])
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(%{behaviours: creds}),
+            turn_engine: :server,
+            template_provider: {Catalog, catalog}
+          ] ++ supplied_infra()
+        )
+
+      assert_raise ArgumentError, ~r/:credential/, fn ->
+        AgentProcess.update_agent(pid, fn a -> %{a | behaviours: nil} end)
+      end
+
+      assert Process.alive?(pid)
+      assert %{agent: %{behaviours: ^creds}} = :sys.get_state(pid)
+    end
+
+    # The same refusal at start: start_link/1 raises it in the caller before any process
+    # starts, never as an EXIT from init/1.
+    test "start_link/1 refuses a template-backed config without a credential provider" do
+      {:ok, catalog} = Catalog.start_link([])
+
+      assert_raise ArgumentError, ~r/start_link\/1.*:credential/s, fn ->
+        AgentProcess.start_link(
+          [
+            agent: server_config(%{behaviours: nil}),
+            turn_engine: :server,
+            template_provider: {Catalog, catalog}
+          ] ++ supplied_infra()
+        )
+      end
+    end
+  end
+
+  # Final review M-d: a stored history from_entries/1 refuses (here a snapshot version a
+  # newer node wrote during a rolling deploy) must not crash the AgentProcess.
+  describe ":server get_agent/1 on a history it cannot rebuild" do
+    test "logs, returns the template and keeps the process" do
+      infra = supplied_infra()
+      {InMemory, store} = Keyword.fetch!(infra, :store)
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(),
+            agent_id: "v2",
+            turn_engine: :server,
+            handlers: final_handlers()
+          ] ++
+            infra
+        )
+
+      entry = %AgentMemory.Entry{
+        id: "c1",
+        turn_id: "t1",
+        role: "compaction",
+        content: %{version: 2, entries: []}
+      }
+
+      {:ok, _} = InMemory.append_entry(store, "v2", entry)
+
+      log = capture_log(fn -> assert %{memory: %AgentMemory{}} = AgentProcess.get_agent(pid) end)
+
+      assert log =~
+               "AgentProcess v2: get_agent could not rebuild the stored history: " <>
+                 ~s|AgentMemory.from_entries/1: compaction entry "c1" has snapshot version 2|
+
+      assert Process.alive?(pid)
+      assert %{agent_id: "v2"} = AgentProcess.get_stats(pid)
     end
   end
 end

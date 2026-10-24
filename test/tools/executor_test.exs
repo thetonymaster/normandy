@@ -1,225 +1,277 @@
 defmodule NormandyTest.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Tools.{Executor, Registry}
-  alias Normandy.Tools.Examples.{Calculator, StringManipulator, ListProcessor}
+  alias Normandy.Test.TelemetryCapture
+  alias Normandy.Tools.{Context, Executor}
+  alias Normandy.Tools.Examples.{Calculator, ListProcessor, StringManipulator}
 
-  describe "Executor.execute/3" do
-    test "executes tool successfully" do
-      tool = %Calculator{operation: "add", a: 5, b: 3}
-      registry = Registry.new([tool])
+  defp ctx(input), do: %Context{tool_call_id: "t1", input: input}
 
-      assert {:ok, 8.0} = Executor.execute(registry, "calculator")
+  describe "execute_tool/2" do
+    test "runs the tool with the context's input" do
+      input = %Calculator.Input{operation: "multiply", a: 6, b: 7}
+
+      assert {:ok, 42.0} = Executor.execute_tool(%Calculator{}, context: ctx(input))
     end
 
-    test "returns error for nonexistent tool" do
-      registry = Registry.new()
+    test "a tool with a hand-written schema gets a string-keyed map" do
+      assert {:ok, "olleh"} =
+               Executor.execute_tool(%StringManipulator{},
+                 context: ctx(%{"operation" => "reverse", "text" => "hello"})
+               )
 
-      assert {:error, "Tool 'nonexistent' not found in registry"} =
-               Executor.execute(registry, "nonexistent")
+      assert {:ok, 15} =
+               Executor.execute_tool(%ListProcessor{},
+                 context: ctx(%{"operation" => "sum", "numbers" => [1, 2, 3, 4, 5]})
+               )
     end
 
-    test "handles tool execution errors" do
-      tool = %Calculator{operation: "divide", a: 10, b: 0}
-      registry = Registry.new([tool])
+    test "the tool's own error comes back as is" do
+      input = %Calculator.Input{operation: "divide", a: 10, b: 0}
 
-      assert {:error, "Cannot divide by zero"} = Executor.execute(registry, "calculator")
-    end
-  end
-
-  describe "Executor.execute_tool/2" do
-    test "executes tool instance directly" do
-      tool = %Calculator{operation: "multiply", a: 6, b: 7}
-
-      assert {:ok, 42.0} = Executor.execute_tool(tool)
-    end
-
-    test "executes string manipulator tool" do
-      tool = %StringManipulator{operation: "reverse", text: "hello"}
-
-      assert {:ok, "olleh"} = Executor.execute_tool(tool)
-    end
-
-    test "executes list processor tool" do
-      tool = %ListProcessor{operation: "sum", numbers: [1, 2, 3, 4, 5]}
-
-      assert {:ok, 15} = Executor.execute_tool(tool)
+      assert {:error, "Cannot divide by zero"} =
+               Executor.execute_tool(%Calculator{}, context: ctx(input))
     end
   end
 
-  describe "Executor with timeout" do
+  describe "timeout" do
     defmodule SlowTool do
-      defstruct [:delay]
+      @moduledoc false
+      use Normandy.Tool, name: "slow_tool", description: "sleeps for its input's delay"
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "slow_tool"
-        def tool_description(_), do: "A slow tool for testing timeouts"
-        def input_schema(_), do: %{type: "object", properties: %{delay: %{type: "integer"}}}
+      # A struct field named :timeout is configuration like any other; the executor
+      # never reads it.
+      defstruct timeout: 10_000
 
-        def run(%{delay: delay}) do
-          Process.sleep(delay)
-          {:ok, "completed"}
-        end
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object", properties: %{delay: %{type: "integer"}}}
+
+      @impl Normandy.Tool
+      def run(_tool, %Context{input: %{"delay" => delay}}) do
+        Process.sleep(delay)
+        {:ok, "completed"}
       end
     end
 
-    test "respects timeout setting" do
-      tool = %SlowTool{delay: 100}
-
-      # Should complete within timeout
-      assert {:ok, "completed"} = Executor.execute_tool(tool, timeout: 200)
+    test "a run within :timeout completes" do
+      assert {:ok, "completed"} =
+               Executor.execute_tool(%SlowTool{}, context: ctx(%{"delay" => 10}), timeout: 1_000)
     end
 
-    test "times out slow tools" do
-      tool = %SlowTool{delay: 200}
+    test "a run past :timeout fails; the struct's :timeout field is not read" do
+      assert {:error, "Tool execution timeout after 20ms"} =
+               Executor.execute_tool(%SlowTool{timeout: 10_000},
+                 context: ctx(%{"delay" => 1_000}),
+                 timeout: 20
+               )
+    end
 
-      # Should timeout
-      assert {:error, error} = Executor.execute_tool(tool, timeout: 50)
-      assert error =~ "timeout"
+    test "without :timeout the default applies, not the struct's :timeout field" do
+      assert {:ok, "completed"} =
+               Executor.execute_tool(%SlowTool{timeout: 10}, context: ctx(%{"delay" => 50}))
+    end
+
+    # A tool whose run opens a span and never returns: the span stays open.
+    defmodule SpanThenHangTool do
+      @moduledoc false
+      use Normandy.Tool, name: "span_then_hang", description: "opens a span, then waits"
+
+      alias Normandy.Telemetry.Span
+
+      defstruct marker: nil
+
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object", properties: %{}}
+
+      @impl Normandy.Tool
+      def run(%__MODULE__{marker: marker}, %Context{}) do
+        Span.span([:normandy, :memory, :command], %{command: marker}, fn ->
+          receive do
+            :never_sent -> {{:ok, "done"}, %{}}
+          end
+        end)
+      end
+    end
+
+    # TEL-9, a documented limit ("Known limits" in Normandy.Telemetry): the timed-out
+    # tool's process is shut down, so a span open inside it emits no :stop or :exception.
+    test "a span open inside a tool past its :timeout never ends" do
+      marker = "tel9-#{System.unique_integer([:positive])}"
+
+      TelemetryCapture.attach_span(
+        [
+          [:normandy, :memory, :command, :start],
+          [:normandy, :memory, :command, :stop],
+          [:normandy, :memory, :command, :exception]
+        ],
+        command: marker
+      )
+
+      assert {:error, "Tool execution timeout after 50ms"} =
+               Executor.execute_tool(%SpanThenHangTool{marker: marker},
+                 context: ctx(%{}),
+                 timeout: 50
+               )
+
+      assert_received {:span, [:normandy, :memory, :command, :start], _}
+      # Task.shutdown/1 returned only after the tool's process died, and that process's
+      # messages to this one arrive in order before its death is seen, so any end event
+      # would already be here.
+      refute_received {:span, [:normandy, :memory, :command, :stop], _}
+      refute_received {:span, [:normandy, :memory, :command, :exception], _}
+    end
+
+    test "the default is 30 seconds" do
+      assert Executor.default_timeout() == 30_000
     end
   end
 
-  describe "Executor.execute_parallel/3" do
-    test "executes multiple tools in parallel" do
-      calc1 = %Calculator{operation: "add", a: 1, b: 2}
-      calc2 = %Calculator{operation: "multiply", a: 3, b: 4}
-
-      registry = Registry.new([calc1, calc2])
-
-      results =
-        Executor.execute_parallel(registry, [
-          {"calculator", calc1},
-          {"calculator", calc2}
-        ])
-
-      assert length(results) == 2
-      # Both should succeed (though they're the same tool name, different instances)
-      assert Enum.all?(results, fn
-               {:ok, _} -> true
-               _ -> false
-             end)
-    end
-  end
-
-  describe "Executor.execute_sequential/3" do
-    test "executes tools sequentially and returns all results" do
-      calc = %Calculator{operation: "add", a: 1, b: 2}
-      string = %StringManipulator{operation: "uppercase", text: "hello"}
-
-      registry = Registry.new([calc, string])
-
-      assert {:ok, results} =
-               Executor.execute_sequential(registry, ["calculator", "string_manipulator"])
-
-      assert length(results) == 2
-      assert 3.0 in results
-      assert "HELLO" in results
-    end
-
-    test "stops on first error (fail-fast)" do
-      good_calc = %Calculator{operation: "add", a: 1, b: 2}
-      bad_calc = %Calculator{operation: "divide", a: 10, b: 0}
-
-      registry = Registry.new([good_calc])
-      # Register bad_calc second (will be looked up by name "calculator")
-      registry = Registry.register(registry, bad_calc)
-
-      # The bad calculator will fail, stopping execution
-      assert {:error, "Cannot divide by zero"} =
-               Executor.execute_sequential(registry, ["calculator", "calculator"])
-    end
-  end
-
-  describe "Executor error handling" do
+  describe "error handling" do
     defmodule CrashingTool do
+      @moduledoc false
+      use Normandy.Tool, name: "crasher", description: "A tool that crashes"
+
       defstruct []
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "crasher"
-        def tool_description(_), do: "A tool that crashes"
-        def input_schema(_), do: %{type: "object"}
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object"}
 
-        def run(_) do
-          raise "Intentional crash for testing"
-        end
-      end
+      @impl Normandy.Tool
+      def run(_tool, _context), do: raise("Intentional crash for testing")
     end
 
     test "catches and reports tool crashes" do
-      tool = %CrashingTool{}
-
-      assert {:error, error} = Executor.execute_tool(tool)
+      assert {:error, error} = Executor.execute_tool(%CrashingTool{}, context: ctx(%{}))
       assert error =~ "Tool execution failed"
       assert error =~ "Intentional crash"
     end
   end
 
-  describe "Executor OTel context propagation" do
+  describe "results the model can use" do
+    defmodule ReturnTool do
+      @moduledoc false
+      use Normandy.Tool, name: "return_tool", description: "returns or exits with its value"
+
+      defstruct [:value]
+
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object", properties: %{}}
+
+      @impl Normandy.Tool
+      def run(%{value: {:exit, reason}}, _context), do: exit(reason)
+      def run(%{value: {:sleep, ms}}, _context), do: Process.sleep(ms) && {:ok, :slept}
+      def run(%{value: value}, _context), do: value
+    end
+
+    test "a result that is not {:ok, _} or {:error, _} becomes an error result" do
+      for bad <- [:ok, "bare string", nil] do
+        assert {:error, message} =
+                 Executor.execute_tool(%ReturnTool{value: bad}, context: ctx(%{}))
+
+        assert message =~ "invalid result"
+      end
+    end
+
+    test "an exit reason is named by its tag, not copied into the result" do
+      tool = %ReturnTool{value: {:exit, {:timeout, {GenServer, :call, [:db, "SELECT secret"]}}}}
+
+      assert {:error, message} = Executor.execute_tool(tool, context: ctx(%{}))
+      assert message =~ ":timeout"
+      refute message =~ "SELECT secret"
+    end
+
+    test "options are validated, naming the function and the key" do
+      tool = %ReturnTool{value: {:ok, 1}}
+
+      for {opts, key} <- [
+            {[context: ctx(%{}), timeout: nil], ":timeout"},
+            {[context: ctx(%{}), max_retries: 1], ":max_retries"},
+            {[], ":context"}
+          ] do
+        error = assert_raise ArgumentError, fn -> Executor.execute_tool(tool, opts) end
+        assert String.starts_with?(error.message, "Normandy.Tools.Executor.execute_tool/2: ")
+        assert error.message =~ key
+      end
+    end
+
+    test ":context must be a %Normandy.Tools.Context{}" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Executor.execute_tool(%ReturnTool{value: {:ok, 1}}, context: %{})
+        end
+
+      assert error.message ==
+               "Normandy.Tools.Executor.execute_tool/2: :context must be a " <>
+                 "%Normandy.Tools.Context{}, got: a map"
+    end
+  end
+
+  describe "execute_tool_classified/2" do
+    alias NormandyTest.Tools.ExecutorTest.{CrashingTool, ReturnTool}
+
+    test "success carries no error type" do
+      assert {{:ok, 1}, nil} =
+               Executor.execute_tool_classified(%ReturnTool{value: {:ok, 1}}, context: ctx(%{}))
+    end
+
+    test "each failure kind is named, with the same {:error, msg} execute_tool/2 returns" do
+      cases = [
+        {%ReturnTool{value: {:error, "nope"}}, [], :tool_error},
+        {%ReturnTool{value: :bare}, [], :invalid_result},
+        {%ReturnTool{value: {:exit, :boom}}, [], :exit},
+        {%ReturnTool{value: {:sleep, 100}}, [timeout: 10], :timeout},
+        {%CrashingTool{}, [], :exception}
+      ]
+
+      for {tool, opts, kind} <- cases do
+        opts = [context: ctx(%{})] ++ opts
+        assert {{:error, message}, ^kind} = Executor.execute_tool_classified(tool, opts)
+        assert {:error, ^message} = Executor.execute_tool(tool, opts)
+      end
+    end
+  end
+
+  describe "OTel context propagation" do
     # `Task.async` spawns a fresh process, which gets an empty process
     # dictionary — and therefore an empty OpenTelemetry context. Without the
     # capture/restore dance in `Executor`, any span opened inside the tool's
-    # `run/1` becomes a root span in a fresh trace instead of a child of the
-    # caller's active span. These tests verify the propagation by setting a
-    # known key in the parent's OTel context and asserting the spawned tool
-    # sees it via `get_value/2`.
+    # `run/2` becomes a root span in a fresh trace instead of a child of the
+    # caller's active span.
     defmodule CtxCapturingTool do
+      @moduledoc false
+      use Normandy.Tool, name: "ctx_capturing_tool", description: "Snapshots OTel ctx"
+
       defstruct [:reply_to]
 
-      defimpl Normandy.Tools.BaseTool do
-        def tool_name(_), do: "ctx_capturing_tool"
-        def tool_description(_), do: "Snapshots OTel ctx for the test harness"
-        def input_schema(_), do: %{type: "object", properties: %{}}
+      @impl Normandy.Tool
+      def input_schema(_tool), do: %{type: "object", properties: %{}}
 
-        def run(%{reply_to: pid}) do
-          value = OpenTelemetry.Ctx.get_value(:normandy_test_marker, :missing)
-          send(pid, {:captured_marker, value})
-          {:ok, :captured}
-        end
+      @impl Normandy.Tool
+      def run(%{reply_to: pid}, _context) do
+        value = OpenTelemetry.Ctx.get_value(:normandy_test_marker, :missing)
+        send(pid, {:captured_marker, value})
+        {:ok, :captured}
       end
     end
 
     setup do
-      # Each test attaches its own ctx and detaches in on_exit so tests don't
-      # leak ctx state into each other. Tests run with `async: true` but each
-      # has its own process dictionary, so isolation is per-process.
       on_exit(fn -> OpenTelemetry.Ctx.clear() end)
       :ok
     end
 
-    test "execute_tool/2 propagates active OTel context into the spawned task" do
+    test "execute_tool/2 propagates the active OTel context into the task" do
       marker = make_ref()
       OpenTelemetry.Ctx.set_value(:normandy_test_marker, marker)
 
-      tool = %CtxCapturingTool{reply_to: self()}
-      assert {:ok, :captured} = Executor.execute_tool(tool)
+      assert {:ok, :captured} =
+               Executor.execute_tool(%CtxCapturingTool{reply_to: self()}, context: ctx(%{}))
 
       assert_receive {:captured_marker, ^marker}, 1_000
     end
 
-    test "execute_parallel/3 propagates active OTel context into each task" do
-      marker = make_ref()
-      OpenTelemetry.Ctx.set_value(:normandy_test_marker, marker)
-
-      tool = %CtxCapturingTool{reply_to: self()}
-      registry = Registry.new([tool])
-
-      results =
-        Executor.execute_parallel(registry, [
-          {"ctx_capturing_tool", %{}},
-          {"ctx_capturing_tool", %{}}
-        ])
-
-      assert results == [{:ok, :captured}, {:ok, :captured}]
-      assert_receive {:captured_marker, ^marker}, 1_000
-      assert_receive {:captured_marker, ^marker}, 1_000
-    end
-
-    test "execute_tool/2 with empty ctx still works (no-op restore)" do
-      # Sanity check: with no parent ctx set, capture returns the default
-      # ctx and restore is a no-op. The tool runs normally and reads `:missing`
-      # because the test marker was never set.
-      tool = %CtxCapturingTool{reply_to: self()}
-      assert {:ok, :captured} = Executor.execute_tool(tool)
+    test "with no context set the tool still runs (no-op restore)" do
+      assert {:ok, :captured} =
+               Executor.execute_tool(%CtxCapturingTool{reply_to: self()}, context: ctx(%{}))
 
       assert_receive {:captured_marker, :missing}, 1_000
     end

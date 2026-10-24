@@ -4,9 +4,9 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
   alias Normandy.Agents.{BaseAgent, BaseAgentInputSchema, BaseAgentOutputSchema, ToolCallResponse}
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
-  # Re-uses the project-wide ModelMockup: converse/completitions return
+  # Re-uses the project-wide ModelMockup: converse/3 returns the
   # response_model as-is, giving deterministic LLM responses without network.
 
   # Fake client for the with-tools characterization tests: a SIMPLIFIED
@@ -23,32 +23,30 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, request, _opts) do
+        tool_message_count = Enum.count(request.messages, fn msg -> msg.role == "tool" end)
+
+        content =
+          if tool_message_count == 0 do
+            %ToolCallResponse{
+              content: nil,
+              tool_calls: [
+                %ToolCall{
+                  id: "call_1",
+                  name: "calculator",
+                  input: %{operation: "add", a: 5, b: 3}
+                }
+              ]
+            }
+          else
+            %ToolCallResponse{content: config.final_response, tool_calls: []}
+          end
+
+        {:ok, %Normandy.LLM.Response{content: content}}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        tool_message_count = Enum.count(messages, fn msg -> msg.role == "tool" end)
-
-        if tool_message_count == 0 do
-          %ToolCallResponse{
-            content: nil,
-            tool_calls: [
-              %ToolCall{id: "call_1", name: "calculator", input: %{operation: "add", a: 5, b: 3}}
-            ]
-          }
-        else
-          %ToolCallResponse{content: config.final_response, tool_calls: []}
-        end
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
@@ -67,36 +65,30 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
+      def converse(config, _request, _opts) do
+        {:ok,
+         %Normandy.LLM.Response{
+           content: %ToolCallResponse{
+             content: config.content,
+             tool_calls: [%ToolCall{id: "spurious_1", name: "ghost_tool", input: %{}}]
+           }
+         }}
       end
 
-      def converse(
-            config,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            _opts \\ []
-          ) do
-        %ToolCallResponse{
-          content: config.content,
-          tool_calls: [%ToolCall{id: "spurious_1", name: "ghost_tool", input: %{}}]
-        }
-      end
+      def stream(_client, _request, _opts),
+        do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
     end
   end
 
   defp with_tools_agent do
-    calc = %Calculator{operation: "add", a: 0, b: 0}
-    registry = Registry.new([calc])
+    calc = %Calculator{}
+    registry = Toolset.new([calc])
 
     BaseAgent.init(%{
       client: %MockWithToolsClient{},
       model: "test-model",
       temperature: 0.7,
-      tool_registry: registry,
+      toolset: registry,
       max_tool_iterations: 5
     })
   end
@@ -114,7 +106,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "hello"}
 
-      {_updated, response} = BaseAgent.run(config, mock_input)
+      {_updated, response} = BaseAgent.run!(config, mock_input)
 
       assert %BaseAgentOutputSchema{} = response
     end
@@ -123,7 +115,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "hello"}
 
-      {updated, _response} = BaseAgent.run(config, mock_input)
+      {updated, _response} = BaseAgent.run!(config, mock_input)
 
       history = AgentMemory.history(updated.memory)
       roles = Enum.map(history, & &1.role)
@@ -134,7 +126,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = no_tools_agent()
       mock_input = %BaseAgentInputSchema{chat_message: "world"}
 
-      {updated, _response} = BaseAgent.run(config, mock_input)
+      {updated, _response} = BaseAgent.run!(config, mock_input)
 
       assert updated.current_user_input == mock_input
     end
@@ -142,7 +134,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
     test "nil input skips user-message admission — only assistant message in history" do
       config = no_tools_agent()
 
-      {updated, response} = BaseAgent.run(config, nil)
+      {updated, response} = BaseAgent.run!(config, nil)
 
       # The admit_turn_input/2 nil branch returns config unchanged, so no
       # "user" message is ever appended. The FSM finalizes by appending one
@@ -167,12 +159,12 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
           client: %MisbehavingNoToolsClient{},
           model: "test-model",
           temperature: 0.7
-          # no :tool_registry -> has_tools?/1 is false
+          # no :toolset -> has_tools?/1 is false
         })
 
       input = %BaseAgentInputSchema{chat_message: "hi"}
 
-      {updated, response} = BaseAgent.run(config, input)
+      {updated, response} = BaseAgent.run!(config, input)
 
       # The strip emptied tool_calls before the FSM saw the response, so the turn
       # finalized to the output schema and never appended a "tool" role (no
@@ -190,7 +182,7 @@ defmodule Normandy.Agents.BaseAgentTurnDriverTest do
       config = with_tools_agent()
       user_input = %BaseAgentInputSchema{chat_message: "What is 5 + 3?"}
 
-      {updated, response} = BaseAgent.run_with_tools(config, user_input)
+      {updated, response} = BaseAgent.run!(config, user_input)
 
       # The final response should be the converted output schema
       assert %BaseAgentOutputSchema{} = response

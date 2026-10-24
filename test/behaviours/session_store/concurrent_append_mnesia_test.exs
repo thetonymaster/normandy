@@ -1,5 +1,6 @@
 defmodule Normandy.Behaviours.SessionStore.ConcurrentAppendMnesiaTest do
   @moduledoc "GAP: concurrent single-session appends must not lose writes (Mnesia, transactional)."
+  # async: false — Mnesia is node-global state.
   use ExUnit.Case, async: false
 
   alias Normandy.Behaviours.SessionStore.Mnesia

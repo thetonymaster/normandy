@@ -1,9 +1,9 @@
 defmodule NormandyTest.Components.ContentBlockTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Components.ContentBlock.Text
-  alias Normandy.Components.ContentBlock.Image
   alias Normandy.Components.ContentBlock.Document
+  alias Normandy.Components.ContentBlock.Image
+  alias Normandy.Components.ContentBlock.Text
 
   describe "Text" do
     test "new/1 builds a text block" do

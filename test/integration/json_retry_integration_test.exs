@@ -1,10 +1,12 @@
 defmodule Normandy.Integration.JsonRetryIntegrationTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Components.PromptSpecification
+  alias Normandy.LLM.ClaudioAdapter
+  alias NormandyTest.Support.NormandyIntegrationHelper
 
   @moduletag :integration
   @moduletag :json_retry
@@ -12,7 +14,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
   # ExUnit setup cannot skip at runtime (returning {:skip, _} raises), so gate the
   # whole module at compile time: skipped when no API key is present (shown as
   # skipped, not failed), run when one is.
-  unless NormandyTest.Support.NormandyIntegrationHelper.api_key_available?() do
+  unless NormandyIntegrationHelper.api_key_available?() do
     @moduletag skip: "API_KEY or ANTHROPIC_API_KEY not set"
   end
 
@@ -59,7 +61,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
 
       # Run the agent with a simple query
       input = %BaseAgentOutputSchema{chat_message: "Say hello"}
-      {_updated_agent, response} = BaseAgent.run(agent_with_retry, input)
+      {_updated_agent, response} = BaseAgent.run!(agent_with_retry, input)
 
       # Verify we got a valid response
       assert is_struct(response, BaseAgentOutputSchema)
@@ -96,7 +98,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
         })
 
       input = %BaseAgentOutputSchema{chat_message: "What is 2+2?"}
-      {_updated_agent, response} = BaseAgent.run(agent_without_retry, input)
+      {_updated_agent, response} = BaseAgent.run!(agent_without_retry, input)
 
       # Verify normal operation
       assert is_struct(response, BaseAgentOutputSchema)
@@ -132,7 +134,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
         })
 
       input = %BaseAgentOutputSchema{chat_message: "Test message"}
-      {_updated_agent, response} = BaseAgent.run(agent, input)
+      {_updated_agent, response} = BaseAgent.run!(agent, input)
 
       # Should successfully normalize any field variant
       assert is_struct(response, BaseAgentOutputSchema)
@@ -167,7 +169,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
         })
 
       input = %BaseAgentOutputSchema{chat_message: "Respond with fenced JSON"}
-      {_updated_agent, response} = BaseAgent.run(agent, input)
+      {_updated_agent, response} = BaseAgent.run!(agent, input)
 
       # Should strip code fences and parse correctly
       assert is_struct(response, BaseAgentOutputSchema)
@@ -219,7 +221,7 @@ defmodule Normandy.Integration.JsonRetryIntegrationTest do
       results =
         Enum.map(inputs, fn input_text ->
           input = %BaseAgentOutputSchema{chat_message: input_text}
-          {_updated_agent, response} = BaseAgent.run(agent, input)
+          {_updated_agent, response} = BaseAgent.run!(agent, input)
           response
         end)
 

@@ -6,6 +6,10 @@ defmodule Normandy.Coordination.SharedContext do
   read from and write to, enabling information sharing across agent
   boundaries.
 
+  A `SharedContext` is an immutable value: `put/3` returns a new one. Share it by
+  passing it along (to the next step, the next agent), not between processes; for
+  state several processes read and write, use `Normandy.Coordination.StatefulContext`.
+
   ## Example
 
       # Create shared context
@@ -15,7 +19,7 @@ defmodule Normandy.Coordination.SharedContext do
       context = SharedContext.put(context, "research_results", data)
 
       # Retrieve data
-      {:ok, data} = SharedContext.get(context, "research_results")
+      {:ok, data} = SharedContext.fetch(context, "research_results")
 
       # Store with namespace
       context = SharedContext.put(context, {"agent_1", "status"}, "processing")
@@ -74,24 +78,15 @@ defmodule Normandy.Coordination.SharedContext do
   end
 
   @doc """
-  Retrieves a value from the shared context.
-
-  Returns `{:ok, value}` if found, `{:error, :not_found}` otherwise.
+  Looks up `key`: `{:ok, value}` or `:error`.
 
   ## Examples
 
-      {:ok, value} = SharedContext.get(context, "key")
-      {:error, :not_found} = SharedContext.get(context, "missing")
+      {:ok, value} = SharedContext.fetch(context, "key")
+      :error = SharedContext.fetch(context, "missing")
   """
-  @spec get(t(), key()) :: {:ok, term()} | {:error, :not_found}
-  def get(%__MODULE__{data: data}, key) do
-    normalized_key = normalize_key(key)
-
-    case Map.fetch(data, normalized_key) do
-      {:ok, value} -> {:ok, value}
-      :error -> {:error, :not_found}
-    end
-  end
+  @spec fetch(t(), key()) :: {:ok, term()} | :error
+  def fetch(%__MODULE__{data: data}, key), do: Map.fetch(data, normalize_key(key))
 
   @doc """
   Retrieves a value with a default if not found.
@@ -102,9 +97,9 @@ defmodule Normandy.Coordination.SharedContext do
   """
   @spec get(t(), key(), term()) :: term()
   def get(%__MODULE__{} = context, key, default) do
-    case get(context, key) do
+    case fetch(context, key) do
       {:ok, value} -> value
-      {:error, :not_found} -> default
+      :error -> default
     end
   end
 
@@ -196,11 +191,13 @@ defmodule Normandy.Coordination.SharedContext do
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{data: data}), do: data
 
-  # Private functions
-
-  defp normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
+  @doc false
+  # The one string a key is stored under: a `{namespace, key}` pair is "namespace:key".
+  # `StatefulContext` stores its keys the same way.
+  @spec normalize_key(String.t() | {String.t(), String.t()}) :: String.t()
+  def normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
     "#{namespace}:#{key}"
   end
 
-  defp normalize_key(key) when is_binary(key), do: key
+  def normalize_key(key) when is_binary(key), do: key
 end

@@ -11,17 +11,27 @@ defmodule Normandy.Test.TurnConfig do
   Turn.Server, Turn.Supervisor.Horde, and related tests.
   """
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.PromptSpecification
+  alias Normandy.Tools.Toolset
 
   defmodule Resp do
     @moduledoc false
     defstruct content: "", tool_calls: nil
   end
 
-  @spec build() :: Normandy.Agents.BaseAgentConfig.t()
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
+  # Not BaseAgentConfig.t(): the fixture uses a plain-map client and no input_schema.
+  @spec build() :: BaseAgentConfig.partial()
   def build do
-    %Normandy.Agents.BaseAgentConfig{
+    %BaseAgentConfig{
       input_schema: nil,
       output_schema: %Resp{},
       model: "test",
@@ -29,7 +39,7 @@ defmodule Normandy.Test.TurnConfig do
       memory: AgentMemory.new_memory(),
       initial_memory: AgentMemory.new_memory(),
       prompt_specification: %PromptSpecification{},
-      tool_registry: Normandy.Tools.Registry.new(),
+      toolset: Toolset.new(),
       behaviours: %Normandy.Behaviours.Config{
         credential: {Normandy.Test.StubCreds, []}
       }

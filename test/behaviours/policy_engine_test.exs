@@ -1,6 +1,7 @@
 defmodule Normandy.Behaviours.PolicyEngineTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Components.ToolCall
 
@@ -68,6 +69,52 @@ defmodule Normandy.Behaviours.PolicyEngineTest do
     test "implements the PolicyEngine behaviour" do
       behaviours = PolicyEngine.Ruleset.module_info(:attributes)[:behaviour] || []
       assert PolicyEngine in behaviours
+    end
+  end
+
+  describe "Ruleset validation" do
+    alias PolicyEngine.Ruleset
+
+    test "a rule without :action is rejected instead of allowing" do
+      assert_raise ArgumentError, ~r/rule 0 needs :action .*acton: :deny/, fn ->
+        Ruleset.validate_opts!(rules: [%{match: "delete_*", acton: :deny}], default_action: :deny)
+      end
+    end
+
+    test "an unknown action and a missing :match are rejected" do
+      assert_raise ArgumentError, ~r/rule 0 needs :action/, fn ->
+        Ruleset.validate_opts!(rules: [%{match: "x", action: :maybe}], default_action: :deny)
+      end
+
+      assert_raise ArgumentError, ~r/rule 0 needs :match/, fn ->
+        Ruleset.validate_opts!(rules: [%{action: :deny}], default_action: :deny)
+      end
+    end
+
+    test ":rules and :default_action are required" do
+      assert_raise ArgumentError, ~r/:rules is required/, fn ->
+        Ruleset.validate_opts!(default_action: :deny)
+      end
+
+      assert_raise ArgumentError, ~r/:default_action is required/, fn ->
+        Ruleset.validate_opts!(rules: [])
+      end
+    end
+
+    test "check/2 refuses a malformed ruleset instead of allowing" do
+      assert_raise ArgumentError, fn ->
+        Ruleset.check(%ToolCall{name: "delete_all"}, %{opts: [rules: [%{match: "delete_*"}]]})
+      end
+    end
+
+    test "BaseAgent.init rejects a malformed ruleset" do
+      assert_raise ArgumentError, ~r/:default_action is required/, fn ->
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "m",
+          behaviours: %Normandy.Behaviours.Config{policy: {Ruleset, rules: []}}
+        })
+      end
     end
   end
 end

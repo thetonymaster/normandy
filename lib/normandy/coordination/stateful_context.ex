@@ -3,13 +3,17 @@ defmodule Normandy.Coordination.StatefulContext do
   GenServer-backed shared context for multi-agent systems.
 
   StatefulContext provides a concurrent, process-based key-value store
-  using GenServer with ETS backing for high-performance reads.
+  using GenServer with ETS backing.
 
   ## Features
 
   - Concurrent access from multiple processes
-  - Fast reads via ETS (no GenServer bottleneck)
-  - Atomic updates via GenServer
+  - Reads from ETS: each read makes one short `GenServer.call` for the table, then
+    looks the key up in ETS. The context process does only short work (an insert, a
+    delete, a notification), so a read waits behind at most that; `update/4` runs
+    its function in the caller, never in the context process
+  - Atomic updates: the table is `:protected`, so only the context process writes it;
+    `update/4` commits with a compare-and-set (see there)
   - Optional pub/sub notifications for changes
   - Process supervision compatible
 
@@ -20,7 +24,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
       # Store and retrieve data
       :ok = StatefulContext.put(pid, "key", "value")
-      {:ok, "value"} = StatefulContext.get(pid, "key")
+      {:ok, "value"} = StatefulContext.fetch(pid, "key")
 
       # Use namespaced keys
       :ok = StatefulContext.put(pid, {"agent_1", "status"}, "active")
@@ -30,10 +34,24 @@ defmodule Normandy.Coordination.StatefulContext do
   """
 
   use GenServer
-  require Logger
+
+  alias Normandy.Coordination.SharedContext
+  alias Normandy.Options
 
   @type key :: String.t() | {String.t(), String.t()}
   @type subscriber :: pid()
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the context."],
+                            notify_on_change: [
+                              type: :boolean,
+                              default: true,
+                              doc: "Send subscribers a message on every change."
+                            ]
+                          )
+
+  # Lost compare-and-sets after which update/4 runs its function in the context process.
+  @max_conflicts 10
 
   # Client API
 
@@ -42,8 +60,7 @@ defmodule Normandy.Coordination.StatefulContext do
 
   ## Options
 
-  - `:name` - Register the process with a name (optional)
-  - `:notify_on_change` - Enable change notifications (default: true)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Example
 
@@ -51,6 +68,7 @@ defmodule Normandy.Coordination.StatefulContext do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
     name = Keyword.get(opts, :name)
 
     if name do
@@ -63,8 +81,8 @@ defmodule Normandy.Coordination.StatefulContext do
   @doc """
   Stores a value in the context.
 
-  Writes go through GenServer for consistency, but subsequent reads
-  are fast via ETS.
+  Writes go through the context process for consistency; reads look the key up
+  in ETS (after one short call for the table).
 
   ## Example
 
@@ -77,23 +95,24 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @doc """
-  Retrieves a value from the context.
+  Looks up `key`: `{:ok, value}` or `:error`.
 
-  Reads directly from ETS for maximum performance (no GenServer call).
+  Asks the context process for its table (one short `GenServer.call`), then reads
+  the key from ETS.
 
   ## Example
 
-      {:ok, value} = StatefulContext.get(pid, "key")
-      {:error, :not_found} = StatefulContext.get(pid, "missing")
+      {:ok, value} = StatefulContext.fetch(pid, "key")
+      :error = StatefulContext.fetch(pid, "missing")
   """
-  @spec get(GenServer.server(), key()) :: {:ok, term()} | {:error, :not_found}
-  def get(server, key) do
+  @spec fetch(GenServer.server(), key()) :: {:ok, term()} | :error
+  def fetch(server, key) do
     table = get_table(server)
     normalized_key = normalize_key(key)
 
     case :ets.lookup(table, normalized_key) do
       [{^normalized_key, value}] -> {:ok, value}
-      [] -> {:error, :not_found}
+      [] -> :error
     end
   end
 
@@ -106,9 +125,9 @@ defmodule Normandy.Coordination.StatefulContext do
   """
   @spec get(GenServer.server(), key(), term()) :: term()
   def get(server, key, default) do
-    case get(server, key) do
+    case fetch(server, key) do
       {:ok, value} -> value
-      {:error, :not_found} -> default
+      :error -> default
     end
   end
 
@@ -159,13 +178,45 @@ defmodule Normandy.Coordination.StatefulContext do
 
   If the key doesn't exist, uses the initial value.
 
+  `fun` runs in the calling process, not in the context process, so a slow `fun`
+  blocks no other caller and a `fun` that raises raises in the caller. The result
+  is committed only if the key still holds the value `fun` was given; otherwise
+  `fun` runs again on the new value. So `fun` can run more than once and must have
+  no side effects. After #{@max_conflicts} lost races (a key written more often than
+  `fun` takes) `fun` runs once inside the context process, serialized with every other
+  call, so every update finishes. There a `fun` that raises crashes the context, and a `fun`
+  that calls this same context (`put/3`, `fetch/2`, `update/4`, `get_table/1`, ...) exits
+  with `:calling_self` and crashes it too.
+
+  The caller reads the key from ETS directly (`get_table/1`), so `update/4` works only
+  against a context on the caller's node.
+
   ## Example
 
       :ok = StatefulContext.update(pid, "counter", 0, fn count -> count + 1 end)
   """
   @spec update(GenServer.server(), key(), term(), (term() -> term())) :: :ok
-  def update(server, key, initial, fun) do
-    GenServer.call(server, {:update, key, initial, fun})
+  def update(server, key, initial, fun), do: update(server, key, initial, fun, @max_conflicts)
+
+  defp update(server, key, initial, fun, 0),
+    do: GenServer.call(server, {:update, key, initial, fun}, :infinity)
+
+  defp update(server, key, initial, fun, retries) do
+    table = get_table(server)
+    normalized_key = normalize_key(key)
+
+    {expected, current} =
+      case :ets.lookup(table, normalized_key) do
+        [{^normalized_key, value}] -> {{:ok, value}, value}
+        [] -> {:none, initial}
+      end
+
+    new_value = fun.(current)
+
+    case GenServer.call(server, {:compare_and_put, normalized_key, expected, initial, new_value}) do
+      :ok -> :ok
+      :conflict -> update(server, key, initial, fun, retries - 1)
+    end
   end
 
   @doc """
@@ -212,9 +263,11 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @doc """
-  Returns the ETS table reference for direct access.
+  Returns the ETS table, for reads (`:ets.lookup/2`, `:ets.select/2`, ...).
 
-  Advanced users can use this for custom ETS operations.
+  The table is `:protected`: only the context process writes it, so a write from
+  any other process raises `ArgumentError`. Write through `put/3`, `update/4` and
+  `delete/2`.
 
   ## Example
 
@@ -230,13 +283,13 @@ defmodule Normandy.Coordination.StatefulContext do
 
   @impl true
   def init(opts) do
-    notify_on_change = Keyword.get(opts, :notify_on_change, true)
+    notify_on_change = Keyword.fetch!(opts, :notify_on_change)
 
     # Create ETS table for data storage
     table =
       :ets.new(:stateful_context, [
         :set,
-        :public,
+        :protected,
         read_concurrency: true,
         write_concurrency: false
       ])
@@ -299,29 +352,38 @@ defmodule Normandy.Coordination.StatefulContext do
   end
 
   @impl true
+  def handle_call({:compare_and_put, key, expected, initial, new_value}, _from, state) do
+    actual =
+      case :ets.lookup(state.table, key) do
+        [{^key, val}] -> {:ok, val}
+        [] -> :none
+      end
+
+    if actual === expected do
+      old_value =
+        case expected do
+          {:ok, val} -> val
+          :none -> initial
+        end
+
+      {:reply, :ok, commit(state, key, old_value, new_value)}
+    else
+      {:reply, :conflict, state}
+    end
+  end
+
+  # update/4's last resort: the function runs here, serialized with every other call.
+  @impl true
   def handle_call({:update, key, initial, fun}, _from, state) do
     normalized_key = normalize_key(key)
 
-    # Get current value or use initial
-    current_value =
+    current =
       case :ets.lookup(state.table, normalized_key) do
         [{^normalized_key, val}] -> val
         [] -> initial
       end
 
-    # Apply update function
-    new_value = fun.(current_value)
-
-    # Write to ETS
-    :ets.insert(state.table, {normalized_key, new_value})
-
-    # Notify subscribers if enabled
-    if state.notify_on_change do
-      notify_subscribers(state.subscribers, normalized_key, {:ok, current_value}, new_value)
-    end
-
-    updated_state = %{state | updated_at: :os.system_time(:second)}
-    {:reply, :ok, updated_state}
+    {:reply, :ok, commit(state, normalized_key, current, fun.(current))}
   end
 
   @impl true
@@ -350,11 +412,17 @@ defmodule Normandy.Coordination.StatefulContext do
 
   # Private Functions
 
-  defp normalize_key({namespace, key}) when is_binary(namespace) and is_binary(key) do
-    "#{namespace}:#{key}"
+  defp commit(state, key, old_value, new_value) do
+    :ets.insert(state.table, {key, new_value})
+
+    if state.notify_on_change do
+      notify_subscribers(state.subscribers, key, {:ok, old_value}, new_value)
+    end
+
+    %{state | updated_at: :os.system_time(:second)}
   end
 
-  defp normalize_key(key) when is_binary(key), do: key
+  defp normalize_key(key), do: SharedContext.normalize_key(key)
 
   defp notify_subscribers(subscribers, key, old_value, new_value) do
     Enum.each(subscribers, fn subscriber ->

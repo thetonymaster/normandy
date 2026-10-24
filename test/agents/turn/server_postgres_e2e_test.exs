@@ -1,23 +1,34 @@
 defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
   @moduledoc "GAP: durable :server lifecycle (persist → passivate → rehydrate) against real Postgres."
+  # async: false — the Postgres sandbox runs in shared mode (one connection for every process).
   use ExUnit.Case, async: false
+  import Normandy.Test.Eventually
   @moduletag :postgres
 
-  alias Normandy.Agents.BaseAgent
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.Postgres
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.Postgres
+  alias Normandy.Components.AgentMemory
 
   # Output struct the fake LLM returns; mirrors the Turn.Server test idiom.
   defmodule Resp do
     defstruct content: "", tool_calls: nil
   end
 
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
+  end
+
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
+    :ok = Sandbox.checkout(Normandy.TestRepo)
     # Supervised Turn.Server runs in its own process and must see the same
     # sandboxed connection — shared mode + async: false.
-    Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, {:shared, self()})
+    Sandbox.mode(Normandy.TestRepo, {:shared, self()})
     :ok
   end
 
@@ -27,15 +38,18 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
+      initial_memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      tool_registry: nil
+      toolset: nil
     }
   end
 
   defp final_handlers(text) do
-    %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> %Resp{content: text} end}
+    %{
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: fn _c, _s, _r -> %Resp{content: text} end
+    }
   end
 
   test "a turn persists to Postgres and rehydrates with no data loss" do
@@ -46,7 +60,7 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     opts = [
       session_id: sid,
       config: server_config(),
-      store: {Postgres, Postgres.new()},
+      store: {Postgres, Normandy.TestHandles.postgres_repo()},
       registry: {Native, reg},
       supervisor: sup,
       idle_timeout_ms: 60,
@@ -54,40 +68,29 @@ defmodule Normandy.Agents.Turn.ServerPostgresE2ETest do
     ]
 
     # Turn 1: runs and persists to Postgres.
-    assert {:ok, %Resp{content: "first"}} = Turn.Session.run(opts, "hello")
+    assert {:ok, %Resp{content: "first"}} = Turn.Session.run(Turn.Session.new(opts), "hello")
 
     # DURABILITY INVARIANT: the user input is in Postgres after the turn.
-    assert {:ok, entries} = Postgres.history(Postgres.new(), sid)
+    assert {:ok, entries} = Postgres.history(Normandy.TestHandles.postgres_repo(), sid)
     assert entries != [], "expected the turn to persist entries to Postgres; got none"
     first_count = length(entries)
 
     # Let the server passivate (idle timeout), then rehydrate via a second run.
     # Bounded polling, not a fixed sleep: passivation is async and a fixed delay
     # is flaky under slow CI. Assert eventual passivation within a deadline.
-    assert wait_until(fn -> Native.whereis(reg, sid) == :none end, 1_000),
+    assert wait_until(fn -> Native.whereis(reg, sid) == :none end, 100),
            "server did not passivate (registry still holds the pid) within 1s"
 
     assert {:ok, %Resp{content: "second"}} =
-             Turn.Session.run(Keyword.put(opts, :handlers, final_handlers("second")), "again")
+             Turn.Session.run(
+               Turn.Session.new(Keyword.put(opts, :handlers, final_handlers("second"))),
+               "again"
+             )
 
     # NO-LOSS INVARIANT: history grew across passivation; turn-1 entries survived.
-    assert {:ok, entries2} = Postgres.history(Postgres.new(), sid)
+    assert {:ok, entries2} = Postgres.history(Normandy.TestHandles.postgres_repo(), sid)
 
     assert length(entries2) > first_count,
            "rehydrated history did not grow; passivation may have dropped persisted state"
-  end
-
-  # Poll `fun` until it returns true or the monotonic deadline passes.
-  defp wait_until(fun, timeout_ms, interval_ms \\ 10) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline, interval_ms)
-  end
-
-  defp do_wait_until(fun, deadline, interval_ms) do
-    cond do
-      fun.() -> true
-      System.monotonic_time(:millisecond) >= deadline -> false
-      true -> Process.sleep(interval_ms) && do_wait_until(fun, deadline, interval_ms)
-    end
   end
 end

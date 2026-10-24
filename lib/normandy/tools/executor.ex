@@ -1,158 +1,106 @@
 defmodule Normandy.Tools.Executor do
   @moduledoc """
-  Executes tools safely with timeout and error handling.
+  Runs one tool call safely: `c:Normandy.Tool.run/2` in a separate task, with a timeout and
+  error handling.
 
-  The Executor provides a controlled environment for running tools with:
-  - Timeout protection
-  - Error catching and formatting
-  - Execution logging
-  - Result validation
+  - The tool gets the `%Normandy.Tools.Context{}` passed as `:context`; its `input` is the
+    call's validated input.
+  - Timeout: `:timeout` milliseconds, default `default_timeout/0`. The dispatch pipeline
+    passes the tool's registration timeout (`Normandy.Tools.Toolset.register/3`); a
+    `:timeout` field on the tool struct is never read.
+  - A raise, exit, throw or timeout becomes `{:error, message}`.
+  - A result that is not `{:ok, value}` or `{:error, reason}` becomes an error.
+
+  Error messages reach the model as tool results, so an exit or throw is named
+  by its tag only (its terms can carry call arguments), an exception whose message
+  shows the term it failed on (`KeyError`, `MatchError`, `CaseClauseError`,
+  `Protocol.UndefinedError`, ...) is named by its module (a `KeyError` also by its key),
+  and any other exception message is cut to 500 characters.
+
+  ## No controls
+
+  `execute_tool/2` and `execute_tool_classified/2` run the tool and nothing else: no
+  policy, no approval, no hooks, no budget and no input validation. The agent loop runs
+  tools through `Normandy.Agents.Dispatch`, which applies all of them; call these only for
+  a tool and an input you have already checked.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.OtelCtx
-  alias Normandy.Tools.BaseTool
-  alias Normandy.Tools.Registry
+  alias Normandy.Tool
+  alias Normandy.Tools.Context
 
   @type execution_result :: {:ok, term()} | {:error, String.t()}
-  @type execution_options :: [
-          timeout: pos_integer(),
-          max_retries: non_neg_integer()
-        ]
+  @typedoc """
+  What made a tool execution fail: the tool raised (or threw) (`:exception`),
+  exited (`:exit`), ran past its timeout (`:timeout`), returned `{:error, _}`
+  itself (`:tool_error`), or returned something else (`:invalid_result`).
+  """
+  @type error_type :: :exception | :exit | :timeout | :tool_error | :invalid_result
+  @type execution_options :: [context: Context.t(), timeout: pos_integer()]
 
   @default_timeout 30_000
-  @default_max_retries 0
+
+  @opts_schema NimbleOptions.new!(
+                 context: [
+                   type: :any,
+                   type_doc: "a `Normandy.Tools.Context`",
+                   required: true,
+                   doc: "The call's `%Normandy.Tools.Context{}`, carrying the validated input."
+                 ],
+                 timeout: [
+                   type: :pos_integer,
+                   default: @default_timeout,
+                   doc: "Milliseconds the tool may run before the call fails with a timeout."
+                 ]
+               )
+
+  @doc "The timeout of a tool registered without `:timeout`, in milliseconds."
+  @spec default_timeout() :: pos_integer()
+  def default_timeout, do: @default_timeout
 
   @doc """
-  Executes a tool by name from the registry.
+  Runs `tool` with the given context.
 
   ## Options
 
-    * `:timeout` - Maximum execution time in milliseconds (default: 30000)
-    * `:max_retries` - Number of retry attempts on failure (default: 0)
-
-  ## Examples
-
-      iex> registry = Normandy.Tools.Registry.new([%CalculatorTool{operation: :add, a: 5, b: 3}])
-      iex> Normandy.Tools.Executor.execute(registry, "calculator")
-      {:ok, 8}
-
-      iex> Normandy.Tools.Executor.execute(registry, "nonexistent")
-      {:error, "Tool 'nonexistent' not found in registry"}
-
-  """
-  @spec execute(Registry.t(), String.t(), execution_options()) :: execution_result()
-  def execute(registry, tool_name, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
-
-    case Registry.get(registry, tool_name) do
-      {:ok, tool} ->
-        execute_with_retries(tool, max_retries, timeout)
-
-      :error ->
-        {:error, "Tool '#{tool_name}' not found in registry"}
-    end
-  end
-
-  @doc """
-  Executes a tool instance directly.
-
-  ## Examples
-
-      iex> tool = %CalculatorTool{operation: :add, a: 2, b: 3}
-      iex> Normandy.Tools.Executor.execute_tool(tool)
-      {:ok, 5}
-
+  #{Normandy.Options.docs(@opts_schema)}
   """
   @spec execute_tool(struct(), execution_options()) :: execution_result()
   def execute_tool(tool, opts \\ []) do
-    # Precedence: explicit opts > per-tool struct :timeout > module default.
-    # Per-tool timeout lets slow tools (e.g. a delegation that fans out to
-    # another agent's tool loop) opt into longer-than-default budgets
-    # without changing the global default for fast tools.
-    timeout =
-      Keyword.get(opts, :timeout) || Map.get(tool, :timeout) || @default_timeout
-
-    execute_with_timeout(tool, timeout)
+    opts = Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_tool, 2})
+    {result, _error_type} = run_classified(tool, opts, "execute_tool/2")
+    result
   end
 
   @doc """
-  Executes multiple tools in parallel.
-
-  Returns a list of results in the same order as the input tools.
-
-  ## Examples
-
-      iex> tools = [
-      ...>   {"calc1", %CalculatorTool{operation: :add, a: 1, b: 2}},
-      ...>   {"calc2", %CalculatorTool{operation: :multiply, a: 3, b: 4}}
-      ...> ]
-      iex> Normandy.Tools.Executor.execute_parallel(registry, tools)
-      [
-        {:ok, 3},
-        {:ok, 12}
-      ]
-
+  Like `execute_tool/2`, but also says why a failed execution failed (see
+  `t:error_type/0`); the error type is `nil` on success. The `{:error, message}`
+  result is exactly the one `execute_tool/2` returns.
   """
-  @spec execute_parallel(Registry.t(), [{String.t(), struct()}], execution_options()) :: [
-          execution_result()
-        ]
-  def execute_parallel(registry, tool_specs, opts \\ []) do
-    parent_ctx = OtelCtx.capture()
+  @spec execute_tool_classified(struct(), execution_options()) ::
+          {{:ok, term()}, nil} | {{:error, String.t()}, error_type()}
+  def execute_tool_classified(tool, opts \\ []) do
+    opts =
+      Normandy.Options.validate!(opts, @opts_schema, {__MODULE__, :execute_tool_classified, 2})
 
-    tool_specs
-    |> Enum.map(fn {tool_name, _params} ->
-      Task.async(fn ->
-        OtelCtx.restore(parent_ctx)
-        execute(registry, tool_name, opts)
-      end)
-    end)
-    |> Enum.map(&Task.await(&1, :infinity))
+    run_classified(tool, opts, "execute_tool_classified/2")
   end
 
-  @doc """
-  Executes multiple tools sequentially.
-
-  Stops execution if any tool returns an error (fail-fast behavior).
-
-  ## Examples
-
-      iex> tools = ["tool1", "tool2", "tool3"]
-      iex> Normandy.Tools.Executor.execute_sequential(registry, tools)
-      {:ok, [result1, result2, result3]}
-
-  """
-  @spec execute_sequential(Registry.t(), [String.t()], execution_options()) ::
-          {:ok, [term()]} | {:error, String.t()}
-  def execute_sequential(registry, tool_names, opts \\ []) do
-    tool_names
-    |> Enum.reduce_while({:ok, []}, fn tool_name, {:ok, results} ->
-      case execute(registry, tool_name, opts) do
-        {:ok, result} ->
-          {:cont, {:ok, results ++ [result]}}
-
-        {:error, _reason} = error ->
-          {:halt, error}
-      end
-    end)
+  defp run_classified(tool, opts, function) do
+    context = context!(Keyword.fetch!(opts, :context), function)
+    execute_with_timeout(tool, Keyword.fetch!(opts, :timeout), context)
   end
 
-  # Private functions
+  defp context!(%Context{} = context, _function), do: context
 
-  defp execute_with_retries(tool, retries_left, timeout) do
-    case execute_with_timeout(tool, timeout) do
-      {:ok, result} ->
-        {:ok, result}
-
-      {:error, _reason} when retries_left > 0 ->
-        execute_with_retries(tool, retries_left - 1, timeout)
-
-      {:error, _reason} = error ->
-        error
-    end
+  defp context!(other, function) do
+    raise ArgumentError,
+          "Normandy.Tools.Executor.#{function}: :context must be a %Normandy.Tools.Context{}, " <>
+            "got: #{Describe.type_of(other)}"
   end
 
-  defp execute_with_timeout(tool, timeout) do
+  defp execute_with_timeout(tool, timeout, context) do
     parent_ctx = OtelCtx.capture()
 
     task =
@@ -160,25 +108,69 @@ defmodule Normandy.Tools.Executor do
         OtelCtx.restore(parent_ctx)
 
         try do
-          BaseTool.run(tool)
+          tool |> Tool.run(context) |> check_result()
         rescue
           error ->
-            {:error, "Tool execution failed: #{Exception.message(error)}"}
+            {{:error, "Tool execution failed: #{describe_exception(error)}"}, :exception}
         catch
           :exit, reason ->
-            {:error, "Tool execution exited: #{inspect(reason)}"}
+            {{:error, "Tool execution exited: #{describe_reason(reason)}"}, :exit}
 
           kind, reason ->
-            {:error, "Tool execution failed (#{kind}): #{inspect(reason)}"}
+            {{:error, "Tool execution failed (#{kind}): #{describe_reason(reason)}"}, :exception}
         end
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, result} ->
-        result
+      {:ok, classified} ->
+        classified
 
       nil ->
-        {:error, "Tool execution timeout after #{timeout}ms"}
+        {{:error, "Tool execution timeout after #{timeout}ms"}, :timeout}
     end
+  end
+
+  defp check_result({:ok, _value} = ok), do: {ok, nil}
+  defp check_result({:error, _reason} = error), do: {error, :tool_error}
+
+  defp check_result(other) do
+    {{:error,
+      "Tool returned an invalid result: expected {:ok, value} or {:error, reason}, got " <>
+        Describe.type_of(other)}, :invalid_result}
+  end
+
+  defp describe_reason(reason), do: Describe.reason_tag(reason)
+
+  # Exceptions whose message inspects the term they failed on, which can be a struct
+  # holding a token or the tool's whole input: named by module (and a KeyError's key).
+  @term_exceptions [
+    BadArityError,
+    BadBooleanError,
+    BadFunctionError,
+    BadMapError,
+    BadStructError,
+    CaseClauseError,
+    MatchError,
+    Protocol.UndefinedError,
+    TryClauseError,
+    WithClauseError
+  ]
+
+  defp describe_exception(%KeyError{key: key}),
+    do: "KeyError: key #{inspect(key, limit: 5, printable_limit: 50)} not found"
+
+  # An Erlang error's message inspects its whole original term: named by that term's tag.
+  defp describe_exception(%ErlangError{original: original}),
+    do: "ErlangError: #{Describe.reason_tag(original)}"
+
+  defp describe_exception(%mod{}) when mod in @term_exceptions, do: inspect(mod)
+  defp describe_exception(error), do: error |> Exception.message() |> truncate()
+
+  # Characters, not bytes, so a multibyte character is never cut in half.
+  @max_message 500
+  defp truncate(message) do
+    if String.length(message) <= @max_message,
+      do: message,
+      else: String.slice(message, 0, @max_message) <> "..."
   end
 end

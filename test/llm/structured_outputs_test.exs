@@ -1,8 +1,8 @@
 defmodule Normandy.LLM.StructuredOutputsTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
-  alias Normandy.LLM.StructuredOutputs
   alias Normandy.LLM.Json.TestFixtures.MultiField
+  alias Normandy.LLM.StructuredOutputs
 
   defmodule OpenMapSchema do
     use Normandy.Schema
@@ -29,7 +29,8 @@ defmodule Normandy.LLM.StructuredOutputsTest do
   test "schema_for returns {:ok, schema} for a compatible struct" do
     assert {:ok, schema} = StructuredOutputs.schema_for(client(), %MultiField{})
     assert schema["additionalProperties"] == false
-    assert "chat_message" in Map.keys(schema["properties"])
+    assert %Jason.OrderedObject{} = schema["properties"]
+    assert Enum.map(schema["properties"], &elem(&1, 0)) == ["chat_message", "count"]
   end
 
   test "schema_for skips when disabled per client" do

@@ -9,7 +9,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   - Full Messages API support
   - Tool/function calling integration
-  - Streaming responses (via callbacks)
+  - Streaming responses (`stream/3` returns the events)
   - Prompt caching support
   - Vision/multimodal inputs
   - Thinking mode configuration
@@ -19,29 +19,89 @@ defmodule Normandy.LLM.ClaudioAdapter do
       # Initialize Claudio client
       client = %Normandy.LLM.ClaudioAdapter{
         api_key: System.get_env("ANTHROPIC_API_KEY"),
-        options: [
+        options: %{
           timeout: 60_000,
           enable_caching: true
-        ]
+        }
       }
 
       # Use with Normandy agent
       agent = Normandy.Agents.BaseAgent.init(%{
         client: client,
-        model: "claude-3-5-sonnet-20241022",
-        temperature: 0.7
+        model: "claude-opus-5-5"
       })
 
-      {agent, response} = Normandy.Agents.BaseAgent.run(agent, user_input)
+      {:ok, agent, response} = Normandy.Agents.BaseAgent.run(agent, user_input)
 
   ## Configuration
 
-  The adapter supports all Claudio client options:
+  The adapter reads these keys from `options` (a map). Nothing below is sent unless set,
+  except prompt caching, which is on unless `:enable_caching` is `false`:
 
-  - `:timeout` - Request timeout in milliseconds (default: 30_000)
-  - `:enable_caching` - Enable prompt caching (default: false)
-  - `:thinking_budget` - Token budget for extended thinking mode
-  - `:base_url` - Custom API base URL (for testing)
+  - `:timeout` - Connection timeout in milliseconds (Claudio's default: 60_000)
+  - `:recv_timeout` - How long to wait for data once connected, in milliseconds
+    (Claudio's default: 120_000); raise it for long thinking or streaming calls
+  - `:enable_caching` - Prompt caching (default: `true`; `false` turns it off): an
+    explicit breakpoint on the system prompt and the last tool, plus the API's automatic
+    breakpoint for the conversation. Keep context-provider output stable across calls, or
+    the cache stops at the system prompt. Normandy uses 3 of the API's 4 cache breakpoints
+    (system, last tool, automatic); callers who add their own `cache_control` markers can
+    add at most one more, or the API rejects the request. A cache write costs 1.25 times
+    the input price and a cache read 0.1 times, so an agent that makes one call per
+    conversation pays more with it on; a tool loop, which re-sends its prefix on every
+    call, pays less
+  - `:thinking` - `:adaptive` (Claude 4.6 and later) or `:disabled`
+  - `:thinking_display` - `:summarized | :omitted | :updates`; requires `thinking: :adaptive`
+  - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
+    `budget_tokens` (4.6 and earlier, such as Haiku 4.5; Opus 4.7+, 5.x, Sonnet 5 and
+    Fable return 400); mutually exclusive with `:thinking`. `thinking: :disabled` also
+    returns 400 on Opus 5.5, which always thinks
+  - `:thinking_block_binding` - `:error | :drop_block`: what the API does with a replayed
+    thinking block whose history changed since it was produced (sends the
+    `thinking-binding-controls-2026-08-01` beta). `:drop_block` drops that block and every
+    later one instead of rejecting the request. Normandy's own history edits already drop
+    the thinking they invalidate (see `Normandy.Components.AgentMemory.drop_thinking/1`);
+    this covers edits it can't see, such as a context provider whose output changes the
+    system prompt. Requires `thinking: :adaptive` or `:thinking_budget`
+  - `:effort` - `:low | :medium | :high | :xhigh | :max`
+  - `:speed` - `:fast | :standard` (fast mode research preview)
+  - `:inference_geo` - `:global | :us`
+  - `:fallbacks` - `:default` or a list of model ids/maps (server-side refusal fallback);
+    Normandy rejects it on streaming calls (partial output would reach the callback)
+  - `:task_budget` - total tokens for the agentic turn (advisory; API minimum 20,000)
+  - `:on_parse_failure` - `:fallback | :error`, what to do when the output still does
+    not match the schema after the JSON retries; overrides the `:normandy` app env
+    (see `Normandy.LLM.JsonDeserializer`)
+  - `:base_url` - Custom API base URL (for testing); the struct's `base_url` field wins
+  - `:req_options` - Req options merged into the HTTP client
+  - `:structured_outputs` - `false` to use the legacy parse-and-retry path
+
+  Any other key, a non-boolean `:enable_caching`/`:structured_outputs`, or a missing
+  `api_key` raises `ArgumentError` when the agent is built (`BaseAgent.init/1`).
+
+  ## Errors
+
+  `converse/3` and `stream/3` return `{:error, %Normandy.LLMError{}}` on failure,
+  classified from the Claudio error type (or the HTTP status, for Claudio's generic
+  `:api_error`, which it uses for every streaming HTTP error):
+
+  - `:rate_limit` (429), `:overloaded` (529), `:server` (5xx, 408, no status) and
+    `:transport` (connection-level failures) are retryable
+  - `:authentication` (401), `:permission` (403), `:not_found` (404) and
+    `:invalid_request` (other 4xx) are not retryable
+  - `:unknown` covers anything else and is not retryable
+  - `on_parse_failure: :error` returns `type: :invalid_output`, and so does `:fallback`
+    when the schema has no `:chat_message` field to put the raw text in
+
+  Claudio's client-level `retry:` (in `req_options` or the client config) retries HTTP
+  failures before Normandy sees them; enabling it together with the agent's `retry`
+  multiplies the attempts.
+
+  `validate_options!/1` checks the option combinations and values above once, up front;
+  `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` call it for you.
+
+  Which models accept which values is left to the API: an unsupported pairing
+  returns the API's 400 through the normal error path.
 
   ## Structured Outputs
 
@@ -55,29 +115,54 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - The response schema is incompatible with constrained decoding: contains an open `:map` field,
     a non-JSON-Schema scalar type (e.g. `:date`, `:binary`, `:any`), or exceeds the nesting depth
     guard.
-  - The call carries tools — a `stop_reason: :tool_use` response requires the legacy tool-handling
-    loop.
-  - The model returns `refusal`, `max_tokens`, or context-exceeded, or the API rejects the
-    structured-output request — these route through the existing `:on_parse_failure` policy and
-    legacy fallback.
+  - A tool-loop call (`response_model: %ToolCallResponse{}`) or a stream without
+    `request.output_format`. With it, the format (the agent's non-chat output schema) is sent
+    as `output_config.format` beside the tools: it constrains the final answer's text, and a
+    `tool_use` response is still a tool call. `stream/3` re-sends without the format on a 400
+    naming it, as `converse/3` does.
+  - Any other call that carries tools.
+  - The API answers 400 with a message naming the output format or schema. Any other 400 (such
+    as "prompt is too long") is returned as the error, without a second request.
 
+  A response that stops at `max_tokens`, `model_context_window_exceeded` or `refusal` is
+  never parsed, re-asked or passed to `:on_parse_failure`, on either path: `converse/3`
+  returns the empty response model with that `stop_reason`, and Normandy turns it into
+  `{:error, %Normandy.LLMError{type: :max_tokens | :refusal}}`.
   """
 
   use Normandy.Schema
 
+  alias Normandy.Agents.ToolCallResponse
+  alias Normandy.Components.ContentBlock.Describe
+  alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.Json.Decoder
+  alias Normandy.LLM.Json.SchemaBinder
+  alias Normandy.LLM.JsonDeserializer
+  alias Normandy.LLM.Request
+  alias Normandy.LLM.StructuredOutputs
+  alias Normandy.LLMError
+  alias Normandy.Telemetry.Request, as: TelemetryRequest
+  alias Normandy.Telemetry.Usage
+
   @type t :: %__MODULE__{
           api_key: String.t(),
           base_url: String.t() | nil,
-          options: keyword(),
+          options: map(),
           finch: atom() | nil
         }
 
-  @derive {Inspect, except: [:api_key]}
   schema do
     field(:api_key, :string, required: true)
     field(:base_url, :string, default: nil)
     field(:options, :map, default: %{})
     field(:finch, :any, default: nil)
+  end
+
+  # Hides api_key and the credential-bearing options (Normandy.LLM.ClientInspect).
+  defimpl Inspect do
+    alias Normandy.LLM.ClientInspect
+
+    def inspect(client, opts), do: ClientInspect.inspect(client, opts)
   end
 
   defimpl Normandy.Agents.Model do
@@ -87,331 +172,238 @@ defmodule Normandy.LLM.ClaudioAdapter do
     Converts Normandy requests to Claudio format and vice versa.
     """
 
+    alias Normandy.Components.ContentBlock
+    alias Normandy.Components.ContentBlock.Describe
+    alias Normandy.Components.ContentBlock.Protocol
     alias Normandy.Components.Message
-    alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
-    alias Normandy.Components.ContentBlock.Image, as: ImageBlock
-    alias Normandy.Components.ContentBlock.Text, as: TextBlock
+    alias Normandy.LLMError
+
+    # Stop reasons whose answer is incomplete: cut off (max_tokens, the context
+    # window) or withheld (refusal). Claudio parses each to this atom.
+    @incomplete_stop_reasons [:max_tokens, :model_context_window_exceeded, :refusal]
 
     @doc """
-    Legacy completion function (not used with Claudio).
-    """
-    def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-      # Claudio uses Messages API, not Completions
-      # Return empty response_model
-      response_model
-    end
+    Converse with Claude via the Claudio library.
 
-    @doc """
-    Converse with Claude via Claudio library.
-
-    Converts Normandy messages to Claudio format, sends request,
-    and converts response back to Normandy schema.
+    Converts the `Normandy.LLM.Request` to a Claudio request, sends it, and returns
+    `{:ok, %Normandy.LLM.Response{}}` with `request.response_model` filled in (or the
+    answer text when it is `nil`).
     """
-    def converse(client, model, temperature, max_tokens, messages, response_model, opts \\ []) do
-      if Keyword.get(opts, :raw, false) do
-        converse_raw(client, model, temperature, max_tokens, messages, opts)
-      else
-        do_converse(client, model, temperature, max_tokens, messages, response_model, opts)
+    def converse(client, %Request{response_model: nil} = request, opts),
+      do: converse_raw(client, request, opts)
+
+    def converse(client, %Request{} = request, opts) do
+      case ClaudioAdapter.__structured_schema_for__(client, request) do
+        {:ok, json_schema} -> converse_structured(client, request, opts, json_schema)
+        :skip -> converse_legacy(client, request, opts, nil)
       end
     end
 
-    defp do_converse(client, model, temperature, max_tokens, messages, response_model, opts) do
-      case Normandy.LLM.ClaudioAdapter.__structured_schema_for__(client, response_model, opts) do
-        {:ok, json_schema} ->
-          converse_structured(
-            client,
-            model,
-            temperature,
-            max_tokens,
-            messages,
-            response_model,
-            opts,
-            json_schema
-          )
-
-        :skip ->
-          do_converse_legacy(
-            client,
-            model,
-            temperature,
-            max_tokens,
-            messages,
-            response_model,
-            opts
-          )
-      end
-    end
-
-    defp do_converse_legacy(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages,
-           response_model,
-           opts
-         ) do
-      # Extract tools and MCP servers from opts if provided
-      tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
-
-      # Initialize Claudio client
+    defp converse_legacy(client, request, opts, request_kind) do
       claudio_client = build_claudio_client(client)
 
-      # Check if caching is enabled
-      enable_caching = Map.get(client.options, :enable_caching, false)
+      case create(
+             claudio_client,
+             build_request(client, request),
+             request.model,
+             opts,
+             request_kind
+           ) do
+        # An answer cut off or refused is never parsed or re-asked: the empty response
+        # model goes back with its stop reason, and Normandy.LLM.Call makes the error.
+        {:ok, %Claudio.Messages.Response{stop_reason: reason} = response}
+        when reason in @incomplete_stop_reasons ->
+          {:ok, ClaudioAdapter.__incomplete_response__(request, response)}
 
-      # Build Claudio request
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
-
-      # Execute request
-      case Claudio.Messages.create(claudio_client, request) do
         {:ok, response} ->
           # Pass context for JSON retry
           context = %{
             client: client,
-            model: model,
-            temperature: temperature,
-            max_tokens: max_tokens,
-            messages: messages,
-            tools: tools
+            request: request,
+            json_retries: Keyword.get(opts, :json_retries, 2),
+            request_tracker: Keyword.get(opts, :request_tracker)
           }
 
-          normalized_response = convert_response_to_normandy(response, response_model, context)
-          {normalized_response, Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+          {converted, retry_usages} =
+            convert_response_to_normandy(response, request.response_model, context)
+
+          # The first response and any JSON retries were billed, even when the call
+          # failed; on failure the usage rides on the error.
+          usage =
+            ClaudioAdapter.add_retry_usages(
+              ClaudioAdapter.extract_usage(response),
+              retry_usages
+            )
+
+          case converted do
+            {:error, %LLMError{} = error} ->
+              {:error, LLMError.with_usage(error, usage)}
+
+            normalized_response ->
+              {:ok, ClaudioAdapter.__response__(normalized_response, response, usage)}
+          end
 
         {:error, error} ->
-          handle_error(error, response_model)
+          handle_error(error)
       end
     end
 
-    defp converse_structured(
-           client,
-           model,
-           temperature,
-           max_tokens,
-           messages,
-           response_model,
-           opts,
-           json_schema
-         ) do
+    defp converse_structured(client, request, opts, json_schema) do
       claudio_client = build_claudio_client(client)
-      enable_caching = Map.get(client.options, :enable_caching, false)
-      tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
 
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
+      claudio_request =
+        client
+        |> build_request(request)
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
-      case Claudio.Messages.create(claudio_client, request) do
-        {:ok, response} ->
-          context = %{
-            client: client,
-            model: model,
-            temperature: temperature,
-            max_tokens: max_tokens,
-            messages: messages,
-            tools: tools
-          }
+      case create(claudio_client, claudio_request, request.model, opts, nil) do
+        # An answer cut off or refused is never parsed or re-asked: the empty response
+        # model goes back with its stop reason, and Normandy.LLM.Call makes the error.
+        {:ok, %Claudio.Messages.Response{stop_reason: reason} = response}
+        when reason in @incomplete_stop_reasons ->
+          {:ok, ClaudioAdapter.__incomplete_response__(request, response)}
 
-          {Normandy.LLM.ClaudioAdapter.__handle_structured_response__(
-             response,
-             response_model,
-             context
-           ), Normandy.LLM.ClaudioAdapter.extract_usage(response)}
+        {:ok, response} ->
+          context = %{client: client, request: request}
+
+          case handle_structured(response, request.response_model, context) do
+            {:error, %LLMError{} = error} ->
+              {:error, LLMError.with_usage(error, ClaudioAdapter.extract_usage(response))}
+
+            handled ->
+              {:ok,
+               ClaudioAdapter.__response__(
+                 handled,
+                 response,
+                 ClaudioAdapter.extract_usage(response)
+               )}
+          end
 
         {:error, error} ->
-          case Normandy.LLM.ClaudioAdapter.__structured_error_action__(error) do
-            :fallback ->
-              do_converse_legacy(
-                client,
-                model,
-                temperature,
-                max_tokens,
-                messages,
-                response_model,
-                opts
-              )
-
-            :propagate ->
-              {handle_error(error, response_model), nil}
+          case ClaudioAdapter.__structured_error_action__(error) do
+            :fallback -> converse_legacy(client, request, opts, :structured_fallback)
+            :propagate -> handle_error(error)
           end
       end
     end
 
-    # Raw completion: one Claudio call returning {raw_text, usage}, with no
-    # schema deserialization. Used by JsonDeserializer's retry loop so it owns
-    # parsing+retry without ClaudioAdapter re-entering deserialize_with_retry.
-    defp converse_raw(client, model, temperature, max_tokens, messages, opts) do
+    # A tool-loop call's text is the constrained final answer, or text beside tool
+    # calls: it stays the ToolCallResponse's content, and the turn parses the final
+    # answer into the output schema (BaseAgent.convert_turn_output/3), as on the
+    # legacy path.
+    defp handle_structured(response, %Normandy.Agents.ToolCallResponse{} = schema, _context),
+      do: populate_tool_call_response(schema, ClaudioAdapter.extract_content(response), response)
+
+    defp handle_structured(response, response_model, context),
+      do: ClaudioAdapter.__handle_structured_response__(response, response_model, context)
+
+    # The answer as text, with no schema deserialization: response_model nil. Used by
+    # JsonDeserializer's retry loop so it owns parsing and retrying.
+    defp converse_raw(client, request, opts) do
       claudio_client = build_claudio_client(client)
-      enable_caching = Map.get(client.options, :enable_caching, false)
-      tools = Keyword.get(opts, :tools, [])
-      mcp_servers = Keyword.get(opts, :mcp_servers, nil)
 
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_mcp_servers(mcp_servers)
-        |> add_client_options(client.options)
+      case create(
+             claudio_client,
+             build_request(client, request),
+             request.model,
+             opts,
+             Keyword.get(opts, :request_kind)
+           ) do
+        {:ok, response} ->
+          {:ok,
+           ClaudioAdapter.__response__(
+             ClaudioAdapter.extract_content(response),
+             response,
+             ClaudioAdapter.extract_usage(response)
+           )}
 
-      Normandy.LLM.ClaudioAdapter.__raw_completion__(
-        Claudio.Messages.create(claudio_client, request)
+        {:error, error} ->
+          handle_error(error)
+      end
+    end
+
+    # One non-streaming Messages API request, in a [:normandy, :llm, :request] span
+    # (Normandy.Telemetry.Request). `kind` is nil for the call's first request.
+    defp create(claudio_client, request, model, opts, kind) do
+      TelemetryRequest.span(
+        Keyword.get(opts, :request_tracker),
+        kind,
+        %{model: model, provider: :anthropic, stream: false},
+        fn -> Claudio.Messages.create(claudio_client, request) end,
+        &ClaudioAdapter.__request_outcome__/1
       )
     end
 
     @doc """
-    Stream responses from Claude via Claudio library.
+    Stream a response from Claude via the Claudio library.
 
-    Enables streaming mode and returns a raw stream of SSE events
-    that can be processed with StreamProcessor.
-
-    ## Options
-
-    - `:tools` - List of tool schemas
-    - `:callback` - Function called for each event: `(event_type, data) -> :ok`
-
-    ## Returns
-
-    `{:ok, stream}` - Enumerable stream of events
-    `{:error, reason}` - Error occurred
-
-    ## Example
-
-        {:ok, stream} = Model.stream_converse(client, model, temp, max_tokens, messages, schema, callback: fn
-          :text_delta, text -> IO.write(text)
-          _, _ -> :ok
-        end)
-
-        # Process stream
-        Enum.each(stream, fn event -> process_event(event) end)
+    Returns `{:ok, stream}`: the SSE events converted to the stream events described in
+    `Normandy.Agents.Model` ("Stream events"), ready for
+    `Normandy.Components.StreamProcessor`. A transport failure after the stream started
+    is an `{:error, reason}` item. Normandy, not this adapter, delivers the events to
+    the caller's callback.
     """
-    @spec stream_converse(
-            struct(),
-            String.t(),
-            float() | nil,
-            integer() | nil,
-            list(),
-            struct(),
-            keyword()
-          ) :: {:ok, Enumerable.t()} | {:error, term()}
-    def stream_converse(
-          client,
-          model,
-          temperature,
-          max_tokens,
-          messages,
-          _response_model,
-          opts \\ []
-        ) do
-      # Extract options
-      tools = Keyword.get(opts, :tools, [])
-      callback = Keyword.get(opts, :callback)
-
-      # Initialize Claudio client
+    def stream(client, %Request{} = request, _opts) do
       claudio_client = build_claudio_client(client)
 
-      # Check if caching is enabled
-      enable_caching = Map.get(client.options, :enable_caching, false)
-
-      # Build streaming request
-      request =
-        Claudio.Messages.Request.new(model)
-        |> add_temperature(temperature)
-        |> add_max_tokens(max_tokens)
-        |> add_messages(messages, enable_caching)
-        |> add_tools(tools, enable_caching)
-        |> add_client_options(client.options)
+      claudio_request =
+        client
+        |> build_request(request, stream: true)
         |> Claudio.Messages.Request.enable_streaming()
 
-      # Execute streaming request - Req returns Req.Response with streaming body
-      case Claudio.Messages.create(claudio_client, request) do
+      # request.output_format constrains the streamed text as it does a tool-loop
+      # call's. A 400 naming the output format or its schema re-sends the request
+      # without it (the system prompt already shows the schema); any other error
+      # is returned.
+      result =
+        case ClaudioAdapter.__structured_schema_for__(client, request) do
+          {:ok, json_schema} ->
+            claudio_request
+            |> Claudio.Messages.Request.set_output_format(json_schema)
+            |> open_stream(claudio_client)
+            |> retry_stream_without_format(claudio_request, claudio_client)
+
+          :skip ->
+            open_stream(claudio_request, claudio_client)
+        end
+
+      case result do
+        {:ok, stream} -> {:ok, stream}
+        {:error, error} -> {:error, ClaudioAdapter.__to_llm_error__(error)}
+      end
+    end
+
+    defp open_stream(claudio_request, claudio_client) do
+      case Claudio.Messages.create(claudio_client, claudio_request) do
         {:ok, %Req.Response{body: stream}} ->
-          # Parse events and optionally invoke callback
-          event_stream =
-            stream
-            |> Claudio.Messages.Stream.parse_events()
+          {:ok,
+           stream
+           |> Claudio.Messages.Stream.parse_events()
+           |> Stream.map(fn
+             {:ok, event} -> to_stream_processor_event(event)
+             {:error, _} = error -> error
+           end)}
 
-          final_stream =
-            if callback do
-              Stream.map(event_stream, fn event ->
-                case event do
-                  {:ok, parsed_event} ->
-                    invoke_stream_callback(parsed_event, callback)
-                    to_stream_processor_event(parsed_event)
+        {:error, _error} = error ->
+          error
+      end
+    end
 
-                  {:error, _} = error ->
-                    error
-                end
-              end)
-            else
-              Stream.map(event_stream, fn
-                {:ok, event} -> to_stream_processor_event(event)
-                error -> error
-              end)
-            end
+    defp retry_stream_without_format({:ok, _stream} = ok, _claudio_request, _claudio_client),
+      do: ok
 
-          {:ok, final_stream}
-
-        {:error, error} ->
-          {:error, error}
+    defp retry_stream_without_format({:error, error}, claudio_request, claudio_client) do
+      case ClaudioAdapter.__structured_error_action__(error) do
+        :fallback -> open_stream(claudio_request, claudio_client)
+        :propagate -> {:error, error}
       end
     end
 
     # Private streaming helpers
 
-    defp invoke_stream_callback(
-           %{
-             event: "content_block_delta",
-             data: %{"delta" => %{"type" => "text_delta", "text" => text}}
-           },
-           callback
-         ) do
-      callback.(:text_delta, text)
-    end
-
-    defp invoke_stream_callback(
-           %{
-             event: "content_block_start",
-             data: %{"content_block" => %{"type" => "tool_use"} = tool}
-           },
-           callback
-         ) do
-      callback.(:tool_use_start, tool)
-    end
-
-    defp invoke_stream_callback(
-           %{event: "message_start", data: %{"message" => message}},
-           callback
-         ) do
-      callback.(:message_start, message)
-    end
-
-    defp invoke_stream_callback(%{event: "message_stop"}, callback) do
-      callback.(:message_stop, %{})
-    end
-
-    defp invoke_stream_callback(_, _callback), do: :ok
-
-    # Claudio's parse_events emits `%{event: "...", data: %{...}}` where
-    # `data` was decoded with `Poison.decode(..., keys: :atoms)` — so its
-    # keys are atoms. Normandy's StreamProcessor pattern-matches
+    # Claudio's parse_events emits `%{event: "...", data: %{...}}`; `data` is
+    # decoded with string keys (deps/claudio/lib/claudio/messages/stream.ex,
+    # parse_event/1), and data_get/2 reads that form. Normandy's StreamProcessor pattern-matches
     # `%{type: "...", <shaped-fields>}` directly (atom :type, atom field
     # keys, but the nested content block / delta maps stay string-keyed
     # because StreamProcessor's inner patterns use `%{"type" => ...}`).
@@ -445,7 +437,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
       %{
         type: "message_delta",
         delta: data_get(data, :delta) |> stringify_keys(),
-        usage: data_get(data, :usage) |> stringify_keys()
+        usage: data_get(data, :usage) |> stringify_keys(),
+        # Top level, beside delta and usage (after a mid-stream fallback).
+        input_transformations: data_get(data, :input_transformations) |> stringify_keys()
       }
     end
 
@@ -459,11 +453,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp to_stream_processor_event(other), do: other
 
-    # Claudio historically mixes atom-keyed and string-keyed map payloads
-    # depending on decode path — read both to stay compatible.
-    defp data_get(data, key) when is_map(data) do
-      Map.get(data, key) || Map.get(data, Atom.to_string(key))
-    end
+    defp data_get(data, key) when is_map(data), do: Map.get(data, Atom.to_string(key))
 
     defp data_get(_, _), do: nil
 
@@ -485,53 +475,52 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     # Private functions
 
-    defp build_claudio_client(client) do
-      # Build Claudio client with token (not api_key) and version
-      # Claudio.Client.new now expects a single map parameter
-      config = %{
-        token: client.api_key,
-        version: "2023-06-01"
-      }
-
-      config = if client.finch, do: Map.put(config, :finch, client.finch), else: config
-
-      # base_url is a second parameter, not part of config
-      if client.base_url do
-        Claudio.Client.new(config, client.base_url)
-      else
-        Claudio.Client.new(config)
-      end
-    end
+    defp build_claudio_client(client), do: ClaudioAdapter.to_claudio_client(client)
 
     defp add_temperature(request, nil), do: request
 
     defp add_temperature(request, temp),
       do: Claudio.Messages.Request.set_temperature(request, temp)
 
-    defp add_max_tokens(request, nil), do: request
-
-    defp add_max_tokens(request, max_tokens),
-      do: Claudio.Messages.Request.set_max_tokens(request, max_tokens)
-
     @doc false
     # Public (not `defp`) so tests can exercise the full message pipeline
-    # — auto-cache strategy + per-message dispatch — directly without
-    # round-tripping through `converse/7` and a live Claudio HTTP client.
-    # Not part of the adapter's supported surface.
+    # directly without round-tripping through `converse/3` and a live Claudio
+    # HTTP client. Not part of the adapter's supported surface.
+    #
+    # Conversation caching: with `enable_caching`, set Claudio's top-level
+    # automatic breakpoint. The API places it on the last cacheable block of any
+    # role (tool results included) and moves it forward as the conversation
+    # grows. Together with the explicit system and last-tool breakpoints that's 3
+    # of the 4 allowed. Normandy marks no message block itself.
     def add_messages(request, messages, enable_caching) do
-      messages =
-        if enable_caching, do: annotate_last_user_message(messages), else: messages
+      ensure_single_leading_system!(messages)
 
-      Enum.reduce(messages, request, fn msg, req ->
-        add_single_message(req, msg, enable_caching)
-      end)
+      request =
+        if enable_caching,
+          do: Claudio.Messages.Request.set_cache_control(request),
+          else: request
+
+      case messages do
+        [%Message{role: "system"} = system | rest] ->
+          request
+          |> add_single_message(system, enable_caching)
+          |> append_messages(rest)
+
+        _no_system ->
+          append_messages(request, messages)
+      end
     end
+
+    # One Claudio call for the whole conversation: Request.add_messages/2 appends in
+    # time linear in the history (a loop of add_message/3 copies the list each time).
+    defp append_messages(request, messages),
+      do: Claudio.Messages.Request.add_messages(request, Enum.map(messages, &message_entry/1))
 
     @doc false
     # Public (not `defp`) so tests can exercise the dispatch branches
-    # directly without round-tripping through `converse/7` and a live
+    # directly without round-tripping through `converse/3` and a live
     # Claudio HTTP client. Not part of the adapter's supported surface —
-    # callers should go through `Normandy.Agents.Model.converse/7`.
+    # callers should go through `Normandy.Agents.Model.converse/3`.
     # List-form system prompts: convert ContentBlock structs to Anthropic
     # wire shape. When caching is enabled, annotate the last block with
     # `cache_control: {"type": "ephemeral"}` (unless the caller already
@@ -555,78 +544,86 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
-    def add_single_message(
-          request,
-          %Message{role: role, content: content},
-          _enable_caching
-        )
-        when role in ["user", "assistant"] and is_list(content) do
-      _ = ensure_non_empty_content!(content)
-      role_atom = String.to_existing_atom(role)
-      dispatch_multimodal(request, role_atom, content)
+    def add_single_message(request, message, _enable_caching) do
+      {role, content} = message_entry(message)
+      Claudio.Messages.Request.add_message(request, role, content)
+    end
+
+    # A message as Claudio's `{role, content}`: content blocks become API maps here, so
+    # add_messages/2 and add_message/3 get the same entry.
+    defp message_entry(%Message{role: role, content: content})
+         when role in ["user", "assistant"] and is_list(content) do
+      blocks = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
+      {String.to_existing_atom(role), blocks}
     end
 
     # Single ContentBlock struct as content — treat as a one-element list
     # so the wire shape is symmetric with `content: [block]`. Without this,
     # a caller who sets `content: %Image{...}` ships a raw struct to
     # Claudio and the request is malformed at JSON-encode time.
-    def add_single_message(
-          request,
-          %Message{role: role, content: %block_mod{} = block},
-          _enable_caching
-        )
-        when role in ["user", "assistant"] and
-               block_mod in [TextBlock, ImageBlock, DocumentBlock] do
-      role_atom = String.to_existing_atom(role)
-      Claudio.Messages.Request.add_message(request, role_atom, [block_to_claudio(block)])
+    defp message_entry(%Message{role: role, content: %{__struct__: _} = block})
+         when role in ["user", "assistant"] do
+      content = if ContentBlock.block?(block), do: [block_to_claudio(block)], else: block
+      {String.to_existing_atom(role), content}
     end
 
-    def add_single_message(request, %Message{role: role, content: content}, _enable_caching)
-        when role in ["user", "assistant"] do
-      role_atom = String.to_existing_atom(role)
-      Claudio.Messages.Request.add_message(request, role_atom, content)
-    end
+    defp message_entry(%Message{role: role, content: content})
+         when role in ["user", "assistant"],
+         do: {String.to_existing_atom(role), content}
 
     # List-form tool content: convert ContentBlock structs to Anthropic
     # wire shape. Pre-shaped maps (e.g. from BaseIOSchema.to_json/1) pass
     # through via the `%{} = raw when not is_struct` branch of
     # block_to_claudio/1, preserving the pre-multimodal tool_result path.
-    def add_single_message(
-          request,
-          %Message{role: "tool", content: content},
-          _enable_caching
-        )
-        when is_list(content) do
-      raw = content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)
-      Claudio.Messages.Request.add_message(request, :user, raw)
-    end
+    defp message_entry(%Message{role: "tool", content: content}) when is_list(content),
+      do: {:user, content |> ensure_non_empty_content!() |> Enum.map(&block_to_claudio/1)}
 
-    def add_single_message(
-          request,
-          %Message{role: "tool", content: content},
-          _enable_caching
-        ) do
-      # Tool results are serialized via BaseIOSchema protocol
-      # They come as content blocks, send as user message
-      Claudio.Messages.Request.add_message(request, :user, content)
-    end
+    # Tool results are serialized via the BaseIOSchema protocol; they go as a user message.
+    defp message_entry(%Message{role: "tool", content: content}), do: {:user, content}
 
     # Caller typos and unsupported roles (e.g. OpenAI's "function") would
     # otherwise silently disappear from the request — the model gets a
     # degraded conversation with no feedback loop. Raise at the boundary.
-    def add_single_message(
-          _request,
-          %Message{role: role, turn_id: turn_id},
-          _enable_caching
-        )
-        when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
+    defp message_entry(%Message{role: role, turn_id: turn_id})
+         when is_binary(role) and role not in ["system", "user", "assistant", "tool"] do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: unrecognized message role #{inspect(role)} " <>
               "(turn_id=#{inspect(turn_id)}). Expected one of: " <>
               ~s("system", "user", "assistant", "tool".)
     end
 
-    def add_single_message(request, _msg, _enable_caching), do: request
+    defp message_entry(%Message{role: role}) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: message role must be a string, got: " <>
+              Describe.type_of(role)
+    end
+
+    defp message_entry(other) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: expected a %Normandy.Components.Message{}, got " <>
+              Describe.type_of(other)
+    end
+
+    # Anthropic takes one top-level system prompt and `set_system/2` replaces
+    # it, so a system message anywhere but first would silently overwrite the
+    # agent's prompt (e.g. a "system"-role summary in history). Raise instead.
+    defp ensure_single_leading_system!(messages) do
+      messages
+      |> Enum.with_index()
+      |> Enum.drop(1)
+      |> Enum.find(fn {msg, _index} -> match?(%Message{role: "system"}, msg) end)
+      |> case do
+        nil ->
+          :ok
+
+        {%Message{turn_id: turn_id}, index} ->
+          raise ArgumentError,
+                "Normandy.LLM.ClaudioAdapter: system message at position #{index} " <>
+                  "(turn_id=#{inspect(turn_id)}); only the first message may be a system " <>
+                  "message, since a later one would replace the system prompt. " <>
+                  ~s(Store summaries and notes as "user" or "assistant" messages.)
+      end
+    end
 
     # Shared non-empty-list guard — called from every list branch of
     # `add_single_message/3` so no role (system/user/assistant/tool) can
@@ -640,63 +637,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp ensure_non_empty_content!(list) when is_list(list), do: list
 
-    # Opportunistic dispatch: when a content list exactly matches a shape
-    # covered by one of Claudio's named helpers, use the helper so intent
-    # is preserved in the request builder. Any other shape (multi-block,
-    # reversed order, image-alone, cache-annotated, etc.) falls through
-    # to the raw-list path, which Claudio's `add_message/3` accepts
-    # natively. Empty-list is rejected at every list-branch entry via
-    # `ensure_non_empty_content!/1`, so the clauses below never see `[]`.
-    #
-    # Cache annotations: Claudio's named helpers (`add_message_with_image`
-    # etc.) take raw args and rebuild blocks internally, dropping
-    # `cache_control`. So we only take the named-helper path when neither
-    # block carries one — `cache_control: nil` in the pattern enforces
-    # this. Cached blocks always go through the raw-list fallback.
-    # Non-empty-string guards mirror `ContentBlock.{Image,Document}.to_claudio/1`:
-    # the raw-list fallback (below) ultimately calls those serializers and
-    # raises ArgumentError on empty `data`/`media_type`/`url`/`file_id`. The
-    # named-helper path here would otherwise ship empty values to Anthropic
-    # downstream, asymmetrically letting malformed blocks through.
-    defp dispatch_multimodal(request, role, [
-           %ImageBlock{
-             source: :base64,
-             data: data,
-             media_type: media_type,
-             cache_control: nil
-           },
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(data) and data != "" and
-                is_binary(media_type) and media_type != "" and
-                is_binary(text) do
-      Claudio.Messages.Request.add_message_with_image(request, role, text, data, media_type)
+    defp block_to_claudio(%{__struct__: _} = b) do
+      if ContentBlock.block?(b), do: Protocol.to_claudio(b), else: unsupported_block!(b)
     end
 
-    defp dispatch_multimodal(request, role, [
-           %ImageBlock{source: :url, url: url, cache_control: nil},
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(url) and url != "" and is_binary(text) do
-      Claudio.Messages.Request.add_message_with_image_url(request, role, text, url)
-    end
-
-    defp dispatch_multimodal(request, role, [
-           %DocumentBlock{source: :file_id, file_id: file_id, cache_control: nil},
-           %TextBlock{text: text, cache_control: nil}
-         ])
-         when is_binary(file_id) and file_id != "" and is_binary(text) do
-      Claudio.Messages.Request.add_message_with_document(request, role, text, file_id)
-    end
-
-    defp dispatch_multimodal(request, role, blocks) when is_list(blocks) do
-      raw = Enum.map(blocks, &block_to_claudio/1)
-      Claudio.Messages.Request.add_message(request, role, raw)
-    end
-
-    defp block_to_claudio(%TextBlock{} = b), do: TextBlock.to_claudio(b)
-    defp block_to_claudio(%ImageBlock{} = b), do: ImageBlock.to_claudio(b)
-    defp block_to_claudio(%DocumentBlock{} = b), do: DocumentBlock.to_claudio(b)
     # Pass through any caller-provided pre-shaped block map (e.g. when a
     # caller hand-builds an Anthropic block for a feature Normandy doesn't
     # model yet, like `cache_control`). Plain maps only — structs (which
@@ -705,56 +649,16 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # wire data to Anthropic.
     defp block_to_claudio(%{} = raw) when not is_struct(raw), do: raw
 
-    defp block_to_claudio(other) do
+    defp block_to_claudio(other), do: unsupported_block!(other)
+
+    @spec unsupported_block!(term()) :: no_return()
+    defp unsupported_block!(other) do
       raise ArgumentError,
-            "Normandy.LLM.ClaudioAdapter: unsupported content block #{inspect(other)}. " <>
+            "Normandy.LLM.ClaudioAdapter: unsupported content block, got " <>
+              "#{Describe.type_of(other)}. " <>
               "Expected a Normandy.Components.ContentBlock.* struct or a " <>
               "pre-shaped Anthropic block map."
     end
-
-    # Conversation-breakpoint cache strategy: when `enable_caching: true`,
-    # find the last `role: "user"` message and annotate its final content
-    # block with `cache_control`. Anthropic's prompt cache is cumulative,
-    # so a breakpoint at the latest user turn caches the entire system +
-    # tools + history up to that point.
-    #
-    # Only multimodal/list-form content (or a single ContentBlock struct)
-    # is annotated — plain string user content is left as-is so we don't
-    # silently change the wire shape for chat-text callers.
-    defp annotate_last_user_message(messages) do
-      case last_user_index(messages) do
-        nil -> messages
-        idx -> List.update_at(messages, idx, &auto_cache_user_message/1)
-      end
-    end
-
-    defp last_user_index(messages) do
-      messages
-      |> Enum.with_index()
-      |> Enum.reduce(nil, fn
-        {%Message{role: "user"}, idx}, _acc -> idx
-        _, acc -> acc
-      end)
-    end
-
-    # List-form content: convert to wire-shape and cache the last block.
-    defp auto_cache_user_message(%Message{content: content} = msg)
-         when is_list(content) and content != [] do
-      raw = Enum.map(content, &block_to_claudio/1)
-      %{msg | content: cache_last_block(raw)}
-    end
-
-    # Single ContentBlock struct: treat as a one-element list.
-    defp auto_cache_user_message(%Message{content: %mod{} = block} = msg)
-         when mod in [TextBlock, ImageBlock, DocumentBlock] do
-      %{msg | content: cache_last_block([block_to_claudio(block)])}
-    end
-
-    # String, opaque structs (I/O schema, ToolResult), or empty list:
-    # leave the message unchanged. The empty-list case is rejected later
-    # by `ensure_non_empty_content!/1` in the dispatch path with a clear
-    # ArgumentError; we don't want to mask that here.
-    defp auto_cache_user_message(msg), do: msg
 
     # Annotate the last block of a wire-shape list with a default ephemeral
     # cache breakpoint. If the caller already annotated it (via
@@ -802,13 +706,48 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
+    # The one request builder for every call path (legacy, structured, raw
+    # retry, streaming), so a setting cannot reach one path and miss another.
+    #
+    # `max_tokens` is required by the Request struct; a nil fails here instead of being
+    # dropped. add_messages/3 takes the system prompt as a leading "system" message, and
+    # keeps ensure_single_leading_system!/1: a "system" message in `request.messages`
+    # next to `:system` raises.
+    defp build_request(client, %Request{} = request, call_opts \\ []) do
+      # On unless the client opts out (MIGRATING-2.0.md §38).
+      enable_caching = Map.get(client.options, :enable_caching, true)
+
+      Claudio.Messages.Request.new(request.model)
+      |> add_temperature(request.temperature)
+      |> Claudio.Messages.Request.set_max_tokens(request.max_tokens)
+      |> add_messages(Request.messages_with_system(request), enable_caching)
+      |> add_tools(request.tools, enable_caching)
+      |> add_mcp_servers(request.mcp_servers)
+      |> add_tool_choice(request.tool_choice)
+      |> add_client_options(client.options, call_opts ++ task_budget_opts(request))
+    end
+
+    # tool_choice is valid only next to tools (the agent's, or an MCP server's
+    # mcp_toolset), so a request with none leaves it unset.
+    defp add_tool_choice(claudio_request, nil), do: claudio_request
+
+    defp add_tool_choice(%Claudio.Messages.Request{tools: tools} = claudio_request, :none)
+         when tools in [nil, []],
+         do: claudio_request
+
+    defp add_tool_choice(claudio_request, :none),
+      do: Claudio.Messages.Request.set_tool_choice(claudio_request, :none)
+
+    defp task_budget_opts(%Request{task_budget_remaining: nil}), do: []
+    defp task_budget_opts(%Request{task_budget_remaining: n}), do: [task_budget_remaining: n]
+
     defp add_tools(request, [], _enable_caching), do: request
 
     defp add_tools(request, tools, enable_caching) when is_list(tools) do
       # Add tools with caching if enabled
       # Cache all tools except the last one, then cache the last one
-      # This provides optimal caching for tool definitions
-      if enable_caching and length(tools) > 0 do
+      # This provides optimal caching for tool definitions (the clause above took [])
+      if enable_caching do
         # Add all tools except last without cache
         {last_tool, other_tools} = List.pop_at(tools, -1)
 
@@ -859,239 +798,551 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end)
     end
 
-    defp add_client_options(request, options) do
-      request
-      |> maybe_set_thinking(Map.get(options, :thinking_budget))
-    end
+    defp add_client_options(request, options, call_opts),
+      do: ClaudioAdapter.__apply_client_options__(request, options, call_opts)
 
-    defp maybe_set_thinking(request, nil), do: request
-
-    defp maybe_set_thinking(request, budget) when is_integer(budget) do
-      Claudio.Messages.Request.enable_thinking(request, %{
-        "type" => "enabled",
-        "budget_tokens" => budget
-      })
-    end
-
+    # {converted, usage of the JSON retries}: only a schema answer is re-asked.
     defp convert_response_to_normandy(claudio_response, response_model, context) do
-      # Extract content from Claudio response
-      content = Normandy.LLM.ClaudioAdapter.extract_content(claudio_response)
+      content = ClaudioAdapter.extract_content(claudio_response)
 
-      # If response_model has specific fields, populate them
       case response_model do
+        %Normandy.Agents.ToolCallResponse{} = schema ->
+          {populate_tool_call_response(schema, content, claudio_response), []}
+
         %{__struct__: _module} = schema ->
-          # Populate schema with response content
-          populate_schema(schema, content, claudio_response, context)
-
-        _ ->
-          # Return raw content
-          content
-      end
-    end
-
-    defp populate_schema(schema, content, claudio_response, context) do
-      # Handle ToolCallResponse specially
-      case schema do
-        %Normandy.Agents.ToolCallResponse{} ->
-          populate_tool_call_response(schema, content, claudio_response)
-
-        _ ->
           populate_standard_schema(schema, content, context)
+
+        _ ->
+          {content, []}
       end
     end
 
     defp populate_tool_call_response(schema, content, claudio_response) do
       # Extract tool_use blocks from Claudio response
-      tool_calls = extract_tool_uses(claudio_response)
+      tool_calls = ClaudioAdapter.extract_tool_uses(claudio_response)
 
       schema
       |> Map.put(:content, content)
       |> Map.put(:tool_calls, tool_calls)
+      |> Map.put(:thinking, ClaudioAdapter.extract_thinking(claudio_response))
+      |> Map.put(
+        :content_blocks,
+        Claudio.Messages.Response.to_assistant_content(claudio_response)
+      )
+      |> Map.put(:stop_reason, claudio_response.stop_reason)
     end
-
-    defp extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
-      content_blocks
-      |> Enum.filter(fn block ->
-        type = Map.get(block, :type) || Map.get(block, "type")
-        type in [:tool_use, :mcp_tool_use, "tool_use", "mcp_tool_use"]
-      end)
-      |> Enum.map(fn tool_use ->
-        type = Map.get(tool_use, :type) || Map.get(tool_use, "type")
-
-        tool_name = Map.get(tool_use, :name) || Map.get(tool_use, "name")
-
-        name =
-          cond do
-            type in [:mcp_tool_use, "mcp_tool_use"] ->
-              server_name =
-                Map.get(tool_use, :server_name) || Map.get(tool_use, "server_name")
-
-              if server_name do
-                "#{server_name}__#{tool_name}"
-              else
-                tool_name
-              end
-
-            true ->
-              tool_name
-          end
-
-        %Normandy.Components.ToolCall{
-          id: Map.get(tool_use, :id) || Map.get(tool_use, "id"),
-          name: name,
-          input: Map.get(tool_use, :input) || Map.get(tool_use, "input")
-        }
-      end)
-    end
-
-    defp extract_tool_uses(_), do: []
 
     defp populate_standard_schema(schema, content, context) do
-      # Use JsonDeserializer with retry for robust parsing and validation
-      # Extract context parameters
-      %{
-        client: client,
-        model: model,
-        temperature: temperature,
-        max_tokens: max_tokens,
-        messages: messages,
-        tools: tools
-      } = context
+      # Use JsonDeserializer with retry for robust parsing and validation. The request
+      # carries the tools and the task budget the retries resend. Each JSON retry is a
+      # paid call: its usage comes back beside the result.
+      %{client: client, request: request, json_retries: json_retries} = context
 
-      # Build opts with tools if present
-      opts = if tools != [], do: [tools: tools, max_retries: 2], else: [max_retries: 2]
+      opts = [max_retries: json_retries, request_tracker: context.request_tracker]
 
-      case Normandy.LLM.JsonDeserializer.deserialize_with_retry(
-             content,
-             schema,
-             client,
-             model,
-             temperature,
-             max_tokens,
-             messages,
-             opts
-           ) do
-        {:ok, validated_schema} ->
-          validated_schema
+      case JsonDeserializer.deserialize_with_usage(content, schema, client, request, opts) do
+        {{:ok, validated_schema}, usages} ->
+          {validated_schema, usages}
 
-        {:error, reason} ->
-          Normandy.LLM.ClaudioAdapter.apply_parse_failure(schema, content, reason, context)
+        # An LLM failure during a parse retry is not a parse failure.
+        {{:error, %LLMError{}} = error, usages} ->
+          {error, usages}
+
+        {{:error, reason}, usages} ->
+          {ClaudioAdapter.apply_parse_failure(schema, content, reason, context), usages}
       end
     end
 
-    defp handle_error(error, response_model) do
-      # Log error and return empty response_model
-      # In production, you might want more sophisticated error handling
-      IO.warn("Claudio API error: #{inspect(error)}")
-      response_model
-    end
+    defp handle_error(error), do: {:error, ClaudioAdapter.__to_llm_error__(error)}
   end
 
   @doc false
-  def apply_parse_failure(schema, content, reason, context) do
-    case __on_parse_failure_policy__(context) do
-      :error ->
-        {:error, reason}
-
-      :fallback when is_binary(content) ->
-        require Logger
-        Logger.warning("JSON parse failed; falling back to raw text. reason=#{inspect(reason)}")
-
-        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
-          reason: reason
-        })
-
-        Map.put(schema, :chat_message, content)
-
-      :fallback ->
-        require Logger
-        Logger.warning("JSON parse failed; returning schema unchanged. reason=#{inspect(reason)}")
-
-        :telemetry.execute([:normandy, :json_deserializer, :fallback], %{count: 1}, %{
-          reason: reason
-        })
-
-        schema
-    end
-  end
+  defdelegate apply_parse_failure(schema, content, reason, context),
+    to: Normandy.LLM.ParseFailure,
+    as: :apply
 
   @doc false
-  def __on_parse_failure_policy__(context),
-    do:
-      Map.get(context, :on_parse_failure) ||
-        Application.get_env(:normandy, :on_parse_failure, :fallback)
+  defdelegate __on_parse_failure_policy__(context), to: Normandy.LLM.ParseFailure, as: :policy
 
   @doc false
   def extract_content(%{content: content_blocks}) when is_list(content_blocks) do
     content_blocks
-    |> Enum.filter(fn block ->
-      Map.get(block, :type) == :text || Map.get(block, "type") == "text"
-    end)
-    |> Enum.map(fn block ->
-      Map.get(block, :text) || Map.get(block, "text") || ""
-    end)
-    |> Enum.join("\n")
+    |> content_after_last_fallback()
+    |> Enum.filter(&(Map.get(&1, :type) == :text))
+    |> Enum.map_join("\n", &(Map.get(&1, :text) || ""))
   end
 
   def extract_content(_response), do: ""
 
   @doc false
+  # Blocks after the last `fallback` block (server-side refusal fallback, Claudio 0.7
+  # `Request.set_fallbacks/2`). Earlier blocks came from a model that declined:
+  # Normandy must not surface their text or run their tool calls. Unchanged when
+  # there is no fallback block.
+  @spec content_after_last_fallback(list()) :: list()
+  def content_after_last_fallback(blocks) when is_list(blocks) do
+    last =
+      blocks
+      |> Enum.with_index()
+      |> Enum.filter(fn {block, _index} -> fallback_block?(block) end)
+      |> List.last()
+
+    case last do
+      nil -> blocks
+      {_block, index} -> Enum.drop(blocks, index + 1)
+    end
+  end
+
+  defp fallback_block?(block) when is_map(block),
+    do: Map.get(block, :type) == :fallback
+
+  defp fallback_block?(_block), do: false
+
+  @doc false
+  # Per-call facts that are not token usage, carried as `Response.meta`.
+  @spec response_meta(term()) :: map()
+  def response_meta(%Claudio.Messages.Response{} = response) do
+    served_by =
+      case Claudio.Messages.Response.served_by(response) do
+        model when is_binary(model) -> %{served_by: model}
+        _ -> %{}
+      end
+
+    # After a server-side fallback the kept thinking belongs to the fallback model.
+    meta =
+      case {Claudio.Messages.Response.fallbacks(response), served_by} do
+        {[_ | _], %{served_by: model}} -> Map.put(served_by, :fallback_model, model)
+        _ -> served_by
+      end
+
+    # Thinking blocks the API dropped or let through after their history changed
+    # (sent only with :thinking_block_binding's beta).
+    meta =
+      case response.input_transformations do
+        [_ | _] = transformations -> Map.put(meta, :input_transformations, transformations)
+        _ -> meta
+      end
+
+    # The provider's message id and stop_reason, as a string (e.g. "end_turn").
+    meta
+    |> put_unless_nil(:response_id, response.id)
+    |> put_unless_nil(:finish_reason, stop_reason_string(response.stop_reason))
+  end
+
+  def response_meta(_response), do: %{}
+
+  @doc false
+  # The %Normandy.LLM.Response{} for a Claudio response; usage is passed in because
+  # JSON retries add theirs to the first response's.
+  @spec __response__(struct() | String.t(), Claudio.Messages.Response.t(), map() | nil) ::
+          Normandy.LLM.Response.t()
+  def __response__(content, %Claudio.Messages.Response{} = response, usage) do
+    %Normandy.LLM.Response{
+      content: content,
+      stop_reason: response.stop_reason,
+      usage: usage,
+      meta: response_meta(response)
+    }
+  end
+
+  defp stop_reason_string(reason) when is_atom(reason) and reason != nil,
+    do: Atom.to_string(reason)
+
+  defp stop_reason_string(reason), do: reason
+
+  defp put_unless_nil(map, _key, nil), do: map
+  defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
+
+  @doc false
+  # The served model's thinking and redacted_thinking blocks, in order and in
+  # wire shape (string keys), so they can be sent back exactly as received.
+  def extract_thinking(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> content_after_last_fallback()
+    |> ToolCallResponse.thinking_blocks()
+  end
+
+  def extract_thinking(_response), do: []
+
+  @doc false
+  # The client tool calls Normandy runs: `tool_use` blocks after the last fallback.
+  # `mcp_tool_use` and `server_tool_use` blocks were run by the API (an MCP connector,
+  # a server tool); their results are already in the response, so they are never
+  # dispatched here. They reach the next request in `ToolCallResponse.content_blocks`.
+  def extract_tool_uses(%{content: content_blocks}) when is_list(content_blocks) do
+    content_blocks
+    |> content_after_last_fallback()
+    |> Enum.filter(&(Map.get(&1, :type) == :tool_use))
+    |> Enum.map(fn tool_use ->
+      %Normandy.Components.ToolCall{
+        id: Map.get(tool_use, :id),
+        name: Map.get(tool_use, :name),
+        input: Map.get(tool_use, :input)
+      }
+    end)
+  end
+
+  def extract_tool_uses(_), do: []
+
+  # The first call's usage plus each JSON retry's.
+  @doc false
+  def add_retry_usages(usage, retry_usages),
+    do: Enum.reduce(retry_usages, usage, &Usage.sum(&2, &1))
+
+  @doc false
   def extract_usage(response) when is_map(response),
-    do: Map.get(response, :usage) || Map.get(response, "usage")
+    do: Map.get(response, :usage)
 
   def extract_usage(_response), do: nil
 
-  @doc false
-  # Decides what to do when the structured-outputs call errors. A request-shape
-  # rejection (the API not accepting the output_format/schema) is recoverable via
-  # the legacy parse-retry path, which sends no output_format — so fall back.
-  # Auth/permission/rate-limit/overload/transport errors are NOT recoverable that
-  # way (the legacy call hits the same endpoint with the same credentials), so
-  # surface them via handle_error instead of duplicating the request.
-  @spec __structured_error_action__(term()) :: :fallback | :propagate
-  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error}), do: :fallback
-  def __structured_error_action__(_error), do: :propagate
+  @doc """
+  Builds the Claudio HTTP client (a `Req.Request`) for this adapter: the API key,
+  `base_url` (when set), `finch` pool and `options[:req_options]` are respected.
+  `req_options` is merged with `Req.merge/2`, as in `OpenAICompatibleAdapter`
+  (for example `[plug: {Req.Test, MyStub}]` in tests).
+  """
+  @spec to_claudio_client(t()) :: Req.Request.t()
+  def to_claudio_client(%__MODULE__{} = client) do
+    options = client.options || %{}
 
-  @doc false
-  # Decides structured-vs-legacy for THIS call. Tool-bearing calls always use
-  # the legacy path: with tools, a `stop_reason: :tool_use` response is a normal
-  # mid-turn tool call the legacy path handles, not a structured-output result.
-  def __structured_schema_for__(client, response_model, opts) do
-    case Keyword.get(opts, :tools, []) do
-      [] -> Normandy.LLM.StructuredOutputs.schema_for(client, response_model)
-      _ -> :skip
+    config =
+      %{token: client.api_key, version: "2023-06-01"}
+      |> put_present(:finch, client.finch)
+      |> put_present(:timeout, Map.get(options, :timeout))
+      |> put_present(:recv_timeout, Map.get(options, :recv_timeout))
+
+    req =
+      case client.base_url || Map.get(options, :base_url) do
+        nil -> Claudio.Client.new(config)
+        base_url -> Claudio.Client.new(config, base_url)
+      end
+
+    case check_req_options!(client) do
+      nil -> req
+      req_options -> Req.merge(req, req_options)
     end
   end
+
+  defp check_req_options!(%__MODULE__{options: options}) do
+    case Map.get(options, :req_options) do
+      nil ->
+        nil
+
+      req_options when is_list(req_options) ->
+        req_options
+
+      other ->
+        raise ArgumentError,
+              "ClaudioAdapter.to_claudio_client/1: expected options[:req_options] to be a " <>
+                "keyword list of Req options (for example [plug: {Req.Test, MyStub}]), " <>
+                "got: #{Describe.type_of(other)}"
+    end
+  end
+
+  @doc """
+  Raises `ArgumentError` when `client.options` can never produce a valid request, and
+  returns `client` unchanged otherwise.
+
+  Checks the option combinations (`:thinking` with `:thinking_budget`, `:thinking_display`
+  without `thinking: :adaptive`), the values Claudio validates in its own request setters,
+  and the shape of `options[:req_options]`. It runs the same option pass real requests
+  run, against a placeholder request, so nothing is duplicated and no network is touched.
+
+  `BaseAgent.init/1` and `ConfigTemplate.rebuild/3` call it, so a misconfigured agent
+  fails when it is configured rather than on every call, where the retry policy would
+  wait through its backoff before surfacing the error.
+
+  The `:fallbacks` check on streaming calls is not made here: it depends on the call,
+  so it stays per call.
+  """
+  @spec validate_options!(t()) :: t()
+  def validate_options!(%__MODULE__{} = client) do
+    check_api_key!(client.api_key)
+    check_option_keys!(client.options)
+    check_on_parse_failure!(Map.get(client.options, :on_parse_failure))
+    # Builds the Claudio client locally (no request): checks :req_options, and
+    # Claudio checks :timeout and :recv_timeout.
+    _ = to_claudio_client(client)
+
+    _ =
+      __apply_client_options__(
+        Claudio.Messages.Request.new("validate-options-placeholder"),
+        client.options,
+        []
+      )
+
+    client
+  end
+
+  # Every key `options` may hold; anything else is a typo or an unsupported setting.
+  @option_keys [
+    :timeout,
+    :recv_timeout,
+    :base_url,
+    :req_options,
+    :enable_caching,
+    :structured_outputs,
+    :on_parse_failure,
+    :thinking,
+    :thinking_display,
+    :thinking_budget,
+    :thinking_block_binding,
+    :effort,
+    :speed,
+    :inference_geo,
+    :fallbacks,
+    :task_budget
+  ]
+
+  defp check_on_parse_failure!(nil), do: :ok
+  defp check_on_parse_failure!(policy) when policy in [:fallback, :error], do: :ok
+
+  defp check_on_parse_failure!(policy) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client option :on_parse_failure must be :fallback " <>
+            "or :error; got #{Describe.type_of(policy)}"
+  end
+
+  defp check_api_key!(key) when is_binary(key) and key != "", do: :ok
+
+  defp check_api_key!(key) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: api_key must be a non-empty string, got: " <>
+            Describe.type_of(key)
+  end
+
+  defp check_option_keys!(options) when is_map(options) do
+    case Map.keys(options) -- @option_keys do
+      [] ->
+        :ok
+
+      [key | _] ->
+        raise ArgumentError,
+              "Normandy.LLM.ClaudioAdapter: unknown client option #{inspect(key)}; " <>
+                "supported: #{Enum.map_join(@option_keys, ", ", &inspect/1)}"
+    end
+
+    for key <- [:enable_caching, :structured_outputs],
+        Map.has_key?(options, key),
+        not is_boolean(Map.fetch!(options, key)) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client option #{inspect(key)} must be a boolean, " <>
+              "got: #{Describe.type_of(Map.fetch!(options, key))}"
+    end
+
+    :ok
+  end
+
+  defp check_option_keys!(options) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client options must be a map, got " <>
+            Describe.type_of(options)
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
+
+  @doc false
+  # Applies `client.options` request settings, plus per-call options from the turn
+  # loop (`:task_budget_remaining`, `:stream`), to a Claudio request. Public so
+  # tests can assert the request shape without an HTTP call; not part of the
+  # supported surface. Normandy checks option *combinations* only; values reach
+  # Claudio's own ArgumentError and model support reaches the API.
+  @spec __apply_client_options__(Claudio.Messages.Request.t(), map(), keyword()) ::
+          Claudio.Messages.Request.t()
+  def __apply_client_options__(request, options, call_opts \\ []) do
+    opt = fn key -> Map.get(options, key) end
+    validate_option_combinations!(opt, call_opts)
+
+    request
+    |> put_thinking(opt.(:thinking), opt.(:thinking_display), opt.(:thinking_budget))
+    |> put_if(
+      opt.(:thinking_block_binding),
+      &Claudio.Messages.Request.set_thinking_block_binding/2
+    )
+    |> put_if(opt.(:effort), &Claudio.Messages.Request.set_effort/2)
+    |> put_if(opt.(:speed), &Claudio.Messages.Request.set_speed/2)
+    |> put_if(opt.(:inference_geo), &Claudio.Messages.Request.set_inference_geo/2)
+    |> put_if(opt.(:fallbacks), &Claudio.Messages.Request.set_fallbacks/2)
+    |> put_task_budget(opt.(:task_budget), Keyword.get(call_opts, :task_budget_remaining))
+  end
+
+  # A flat list of independent checks, one per rule.
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+  defp validate_option_combinations!(opt, call_opts) do
+    if opt.(:thinking) != nil and opt.(:thinking_budget) != nil do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking and :thinking_budget are " <>
+              "mutually exclusive (:thinking_budget is for models that still accept budget_tokens: " <>
+              "4.6 and earlier, such as Haiku 4.5); " <>
+              "got thinking: #{Describe.type_of(opt.(:thinking))}, " <>
+              "thinking_budget: #{Describe.type_of(opt.(:thinking_budget))}"
+    end
+
+    if opt.(:thinking_display) != nil and opt.(:thinking) != :adaptive do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking_display requires thinking: :adaptive; " <>
+              "got thinking: #{Describe.type_of(opt.(:thinking))}"
+    end
+
+    if opt.(:thinking_block_binding) != nil and opt.(:thinking) != :adaptive and
+         opt.(:thinking_budget) == nil do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: client.options :thinking_block_binding requires " <>
+              "thinking: :adaptive or :thinking_budget; got thinking: " <>
+              Describe.type_of(opt.(:thinking))
+    end
+
+    if opt.(:fallbacks) != nil and Keyword.get(call_opts, :stream, false) do
+      raise ArgumentError,
+            "Normandy.LLM.ClaudioAdapter: Normandy does not support :fallbacks on streaming calls. " <>
+              "The API retries on the same stream, but partial output from the declining model " <>
+              "would already have reached the stream callback. Remove client.options :fallbacks " <>
+              "or use a non-streaming call"
+    end
+
+    :ok
+  end
+
+  defp put_thinking(request, nil, _display, nil), do: request
+
+  defp put_thinking(request, :adaptive, display, nil),
+    do: Claudio.Messages.Request.enable_adaptive_thinking(request, display: display)
+
+  defp put_thinking(request, :disabled, _display, nil),
+    do: Claudio.Messages.Request.disable_thinking(request)
+
+  defp put_thinking(request, nil, _display, budget) when is_integer(budget) do
+    Claudio.Messages.Request.enable_thinking(request, %{
+      "type" => "enabled",
+      "budget_tokens" => budget
+    })
+  end
+
+  defp put_thinking(_request, thinking, _display, nil) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client.options :thinking must be :adaptive or :disabled; " <>
+            "got #{Describe.type_of(thinking)}"
+  end
+
+  defp put_thinking(_request, nil, _display, budget) do
+    raise ArgumentError,
+          "Normandy.LLM.ClaudioAdapter: client.options :thinking_budget must be a positive integer; " <>
+            "got #{Describe.type_of(budget)}"
+  end
+
+  defp put_if(request, nil, _setter), do: request
+  defp put_if(request, value, setter), do: setter.(request, value)
+
+  defp put_task_budget(request, nil, _remaining), do: request
+
+  defp put_task_budget(request, total, nil),
+    do: Claudio.Messages.Request.set_task_budget(request, total)
+
+  defp put_task_budget(request, total, remaining),
+    do: Claudio.Messages.Request.set_task_budget(request, total, remaining: remaining)
+
+  @doc false
+  # Classifies a Claudio failure (spec section 2). A generic :api_error is classified by
+  # status: Claudio types every streaming HTTP error as :api_error.
+  @spec __to_llm_error__(term()) :: LLMError.t()
+  def __to_llm_error__(%LLMError{} = error), do: error
+
+  def __to_llm_error__(%Claudio.APIError{type: type, status_code: status, message: message} = e) do
+    {llm_type, retryable?} = classify_api_error(type, status)
+
+    LLMError.new(
+      type: llm_type,
+      status: status,
+      retryable?: retryable?,
+      detail: message,
+      reason: e
+    )
+  end
+
+  def __to_llm_error__(%module{} = e)
+      when module in [Req.TransportError, Mint.TransportError, Mint.HTTPError] do
+    LLMError.transport(e)
+  end
+
+  def __to_llm_error__(other), do: LLMError.wrap(other)
+
+  defp classify_api_error(:rate_limit_error, _status), do: {:rate_limit, true}
+  defp classify_api_error(:overloaded_error, _status), do: {:overloaded, true}
+  defp classify_api_error(:authentication_error, _status), do: {:authentication, false}
+  defp classify_api_error(:permission_error, _status), do: {:permission, false}
+  defp classify_api_error(:not_found_error, _status), do: {:not_found, false}
+  defp classify_api_error(:invalid_request_error, _status), do: {:invalid_request, false}
+  defp classify_api_error(_type, status), do: LLMError.classify_status(status)
+
+  @doc false
+  # Decides what to do when the structured-outputs call errors. The API refusing the
+  # output format or its schema is recoverable via the legacy parse-retry path, which
+  # sends no output format, so fall back. Any other error, including other 400s such
+  # as "prompt is too long", would fail the legacy call the same way: surface it
+  # instead of paying for a second request.
+  @spec __structured_error_action__(term()) :: :fallback | :propagate
+  def __structured_error_action__(%Claudio.APIError{type: :invalid_request_error} = error) do
+    if schema_rejection?(error.message), do: :fallback, else: :propagate
+  end
+
+  def __structured_error_action__(_error), do: :propagate
+
+  defp schema_rejection?(message) when is_binary(message),
+    do: message =~ ~r/output_format|output_config|schema/i
+
+  defp schema_rejection?(_message), do: false
+
+  @doc false
+  # Decides structured-vs-legacy for THIS call, returning the JSON Schema to send as
+  # output_config.format. A tool-loop call (response_model %ToolCallResponse{}) and a
+  # stream (response_model nil) are constrained by request.output_format alone: the
+  # format shapes the final answer's text while tool_use stays available. Any other
+  # call with tools takes the legacy path; without tools the response model is the
+  # format.
+  @spec __structured_schema_for__(t(), Request.t()) :: {:ok, map()} | :skip
+  def __structured_schema_for__(client, %Request{response_model: model} = request)
+      when model == nil or is_struct(model, ToolCallResponse) do
+    case request.output_format do
+      nil -> :skip
+      format -> StructuredOutputs.schema_for(client, format)
+    end
+  end
+
+  def __structured_schema_for__(client, %Request{tools: [], response_model: model}),
+    do: StructuredOutputs.schema_for(client, model)
+
+  def __structured_schema_for__(_client, %Request{}), do: :skip
+
+  @doc false
+  # The %Normandy.LLM.Response{} for an incomplete answer: the request's empty response
+  # model, the stop reason and the billed usage. Normandy.LLM.Call turns it into the
+  # :max_tokens or :refusal LLMError.
+  @spec __incomplete_response__(Request.t(), Claudio.Messages.Response.t()) ::
+          Normandy.LLM.Response.t()
+  def __incomplete_response__(%Request{response_model: response_model}, response),
+    do: __response__(response_model, response, extract_usage(response))
+
+  @incomplete_stop_reasons [:max_tokens, :model_context_window_exceeded, :refusal]
 
   @doc false
   def __handle_structured_response__(response, response_model, context) do
     content = extract_content(response)
 
-    stop_reason = Map.get(response, :stop_reason) || Map.get(response, "stop_reason")
+    stop_reason = Map.get(response, :stop_reason)
 
     case stop_reason do
+      # Incomplete (cut off or refused): not parsed, whatever the :on_parse_failure
+      # policy; converse/3 never gets here with one (its incomplete clause), so this
+      # serves direct callers.
       reason
-      when reason in [
-             :refusal,
-             "refusal",
-             :max_tokens,
-             "max_tokens",
-             :model_context_window_exceeded,
-             "model_context_window_exceeded"
-           ] ->
-        apply_parse_failure(
-          response_model,
-          content,
-          {:structured_output_incomplete, reason},
-          context
-        )
+      when reason in @incomplete_stop_reasons ->
+        response_model
 
       _ ->
-        adapter = Normandy.LLM.JsonDeserializer.get_json_adapter()
-
         with {:ok, parsed} when is_map(parsed) <-
-               Normandy.LLM.Json.Decoder.decode(content, adapter, []),
-             {:ok, bound} <- Normandy.LLM.Json.SchemaBinder.bind(parsed, response_model, content) do
+               Decoder.decode(content, []),
+             {:ok, bound} <- SchemaBinder.bind(parsed, response_model, content) do
           bound
         else
           _ ->
@@ -1106,12 +1357,18 @@ defmodule Normandy.LLM.ClaudioAdapter do
   end
 
   @doc false
-  # Maps a `Claudio.Messages.create/2` result to the raw-completion shape used
-  # by the deserializer retry loop. Reuses extract_content/1 + extract_usage/1
-  # (the same logic the normal path uses). Lives in the outer module so it is
-  # unit-testable without a live Claudio call.
-  def __raw_completion__({:ok, response}),
-    do: {extract_content(response), extract_usage(response)}
+  # The request span's outcome for a `Claudio.Messages.create/2` result.
+  @spec __request_outcome__(term()) :: {:ok, map()} | {:error, LLMError.t()}
+  def __request_outcome__({:ok, response}) do
+    meta = response_meta(response)
 
-  def __raw_completion__({:error, error}), do: {:error, error}
+    {:ok,
+     TelemetryRequest.stop_metadata(
+       Map.get(meta, :response_id),
+       Map.get(meta, :finish_reason),
+       extract_usage(response)
+     )}
+  end
+
+  def __request_outcome__({:error, error}), do: {:error, __to_llm_error__(error)}
 end

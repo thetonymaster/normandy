@@ -18,16 +18,16 @@ defmodule Normandy.LLM.Json.ContentCleanerTest do
 
   test "extracts a balanced object embedded in prose" do
     input = ~s(Here's the JSON:\n{"a": 1}\nHope that helps!)
-    assert {:ok, ~s({"a": 1})} = ContentCleaner.extract_balanced(input)
+    assert {:ok, ~s({"a": 1}), _} = ContentCleaner.extract_balanced(input, 0)
   end
 
   test "ignores braces inside strings when balancing" do
     input = ~s(text {"a": "}{"} more)
-    assert {:ok, ~s({"a": "}{"})} = ContentCleaner.extract_balanced(input)
+    assert {:ok, ~s({"a": "}{"}), _} = ContentCleaner.extract_balanced(input, 0)
   end
 
   test "returns :error when no balanced object is present" do
-    assert :error = ContentCleaner.extract_balanced("no json here")
+    assert :error = ContentCleaner.extract_balanced("no json here", 0)
   end
 
   test "extract_balanced/2 returns the region and the byte offset it started at" do
@@ -43,6 +43,18 @@ defmodule Normandy.LLM.Json.ContentCleanerTest do
 
   test "skips an unbalanced opener to find a later balanced region" do
     input = ~s(oops {unclosed and then {"a": 1})
-    assert {:ok, ~s({"a": 1})} = ContentCleaner.extract_balanced(input)
+    assert {:ok, ~s({"a": 1}), _} = ContentCleaner.extract_balanced(input, 0)
+  end
+
+  test "balanced_regions/1 yields nested and later regions in start order" do
+    input = ~s(x {"a": [1, {"b": 2}]} y [3] { open)
+
+    assert [
+             {~s({"a": [1, {"b": 2}]}), 2},
+             {~s([1, {"b": 2}]), 8},
+             {~s({"b": 2}), 12},
+             {"[3]", 25}
+           ] ==
+             input |> ContentCleaner.balanced_regions() |> Enum.to_list()
   end
 end

@@ -1,4 +1,5 @@
 defmodule NormandyTest.Support.ModelMockup do
+  @moduledoc false
   use Normandy.Schema
 
   schema do
@@ -6,20 +7,14 @@ defmodule NormandyTest.Support.ModelMockup do
   end
 
   defimpl Normandy.Agents.Model, for: __MODULE__ do
-    def completitions(_config, _model, _temperature, _max_tokens, _messages, response_model) do
-      response_model
-    end
+    alias Normandy.Test.StubClient
 
-    def converse(
-          _config,
-          _model,
-          _temperature,
-          _max_tokens,
-          _messages,
-          response_model,
-          _opts \\ []
-        ) do
-      response_model
-    end
+    # The response model, a nil :chat_message filled in (a nil answer is an error,
+    # decision 27 A3).
+    def converse(_config, request, _opts),
+      do: {:ok, %Normandy.LLM.Response{content: StubClient.answer(request.response_model)}}
+
+    def stream(_client, _request, _opts),
+      do: {:error, Normandy.LLMError.new(type: :unsupported, retryable?: false)}
   end
 end

@@ -3,8 +3,8 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   Helper functions for Normandy integration tests with real Anthropic API.
   """
 
-  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.Agents.BaseAgent
+  alias Normandy.LLM.ClaudioAdapter
 
   @default_model "claude-haiku-4-5-20251001"
 
@@ -53,8 +53,7 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
       options:
         Keyword.get(opts, :options, %{
           timeout: 60_000,
-          enable_caching: true,
-          max_retries: 3
+          enable_caching: true
         })
     }
   end
@@ -79,22 +78,20 @@ defmodule NormandyTest.Support.NormandyIntegrationHelper do
   Creates a simple calculator tool for testing.
   """
   def create_calculator_tool do
-    %Normandy.Tools.Examples.Calculator{
-      operation: "add",
-      a: 0,
-      b: 0
-    }
+    %Normandy.Tools.Examples.Calculator{}
   end
 
-  @doc """
-  Creates a weather tool for testing.
+  @weather_source Path.expand("../../examples/tools/weather.ex", __DIR__)
 
-  This tool fetches real weather data, ensuring models must use it
-  as they cannot know current weather conditions.
+  @doc """
+  Creates the example weather tool (`examples/tools/weather.ex`).
+
+  It fetches real weather data, so a model must call it: it cannot know current
+  conditions. It lives in `examples/`, which mix does not compile, so it is
+  compiled here, on first use, only by the live tests that call this.
   """
   def create_weather_tool do
-    %Normandy.Tools.Examples.Weather{
-      city: ""
-    }
+    _ = unless Code.ensure_loaded?(MyApp.Tools.Weather), do: Code.compile_file(@weather_source)
+    struct(MyApp.Tools.Weather)
   end
 end

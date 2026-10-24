@@ -1,20 +1,20 @@
 defmodule Normandy.LLM.Json.RetryFeedback do
-  @moduledoc """
-  Builds the corrective feedback appended to the system prompt on a JSON
-  retry, and augments the message history with it.
-  """
+  @moduledoc false
+  # Builds the corrective feedback sent as a user message on a JSON
+  # retry, and augments the message history with it.
 
   alias Normandy.Components.Message
+  alias Normandy.Schema.Wire
   alias Normandy.Validate
 
-  @spec build(term(), binary(), struct(), module()) :: String.t()
+  @spec build(term(), binary(), struct()) :: String.t()
   def build(
         {:validation_error, changeset, content},
         _failed_content,
-        schema,
-        adapter
+        schema
       ) do
-    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
+    schema_json =
+      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     # Extract detailed field-level errors using traverse_errors
     error_details =
@@ -44,33 +44,49 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     #{schema_json}
     ```
 
-    ## Instructions for Correction
-
-    1. You MUST provide ALL required fields
-    2. Ensure field types match the schema (string, integer, etc.)
-    3. Ensure field values meet validation requirements
-    4. Do NOT wrap your JSON in markdown code blocks
-    5. Do NOT add any text before or after the JSON
-
-    Please provide a corrected JSON response addressing all validation errors above.
+    Respond with a corrected JSON object that fixes the errors above: include
+    every required field, with types and values that satisfy the schema.
     """
   end
 
   def build(
         {:json_parse_error, reason, content},
         _failed_content,
-        schema,
-        adapter
+        schema
       ) do
-    schema_json = adapter.encode!(schema.__struct__.__specification__(), pretty: true)
+    parse_feedback(
+      "JSON DESERIALIZATION ERROR",
+      "Your previous response could not be parsed as valid JSON.",
+      format_json_error(reason),
+      content,
+      schema
+    )
+  end
+
+  # Any other failure (an answer over the size limit, JSON that is not an object) gets
+  # the parse-error template with a plain description. The reason is an Elixir term,
+  # never text for the model, so it is not shown.
+  def build(reason, content, schema) do
+    parse_feedback(
+      "RESPONSE FORMAT ERROR",
+      "Your previous response could not be used as the answer.",
+      describe_failure(reason),
+      content,
+      schema
+    )
+  end
+
+  defp parse_feedback(heading, summary, details, content, schema) do
+    schema_json =
+      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
     """
-    # JSON DESERIALIZATION ERROR
+    # #{heading}
 
-    Your previous response could not be parsed as valid JSON.
+    #{summary}
 
     ## Error Details
-    #{format_json_error(reason)}
+    #{details}
 
     ## Your Previous Response
     ```
@@ -82,64 +98,42 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     #{schema_json}
     ```
 
-    ## Instructions for Correction
-
-    1. You MUST respond with ONLY valid JSON
-    2. Do NOT wrap your JSON in markdown code blocks
-    3. Do NOT add any text before or after the JSON
-    4. Ensure all field names exactly match the schema
-    5. Ensure proper JSON escaping (quotes, newlines, etc.)
-    6. Do NOT nest the response in extra JSON objects
-
-    Example of CORRECT response:
-    {"chat_message": "This is my response"}
-
-    Example of INCORRECT responses:
-    - {"chat_message": "{\\"chat_message\\": \\"nested\\"}"}  ❌ Double nesting
-    - ```json\\n{"chat_message": "response"}\\n```  ❌ Code blocks
-    - Some text {"chat_message": "response"}  ❌ Extra text
-
-    Please provide a corrected JSON response now.
+    Respond with a single JSON object whose field names match the schema exactly,
+    with strings properly escaped. Put the field values at the top level of that
+    object rather than encoding another JSON document inside a string field.
     """
   end
 
-  def build(reason, content, _schema, _adapter) do
-    """
-    # RESPONSE FORMAT ERROR
+  defp describe_failure({:input_too_large, size, limit}),
+    do: "The response is #{size} bytes; the limit is #{limit} bytes. Give a shorter answer."
 
-    Error: #{inspect(reason)}
+  defp describe_failure({:unexpected_parse_result, _content}),
+    do: "The response is valid JSON, but not a JSON object."
 
-    Your previous response:
-    ```
-    #{String.slice(content, 0, 500)}
-    ```
-
-    Please provide a valid JSON response.
-    """
-  end
+  defp describe_failure(_reason), do: "The response does not match the required format."
 
   @spec augment_messages([Message.t()], String.t()) :: [Message.t()]
+  # The feedback quotes the model's own failed output, so it goes in a user
+  # message after the conversation, never into the system prompt (where a
+  # prompt-injected response could steer the retry). That also works for a
+  # block-list system prompt and for a conversation without one.
   def augment_messages(messages, feedback) do
-    # Find system message and append error feedback
-    Enum.map(messages, fn msg ->
-      case msg do
-        %Message{role: "system", content: content} = message ->
-          %Message{message | content: content <> "\n\n" <> feedback}
-
-        other ->
-          other
+    turn_id =
+      case List.last(messages) do
+        %Message{turn_id: turn_id} -> turn_id
+        _ -> nil
       end
-    end)
+
+    messages ++ [%Message{turn_id: turn_id, role: "user", content: feedback}]
   end
 
   # Format validation errors for LLM feedback
   defp format_validation_errors(error_map) when is_map(error_map) do
     error_map
-    |> Enum.map(fn {field, errors} ->
-      formatted_errors = errors |> Enum.map(&"  - #{&1}") |> Enum.join("\n")
+    |> Enum.map_join("\n\n", fn {field, errors} ->
+      formatted_errors = errors |> Enum.map_join("\n", &"  - #{&1}")
       "• Field `#{field}`:\n#{formatted_errors}"
     end)
-    |> Enum.join("\n\n")
   end
 
   # Format JSON error for human readability
@@ -151,7 +145,8 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     "Invalid JSON: #{reason}"
   end
 
-  defp format_json_error(reason) do
-    "JSON parsing failed: #{inspect(reason)}"
-  end
+  defp format_json_error(%{__exception__: true} = exception),
+    do: "Invalid JSON: #{Exception.message(exception)}"
+
+  defp format_json_error(_reason), do: "The response is not valid JSON."
 end

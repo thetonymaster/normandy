@@ -1,0 +1,1775 @@
+
+11:36:13.533 [info] Loading 161 CA(s) from :otp store
+
+11:36:13.561 [debug] SessionManager started
+
+11:36:14.000 [info] Loading 161 CA(s) from :otp store
+
+11:36:14.029 [debug] SessionManager started
+
+=== 01_long_conversation (live-call cap 12) ===
+
+▸ Eight turns on one agent; facts seeded in turns 1-3 must survive to turn 8.
+  [turn 1] user:  My code word is PERIWINKLE-42. Please remember it.
+  [turn 1] agent: Got it. I've remembered your code word: PERIWINKLE-42.
+  ok: turn 1 returns a typed Answer
+  [turn 2] user:  My dog's name is Biscotti.
+  [turn 2] agent: Nice! I've got that down.
+  ok: turn 2 returns a typed Answer
+  [turn 3] user:  I live in Ushuaia.
+  [turn 3] agent: Got it. Ushuaia—that's quite a location.
+  ok: turn 3 returns a typed Answer
+  [turn 4] user:  What is today's date? Reply with it in YYYY-MM-DD form exactly as your context gives it.
+  [turn 4] agent: Today's date is 2026-10-09.
+  ok: turn 4 returns a typed Answer
+  [turn 5] user:  What is 17 times 3? Just the number.
+  [turn 5] agent: 51
+  ok: turn 5 returns a typed Answer
+  [turn 6] user:  Name one colour of the rainbow.
+  [turn 6] agent: Red.
+  ok: turn 6 returns a typed Answer
+  [turn 7] user:  What is the capital of Japan? One word.
+  [turn 7] agent: Tokyo.
+  ok: turn 7 returns a typed Answer
+  [turn 8] user:  Tell me my code word, my dog's name and my city.
+  [turn 8] agent: Your code word is PERIWINKLE-42, your dog's name is Biscotti, and you live in Ushuaia.
+  ok: turn 8 returns a typed Answer
+  ok: turn 4 reads the date from the DateTimeProvider context
+  ok: turn 8 recalls PERIWINKLE-42
+  ok: turn 8 recalls Biscotti
+  ok: turn 8 recalls Ushuaia
+  ok: memory holds 8 user + 8 assistant messages
+  ok: call 1 engaged the prompt cache (prefix long enough to cache)
+  ok: a later call read from the prompt cache
+
+▸ Structured-outputs kill switch: same schema through the legacy parse path.
+  [turn 1] user:  I collect stamps.
+  [turn 1] agent: That's great! Stamp collecting is a fascinating hobby with a rich history.
+  ok: legacy path returns a typed Answer
+
+▸ Open :map field: structured outputs can't express it, so the legacy fallback runs.
+  [turn 1] user:  Say hello (open map)
+  [turn 1] agent: Hello! I'm here to help you with whatever you need. Feel free to ask me questions, have a conversation, or let me know what I can assist you with today.
+  ok: open-map schema falls back and returns a map field
+
+LIVE CALLS USED: 10
+usage: input=449 output=608 cache_read=49554 cache_write=7350 est_cost=$0.02
+E2E_RESULT {"usage":{"input":449,"output":608,"cache_read":49554,"cache_write":7350,"cost_usd":0.017632},"ms":15426,"calls":10,"scenario":"01_long_conversation"}
+
+11:36:30.052 [info] Loading 161 CA(s) from :otp store
+
+11:36:30.082 [debug] SessionManager started
+
+=== 02_compaction (live-call cap 18) ===
+
+▸ Ten turns; the window is small enough that memory must be summarised along the way.
+  [turn 1] user:  The vault code is TANGERINE-7. Remember it; I will ask later. Reply 'noted'.
+  [turn 1] agent: I appreciate you testing me, but I should be transparent: I don't actually retain information between separate conversations. Each conversation starts fresh for me, so I won't be able to recall this code later. However, I've noted what you've shared in this current message. If you need me to remember something for later in *this* conversation, feel free to ask and I'll do my best to help within th
+  [turn 2] user:  In about 120 words, describe lighthouses.
+  [turn 2] agent: Lighthouses are iconic coastal structures that have guided maritime navigation for centuries. These tall, often cylindrical towers stand on rocky shores, headlands, or islands, serving as beacons of safety for ships at sea. Equipped with powerful lights and lenses, lighthouses emit distinctive beam patterns that help sailors identify their location and navigate around dangerous obstacles like rock
+  [turn 3] user:  In about 120 words, describe sourdough bread.
+  [turn 3] agent: Sourdough bread is a traditional fermented loaf made from just three basic ingredients: flour, water, and salt. What distinguishes it is the use of a sourdough starter—a living culture of wild yeast and lactic acid bacteria that ferments the dough over an extended period, typically 12 to 48 hours. This slow fermentation creates sourdough's characteristic tangy flavor and chewy texture with a crisp
+  [turn 4] user:  In about 120 words, describe glaciers.
+  [turn 4] agent: Glaciers are massive, slow-moving rivers of ice formed over centuries from accumulated snow in high-altitude and polar regions. These frozen landscapes cover approximately 10% of Earth's surface and store roughly 69% of the planet's fresh water. Glaciers move gradually downhill under their own weight, carving dramatic valleys and shaping terrain through erosion. They advance during cold periods an
+  [turn 5] user:  In about 120 words, describe chess openings.
+  [turn 5] agent: Chess openings are the initial moves of a game, typically the first 10-15 moves, where players establish strategic positions and control central squares. Openings are named and categorized by their characteristics and typical piece placements. Classic openings include the Ruy Lopez, Italian Game, and Sicilian Defense, each with distinct strategies and objectives. The opening phase focuses on rapid
+  [turn 6] user:  In about 120 words, describe honeybees.
+  [turn 6] agent: Honeybees are highly social insects living in colonies of up to 60,000 individuals, each with specialized roles. A single queen bee lays eggs while worker bees—all female—forage for nectar and pollen, build honeycomb, and care for larvae. Male drones exist primarily to mate with queens. These remarkable insects communicate through the famous "waggle dance," sharing information about flower locatio
+  [turn 7] user:  In about 120 words, describe tidal pools.
+  [turn 7] agent: Tidal pools are shallow, rocky depressions along coastlines that retain seawater when the tide recedes. These miniature marine ecosystems support diverse life adapted to harsh, fluctuating conditions. Residents include starfish, sea anemones, crabs, mussels, urchins, and various fish species. Tidal pools experience dramatic environmental changes—temperature, salinity, and oxygen levels shift drama
+  [turn 8] user:  In about 120 words, describe paper airplanes.
+  [turn 8] agent: Paper airplanes are simple aircraft crafted by folding ordinary sheets of paper into aerodynamic shapes. Despite their basic construction, they demonstrate fundamental principles of flight, including lift, drag, and thrust. The classic dart design remains popular for its speed and stability, while more complex folds create gliders that soar gracefully through the air. Paper airplanes have entertai
+  [turn 9] user:  In about 120 words, describe volcanoes.
+  [turn 9] agent: Volcanoes are geological structures where molten rock, gases, and ash erupt from Earth's interior through the crust. They form at tectonic plate boundaries, hotspots, and zones of continental rifting. Volcanic eruptions vary dramatically—some are gentle lava flows, while others are catastrophic explosions. Different volcano types include shield volcanoes with gradual slopes, steep stratovolcanoes,
+  [turn 10] user:  What is the vault code? Answer with the code only.
+  [turn 10] agent: TANGERINE-7
+
+▸ Compactor ran 10 times, compacted 4 times.
+  ok: the compactor ran on every turn
+  ok: compaction fired at least once
+  ok: every compaction shrank the conversation
+  ok: compactions used the :summarize strategy
+  ok: the turn-1 fact survives summarisation
+
+LIVE CALLS USED: 14
+usage: input=10830 output=2394 cache_read=0 cache_write=0 est_cost=$0.02
+E2E_RESULT {"usage":{"input":10830,"output":2394,"cache_read":0,"cache_write":0,"cost_usd":0.0228},"ms":38890,"calls":14,"scenario":"02_compaction"}
+
+11:37:09.529 [info] Loading 161 CA(s) from :otp store
+
+11:37:09.558 [debug] SessionManager started
+
+=== 03_tool_loop (live-call cap 12) ===
+
+▸ Three turns; the store carries state between turns, an after-hook rewrites one read.
+  [turn 1] user:  Using the calculator, compute (12 + 30) * 3. Then store the result under key 'answer' and store the text 'carpe diem' under key 'motto'.
+  [turn 1] agent: Done! Here's a summary of what was completed:
+- **(12 + 30) * 3 = 126**
+- Stored **126** under key **'answer'**
+- Stored **'carpe diem'** under key **'motto'**
+  [turn 2] user:  Read 'answer' from the store and multiply it by 2 with the calculator. Tell me the result.
+  [turn 2] agent: The result is **252**.
+
+To break it down:
+- Retrieved 'answer' from the store: **126**
+- Calculated 126 * 2 = **252**
+  [turn 3] user:  Read both 'answer' and 'motto' from the store and tell me their exact values.
+  [turn 3] agent: Here are the exact values from the store:
+
+- **'answer'**: 126
+- **'motto'**: HOOKED-MOTTO
+
+Interesting! The 'motto' value has changed from 'carpe diem' (which we stored earlier) to 'HOOKED-MOTTO'. This suggests the store was modified since we last wrote to it.
+  ok: turn 1 replies in plain text, not the internal tool-loop JSON shape
+  ok: turn 2 replies in plain text, not the internal tool-loop JSON shape
+  ok: turn 3 replies in plain text, not the internal tool-loop JSON shape
+  ok: turn 1 stored the computed answer
+  ok: turn 1 stored the motto
+  ok: turn 2 used the stored value
+  ok: turn 3 reads the answer back
+  ok: turn 3 reflects the hook-rewritten result
+  ok: tool results were recorded in memory
+  ok: no tool result carried the raw motto
+  ok: the model made at least 6 tool calls across the turns
+
+LIVE CALLS USED: 9
+usage: input=12579 output=938 cache_read=0 cache_write=0 est_cost=$0.02
+E2E_RESULT {"usage":{"input":12579,"output":938,"cache_read":0,"cache_write":0,"cost_usd":0.017269},"ms":10330,"calls":9,"scenario":"03_tool_loop"}
+
+11:37:20.488 [info] Loading 161 CA(s) from :otp store
+
+11:37:20.518 [debug] SessionManager started
+
+=== 04_durable_server (live-call cap 6) ===
+
+▸ Two turns, then Process.exit(:kill) on the session server.
+  [turn 1] user:  My locker number is 4417. Reply 'noted'.
+  [turn 1] agent: noted
+  [turn 2] user:  My favourite colour is teal. Reply 'noted'.
+  [turn 2] agent: noted
+  ok: a different server process owns the session
+
+▸ Three more turns on the restarted server.
+  [turn 3] user:  What is my locker number? Number only.
+  [turn 3] agent: 4417
+  [turn 4] user:  What is my favourite colour? One word.
+  [turn 4] agent: teal
+  [turn 5] user:  Repeat both facts you know about me in one sentence.
+  [turn 5] agent: Your locker number is 4417 and your favourite colour is teal.
+  ok: turn 3 recalls the locker number from before the kill
+  ok: turn 4 recalls the colour from before the kill
+  ok: turn 5 recalls both
+
+▸ Store holds 10 entries: %{"assistant" => 5, "user" => 5}
+  ok: the store holds exactly 5 user and 5 assistant entries (no duplicates after restart)
+  ok: entry ids are unique
+
+LIVE CALLS USED: 5
+usage: input=1683 output=73 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":1683,"output":73,"cache_read":0,"cache_write":0,"cost_usd":0.002048},"ms":4002,"calls":5,"scenario":"04_durable_server"}
+
+11:37:25.115 [info] Loading 161 CA(s) from :otp store
+
+11:37:25.146 [debug] SessionManager started
+
+=== 05_approvals (live-call cap 6) ===
+
+▸ Turn 1: the model asks to delete R-100; a human approves.
+  ok: the delete call parks for approval
+  [turn 1] user:  Delete customer record R-100.
+  [turn 1] agent: The customer record R-100 has been successfully deleted.
+  ok: the approved delete ran
+
+▸ Turn 2: the model asks to delete R-200; nobody answers within 1.5 s (:continue).
+  ok: the approval expires in :continue mode
+  [turn 2] user:  Now delete customer record R-200.
+  [turn 2] agent: I was unable to delete customer record R-200. The deletion request requires approval, but no approver responded within the time limit. Please try again later or contact your administrator if you need assistance with this deletion.
+  ok: the expired delete never ran
+  ok: expiry telemetry fired
+
+▸ A second session with on_approval_timeout: :fail.
+
+▸ Result: {:error, %Normandy.TurnError{type: :approval_timeout, handler: nil, reason: ["toolu_012LBc9FEizPDcVLJrHzQ4jq"]}}
+  ok: :fail mode returns approval_timeout with the parked ids
+  ok: still only R-100 deleted
+
+LIVE CALLS USED: 5
+usage: input=3404 output=235 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":3404,"output":235,"cache_read":0,"cache_write":0,"cost_usd":0.004579},"ms":6821,"calls":5,"scenario":"05_approvals"}
+
+11:37:32.575 [info] Loading 161 CA(s) from :otp store
+
+11:37:32.604 [debug] SessionManager started
+
+=== 06_resilience (live-call cap 3) ===
+
+▸ Run 1: two injected 529s exhaust the retry budget.
+  [fault] converse call 1: injected 529 overloaded
+
+11:37:32.733 [warning] Retry attempt 1/2 failed: Normandy.LLMError (overloaded). Retrying in 100ms...
+  [fault] converse call 2: injected 529 overloaded
+  ok: run 1 fails with the overloaded error after retrying
+  ok: run 1 made 2 attempts
+  ok: one exhausted run leaves the breaker closed
+
+▸ Run 2: two more 529s — the second breaker failure opens it.
+  [fault] converse call 3: injected 529 overloaded
+
+11:37:32.841 [warning] Retry attempt 1/2 failed: Normandy.LLMError (overloaded). Retrying in 100ms...
+  [fault] converse call 4: injected 529 overloaded
+
+11:37:32.943 [warning] Circuit breaker {E2E.FaultClient, nil, "claude-haiku-4-5-20251001", [failure_threshold: 2, half_open_max_calls: 1, scope: nil, success_threshold: 1, timeout: 3000]} closed -> open (failure_threshold)
+  ok: run 2 fails with overloaded
+  ok: the breaker is open
+
+▸ Run 3: the open breaker fails fast.
+  ok: run 3 fails with circuit_open
+  ok: run 3 never reached the client
+  ok: no live request so far
+
+▸ Waiting out the 3 s breaker timeout (the documented open → half-open contract).
+  ok: the breaker is half-open
+  [turn 4] user:  Reply with the single word: ready
+  [turn 4] agent: ready
+  ok: run 4 succeeds against the live API
+  ok: the breaker closed again
+
+LIVE CALLS USED: 1
+usage: input=293 output=11 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":293,"output":11,"cache_read":0,"cache_write":0,"cost_usd":3.48e-4},"ms":4534,"calls":1,"scenario":"06_resilience"}
+
+11:37:37.693 [info] Loading 161 CA(s) from :otp store
+
+11:37:37.722 [debug] SessionManager started
+
+=== 07_guardrails (live-call cap 5) ===
+
+▸ Turn 1: a normal exchange.
+  [turn 1] user:  My project is called NIGHTJAR.
+  [turn 1] agent: noted
+
+▸ admit/2 screens a prompt-injection attempt before any request is made.
+  ok: admit/2 blocks the injection
+
+▸ Turn 2: the same injection sent to run/2 is rejected before the LLM call.
+  ok: the input violation names the forbidden term
+  ok: blocked inputs made no API request
+
+▸ Turn 3: the model is asked to echo an SSN-shaped string; the output guard blocks it.
+  ok: the SSN-bearing output is blocked (:block fails the run)
+
+▸ Turn 4: the conversation continues.
+  [turn 4] user:  What is my project called?
+  [turn 4] agent: NIGHTJAR
+  ok: turn 4 still recalls turn 1
+
+▸ :warn mode: the same violating output is returned and reported, not failed.
+  [turn 1] user:  (warn) Repeat 123-45-6789
+
+11:37:41.981 [warning] Agent output guardrail violation: RegexGuard at chat_message (1 violation)
+  [turn 1] agent: 123-45-6789
+  ok: :warn returns the response
+
+▸ Violation telemetry stages: [:input, :input, :input, :output, :output]
+  ok: violation telemetry fired for input and output
+  ok: both output violations (block + warn) were reported
+
+LIVE CALLS USED: 4
+usage: input=1236 output=56 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":1236,"output":56,"cache_read":0,"cache_write":0,"cost_usd":0.001516},"ms":4165,"calls":4,"scenario":"07_guardrails"}
+
+11:37:42.436 [info] Loading 161 CA(s) from :otp store
+
+11:37:42.465 [debug] SessionManager started
+
+=== 08_streaming (live-call cap 5) ===
+
+▸ Three streamed turns; each turn's deltas must rebuild what memory stores.
+  [turn 1] user:  My badge id is ORCA-19. Reply 'noted'.
+  [turn 1] agent: Noted.
+  [turn 2] user:  In two sentences, describe a harbour at dawn.
+  [turn 2] agent: The harbour awakens as the first light breaks across the water, casting long golden shadows from the moored boats and dock structures. Sebirds call out in the quiet morning air while gentle waves lap against the weathered pilings, and a soft mist begins to lift from the surface as the day gradually comes to life.
+  [turn 3] user:  What is my badge id? Answer with the id only.
+  [turn 3] agent: ORCA-19
+  ok: turn 1 streamed some text
+  ok: turn 2 streamed some text
+  ok: turn 3 streamed some text
+  ok: memory holds one assistant entry per streamed turn
+  ok: turn 2's streamed text is what memory stored
+  ok: turn 3 recalls the badge id across streamed turns
+
+▸ Turn 4: the model is asked for a forbidden word; the incremental guard halts the stream.
+  [turn 4] user:  Write the word PINEAPPLE ten times, separated by spaces, and nothing else.
+  [turn 4] agent: PINEAPPLE PINEAPPLE P
+  ok: the callback saw the violation
+  ok: the halted answer is the text streamed so far
+  ok: no text deltas arrived after the violation fired
+  ok: violation telemetry reports :incremental streaming
+
+LIVE CALLS USED: 4
+usage: input=385 output=88 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":385,"output":88,"cache_read":0,"cache_write":0,"cost_usd":8.25e-4},"ms":2540,"calls":4,"scenario":"08_streaming"}
+
+11:37:45.600 [info] Loading 161 CA(s) from :otp store
+
+11:37:45.631 [debug] SessionManager started
+
+=== 09_dsl (live-call cap 10) ===
+
+▸ Workflow run 1: the first moon landing
+  [turn 1] user:  gather
+  [turn 1] agent: On July 20, 1969, Apollo 11 astronaut Neil Armstrong became the first person to walk on the Moon, followed by Buzz Aldrin, while Michael Collins orbited above in the command module. This historic achievement was the culmination of the Space Race and represented a major milestone in human exploration and technological advancement.
+  ok: run 1: gather produced text
+  ok: run 1: both parallel branches succeeded
+  sentiment: The tone of this text is **positive**. The language celebrates a historic achievement with words like 'historic,' 'major milestone,' and 'advancement.' The factual description conveys admiration and significance about the Apollo 11 moon landing, reflecting an appreciative and uplifting perspective on this momentous event in human history. · topic: Moon landing achievement
+  ok: run 1: race returned exactly one unwrapped response
+  fastest: Red
+
+▸ Workflow run 2: the history of the bicycle
+  [turn 2] user:  gather
+  [turn 2] agent: The bicycle evolved from early wooden 
+  ok: run 2: gather produced text
+  ok: run 2: both parallel branches succeeded
+  sentiment: The text you provided appears to be incomplete - it cuts off mid-sentence at "The bicycle evolved from early wooden". 
+
+Based on what's there, the tone would be **neutral** - it's a straightforward, factual statement that seems to be introducing historical information about bicycles. There are no emotional words, opinions, or sentiments expressed.
+
+If you'd like me to analyze the complete text, please provide the full sentence! · topic: Bicycle history
+  ok: run 2: race returned exactly one unwrapped response
+  fastest: Red
+
+LIVE CALLS USED: 8
+usage: input=2513 output=333 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":2513,"output":333,"cache_read":0,"cache_write":0,"cost_usd":0.004178},"ms":7334,"calls":8,"scenario":"09_dsl"}
+
+11:37:53.659 [info] Loading 161 CA(s) from :otp store
+
+11:37:53.688 [debug] SessionManager started
+
+=== 10_coordination (live-call cap 14) ===
+
+▸ AgentPool of 2 processes, three rounds of two concurrent transactions.
+  [round 1] #PID<0.382.0>: "I will remember the number 11.\n\nNumbers you have asked me to remember so far: 11"
+  [round 1] #PID<0.383.0>: "I will remember the number 11.\n\nEvery number you have asked me to remember so far:\n11"
+  [round 2] #PID<0.383.0>: "I will remember the number 22.\n\nEvery number you have asked me to remember so far:\n11, 22"
+  [round 2] #PID<0.382.0>: "I will remember the number 22.\n\nNumbers you have asked me to remember so far: 11, 22"
+  [round 3] #PID<0.382.0>: "I will remember the number 33.\n\nNumbers you have asked me to remember so far: 11, 22, 33"
+  [round 3] #PID<0.383.0>: "I will remember the number 33.\n\nEvery number you have asked me to remember so far:\n11, 22, 33"
+  ok: each round used two distinct workers
+  ok: the same two workers served every round
+  ok: worker #PID<0.382.0> remembers all three rounds
+  ok: worker #PID<0.382.0> memory grew to 6 messages
+  ok: worker #PID<0.383.0> remembers all three rounds
+  ok: worker #PID<0.383.0> memory grew to 6 messages
+
+▸ HierarchicalCoordinator: a manager splits a task across two workers and aggregates.
+  combined: "🦉 Owls can turn their heads up to 270 degrees thanks to 14 vertebrae in their necks (humans only have 7), making them incredible night hunters. 🐙 Octopuses have three hearts—two pump blood to the gills while the third pumps to the body, and it stops beating when they swim, which is why they prefer crawling!"
+  ok: hierarchical run made manager + 2 workers + aggregation requests
+  ok: the combined answer mentions both animals
+
+▸ SequentialOrchestrator: translate, then name the translation's language.
+  step 1: %Normandy.Agents.BaseAgentOutputSchema{__meta__: #Normandy.Metadata<:built>, chat_message: "La biblioteca abre a las nueve de la mañana."}
+  step 2: %Normandy.Agents.BaseAgentOutputSchema{__meta__: #Normandy.Metadata<:built>, chat_message: "Spanish"}
+  ok: step 2 received step 1's Spanish output
+
+LIVE CALLS USED: 12
+usage: input=4535 output=656 cache_read=0 cache_write=0 est_cost=$0.01
+E2E_RESULT {"usage":{"input":4535,"output":656,"cache_read":0,"cache_write":0,"cost_usd":0.007815},"ms":15294,"calls":12,"scenario":"10_coordination"}
+
+11:38:09.567 [info] Loading 161 CA(s) from :otp store
+
+11:38:09.598 [debug] SessionManager started
+
+=== 11_distributed (live-call cap 6) ===
+  ok: the primary node is distributed
+
+▸ Starting peers A and B (Horde members); the primary only observes.
+
+11:38:10.155 [debug] OTLP exporter failed to initialize: exception error: no match of right hand side value {error,inets_not_started}
+  in function  otel_exporter_otlp:start_httpc/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_otlp.erl:155)
+  in call from otel_exporter_otlp:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_otlp.erl:126)
+  in call from otel_exporter_traces_otlp:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_traces_otlp.erl:123)
+  in call from otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+11:38:10.163 [warning] OTLP exporter failed to initialize with exception :error:{:badmatch, {:error, :inets_not_started}}
+
+11:38:10.212 [info] Loading 161 CA(s) from :otp store
+
+11:38:10.251 [debug] SessionManager started
+
+11:38:10.411 [debug] OTLP exporter failed to initialize: exception error: no match of right hand side value {error,inets_not_started}
+  in function  otel_exporter_otlp:start_httpc/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_otlp.erl:155)
+  in call from otel_exporter_otlp:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_otlp.erl:126)
+  in call from otel_exporter_traces_otlp:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry_exporter/src/otel_exporter_traces_otlp.erl:123)
+  in call from otel_exporter:init/1 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_exporter.erl:48)
+  in call from otel_batch_processor:init_exporter/2 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:327)
+  in call from otel_batch_processor:idle/3 (/Users/antonio/personal/normandy/deps/opentelemetry/src/otel_batch_processor.erl:200)
+  in call from gen_statem:loop_state_callback/11 (gen_statem.erl:3741)
+  in call from proc_lib:init_p_do_apply/3 (proc_lib.erl:333)
+
+11:38:10.418 [warning] OTLP exporter failed to initialize with exception :error:{:badmatch, {:error, :inets_not_started}}
+
+11:38:10.466 [info] Loading 161 CA(s) from :otp store
+
+11:38:10.499 [debug] SessionManager started
+  [turn 1] user:  My badge id is ORCA-19. Reply 'noted'.   (via e2e_a_15682@127.0.0.1)
+  [turn 1] agent: Noted.
+  [turn 2] user:  My team is called Kestrel. Reply 'noted'.   (via e2e_a_15682@127.0.0.1)
+  [turn 2] agent: Noted.
+
+▸ Turn 3 asks for a refund; the gated tool parks the turn awaiting approval.
+  ok: turn 3 parked for approval
+
+▸ Stopping the owning node e2e_a_15682@127.0.0.1; e2e_b_15682@127.0.0.1 should take the session over.
+  ok: turn 3's original caller got no reply (expected; the turn lives on in the store)
+  ok: the revived server is alive on e2e_b_15682@127.0.0.1
+
+11:38:15.425 [info] OTLP exporter successfully initialized
+  ok: the approved refund ran on the survivor
+  [turn 4] user:  What is my badge id and my team name?   (via e2e_b_15682@127.0.0.1)
+  [turn 4] agent: Your badge id is ORCA-19 and your team name is Kestrel.
+  ok: turn 4 recalls turn 1 across the handoff
+  ok: turn 4 recalls turn 2 across the handoff
+  ok: one live server for the session, on the survivor
+
+LIVE CALLS USED: 5
+usage: input=3509 output=111 cache_read=0 cache_write=0 est_cost=$0.00
+E2E_RESULT {"usage":{"input":3509,"output":111,"cache_read":0,"cache_write":0,"cost_usd":0.004064},"ms":8141,"calls":5,"scenario":"11_distributed"}
+
+11:38:18.321 [info] Loading 161 CA(s) from :otp store
+
+11:38:18.350 [debug] SessionManager started
+
+=== 12_mcp_a2a (live-call cap 10) ===
+
+▸ Agent B (Harbour Office) behind A2A on a random local port.
+  ok: the agent card is served over HTTP
+
+▸ MCP: spawn the stdio city server and discover its tools.
+  ok: MCP tool registered with its prefix
+city server: lookup_city Zubrowka
+  [turn 1] user:  What is the population of Zubrowka? Use the city lookup tool.
+  [turn 1] agent: The population of Zubrowka is **4,321,987** according to the city lookup tool.
+  [turn 2] user:  Ask the Harbour Office when the harbour opens and who the duty officer is.
+  [turn 2] agent: According to the Harbour Office:
+- **Opening time**: The harbour opens at 05:40
+- **Duty officer**: Captain Ilse Varga
+  [turn 3] user:  Ask the Harbour Office once more who is on duty today, and remind me of Zubrowka's population.
+  [turn 3] agent: According to the Harbour Office, **Captain Ilse Varga** is the duty officer today.
+
+As a reminder, **Zubrowka's population is 4,321,987**.
+  ok: turn 1 answer came from the MCP tool
+  ok: turn 2 relays the harbour opening time from agent B
+  ok: turn 2 relays the duty officer from agent B
+  ok: turn 3 asks B again and remembers turn 1
+  ok: agent A called agent B over HTTP at least twice
+
+LIVE CALLS USED: 8
+usage: input=5988 output=361 cache_read=0 cache_write=0 est_cost=$0.01
+E2E_RESULT {"usage":{"input":5988,"output":361,"cache_read":0,"cache_write":0,"cost_usd":0.007793},"ms":7498,"calls":8,"scenario":"12_mcp_a2a"}
+
+11:38:26.449 [info] Loading 161 CA(s) from :otp store
+
+11:38:26.480 [debug] SessionManager started
+
+=== 13_budget_policy (live-call cap 8) ===
+  [turn 1] user:  Use the drop_table tool to drop the table 'orders'.
+  [turn 1] agent: I was unable to drop the 'orders' table because destructive operations are not allowed by the system policy. The drop_table function has been blocked to prevent accidental deletion of important data.
+
+If you need to delete this table, you may need to:
+- Contact your database administrator who may have higher-level permissions
+- Use a direct database connection if you have the appropriate credentia
+  [turn 2] user:  Look up the prices of apple and pear, one lookup_price call each.
+  [turn 2] agent: Here are today's market prices:
+
+- **Apple**: 2.40 EUR/kg
+- **Pear**: 3.15 EUR/kg
+  [turn 3] user:  Now look up the price of plum with lookup_price and tell me the exact figure.
+  [turn 3] agent: I apologize, but I'm unable to look up the price of plum at this time as the tool budget has been exhausted. Based on the previous lookups I was able to complete, I can tell you that:
+
+- Apple: 2.40 EUR/kg
+- Pear: 3.15 EUR/kg
+
+But I cannot retrieve the exact figure for plum right now. You may need to try again later when the tool budget is replenished, or check the market price directly through an
+  ok: the Ruleset denied a drop_table call (R-no-drops result in memory)
+  ok: the denied drop_table never executed
+  ok: apple and pear were looked up
+  ok: turn 2 reports both prices
+  ok: the third lookup was refused by the budget
+  ok: the plum price never reached the model
+
+LIVE CALLS USED: 6
+usage: input=6033 output=463 cache_read=0 cache_write=0 est_cost=$0.01
+E2E_RESULT {"usage":{"input":6033,"output":463,"cache_read":0,"cache_write":0,"cost_usd":0.008348},"ms":6260,"calls":6,"scenario":"13_budget_policy"}
+
+11:38:33.348 [info] Loading 161 CA(s) from :otp store
+
+11:38:33.378 [debug] SessionManager started
+
+=== 14_memory (live-call cap 18) ===
+
+▸ Session 1 (alice) stores a fact; session 2 (alice) recalls it; session 3 (bob) must not.
+  [turn 1] user:  Please remember for our future conversations: my locker code is KESTREL-42.
+  [turn 1] agent: I've saved your locker code (KESTREL-42) to my memory. I'll have this information available for our future conversations!
+  ok: session 1 wrote the fact into alice's memory
+  [turn 2] user:  What is my locker code?
+  [turn 2] agent: Your locker code is **KESTREL-42**.
+  ok: session 2 (same namespace) recalls the fact
+  [turn 3] user:  What is my locker code?
+  [turn 3] agent: I don't have any information about your locker code stored in my memory. This is the first time you've asked me about it, and I don't have access to personal information like locker codes unless you've shared it with me previously.
+
+If you'd like me to remember your locker code for future reference, you can tell me what it is, and I can store it securely in my memory. However, please be cautious a
+  ok: session 3 (another namespace) does not see it
+  ok: bob's namespace holds none of alice's facts
+  ok: the model used the memory tool
+  ok: no memory command hit a backend error
+
+LIVE CALLS USED: 7
+usage: input=7650 output=504 cache_read=0 cache_write=0 est_cost=$0.01
+E2E_RESULT {"usage":{"input":7650,"output":504,"cache_read":0,"cache_write":0,"cost_usd":0.01017},"ms":6639,"calls":7,"scenario":"14_memory"}
+
+11:38:40.564 [info] Loading 161 CA(s) from :otp store
+
+11:38:40.593 [debug] SessionManager started
+    error: cannot access struct E2E.S15.Stock, the struct was not yet defined or the struct is being accessed in the same context that defines it
+    │
+ 67 │     {:ok, agent, %E2E.S15.Stock{} = stock} -> {agent, stock}
+    │                  ^
+    │
+    └─ e2e/15_preserved_thinking.exs:67:18
+
+** (CompileError) e2e/15_preserved_thinking.exs: cannot compile file (errors have been logged)
+    (stdlib 7.3) lists.erl:2466: :lists.foldl/3
+
+11:38:41.033 [info] Loading 161 CA(s) from :otp store
+
+11:38:41.063 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.414.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+  ok: the new input directly follows the paused turn
+PAUSE_PATH live
+INVARIANT FAILED: the API accepts new input after a paused turn — {:error, %Normandy.LLMError{type: :invalid_request, status: 400, retryable?: false, message: "LLM call failed: invalid_request (400): messages.1: `mcp_tool_use` with id `mcptoolu_017T7hcyDNVDtGGfnF4u5wJQ` was found without a corresponding `mcp_tool_result` block", reason: %Claudio.APIError{type: :invalid_request_error, message: "messages.1: `mcp_tool_use` with id `mcptoolu_017T7hcyDNVDtGGfnF4u5wJQ` was found without a corresponding `mcp_tool_result` block", status_code: 400, raw_body: %{"error" => %{"message" => "messages.1: `mcp_tool_use` with id `mcptoolu_017T7hcyDNVDtGGfnF4u5wJQ` was found without a corresponding `mcp_tool_result` block", "type" => "invalid_request_error"}, "request_id" => "req_011Cfs56x7K1KFQNhAR99coR", "type" => "error"}}, usage: nil, usage_counts: nil}}
+
+LIVE CALLS USED: 2
+usage: input=22229 output=887 cache_read=4124 cache_write=4444 est_cost=$0.03
+E2E_RESULT {"usage":{"input":22229,"output":887,"cache_read":4124,"cache_write":4444,"cost_usd":0.032631},"ms":14666,"calls":2,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 01_long_conversation | PASS | 0 | 10 | 16.0 | 0.02 |
+| 02_compaction | PASS | 0 | 14 | 39.5 | 0.02 |
+| 03_tool_loop | PASS | 0 | 9 | 11.0 | 0.02 |
+| 04_durable_server | PASS | 0 | 5 | 4.6 | 0.00 |
+| 05_approvals | PASS | 0 | 5 | 7.5 | 0.00 |
+| 06_resilience | PASS | 0 | 1 | 5.1 | 0.00 |
+| 07_guardrails | PASS | 0 | 4 | 4.7 | 0.00 |
+| 08_streaming | PASS | 0 | 4 | 3.1 | 0.00 |
+| 09_dsl | PASS | 0 | 8 | 8.1 | 0.00 |
+| 10_coordination | PASS | 0 | 12 | 15.9 | 0.01 |
+| 11_distributed | PASS | 0 | 5 | 8.8 | 0.00 |
+| 12_mcp_a2a | PASS | 0 | 8 | 8.1 | 0.01 |
+| 13_budget_policy | PASS | 0 | 6 | 6.9 | 0.01 |
+| 14_memory | PASS | 0 | 7 | 7.2 | 0.01 |
+| 15_preserved_thinking | FAIL | 1 | ? | 0.5 | ? |
+| 16_mcp_pause | FAIL | 2 | 2 | 15.3 | 0.03 |
+
+total live calls (known): 100 (suite cap 150)
+usage (known): input=83316 output=7718 cache_read=53678 cache_write=11794 est_cost=$0.14
+reports: e2e/reports/20261009T173613Z
+
+11:39:36.653 [info] Loading 161 CA(s) from :otp store
+
+11:39:36.683 [debug] SessionManager started
+
+11:39:37.111 [info] Loading 161 CA(s) from :otp store
+
+11:39:37.141 [debug] SessionManager started
+
+=== 15_preserved_thinking (live-call cap 8) ===
+
+▸ Run 1: two chained lookups, then the iteration cap forces the final call.
+  [turn 1] user:  A1 and its linked SKU
+  [turn 1] agent: %E2E.S15.Stock{__meta__: #Normandy.Metadata<:built>, total: 12, skus: ["A1", "B2"]}
+  ok: run 1 made 3 calls: two tool rounds, then the forced final call
+  ok: run 1 totals A1 + B2 = 12
+INVARIANT FAILED: memory holds thinking blocks to replay (else this probe proves nothing) — no thinking block in any assistant tool turn
+
+LIVE CALLS USED: 3
+usage: input=10 output=154 cache_read=2005 cache_write=1144 est_cost=$0.01
+E2E_RESULT {"usage":{"input":10,"output":154,"cache_read":2005,"cache_write":1144,"cost_usd":0.009241},"ms":10074,"calls":3,"scenario":"15_preserved_thinking"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 15_preserved_thinking | FAIL | 2 | 3 | 10.7 | 0.01 |
+
+total live calls (known): 3 (suite cap 150)
+usage (known): input=10 output=154 cache_read=2005 cache_write=1144 est_cost=$0.01
+reports: e2e/reports/20261009T173936Z
+=== rerun 3 of 15 (effort high) 2026-10-09T19:33:57Z ===
+
+13:33:58.313 [info] Loading 161 CA(s) from :otp store
+
+13:33:58.347 [debug] SessionManager started
+
+13:33:58.781 [info] Loading 161 CA(s) from :otp store
+
+13:33:58.810 [debug] SessionManager started
+
+=== 15_preserved_thinking (live-call cap 8) ===
+
+▸ Run 1: two chained lookups, then the iteration cap forces the final call.
+  [turn 1] user:  A1 and its linked SKU
+  [turn 1] agent: %E2E.S15.Stock{__meta__: #Normandy.Metadata<:built>, total: 12, skus: ["A1", "B2"]}
+  ok: run 1 made 3 calls: two tool rounds, then the forced final call
+  ok: run 1 totals A1 + B2 = 12
+  ok: memory holds thinking blocks to replay (else this probe proves nothing)
+  ok: run 1 stamped its prefix key on a tool turn
+  ok: the request run 2 builds replays thinking blocks (under run 1's prefix key)
+
+▸ Run 2 (run/3) on the same memory: run 1's thinking, tool and notice blocks replay.
+  [turn 2] user:  add C3
+  [turn 2] agent: %E2E.S15.Stock{__meta__: #Normandy.Metadata<:built>, total: 16, skus: ["A1", "B2", "C3"]}
+  ok: run 2 totals 16
+  ok: run 2 stamped a prefix key on its own turns
+  ok: run 2 ran under the same prefix key as run 1 (so run 1's thinking was not dropped as stale)
+
+▸ Run 3 (stream/3) on the same memory.
+  [turn 3] user:  repeat
+  [turn 3] agent: %E2E.S15.Stock{__meta__: #Normandy.Metadata<:built>, total: 16, skus: ["A1", "B2", "C3"]}
+  ok: run 3 repeats 16
+
+LIVE CALLS USED: 6
+usage: input=20 output=352 cache_read=5860 cache_write=1416 est_cost=$0.02
+E2E_RESULT {"usage":{"input":20,"output":352,"cache_read":5860,"cache_write":1416,"cost_usd":0.015372},"ms":20859,"calls":6,"scenario":"15_preserved_thinking"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 15_preserved_thinking | PASS | 0 | 6 | 21.5 | 0.02 |
+
+total live calls (known): 6 (suite cap 150)
+usage (known): input=20 output=352 cache_read=5860 cache_write=1416 est_cost=$0.02
+reports: e2e/reports/20261009T193358Z
+=== rerun of 16 after fix 53f7931/5b4ffbc 2026-10-09T21:13:01Z ===
+
+15:13:01.806 [info] Loading 161 CA(s) from :otp store
+
+15:13:01.835 [debug] SessionManager started
+
+15:13:02.260 [info] Loading 161 CA(s) from :otp store
+
+15:13:02.289 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.414.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+INVARIANT FAILED: the new input directly follows the paused turn — ["user", "assistant", "assistant", "user"]
+
+LIVE CALLS USED: 3
+usage: input=22166 output=1252 cache_read=13352 cache_write=4954 est_cost=$0.04
+E2E_RESULT {"usage":{"input":22166,"output":1252,"cache_read":13352,"cache_write":4954,"cost_usd":0.035954},"ms":22716,"calls":3,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 16_mcp_pause | FAIL | 2 | 3 | 23.3 | 0.04 |
+
+total live calls (known): 3 (suite cap 150)
+usage (known): input=22166 output=1252 cache_read=13352 cache_write=4954 est_cost=$0.04
+reports: e2e/reports/20261009T211301Z
+=== rerun 3 of 16 (assertion updated to the 2.0 shape) 2026-10-12T21:31:40Z ===
+
+15:31:40.823 [info] Loading 161 CA(s) from :otp store
+
+15:31:40.868 [debug] SessionManager started
+
+15:31:41.331 [info] Loading 161 CA(s) from :otp store
+
+15:31:41.360 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.414.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+  ok: the new input is stored after the paused turn
+  ok: the paused turn was continued before the new input (an answer precedes it)
+PAUSE_PATH live
+INVARIANT FAILED: the API accepts new input after a paused turn — {:error, %Normandy.LLMError{type: :invalid_request, status: 400, retryable?: false, message: "LLM call failed: invalid_request (400): messages.1: `mcp_tool_use` with id `mcptoolu_01FBgzNF1RKkX1e8Lv1LLy4m` was found without a corresponding `mcp_tool_result` block", reason: %Claudio.APIError{type: :invalid_request_error, message: "messages.1: `mcp_tool_use` with id `mcptoolu_01FBgzNF1RKkX1e8Lv1LLy4m` was found without a corresponding `mcp_tool_result` block", status_code: 400, raw_body: %{"error" => %{"message" => "messages.1: `mcp_tool_use` with id `mcptoolu_01FBgzNF1RKkX1e8Lv1LLy4m` was found without a corresponding `mcp_tool_result` block", "type" => "invalid_request_error"}, "request_id" => "req_011Cfy4JkT5e6CbfpY3VVKyn", "type" => "error"}}, usage: nil, usage_counts: nil}}
+
+LIVE CALLS USED: 3
+usage: input=26035 output=1212 cache_read=9117 cache_write=4883 est_cost=$0.04
+E2E_RESULT {"usage":{"input":26035,"output":1212,"cache_read":9117,"cache_write":4883,"cost_usd":0.03911},"ms":21435,"calls":3,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 16_mcp_pause | FAIL | 2 | 3 | 22.1 | 0.04 |
+
+total live calls (known): 3 (suite cap 150)
+usage (known): input=26035 output=1212 cache_read=9117 cache_write=4883 est_cost=$0.04
+reports: e2e/reports/20261012T213140Z
+=== diagnostic run 4 of 16 (stored entry block shapes) 2026-10-23T20:35:46Z ===
+==> file_system
+Compiling 7 files (.ex)
+Generated file_system app
+==> stream_data
+Compiling 3 files (.ex)
+Generated stream_data app
+==> mime
+Compiling 1 file (.ex)
+Generated mime app
+==> libring
+Compiling 5 files (.ex)
+Generated libring app
+==> nimble_options
+Compiling 3 files (.ex)
+Generated nimble_options app
+==> bunt
+Compiling 2 files (.ex)
+Generated bunt app
+==> plug_crypto
+Compiling 5 files (.ex)
+Generated plug_crypto app
+==> hpax
+Compiling 4 files (.ex)
+Generated hpax app
+==> jose
+Compiling 113 files (.erl)
+src/jwa/jose_jwa.erl:230:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  230| 	case catch block_cipher(Cipher) of
+%     | 	     ^
+
+src/jwa/jose_jwa.erl:238:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  238| 	case catch ?MAYBE_START_JOSE(ets:lookup_element(?TAB, chacha20_poly1305_module, 2)) of
+%     | 	     ^
+
+src/jwa/jose_jwa.erl:246:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  246| 	case catch rsa_crypt(Padding) of
+%     | 	     ^
+
+src/jwa/jose_jwa.erl:254:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  254| 	case catch rsa_sign(Padding) of
+%     | 	     ^
+
+src/jwa/jose_jwa.erl:262:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  262| 	case catch ?MAYBE_START_JOSE(ets:lookup_element(?TAB, xchacha20_poly1305_module, 2)) of
+%     | 	     ^
+
+src/jose_server.erl:137:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  137| 		_ = catch jose_jwa:unsecured_signing(UnsecuredSigning),
+%     | 		    ^
+
+src/jose_server.erl:797:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  797| 	case catch jose_crypto_compat:crypto_one_time(Cipher, Key, PlainText, true) of
+%     | 	     ^
+
+src/jose_server.erl:799:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  799| 			case catch jose_crypto_compat:crypto_one_time(Cipher, Key, CipherText, false) of
+%     | 			     ^
+
+src/jose_server.erl:809:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  809| 	case catch jose_crypto_compat:crypto_one_time(Cipher, Key, IV, PlainText, true) of
+%     | 	     ^
+
+src/jose_server.erl:811:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  811| 			case catch jose_crypto_compat:crypto_one_time(Cipher, Key, IV, CipherText, false) of
+%     | 			     ^
+
+src/jose_server.erl:821:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  821| 	case catch jose_crypto_compat:crypto_one_time(Cipher, Key, IV, {AAD, PlainText}, true) of
+%     | 	     ^
+
+src/jose_server.erl:823:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  823| 			case catch jose_crypto_compat:crypto_one_time(Cipher, Key, IV, {AAD, CipherText, CipherTag}, false) of
+%     | 			     ^
+
+src/jose_server.erl:837:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  837| 	case catch public_key:encrypt_public(PlainText, PublicKey, FutureOptions) of
+%     | 	     ^
+
+src/jose_server.erl:840:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  840| 			case catch public_key:decrypt_private(CipherText, PrivateKey, FutureOptions) of
+%     | 			     ^
+
+src/jose_server.erl:842:11: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  842| 					case catch public_key:decrypt_private(rsa_ciphertext(Algorithm), PrivateKey, FutureOptions) of
+%     | 					     ^
+
+src/jose_server.erl:859:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  859| 	case catch public_key:encrypt_public(PlainText, PublicKey, LegacyOptions) of
+%     | 	     ^
+
+src/jose_server.erl:862:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  862| 			case catch public_key:decrypt_private(CipherText, PrivateKey, LegacyOptions) of
+%     | 			     ^
+
+src/jose_server.erl:864:11: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  864| 					case catch public_key:decrypt_private(rsa_ciphertext(Algorithm), PrivateKey, LegacyOptions) of
+%     | 					     ^
+
+src/jose_server.erl:882:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  882| 	case catch public_key:sign(Message, DigestType, PrivateKey, Options) of
+%     | 	     ^
+
+src/jose_server.erl:885:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  885| 			case catch public_key:verify(Message, DigestType, Signature, PublicKey, Options) of
+%     | 			     ^
+
+src/jose_server.erl:897:7: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  897| 	case catch public_key:sign(Message, DigestType, PrivateKey) of
+%     | 	     ^
+
+src/jose_server.erl:900:9: Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+%  900| 			case catch public_key:verify(Message, DigestType, Signature, PublicKey) of
+%     | 			     ^
+
+Compiling 8 files (.ex)
+Generated jose app
+==> normandy
+* creating /Users/antonio/.mix/elixir/1-20-otp-29/rebar3
+===> Failed to restore /Users/antonio/personal/normandy/deps/ranch/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling ranch
+    ┌─ src/ranch_conns_sup.erl:
+    │
+ 80 │  	catch erlang:send(SupPid, {?MODULE, active_connections, self(), Tag},
+    │  	╰── Warning: 'catch ...' is deprecated; please use 'try ... catch ... end' instead.
+Compile directive 'nowarn_deprecated_catch' can be used to suppress
+warnings in selected modules.
+
+
+==> ssl_verify_fun
+Compiling 7 files (.erl)
+Generated ssl_verify_fun app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/ctx/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling ctx
+==> erlex
+Compiling 2 files (.erl)
+Compiling 1 file (.ex)
+Generated erlex app
+==> castore
+Compiling 1 file (.ex)
+Generated castore app
+==> mint
+Compiling 1 file (.erl)
+Compiling 21 files (.ex)
+Generated mint app
+==> mint_web_socket
+Compiling 7 files (.ex)
+Generated mint_web_socket app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/cowlib/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling cowlib
+==> elixir_uuid
+Compiling 1 file (.ex)
+    warning: use Bitwise is deprecated. import Bitwise instead
+    │
+  2 │   use Bitwise, only_operators: true
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ lib/uuid.ex:2: UUID (module)
+
+Generated elixir_uuid app
+==> merkle_map
+Compiling 7 files (.ex)
+    warning: the variable "discard_bits" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator
+    │
+ 54 │     {_, {<<_::size(discard_bits), found_leaf_direction::size(1), _::bits>>, _}} = found_leaf_node
+    │                    ~
+    │
+    └─ lib/merkle_map/merkle_tree_impl.ex:54:20: MerkleMap.MerkleTreeImpl.put_leaf/3
+
+     warning: the variable "levels" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator
+     │
+ 163 │     {_, {<<_discard::size(levels), direction::size(1), _rest::bits>>, _}} = leaf
+     │                           ~
+     │
+     └─ lib/merkle_map/merkle_tree_impl.ex:163:27: MerkleMap.MerkleTreeImpl.do_diff_keys/3
+
+Generated merkle_map app
+==> decimal
+Compiling 4 files (.ex)
+      warning: this clause of defp check_dbl_min_max/1 is never used (or it will always fail/warn when invoked)
+      │
+ 2842 │   defp check_dbl_min_max(%Decimal{coef: :inf} = infinity), do: infinity
+      │        ~
+      │
+      └─ lib/decimal.ex:2842:8: Decimal.check_dbl_min_max/1
+
+Generated decimal app
+==> jason
+Compiling 10 files (.ex)
+Generated jason app
+==> ex_json_schema
+Compiling 40 files (.ex)
+Generated ex_json_schema app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/gproc/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling gproc
+     ┌─ src/gproc_pool.erl:
+     │
+ 809 │      gproc:set_attributes_shared(Wrk, [{n, Pos}]).
+     │                                  ╰── Warning: variable 'Wrk' exported from call (line 808, column 5).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'Wrk' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_pool.erl:
+     │
+ 832 │                      gproc:set_value_shared(K, {NewLen, Type})
+     │                                                 ╰── Warning: variable 'NewLen' exported from '-' (line 828, column 41).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'NewLen' out of the '-'.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 143 │  	    ets:insert(?TAB, {K, Attrs1}),
+     │  	                      ╰── Warning: variable 'K' exported from call (line 136, column 10).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'K' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 491 │      Reg;
+     │      ╰── Warning: variable 'Reg' exported from call (line 490, column 5).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'Reg' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 494 │      Reg;
+     │      ╰── Warning: variable 'Reg' exported from call (line 493, column 5).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'Reg' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 497 │      Reg;
+     │      ╰── Warning: variable 'Reg' exported from call (line 496, column 5).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'Reg' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 500 │      Reg.
+     │      ╰── Warning: variable 'Reg' exported from call (line 499, column 5).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'Reg' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+     ┌─ src/gproc_lib.erl:
+     │
+ 610 │              case get_attr(on_zero, Pid, K, undefined) of
+     │                                          ╰── Warning: variable 'K' exported from call (line 608, column 10).
+Exporting bindings from subexpressions other than block expressions is
+deprecated and may yield an error in a future version of Erlang/OTP.
+Please move the binding of 'K' out of the call.
+Compile directive 'nowarn_export_var_subexpr' can be used to suppress
+warnings in selected modules.
+
+
+      ┌─ src/gproc.erl:
+      │
+ 2285 │      {?MODULE, lists:zf(
+      │                ╰── Warning: lists:zf/2 is deprecated; use filtermap/2 instead
+
+
+===> Failed to restore /Users/antonio/personal/normandy/deps/telemetry/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling telemetry
+==> redix
+Compiling 12 files (.ex)
+     warning: the variable "size_left" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator
+     │
+ 197 │       <<str::bytes-size(size_left), rest::binary>> ->
+     │                         ~
+     │
+     └─ lib/redix/protocol.ex:197:25: Redix.Protocol.parse_string_of_known_size/3
+
+Generated redix app
+==> delta_crdt
+Compiling 5 files (.ex)
+    warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+    │
+ 81 │       Logger.warn(
+    │              ~
+    │
+    └─ lib/delta_crdt.ex:81:14: DeltaCrdt.warn_low_sync_interval/1
+
+    warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+    │
+ 31 │       Logger.warn("inefficient next_dot computation")
+    │              ~
+    │
+    └─ lib/delta_crdt/aw_lww_map.ex:31:14: DeltaCrdt.AWLWWMap.Dots.next_dot/2
+
+    warning: a struct for DeltaCrdt.CausalCrdt.Diff is expected on struct update:
+
+        %DeltaCrdt.CausalCrdt.Diff{diff | continuation: truncate(continuation, state.max_sync_size)}
+
+    but got type:
+
+        dynamic(%{
+          ...,
+          continuation: %MerkleMap{} or %MerkleMap.MerkleTree.Diff{},
+          from: term(),
+          to: term()
+        })
+
+    where "diff" was given the types:
+
+        # type: dynamic(%{..., from: term(), to: term()})
+        # from: lib/delta_crdt/causal_crdt.ex:92:10
+        diff = reverse_diff(diff)
+
+        # type: dynamic(%{
+          ...,
+          continuation: %MerkleMap{} or %MerkleMap.MerkleTree.Diff{},
+          from: term(),
+          to: term()
+        })
+        # from: lib/delta_crdt/causal_crdt.ex:96:20
+        MerkleMap.continue_partial_diff(diff.continuation, new_merkle_map, 8)
+
+    when defining the variable "diff", you must also pattern match on "%DeltaCrdt.CausalCrdt.Diff{}"
+
+    type warning found at:
+    │
+ 98 │         %Diff{diff | continuation: truncate(continuation, state.max_sync_size)}
+    │         ~
+    │
+    └─ lib/delta_crdt/causal_crdt.ex:98:9: DeltaCrdt.CausalCrdt.handle_info/2
+
+     warning: a struct for DeltaCrdt.CausalCrdt.Diff is expected on struct update:
+
+         %DeltaCrdt.CausalCrdt.Diff{diff | from: diff.to, to: diff.from}
+
+     but got type:
+
+         dynamic()
+
+     where "diff" was given the type:
+
+         # type: dynamic()
+         # from: lib/delta_crdt/causal_crdt.ex:327:21
+         diff
+
+     when defining the variable "diff", you must also pattern match on "%DeltaCrdt.CausalCrdt.Diff{}"
+
+     type warning found at:
+     │
+ 328 │     %Diff{diff | from: diff.to, to: diff.from}
+     │     ~
+     │
+     └─ lib/delta_crdt/causal_crdt.ex:328:5: DeltaCrdt.CausalCrdt.reverse_diff/1
+
+Generated delta_crdt app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/telemetry_poller/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling telemetry_poller
+==> horde
+Compiling 14 files (.ex)
+    warning: unused require Logger
+    │
+  2 │   require Logger
+    │   ~
+    │
+    └─ lib/horde/cluster.ex:2:3
+
+    warning: unused require Logger
+    │
+  5 │   require Logger
+    │   ~
+    │
+    └─ lib/horde/signal_shutdown.ex:5:3
+
+Generated horde app
+==> db_connection
+Compiling 18 files (.ex)
+Generated db_connection app
+==> ecto
+Compiling 56 files (.ex)
+     warning: this clause of defp field_source!/2 is never used (or it will always fail/warn when invoked)
+     │
+ 968 │   defp field_source!(nil, field) do
+     │        ~
+     │
+     └─ lib/ecto/repo/schema.ex:968:8: Ecto.Repo.Schema.field_source!/2
+
+Generated ecto app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/cowboy/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling cowboy
+===> Failed to restore /Users/antonio/personal/normandy/deps/acceptor_pool/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling acceptor_pool
+===> Failed to restore /Users/antonio/personal/normandy/deps/hpack/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling hpack
+==> dialyxir
+Compiling 67 files (.ex)
+Generated dialyxir app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/tls_certificate_check/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling tls_certificate_check
+==> credo
+Compiling 257 files (.ex)
+Generated credo app
+==> plug
+Compiling 1 file (.erl)
+Compiling 42 files (.ex)
+Generated plug app
+warning: "xref: [exclude: ...]" in your mix.exs file is deprecated, instead use: "elixirc_options: [no_warn_undefined: ...]"
+  (mix 1.20.4) lib/mix/tasks/compile.elixir.ex:243: Mix.Tasks.Compile.Elixir.xref_exclude_opts/2
+  (mix 1.20.4) lib/mix/tasks/compile.elixir.ex:142: Mix.Tasks.Compile.Elixir.run/1
+  (mix 1.20.4) lib/mix/task.ex:502: anonymous fn/3 in Mix.Task.run_task/5
+  (mix 1.20.4) lib/mix/task.compiler.ex:299: Mix.Task.Compiler.run_compiler/2
+  (mix 1.20.4) lib/mix/task.compiler.ex:287: Mix.Task.Compiler.run/4
+  (mix 1.20.4) lib/mix/tasks/compile.all.ex:75: Mix.Tasks.Compile.All.do_run/2
+
+==> postgrex
+Compiling 70 files (.ex)
+Generated postgrex app
+warning: "xref: [exclude: ...]" in your mix.exs file is deprecated, instead use: "elixirc_options: [no_warn_undefined: ...]"
+  (mix 1.20.4) lib/mix/tasks/compile.elixir.ex:243: Mix.Tasks.Compile.Elixir.xref_exclude_opts/2
+  (mix 1.20.4) lib/mix/tasks/compile.elixir.ex:142: Mix.Tasks.Compile.Elixir.run/1
+  (mix 1.20.4) lib/mix/task.ex:502: anonymous fn/3 in Mix.Task.run_task/5
+  (mix 1.20.4) lib/mix/task.compiler.ex:299: Mix.Task.Compiler.run_compiler/2
+  (mix 1.20.4) lib/mix/task.compiler.ex:287: Mix.Task.Compiler.run/4
+  (mix 1.20.4) lib/mix/tasks/compile.all.ex:75: Mix.Tasks.Compile.All.do_run/2
+
+==> ecto_sql
+Compiling 25 files (.ex)
+      warning: the variable "size" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator
+      │
+ 1983 │       <<val::size(size)>> = value
+      │                   ~
+      │
+      └─ lib/ecto/adapters/postgres/connection.ex:1983:19: Ecto.Adapters.Postgres.Connection.bitstring_literal/1
+
+     warning: unused require Ecto.Query
+     │
+ 107 │   require Ecto.Query
+     │   ~
+     │
+     └─ lib/ecto/migrator.ex:107:3
+
+     warning: unused require Ecto.Query
+     │
+ 140 │   require Ecto.Query
+     │   ~
+     │
+     └─ lib/ecto/adapters/tds.ex:140:3
+
+     warning: unused require Logger
+     │
+ 139 │   require Logger
+     │   ~
+     │
+     └─ lib/ecto/adapters/tds.ex:139:3
+
+      warning: this clause of defp validate_index_opts!/1 is never used (or it will always fail/warn when invoked)
+      │
+ 1724 │   defp validate_index_opts!(opts), do: opts
+      │        ~
+      │
+      └─ lib/ecto/migration.ex:1724:8: Ecto.Migration.validate_index_opts!/1
+
+      warning: this clause of defp drop_reference_if_exists_expr/3 is never used (or it will always fail/warn when invoked)
+      │
+ 1881 │     defp drop_reference_if_exists_expr(_, _, _),
+      │          ~
+      │
+      └─ lib/ecto/adapters/postgres/connection.ex:1881:10: Ecto.Adapters.Postgres.Connection.drop_reference_if_exists_expr/3
+
+Generated ecto_sql app
+==> nimble_pool
+Compiling 2 files (.ex)
+Generated nimble_pool app
+==> finch
+Compiling 23 files (.ex)
+Generated finch app
+==> req
+Compiling 24 files (.ex)
+Generated req app
+==> claudio
+Compiling 38 files (.ex)
+Generated claudio app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/cowboy_telemetry/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling cowboy_telemetry
+==> plug_cowboy
+Compiling 5 files (.ex)
+Generated plug_cowboy app
+==> bypass
+Compiling 5 files (.ex)
+    warning: Application.get_env/3 is discouraged in the module body, use Application.compile_env/3 instead
+    │
+  6 │   if Application.get_env(:bypass, :enable_debug_log, false) do
+    │                  ~
+    │
+    └─ lib/bypass/utils.ex:6:18: Bypass.Utils (module)
+
+    warning: unused require Logger
+    │
+ 16 │   require Logger
+    │   ~
+    │
+    └─ lib/bypass.ex:16:3
+
+Generated bypass app
+==> ex_mcp
+Compiling 302 files (.ex)
+Generated ex_mcp app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/chatterbox/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling chatterbox
+===> Failed to restore /Users/antonio/personal/normandy/deps/grpcbox/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling grpcbox
+==> opentelemetry_api
+Compiling 19 files (.erl)
+Compiling 5 files (.ex)
+Generated opentelemetry_api app
+==> normandy
+===> Failed to restore /Users/antonio/personal/normandy/deps/opentelemetry/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling opentelemetry
+===> Failed to restore /Users/antonio/personal/normandy/deps/opentelemetry_exporter/_build/prod/lib/.rebar3/rebar_compiler_erl/source.dag file. Discarding it.
+
+===> Analyzing applications...
+===> Compiling opentelemetry_exporter
+Compiling 211 files (.ex)
+    warning: unused require Logger
+    │
+ 35 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/coordination/stateful_context.ex:35:3
+
+    warning: unused require Logger
+    │
+ 30 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/validate.ex:30:3
+
+    warning: unused require Logger
+    │
+ 35 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/coordination/agent_supervisor.ex:35:3
+
+     warning: the following conditional expression:
+
+         is_float(savings_percent_raw)
+
+     will always evaluate to:
+
+         dynamic(true)
+
+     where "savings_percent_raw" was given the type:
+
+         # type: float()
+         # from: lib/normandy/context/summarizer.ex:222:25
+         savings_percent_raw =
+           if original_tokens > 0 do
+             savings / original_tokens * 100
+           else
+             0.0
+           end
+
+     type warning found at:
+     │
+ 225 │       if is_float(savings_percent_raw), do: Float.round(savings_percent_raw, 1), else: 0.0
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ lib/normandy/context/summarizer.ex:225: Normandy.Context.Summarizer.estimate_savings/2
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%Date{})
+
+     it has type:
+
+         %Date{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 220 │   defp actual_type(%Date{}), do: :date
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:220:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%Time{})
+
+     it has type:
+
+         %Time{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 221 │   defp actual_type(%Time{}), do: :time
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:221:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%NaiveDateTime{})
+
+     it has type:
+
+         %NaiveDateTime{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 222 │   defp actual_type(%NaiveDateTime{}), do: :naive_datetime
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:222:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%DateTime{})
+
+     it has type:
+
+         %DateTime{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 223 │   defp actual_type(%DateTime{}), do: :datetime
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:223:8: Normandy.Schema.Validator.actual_type/1
+
+Generated normandy app
+
+14:36:14.975 [info] Loading 161 CA(s) from :otp store
+
+14:36:15.005 [debug] SessionManager started
+    warning: unused require Logger
+    │
+ 30 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/validate.ex:30:3
+
+    warning: unused require Logger
+    │
+ 35 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/coordination/agent_supervisor.ex:35:3
+
+     warning: the following conditional expression:
+
+         is_float(savings_percent_raw)
+
+     will always evaluate to:
+
+         dynamic(true)
+
+     where "savings_percent_raw" was given the type:
+
+         # type: float()
+         # from: lib/normandy/context/summarizer.ex:222:25
+         savings_percent_raw =
+           if original_tokens > 0 do
+             savings / original_tokens * 100
+           else
+             0.0
+           end
+
+     type warning found at:
+     │
+ 225 │       if is_float(savings_percent_raw), do: Float.round(savings_percent_raw, 1), else: 0.0
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ lib/normandy/context/summarizer.ex:225: Normandy.Context.Summarizer.estimate_savings/2
+
+    warning: unused require Logger
+    │
+ 35 │   require Logger
+    │   ~
+    │
+    └─ lib/normandy/coordination/stateful_context.ex:35:3
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%Date{})
+
+     it has type:
+
+         %Date{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 220 │   defp actual_type(%Date{}), do: :date
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:220:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%Time{})
+
+     it has type:
+
+         %Time{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 221 │   defp actual_type(%Time{}), do: :time
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:221:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%NaiveDateTime{})
+
+     it has type:
+
+         %NaiveDateTime{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 222 │   defp actual_type(%NaiveDateTime{}), do: :naive_datetime
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:222:8: Normandy.Schema.Validator.actual_type/1
+
+     warning: the following clause is redundant:
+
+         defp actual_type(%DateTime{})
+
+     it has type:
+
+         %DateTime{}
+
+     previous clauses have already matched on the following types:
+
+         binary()
+         integer()
+         float()
+         boolean()
+         empty_list() or non_empty_list(term(), term())
+         map()
+
+     │
+ 223 │   defp actual_type(%DateTime{}), do: :datetime
+     │        ~
+     │
+     └─ lib/normandy/schema/validator.ex:223:8: Normandy.Schema.Validator.actual_type/1
+
+
+14:36:15.515 [info] Loading 161 CA(s) from :otp store
+
+14:36:15.543 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.476.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+  ok: the new input is stored after the paused turn
+  ok: the paused turn was continued before the new input (an answer precedes it)
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+ENTRY assistant: ToolCallResponse stop_reason=:pause_turn blocks=[{"text", nil}, {"mcp_tool_use", "mcptoolu_01MAHsd97cgqSF6NRvdhQVwU"}, {"mcp_tool_result", "mcptoolu_01MAHsd97cgqSF6NRvdhQVwU"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_012GST5UgfZ9tgwT5Cdnoifw"}, {"mcp_tool_result", "mcptoolu_012GST5UgfZ9tgwT5Cdnoifw"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01XHffA19q3GXneGur9TTtLe"}, {"mcp_tool_result", "mcptoolu_01XHffA19q3GXneGur9TTtLe"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01FfwvMcmZmnE1G29JcvWCxU"}, {"mcp_tool_result", "mcptoolu_01FfwvMcmZmnE1G29JcvWCxU"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_017DUcSAEBnpfEUfhBgbmfZz"}, {"mcp_tool_result", "mcptoolu_017DUcSAEBnpfEUfhBgbmfZz"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01D7brqrCUVNaPBS7Npr7m2t"}, {"mcp_tool_result", "mcptoolu_01D7brqrCUVNaPBS7Npr7m2t"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01YGoLBaPAwgujCzVZweBPmH"}, {"mcp_tool_result", "mcptoolu_01YGoLBaPAwgujCzVZweBPmH"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01EztVv3iin5L3v9bK2s6wPr"}, {"mcp_tool_result", "mcptoolu_01EztVv3iin5L3v9bK2s6wPr"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_012vojjp8zUS4h6h5TmzhZdL"}, {"mcp_tool_result", "mcptoolu_012vojjp8zUS4h6h5TmzhZdL"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01Ja2zG5kiKLm9CMjgEbbe5H"}, {"mcp_tool_result", "mcptoolu_01Ja2zG5kiKLm9CMjgEbbe5H"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01RSgAmxd4taFFWE2bt2Sjda"}]
+ENTRY assistant: Normandy.Agents.BaseAgentOutputSchema
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+PAUSE_PATH live
+INVARIANT FAILED: the API accepts new input after a paused turn — {:error, %Normandy.LLMError{type: :invalid_request, status: 400, retryable?: false, message: "LLM call failed: invalid_request (400): messages.1: `mcp_tool_use` with id `mcptoolu_01RSgAmxd4taFFWE2bt2Sjda` was found without a corresponding `mcp_tool_result` block", reason: %Claudio.APIError{type: :invalid_request_error, message: "messages.1: `mcp_tool_use` with id `mcptoolu_01RSgAmxd4taFFWE2bt2Sjda` was found without a corresponding `mcp_tool_result` block", status_code: 400, raw_body: %{"error" => %{"message" => "messages.1: `mcp_tool_use` with id `mcptoolu_01RSgAmxd4taFFWE2bt2Sjda` was found without a corresponding `mcp_tool_result` block", "type" => "invalid_request_error"}, "request_id" => "req_011CgKoyfXpe3WxAjJt4z1h9", "type" => "error"}}, usage: nil, usage_counts: nil}}
+
+LIVE CALLS USED: 3
+usage: input=26090 output=1223 cache_read=9131 cache_write=4892 est_cost=$0.04
+E2E_RESULT {"calls":3,"usage":{"input":26090,"output":1223,"cache_read":9131,"cache_write":4892,"cost_usd":0.039233},"ms":21497,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 16_mcp_pause | FAIL | 2 | 3 | 22.2 | 0.04 |
+
+total live calls (known): 3 (suite cap 150)
+usage (known): input=26090 output=1223 cache_read=9131 cache_write=4892 est_cost=$0.04
+reports: e2e/reports/20261023T203615Z
+=== run 5 of 16 (dangling server-tool use dropped, 318992b) 2026-10-23T21:05:31Z ===
+
+15:05:32.019 [info] Loading 161 CA(s) from :otp store
+
+15:05:32.042 [debug] SessionManager started
+
+15:05:32.455 [info] Loading 161 CA(s) from :otp store
+
+15:05:32.479 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.468.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+  ok: the new input is stored after the paused turn
+  ok: the paused turn was continued before the new input (an answer precedes it)
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+ENTRY assistant: ToolCallResponse stop_reason=:pause_turn blocks=[{"text", nil}, {"mcp_tool_use", "mcptoolu_01KnYX1aKzWSwJMu2B3vnhxm"}, {"mcp_tool_result", "mcptoolu_01KnYX1aKzWSwJMu2B3vnhxm"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_011fqwR7uUwVQGzY6PAk8U6u"}, {"mcp_tool_result", "mcptoolu_011fqwR7uUwVQGzY6PAk8U6u"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01GsrTfedxVqMHe1WJAjj1aF"}, {"mcp_tool_result", "mcptoolu_01GsrTfedxVqMHe1WJAjj1aF"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01Km9MFbwuHxYCpkR3emtEff"}, {"mcp_tool_result", "mcptoolu_01Km9MFbwuHxYCpkR3emtEff"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01Abee4WaWx4iTPaE4HuRjty"}, {"mcp_tool_result", "mcptoolu_01Abee4WaWx4iTPaE4HuRjty"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_014jfh4hyswyDJJTJGnhtPe8"}, {"mcp_tool_result", "mcptoolu_014jfh4hyswyDJJTJGnhtPe8"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01Ak2VncNJCSKZ4XzqCmpNSW"}, {"mcp_tool_result", "mcptoolu_01Ak2VncNJCSKZ4XzqCmpNSW"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_0139e1147x8aCd4nAknMZw8z"}, {"mcp_tool_result", "mcptoolu_0139e1147x8aCd4nAknMZw8z"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01RnazpJmmwMjk6YRBfGQ2Eu"}, {"mcp_tool_result", "mcptoolu_01RnazpJmmwMjk6YRBfGQ2Eu"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01C8WcvPYkpERZAUHit3scxh"}, {"mcp_tool_result", "mcptoolu_01C8WcvPYkpERZAUHit3scxh"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01VaMAVyuPYsBEyJuY7AELm1"}]
+ENTRY assistant: Normandy.Agents.BaseAgentOutputSchema
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+ENTRY assistant: Normandy.Agents.BaseAgentOutputSchema
+PAUSE_PATH live
+  ok: the API accepts new input after a paused turn
+PAUSE_SHAPE accepted
+
+▸ Part B: a cited answer and a tool call in one reply; the cited block is replayed.
+INVARIANT FAILED: the API accepts the replayed cited turn — LLM call failed: invalid_output: expected a final answer, got an empty one: the model ended its turn with no text
+
+LIVE CALLS USED: 5
+usage: input=28711 output=1329 cache_read=13578 cache_write=5277 est_cost=$0.04
+E2E_RESULT {"calls":5,"usage":{"input":28711,"output":1329,"cache_read":13578,"cache_write":5277,"cost_usd":0.04331},"ms":24357,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 16_mcp_pause | FAIL | 2 | 5 | 25.0 | 0.04 |
+
+total live calls (known): 5 (suite cap 150)
+usage (known): input=28711 output=1329 cache_read=13578 cache_write=5277 est_cost=$0.04
+reports: e2e/reports/20261023T210532Z
+=== run 6 of 16 (blank final keeps tool-round answer, 123b4a7) 2026-10-23T21:20:03Z ===
+
+15:20:03.975 [info] Loading 161 CA(s) from :otp store
+
+15:20:03.998 [debug] SessionManager started
+
+15:20:04.408 [info] Loading 161 CA(s) from :otp store
+
+15:20:04.432 [debug] SessionManager started
+
+=== 16_mcp_pause (live-call cap 8) ===
+
+▸ Part A: a paused MCP-connector turn, its server killed, then new input.
+
+▸ Live: deepwiki (https://mcp.deepwiki.com/mcp), 12 sequential read_wiki_structure calls in one turn.
+
+▸ The turn paused (pause_turn); killing its Turn.Server before the continuation.
+  ok: the caller of the killed turn gets an exit, not an answer
+
+▸ Restarted as #PID<0.468.0>; new input on the paused history.
+  ok: the follow-up Session.run does not raise
+  ok: the store holds the paused assistant turn
+  ok: the new input is stored after the paused turn
+  ok: the paused turn was continued before the new input (an answer precedes it)
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+ENTRY assistant: ToolCallResponse stop_reason=:pause_turn blocks=[{"text", nil}, {"mcp_tool_use", "mcptoolu_01UpBKkZK7P2EGX4egFh1VSN"}, {"mcp_tool_result", "mcptoolu_01UpBKkZK7P2EGX4egFh1VSN"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_016G9wwdaf9GkN8Y9qqGSSk5"}, {"mcp_tool_result", "mcptoolu_016G9wwdaf9GkN8Y9qqGSSk5"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01XD6oyFzjhWWYpUDDgBHC9f"}, {"mcp_tool_result", "mcptoolu_01XD6oyFzjhWWYpUDDgBHC9f"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01CXc4MWVfszZnwjXvuvo3rP"}, {"mcp_tool_result", "mcptoolu_01CXc4MWVfszZnwjXvuvo3rP"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01JXabrFTS9WYGKx2YSYAvfK"}, {"mcp_tool_result", "mcptoolu_01JXabrFTS9WYGKx2YSYAvfK"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01L9EBBXyRbGXrM1h9p3t6MC"}, {"mcp_tool_result", "mcptoolu_01L9EBBXyRbGXrM1h9p3t6MC"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01KCNFL6NKdAhTCRn4JUA8PE"}, {"mcp_tool_result", "mcptoolu_01KCNFL6NKdAhTCRn4JUA8PE"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_019CC74p3Wz3MuPozD39xkwP"}, {"mcp_tool_result", "mcptoolu_019CC74p3Wz3MuPozD39xkwP"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01R3SGYUHzmouaigk9QrQtnk"}, {"mcp_tool_result", "mcptoolu_01R3SGYUHzmouaigk9QrQtnk"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01FXSGYq6XY9gRMcgk2hPKtm"}, {"mcp_tool_result", "mcptoolu_01FXSGYq6XY9gRMcgk2hPKtm"}, {"text", nil}, {"mcp_tool_use", "mcptoolu_01QDcahL2uNtqmNWAYE8vMfL"}]
+ENTRY assistant: Normandy.Agents.BaseAgentOutputSchema
+ENTRY user: Normandy.Agents.BaseAgentInputSchema
+ENTRY assistant: Normandy.Agents.BaseAgentOutputSchema
+PAUSE_PATH live
+  ok: the API accepts new input after a paused turn
+PAUSE_SHAPE accepted
+
+▸ Part B: a cited answer and a tool call in one reply; the cited block is replayed.
+  [turn 1] user:  cite and record
+  [turn 1] agent: The capital of France is Paris.
+  ok: the tool-call turn carried a cited text block (else the replay was not exercised)
+CITATIONS_REPLAY accepted (1 cited block(s))
+
+LIVE CALLS USED: 5
+usage: input=28605 output=1281 cache_read=13534 cache_write=5224 est_cost=$0.04
+E2E_RESULT {"calls":5,"usage":{"input":28605,"output":1281,"cache_read":13534,"cache_write":5224,"cost_usd":0.042893},"ms":32158,"scenario":"16_mcp_pause"}
+
+| scenario | result | exit | live calls | wall s | est $ |
+|---|---|---|---|---|---|
+| 16_mcp_pause | PASS | 0 | 5 | 32.8 | 0.04 |
+
+total live calls (known): 5 (suite cap 150)
+usage (known): input=28605 output=1281 cache_read=13534 cache_write=5224 est_cost=$0.04
+reports: e2e/reports/20261023T212004Z

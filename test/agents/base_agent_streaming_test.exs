@@ -2,28 +2,21 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.StreamEvent
 
   # Test calculator tool for streaming tests
   defmodule TestCalculator do
+    use Normandy.Tool, name: "calculator", description: "Performs calculations"
+
     defstruct []
 
-    defimpl Normandy.Tools.BaseTool do
-      def tool_name(_), do: "calculator"
-      def tool_description(_), do: "Performs calculations"
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{type: "object", properties: %{}, required: []}
 
-      def input_schema(_) do
-        %{
-          type: "object",
-          properties: %{},
-          required: []
-        }
-      end
-
-      def run(_) do
-        {:ok, 42}
-      end
-    end
+    @impl Normandy.Tool
+    def run(_tool, _context), do: {:ok, 42}
   end
 
   # Mock streaming client for testing
@@ -35,27 +28,11 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      # Implement streaming support
-      def stream_converse(
-            _client,
-            _model,
-            _temperature,
-            _max_tokens,
-            _messages,
-            _response_model,
-            opts \\ []
-          ) do
-        # Simulate streaming events
-        callback = Keyword.get(opts, :callback)
-
+      # Implement streaming support: the events only; Normandy calls the callback.
+      def stream(_client, _request, _opts) do
         events = [
           %{
             type: "message_start",
@@ -84,25 +61,6 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
           %{type: "message_stop"}
         ]
 
-        # Invoke callback if provided
-        if callback do
-          Enum.each(events, fn event ->
-            case event do
-              %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-                callback.(:text_delta, text)
-
-              %{type: "message_start", message: message} ->
-                callback.(:message_start, message)
-
-              %{type: "message_stop"} ->
-                callback.(:message_stop, %{})
-
-              _ ->
-                :ok
-            end
-          end)
-        end
-
         {:ok, Stream.map(events, & &1)}
       end
     end
@@ -117,28 +75,13 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     end
 
     defimpl Normandy.Agents.Model do
-      def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-        response_model
-      end
+      def converse(_client, request, _opts),
+        do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-      def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-        response_model
-      end
-
-      def stream_converse(
-            _client,
-            _model,
-            _temperature,
-            _max_tokens,
-            messages,
-            _response_model,
-            opts \\ []
-          ) do
-        callback = Keyword.get(opts, :callback)
-
+      def stream(_client, request, _opts) do
         # Check if this is the first call (has user message) or follow-up (has tool results)
         has_tool_result =
-          Enum.any?(messages, fn msg ->
+          Enum.any?(request.messages, fn msg ->
             case msg do
               %{role: "tool"} -> true
               _ -> false
@@ -186,34 +129,23 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
             ]
           end
 
-        # Invoke callback if provided
-        if callback do
-          Enum.each(events, fn event ->
-            case event do
-              %{type: "content_block_delta", delta: %{"type" => "text_delta", "text" => text}} ->
-                callback.(:text_delta, text)
-
-              %{type: "content_block_start", content_block: %{"type" => "tool_use"} = tool} ->
-                callback.(:tool_use_start, tool)
-
-              %{type: "message_start", message: message} ->
-                callback.(:message_start, message)
-
-              %{type: "message_stop"} ->
-                callback.(:message_stop, %{})
-
-              _ ->
-                :ok
-            end
-          end)
-        end
-
         {:ok, Stream.map(events, & &1)}
       end
     end
   end
 
-  describe "stream_response/3" do
+  describe "stream/3" do
+    test "the returned response is the output schema, with no internal bookkeeping keys" do
+      config = BaseAgent.init(%{client: %MockStreamingClient{}, model: "claude-3"})
+
+      {:ok, _config, response} =
+        BaseAgent.stream(config, %{chat_message: "Hi"}, fn _ -> :ok end)
+
+      assert %BaseAgentOutputSchema{} = response
+      refute Map.has_key?(response, :tool_calls)
+      refute Map.has_key?(response, :prefix_key)
+    end
+
     test "streams text response with callback" do
       client = %MockStreamingClient{}
 
@@ -225,20 +157,19 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
         })
 
       callback = fn
-        :text_delta, text -> send(self(), {:text, text})
-        _, _ -> :ok
+        %StreamEvent{type: :text_delta, data: text} -> send(self(), {:text, text})
+        _ -> :ok
       end
 
       user_input = %{chat_message: "Hello"}
-      {_updated_config, response} = BaseAgent.stream_response(config, user_input, callback)
+      {:ok, _updated_config, response} = BaseAgent.stream(config, user_input, callback)
 
       # Verify callbacks were invoked
       assert_received {:text, "Hello"}
       assert_received {:text, " streaming"}
 
-      # Verify final response
-      assert response.content
-      assert length(response.content) > 0
+      # Verify final response: the streamed text in the output schema
+      assert response.chat_message == "Hello streaming"
     end
 
     test "adds streamed response to memory" do
@@ -251,10 +182,10 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
           temperature: 0.7
         })
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
       user_input = %{chat_message: "Hello"}
 
-      {updated_config, _response} = BaseAgent.stream_response(config, user_input, callback)
+      {:ok, updated_config, _response} = BaseAgent.stream(config, user_input, callback)
 
       # Check memory contains both user and assistant messages
       history = AgentMemory.history(updated_config.memory)
@@ -279,13 +210,13 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
           temperature: 0.7
         })
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
 
       # First turn
-      {config, _} = BaseAgent.stream_response(config, %{chat_message: "First"}, callback)
+      {:ok, config, _} = BaseAgent.stream(config, %{chat_message: "First"}, callback)
 
       # Second turn
-      {config, _} = BaseAgent.stream_response(config, %{chat_message: "Second"}, callback)
+      {:ok, config, _} = BaseAgent.stream(config, %{chat_message: "Second"}, callback)
 
       # Should have 4 messages: 2 user, 2 assistant
       history = AgentMemory.history(config.memory)
@@ -303,14 +234,14 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
         })
 
       callback = fn
-        :message_start, msg -> send(self(), {:start, msg})
-        :text_delta, text -> send(self(), {:text, text})
-        :message_stop, _ -> send(self(), :stop)
-        _, _ -> :ok
+        %StreamEvent{type: :message_start, data: msg} -> send(self(), {:start, msg})
+        %StreamEvent{type: :text_delta, data: text} -> send(self(), {:text, text})
+        %StreamEvent{type: :message_stop} -> send(self(), :stop)
+        _ -> :ok
       end
 
       user_input = %{chat_message: "Hello"}
-      BaseAgent.stream_response(config, user_input, callback)
+      {:ok, _config, _response} = BaseAgent.stream(config, user_input, callback)
 
       assert_received {:start, _}
       assert_received {:text, _}
@@ -318,7 +249,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     end
   end
 
-  describe "stream_with_tools/3" do
+  describe "stream/3 with tools" do
     test "executes tool calls during streaming" do
       client = %MockStreamingClientWithTools{}
 
@@ -340,14 +271,14 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
 
       # Track events
       callback = fn
-        :tool_use_start, tool -> send(parent, {:tool_start, tool["name"]})
-        :tool_result, result -> send(parent, {:tool_result, result})
-        :text_delta, text -> send(parent, {:text, text})
-        _, _ -> :ok
+        %StreamEvent{type: :tool_use_start, data: tool} -> send(parent, {:tool_start, tool.name})
+        %StreamEvent{type: :tool_result, data: result} -> send(parent, {:tool_result, result})
+        %StreamEvent{type: :text_delta, data: text} -> send(parent, {:text, text})
+        _ -> :ok
       end
 
       user_input = %{chat_message: "Calculate something"}
-      {updated_config, _response} = BaseAgent.stream_with_tools(config, user_input, callback)
+      {:ok, updated_config, _response} = BaseAgent.stream(config, user_input, callback)
 
       # Should have received tool events
       assert_received {:tool_start, "calculator"}
@@ -364,7 +295,7 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
     # Regression: `execute_streaming_tool_loop/3` used to store the raw
     # StreamProcessor map as the assistant message. `AgentMemory.history/1`
     # then routed it through `BaseIOSchema.Map.to_json`, which
-    # `Poison.encode!`s the whole thing into a JSON string — destroying
+    # encodes the whole thing into a JSON string — destroying
     # the tool_use block structure. On the next iteration, Anthropic
     # received the assistant turn as plain text and rejected the trailing
     # tool_result block with `unexpected tool_use_id`. The fix wraps the
@@ -383,10 +314,10 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       tool = %TestCalculator{}
       config = BaseAgent.register_tool(config, tool)
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
 
-      {updated_config, _response} =
-        BaseAgent.stream_with_tools(config, %{chat_message: "Calculate"}, callback)
+      {:ok, updated_config, _response} =
+        BaseAgent.stream(config, %{chat_message: "Calculate"}, callback)
 
       history = AgentMemory.history(updated_config.memory)
 
@@ -426,13 +357,11 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       tool = %TestCalculator{}
       config = BaseAgent.register_tool(config, tool)
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
       user_input = %{chat_message: "Calculate"}
 
-      {_updated_config, _response} = BaseAgent.stream_with_tools(config, user_input, callback)
-
       # Should complete without error despite iteration limit
-      assert true
+      assert {:ok, _updated_config, _response} = BaseAgent.stream(config, user_input, callback)
     end
 
     test "max iterations forced-final returns a clean response and persists a tool turn" do
@@ -451,13 +380,15 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       tool = %TestCalculator{}
       config = BaseAgent.register_tool(config, tool)
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
       user_input = %{chat_message: "Calculate"}
 
-      {updated_config, response} = BaseAgent.stream_with_tools(config, user_input, callback)
+      {:ok, updated_config, response} = BaseAgent.stream(config, user_input, callback)
 
-      # The forced-final streaming call produced a final message.
-      assert response.content
+      # The forced-final streaming call produced a final answer, converted to the
+      # output schema by the core's convert step, as on the normal path.
+      assert %BaseAgentOutputSchema{chat_message: text} = response
+      assert is_binary(text)
 
       # The synthetic :tool_calls key must be stripped from the returned response.
       refute Map.has_key?(response, :tool_calls)
@@ -481,18 +412,18 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       config = BaseAgent.register_tool(config, tool)
 
       callback = fn
-        :text_delta, text -> send(self(), {:text, text})
-        _, _ -> :ok
+        %StreamEvent{type: :text_delta, data: text} -> send(self(), {:text, text})
+        _ -> :ok
       end
 
       user_input = %{chat_message: "Calculate"}
-      {_config, response} = BaseAgent.stream_with_tools(config, user_input, callback)
+      {:ok, _config, response} = BaseAgent.stream(config, user_input, callback)
 
       # Should receive final text after tool execution
       assert_received {:text, "The answer is 42"}
 
       # Response should contain final message
-      assert response.content
+      assert response.chat_message == "The answer is 42"
     end
   end
 
@@ -505,29 +436,17 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
       end
 
       defimpl Normandy.Agents.Model do
-        def completitions(_client, _model, _temperature, _max_tokens, _messages, response_model) do
-          response_model
-        end
+        def converse(_client, request, _opts),
+          do: {:ok, %Normandy.LLM.Response{content: request.response_model}}
 
-        def converse(_client, _model, _temperature, _max_tokens, _messages, response_model, _opts) do
-          response_model
-        end
-
-        def stream_converse(
-              _client,
-              _model,
-              _temperature,
-              _max_tokens,
-              _messages,
-              _response_model,
-              _opts
-            ) do
-          {:error, "Stream failed"}
-        end
+        def stream(_client, _request, _opts),
+          do:
+            {:error,
+             Normandy.LLMError.new(type: :unknown, retryable?: false, reason: "Stream failed")}
       end
     end
 
-    test "handles streaming errors gracefully" do
+    test "a failed stream/3 returns LLMError" do
       client = %FailingStreamClient{}
 
       config =
@@ -537,13 +456,11 @@ defmodule Normandy.Agents.BaseAgentStreamingTest do
           temperature: 0.7
         })
 
-      callback = fn _, _ -> :ok end
+      callback = fn _ -> :ok end
       user_input = %{chat_message: "Hello"}
 
-      {_config, response} = BaseAgent.stream_response(config, user_input, callback)
-
-      # Should return error response
-      assert response.error == "Stream failed"
+      assert {:error, %Normandy.LLMError{type: :unknown, reason: "Stream failed"}} =
+               BaseAgent.stream(config, user_input, callback)
     end
   end
 

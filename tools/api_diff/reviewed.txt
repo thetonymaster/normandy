@@ -1,0 +1,12 @@
+# Items tools/api_diff reports that MIGRATING-2.0.md covers in words the matcher cannot see,
+# or that are not changes for a caller. One <key><TAB><reason> per line.
+Normandy.Agents.BaseAgent.run_with_tools/1	§20 table: run_with_tools(agent, input) -> run(agent, input); the section never spells BaseAgent
+Normandy.Agents.BaseAgent.run_with_tools/2	§20 table: run_with_tools(agent, input) -> run(agent, input); the section never spells BaseAgent
+Normandy.Components.StreamEvent.__meta__	§20: the 1.x SSE StreamEvent is replaced by %StreamEvent{type, data}
+Normandy.Components.StreamEvent.index	§20: the 1.x SSE StreamEvent is replaced by %StreamEvent{type, data}
+Normandy.Components.StreamEvent.message	§20: the 1.x SSE StreamEvent is replaced by %StreamEvent{type, data}
+Normandy.Components.StreamEvent.usage	§20: the 1.x SSE StreamEvent is replaced by %StreamEvent{type, data}
+Normandy.Context.WindowManager.estimate_conversation_tokens/1	spec only: pos_integer() became non_neg_integer() (0 for an empty input); same values
+Normandy.Context.WindowManager.estimate_message_content_tokens/1	spec only: pos_integer() became non_neg_integer(); same values
+Normandy.Context.WindowManager.estimate_tokens/1	spec only: pos_integer() became non_neg_integer(); same values
+Normandy.Validate.cast/4	spec only: the clauses are unchanged (lib/normandy/validate.ex cast/4 vs main); main's spec was looser

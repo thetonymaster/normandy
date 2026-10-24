@@ -1,16 +1,38 @@
 defmodule Normandy.Context.WindowManagerTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Context.WindowManager
+  alias Normandy.Agents.Turn
   alias Normandy.Components.AgentMemory
+  alias Normandy.Context.WindowManager
 
   describe "new/1" do
-    test "creates WindowManager with default options" do
-      manager = WindowManager.new()
+    test "requires :max_tokens (no static model table)" do
+      assert_raise ArgumentError, ~r/requires :max_tokens/, fn -> WindowManager.new() end
 
+      assert_raise ArgumentError, ~r/requires :max_tokens/, fn ->
+        WindowManager.new(strategy: :oldest_first)
+      end
+    end
+
+    test "rejects a non-positive or non-integer :max_tokens" do
+      assert_raise ArgumentError, ~r/positive integer/, fn -> WindowManager.new(max_tokens: 0) end
+
+      assert_raise ArgumentError, ~r/positive integer/, fn ->
+        WindowManager.new(max_tokens: nil)
+      end
+    end
+
+    test "defaults reserved_tokens and strategy" do
+      manager = WindowManager.new(max_tokens: 100_000)
       assert manager.max_tokens == 100_000
       assert manager.reserved_tokens == 4096
       assert manager.strategy == :oldest_first
+    end
+
+    test "has no model_limits field and no for_model/2" do
+      refute Map.has_key?(WindowManager.new(max_tokens: 10), :model_limits)
+      Code.ensure_loaded!(WindowManager)
+      refute function_exported?(WindowManager, :for_model, 2)
     end
 
     test "creates WindowManager with custom options" do
@@ -18,39 +40,17 @@ defmodule Normandy.Context.WindowManagerTest do
         WindowManager.new(
           max_tokens: 50_000,
           reserved_tokens: 2048,
-          strategy: :sliding_window
+          strategy: :summarize
         )
 
       assert manager.max_tokens == 50_000
       assert manager.reserved_tokens == 2048
-      assert manager.strategy == :sliding_window
-    end
-  end
-
-  describe "for_model/2" do
-    test "sets max_tokens based on known model limits" do
-      manager = WindowManager.for_model("claude-haiku-4-5-20251001")
-      assert manager.max_tokens == 200_000
+      assert manager.strategy == :summarize
     end
 
-    test "uses default for unknown models" do
-      manager = WindowManager.for_model("unknown-model")
-      assert manager.max_tokens == 100_000
-    end
-
-    test "allows override with options" do
-      manager =
-        WindowManager.for_model("claude-haiku-4-5-20251001",
-          reserved_tokens: 8192
-        )
-
-      assert manager.max_tokens == 200_000
-      assert manager.reserved_tokens == 8192
-    end
-
-    test "sources limits from the canonical ModelCatalog (single source of truth)" do
-      for {model, window} <- Normandy.Behaviours.ModelCatalog.Static.limits() do
-        assert WindowManager.for_model(model).max_tokens == window
+    test "rejects the removed :sliding_window strategy" do
+      assert_raise ArgumentError, ~r/:sliding_window/, fn ->
+        WindowManager.new(max_tokens: 100, strategy: :sliding_window)
       end
     end
   end
@@ -241,6 +241,59 @@ defmodule Normandy.Context.WindowManagerTest do
   end
 
   describe "truncate_conversation/2 with :oldest_first strategy" do
+    test "kept messages keep their entry ids" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "First message that is quite long")
+        |> AgentMemory.add_message("assistant", "First response that is quite long")
+        |> AgentMemory.add_message("user", "Second message that is quite long")
+        |> AgentMemory.add_message("assistant", "Second response that is quite long")
+        |> AgentMemory.add_message("user", "Third message that is quite long")
+        |> AgentMemory.add_message("assistant", "Third response that is quite long")
+
+      {:ok, truncated} =
+        WindowManager.truncate_conversation(%{memory: memory, config: %{}}, manager)
+
+      kept = AgentMemory.entry_chain(truncated.memory)
+      assert length(kept) < 6
+
+      assert Enum.map(kept, & &1.id) ==
+               memory
+               |> AgentMemory.entry_chain()
+               |> Enum.take(-length(kept))
+               |> Enum.map(& &1.id)
+    end
+
+    test "kept messages lose their thinking: their history changed" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+      agent = %{memory: memory_ending_in_thinking_round(), config: %{}}
+
+      {:ok, truncated} = WindowManager.truncate_conversation(agent, manager)
+
+      blocks = kept_assistant_blocks(truncated.memory)
+      assert Enum.any?(blocks, &(&1[:type] == "tool_use"))
+      refute Enum.any?(blocks, &(&1["type"] == "thinking"))
+    end
+
+    test "kept messages keep their stored structs, so the kept batch is still answered" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
+      agent = %{memory: memory_ending_in_thinking_round(), config: %{}}
+
+      {:ok, truncated} = WindowManager.truncate_conversation(agent, manager)
+
+      messages = AgentMemory.messages(truncated.memory)
+
+      assert [%Normandy.Agents.ToolCallResponse{thinking: []}] =
+               for(%{role: "assistant", content: c} <- messages, do: c)
+
+      assert [%Normandy.Components.ToolResult{tool_call_id: "t1"}] =
+               for(%{role: "tool", content: c} <- messages, do: c)
+
+      assert Turn.unanswered_tool_calls(messages) == []
+    end
+
     test "removes oldest messages first" do
       manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
 
@@ -261,32 +314,42 @@ defmodule Normandy.Context.WindowManagerTest do
 
       # Should keep most recent messages
       assert length(history) < 6
-      assert length(history) > 0
+      assert history != []
       # First message should be removed
       first = List.first(history)
       assert first.content != "First message that is quite long"
     end
   end
 
-  describe "truncate_conversation/2 with :sliding_window strategy" do
-    test "keeps most recent messages" do
-      manager =
-        WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :sliding_window)
+  describe "truncate_conversation/2 keeps a window the API accepts" do
+    test "the kept history starts at a user message" do
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 20, strategy: :oldest_first)
 
       memory =
-        Enum.reduce(1..10, AgentMemory.new_memory(), fn i, mem ->
-          AgentMemory.add_message(mem, "user", "Message number #{i} with some content here")
-        end)
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "First message that is quite long")
+        |> AgentMemory.add_message("assistant", "First response that is quite long")
+        |> AgentMemory.add_message("user", "Second message that is quite long")
+        |> AgentMemory.add_message("assistant", "Second response that is quite long")
+        |> AgentMemory.add_message("tool", "A tool result that is quite long")
+        |> AgentMemory.add_message("assistant", "Third response that is quite long")
 
-      agent = %{memory: memory, config: %{}}
+      {:ok, %{memory: kept}} = WindowManager.truncate_conversation(%{memory: memory}, manager)
 
-      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
+      assert [%{role: "user"} | _] = AgentMemory.history(kept)
+    end
 
-      history = AgentMemory.history(truncated_agent.memory)
+    test "a newest message larger than the target does not empty the memory" do
+      manager = WindowManager.new(max_tokens: 30, reserved_tokens: 0, strategy: :oldest_first)
 
-      # Should keep most recent messages
-      assert length(history) > 0
-      assert length(history) < 10
+      memory =
+        AgentMemory.new_memory()
+        |> AgentMemory.add_message("user", "short")
+        |> AgentMemory.add_message("assistant", String.duplicate("long answer ", 50))
+
+      {:ok, %{memory: kept}} = WindowManager.truncate_conversation(%{memory: memory}, manager)
+
+      assert [%{role: "user"}, %{role: "assistant"}] = AgentMemory.history(kept)
     end
   end
 
@@ -304,7 +367,7 @@ defmodule Normandy.Context.WindowManagerTest do
           AgentMemory.add_message(mem, "user", "Message number #{i} with content here")
         end)
 
-      agent = %{memory: memory, config: %{client: client, model: "test-model"}}
+      agent = %{memory: memory, client: client, model: "test-model", config: %{}}
 
       {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
 
@@ -312,11 +375,22 @@ defmodule Normandy.Context.WindowManagerTest do
 
       # Should have fewer messages than original
       assert length(history) < 15
-      # Should have at least one summary message
-      assert length(history) > 0
+
+      # The summarizer ran: its summary message leads the history
+      assert [%{content: summary} | _] = history
+      assert summary =~ "Summary of old messages"
     end
 
-    test "falls back to oldest_first when no client available" do
+    test "raises naming :client even when the conversation is under budget" do
+      manager = WindowManager.new(max_tokens: 100_000, strategy: :summarize)
+      memory = AgentMemory.add_message(AgentMemory.new_memory(), "user", "short")
+
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WindowManager.truncate_conversation(%{memory: memory, config: %{}}, manager)
+      end
+    end
+
+    test "raises naming :client when the agent has none" do
       manager = WindowManager.new(max_tokens: 100, reserved_tokens: 30, strategy: :summarize)
 
       memory =
@@ -326,11 +400,78 @@ defmodule Normandy.Context.WindowManagerTest do
 
       agent = %{memory: memory, config: %{}}
 
-      {:ok, truncated_agent} = WindowManager.truncate_conversation(agent, manager)
-
-      # Should still truncate, just using oldest_first strategy
-      assert AgentMemory.count_messages(truncated_agent.memory) <
-               AgentMemory.count_messages(memory)
+      assert_raise ArgumentError, ~r/:client/, fn ->
+        WindowManager.truncate_conversation(agent, manager)
+      end
     end
+  end
+
+  describe "compaction keeps turn ids" do
+    defp two_turn_memory do
+      old =
+        Enum.reduce(1..6, AgentMemory.initialize_turn(AgentMemory.new_memory()), fn i, mem ->
+          AgentMemory.add_message(mem, "user", "earlier turn message #{i} with padding text")
+        end)
+
+      old_turn = AgentMemory.get_current_turn_id(old)
+
+      new =
+        old
+        |> AgentMemory.initialize_turn()
+        |> AgentMemory.add_message("user", "q")
+        |> AgentMemory.add_message("assistant", "a")
+
+      {new, old_turn, AgentMemory.get_current_turn_id(new)}
+    end
+
+    test "oldest_first keeps each kept message's original turn_id" do
+      {memory, old_turn, new_turn} = two_turn_memory()
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 16)
+
+      {:ok, %{memory: compacted}} = WindowManager.ensure_within_limit(%{memory: memory}, manager)
+
+      turn_ids = compacted |> AgentMemory.messages() |> Enum.map(& &1.turn_id)
+      assert length(turn_ids) < 8
+      assert List.last(turn_ids) == new_turn
+      assert old_turn in turn_ids
+      assert AgentMemory.get_current_turn_id(compacted) == new_turn
+    end
+
+    test "delete_turn/2 still removes only the old turn after a compaction" do
+      {memory, old_turn, new_turn} = two_turn_memory()
+      manager = WindowManager.new(max_tokens: 80, reserved_tokens: 16)
+      {:ok, %{memory: compacted}} = WindowManager.ensure_within_limit(%{memory: memory}, manager)
+
+      remaining = compacted |> AgentMemory.delete_turn(old_turn) |> AgentMemory.messages()
+      assert remaining != []
+      assert Enum.all?(remaining, &(&1.turn_id == new_turn))
+    end
+  end
+
+  # 20 filler user messages, then a tool round whose assistant turn carries thinking.
+  defp memory_ending_in_thinking_round do
+    filler =
+      Enum.reduce(1..20, AgentMemory.new_memory(), fn i, mem ->
+        AgentMemory.add_message(mem, "user", "Message #{i} with some padding content")
+      end)
+
+    filler
+    |> AgentMemory.add_message("user", "weather?")
+    |> AgentMemory.add_message("assistant", %Normandy.Agents.ToolCallResponse{
+      thinking: [%{"type" => "thinking", "thinking" => "plan", "signature" => "s"}],
+      tool_calls: [%Normandy.Components.ToolCall{id: "t1", name: "weather", input: %{}}]
+    })
+    |> AgentMemory.add_message("tool", %Normandy.Components.ToolResult{
+      tool_call_id: "t1",
+      output: "x"
+    })
+  end
+
+  # The kept tool round, as the next request will send it.
+  defp kept_assistant_blocks(memory) do
+    memory
+    |> AgentMemory.history()
+    |> Enum.find(&(&1.role == "assistant" and is_list(&1.content)))
+    |> Map.fetch!(:content)
   end
 end

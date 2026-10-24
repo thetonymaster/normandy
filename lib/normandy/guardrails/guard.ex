@@ -7,11 +7,9 @@ defmodule Normandy.Guardrails.Guard do
   guard's options. It must return `:ok` to allow the value through, or
   `{:error, [violation]}` to reject it.
 
-  Violations use the same `%{path, message, constraint}` shape as
-  `Normandy.Agents.ValidationMiddleware`, with an additional `:guard` key
-  identifying the module that produced the violation. This means
-  `Normandy.Agents.ValidationMiddleware.error_message/1` renders guardrail
-  violations without modification.
+  Violations use the same `%{path, message, constraint}` shape as the `errors` of a
+  `Normandy.Schema.ValidationError`, with an additional `:guard` key identifying the
+  module that produced the violation.
 
   ## Example
 
@@ -47,6 +45,13 @@ defmodule Normandy.Guardrails.Guard do
           optional(atom()) => term()
         }
 
+  @doc """
+  Checks `value`, the agent's validated input or output, against the guard's `opts`.
+
+  Return `:ok` to let it through, or `{:error, violations}` to reject it, a list of
+  `t:violation/0`. A guard list stops at the first guard that rejects. Any other return
+  value raises, whatever the guard's `:on_error`.
+  """
   @callback check(value :: term(), opts :: keyword()) :: :ok | {:error, [violation()]}
 
   @doc """

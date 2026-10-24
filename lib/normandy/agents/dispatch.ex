@@ -3,38 +3,119 @@ defmodule Normandy.Agents.Dispatch do
   The single chokepoint every agent tool call flows through.
 
   `dispatch_one/3` runs one tool call through a fixed pipeline:
-  registry resolution → before-hooks → policy check → budget pre-check →
+  toolset lookup → before-hooks → input validation → policy check → budget pre-check →
   execute → budget record → after-hooks. The behaviours are carried on a
-  `Pipeline` struct so they can be injected in tests and replaced by real
-  implementations in later phases. The default pipeline is allow-all / no-op /
-  identity, preserving current behavior.
+  `Pipeline` struct. Every agent run builds its pipeline from the agent's
+  `Normandy.Behaviours.Config` (`Normandy.Behaviours.Config.to_pipeline/1`: its policy,
+  budget, function hooks and `before_tool`/`after_tool` hook modules), with an execute step
+  wrapped in the `[:normandy, :tool, :execute]` span. `default_pipeline/0` (allow-all
+  policy, no-op budget, no hooks) is what `dispatch_one/2` and `classify/2` use when no
+  pipeline is passed.
 
-  The pipeline is also exposed as two composable halves: `classify/3` (registry →
-  before-hooks → policy, producing a verdict with no side effects) and `execute/4`
-  (budget → execute → record → after, running an already-classified call).
+  The pipeline is also exposed as two composable halves: `classify/3` (toolset lookup →
+  before-hooks → input validation → policy, producing a verdict with no side effects) and
+  `execute/4` (budget → execute → record → after, running an already-classified call).
   `dispatch_one/3` is exactly `classify ➞ execute`; a durable shell consults
-  `classify/3` to park a `:needs_approval` call before any side effect runs.
+  `classify/3` to park a `:needs_approval` call before any side effect runs, and runs an
+  approved one with `execute_approved/3`.
+
+  ## Input
+
+  The model's input is validated against the tool's input schema
+  (`Normandy.Tools.Input.validate/2`) after the before-hooks, so a hook's rewrite is what is
+  checked. The validated input travels in an `Invocation` beside the registered tool, and
+  reaches the tool as `context.input`; the tool struct is never changed. Invalid input (an
+  unknown key, a missing required key, a wrong type) answers the call with an `is_error`
+  result naming the keys, and the turn goes on.
+
+  ## Results the model sees
+
+  A call answered without running its tool as asked gets `is_error: true` and an
+  `output` of `%{error: message}` plus only the keys that apply (never a `null`). The
+  message says what happened and what to do next. Keys: `denied: true` (a policy deny,
+  the synchronous `:needs_approval` collapse, a budget refusal, a before-hook halt, a
+  rejected or expired approval), `rule_id` and `rationale` (a policy's, when set),
+  `validation_errors` (input that failed the tool's schema: a fixable mistake, so not
+  `denied`), `expired: true` and `interrupted: true`. A tool's own `{:error, binary}`,
+  or a raised exception, reaches the model as that text alone; any other error term as
+  `%{error: term}`.
+
+  ## Telemetry
+
+  A call answered without running its tool emits `[:normandy, :tool, :denied]`
+  (`%{count: 1}`, metadata as listed in `Normandy.Telemetry`) with
+  `reason` `:policy` (a policy deny, or a `:needs_approval` verdict collapsed by
+  `dispatch_one/3`), `:hook_halt` (a before-hook halted it) or `:budget` (the
+  budget pre-check refused it). Approval outcomes (`:approval_rejected`,
+  `:approval_expired`) are emitted by `Turn.Server`, the only shell that parks.
+  Toolset misses and invalid or schema-failing input are errors, not denials,
+  and emit nothing. A result cut by the cap (below) emits
+  `[:normandy, :tool, :result_truncated]` (`%{original_chars, kept_chars}`, metadata as
+  listed in `Normandy.Telemetry`).
+
+  ## Result cap
+
+  Every result leaves the chokepoint through `finish/3`, after the `after_tool` slot and
+  the after-hooks (which see the whole output): an output JSON cannot express, or a
+  binary that is not valid UTF-8, becomes an error result; then a result whose text (what
+  the model reads: a binary as-is, a number as its digits, anything else as JSON) is
+  longer than the limit is cut to the limit, in characters (graphemes, so a
+  multi-codepoint character is never split), and ends with
+  `"\n[truncated: <kept> of <total> chars shown]"`. Error results are capped too. The
+  limit is the tool's `Normandy.Tools.Toolset.register/3` `:max_result_chars` when it was
+  registered with one (`nil` there turns the cap off for that tool), else the agent's
+  `:max_tool_result_chars` (default 100_000; `nil` = no cap). A map or list output is cut
+  as its JSON text, so the model gets a string.
+
+  ## `after_tool`
+
+  `Pipeline.after_tool` (`fn config, call, result -> result end`, default `nil`) runs on
+  every result the chokepoint returns: executed, budget-denied, every `classify/3` denial
+  (toolset miss, invalid or schema-failing input, a before-hook halt, a policy deny) and
+  `dispatch_one/3`'s interim approval denial. It runs before the function `after_hooks`,
+  which see only results of tools that ran, and the result answers the call's id
+  whatever it returns. `Normandy.Behaviours.Config.to_pipeline/1` sets it from the agent's
+  hook modules. For a denial it receives the call as the model sent it (input
+  normalized); for an executed result, the call the before-hooks produced.
+
+  The config it gets depends on where the result was made. A call answered at
+  classification (a denial, or a `:needs_approval` verdict answered without an approval)
+  is answered in the calling process with the full config. In a batch (`BaseAgent.run/3`,
+  `BaseAgent.stream/3`, `Turn.Server`), an executed call's after-hooks run in a task whose
+  config leaves out the conversation's memory entries, so `config.memory`'s entries are
+  empty there; read the turn id, name, model, toolset and `tool_context`, not the history.
+
+  ## `policy_fn` and `execute_fn`
+
+  `policy_fn` is called as `(config, tool_call, invocation)`. `execute_fn` is called as
+  `(config, invocation, tool_name)` when it has arity 3, or
+  `(config, invocation, tool_name, tool_call)` when it has arity 4; `executor_opts/3` builds
+  the `Normandy.Tools.Executor` options (context with the input, registration timeout) from
+  them.
   """
 
+  alias Normandy.Agents.BaseAgentConfig
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Telemetry.Metadata
+  alias Normandy.Telemetry.OtelCtx
+  alias Normandy.Tools.Context
   alias Normandy.Tools.Executor
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Input
+  alias Normandy.Tools.Toolset
 
-  defmodule DenialEnvelope do
-    @moduledoc "Structured record of a denied (or approval-pending) tool call."
-    @type t :: %__MODULE__{
-            call_id: String.t() | nil,
-            reason: String.t(),
-            rule_id: String.t() | nil,
-            rationale: String.t() | nil,
-            pending_approval: boolean()
-          }
-    defstruct call_id: nil,
-              reason: "denied",
-              rule_id: nil,
-              rationale: nil,
-              pending_approval: false
+  defmodule Invocation do
+    @moduledoc """
+    A tool call ready to run: the tool as registered (never changed by the call), the
+    model's input validated against the tool's input schema, and the call's timeout (the
+    tool's registration `:timeout`, else `Normandy.Tools.Executor.default_timeout/0`).
+    """
+    @enforce_keys [:tool, :input, :timeout]
+    defstruct [:tool, :input, :timeout]
+
+    @type t :: %__MODULE__{tool: struct(), input: struct() | map(), timeout: pos_integer()}
   end
 
   defmodule Pipeline do
@@ -44,30 +125,39 @@ defmodule Normandy.Agents.Dispatch do
             policy_fn: function(),
             budget_check_fn: function(),
             budget_record_fn: function(),
-            execute_fn: function(),
-            after_hooks: [function()]
+            execute_fn:
+              (map(), Normandy.Agents.Dispatch.Invocation.t(), String.t() ->
+                 Executor.execution_result())
+              | (map(), Normandy.Agents.Dispatch.Invocation.t(), String.t(), ToolCall.t() ->
+                   Executor.execution_result()),
+            after_hooks: [function()],
+            after_tool: (map(), ToolCall.t(), ToolResult.t() -> ToolResult.t()) | nil
           }
     defstruct before_hooks: [],
               policy_fn: nil,
               budget_check_fn: nil,
               budget_record_fn: nil,
               execute_fn: nil,
-              after_hooks: []
+              after_hooks: [],
+              after_tool: nil
   end
 
   @doc """
-  The default pipeline: allow-all policy, no-op budget, no hooks, bare executor.
-  Reproduces current behavior. Callers (e.g. BaseAgent) override `execute_fn`
-  to add telemetry, and later phases override the behaviour functions.
+  The default pipeline: allow-all policy, no-op budget, no hooks, the bare executor, passing
+  the call's `%Normandy.Tools.Context{}` (with the validated input) and timeout. It behaves as
+  `Normandy.Behaviours.Config.to_pipeline/1` of a default `%Normandy.Behaviours.Config{}`;
+  agent runs use that function's pipeline for the agent's own behaviours.
   """
   @spec default_pipeline() :: Pipeline.t()
   def default_pipeline do
     %Pipeline{
       before_hooks: [],
-      policy_fn: fn _config, _call, _tool -> {:allow, %{}} end,
+      policy_fn: fn _config, _call, _invocation -> {:allow, %{}} end,
       budget_check_fn: fn _config, _call -> :ok end,
       budget_record_fn: fn _config, _call, _result -> :ok end,
-      execute_fn: fn _config, tool, _name -> Executor.execute_tool(tool) end,
+      execute_fn: fn config, invocation, _name, call ->
+        Executor.execute_tool(invocation.tool, executor_opts(config, invocation, call))
+      end,
       after_hooks: []
     }
   end
@@ -85,128 +175,40 @@ defmodule Normandy.Agents.Dispatch do
   end
 
   @doc """
-  Builds the tool struct from LLM-supplied input. Uses the tool's
-  `prepare_input/2` if exported; otherwise maps known keys onto struct fields.
+  The `Normandy.Tools.Executor` options for `invocation`: the call's
+  `%Normandy.Tools.Context{}` carrying the validated input, and the invocation's timeout.
   """
-  @spec prepare_tool(struct(), map()) :: struct()
-  def prepare_tool(tool, input) when is_map(input) do
-    if function_exported?(tool.__struct__, :prepare_input, 2) do
-      tool.__struct__.prepare_input(tool, input)
-    else
-      struct(tool, atomize_known_keys(tool, input))
-    end
-  end
+  @spec executor_opts(map(), Invocation.t(), ToolCall.t()) :: keyword()
+  def executor_opts(config, %Invocation{} = invocation, %ToolCall{} = call),
+    do: [context: Context.build(config, call, invocation.input), timeout: invocation.timeout]
 
   @doc """
-  Validates LLM-supplied input against a schema-based tool's schema BEFORE any
-  side effect, so a malformed call is rejected at classify-time rather than
-  blowing up inside (or three steps after) the tool's `execute/1`.
-
-  Returns `:ok` when the input passes, or when the tool has no generated
-  `validate/1` (plain-schema or hand-rolled tools — current behavior preserved);
-  `{:error, errors}` with path-based validation errors otherwise.
-
-  The LLM payload is string-keyed, but the schema validator looks up atom field
-  names, so input is first mapped onto known field atoms using the same
-  DoS-safe normalization `prepare_tool/2` uses (never `String.to_atom/1` on
-  untrusted input). A tool that defines its own `prepare_input/2` owns its
-  validation and is skipped here.
-  """
-  @spec validate_input(struct(), map()) :: :ok | {:error, list()}
-  def validate_input(tool, input) when is_map(input) do
-    mod = tool.__struct__
-
-    cond do
-      function_exported?(mod, :prepare_input, 2) ->
-        :ok
-
-      # Scope: only SchemaBaseTool-shaped tools, which the macro gives BOTH
-      # validate/1 and validate!/1. Requiring both keeps a hand-rolled validate/1
-      # with a different contract out of the chokepoint. validate_input/2 runs
-      # before apply_policy's rescue/catch, so a validator returning anything
-      # outside the {:ok, _} / {:error, list} contract must fail closed here
-      # rather than crash classify/3.
-      function_exported?(mod, :validate, 1) and function_exported?(mod, :validate!, 1) ->
-        case mod.validate(atomize_known_keys(tool, input)) do
-          {:ok, _validated} ->
-            :ok
-
-          {:error, errors} when is_list(errors) ->
-            {:error, errors}
-
-          _other ->
-            {:error,
-             [
-               %{
-                 path: [],
-                 message: "validator returned an unexpected value",
-                 constraint: :internal
-               }
-             ]}
-        end
-
-      true ->
-        :ok
-    end
-  end
-
-  # Map LLM-supplied input (string- or atom-keyed) onto the tool's struct-field
-  # atoms, dropping any key that isn't a real field. Shared by prepare_tool/2
-  # (to build the struct) and validate_input/2 (to feed the atom-key-expecting
-  # schema validator).
-  defp atomize_known_keys(tool, input) do
-    Enum.reduce(input, %{}, fn {key, value}, acc ->
-      case normalize_tool_field_key(tool, key) do
-        {:ok, atom_key} -> Map.put(acc, atom_key, value)
-        :error -> acc
-      end
-    end)
-  end
-
-  @doc """
-  Classifies one tool call: registry resolution → before-hooks → policy. Returns
+  Classifies one tool call: toolset lookup → before-hooks → input validation → policy. Returns
   the routing decision WITHOUT executing the tool, so a durable shell can act on a
-  `:needs_approval` verdict (park) before any side effect runs.
+  `:needs_approval` verdict (park) before any side effect runs. Its only side
+  effects are the `[:normandy, :tool, :denied]` event for a policy deny or hook halt and,
+  for a `:deny` result, the pipeline's `after_tool` slot (every result the model sees
+  passes it once; an `:execute` or `:needs_approval` verdict has no result yet).
 
-    * `{:execute, prepared, call}` — allowed; `prepared` is the built tool struct,
-      `call` the post-before-hook `%ToolCall{}` (hooks may have rewritten it).
-    * `{:deny, %ToolResult{}}` — registry miss, a before-hook `:halt`, or a policy
-      `:deny`, already shaped into the error/denial result.
-    * `{:needs_approval, prepared, call, info}` — policy wants human approval.
+    * `{:execute, %Invocation{}, call}` — allowed; `call` is the post-before-hook
+      `%ToolCall{}` (hooks may have rewritten it).
+    * `{:deny, %ToolResult{}}` — a toolset miss, input that is not an object or fails
+      validation, a before-hook `:halt`, or a policy `:deny`, already shaped into the
+      error/denial result.
+    * `{:needs_approval, %Invocation{}, call, info}` — policy wants human approval.
   """
   @spec classify(map(), ToolCall.t() | map(), Pipeline.t()) ::
-          {:execute, struct(), ToolCall.t()}
+          {:execute, Invocation.t(), ToolCall.t()}
           | {:deny, ToolResult.t()}
-          | {:needs_approval, struct(), ToolCall.t(), map()}
+          | {:needs_approval, Invocation.t(), ToolCall.t(), map()}
   def classify(config, tool_call, pipeline \\ default_pipeline())
 
   def classify(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     call = %{call | input: normalize_tool_input(call.input)}
 
-    case Registry.get(config.tool_registry, call.name) do
-      {:ok, tool} ->
-        case run_before_hooks(config, call, pipeline.before_hooks) do
-          {:halt, %ToolResult{} = result} ->
-            {:deny, result}
-
-          {:cont, call} ->
-            prepared = prepare_tool(tool, call.input)
-
-            case validate_input(tool, call.input) do
-              {:error, errors} ->
-                {:deny, validation_error_result(call, errors)}
-
-              :ok ->
-                case apply_policy(pipeline, config, call, prepared) do
-                  {:allow, _meta} -> {:execute, prepared, call}
-                  {:deny, info} -> {:deny, denial_result(call, info, false)}
-                  {:needs_approval, info} -> {:needs_approval, prepared, call, info}
-                end
-            end
-        end
-
-      :error ->
-        {:deny, not_found_result(call)}
+    case route(config, call, pipeline) do
+      {:deny, %ToolResult{} = result} -> {:deny, answer(config, call, result, pipeline)}
+      verdict -> verdict
     end
   end
 
@@ -214,23 +216,181 @@ defmodule Normandy.Agents.Dispatch do
     classify(config, to_tool_call(raw_call), pipeline)
   end
 
+  defp route(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    case fetch_tool(config, call.name) do
+      {:ok, _tool} when not is_map(call.input) ->
+        {:deny, invalid_input_result(call)}
+
+      {:ok, tool} ->
+        # A hook may change a call's input, not which call it is: the result must
+        # answer the model's tool_use id, and both shells order results by it.
+        case run_before_hooks(config, call, pipeline.before_hooks) do
+          {:halt, %ToolResult{} = result} ->
+            emit_denied(config, call, :hook_halt)
+            {:deny, %{result | tool_call_id: call.id}}
+
+          {:cont, hooked} ->
+            validate_and_decide(pipeline, config, tool, %{hooked | id: call.id})
+        end
+
+      :error ->
+        {:deny, not_found_result(config, call)}
+    end
+  end
+
+  defp validate_and_decide(pipeline, config, tool, call) do
+    with {:ok, invocation} <- invocation(config, tool, call),
+         do: decide(pipeline, config, call, invocation)
+  end
+
+  defp decide(pipeline, config, call, invocation) do
+    case apply_policy(pipeline, config, call, invocation) do
+      {:allow, _meta} -> {:execute, invocation, call}
+      {:deny, info} -> {:deny, policy_denial(config, call, info, :deny)}
+      {:needs_approval, info} -> {:needs_approval, invocation, call, info}
+    end
+  end
+
+  defp fetch_tool(%{toolset: %Toolset{} = toolset}, name), do: Toolset.fetch(toolset, name)
+  defp fetch_tool(_config, _name), do: :error
+
+  # The validated input and the registration timeout, beside the tool as registered.
+  defp invocation(config, tool, %ToolCall{} = call) do
+    case Input.validate(tool, call.input) do
+      {:ok, input} ->
+        {:ok, %Invocation{tool: tool, input: input, timeout: timeout(config, call.name)}}
+
+      {:error, errors} ->
+        {:deny, validation_error_result(call, errors)}
+    end
+  end
+
+  defp timeout(%{toolset: toolset}, name) do
+    case Toolset.timeout(toolset, name) do
+      nil -> Executor.default_timeout()
+      timeout -> timeout
+    end
+  end
+
+  # Every result the model will see passes the after_tool slot once; the result answers
+  # the call's id whatever the slot returns.
+  defp after_tool_slot(_config, _call, result, %Pipeline{after_tool: nil}), do: result
+
+  defp after_tool_slot(config, call, result, %Pipeline{after_tool: after_tool}),
+    do: %{after_tool.(config, call, result) | tool_call_id: call.id}
+
+  # A result that leaves Dispatch with no after-hooks to run: the slot, then finish/3.
+  defp answer(config, call, result, pipeline),
+    do: finish(config, call, after_tool_slot(config, call, result, pipeline))
+
+  @doc false
+  # The last step of every result that leaves Dispatch, and of the results
+  # Normandy.Hooks.ServerGlue rewrites through after_tool (interrupted, rejected and
+  # expired results, which skip Dispatch): encodable/2, then the cap (see the
+  # moduledoc's "Result cap"). Runs once per result: the cap's note is not idempotent.
+  @spec finish(map(), ToolCall.t(), ToolResult.t()) :: ToolResult.t()
+  def finish(config, %ToolCall{} = call, %ToolResult{} = result),
+    do: finish(config, call, result, nil)
+
+  defp finish(config, call, result, rendering) do
+    {result, {_output, text}} = encodable(result, rendering)
+    cap(result, text, config, call)
+  end
+
+  # A rendering is {output, text}: the output a result held when ToolResult.render/1
+  # turned it into text, so later steps reuse the text while the result still holds that
+  # output (=== on the same term returns at once) and render again only when a hook
+  # replaced it. nil when nothing was rendered yet.
+  #
+  # Hooks (before-hook halts, after_tool, after_hooks) may build any %ToolResult{},
+  # and memory keeps it for every later request. So the encodability check runs on
+  # the final result, the last point before it can reach memory. Returns the result,
+  # replaced by an error result when the model could not read it, and its rendering.
+  defp encodable(%ToolResult{output: output} = result, {rendered, _text} = rendering)
+       when output === rendered,
+       do: {result, rendering}
+
+  defp encodable(%ToolResult{output: output} = result, _stale_or_nil) do
+    case ToolResult.render(output) do
+      {:ok, text} when is_binary(output) ->
+        if String.valid?(text),
+          do: {result, {output, text}},
+          else: unreadable(result, invalid_utf8_output())
+
+      {:ok, text} ->
+        {result, {output, text}}
+
+      {:error, exception} ->
+        unreadable(result, unencodable_output(exception))
+    end
+  end
+
+  defp unreadable(result, message),
+    do: {%{result | output: message, is_error: true}, {message, message}}
+
   @doc """
-  Executes a classified (`{:execute, prepared, call}`) tool call: budget pre-check →
-  execute → budget record → after-hooks. Returns a `%ToolResult{}`. Skips
+  Executes a classified (`{:execute, invocation, call}`) tool call: budget pre-check →
+  execute → budget record → `after_tool` slot → after-hooks. A budget denial passes
+  `after_tool` too. Returns a `%ToolResult{}`. Skips
   re-classification — the verdict was already decided by `classify/3` (and, for an
   approved call, by a human), so re-running policy here would re-deny/re-park.
   """
-  @spec execute(map(), struct(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
-  def execute(config, prepared, %ToolCall{} = call, %Pipeline{} = pipeline) do
+  @spec execute(map(), Invocation.t(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
+  def execute(config, %Invocation{} = invocation, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case pipeline.budget_check_fn.(config, call) do
       :ok ->
-        result = execute_and_wrap(config, call, prepared, pipeline.execute_fn)
+        {result, rendering} = execute_and_wrap(config, call, invocation, pipeline.execute_fn)
         pipeline.budget_record_fn.(config, call, result)
-        run_after_hooks(config, call, result, pipeline.after_hooks)
+
+        {result, rendering} =
+          config |> after_tool_slot(call, result, pipeline) |> encodable(rendering)
+
+        config
+        |> run_after_hooks(call, result, pipeline.after_hooks)
+        |> Map.put(:tool_call_id, call.id)
+        |> then(&finish(config, call, &1, rendering))
 
       {:error, reason} ->
-        budget_denial_result(call, reason)
+        emit_denied(config, call, :budget)
+        answer(config, call, budget_denial_result(call, reason), pipeline)
     end
+  end
+
+  @doc """
+  Executes a call a human approved (a `:needs_approval` verdict a durable shell parked):
+  looks the tool up again and validates the parked call's input again (both are
+  deterministic), then runs `execute/4`. Policy is not consulted again: it would park the
+  call again. A tool no longer registered, or input that no longer validates, answers the
+  call with the same result `classify/3` would give, through the `after_tool` slot.
+
+  The approval covers the call's name and input, not the tool's code: after a redeploy, or
+  a supplement that registers another tool under that name, the approved call runs
+  whatever tool now holds the name. To bind an approval to one implementation, version
+  the tool's name (`"refund_v2"`) when its behaviour changes.
+  """
+  @spec execute_approved(map(), ToolCall.t(), Pipeline.t()) :: ToolResult.t()
+  def execute_approved(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
+    with {:ok, tool} <- fetch_tool(config, call.name),
+         {:ok, invocation} <- invocation(config, tool, call) do
+      execute(config, invocation, call, pipeline)
+    else
+      :error -> answer(config, call, not_found_result(config, call), pipeline)
+      {:deny, %ToolResult{} = result} -> answer(config, call, result, pipeline)
+    end
+  end
+
+  @doc """
+  Emits `[:normandy, :tool, :denied]` for `call`, answered without running its
+  tool. Shells that answer a call outside the pipeline (`Turn.Server` approval
+  rejection or expiry) call this too, so every denial has one shape.
+  """
+  @spec emit_denied(map(), ToolCall.t(), atom(), String.t() | nil) :: :ok
+  def emit_denied(config, %ToolCall{} = call, reason, rule_id \\ nil) do
+    :telemetry.execute(
+      [:normandy, :tool, :denied],
+      %{count: 1},
+      Metadata.tool_denied(config, call, reason, rule_id)
+    )
   end
 
   @doc """
@@ -247,9 +407,14 @@ defmodule Normandy.Agents.Dispatch do
 
   def dispatch_one(config, %ToolCall{} = call, %Pipeline{} = pipeline) do
     case classify(config, call, pipeline) do
-      {:execute, prepared, call} -> execute(config, prepared, call, pipeline)
-      {:deny, %ToolResult{} = result} -> result
-      {:needs_approval, _prepared, call, info} -> denial_result(call, info, true)
+      {:execute, invocation, call} ->
+        execute(config, invocation, call, pipeline)
+
+      {:deny, %ToolResult{} = result} ->
+        result
+
+      {:needs_approval, _invocation, call, info} ->
+        answer(config, call, policy_denial(config, call, info, :needs_approval), pipeline)
     end
   end
 
@@ -257,14 +422,209 @@ defmodule Normandy.Agents.Dispatch do
     dispatch_one(config, to_tool_call(raw_call), pipeline)
   end
 
-  defp execute_and_wrap(config, call, prepared, execute_fn) do
-    case execute_fn.(config, prepared, call.name) do
-      {:ok, result} ->
-        %ToolResult{tool_call_id: call.id, output: result, is_error: false}
+  @doc false
+  # A batch of calls run to completion (BaseAgent.run/3 and stream/3): each call is
+  # classified in the caller with the full config, and a :needs_approval verdict is
+  # answered as dispatch_one/3 answers it. Every verdict then goes through run_batch/3:
+  # an allowed call is executed there, an answered one only hands its result to
+  # `on_result`, so `on_result` sees each result once, from the worker, in completion
+  # order (call order at max_tool_concurrency 1). Returns the results in call order.
+  @spec dispatch_batch(map(), [ToolCall.t() | map()], Pipeline.t(), (ToolResult.t() -> any())) ::
+          [ToolResult.t()]
+  def dispatch_batch(config, calls, %Pipeline{} = pipeline, on_result) do
+    verdicts =
+      Enum.map(calls, fn call ->
+        case classify(config, call, pipeline) do
+          {:execute, invocation, call} ->
+            {:execute, invocation, call}
 
-      {:error, error} ->
-        %ToolResult{tool_call_id: call.id, output: %{error: error}, is_error: true}
+          {:deny, %ToolResult{} = result} ->
+            {:answered, result}
+
+          {:needs_approval, _invocation, call, info} ->
+            result = policy_denial(config, call, info, :needs_approval)
+            {:answered, answer(config, call, result, pipeline)}
+        end
+      end)
+
+    run_batch(config, verdicts, fn
+      task_config, {:execute, invocation, call} ->
+        tap(execute(task_config, invocation, call, pipeline), on_result)
+
+      _task_config, {:answered, result} ->
+        tap(result, on_result)
+    end)
+  end
+
+  @doc false
+  # The concurrent tool-batch runner of every turn path (dispatch_batch/4 for BaseAgent,
+  # Turn.Server's dispatched and approved calls): `fun.(task_config, item)` runs in a task
+  # per item, at most `config.max_tool_concurrency` at once (a pos_integer after
+  # BaseAgent.init/1), with the caller's OpenTelemetry context; the results come back in
+  # item order. `task_config` is `config` with the conversation's entries left behind, so
+  # each task's copy is small (B2): execution, budget, after_tool and after-hooks read the
+  # agent's name, model, toolset, tool_context, behaviours and the turn id
+  # (memory.current_turn_id), never the entries. Classification (policy, before-hooks)
+  # runs in the caller with the full config.
+  @spec run_batch(map(), [item], (map(), item -> result)) :: [result]
+        when item: term(), result: term()
+  def run_batch(config, items, fun) do
+    parent_ctx = OtelCtx.capture()
+    task_config = tool_task_config(config)
+
+    items
+    |> Task.async_stream(
+      fn item ->
+        OtelCtx.restore(parent_ctx)
+        fun.(task_config, item)
+      end,
+      ordered: true,
+      max_concurrency: config.max_tool_concurrency,
+      timeout: :infinity,
+      on_timeout: :kill_task
+    )
+    |> Enum.map(&unwrap_tool_task_result!/1)
+  end
+
+  defp tool_task_config(%{memory: %AgentMemory{} = memory} = config),
+    do: %{config | memory: AgentMemory.without_entries(memory)}
+
+  defp tool_task_config(config), do: config
+
+  # Translate a `Task.async_stream` element into the underlying tool result.
+  # `Task.async_stream/3` (the linked variant run_batch/3 uses) propagates worker
+  # raises to the caller via process-link before the stream yields, so the
+  # `{:exit, {exception, stacktrace}}` clause below is unreachable for raises
+  # in the current configuration. It IS reachable for `:exit` reasons that
+  # the stream catches without killing the caller — most importantly
+  # `{:exit, :timeout}` from `on_timeout: :kill_task`, and any deliberate
+  # `exit/1` from tool wrapper code. Without this helper those would hit
+  # `FunctionClauseError` against a `{:ok, _}`-only pattern, masking the
+  # underlying cause. Public (`@doc false`) so it's directly unit-testable.
+  @doc false
+  def unwrap_tool_task_result!({:ok, result}), do: result
+
+  def unwrap_tool_task_result!({:exit, {exception, stacktrace}})
+      when is_exception(exception) and is_list(stacktrace) do
+    reraise(exception, stacktrace)
+  end
+
+  def unwrap_tool_task_result!({:exit, reason}), do: exit(reason)
+
+  defp execute_and_wrap(config, call, invocation, execute_fn) do
+    case call_execute_fn(execute_fn, config, invocation, call) do
+      {:ok, result} -> wrap_output(call, result)
+      {:error, error} -> wrap_error(call, error)
     end
+  end
+
+  # The model reads a tool result as JSON (ToolResult's BaseIOSchema impl), and
+  # memory keeps the result for every later request. So an output JSON cannot
+  # express (a tuple, a pid) is replaced here by an error result that says so,
+  # before it reaches memory. Returns the result and its rendering (encodable/2); a
+  # binary is checked after the after_tool slot, which may still replace it.
+  defp wrap_output(call, output) when is_binary(output) or is_number(output),
+    do: {%ToolResult{tool_call_id: call.id, output: output, is_error: false}, nil}
+
+  defp wrap_output(call, output),
+    do: encodable(%ToolResult{tool_call_id: call.id, output: output, is_error: false}, nil)
+
+  # An error reason is a message for the model. A binary is sent as it is (AX-15: the
+  # memory tool's reference strings, an Executor timeout), with is_error carrying the
+  # flag; an exception as its message (encoding it would send its fields and
+  # "__exception__"). Any other term keeps the %{error: term} shape, as its inspect/1
+  # text when JSON cannot express it (a tuple such as {:http, 500}).
+  defp wrap_error(call, error) when is_binary(error),
+    do: {%ToolResult{tool_call_id: call.id, output: error, is_error: true}, nil}
+
+  defp wrap_error(call, error) when is_exception(error),
+    do:
+      {%ToolResult{tool_call_id: call.id, output: Exception.message(error), is_error: true}, nil}
+
+  defp wrap_error(call, error) do
+    output = %{error: error}
+
+    case ToolResult.render(output) do
+      {:ok, text} ->
+        {%ToolResult{tool_call_id: call.id, output: output, is_error: true}, {output, text}}
+
+      {:error, _exception} ->
+        {%ToolResult{tool_call_id: call.id, output: %{error: inspect(error)}, is_error: true},
+         nil}
+    end
+  end
+
+  # Sent bare, like a tool's own {:error, binary} (AX-15).
+  defp invalid_utf8_output, do: "the tool ran, but its output is not valid UTF-8 text"
+
+  # The tool's registration :max_result_chars wins over the agent's
+  # :max_tool_result_chars, including a registered nil. Dispatch's callers pass partial
+  # configs (bare maps in tests), so a config without the key has the default cap.
+  # text is the result's rendering (encodable/2), what the model reads.
+  defp cap(result, text, config, call) do
+    case result_limit(config, call.name) do
+      {nil, _source} -> result
+      {limit, source} -> cap_text(result, text, %{limit: limit, source: source}, config, call)
+    end
+  end
+
+  defp result_limit(config, name) do
+    case tool_limit(config, name) do
+      {:ok, limit} ->
+        {limit, :tool}
+
+      :error ->
+        default = BaseAgentConfig.default_max_tool_result_chars()
+        {Map.get(config, :max_tool_result_chars, default), :agent}
+    end
+  end
+
+  defp tool_limit(%{toolset: %Toolset{} = toolset}, name),
+    do: Toolset.max_result_chars(toolset, name)
+
+  defp tool_limit(_config, _name), do: :error
+
+  # A text's byte size bounds its grapheme count, so a short text skips the walk.
+  defp cap_text(result, text, %{limit: limit}, _config, _call) when byte_size(text) <= limit,
+    do: result
+
+  defp cap_text(result, text, %{limit: limit, source: source}, config, call) do
+    case String.length(text) do
+      total when total <= limit ->
+        result
+
+      total ->
+        :telemetry.execute(
+          [:normandy, :tool, :result_truncated],
+          %{original_chars: total, kept_chars: limit},
+          Metadata.tool_result_truncated(config, call, source)
+        )
+
+        kept = String.slice(text, 0, limit)
+        %{result | output: kept <> "\n[truncated: #{limit} of #{total} chars shown]"}
+    end
+  end
+
+  # Sent bare, like invalid_utf8_output/0 and a tool's own {:error, binary} (AX-15).
+  defp unencodable_output(exception),
+    do: "the tool ran, but its output cannot be sent as JSON: #{unencodable(exception)}"
+
+  defp unencodable(%Protocol.UndefinedError{value: value}),
+    do: "it contains #{Describe.type_of(value)}"
+
+  # By the exception's module only: a message (Jason.EncodeError's "invalid byte ... in
+  # <<...>>") can quote the output's bytes into the model's text.
+  defp unencodable(%module{}), do: "encoding it raised #{inspect(module)}"
+
+  defp call_execute_fn(execute_fn, config, invocation, call) when is_function(execute_fn, 4),
+    do: execute_fn.(config, invocation, call.name, call)
+
+  defp call_execute_fn(execute_fn, config, invocation, call),
+    do: execute_fn.(config, invocation, call.name)
+
+  defp policy_denial(config, call, info, verdict) do
+    emit_denied(config, call, :policy, Map.get(info, :rule_id))
+    denial_result(call, info, verdict)
   end
 
   defp run_before_hooks(_config, call, []), do: {:cont, call}
@@ -283,13 +643,23 @@ defmodule Normandy.Agents.Dispatch do
   # {:deny, …}, honoring the spec's "a policy timeout/unreachable surfaces as
   # {:deny, …}". `catch` covers exits/throws (e.g. a GenServer.call timeout);
   # `rescue` covers raised exceptions.
-  defp apply_policy(pipeline, config, call, prepared) do
-    pipeline.policy_fn.(config, call, prepared)
+  #
+  # The rationale goes to the model, and a policy engine's exception or exit can
+  # carry its ctx (config and client), so it names the failure's shape only.
+  defp apply_policy(pipeline, config, call, invocation) do
+    pipeline.policy_fn.(config, call, invocation)
   rescue
-    e -> {:deny, %{reason: "policy check raised", rationale: Exception.message(e)}}
+    e -> {:deny, %{reason: "policy check raised", rationale: inspect(e.__struct__)}}
   catch
-    kind, value -> {:deny, %{reason: "policy check failed (#{kind})", rationale: inspect(value)}}
+    kind, value ->
+      {:deny, %{reason: "policy check failed (#{kind})", rationale: describe_failure(value)}}
   end
+
+  defp describe_failure(tuple)
+       when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+       do: "{#{inspect(elem(tuple, 0))}, ...}"
+
+  defp describe_failure(value), do: Describe.type_of(value)
 
   defp run_after_hooks(_config, _call, result, []), do: result
 
@@ -297,76 +667,108 @@ defmodule Normandy.Agents.Dispatch do
     run_after_hooks(config, call, hook.(config, call, result), rest)
   end
 
-  defp denial_result(call, info, pending?) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{
-        error: Map.get(info, :reason, "denied by policy"),
-        rationale: Map.get(info, :rationale),
-        rule_id: Map.get(info, :rule_id),
-        denied: true,
-        pending_approval: pending?
-      },
-      is_error: true
-    }
+  @doc false
+  # The one shape of a result answering a call Normandy did not run as asked (Dispatch's
+  # denials and errors, Turn's rejection and expiry, Turn.Server's interrupted result,
+  # Hooks.Runner's halts): `%{error: message}` plus every extra key whose value is not
+  # nil, with is_error set. A nil is never sent as a JSON null.
+  @spec error_result(String.t() | nil, String.t(), map()) :: ToolResult.t()
+  def error_result(call_id, message, extra \\ %{}) when is_binary(message) and is_map(extra) do
+    output =
+      for {key, value} <- extra, not is_nil(value), into: %{error: message}, do: {key, value}
+
+    %ToolResult{tool_call_id: call_id, output: output, is_error: true}
   end
+
+  defp denial_result(call, info, :deny) do
+    message =
+      case Map.get(info, :reason) do
+        reason when is_binary(reason) and reason != "" ->
+          "This call was blocked by policy (#{reason}). " <>
+            "Do not retry it; continue without it or tell the user."
+
+        _none ->
+          "This call was blocked by policy. Do not retry it; continue without it or tell the user."
+      end
+
+    error_result(call.id, message, policy_keys(info))
+  end
+
+  defp denial_result(call, info, :needs_approval) do
+    error_result(
+      call.id,
+      "This action needs human approval, which is not available in this run. " <>
+        "Do not retry it; tell the user it requires approval.",
+      policy_keys(info)
+    )
+  end
+
+  defp policy_keys(info),
+    do: %{rule_id: Map.get(info, :rule_id), rationale: Map.get(info, :rationale), denied: true}
 
   defp validation_error_result(call, errors) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{
-        error: "tool input failed schema validation",
-        validation_errors: errors,
-        denied: true
-      },
-      is_error: true
-    }
+    error_result(
+      call.id,
+      "invalid input for #{call.name}: #{Input.message(errors)}; the tool was not run. " <>
+        "Correct the input and call the tool again.",
+      %{validation_errors: errors}
+    )
   end
 
+  # The budget tracker's reason is shown only when it is text; any other term is the
+  # tracker's own data, not a message for the model.
   defp budget_denial_result(call, reason) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{error: "budget check failed: #{inspect(reason)}", denied: true},
-      is_error: true
-    }
+    detail = if is_binary(reason) and reason != "", do: " (#{reason})", else: ""
+
+    error_result(
+      call.id,
+      "The tool budget is used up#{detail}; the tool was not run. Answer with what you have.",
+      %{denied: true}
+    )
   end
 
-  defp not_found_result(call) do
-    %ToolResult{
-      tool_call_id: call.id,
-      output: %{error: "Tool '#{call.name}' not found in registry"},
-      is_error: true
-    }
+  defp invalid_input_result(call) do
+    error_result(
+      call.id,
+      "tool input is not a JSON object (it may have been cut off); the tool was not run. " <>
+        "Send the arguments as a JSON object."
+    )
   end
 
+  @max_listed_tools 20
+
+  defp not_found_result(config, call),
+    do: error_result(call.id, "No tool named '#{call.name}'. #{available_tools(config)}")
+
+  defp available_tools(%{toolset: %Toolset{} = toolset}) do
+    case toolset |> Toolset.list_names() |> Enum.sort() do
+      [] ->
+        "This agent has no tools."
+
+      names when length(names) > @max_listed_tools ->
+        {listed, rest} = Enum.split(names, @max_listed_tools)
+        "Available tools: #{Enum.join(listed, ", ")}, and #{length(rest)} more."
+
+      names ->
+        "Available tools: #{Enum.join(names, ", ")}."
+    end
+  end
+
+  defp available_tools(_config), do: "This agent has no tools."
+
+  # A JSON object string is decoded. Anything that is not an object (truncated
+  # JSON, an array, a number) is kept as it came, so classify/3 can refuse the
+  # call and tell the model, instead of running the tool with empty input.
   @doc false
   def normalize_tool_input(nil), do: %{}
   def normalize_tool_input(input) when is_map(input), do: input
 
   def normalize_tool_input(input) when is_binary(input) do
-    case Poison.decode(input) do
+    case Normandy.JSON.decode(input) do
       {:ok, parsed} when is_map(parsed) -> parsed
-      _ -> %{}
+      _ -> input
     end
   end
 
-  def normalize_tool_input(_), do: %{}
-
-  # Map an LLM-supplied input key (atom or binary) to a struct field atom on the
-  # tool, returning :error for keys that don't correspond to any field. NEVER
-  # calls String.to_atom/1 on untrusted input (atom-table exhaustion / DoS).
-  @doc false
-  def normalize_tool_field_key(tool, key) when is_atom(key) do
-    if key != :__struct__ and Map.has_key?(tool, key), do: {:ok, key}, else: :error
-  end
-
-  def normalize_tool_field_key(tool, key) when is_binary(key) do
-    Enum.find_value(Map.keys(tool), :error, fn field ->
-      if is_atom(field) and field != :__struct__ and Atom.to_string(field) == key do
-        {:ok, field}
-      end
-    end)
-  end
-
-  def normalize_tool_field_key(_tool, _key), do: :error
+  def normalize_tool_input(input), do: input
 end

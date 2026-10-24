@@ -1,7 +1,7 @@
 defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
+  # async: false — live API calls, kept serial to stay under rate limits.
   use ExUnit.Case, async: false
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Batch.Processor
   alias NormandyTest.Support.IntegrationHelper
 
@@ -27,7 +27,7 @@ defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
       {:ok, results} = Processor.process_batch(agent, inputs, max_concurrency: 2)
 
       assert length(results) == 3
-      assert Enum.all?(results, fn result -> is_binary(result.chat_message) end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: msg}} when is_binary(msg), &1))
     end
 
     test "maintains order with ordered: true", %{agent: agent} do
@@ -39,7 +39,7 @@ defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
       {:ok, results} = Processor.process_batch(agent, inputs, ordered: true, max_concurrency: 2)
 
       assert length(results) == 5
-      assert Enum.all?(results, fn result -> result.chat_message != nil end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: msg}} when not is_nil(msg), &1))
     end
 
     test "returns stats with ordered: false", %{agent: agent} do
@@ -94,7 +94,7 @@ defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
       Agent.stop(progress_agent)
 
       # Should have received progress updates
-      assert length(progress) > 0
+      assert progress != []
     end
 
     test "tracks completion accurately", %{agent: agent} do
@@ -137,7 +137,7 @@ defmodule Normandy.Integration.BatchCoordinationIntegrationTest do
         )
 
       assert length(results) == 10
-      assert Enum.all?(results, fn result -> result.chat_message != nil end)
+      assert Enum.all?(results, &match?({:ok, %{chat_message: msg}} when not is_nil(msg), &1))
     end
 
     test "applies delay between chunks", %{agent: agent} do

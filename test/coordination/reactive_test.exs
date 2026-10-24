@@ -2,7 +2,8 @@ defmodule Normandy.Coordination.ReactiveTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
-  alias Normandy.Coordination.{Reactive, AgentProcess}
+  alias Normandy.Coordination.{AgentProcess, Reactive}
+  alias Normandy.TurnError
 
   # Helper to create a test agent
   defp create_test_agent do
@@ -22,7 +23,163 @@ defmodule Normandy.Coordination.ReactiveTest do
     pid
   end
 
+  # An agent whose model call exits (as a timed-out GenServer.call does) instead of raising.
+  defp exiting_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{reply: fn _ -> exit(:boom) end},
+      model: "exiting-model"
+    })
+  end
+
+  defp throwing_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{reply: fn _ -> throw(:oops) end},
+      model: "throwing-model"
+    })
+  end
+
+  # An agent whose model call links a process that then crashes: the signal kills the
+  # agent's task, and would kill a caller the task is linked to.
+  defp linked_crash_agent do
+    BaseAgent.init(%{
+      client: %Normandy.Test.StubClient{
+        reply: fn _ ->
+          spawn_link(fn -> exit(:linked_boom) end)
+          Process.sleep(500)
+        end
+      },
+      model: "linked-crash-model"
+    })
+  end
+
+  defp failing_agent(:exits), do: exiting_agent()
+  defp failing_agent(:throws), do: throwing_agent()
+  defp failing_agent(:linked_crash), do: linked_crash_agent()
+
+  defp bad_callback(:raise), do: fn _id, _result -> raise "callback boom" end
+  defp bad_callback(:throw), do: fn _id, _result -> throw(:callback) end
+
+  # Runs `fun` in its own process so a caller killed by a linked task fails the
+  # assertion instead of the test process.
+  defp run_caller(fun) do
+    {pid, mref} = spawn_monitor(fn -> exit({:returned, fun.()}) end)
+
+    receive do
+      {:DOWN, ^mref, :process, ^pid, {:returned, value}} -> {:returned, value}
+      {:DOWN, ^mref, :process, ^pid, reason} -> {:caller_died, reason}
+    after
+      5_000 -> :caller_hung
+    end
+  end
+
+  describe "agent failures never take down the caller" do
+    for kind <- [:exits, :throws, :linked_crash] do
+      test "race/3 with an agent that #{kind}" do
+        assert {:returned, {:error, :all_failed}} =
+                 run_caller(fn -> Reactive.race([failing_agent(unquote(kind))], "x") end)
+      end
+
+      test "some/3 with an agent that #{kind}" do
+        assert {:returned, {:error, :insufficient_successes}} =
+                 run_caller(fn ->
+                   Reactive.some([failing_agent(unquote(kind))], "x", count: 1)
+                 end)
+      end
+
+      test "all/3 with an agent that #{kind}" do
+        assert {:returned, {:ok, %{"agent_0" => {:error, %TurnError{type: :task_down}}}}} =
+                 run_caller(fn -> Reactive.all([failing_agent(unquote(kind))], "x") end)
+      end
+
+      test "all/3 fail_fast with an agent that #{kind}" do
+        assert {:returned, {:error, %TurnError{type: :task_down}}} =
+                 run_caller(fn ->
+                   Reactive.all([failing_agent(unquote(kind))], "x", fail_fast: true)
+                 end)
+      end
+    end
+
+    for raiser <- [:raise, :throw] do
+      test "race/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:error, :all_failed}} =
+                 run_caller(fn ->
+                   Reactive.race([create_test_agent()], "x",
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+      end
+
+      test "some/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:error, :insufficient_successes}} =
+                 run_caller(fn ->
+                   Reactive.some([create_test_agent()], "x",
+                     count: 1,
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+      end
+
+      test "all/3 with an on_complete that #{raiser}s" do
+        assert {:returned, {:ok, %{"agent_0" => {:error, error}}}} =
+                 run_caller(fn ->
+                   Reactive.all([create_test_agent()], "x",
+                     on_complete: bad_callback(unquote(raiser))
+                   )
+                 end)
+
+        assert is_exception(error)
+      end
+    end
+  end
+
+  describe "a caller that traps exits" do
+    # Several agents finish before the outcome is decided, so race/3 and some/3 used to
+    # leave their reports behind; every call left the per-call supervisor's {:EXIT, _, _}.
+    setup do
+      Process.flag(:trap_exit, true)
+      agents = for _ <- 1..5, do: create_test_agent()
+      {:ok, agents: agents}
+    end
+
+    test "finds its mailbox empty after race/3", %{agents: agents} do
+      for _ <- 1..5, do: assert({:ok, _} = Reactive.race(agents, "go"))
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+
+    test "finds its mailbox empty after all/3", %{agents: agents} do
+      assert {:ok, _} = Reactive.all(agents, "go")
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+
+    test "finds its mailbox empty after some/3", %{agents: agents} do
+      for _ <- 1..5, do: assert({:ok, _} = Reactive.some(agents, "go", count: 2))
+      assert Process.info(self(), :messages) == {:messages, []}
+    end
+  end
+
+  describe "all/3 with no agents" do
+    test "returns an empty result" do
+      assert {:ok, %{}} = Reactive.all([], "go")
+    end
+  end
+
   describe "race/3" do
+    test "an agent that exits is a failure, not an exit of the caller" do
+      test_pid = self()
+
+      assert {:error, :all_failed} =
+               Reactive.race([exiting_agent()], "x",
+                 on_complete: fn id, result -> send(test_pid, {:done, id, result}) end
+               )
+
+      assert_receive {:done, "agent_0", {:error, %TurnError{type: :task_down, reason: :boom}}}
+    end
+
+    test "timeout: :infinity waits for the first success" do
+      assert {:ok, result} = Reactive.race([create_test_agent()], "test", timeout: :infinity)
+      assert is_map(result)
+    end
+
     test "returns first successful result from agents" do
       agents = [create_test_agent(), create_test_agent(), create_test_agent()]
 
@@ -33,8 +190,8 @@ defmodule Normandy.Coordination.ReactiveTest do
     test "returns first successful result from agent processes" do
       pids = [create_agent_process(), create_agent_process(), create_agent_process()]
 
-      assert {:ok, result} = Reactive.race(pids, "test")
-      assert is_map(result)
+      # An agent process returns a chat answer as its text.
+      assert {:ok, "stub answer"} = Reactive.race(pids, "test")
 
       # Cleanup
       Enum.each(pids, &AgentProcess.stop/1)
@@ -84,6 +241,40 @@ defmodule Normandy.Coordination.ReactiveTest do
   end
 
   describe "all/3" do
+    # An agent whose LLM call never returns, so it always runs past the timeout.
+    defp stuck_agent do
+      BaseAgent.init(%{
+        client: %Normandy.Test.StubClient{reply: fn _ -> receive do: (:never -> :ok) end},
+        model: "stuck-model"
+      })
+    end
+
+    test "keeps the other results when an agent times out" do
+      assert {:ok, results} =
+               Reactive.all([create_test_agent(), stuck_agent(), create_test_agent()], "test",
+                 timeout: 100
+               )
+
+      assert %{
+               "agent_0" => {:ok, _},
+               "agent_1" => {:error, %TurnError{type: :task_down, reason: :timeout}},
+               "agent_2" => {:ok, _}
+             } = results
+    end
+
+    test "an agent that exits is reported as a :task_down TurnError" do
+      assert {:ok, %{"agent_0" => {:error, %TurnError{type: :task_down, reason: :boom}}}} =
+               Reactive.all([exiting_agent()], "x")
+    end
+
+    test "fail_fast still stops on an agent that times out" do
+      assert {:error, %TurnError{type: :task_down, reason: :timeout}} =
+               Reactive.all([stuck_agent(), create_test_agent()], "test",
+                 timeout: 100,
+                 fail_fast: true
+               )
+    end
+
     test "waits for all agents to complete" do
       agents = [create_test_agent(), create_test_agent(), create_test_agent()]
 
@@ -192,11 +383,27 @@ defmodule Normandy.Coordination.ReactiveTest do
       assert map_size(results) == 3
     end
 
-    test "returns error if count exceeds agent count" do
+    test "a count above the number of agents raises before any agent runs" do
       agents = [create_test_agent(), create_test_agent()]
 
-      assert {:error, :count_exceeds_agent_count} =
-               Reactive.some(agents, "test", count: 5)
+      assert_raise ArgumentError,
+                   "Normandy.Coordination.Reactive.some/3: :count must be at most the " <>
+                     "number of agents (2), got: 5",
+                   fn -> Reactive.some(agents, "test", count: 5) end
+    end
+
+    test "timeout: :infinity waits for the successes" do
+      agents = [create_test_agent(), create_test_agent()]
+
+      assert {:ok, results} = Reactive.some(agents, "test", count: 2, timeout: :infinity)
+      assert map_size(results) == 2
+    end
+
+    test "an agent that exits does not kill the caller" do
+      agents = [exiting_agent(), create_test_agent()]
+
+      assert {:ok, results} = Reactive.some(agents, "test", count: 1)
+      assert [{"agent_1", _}] = Map.to_list(results)
     end
 
     test "calls on_complete callback" do
@@ -342,8 +549,18 @@ defmodule Normandy.Coordination.ReactiveTest do
       # Map with chat_message
       assert {:ok, _} = Reactive.race(agents, %{chat_message: "map input"})
 
-      # Plain map
-      assert {:ok, _} = Reactive.race(agents, %{custom: "data"})
+      # A map without chat_message is rejected by the default input schema. race
+      # reports only :all_failed; each agent's ValidationError reaches on_complete.
+      test_pid = self()
+
+      assert {:error, :all_failed} =
+               Reactive.race(agents, %{custom: "data"},
+                 on_complete: fn id, result -> send(test_pid, {:race_done, id, result}) end
+               )
+
+      for id <- ["agent_0", "agent_1"] do
+        assert_receive {:race_done, ^id, {:error, %Normandy.Schema.ValidationError{}}}
+      end
     end
 
     test "all handles different input types" do
@@ -351,7 +568,13 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert {:ok, _} = Reactive.all(agents, "string")
       assert {:ok, _} = Reactive.all(agents, %{chat_message: "msg"})
-      assert {:ok, _} = Reactive.all(agents, %{data: 42})
+      assert {:ok, results} = Reactive.all(agents, %{data: 42})
+      assert map_size(results) == 2
+
+      assert Enum.all?(
+               Map.values(results),
+               &match?({:error, %Normandy.Schema.ValidationError{}}, &1)
+             )
     end
 
     test "some handles different input types" do
@@ -359,7 +582,19 @@ defmodule Normandy.Coordination.ReactiveTest do
 
       assert {:ok, _} = Reactive.some(agents, "string", count: 1)
       assert {:ok, _} = Reactive.some(agents, %{chat_message: "msg"}, count: 1)
-      assert {:ok, _} = Reactive.some(agents, %{data: 42}, count: 1)
+      # some reports only :insufficient_successes; each agent's ValidationError
+      # reaches on_complete.
+      test_pid = self()
+
+      assert {:error, :insufficient_successes} =
+               Reactive.some(agents, %{data: 42},
+                 count: 1,
+                 on_complete: fn id, result -> send(test_pid, {:some_done, id, result}) end
+               )
+
+      for id <- ["agent_0", "agent_1"] do
+        assert_receive {:some_done, ^id, {:error, %Normandy.Schema.ValidationError{}}}
+      end
     end
   end
 end

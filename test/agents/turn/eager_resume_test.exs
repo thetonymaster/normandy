@@ -1,11 +1,14 @@
 defmodule Normandy.Agents.Turn.EagerResumeTest do
   @moduledoc "Eager auto-resume on (re)start from a persisted :steering state, no caller."
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Test.TurnConfig
 
   test "eager server with a persisted :steering state resumes to completion without a caller" do
     store = InMemory.new()
@@ -13,18 +16,18 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
     {:ok, cat} = Catalog.start_link([])
     sid = "eager-#{System.unique_integer([:positive])}"
 
-    base = Normandy.Test.TurnConfig.build()
+    base = TurnConfig.build()
 
     tmpl =
       base
-      |> Normandy.Agents.ConfigTemplate.from_config("k", :eager)
+      |> ConfigTemplate.from_config("k", :eager)
       |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
 
     :ok = InMemory.save_config_template(store, sid, tmpl)
 
     :ok =
       Catalog.put(cat, "k", %{
-        tool_registry: base.tool_registry,
+        toolset: base.toolset,
         before_hooks: [],
         after_hooks: [],
         client_builder: fn _ -> base.client end
@@ -32,11 +35,11 @@ defmodule Normandy.Agents.Turn.EagerResumeTest do
 
     # Seed a non-terminal persisted turn state at a steering boundary.
     steering = %Turn.State{status: :steering, iterations_left: 1, max_iterations: 5}
-    :ok = InMemory.save_turn_state(store, sid, steering)
+    :ok = InMemory.save_turn_state(store, sid, steering, true)
 
     # Stub call_llm so the resumed turn finalizes instead of hitting a nil client.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req ->
           %Normandy.Test.TurnConfig.Resp{content: "resumed-done", tool_calls: nil}
         end

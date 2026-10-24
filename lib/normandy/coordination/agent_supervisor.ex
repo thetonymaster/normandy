@@ -9,7 +9,7 @@ defmodule Normandy.Coordination.AgentSupervisor do
 
   - Dynamic agent spawning
   - Automatic restart on failure
-  - Configurable restart strategies
+  - Configurable restart intensity (`:max_restarts`, `:max_seconds`)
   - Agent process discovery
 
   ## Example
@@ -32,21 +32,50 @@ defmodule Normandy.Coordination.AgentSupervisor do
   """
 
   use DynamicSupervisor
-  require Logger
 
   alias Normandy.Coordination.AgentProcess
+  alias Normandy.Options
 
   # Client API
+
+  @start_link_opts_schema NimbleOptions.new!(
+                            name: [type: :any, doc: "A `t:GenServer.name/0` for the supervisor."],
+                            strategy: [
+                              type: {:in, [:one_for_one]},
+                              default: :one_for_one,
+                              doc: "`DynamicSupervisor` supports only `:one_for_one`."
+                            ],
+                            max_restarts: [
+                              type: :non_neg_integer,
+                              default: 3,
+                              doc: "Restarts allowed within `:max_seconds`."
+                            ],
+                            max_seconds: [
+                              type: :pos_integer,
+                              default: 5,
+                              doc: "The window for `:max_restarts`, in seconds."
+                            ]
+                          )
+
+  # The agent process's own options plus :restart, which stays here for the child spec.
+  @start_agent_opts_schema NimbleOptions.new!(
+                             AgentProcess.__opts_schema__(:start_link).schema ++
+                               [
+                                 restart: [
+                                   type: {:in, [:permanent, :temporary, :transient]},
+                                   default: :transient,
+                                   doc:
+                                     "The child's restart value. Not passed to the agent process."
+                                 ]
+                               ]
+                           )
 
   @doc """
   Starts the agent supervisor.
 
   ## Options
 
-  - `:name` - Register supervisor with a name (optional)
-  - `:strategy` - Supervision strategy (default: :one_for_one)
-  - `:max_restarts` - Max restarts allowed (default: 3)
-  - `:max_seconds` - Time window for max_restarts (default: 5)
+  #{Options.docs(@start_link_opts_schema)}
 
   ## Example
 
@@ -54,21 +83,11 @@ defmodule Normandy.Coordination.AgentSupervisor do
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []) do
-    name = Keyword.get(opts, :name)
-    strategy = Keyword.get(opts, :strategy, :one_for_one)
-    max_restarts = Keyword.get(opts, :max_restarts, 3)
-    max_seconds = Keyword.get(opts, :max_seconds, 5)
+    opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
 
-    sup_opts = [
-      strategy: strategy,
-      max_restarts: max_restarts,
-      max_seconds: max_seconds
-    ]
-
-    if name do
-      DynamicSupervisor.start_link(__MODULE__, sup_opts, name: name)
-    else
-      DynamicSupervisor.start_link(__MODULE__, sup_opts)
+    case Keyword.pop(opts, :name) do
+      {nil, sup_opts} -> DynamicSupervisor.start_link(__MODULE__, sup_opts)
+      {name, sup_opts} -> DynamicSupervisor.start_link(__MODULE__, sup_opts, name: name)
     end
   end
 
@@ -77,11 +96,9 @@ defmodule Normandy.Coordination.AgentSupervisor do
 
   ## Options
 
-  - `:agent` - BaseAgent struct (required)
-  - `:agent_id` - Unique identifier (default: UUID)
-  - `:name` - Register agent process with name (optional)
-  - `:context_pid` - StatefulContext to use (optional)
-  - `:restart` - Restart strategy: :permanent, :temporary, :transient (default: :transient)
+  `AgentProcess.start_link/1`'s options, plus `:restart`:
+
+  #{Options.docs(@start_agent_opts_schema)}
 
   ## Example
 
@@ -95,13 +112,12 @@ defmodule Normandy.Coordination.AgentSupervisor do
   @spec start_agent(Supervisor.supervisor(), keyword()) ::
           DynamicSupervisor.on_start_child()
   def start_agent(supervisor, opts) do
-    # Validate that :agent key exists (will raise if missing)
-    _agent = Keyword.fetch!(opts, :agent)
-    restart = Keyword.get(opts, :restart, :transient)
+    opts = Options.validate!(opts, @start_agent_opts_schema, {__MODULE__, :start_agent, 2})
+    {restart, process_opts} = Keyword.pop!(opts, :restart)
 
     child_spec = %{
       id: AgentProcess,
-      start: {AgentProcess, :start_link, [opts]},
+      start: {AgentProcess, :start_link, [process_opts]},
       restart: restart,
       shutdown: 5000,
       type: :worker
@@ -137,9 +153,13 @@ defmodule Normandy.Coordination.AgentSupervisor do
     supervisor
     |> DynamicSupervisor.which_children()
     |> Enum.filter(fn {_id, pid, _type, _modules} -> is_pid(pid) end)
-    |> Enum.map(fn {_id, pid, _type, _modules} ->
-      agent_id = AgentProcess.get_id(pid)
-      {pid, agent_id}
+    |> Enum.flat_map(fn {_id, pid, _type, _modules} ->
+      # Read without calling the agent, so one busy in a long call is still listed.
+      # A child that exited after which_children/1 is no longer an agent to list.
+      case AgentProcess.agent_id_of(pid) do
+        {:ok, id} -> [{pid, id}]
+        :error -> []
+      end
     end)
   end
 
@@ -159,19 +179,17 @@ defmodule Normandy.Coordination.AgentSupervisor do
   end
 
   @doc """
-  Finds an agent by its agent_id.
-
-  Returns `{:ok, pid}` if found, `{:error, :not_found}` otherwise.
+  Looks up a running agent by its agent_id: `{:ok, pid}` or `:error`.
 
   ## Example
 
-      {:ok, pid} = AgentSupervisor.find_agent(supervisor, "agent_1")
+      {:ok, pid} = AgentSupervisor.fetch_agent(supervisor, "agent_1")
   """
-  @spec find_agent(Supervisor.supervisor(), String.t()) :: {:ok, pid()} | {:error, :not_found}
-  def find_agent(supervisor, agent_id) do
+  @spec fetch_agent(Supervisor.supervisor(), String.t()) :: {:ok, pid()} | :error
+  def fetch_agent(supervisor, agent_id) do
     case Enum.find(list_agents(supervisor), fn {_pid, id} -> id == agent_id end) do
       {pid, _id} -> {:ok, pid}
-      nil -> {:error, :not_found}
+      nil -> :error
     end
   end
 

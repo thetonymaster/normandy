@@ -8,7 +8,6 @@ defmodule Normandy.TypeTest do
     def cast(_), do: {:ok, :cast}
     def equal?(true, _), do: true
     def equal?(_, _), do: false
-    def embed_as(_), do: :dump
   end
 
   defmodule CustomAny do
@@ -60,19 +59,44 @@ defmodule Normandy.TypeTest do
     end
   end
 
-  import Kernel, except: [match?: 2], warn: false
   import Normandy.Type
   doctest Normandy.Type
 
-  test "embed_as" do
-    assert embed_as(:string, :json) == :self
-    assert embed_as(:integer, :json) == :self
-    assert embed_as(Custom, :json) == :dump
-    assert embed_as(CustomAny, :json) == :self
-  end
+  describe "no Ecto database, embed or query machinery" do
+    test "the Type API is cast/dump/equal only" do
+      for {fun, arity} <- [
+            embed_as: 2,
+            embedded_dump: 3,
+            embedded_load: 3,
+            match?: 2,
+            primitive?: 1,
+            load: 2,
+            load: 3
+          ] do
+        Code.ensure_loaded!(Normandy.Type)
+        refute function_exported?(Normandy.Type, fun, arity), "#{fun}/#{arity} is back"
+      end
+    end
 
-  test "embedded_dump" do
-    assert embedded_dump(Custom, :value, :json) == {:ok, :dump}
+    test "the behaviours declare no embed_as or load" do
+      callbacks = Normandy.Type.behaviour_info(:callbacks)
+      refute {:embed_as, 1} in callbacks
+      refute {:load, 1} in callbacks
+      refute {:embed_as, 2} in Normandy.ParameterizedType.behaviour_info(:callbacks)
+    end
+
+    test "`use` injects only equal?" do
+      refute function_exported?(CustomAny, :embed_as, 1)
+      assert function_exported?(CustomAny, :equal?, 2)
+    end
+
+    test "types field/3 rejects do not cast either" do
+      for type <- [:utc_datetime, :naive_datetime, :id, :binary_id, :time_usec] do
+        assert_raise ArgumentError, ~r/neither a Normandy.Type/, fn ->
+          Normandy.Type.cast(type, "1")
+        end
+      end
+    end
   end
 
   test "custom types" do
@@ -95,10 +119,6 @@ defmodule Normandy.TypeTest do
     assert dump(Custom, nil) == {:ok, nil}
     assert cast(Custom, nil) == {:ok, nil}
     assert cast(CustomWithCastError, nil) == {:ok, nil}
-
-    assert match?(Custom, :any)
-    assert match?(:any, Custom)
-    assert match?(CustomAny, :boolean)
   end
 
   test "untyped maps" do
@@ -202,13 +222,6 @@ defmodule Normandy.TypeTest do
     dumper = fn :integer, term -> {:ok, term * 2} end
     assert dump({:array, :integer}, [1, 2], dumper) == {:ok, [2, 4]}
     assert dump({:map, :integer}, %{x: 1, y: 2}, dumper) == {:ok, %{x: 2, y: 4}}
-  end
-
-  test "in" do
-    assert cast({:in, :integer}, ["1", "2", "3"]) == {:ok, [1, 2, 3]}
-    assert {:ok, list} = cast({:in, :integer}, MapSet.new(~w(1 2 3)))
-    assert [1, 2, 3] = Enum.sort(list)
-    assert cast({:in, :integer}, nil) == :error
   end
 
   test "integer" do
@@ -450,6 +463,40 @@ defmodule Normandy.TypeTest do
 
       assert Normandy.Type.format({:array, {:map, :integer}}) ==
                "{:array, {:map, :integer}}"
+    end
+  end
+
+  describe "cast of :struct and plain modules" do
+    test ":struct accepts any struct and rejects anything else" do
+      assert Normandy.Type.cast(:struct, %URI{host: "x"}) == {:ok, %URI{host: "x"}}
+      assert Normandy.Type.cast(:struct, %{host: "x"}) == :error
+    end
+
+    test "a module that is neither a Normandy.Type nor a schema raises a clear error" do
+      assert_raise ArgumentError,
+                   ~r/String.*neither a Normandy.Type.*nor a Normandy schema/,
+                   fn ->
+                     Normandy.Type.cast(String, "x")
+                   end
+    end
+  end
+
+  describe "dump of nested schemas and :struct" do
+    defmodule Point do
+      use Normandy.Schema
+
+      io_schema "a point" do
+        field(:x, :integer, description: "x")
+      end
+    end
+
+    test "a nested schema dumps its own struct and rejects other values" do
+      assert Normandy.Type.dump(Point, %Point{x: 1}) == {:ok, %Point{x: 1}}
+      assert Normandy.Type.dump(Point, %{x: 1}) == :error
+    end
+
+    test ":struct dumps any struct" do
+      assert Normandy.Type.dump(:struct, %URI{}) == {:ok, %URI{}}
     end
   end
 end

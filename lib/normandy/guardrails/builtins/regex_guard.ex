@@ -8,8 +8,9 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
 
   ## Options
 
-  - `:patterns` (required) — list of compiled `Regex.t()` values. Must be
-    non-empty.
+  - `:patterns` (required) — list of `Regex.t()` values. Must be non-empty. Each is
+    compiled again from its source and options when checked, so a pattern restored
+    from storage written by another node still works.
   - `:mode` (optional, default `:deny`) — `:deny` rejects when any pattern
     matches; `:require` rejects when no pattern matches.
   - `:field` (optional) — atom naming a field to extract from a struct or map
@@ -19,6 +20,8 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
   a nil/missing field *is* a violation — the required pattern couldn't possibly
   be present in missing text.
   """
+
+  alias Normandy.Guardrails.Builtins.Field
 
   @behaviour Normandy.Guardrails.Guard
 
@@ -38,81 +41,51 @@ defmodule Normandy.Guardrails.Builtins.RegexGuard do
             "#{inspect(__MODULE__)} :mode must be :deny or :require, got: #{inspect(mode)}"
     end
 
-    check_value(extract(value, field), patterns, mode, field)
+    check_value(
+      Field.string!(__MODULE__, value, field),
+      Enum.map(patterns, &usable/1),
+      mode,
+      Field.path(field)
+    )
   end
 
-  defp check_value(nil, patterns, :require, field) do
-    path = if field, do: [field], else: []
+  # A compiled regex is only valid in the VM that compiled it, and a guard spec can
+  # come from storage (a Tier-2 config template), so match with one compiled here
+  # from the pattern's source and options.
+  defp usable(regex), do: Regex.compile!(Regex.source(regex), Regex.opts(regex))
 
-    {:error,
-     [
-       %{
-         guard: __MODULE__,
-         path: path,
-         message: "must match one of #{length(patterns)} required patterns",
-         constraint: :regex_require
-       }
-     ]}
-  end
+  defp check_value(nil, _patterns, :deny, _path), do: :ok
+  defp check_value(nil, patterns, :require, path), do: {:error, [required(patterns, path)]}
 
-  defp check_value(nil, _patterns, :deny, _field), do: :ok
-
-  defp check_value(string, patterns, :deny, field) when is_binary(string) do
-    matched = Enum.filter(patterns, &Regex.match?(&1, string))
-
-    case matched do
-      [] ->
-        :ok
-
-      matched_patterns ->
-        path = if field, do: [field], else: []
-
-        violations =
-          Enum.map(matched_patterns, fn pattern ->
-            %{
-              guard: __MODULE__,
-              path: path,
-              message: "must not match pattern #{inspect(pattern)}",
-              constraint: :regex_deny,
-              pattern: pattern
-            }
-          end)
-
-        {:error, violations}
+  defp check_value(string, patterns, :deny, path) do
+    case Enum.filter(patterns, &Regex.match?(&1, string)) do
+      [] -> :ok
+      matched -> {:error, Enum.map(matched, &denied(&1, path))}
     end
   end
 
-  defp check_value(string, patterns, :require, field) when is_binary(string) do
-    if Enum.any?(patterns, &Regex.match?(&1, string)) do
-      :ok
-    else
-      path = if field, do: [field], else: []
-
-      {:error,
-       [
-         %{
-           guard: __MODULE__,
-           path: path,
-           message: "must match one of #{length(patterns)} required patterns",
-           constraint: :regex_require
-         }
-       ]}
-    end
+  defp check_value(string, patterns, :require, path) do
+    if Enum.any?(patterns, &Regex.match?(&1, string)),
+      do: :ok,
+      else: {:error, [required(patterns, path)]}
   end
 
-  defp check_value(other, _patterns, _mode, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a string#{field_suffix(field)}, got: #{inspect(other)}"
+  defp required(patterns, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must match one of #{length(patterns)} required patterns",
+      constraint: :regex_require
+    }
   end
 
-  defp extract(value, nil), do: value
-  defp extract(value, field) when is_map(value), do: Map.get(value, field)
-
-  defp extract(value, field) do
-    raise ArgumentError,
-          "#{inspect(__MODULE__)} expected a map or struct when using :field #{inspect(field)}, got: #{inspect(value)}"
+  defp denied(pattern, path) do
+    %{
+      guard: __MODULE__,
+      path: path,
+      message: "must not match pattern #{inspect(pattern)}",
+      constraint: :regex_deny,
+      pattern: pattern
+    }
   end
-
-  defp field_suffix(nil), do: ""
-  defp field_suffix(field), do: " at field #{inspect(field)}"
 end

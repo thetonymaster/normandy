@@ -6,6 +6,150 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## Normandy 2.0 release notes
+
+Normandy 2.0 moves to Claudio 0.7.1 and works with the current Claude models (Opus 4.7 and later reject
+sampling parameters and budgeted thinking). It is a breaking release: **read `MIGRATING-2.0.md` before
+upgrading**; its "Who is affected" table at the top sends you to the sections that concern you, and
+"Known limits of 2.0" at the end lists what 2.0 does not do yet.
+
+### Highlights
+
+- **One model protocol.** `Normandy.Agents.Model` is `converse/3` and `stream/3` over
+  `%Normandy.LLM.Request{}`; failures are `%Normandy.LLMError{}` and `run/3` returns
+  `{:ok, config, output}` or `{:error, exception}` (`run!/3` raises). `stream/3` returns the output schema
+  like `run/3`.
+- **Durable sessions.** `Turn.Session` and `Turn.Server` persist every turn boundary to a
+  `SessionStore` (InMemory, ETS, Mnesia, Postgres, Redis), resume after a crash or on another node
+  (`SessionRegistry` Native, Horde or Redis; `ResumeReaper`), park tool calls for approval, and keep a
+  turn whose final save failed until the store recovers.
+- **Tools.** One `Normandy.Tool` behaviour (`use Normandy.Tool, name:, description:, input:`), a
+  `Toolset`, validated tool input, per-tool timeouts and result caps; MCP and A2A tools are prefixed.
+- **Lifecycle hooks** (`Normandy.Behaviours.Hooks`), **long-term memory** (`Normandy.Tools.Memory` over a
+  `MemoryStore`), **policy, budget and guardrails** checked on every path.
+- **Structured outputs on tool loops.** A non-chat output schema is sent as `output_config.format` beside
+  the tools; a cut-off, refused or blank answer is an error on every path.
+- **Prompt caching on by default**, the conversation built in linear time, assistant turns (thinking,
+  citations, server and MCP tool blocks) replayed exactly as the API returned them.
+- **Every option is validated** (NimbleOptions; an unknown option raises naming it).
+- **Observability.** The `Normandy.Telemetry` catalogue documents every event; run, LLM-call, request,
+  tool, approval and workflow spans carry OpenTelemetry GenAI attributes and run totals.
+- **Testing support.** `Normandy.Test.FakeClient` and the store and registry contracts
+  (`Normandy.Test.SessionStoreContract`, `MemoryStoreContract`, `SessionRegistryContract`) ship in the
+  package; `docs/guides/testing.md` shows them.
+
+### Added
+
+- `Normandy.Agents.Turn.Driver.Handlers.default/0`: the handler set `Turn.Server` uses when `:handlers`
+  is `nil`; build a custom set from it (`%{Handlers.default() | validate: f}`).
+- **Telemetry catalogue.** `Normandy.Telemetry` documents every event with its measurements, metadata,
+  the OpenTelemetry GenAI attribute mapping and the known limits. `test/telemetry/catalogue_test.exs`
+  fails when an event is emitted but not listed there, or the reverse.
+- `[:normandy, :llm, :request, :start | :stop | :exception]`: one span per provider request inside an
+  llm_call (`attempt`, `request_kind`, `status`, `response_id`, `finish_reason`, token counts).
+- `[:normandy, :agent, :llm_call, :stop]` adds `provider`, `stream`, `structured_output`, `max_tokens`,
+  `temperature`, `effort`, `server_address` (start), `response_id`, `finish_reason` (a string, when the provider sent one),
+  `served_by`, `attempts`, `json_retries`, `structured_fallback`, and for streaming
+  `time_to_first_chunk` (metadata, native units). Normalized `input_tokens` (Anthropic: includes cache
+  reads and writes), `output_tokens`, `cache_read_input_tokens`, `cache_write_input_tokens` sit beside the
+  unchanged raw `usage`; streaming calls carry usage too, and OpenAI-shaped usage is normalized.
+  Failed calls carry the billed usage on the error: `reason.usage` and `reason.usage_counts`.
+- Run, llm_call and tool events carry `provider`, `turn_id`, `session_id` and `conversation_id` when
+  known; tool spans add `tool_call_id`, `tool_description`, `tool_type` and, on failure, `error_type`.
+- `[:normandy, :tool, :denied]` for every call answered without running its tool.
+- `[:normandy, :turn, :approval, :start | :stop]` per approval park (`outcome`), and an `approval_wait`
+  measurement on `Turn.Server`'s run `:stop`/`:exception`. The run stays one span.
+- `Normandy.Components.ContentBlock.Protocol`, `Normandy.Agents.Turn.ServerSupervisor`,
+  `Telemetry.Usage.sum/2`, `Telemetry.Span.span/4`, `A2A.AgentTool` `:poll_interval`, and optional
+  `Compactor.validate_opts!/2`, `Compactor.needs_window?/1` and `ModelCatalog.needs_claudio_client?/1`
+  callbacks (a host compactor or catalog no longer needs a `BaseAgent` edit).
+- `[:normandy, :workflow, :run]` around `Workflow.execute/1` and the orchestrators' entry points.
+- `[:normandy, :a2a, :request]` around `A2A.Server.handle_message/3`.
+- Trace context: `Turn.Server`, `AgentProcess` and the coordinators carry the caller's OpenTelemetry
+  context into the runs they start. `A2A.AgentTool` injects a W3C `traceparent` and
+  `A2A.Server.handle_message/3` extracts it; this needs Claudio's A2A transport `:headers` option
+  (Claudio 0.7.0). MCP calls carry no trace context (`call_tool/4` has no field for it).
+- Resumed durable turns emit a run `:start` with `resumed: true`, parented under the persisted caller
+  context.
+
+### Changed
+
+- Requires Elixir 1.17 or later (was 1.15); CI tests Elixir 1.17-1.19 on OTP 27 and 28.
+- Breaking changes are listed, with what to do, in `MIGRATING-2.0.md` (sections 1–47). The bullets below
+  are the telemetry and rolling-deploy changes; MIGRATING has the rest.
+- `Turn.Server.run/2` now sends `{:turn, input, ctx}` and `approve/2` casts `{:approval, decisions, ctx}`.
+  `AgentProcess.run/3` sends `{:run, input, ctx}` and `AgentProcess.cast/3` sends
+  `{:run_async, input, reply_to, ctx}`. New servers still accept the old shapes, but an old-version
+  server that receives a new shape crashes. **Rolling deploy: upgrade the nodes that host servers
+  (`Turn.Server`, `AgentProcess`) before the nodes that call or approve them.**
+- `Turn.State` gains `tokens_compacted` and `trace_carrier`. **On the Postgres and Redis stores a
+  pre-2.0 node cannot load a session a 2.0 node has served** (its `[:safe]` decode raises on the
+  new field names), finished turns included, and rolling back hits the same failure. Move every
+  session-hosting node to 2.0 together; see MIGRATING-2.0.md §13.
+- The `normandy llm call stop` log line's `input_tokens` is now the normalized count (Anthropic:
+  input plus cache read and write), matching the span's normalized `input_tokens`. Log parsers that
+  summed the old value on Anthropic will see larger numbers when prompt caching is on.
+- Breaking, from the principles audit (what to do is in `MIGRATING-2.0.md`):
+  - A `Turn.Session` with a `:template_provider` needs a credential provider in the config's
+    `behaviours` (`credential` has no default; `CredentialProvider.FromClient` is removed) (§26).
+  - `config :normandy, :adapter` is removed: Normandy encodes JSON with Jason. `JsonDeserializer` drops
+    `:adapter`, `:recover_truncated_strings` and the `:recovery` event, and now refuses unknown options (§23).
+  - The Redis store, memory store and registry constructors require `:url` and `:namespace` (`:prefix`);
+    the two Postgres `new/0` are removed (§40).
+  - `Coordination.Pattern`: `ok/1` and `error/1` removed, `ok!/2` and `error!/2` are `ok_value/2` and
+    `error_reason/2`; `HierarchicalCoordinator` drops `:shared_context`; `Batch.Processor` errors are
+    bare exceptions or `:task_down` `TurnError`s; a map input reaches the agent whole (§42).
+  - `TokenCounter.count_message/2` removed (pass the model); `WindowManager` drops `:sliding_window`
+    and `:summarize` without a client raises (§6).
+  - `Normandy.Type` drops Ecto's `embed_as`, `embedded_dump/load`, `match?`, `primitive?`, `load`;
+    `%Validate{}` drops `constraints`, `filters`, `prepare`; schema structs drop `__meta__` and
+    `Normandy.Metadata` is removed (stored data still loads) (§47).
+  - `Toolset` keeps one `Toolset.Entry` per tool; `Memory.new/1` and `Retry` validate through
+    `Normandy.Options` (§25, §30).
+  - OpenAI-compatible adapter: HTTP 529 is `:overloaded`, a status above 599 a retryable `:server` (§11).
+  - `BaseAgent`'s `@doc false` functions moved to internal modules (§45); `run/3` and `stream/3` classify
+    tool calls in the caller, as `Turn.Server` does (§16).
+
+### Fixed
+
+- `Turn.Server` no longer leaves a finished session in the in-flight index when the store fails at the
+  turn's last save: it keeps the result, retries the save, refuses new turns with `:persist_failed`
+  until it lands, and a resume whose answer is already stored makes no model call.
+- A tool result is encoded once on every path (it was encoded up to five times).
+- A new input after a stored paused turn continues that turn first, so the API no longer rejects
+  every later request.
+- A module using the `agent do` DSL compiles without warnings on Elixir 1.20.
+- A `Schema.Validator` type error names a `Date`, `Time`, `NaiveDateTime` or `DateTime` value
+  instead of calling it `object`.
+- A request drops a server-tool use nothing answers, except in its last message, so the next
+  input after a continued pause is accepted.
+- A chat answer given beside a tool call survives a blank final reply instead of failing with
+  `:invalid_output`. The run `:stop` metadata marks such an answer `answer_source: :tool_round`
+  (`:final` otherwise). Memory stores the sentence in the tool-calling reply and as the answer
+  (also when the model itself wrote it in both); later requests show it once: the tool-calling
+  message is sent without its text, which rewrites the prompt cache from that message once. It
+  is sent whole when it, or a later message of that turn before the answer, carries thinking
+  the request sends, or when its text carries citations.
+- JSON region extraction is linear on unclosed `{` and `[` (a 240 KB reply took 30 s) and bounded by a
+  work budget; `JsonDeserializer` reports each retry's usage as it finishes.
+- `StatefulContext` reads no longer wait behind a slow `update/4` (it commits by compare-and-set).
+- A killed breaker `Registry` restarts instead of stopping the application, and a breaker crash no longer
+  drops `AgentProcess` registrations.
+- A host guard whose module sits under `Normandy.Guardrails.Builtins.` no longer gets built-in
+  `:on_error` handling.
+- `Normandy.Cluster.redis_child_specs/1` and `redis_handles/1` read `:redis_wait` and compute the store
+  plan once per call.
+- `Turn.Server` runs its worker through `Normandy.WatchedWorker`; a result from another worker is dropped.
+- Coordinators (`Reactive`, `ParallelOrchestrator`, `Batch.Processor`) emit a synthetic
+  `[:normandy, :agent, :run, :exception]` with `reason: :killed` for each agent task they kill. A handler
+  can see it without a matching `:start`; the llm_call and tool spans inside a killed run stay open.
+- `Reactive.all/3` keeps the results it collected when an agent exits or times out.
+- `Turn.Server` closes the run span on `terminate/3` and ignores stray messages.
+- `Context.Summarizer`'s summary request is an `[:normandy, :agent, :llm_call]` span (`purpose: :summary`,
+  no `iteration`) with the agent's name and ids, and its provider requests carry them too. Before, its
+  requests had no llm_call and no ids, so compaction tokens were missing from llm_call totals.
+
+- - -
 ## [v1.3.0](https://github.com/thetonymaster/normandy/compare/6416cea35d8b120370c644dcd9a297dec67df829..v1.3.0) - 2026-06-23
 #### Features
 - (**llm**) JSON pipeline refactor, converse-contract fix, and native structured outputs (#44) - ([6416cea](https://github.com/thetonymaster/normandy/commit/6416cea35d8b120370c644dcd9a297dec67df829)) - Antonio Cabrera
@@ -623,7 +767,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Logger` calls for agent, LLM, and tool lifecycle events
   - Telemetry events for:
     - `[:normandy, :agent, :run, :start | :stop | :exception]`
-    - `[:normandy, :llm, :call, :start | :stop | :exception]`
+    - `[:normandy, :agent, :llm_call, :start | :stop | :exception]` (the LLM call span; an `[:normandy, :llm, :call, *]` event never existed. `[:normandy, :llm, :request, *]`, added in the Unreleased section, is a different event)
     - `[:normandy, :tool, :execute, :start | :stop | :exception]`
   - Automatic duration tracking for all operations
   - Metadata enrichment with agent names, models, and tool names

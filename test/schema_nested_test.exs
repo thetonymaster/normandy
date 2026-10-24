@@ -65,6 +65,7 @@ defmodule Normandy.SchemaNestedTest do
                    pattern: "^[0-9]{5}$"
                  }
                },
+               property_order: [:street, :city, :state, :postal_code],
                required: [:street, :city]
              }
     end
@@ -456,6 +457,61 @@ defmodule Normandy.SchemaNestedTest do
       end
     end
 
+    test "{:try, _} is not a field type" do
+      assert_raise ArgumentError, ~r/is not a field type/, fn ->
+        Code.eval_quoted(
+          quote do
+            defmodule NormandyTest.TryField do
+              use Normandy.Schema
+
+              schema do
+                field(:x, {:try, :string})
+              end
+            end
+          end
+        )
+      end
+    end
+
+    test "{:in, _} is an unknown composite, not a field type" do
+      assert_raise ArgumentError, ~r/invalid or unknown composite \{:in, :integer\}/, fn ->
+        Code.eval_quoted(
+          quote do
+            defmodule NormandyTest.InField do
+              use Normandy.Schema
+
+              schema do
+                field(:x, {:in, :integer})
+              end
+            end
+          end
+        )
+      end
+    end
+
+    test ":datetime is refused with types that exist" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Code.eval_quoted(
+            quote do
+              defmodule NormandyTest.DatetimeField do
+                use Normandy.Schema
+
+                schema do
+                  field(:at, :datetime)
+                end
+              end
+            end
+          )
+        end
+
+      assert error.message =~ "invalid type :datetime for field :at"
+      assert error.message =~ ~s(:string field with format: "date-time")
+      assert error.message =~ "custom Normandy.Type"
+      refute error.message =~ "utc_datetime"
+      refute error.message =~ "naive_datetime"
+    end
+
     test "nested schema without io_schema works" do
       defmodule SimpleNested do
         use Normandy.Schema
@@ -554,7 +610,7 @@ defmodule Normandy.SchemaNestedTest do
 
     test "schema can be encoded to JSON" do
       schema = Venue.get_json_schema()
-      json = Poison.encode!(schema)
+      json = Jason.encode!(schema)
 
       assert is_binary(json)
       assert String.contains?(json, "\"type\"")

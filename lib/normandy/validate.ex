@@ -15,7 +15,10 @@ defmodule Normandy.Validate do
 
   ## Example
 
-      changeset = Validate.validate(data, params, types, required: [:name, :email])
+      changeset =
+        %User{}
+        |> Validate.cast(params, [:name, :email, :age])
+        |> Validate.validate_required([:name, :email])
 
       if changeset.valid? do
         apply_changes(changeset)
@@ -24,7 +27,6 @@ defmodule Normandy.Validate do
       end
   """
 
-  require Logger
   alias __MODULE__
 
   @empty_values [&Normandy.Type.empty_trimmed_string?/1]
@@ -34,39 +36,26 @@ defmodule Normandy.Validate do
             errors: [],
             validations: [],
             required: [],
-            prepare: [],
-            constraints: [],
-            filters: %{},
             action: nil,
             types: %{},
-            changes: []
+            changes: %{}
 
   @type t(data_type) :: %Validate{
           valid?: boolean(),
           data: data_type,
           params: %{optional(String.t()) => term} | nil,
           required: [atom],
-          prepare: [(t -> t)],
           errors: [{atom, error}],
-          constraints: [constraint],
           validations: [validation],
-          filters: %{optional(atom) => term},
           action: action,
-          types: types
+          types: types,
+          changes: %{optional(atom) => term}
         }
   @type t :: t(Normandy.Schema.t() | map | nil)
   @type error :: {String.t(), Keyword.t()}
   @type action :: nil | :insert | :update | :delete | :replace | :ignore | atom
-  @type constraint :: %{
-          type: :check | :exclusion | :foreign_key | :unique,
-          constraint: String.t() | Regex.t(),
-          match: :exact | :suffix | :prefix,
-          field: atom,
-          error_message: String.t(),
-          error_type: atom
-        }
   @type data :: map()
-  @type types :: %{atom => Normandy.Type.t() | {:assoc, term()} | {:embed, term()}}
+  @type types :: %{atom => Normandy.Type.t()}
   @type traverse_result :: %{atom => [term] | traverse_result}
   @type validation :: {atom, term}
   @type empty_value :: (term() -> boolean()) | binary() | list() | map() | tuple()
@@ -80,13 +69,50 @@ defmodule Normandy.Validate do
     not_equal_to: {&!=/2, "must be not equal to %{number}"}
   }
 
+  @doc """
+  Returns the default `:empty_values` of `cast/4`.
+
+  It is a list of functions and values. A param is empty when a function returns `true`
+  for it or when it equals a value. The default holds one function, which is `true` for a
+  string that is empty or only whitespace.
+  """
   @spec empty_values() :: [empty_value()]
   def empty_values do
     @empty_values
   end
 
+  @doc """
+  Casts `params` into a changeset on `data`, a schema struct.
+
+  Each key of `permitted` (a list of atoms) is read from `params` (atom or string keys)
+  and cast to its field's type. The result goes in `changes` unless it equals the current
+  value. A value that is empty (see `:empty_values`) becomes the field's default. A value
+  that does not cast adds an `"is invalid"` error and makes the changeset invalid. A
+  permitted key absent from `params` is skipped. `params` of `:invalid` gives an invalid
+  changeset with no changes.
+
+  ## Options
+
+    * `:empty_values` - values treated as empty (default `empty_values/0`)
+    * `:force_changes` - put a value in `changes` even when it equals the current one
+      (default `false`)
+    * `:message` - `fn field, metadata -> message | nil end`; a string replaces the error
+      message of a failed cast, `nil` keeps `"is invalid"`
+
+  Raises `Normandy.CastError` when `params` is a struct, is not a map or mixes atom and
+  string keys. Raises `ArgumentError` for a permitted key that is not an atom or not a
+  field of `data`, or a `:message` that is not a 2-arity function.
+
+  ## Example
+
+  With `User`, a schema with `:name` and `:email` fields:
+
+      changeset = Validate.cast(%User{}, %{"name" => "Ana"}, [:name, :email])
+      changeset.changes
+      #=> %{name: "Ana"}
+  """
   @spec cast(
-          Normandy.Schema.t() | t | {data, types},
+          Normandy.Schema.t(),
           %{binary => term} | %{atom => term} | :invalid,
           [atom],
           Keyword.t()
@@ -123,19 +149,18 @@ defmodule Normandy.Validate do
             "expected `:message` to be a function of arity 2, received: #{inspect(msg_func)}"
     end
 
-    defaults =
-      case data do
-        %{__struct__: struct} ->
-          struct.__struct__()
-          # %{} -> %{}
-      end
+    ctx = %{
+      params: params,
+      types: types,
+      data: data,
+      empty_values: empty_values,
+      defaults: struct(data.__struct__),
+      force?: force?,
+      msg_func: msg_func
+    }
 
     {changes, errors, valid?} =
-      Enum.reduce(
-        permitted,
-        {changes, [], true},
-        &process_param(&1, params, types, data, empty_values, defaults, force?, msg_func, &2)
-      )
+      Enum.reduce(permitted, {changes, [], true}, &process_param(&1, ctx, &2))
 
     %Validate{
       params: params,
@@ -154,17 +179,8 @@ defmodule Normandy.Validate do
       message: "expected params to be a :map, got: `#{inspect(params)}`"
   end
 
-  defp process_param(
-         key,
-         params,
-         types,
-         data,
-         empty_values,
-         defaults,
-         force?,
-         msg_func,
-         {changes, errors, valid?}
-       ) do
+  defp process_param(key, ctx, {changes, errors, valid?}) do
+    %{types: types, data: data, msg_func: msg_func} = ctx
     {key, param_key} = cast_key(key)
     type = cast_type!(types, key)
 
@@ -174,8 +190,8 @@ defmodule Normandy.Validate do
         _ -> Map.get(data, key)
       end
 
-    case cast_field(key, param_key, type, params, current, empty_values, defaults, force?, valid?) do
-      {:ok, value, valid?} ->
+    case cast_field(key, param_key, type, current, ctx) do
+      {:ok, value} ->
         {Map.put(changes, key, value), errors, valid?}
 
       :missing ->
@@ -207,8 +223,7 @@ defmodule Normandy.Validate do
         known_fields = types |> Map.keys() |> Enum.map_join(", ", &inspect/1)
 
         raise ArgumentError,
-              "unknown field `#{inspect(key)}` given to cast. Either the field does not exist or it is a " <>
-                ":through association (which are read-only). The known fields are: #{known_fields}"
+              "unknown field `#{inspect(key)}` given to cast. The known fields are: #{known_fields}"
     end
   end
 
@@ -219,30 +234,29 @@ defmodule Normandy.Validate do
     raise ArgumentError, "cast/3 expects a list of atom keys, got key: `#{inspect(key)}`"
   end
 
-  defp cast_field(key, param_key, type, params, current, empty_values, defaults, force?, valid?) do
-    case params do
+  defp cast_field(key, param_key, type, current, ctx) do
+    case ctx.params do
       %{^param_key => value} ->
-        value = filter_empty_values(type, value, empty_values, defaults, key)
-
-        case Normandy.Type.cast(type, value) do
-          {:ok, value} ->
-            if not force? and Normandy.Type.equal?(type, current, value) do
-              :missing
-            else
-              {:ok, value, valid?}
-            end
-
-          :error ->
-            {:invalid, []}
-
-          {:error, custom_errors} when is_list(custom_errors) ->
-            {:invalid, custom_errors}
-        end
+        value = filter_empty_values(type, value, ctx.empty_values, ctx.defaults, key)
+        cast_result(Normandy.Type.cast(type, value), type, current, ctx.force?)
 
       _ ->
         :missing
     end
   end
+
+  # An unchanged value is :missing unless the cast is forced to record it.
+  defp cast_result({:ok, value}, type, current, force?) do
+    if not force? and Normandy.Type.equal?(type, current, value),
+      do: :missing,
+      else: {:ok, value}
+  end
+
+  defp cast_result(:error, _type, _current, _force?), do: {:invalid, []}
+
+  defp cast_result({:error, custom_errors}, _type, _current, _force?)
+       when is_list(custom_errors),
+       do: {:invalid, custom_errors}
 
   defp filter_empty_values(type, value, empty_values, defaults, key) do
     case filter_empty_values(type, value, empty_values) do
@@ -287,35 +301,48 @@ defmodule Normandy.Validate do
   defp convert_params(params) do
     case :maps.next(:maps.iterator(params)) do
       {key, _, _} when is_atom(key) ->
-        for {key, value} <- params, into: %{} do
-          if is_atom(key) do
-            {Atom.to_string(key), value}
-          else
-            raise Normandy.CastError,
-              type: :map,
-              value: params,
-              message:
-                "expected params to be a map with atoms or string keys, " <>
-                  "got a map with mixed keys: #{inspect(params)}"
-          end
-        end
+        for {key, value} <- params, into: %{}, do: {string_key!(key, params), value}
 
       _ ->
         params
     end
   end
 
+  defp string_key!(key, _params) when is_atom(key), do: Atom.to_string(key)
+
+  defp string_key!(_key, params) do
+    raise Normandy.CastError,
+      type: :map,
+      value: params,
+      message:
+        "expected params to be a map with atoms or string keys, " <>
+          "got a map with mixed keys: #{inspect(params)}"
+  end
+
+  @doc """
+  Returns the validations recorded on `changeset` as `{field, metadata}` pairs, newest
+  first.
+
+  `metadata` is what the validation stored, such as `{:format, regex}`, `{:length, opts}` or
+  `{:number, opts}`.
+  """
   @spec validations(t) :: [{atom, term}]
   def validations(%Validate{validations: validations}) do
     validations
   end
 
-  @spec apply_changes(t) :: Normandy.Schema.t() | data
-  def apply_changes(%Validate{changes: changes, data: data}) when changes == %{} do
-    data
-  end
+  @doc """
+  Returns `data` with the changes put in, whether or not the changeset is valid.
 
-  def apply_changes(%Validate{changes: changes, data: data, types: types}) do
+  Only fields in the changeset's types are put. For a schema struct, the `compute:`
+  fields are filled. Use `apply_action/2` to refuse an invalid changeset.
+  """
+  @spec apply_changes(t) :: Normandy.Schema.t() | data
+  def apply_changes(%Validate{} = changeset), do: changeset |> merge_changes() |> maybe_compute()
+
+  defp merge_changes(%Validate{changes: changes, data: data}) when changes == %{}, do: data
+
+  defp merge_changes(%Validate{changes: changes, data: data, types: types}) do
     Enum.reduce(changes, data, fn {key, value}, acc ->
       case Map.fetch(types, key) do
         {:ok, _} ->
@@ -327,6 +354,24 @@ defmodule Normandy.Validate do
     end)
   end
 
+  # Schema structs get their compute: fields filled; schemaless {data, types} maps don't.
+  defp maybe_compute(data) when is_struct(data), do: Normandy.Schema.compute(data)
+  defp maybe_compute(data), do: data
+
+  @doc """
+  Adds a `"can't be blank"` error for each of `fields` that `field_missing?/2` finds
+  missing, and marks `fields` as required.
+
+  A field that already has an error is skipped, and each field with a new error is removed
+  from `changes`. `fields` is an atom or a list of atoms.
+
+  ## Options
+
+    * `:message` - the message on failure (default `"can't be blank"`); a `{message, opts}`
+      tuple adds metadata for `traverse_errors/2`
+
+  Raises `ArgumentError` for a field that is not an atom or not a field of the changeset.
+  """
   @spec validate_required(t, list | atom, Keyword.t()) :: t
   def validate_required(%Validate{} = changeset, fields, opts \\ []) when not is_nil(fields) do
     %{required: required, errors: errors, changes: changes} = changeset
@@ -361,6 +406,12 @@ defmodule Normandy.Validate do
     end
   end
 
+  @doc """
+  Returns whether `field` has no value in `changeset`: the value from `get_field/2` is `nil`
+  or a string that is empty or only whitespace.
+
+  Raises `ArgumentError` when `field` is not an atom or not a field of the changeset.
+  """
   @spec field_missing?(t(), atom()) :: boolean()
   def field_missing?(%Validate{} = changeset, field) when not is_nil(field) do
     missing?(changeset, field) &&
@@ -369,8 +420,9 @@ defmodule Normandy.Validate do
 
   defp missing?(changeset, field) when is_atom(field) do
     case get_field(changeset, field) do
+      # Whitespace-only is blank too, as cast/4 already treats it.
       value when is_binary(value) ->
-        value == ""
+        String.trim(value) == ""
 
       nil ->
         true
@@ -385,6 +437,10 @@ defmodule Normandy.Validate do
           "validate_required/3 and field_missing?/2 expect field names to be atoms, got: `#{inspect(field)}`"
   end
 
+  @doc """
+  Returns the value of `key`: the change if there is one, else the value in `data`, else
+  `default` (`nil`) when `data` has no such key.
+  """
   @spec get_field(t, atom, term) :: term
   def get_field(%Validate{changes: changes, data: data, types: types}, key, default \\ nil) do
     case changes do
@@ -413,7 +469,7 @@ defmodule Normandy.Validate do
     end
   end
 
-  defp ensure_field_exists!(changeset = %Validate{}, types, field) do
+  defp ensure_field_exists!(%Validate{} = changeset, types, field) do
     unless Map.has_key?(types, field) do
       raise ArgumentError, "unknown field #{inspect(field)} in #{inspect(changeset.data)}"
     end
@@ -431,9 +487,20 @@ defmodule Normandy.Validate do
     end
   end
 
-  def validate(data, params) do
-    cast(data, params, data.__struct__.__schema__(:fields))
-    |> validate_required(data.__struct__.__schema__(:fields))
+  @doc """
+  Casts `params` into every field of the schema struct `data` and requires the
+  fields declared `required: true`.
+
+  ## Example
+
+      changeset = Validate.validate(%Profile{}, %{"name" => "Ana"})
+      changeset.valid?
+  """
+  @spec validate(Normandy.Schema.t(), %{binary => term} | %{atom => term}) :: t
+  def validate(%schema{} = data, params) do
+    data
+    |> cast(params, schema.__schema__(:fields))
+    |> validate_required(schema.__schema__(:required))
   end
 
   @doc """
@@ -481,6 +548,22 @@ defmodule Normandy.Validate do
     end
   end
 
+  @doc """
+  Runs `validator` on the change of `field` and adds the errors it returns.
+
+  `validator` is called with the field and its new value, only when the changeset has a
+  change for it that is not `nil`, and returns a list of `{field, message}` or
+  `{field, {message, metadata}}`. Any error makes the changeset invalid. The data's current
+  value is not checked. Raises `ArgumentError` when `field` is not a field of the changeset.
+
+  ## Example
+
+  For a changeset with an `:age` field:
+
+      Validate.validate_change(changeset, :age, fn :age, age ->
+        if age < 0, do: [age: "must not be negative"], else: []
+      end)
+  """
   @spec validate_change(
           t,
           atom,
@@ -508,6 +591,10 @@ defmodule Normandy.Validate do
     end
   end
 
+  @doc """
+  Runs `validator` as `validate_change/3` does, and first records `{field, metadata}` in
+  `validations/1`.
+  """
   @spec validate_change(
           t,
           atom,
@@ -524,6 +611,15 @@ defmodule Normandy.Validate do
     validate_change(changeset, field, validator)
   end
 
+  @doc """
+  Adds a `"has invalid format"` error when the change of `field` does not match `format`.
+
+  Raises `ArgumentError` when the change is not a string.
+
+  ## Options
+
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_format(t, atom, Regex.t(), Keyword.t()) :: t
   def validate_format(changeset, field, format, opts \\ []) do
     validate_change(changeset, field, {:format, format}, fn _, value ->
@@ -538,6 +634,13 @@ defmodule Normandy.Validate do
     end)
   end
 
+  @doc """
+  Adds an `"is invalid"` error when the change of `field` is not in `data`, an enumerable.
+
+  ## Options
+
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_inclusion(t, atom, Enum.t(), Keyword.t()) :: t
   def validate_inclusion(changeset, field, data, opts \\ []) do
     validate_change(changeset, field, {:inclusion, data}, fn _, value ->
@@ -549,6 +652,14 @@ defmodule Normandy.Validate do
     end)
   end
 
+  @doc """
+  Adds a `"has an invalid entry"` error when the change of `field`, a list, has an element
+  that is not in `data`, an enumerable.
+
+  ## Options
+
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_subset(t, atom, Enum.t(), Keyword.t()) :: t
   def validate_subset(changeset, field, data, opts \\ []) do
     validate_change(changeset, field, {:subset, data}, fn _, value ->
@@ -563,6 +674,7 @@ defmodule Normandy.Validate do
             element_type
         end
 
+      # credo:disable-for-next-line Credo.Check.Refactor.Nesting
       case Enum.any?(value, fn element ->
              not Normandy.Type.include?(element_type, element, data)
            end) do
@@ -575,6 +687,13 @@ defmodule Normandy.Validate do
     end)
   end
 
+  @doc """
+  Adds an `"is reserved"` error when the change of `field` is in `data`, an enumerable.
+
+  ## Options
+
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_exclusion(t, atom, Enum.t(), Keyword.t()) :: t
   def validate_exclusion(changeset, field, data, opts \\ []) do
     validate_change(changeset, field, {:exclusion, data}, fn _, value ->
@@ -586,7 +705,21 @@ defmodule Normandy.Validate do
     end)
   end
 
+  @doc """
+  Adds an error when the length of the change of `field` is not as `opts` asks.
+
+  The change is a string (counted in graphemes by default), a list or a map.
+
+  ## Options
+
+    * `:is` - the length must be exactly this
+    * `:min` - the length must be at least this
+    * `:max` - the length must be at most this
+    * `:count` - for a string, `:graphemes` (default), `:codepoints` or `:bytes`
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_length(t, atom, Keyword.t()) :: t
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   def validate_length(changeset, field, opts) when is_list(opts) do
     validate_change(changeset, field, {:length, opts}, fn
       _, value ->
@@ -737,13 +870,25 @@ defmodule Normandy.Validate do
     )
   end
 
+  @doc """
+  Adds an error when the change of `field` fails a comparison in `opts`.
+
+  ## Options
+
+    * `:less_than`, `:greater_than`, `:less_than_or_equal_to`, `:greater_than_or_equal_to`,
+      `:equal_to`, `:not_equal_to` - the number to compare the change with
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+
+  Raises `ArgumentError` when the change or a compared number is not a number, or when
+  `opts` has any other key.
+  """
   @spec validate_number(t, atom, Keyword.t()) :: t
   def validate_number(changeset, field, opts) do
     validate_change(changeset, field, {:number, opts}, fn
       field, value ->
         unless is_number(value) do
           raise ArgumentError,
-                "expected field `#{field}` to be a decimal, integer, or float, got: #{inspect(value)}"
+                "expected field `#{field}` to be an integer or float, got: #{inspect(value)}"
         end
 
         opts
@@ -751,9 +896,10 @@ defmodule Normandy.Validate do
         |> Enum.find_value([], fn {spec_key, target_value} ->
           case Map.fetch(@number_validators, spec_key) do
             {:ok, {spec_function, default_message}} ->
-              unless is_atom(target_value) do
+              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+              unless is_number(target_value) do
                 raise ArgumentError,
-                      "expected option `#{spec_key}` to be a decimal, integer, or float, got: #{inspect(target_value)}"
+                      "expected option `#{spec_key}` to be an integer or float, got: #{inspect(target_value)}"
               end
 
               compare_numbers(
@@ -783,7 +929,7 @@ defmodule Normandy.Validate do
   end
 
   defp compare_numbers(field, value, default_message, spec_key, spec_function, target_value, opts) do
-    case apply(spec_function, [value, target_value]) do
+    case spec_function.(value, target_value) do
       true ->
         nil
 
@@ -799,6 +945,19 @@ defmodule Normandy.Validate do
     end
   end
 
+  @doc """
+  Checks that the param `field_confirmation` equals the param `field`.
+
+  It reads `changeset.params`, so it needs a changeset made by `cast/4` from a map. A
+  mismatch adds a `"does not match confirmation"` error on `:field_confirmation`. A
+  changeset with no params (`nil`) is returned unchanged.
+
+  ## Options
+
+    * `:required` - also add a `"can't be blank"` error when the confirmation param is
+      absent (default `false`)
+    * `:message` - the message on failure; a `{message, opts}` tuple adds metadata
+  """
   @spec validate_confirmation(t, atom, Keyword.t()) :: t
   def validate_confirmation(changeset, field, opts \\ [])
 
@@ -842,10 +1001,18 @@ defmodule Normandy.Validate do
       else: []
   end
 
+  @doc """
+  Applies the changes of a valid changeset and returns `{:ok, data}`.
+
+  For an invalid changeset it returns `{:error, changeset}` with `action` set. For a schema
+  struct the `compute:` fields are filled; a compute function that raises gives
+  `{:error, changeset}` with a `"could not be computed (Exception)"` error on that field.
+  Raises `ArgumentError` when `action` is not an atom.
+  """
   @spec apply_action(t, action) :: {:ok, Normandy.Schema.t() | data} | {:error, t}
   def apply_action(%Validate{} = changeset, action) when is_atom(action) do
     if changeset.valid? do
-      {:ok, apply_changes(changeset)}
+      compute_or_error(merge_changes(changeset), changeset, action)
     else
       {:error, %Validate{changeset | action: action}}
     end
@@ -855,6 +1022,32 @@ defmodule Normandy.Validate do
     raise ArgumentError, "expected action to be an atom, got: #{inspect(action)}"
   end
 
+  # A compute function that raises (say, on a nil optional field) makes the
+  # changeset invalid instead of raising out of the caller, which may be parsing
+  # model output. The error names the exception, not its message: that can carry
+  # field values.
+  defp compute_or_error(data, changeset, action) when is_struct(data) do
+    case Normandy.Schema.__compute__(data) do
+      {:ok, computed} ->
+        {:ok, computed}
+
+      {:error, field, exception, _stacktrace} ->
+        error =
+          {field,
+           {"could not be computed (#{inspect(exception.__struct__)})", [validation: :compute]}}
+
+        {:error, %{changeset | errors: [error | changeset.errors], valid?: false, action: action}}
+    end
+  end
+
+  defp compute_or_error(data, _changeset, _action), do: {:ok, data}
+
+  @doc """
+  Returns the data `apply_action/2` returns in `{:ok, data}`.
+
+  Raises `Normandy.InvalidChangesetError` when `apply_action/2` returns
+  `{:error, changeset}`.
+  """
   @spec apply_action!(t, action) :: Normandy.Schema.t() | data
   def apply_action!(%Validate{} = changeset, action) do
     case apply_action(changeset, action) do
@@ -866,6 +1059,20 @@ defmodule Normandy.Validate do
     end
   end
 
+  @doc """
+  Returns the errors of `changeset` as a map of field to a list of `msg_func` results.
+
+  `msg_func` is called for each `{message, metadata}` error with that tuple, or, as a
+  3-arity function, with the changeset, the field and that tuple. A changeset with no
+  errors gives `%{}`.
+
+  ## Example
+
+  For a changeset whose `:name` is required and blank:
+
+      Validate.traverse_errors(changeset, fn {message, _metadata} -> message end)
+      #=> %{name: ["can't be blank"]}
+  """
   @spec traverse_errors(t, (error -> String.t()) | (Validate.t(), atom, error -> String.t())) ::
           traverse_result
   def traverse_errors(

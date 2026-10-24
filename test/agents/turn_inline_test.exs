@@ -1,27 +1,25 @@
 defmodule Normandy.Agents.Turn.InlineTest do
   use ExUnit.Case, async: true
 
+  alias Normandy.Agents.Dispatch
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Inline
-  alias Normandy.Agents.ToolCallResponse
-  alias Normandy.Agents.Dispatch
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
-  alias Normandy.Tools.Registry
+  alias Normandy.Tools.Toolset
 
   defmodule WeatherTool do
-    use Normandy.Schema
+    use Normandy.Tool, name: "weather", description: "fake weather"
 
-    schema do
-      field(:city, :string)
-    end
-  end
+    defstruct []
 
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.Turn.InlineTest.WeatherTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake weather"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
+    @impl Normandy.Tool
+    def input_schema(_tool), do: %{type: "object", properties: %{city: %{type: "string"}}}
+
+    @impl Normandy.Tool
+    def run(_tool, %Normandy.Tools.Context{input: input}),
+      do: {:ok, "weather in #{input["city"]}"}
   end
 
   describe "run/2 with no tool calls" do
@@ -56,7 +54,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
   describe "run/2 with a tool call dispatched through the chokepoint" do
     test "first response calls a tool, second response finalizes; tool actually runs" do
       test_pid = self()
-      config = %{name: "t", tool_registry: Registry.new([%WeatherTool{}])}
+      config = %{name: "t", toolset: Toolset.new([%WeatherTool{}])}
 
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
       first = %ToolCallResponse{content: nil, tool_calls: [call]}
@@ -97,10 +95,37 @@ defmodule Normandy.Agents.Turn.InlineTest do
     end
   end
 
+  describe "run/2 with a dispatch that answers part of the batch" do
+    test "returns the incomplete-batch failure before the next LLM call" do
+      test_pid = self()
+      calls = [%ToolCall{id: "c1", name: "weather"}, %ToolCall{id: "c2", name: "weather"}]
+      answered = %ToolResult{tool_call_id: "c1", output: "ok", is_error: false}
+
+      deps = %{
+        call_llm: fn req ->
+          send(test_pid, {:called_llm, req})
+          {:ok, %ToolCallResponse{content: nil, tool_calls: calls}}
+        end,
+        dispatch: fn _calls -> [answered] end,
+        append: fn role, content -> send(test_pid, {:appended, role, content}) end,
+        emit: fn _name, _meta -> :ok end
+      }
+
+      reason = {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c2"]}}
+
+      assert {:error, ^reason, %Turn.State{status: :failed}} =
+               Inline.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
+
+      assert_received {:appended, "tool", ^answered}
+      assert_received {:called_llm, _}
+      refute_received {:called_llm, _}
+    end
+  end
+
   describe "run/2 hitting the iteration cap" do
     test "always-tool model stops at the cap with one forced final call" do
       test_pid = self()
-      config = %{name: "t", tool_registry: Registry.new([%WeatherTool{}])}
+      config = %{name: "t", toolset: Toolset.new([%WeatherTool{}])}
       call = %ToolCall{id: "c1", name: "weather", input: %{"city" => "NYC"}}
       always = %ToolCallResponse{content: nil, tool_calls: [call]}
 
@@ -129,10 +154,10 @@ defmodule Normandy.Agents.Turn.InlineTest do
       # 3 normal tool-dispatching calls + 1 forced final call = 4.
       assert Agent.get(counter, & &1) == 4
 
-      # Three normal calls (response_model :rm) and one forced final call
-      # (response_model :os, final: true). assert_received consumes one matching
-      # message each; order between distinct patterns does not matter.
-      assert_received {:llm_call, %{response_model: :os, final: true}}
+      # Three normal calls and one final call, all with the loop's response model (:rm);
+      # the final one is marked final: true. assert_received consumes one matching message
+      # each; order between distinct patterns does not matter.
+      assert_received {:llm_call, %{response_model: :rm, final: true}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}
       assert_received {:llm_call, %{response_model: :rm, final: false}}

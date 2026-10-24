@@ -17,9 +17,8 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
       assert BaseIOSchema.to_json([]) == []
     end
 
-    test "__str__/1 and __rich__/1 return strings" do
-      assert is_binary(BaseIOSchema.__str__([1, 2, 3]))
-      assert is_binary(BaseIOSchema.__rich__([1, 2, 3]))
+    test "the protocol is to_json/1 and get_schema/1" do
+      assert BaseIOSchema.__protocol__(:functions) |> Enum.sort() == [get_schema: 1, to_json: 1]
     end
 
     test "get_schema/1 returns an empty map" do
@@ -28,10 +27,29 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
     end
   end
 
-  describe "Any fallback regression" do
-    test "to_json/1 returns \"\" for non-list, non-map, non-binary input" do
-      assert BaseIOSchema.to_json(:atom_value) == ""
-      assert BaseIOSchema.to_json(42) == ""
+  describe "content with no implementation" do
+    test "to_json/1 raises instead of sending an empty message" do
+      assert_raise Protocol.UndefinedError, fn -> BaseIOSchema.to_json(:atom_value) end
+      assert_raise Protocol.UndefinedError, fn -> BaseIOSchema.to_json(42) end
+    end
+  end
+
+  describe "content blocks" do
+    alias Normandy.Components.AgentMemory
+    alias Normandy.Components.ContentBlock.{Image, Text}
+
+    test "a single block is sent as a one-block list" do
+      block = %Text{text: "hi"}
+      assert BaseIOSchema.to_json(block) == [block]
+    end
+
+    test "a single image message survives history/1" do
+      image = %Image{source: :url, url: "https://example.com/a.png"}
+
+      assert [%{role: "user", content: [^image]}] =
+               AgentMemory.new_memory()
+               |> AgentMemory.add_message("user", image)
+               |> AgentMemory.history()
     end
   end
 
@@ -43,9 +61,7 @@ defmodule NormandyTest.Components.BaseIOSchemaTest do
 
   describe "Map impl regression" do
     test "to_json/1 JSON-encodes the map" do
-      adapter = Application.get_env(:normandy, :adapter, Poison)
-      expected = adapter.encode!(%{a: 1})
-      assert BaseIOSchema.to_json(%{a: 1}) == expected
+      assert BaseIOSchema.to_json(%{a: 1}) == ~s({"a":1})
     end
   end
 end

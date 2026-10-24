@@ -18,6 +18,7 @@ defmodule Normandy.Components.ContentBlock.Document do
   use Normandy.Schema
 
   alias Normandy.Components.ContentBlock.CacheControl
+  alias Normandy.Components.ContentBlock.Describe
 
   @type source :: :file_id
 
@@ -80,9 +81,25 @@ defmodule Normandy.Components.ContentBlock.Document do
     |> CacheControl.maybe_attach(cache_control)
   end
 
-  def to_claudio(%__MODULE__{} = block) do
+  def to_claudio(%__MODULE__{source: source, file_id: file_id}) do
     raise ArgumentError,
           "Normandy.Components.ContentBlock.Document: invalid document — " <>
-            "source must be :file_id and file_id a non-empty string. Got: #{inspect(block)}"
+            "source must be :file_id and file_id a non-empty string. Got source: " <>
+            "#{Describe.type_of(source)}, file_id: #{Describe.type_of(file_id)}"
+  end
+
+  defimpl Normandy.Components.ContentBlock.Protocol do
+    alias Normandy.Components.ContentBlock
+
+    def to_claudio(block), do: @for.to_claudio(block)
+    def estimate_tokens(_block), do: ContentBlock.document_tokens()
+    def label(_block), do: "[document]"
+  end
+
+  # A single content block is sent as a one-block list, the same shape as
+  # multimodal list content, which the adapter turns into wire blocks.
+  defimpl Normandy.Components.BaseIOSchema do
+    def to_json(block), do: [block]
+    def get_schema(_block), do: %{}
   end
 end

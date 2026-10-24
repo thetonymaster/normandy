@@ -1,8 +1,12 @@
 defmodule Normandy.Coordination.AgentPoolTest do
   use ExUnit.Case, async: true
 
+  import Normandy.Test.Eventually
+
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Coordination.AgentPool
+  alias Normandy.Resilience.CircuitBreaker
 
   # Helper to create agent config
   defp create_agent_config do
@@ -24,14 +28,17 @@ defmodule Normandy.Coordination.AgentPoolTest do
     end
 
     test "starts a named pool" do
+      # A unique name, so no other test can hold it.
+      name = :"test_pool_#{System.unique_integer([:positive])}"
+
       agent_config = create_agent_config()
 
       assert {:ok, _pool} =
-               AgentPool.start_link(name: :test_pool, agent_config: agent_config)
+               AgentPool.start_link(name: name, agent_config: agent_config)
 
-      assert Process.whereis(:test_pool) != nil
+      assert Process.whereis(name) != nil
 
-      AgentPool.stop(:test_pool)
+      AgentPool.stop(name)
     end
 
     test "starts pool with custom size" do
@@ -77,6 +84,40 @@ defmodule Normandy.Coordination.AgentPoolTest do
       assert Process.alive?(pool)
 
       AgentPool.stop(pool)
+    end
+  end
+
+  describe "checkout strategy" do
+    # Size 2, no overflow: check out both, return a then b (casts, ordered by the
+    # stats/1 call behind them), then check out one.
+    defp checkout_after_returns(strategy) do
+      {:ok, pool} =
+        AgentPool.start_link(
+          agent_config: create_agent_config(),
+          size: 2,
+          max_overflow: 0,
+          strategy: strategy
+        )
+
+      {:ok, a} = AgentPool.checkout(pool)
+      {:ok, b} = AgentPool.checkout(pool)
+      :ok = AgentPool.checkin(pool, a)
+      :ok = AgentPool.checkin(pool, b)
+      assert %{available: 2} = AgentPool.stats(pool)
+
+      {:ok, next} = AgentPool.checkout(pool)
+      AgentPool.stop(pool)
+      {a, b, next}
+    end
+
+    test ":lifo hands out the most recently returned agent" do
+      {_a, b, next} = checkout_after_returns(:lifo)
+      assert next == b
+    end
+
+    test ":fifo hands out the least recently returned agent" do
+      {a, _b, next} = checkout_after_returns(:fifo)
+      assert next == a
     end
   end
 
@@ -269,8 +310,66 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Checkout the only agent
       {:ok, _agent_pid} = AgentPool.checkout(pool)
 
-      # With short timeout, GenServer.call will exit with timeout
-      catch_exit(AgentPool.checkout(pool, timeout: 50, block: true))
+      assert {:error, :timeout} = AgentPool.checkout(pool, timeout: 50, block: true)
+      assert AgentPool.stats(pool).waiting == 0
+
+      AgentPool.stop(pool)
+    end
+
+    test "timeout: :infinity waits until an agent is checked in" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      waiter = Task.async(fn -> AgentPool.checkout(pool, timeout: :infinity) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      :ok = AgentPool.checkin(pool, agent_pid)
+
+      assert {:ok, ^agent_pid} = Task.await(waiter)
+      AgentPool.stop(pool)
+    end
+
+    test "an invalid :timeout raises in the caller, naming the value" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 1)
+
+      assert_raise ArgumentError,
+                   ~r/^Normandy\.Coordination\.AgentPool\.checkout\/2: invalid value for :timeout option: expected non-negative integer or :infinity, got: -1/,
+                   fn -> AgentPool.checkout(pool, timeout: -1) end
+
+      assert Process.alive?(pool)
+      AgentPool.stop(pool)
+    end
+
+    test "a timed-out checkout does not take the next checked-in agent" do
+      agent_config = create_agent_config()
+
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      assert {:error, :timeout} = AgentPool.checkout(pool, timeout: 50)
+
+      :ok = AgentPool.checkin(pool, agent_pid)
+
+      assert %{available: 1, in_use: 0} = AgentPool.stats(pool)
+      assert {:ok, ^agent_pid} = AgentPool.checkout(pool, block: false)
+
+      AgentPool.stop(pool)
+    end
+
+    test "transaction returns {:error, :timeout} when no agent frees up in time" do
+      agent_config = create_agent_config()
+
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 0)
+
+      {:ok, _agent_pid} = AgentPool.checkout(pool)
+
+      assert {:error, :timeout} =
+               AgentPool.transaction(pool, [timeout: 50], fn _ ->
+                 flunk("ran without an agent")
+               end)
 
       AgentPool.stop(pool)
     end
@@ -320,9 +419,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Now checkin overflow agent - should be terminated
       AgentPool.checkin(pool, overflow_pid)
 
-      # Give it time to process
-      Process.sleep(50)
-
+      # checkin/2 is a cast from this process, so this call runs after it.
       stats = AgentPool.stats(pool)
       assert stats.overflow == 0
       assert stats.available == 2
@@ -342,6 +439,24 @@ defmodule Normandy.Coordination.AgentPoolTest do
       # Should fail with non-blocking
       assert {:error, :no_agents} = AgentPool.checkout(pool, block: false)
 
+      AgentPool.stop(pool)
+    end
+  end
+
+  describe "overflow agent death" do
+    test "the freed overflow slot goes to a waiting checkout" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 1)
+
+      {:ok, _pooled} = AgentPool.checkout(pool)
+      {:ok, overflow} = AgentPool.checkout(pool)
+      waiter = Task.async(fn -> AgentPool.checkout(pool, timeout: 2_000) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      Process.exit(overflow, :kill)
+
+      assert {:ok, pid} = Task.await(waiter)
+      assert pid != overflow
       AgentPool.stop(pool)
     end
   end
@@ -390,11 +505,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           AgentPool.checkout(pool, timeout: 5000)
         end)
 
-      # Give it time to start waiting
-      Process.sleep(10)
-
-      stats = AgentPool.stats(pool)
-      assert stats.waiting == 1
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       # Cleanup
       Task.shutdown(task, :brutal_kill)
@@ -409,9 +520,9 @@ defmodule Normandy.Coordination.AgentPoolTest do
 
       {:ok, agent_pid} = AgentPool.checkout(pool)
 
-      # Kill the agent
+      # Kill the agent; the pool replaces it when it handles the :DOWN.
       Process.exit(agent_pid, :kill)
-      Process.sleep(50)
+      assert wait_until(fn -> AgentPool.stats(pool).in_use == 0 end)
 
       # Pool should recover by creating a new agent
       stats = AgentPool.stats(pool)
@@ -430,15 +541,127 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, agent_pid} = AgentPool.checkout(pool)
       original_count = 2
 
-      # Kill the agent
+      # Kill the agent; the pool replaces it when it handles the :DOWN.
       Process.exit(agent_pid, :kill)
-      Process.sleep(50)
+      assert wait_until(fn -> AgentPool.stats(pool).in_use == 0 end)
 
       # Should still have capacity for 2 agents
       stats = AgentPool.stats(pool)
       total = stats.available + stats.in_use
       assert total == original_count
 
+      AgentPool.stop(pool)
+    end
+
+    test "a crashed agent leaves one replacement, not an extra untracked one" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 2)
+      sup = :sys.get_state(pool).supervisor
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      Process.exit(agent_pid, :kill)
+      assert wait_until(fn -> AgentPool.stats(pool).available == 2 end)
+
+      # Only the pool replaces agents; the supervisor must not restart one too.
+      assert DynamicSupervisor.count_children(sup).active == 2
+
+      AgentPool.stop(pool)
+    end
+
+    test "an idle agent that crashes is replaced" do
+      {:ok, pool} = AgentPool.start_link(agent_config: create_agent_config(), size: 2)
+      [idle | _] = :sys.get_state(pool).available
+
+      Process.exit(idle, :kill)
+
+      assert wait_until(fn ->
+               available = :sys.get_state(pool).available
+               length(available) == 2 and idle not in available
+             end)
+
+      AgentPool.stop(pool)
+    end
+
+    test "a client that dies holding an agent gives it back" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      test_pid = self()
+
+      holder =
+        spawn(fn ->
+          {:ok, _} = AgentPool.checkout(pool)
+          send(test_pid, :checked_out)
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive :checked_out
+      Process.exit(holder, :kill)
+
+      assert wait_until(fn -> AgentPool.stats(pool).available == 1 end)
+
+      AgentPool.stop(pool)
+    end
+
+    test "a waiter that dies before it is served does not take the next agent" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      waiter = spawn(fn -> AgentPool.checkout(pool, timeout: 60_000) end)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
+
+      Process.exit(waiter, :kill)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 0 end)
+
+      AgentPool.checkin(pool, agent_pid)
+      assert AgentPool.stats(pool).available == 1
+
+      AgentPool.stop(pool)
+    end
+
+    test "checking in the same agent twice does not list it twice" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      AgentPool.checkin(pool, agent_pid)
+      AgentPool.checkin(pool, agent_pid)
+
+      assert %{available: 1, in_use: 0} = AgentPool.stats(pool)
+      # The second checkin used to terminate the listed agent as if it were overflow.
+      assert :sys.get_state(pool).available == [agent_pid]
+      assert Process.alive?(agent_pid)
+
+      AgentPool.stop(pool)
+    end
+
+    test "a stale checkin after the agent was lent again does not release the new loan" do
+      {:ok, pool} =
+        AgentPool.start_link(agent_config: create_agent_config(), size: 1, max_overflow: 0)
+
+      {:ok, agent_pid} = AgentPool.checkout(pool)
+      AgentPool.checkin(pool, agent_pid)
+
+      test_pid = self()
+
+      holder =
+        spawn(fn ->
+          send(test_pid, {:held, AgentPool.checkout(pool)})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:held, {:ok, ^agent_pid}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          AgentPool.checkin(pool, agent_pid)
+          assert %{in_use: 1, available: 0} = AgentPool.stats(pool)
+        end)
+
+      assert log =~ "not held by the caller"
+      assert {:error, :no_agents} = AgentPool.checkout(pool, block: false)
+
+      Process.exit(holder, :kill)
       AgentPool.stop(pool)
     end
   end
@@ -457,8 +680,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           AgentPool.checkout(pool, timeout: 1000)
         end)
 
-      # Give it time to start waiting
-      Process.sleep(10)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       # Return the agent - should go to waiting task
       AgentPool.checkin(pool, pid1)
@@ -488,7 +710,8 @@ defmodule Normandy.Coordination.AgentPoolTest do
           result
         end)
 
-      Process.sleep(5)
+      # task1 must be queued before task2 starts, so the order is known.
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 1 end)
 
       task2 =
         Task.async(fn ->
@@ -497,7 +720,7 @@ defmodule Normandy.Coordination.AgentPoolTest do
           result
         end)
 
-      Process.sleep(10)
+      assert wait_until(fn -> AgentPool.stats(pool).waiting == 2 end)
 
       # Return agent - should go to first waiting task
       AgentPool.checkin(pool, pid)
@@ -526,9 +749,8 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, pool} = AgentPool.start_link(agent_config: agent_config)
 
       assert Process.alive?(pool)
+      # GenServer.stop/2 returns once the pool has terminated.
       assert :ok = AgentPool.stop(pool)
-
-      Process.sleep(10)
       refute Process.alive?(pool)
     end
 
@@ -537,12 +759,10 @@ defmodule Normandy.Coordination.AgentPoolTest do
       {:ok, pool} = AgentPool.start_link(agent_config: agent_config, size: 3)
 
       # Checkout an agent to get its PID
-      {:ok, agent_pid} = AgentPool.checkout(pool)
+      {:ok, _agent_pid} = AgentPool.checkout(pool)
 
-      # Stop pool
+      # Stop pool (GenServer.stop/2 returns once it has terminated)
       AgentPool.stop(pool)
-
-      Process.sleep(50)
 
       # Pool should be dead
       refute Process.alive?(pool)
@@ -613,6 +833,27 @@ defmodule Normandy.Coordination.AgentPoolTest do
       stats = AgentPool.stats(pool)
       assert stats.available == 5
       assert stats.in_use == 0
+
+      AgentPool.stop(pool)
+    end
+  end
+
+  describe "circuit breakers (PERF-5)" do
+    test "starting, overflowing and stopping a pool starts no breaker" do
+      scope = {__MODULE__, System.unique_integer([:positive])}
+      agent_config = Map.put(create_agent_config(), :circuit_breaker, scope: scope)
+
+      {:ok, pool} = AgentPool.start_link(agent_config: agent_config, size: 1, max_overflow: 2)
+      {:links, links_before} = Process.info(pool, :links)
+
+      agents = for _ <- 1..3, do: elem(AgentPool.checkout(pool), 1)
+      Enum.each(agents, &AgentPool.checkin(pool, &1))
+
+      # Agents are values: neither the pool nor the caller gained a linked process.
+      assert Process.info(pool, :links) == {:links, links_before}
+
+      key = BaseAgentConfig.circuit_breaker_key(BaseAgent.init(agent_config))
+      assert CircuitBreaker.fetch(key) == :error
 
       AgentPool.stop(pool)
     end

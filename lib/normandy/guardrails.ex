@@ -12,17 +12,17 @@ defmodule Normandy.Guardrails do
 
   ## Example
 
-      iex> alias Normandy.Guardrails
-      iex> alias Normandy.Guardrails.Builtins.MaxLength
-      iex> Guardrails.run([{MaxLength, limit: 5}], "too long")
-      {:error, [%{guard: MaxLength, path: [], message: _, constraint: :max_length}]}
+      alias Normandy.Guardrails
+      alias Normandy.Guardrails.Builtins.MaxLength
+      Guardrails.run([{MaxLength, limit: 5}], "too long")
+      #=> {:error, [%{guard: MaxLength, path: [], message: _, constraint: :max_length}]}
 
-      iex> Guardrails.run([{MaxLength, limit: 100}], "ok")
-      {:ok, "ok"}
+      Guardrails.run([{MaxLength, limit: 100}], "ok")
+      #=> {:ok, "ok"}
 
-  Attach a guard list to an agent by setting `:input_guardrails` or
-  `:output_guardrails` on `Normandy.Agents.BaseAgentConfig`, or via the
-  `guardrails/2` macro in `Normandy.DSL.Agent`.
+  Attach a guard list to an agent with `guardrails: [input: ..., output: ...]` in
+  `Normandy.Agents.BaseAgent.init/1`, or with the `guardrails/2` macro in
+  `Normandy.DSL.Agent`.
 
   ## Pre-charge admission
 
@@ -43,17 +43,36 @@ defmodule Normandy.Guardrails do
   ## Error handling (`:on_error`)
 
   Each guard spec may carry an `:on_error` policy controlling what happens when
-  its `check` **raises**:
+  its `check` **crashes**: raises, exits (a `GenServer.call` or `Task.await` timeout
+  inside the guard) or throws:
 
-  - `:reraise` (default) — the exception propagates. A configuration bug stays a
+  - `:reraise` (default) — the crash propagates. A configuration bug stays a
     crash, not a silent admit.
-  - `:open` — the crash is rescued and treated as a pass. Use this for a guard
+  - `:open` — the crash is caught and treated as a pass. Use this for a guard
     that calls an external service so an outage admits instead of taking down
     the whole guard chain.
-  - `:closed` — the crash is rescued and turned into a `:guard_error` violation.
+  - `:closed` — the crash is caught and turned into a `:guard_error` violation
+    whose message names the guard and the exception's module, the exit's tag or
+    "threw", never the exception's message or the exit's terms.
 
-  Only the guard's `check` call is rescued; a malformed return value is a
-  contract violation and always raises regardless of `:on_error`.
+  Only the guard's `check` call is caught; a malformed return value is a
+  contract violation and always raises regardless of `:on_error`. So does a
+  built-in guard's configuration error (an `ArgumentError` or `KeyError`, such
+  as a `:field` the struct does not have or a missing option). Host code a built-in
+  guard calls (`SemanticScope`'s `:classifier` and `:fast_path`) is not configuration:
+  its crash reaches `:on_error` as a `Normandy.Guardrails.GuardError`. A guard has no
+  timeout of its own: one that blocks without failing blocks the turn, so give the
+  service call inside it a timeout. A `:field` on a plain map cannot be checked: a map
+  has no fixed keys, so a missing key reads as `nil`.
+
+  ## What an input guard receives
+
+  An input guard receives the validated input: a `%BaseAgentInputSchema{}` for the default
+  schema (whether the caller passed `"text"` or `%{chat_message: "text"}`), or the custom
+  schema's struct. A built-in guard with no `:field` option checks the `chat_message` text of
+  a default-schema input; with `field: :chat_message` it reads that field of the struct.
+  `SemanticScope` classifies that text too. `RequiredFields` checks named fields, so it stays on
+  the struct.
 
   ## Structured reason
 
@@ -62,34 +81,65 @@ defmodule Normandy.Guardrails do
   `constraint: :off_topic` lets the caller render scope-specific messaging
   without parsing strings. Extra keys on the violation map are allowed.
 
+  ## Output violations (`guardrails: [on_violation: ...]`)
+
+  On the non-streaming path (`BaseAgent.run/3`, `Turn.Server`), output guards
+  run on the validated answer before it is saved to memory:
+
+  - `:block` (default) — `run` returns
+    `{:error, %Normandy.Guardrails.ViolationError{}}` (`run!` raises it;
+    `Turn.Server.run/2` replies the same `{:error, exception}`) and the
+    answer is not saved.
+  - `:warn` — the violation is logged and the answer is returned and saved. The
+    warning names the guards, the paths and the count
+    (`Agent output guardrail violation: ForbiddenSubstrings at chat_message (1 violation)`),
+    never the messages, which quote the guard's configuration (a forbidden term, a
+    pattern). Neither the log nor telemetry carries them: only the caller's reply does
+    (the `ViolationError` under `:block`, the `:guardrail_violation` stream event).
+
+  The option does not apply to streaming, where the content has already
+  reached the caller (see below).
+
   ## Streaming
 
-  Input guardrails run on streaming entry points (`BaseAgent.stream_response/3`,
-  `BaseAgent.stream_with_tools/3`) before the LLM call — violations raise the
-  same as non-streaming paths.
+  Input guardrails run on `BaseAgent.stream/3` before the LLM call, as on
+  `BaseAgent.run/3`: a violation returns `{:error, %Normandy.Guardrails.ViolationError{}}`.
 
   Output guardrails run on streaming in one of two modes, configured per agent:
 
   - `:accumulate` (default) — guards run on the **concatenated assistant text**
     (text blocks from the streamed response, joined) after the stream
-    completes. Log-and-continue on violation; content has already reached the
-    caller. This differs from the non-streaming path, which guards the
-    validated schema struct — streaming never produces one, so field-targeting
-    guards (e.g. `{ForbiddenSubstrings, field: :summary}`) do not apply in
-    streaming mode. Use bare string guards (no `:field`) for streaming output.
+    completes. A violation is logged and reported through a
+    `%Normandy.Components.StreamEvent{type: :guardrail_violation}` and telemetry,
+    not blocked: the content has already reached the caller. This differs from the
+    non-streaming path, which guards the validated schema struct: streaming guards
+    the text before it is converted, so field-targeting guards (e.g.
+    `{ForbiddenSubstrings, field: :summary}`) do not apply in streaming mode. Use
+    bare string guards (no `:field`) for streaming output.
 
-  - `:incremental` — guards run every `:output_guardrails_chunk_size` bytes of
+  - `:incremental` — guards run every `guardrails[:chunk_size]` bytes of
     accumulated assistant text. On violation, the stream is halted, a
-    `:guardrail_violation` event is emitted to the caller callback, any
-    partial tool-use block is dropped, and the returned response carries
-    `:guardrail_violations`. Follows NVIDIA NeMo Guardrails' chunking approach.
+    `:guardrail_violation` event is emitted to the caller callback and telemetry,
+    and any partial tool-use block is dropped; the text streamed so far is
+    converted to the output schema: a `:chat_message` schema gets that text; for a
+    non-chat schema, partial text that does not parse into it makes `stream/3` return
+    `{:error, %Normandy.LLMError{type: :invalid_output}}`. Follows NVIDIA NeMo
+    Guardrails' chunking approach.
+
+    Each check runs the guards on the **whole** text accumulated so far, not on the
+    new chunk, so a pattern that spans two chunks is still seen. The cost grows with
+    the square of the answer's length: an answer of `n` bytes is checked about
+    `n / chunk_size` times on texts up to `n` bytes long (a 100_000-byte answer with
+    the default `chunk_size: 200` runs the guards about 500 times, on 50_000 bytes on
+    average). For long answers or guards that are slow or call a service, raise
+    `chunk_size` or use `:accumulate`.
 
   `RequiredFields` is terminal-only and does not apply to either streaming
   mode (no schema struct to inspect).
 
-  Both modes populate the `:guardrail_violations` field on the returned
-  response (list, empty on pass) and emit the
-  `[:normandy, :agent, :guardrail, :violation]` telemetry event with metadata
+  Both modes deliver a `:guardrail_violation` stream event with data
+  `%{stage: :output, mode: :accumulate | :incremental, violations: violations}` and emit
+  the `[:normandy, :agent, :guardrail, :violation]` telemetry event with metadata
   `streaming: true` and `mode: :accumulate | :incremental`.
 
   ## Telemetry
@@ -97,8 +147,12 @@ defmodule Normandy.Guardrails do
   A `[:normandy, :agent, :guardrail, :violation]` event is emitted per
   violation batch. One event per final-response emission, not per user turn —
   with `enable_json_retry` plus retries, a single turn can emit multiple
-  output-guardrail events. Metadata includes the matched `:term` / `:pattern`
-  on the violation payload; redact downstream if your block-list is sensitive.
+  output-guardrail events. Its `violations` are reduced to
+  `%{guard:, path:, constraint:}` each: no message, so no forbidden term, pattern or
+  model text (`SemanticScope`'s reason). The same holds for the `:decision` event below,
+  a `ViolationError` in a run's `:exception` metadata and a `Turn.Server` turn state's
+  persisted `error`. The full violations reach only the caller: the returned
+  `ViolationError`, `admit/2,3`'s `{:block, violations}` and the stream event.
 
   `Normandy.Agents.BaseAgent.admit/2,3` additionally emits
   `[:normandy, :agent, :guardrail, :decision]` with `outcome` in
@@ -107,7 +161,19 @@ defmodule Normandy.Guardrails do
   `admit/2`); it is suppressed when no guardrails are configured.
   """
 
+  alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Guardrails.Guard
+  alias Normandy.Guardrails.GuardError
+
+  # Guards the library ships: their ArgumentError/KeyError is a configuration bug that
+  # `:on_error` never swallows. A host guard is not one, whatever its module name.
+  @builtins [
+    Normandy.Guardrails.Builtins.MaxLength,
+    Normandy.Guardrails.Builtins.ForbiddenSubstrings,
+    Normandy.Guardrails.Builtins.RegexGuard,
+    Normandy.Guardrails.Builtins.RequiredFields,
+    Normandy.Guardrails.Builtins.SemanticScope
+  ]
 
   @type spec :: module() | {module(), keyword()}
 
@@ -147,15 +213,15 @@ defmodule Normandy.Guardrails do
 
         other ->
           raise ArgumentError,
-                "expected #{inspect(mod)}.check/2 to return :ok or {:error, [violation]}, got: #{inspect(other)}"
+                "expected #{inspect(mod)}.check/2 to return :ok or {:error, [violation]}, got: #{Describe.shape(other)}"
       end
     end)
   end
 
   # Invokes the guard under its `:on_error` policy. `:reraise` (default) lets a
   # crashing guard propagate — a config bug stays a crash, not a silent admit.
-  # `:open` rescues and treats the crash as a pass; `:closed` rescues and turns
-  # it into a `:guard_error` violation. Only the `check` call is rescued: a
+  # `:open` catches a raise, exit or throw and treats it as a pass; `:closed` turns
+  # it into a `:guard_error` violation. Only the `check` call is caught: a
   # malformed return is a contract violation handled by the caller, not an
   # `:on_error` case.
   defp invoke(mod, value, opts, context) do
@@ -164,11 +230,7 @@ defmodule Normandy.Guardrails do
         do_check(mod, value, opts, context)
 
       policy when policy in [:open, :closed] ->
-        try do
-          do_check(mod, value, opts, context)
-        rescue
-          exception -> on_error_result(policy, mod, exception)
-        end
+        guarded_check(policy, mod, value, opts, context)
 
       other ->
         raise ArgumentError,
@@ -176,6 +238,26 @@ defmodule Normandy.Guardrails do
                 ":closed, got: #{inspect(other)}"
     end
   end
+
+  defp guarded_check(policy, mod, value, opts, context) do
+    do_check(mod, value, opts, context)
+  rescue
+    exception -> crashed(policy, mod, exception, __STACKTRACE__)
+  catch
+    :exit, reason -> on_error_result(policy, mod, {:exit, reason})
+    :throw, value -> on_error_result(policy, mod, {:throw, value})
+  end
+
+  # A built-in guard raises ArgumentError or KeyError only for its own configuration (a
+  # :field typo, a bad or missing option): a bug to fix, never a pass or a violation.
+  defp crashed(policy, mod, %error{} = exception, stacktrace)
+       when error in [ArgumentError, KeyError] do
+    if mod in @builtins,
+      do: reraise(exception, stacktrace),
+      else: on_error_result(policy, mod, exception)
+  end
+
+  defp crashed(policy, mod, exception, _stacktrace), do: on_error_result(policy, mod, exception)
 
   # Dispatches to the guard's check/3 when it implements the optional context
   # arity, otherwise its check/2. Context-unaware guards are invoked exactly as
@@ -188,19 +270,26 @@ defmodule Normandy.Guardrails do
     end
   end
 
-  defp on_error_result(:open, _mod, _exception), do: :ok
+  defp on_error_result(:open, _mod, _crash), do: :ok
 
-  defp on_error_result(:closed, mod, exception) do
+  defp on_error_result(:closed, mod, crash) do
     {:error,
      [
        %{
          guard: mod,
          path: [],
-         message: "guard #{inspect(mod)} crashed: #{Exception.message(exception)}",
+         # The module or exit tag only: an exception's message can inspect the guarded
+         # value, and this violation reaches the caller, telemetry and the store.
+         message: "guard #{inspect(mod)} #{describe_crash(crash)}",
          constraint: :guard_error
        }
      ]}
   end
+
+  defp describe_crash(%GuardError{} = error), do: "crashed: " <> Exception.message(error)
+  defp describe_crash({:exit, reason}), do: "exited: " <> Describe.reason_tag(reason)
+  defp describe_crash({:throw, _value}), do: "threw"
+  defp describe_crash(exception), do: "crashed: " <> inspect(exception.__struct__)
 
   defp normalize(mod) when is_atom(mod), do: {mod, []}
   defp normalize({mod, opts}) when is_atom(mod) and is_list(opts), do: {mod, opts}

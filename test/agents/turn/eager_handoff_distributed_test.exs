@@ -37,7 +37,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
      and visible to the peer via its own Repo instance.
   2. Sets pool mode to :auto so all spawned processes (Turn.Server, Tasks) can
      check out their own connections without explicit allow-listing.
-  3. Cleans up the session row in on_exit.
+  3. Cleans up the session row in on_exit (before restoring :manual mode).
 
   ## Tag behaviour note
 
@@ -54,14 +54,20 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
   actionable message if the Repo isn't running (ExUnit setup cannot skip at runtime —
   returning `{:skip, _}` raises).
   """
+  # async: false — starts peer nodes and switches the Postgres sandbox to :auto.
   use ExUnit.Case, async: false
   use Normandy.ClusterCase
   @moduletag :distributed
 
-  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
-  alias Normandy.Behaviours.SessionStore.Postgres, as: PGStore
   alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.SessionRegistry.Horde, as: HReg
+  alias Normandy.Behaviours.SessionStore.Postgres, as: PGStore
+  alias Normandy.Test.HandoffStubs
+  alias Normandy.Test.TurnConfig
 
   setup_all do
     unless Node.alive?(), do: {:ok, _} = :net_kernel.start([:"primary@127.0.0.1", :longnames])
@@ -77,28 +83,25 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     else
       # Non-sandboxed checkout so committed writes are visible across nodes.
       # Then set :auto mode so all spawned processes get their own connections.
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo, sandbox: false)
-      Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :auto)
+      :ok = Sandbox.checkout(Normandy.TestRepo, sandbox: false)
+      Sandbox.mode(Normandy.TestRepo, :auto)
 
       sid = "eager-handoff-#{System.unique_integer([:positive])}"
 
       on_exit(fn ->
-        # Restore manual mode and clean up the test session row.
-        Ecto.Adapters.SQL.Sandbox.mode(Normandy.TestRepo, :manual)
+        # Delete the committed session row while the repo is still in :auto mode:
+        # in :manual this process has no connection, and the row would outlive the
+        # test (ResumeReaperIntegrationTest reaps every eager row it finds).
+        import Ecto.Query
 
-        try do
-          import Ecto.Query
-
-          Normandy.TestRepo.delete_all(
-            from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
-              where: s.session_id == ^sid
-            )
+        Normandy.TestRepo.delete_all(
+          from(s in Normandy.Behaviours.SessionStore.Postgres.Schemas.Session,
+            where: s.session_id == ^sid
           )
-        rescue
-          _ -> :ok
-        end
+        )
 
-        Ecto.Adapters.SQL.Sandbox.checkin(Normandy.TestRepo)
+        Sandbox.mode(Normandy.TestRepo, :manual)
+        Sandbox.checkin(Normandy.TestRepo)
       end)
 
       {:ok, sid: sid}
@@ -111,24 +114,25 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     sup_name = :"handoff_sup_#{System.unique_integer([:positive])}"
 
     {:ok, _} = HReg.start_link(name: reg_name)
-    {:ok, sup} = HSup.start_link(name: sup_name)
+    {:ok, _} = HSup.start_link(name: sup_name)
     {:ok, cat} = Catalog.start_link([])
 
-    base = Normandy.Test.TurnConfig.build()
+    base = TurnConfig.build()
 
-    # Register the supplement (tool_registry + client_builder + hooks).
+    # Register the supplement (toolset + client_builder + hooks).
     :ok =
       Catalog.put(cat, "k", %{
-        tool_registry: base.tool_registry,
+        toolset: base.toolset,
         before_hooks: [],
         after_hooks: [],
-        client_builder: fn _ -> base.client end
+        # A capture of a test/support function: the peer can call it.
+        client_builder: &HandoffStubs.client/1
       })
 
     # Build and persist an :eager config template in Postgres.
     tmpl =
       base
-      |> Normandy.Agents.ConfigTemplate.from_config("k", :eager)
+      |> ConfigTemplate.from_config("k", :eager)
       |> put_in([:behaviours_refs, :credential], {Normandy.Test.StubCreds, []})
 
     :ok = PGStore.save_config_template(repo, sid, tmpl)
@@ -140,7 +144,7 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
       max_iterations: 5
     }
 
-    :ok = PGStore.save_turn_state(repo, sid, steering)
+    :ok = PGStore.save_turn_state(repo, sid, steering, true)
 
     # Verify the seeds are in Postgres.
     assert match?({:ok, %{template_id: "k"}}, PGStore.load_config_template(repo, sid)),
@@ -190,17 +194,15 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
 
     # Stub call_llm so the resumed turn finalizes without hitting a real LLM.
     handlers = %{
-      Normandy.Agents.BaseAgent.non_streaming_handlers()
-      | call_llm: fn _config, _state, _req ->
-          %Normandy.Test.TurnConfig.Resp{content: "resumed-done", tool_calls: nil}
-        end
+      AgentHandlers.non_streaming_handlers()
+      | call_llm: &HandoffStubs.call_llm/3
     }
 
     session_opts = [
       session_id: sid,
       store: {PGStore, repo},
       registry: {HReg, reg_name},
-      supervisor: sup,
+      supervisor: sup_name,
       supervisor_mod: HSup,
       template_provider: {Catalog, cat},
       template_id: "k",
@@ -211,7 +213,9 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
     # Start the Turn.Server somewhere in the cluster via HSup.start_server.
     # Horde decides which node; we don't control placement here.
     # The server reconstructs its config from Postgres (thin opts path).
-    {:ok, server_pid} = HSup.start_server(sup, session_opts)
+    # The session-only keys are Turn.Session.new/1's; Turn.Server.start_link/1 rejects them.
+    server_opts = Keyword.drop(session_opts, [:supervisor, :supervisor_mod, :template_id])
+    {:ok, server_pid} = HSup.start_server(sup_name, server_opts)
     assert is_pid(server_pid)
 
     # Allow the eager resume to complete on wherever the server is hosted.
@@ -227,7 +231,11 @@ defmodule Normandy.Agents.Turn.EagerHandoffDistributedTest do
         assert wait_until(fn -> HReg.whereis(reg_name, sid) == :none end, 300),
                "Horde did not drop the session registration after peer stopped"
 
-        result = Normandy.Agents.Turn.Session.run(session_opts, "continue")
+        result =
+          Normandy.Agents.Turn.Session.run(
+            Normandy.Agents.Turn.Session.new(session_opts),
+            "continue"
+          )
 
         assert match?({:ok, _}, result),
                "expected lazy rehydration to succeed after peer death, got: #{inspect(result)}"

@@ -1,0 +1,34 @@
+# e2e/fault_client.ex — a Model client that fails chosen converse calls with a 529 and passes
+# the rest to a real ClaudioAdapter. Loaded with Code.require_file (protocols are not
+# consolidated under MIX_ENV=test, so this defimpl takes effect at runtime).
+defmodule E2E.FaultClient do
+  @moduledoc false
+  # options.provider names the wrapped client's provider (Normandy.Telemetry.Provider):
+  # the run and llm_call spans read it from this struct, not from `inner`.
+  defstruct [:inner, :counter, options: %{}, faults: MapSet.new()]
+
+  def new(%Normandy.LLM.ClaudioAdapter{} = inner, fault_indices) do
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    %__MODULE__{inner: inner, counter: counter, faults: MapSet.new(fault_indices), options: %{provider: Normandy.Telemetry.Provider.provider(inner)}}
+  end
+
+  def converse_calls(%__MODULE__{counter: c}), do: Agent.get(c, & &1)
+end
+
+defimpl Normandy.Agents.Model, for: E2E.FaultClient do
+  alias Normandy.Agents.Model
+
+  def converse(c, request, opts) do
+    index = Agent.get_and_update(c.counter, &{&1 + 1, &1 + 1})
+
+    if MapSet.member?(c.faults, index) do
+      IO.puts("  [fault] converse call #{index}: injected 529 overloaded")
+      {:error, Normandy.LLMError.new(type: :overloaded, status: 529, retryable?: true, detail: "injected by E2E.FaultClient")}
+    else
+      Model.converse(c.inner, request, opts)
+    end
+  end
+
+  # Streams are passed through uncounted: scenario 06 injects faults into converse only.
+  def stream(c, request, opts), do: Model.stream(c.inner, request, opts)
+end

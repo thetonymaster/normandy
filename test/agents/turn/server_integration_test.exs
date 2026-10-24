@@ -1,29 +1,24 @@
 defmodule Normandy.Agents.Turn.ServerIntegrationTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
-  alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Behaviours.SessionRegistry.Native
+  alias Normandy.Behaviours.SessionStore.InMemory
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ToolCall
+  alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
 
   defmodule Resp do
     defstruct content: "", tool_calls: nil
   end
 
-  # Parameterized fake tool: name is configurable; run/1 returns {:ok, "charged"}.
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:name, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.Turn.ServerIntegrationTest.FakeTool do
-    def tool_name(t), do: t.name
-    def tool_description(_), do: "fake billing tool"
-    def input_schema(_), do: %{}
-    def run(_t), do: {:ok, "charged"}
+  # Memory encodes what it stores (AgentMemory.Entry's `wire`), so the fake answer
+  # needs an encoding like any output schema.
+  defimpl Normandy.Components.BaseIOSchema, for: Resp do
+    def to_json(resp), do: resp.content
+    def get_schema(_resp), do: %{}
   end
 
   # Builds a BaseAgentConfig with billing tool + Ruleset policy requiring approval for "billing".
@@ -35,10 +30,10 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       output_schema: %Resp{},
       client: nil,
       model: "test",
-      memory: Normandy.Components.AgentMemory.new_memory(),
+      memory: AgentMemory.new_memory(),
       prompt_specification: %Normandy.Components.PromptSpecification{},
-      initial_memory: Normandy.Components.AgentMemory.new_memory(),
-      tool_registry: Normandy.Tools.Registry.new(tools),
+      initial_memory: AgentMemory.new_memory(),
+      toolset: Toolset.new(tools),
       behaviours: %Normandy.Behaviours.Config{
         policy:
           {Normandy.Behaviours.PolicyEngine.Ruleset,
@@ -67,7 +62,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
       end
     end
 
-    %{Normandy.Agents.BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
   end
 
   # Poll until Native.whereis returns :none, up to ~1s in 20ms increments.
@@ -106,10 +101,13 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     ]
 
     # Phase 1: park → approve → finalize
-    spawn(fn -> send(parent, {:result, Turn.Session.run(opts, "please charge")}) end)
+    spawn(fn ->
+      send(parent, {:result, Turn.Session.run(Turn.Session.new(opts), "please charge")})
+    end)
+
     assert_receive {:event, :awaiting_approval, %{parked: 1}}, 2_000
 
-    :ok = Turn.Session.approve(opts, %{"pk1" => :approve})
+    :ok = Turn.Session.approve(Turn.Session.new(opts), %{"pk1" => :approve})
     assert_receive {:result, {:ok, %Resp{content: "done"}}}, 2_000
 
     # Phase 2: let server passivate after idle timeout
@@ -117,7 +115,7 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     case Native.whereis(reg, "round-trip") do
       {:ok, p} ->
         ref = Process.monitor(p)
-        assert_receive {:DOWN, ^ref, _, _, :normal}, 1_000
+        assert_receive {:DOWN, ^ref, _, _, {:shutdown, :passivated}}, 1_000
 
       :none ->
         :ok
@@ -128,6 +126,6 @@ defmodule Normandy.Agents.Turn.ServerIntegrationTest do
     assert :none = Native.whereis(reg, "round-trip")
 
     # Phase 3: rehydrate from the store and continue the same conversation.
-    assert {:ok, _} = Turn.Session.run(opts, "follow up")
+    assert {:ok, _} = Turn.Session.run(Turn.Session.new(opts), "follow up")
   end
 end

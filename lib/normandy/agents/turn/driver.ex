@@ -1,27 +1,37 @@
 defmodule Normandy.Agents.Turn.Driver do
-  @moduledoc """
-  Generic synchronous interpreter for the pure `Normandy.Agents.Turn` core.
-
-  Drives a turn to a stop by feeding `:start` into `Turn.step/2`, performing each
-  returned effect via an injected `%Handlers{}` set, and feeding the resulting
-  event back into `step/2` until the turn reaches a terminal effect. The driver
-  owns FSM stepping and `acc` threading; the handlers own all side effects (LLM
-  calls, tool dispatch, memory, guards, telemetry) and return the updated `acc`.
-
-  `acc` is opaque to the driver — the production shells pass the running
-  `%BaseAgentConfig{}` (the memory accumulator). This lets one driver serve the
-  non-streaming and streaming production paths (and future shells) with different
-  handler sets, the same way `Turn.Inline` serves the test/library path.
-
-  By design, `step/2` always places the single blocking/terminal effect last in
-  its effect list, so the driver performs the leading `:emit_event` /
-  `:append_message` effects in order, then acts on the terminal one.
-  """
+  @moduledoc false
+  # Generic synchronous interpreter for the pure `Normandy.Agents.Turn` core.
+  #
+  # Drives a turn to a stop by feeding `:start` into `Turn.step/2`, performing each
+  # returned effect via an injected `%Handlers{}` set, and feeding the resulting
+  # event back into `step/2` until the turn reaches a terminal effect. The driver
+  # owns FSM stepping and `acc` threading; the handlers own all side effects (LLM
+  # calls, tool dispatch, memory, guards, telemetry) and return the updated `acc`.
+  #
+  # `acc` is opaque to the driver — the production shells pass the running
+  # `%BaseAgentConfig{}` (the memory accumulator). This lets one driver serve the
+  # non-streaming and streaming production paths with different handler sets.
+  # `Turn.Inline` is the test shell over the same core; `Turn.Server` the durable one.
+  #
+  # By design, `step/2` always places the single blocking/terminal effect last in
+  # its effect list, so the driver performs the leading `:emit_event` /
+  # `:append_message` effects in order, then acts on the terminal one.
 
   alias Normandy.Agents.Turn
 
   defmodule Handlers do
-    @moduledoc "The injected side-effecting functions the driver consults per effect."
+    @moduledoc """
+    The injected side-effecting functions the driver consults per effect.
+
+    `Normandy.Agents.BaseAgent`'s `validate` makes the blank-answer check (a blank chat
+    answer is the `:invalid_output` `Normandy.LLMError`) and a chat agent's fallback to
+    its tool round's text. A custom `validate` makes neither: a blank answer succeeds.
+    The shell (`BaseAgent.run/3`, `stream/3`, `Turn.Server`) marks the run `:stop`
+    `answer_source: :tool_round` around any `validate`, a custom one included, whenever
+    it turns a blank `chat_message` into a non-blank one.
+    """
+
+    alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
 
     @type acc :: term()
     @type t :: %__MODULE__{
@@ -35,6 +45,15 @@ defmodule Normandy.Agents.Turn.Driver do
             emit: (acc(), atom(), map() -> any())
           }
     defstruct [:call_llm, :dispatch_tools, :convert, :validate, :guard, :append, :compact, :emit]
+
+    @doc """
+    `Normandy.Agents.BaseAgent`'s set: the one `Turn.Server` (and `Turn.Session`) uses when
+    `:handlers` is `nil`. Build a custom set from it, replacing only what you need:
+
+        %{Normandy.Agents.Turn.Driver.Handlers.default() | validate: my_validate}
+    """
+    @spec default() :: t()
+    def default, do: AgentHandlers.non_streaming_handlers()
   end
 
   @spec drive(Turn.State.t(), Handlers.t(), term()) :: {term(), Turn.State.t()}
@@ -45,6 +64,7 @@ defmodule Normandy.Agents.Turn.Driver do
 
   defp run(acc, state, [], _handlers), do: {acc, state}
 
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp run(acc, state, [effect | rest], handlers) do
     case effect do
       {:emit_event, name, meta} ->
@@ -87,6 +107,11 @@ defmodule Normandy.Agents.Turn.Driver do
 
       {:finalize, _value} ->
         {acc, state}
+
+      # A turn the core fails with a Normandy error (a final call that keeps pausing,
+      # a :pause_turn LLMError) raises it; run/3 and stream/3 return it.
+      {:fail, %Normandy.LLMError{} = error} ->
+        raise error
 
       {:fail, reason} ->
         raise "Turn FSM reached :failed unexpectedly: #{inspect(reason)}"

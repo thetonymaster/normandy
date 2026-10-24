@@ -2,19 +2,15 @@ defmodule Normandy.Coordination.Pattern do
   @moduledoc """
   Pattern matching utilities for agent results.
 
-  Provides helper functions and macros to make working with agent results
-  more ergonomic and expressive.
+  Provides helper functions to make working with agent results more ergonomic.
 
   ## Examples
 
-      # Extract successful results
-      {:ok, value} = Pattern.ok(agent_result)
+      # Extract the value, or a default (never raises)
+      value = Pattern.ok_value(agent_result, default: "fallback")
 
-      # Extract error reasons
-      {:error, reason} = Pattern.error(agent_result)
-
-      # Safe extraction with default
-      value = Pattern.ok!(agent_result, default: "fallback")
+      # Extract the error reason, or a default (never raises)
+      reason = Pattern.error_reason(agent_result, default: "no error")
 
       # Check result type
       true = Pattern.ok?(agent_result)
@@ -31,10 +27,16 @@ defmodule Normandy.Coordination.Pattern do
       final = result
         |> Pattern.map_ok(&String.trim/1)
         |> Pattern.map_ok(&String.upcase/1)
-        |> Pattern.ok!(default: "EMPTY")
+        |> Pattern.ok_value(default: "EMPTY")
   """
 
+  alias Normandy.Options
+
   @type result :: {:ok, term()} | {:error, term()}
+
+  @default_opts_schema NimbleOptions.new!(
+                         default: [type: :any, doc: "Returned when the result does not match."]
+                       )
 
   @doc """
   Returns true if the result is `{:ok, _}`.
@@ -67,82 +69,60 @@ defmodule Normandy.Coordination.Pattern do
   def error?(_), do: false
 
   @doc """
-  Extracts the value from an `{:ok, value}` tuple.
-
-  Returns the original result if not successful.
-
-  ## Examples
-
-      iex> Normandy.Coordination.Pattern.ok({:ok, "value"})
-      {:ok, "value"}
-
-      iex> Normandy.Coordination.Pattern.ok({:error, "reason"})
-      {:error, "reason"}
-  """
-  @spec ok(result()) :: result()
-  def ok(result), do: result
-
-  @doc """
-  Extracts the value from an `{:ok, value}` tuple or returns a default.
+  Extracts the value from an `{:ok, value}` tuple, or returns the `:default` (`nil` when unset). Never raises.
 
   ## Options
 
-  - `:default` - Value to return if result is not `{:ok, value}` (default: nil)
+  #{Options.docs(@default_opts_schema)}
 
   ## Examples
 
-      iex> Normandy.Coordination.Pattern.ok!({:ok, "value"}, [])
+      iex> Normandy.Coordination.Pattern.ok_value({:ok, "value"}, [])
       "value"
 
-      iex> Normandy.Coordination.Pattern.ok!({:error, "reason"}, default: "fallback")
+      iex> Normandy.Coordination.Pattern.ok_value({:error, "reason"}, default: "fallback")
       "fallback"
 
-      iex> Normandy.Coordination.Pattern.ok!({:error, "reason"}, [])
+      iex> Normandy.Coordination.Pattern.ok_value({:error, "reason"}, [])
       nil
   """
-  @spec ok!(result(), keyword()) :: term()
-  def ok!(result, opts \\ [])
-  def ok!({:ok, value}, _opts), do: value
-  def ok!(_result, opts), do: Keyword.get(opts, :default)
+  @spec ok_value(result(), keyword()) :: term()
+  def ok_value(result, opts \\ []) do
+    opts = Options.validate!(opts, @default_opts_schema, {__MODULE__, :ok_value, 2})
+
+    case result do
+      {:ok, value} -> value
+      _other -> Keyword.get(opts, :default)
+    end
+  end
 
   @doc """
-  Extracts the error reason from an `{:error, reason}` tuple.
-
-  Returns the original result if not an error.
-
-  ## Examples
-
-      iex> Normandy.Coordination.Pattern.error({:error, "reason"})
-      {:error, "reason"}
-
-      iex> Normandy.Coordination.Pattern.error({:ok, "value"})
-      {:ok, "value"}
-  """
-  @spec error(result()) :: result()
-  def error(result), do: result
-
-  @doc """
-  Extracts the error reason from an `{:error, reason}` tuple or returns a default.
+  Extracts the reason from an `{:error, reason}` tuple, or returns the `:default` (`nil` when unset). Never raises.
 
   ## Options
 
-  - `:default` - Value to return if result is not `{:error, reason}` (default: nil)
+  #{Options.docs(@default_opts_schema)}
 
   ## Examples
 
-      iex> Normandy.Coordination.Pattern.error!({:error, "reason"}, [])
+      iex> Normandy.Coordination.Pattern.error_reason({:error, "reason"}, [])
       "reason"
 
-      iex> Normandy.Coordination.Pattern.error!({:ok, "value"}, default: "no error")
+      iex> Normandy.Coordination.Pattern.error_reason({:ok, "value"}, default: "no error")
       "no error"
 
-      iex> Normandy.Coordination.Pattern.error!({:ok, "value"}, [])
+      iex> Normandy.Coordination.Pattern.error_reason({:ok, "value"}, [])
       nil
   """
-  @spec error!(result(), keyword()) :: term()
-  def error!(result, opts \\ [])
-  def error!({:error, reason}, _opts), do: reason
-  def error!(_result, opts), do: Keyword.get(opts, :default)
+  @spec error_reason(result(), keyword()) :: term()
+  def error_reason(result, opts \\ []) do
+    opts = Options.validate!(opts, @default_opts_schema, {__MODULE__, :error_reason, 2})
+
+    case result do
+      {:error, reason} -> reason
+      _other -> Keyword.get(opts, :default)
+    end
+  end
 
   @doc """
   Filters a list of results to only include successful ones.
@@ -304,7 +284,7 @@ defmodule Normandy.Coordination.Pattern do
     successes = filter_ok(results)
     errors = filter_errors(results)
 
-    if length(successes) > 0 do
+    if successes != [] do
       {:ok, successes}
     else
       {:error, errors}
@@ -334,7 +314,7 @@ defmodule Normandy.Coordination.Pattern do
   def all_ok(results) when is_list(results) do
     errors = filter_errors(results)
 
-    if length(errors) == 0 do
+    if errors == [] do
       {:ok, filter_ok(results)}
     else
       {:error, errors}

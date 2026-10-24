@@ -3,6 +3,7 @@ defmodule Normandy.Agents.DispatchTest do
 
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Dispatch.Pipeline
+  alias Normandy.Components.BaseIOSchema
 
   describe "default_pipeline/0" do
     test "returns a Pipeline with allow-all policy and no-op budget/hooks" do
@@ -19,34 +20,8 @@ defmodule Normandy.Agents.DispatchTest do
 
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
-  alias Normandy.Tools.Registry
-
-  defmodule FakeTool do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-  end
-
-  defimpl Normandy.Tools.BaseTool, for: Normandy.Agents.DispatchTest.FakeTool do
-    def tool_name(_), do: "weather"
-    def tool_description(_), do: "fake"
-    def input_schema(_), do: %{}
-    def run(tool), do: {:ok, "weather in #{tool.city}"}
-  end
-
-  defmodule FakeToolWithPrepare do
-    use Normandy.Schema
-
-    schema do
-      field(:city, :string)
-    end
-
-    def prepare_input(tool, input) do
-      %{tool | city: String.upcase(input["city"] || "")}
-    end
-  end
+  alias Normandy.Test.FakeTool
+  alias Normandy.Tools.Toolset
 
   describe "to_tool_call/1" do
     test "passes a %ToolCall{} with map input through unchanged" do
@@ -54,11 +29,11 @@ defmodule Normandy.Agents.DispatchTest do
       assert Dispatch.to_tool_call(call) == call
     end
 
-    test "normalizes a %ToolCall{} with nil or non-map input to a map" do
+    test "normalizes nil input to a map and keeps non-object input for classify/3 to refuse" do
       assert Dispatch.to_tool_call(%ToolCall{id: "c1a", name: "weather", input: nil}).input == %{}
 
       assert Dispatch.to_tool_call(%ToolCall{id: "c1b", name: "weather", input: [1, 2, 3]}).input ==
-               %{}
+               [1, 2, 3]
 
       assert Dispatch.to_tool_call(%ToolCall{
                id: "c1c",
@@ -74,29 +49,20 @@ defmodule Normandy.Agents.DispatchTest do
                %ToolCall{id: "c2", name: "weather", input: %{"city" => "LA"}}
     end
 
-    test "decodes a JSON-string input and degrades non-map input to %{}" do
+    test "decodes a JSON-string input and keeps non-object input as it came" do
       raw = %{"id" => "c3", "name" => "weather", "input" => ~s({"city":"SF"})}
       assert Dispatch.to_tool_call(raw).input == %{"city" => "SF"}
 
       bad = %{"id" => "c4", "name" => "weather", "input" => [1, 2, 3]}
-      assert Dispatch.to_tool_call(bad).input == %{}
-    end
-  end
+      assert Dispatch.to_tool_call(bad).input == [1, 2, 3]
 
-  describe "prepare_tool/2" do
-    test "maps known string keys onto struct fields and drops unknown keys" do
-      prepared = Dispatch.prepare_tool(%FakeTool{}, %{"city" => "NYC", "bogus" => 1})
-      assert prepared == %FakeTool{city: "NYC"}
-    end
-
-    test "delegates to the tool's prepare_input/2 when exported" do
-      prepared = Dispatch.prepare_tool(%FakeToolWithPrepare{}, %{"city" => "nyc"})
-      assert prepared == %FakeToolWithPrepare{city: "NYC"}
+      truncated = %{"id" => "c5", "name" => "weather", "input" => ~s({"city":"S)}
+      assert Dispatch.to_tool_call(truncated).input == ~s({"city":"S)
     end
   end
 
   defp config_with_tools(tools) do
-    %{name: "test-agent", tool_registry: Registry.new(tools)}
+    %{name: "test-agent", toolset: Toolset.new(tools)}
   end
 
   describe "dispatch_one/3 happy path" do
@@ -122,7 +88,7 @@ defmodule Normandy.Agents.DispatchTest do
       assert %ToolResult{tool_call_id: "c9", output: "weather in LA", is_error: false} = result
     end
 
-    test "a %ToolCall{} with nil input is normalized, not crashed, before prepare_tool" do
+    test "a %ToolCall{} with nil input is normalized, not crashed, before validation" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c10", name: "weather", input: nil}
 
@@ -142,8 +108,26 @@ defmodule Normandy.Agents.DispatchTest do
       assert %ToolResult{
                tool_call_id: "c5",
                is_error: true,
-               output: %{error: "Tool 'nope' not found in registry"}
+               output: %{error: "No tool named 'nope'. This agent has no tools."}
              } = result
+    end
+
+    test "the result names the available tools, sorted, at most 20" do
+      config = config_with_tools([%FakeTool{name: "weather"}, %FakeTool{name: "billing"}])
+      call = %ToolCall{id: "c5b", name: "wether", input: %{}}
+
+      assert Dispatch.dispatch_one(config, call, Dispatch.default_pipeline()).output == %{
+               error: "No tool named 'wether'. Available tools: billing, weather."
+             }
+
+      name = &"t#{String.pad_leading(Integer.to_string(&1), 2, "0")}"
+      many = config_with_tools(Enum.map(23..1//-1, &%FakeTool{name: name.(&1)}))
+
+      assert Dispatch.dispatch_one(many, call, Dispatch.default_pipeline()).output == %{
+               error:
+                 "No tool named 'wether'. Available tools: " <>
+                   Enum.map_join(1..20, ", ", name) <> ", and 3 more."
+             }
     end
   end
 
@@ -161,20 +145,65 @@ defmodule Normandy.Agents.DispatchTest do
 
       result = Dispatch.dispatch_one(config, call, pipeline)
 
-      assert %ToolResult{
-               tool_call_id: "c6",
-               is_error: true,
-               output: %{
-                 error: "weather tool blocked",
-                 rule_id: "R-7",
-                 rationale: "shares state with billing",
-                 denied: true,
-                 pending_approval: false
-               }
-             } = result
+      assert %ToolResult{tool_call_id: "c6", is_error: true, output: output} = result
+
+      assert output == %{
+               error:
+                 "This call was blocked by policy (weather tool blocked). " <>
+                   "Do not retry it; continue without it or tell the user.",
+               rule_id: "R-7",
+               rationale: "shares state with billing",
+               denied: true
+             }
     end
 
-    test "needs_approval → tagged denial result with pending_approval: true" do
+    # PolicyEngine.Ruleset's default-action deny is %{reason: nil, rule_id: nil,
+    # rationale: nil} (policy_engine_test.exs); the model used to see "error": null.
+    test "a deny with nil reason, rule_id and rationale sends no null" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c6b", name: "weather", input: %{"city" => "NYC"}}
+      deny = fn _config, _call, _inv -> {:deny, %{reason: nil, rule_id: nil, rationale: nil}} end
+      pipeline = %{Dispatch.default_pipeline() | policy_fn: deny}
+
+      result = Dispatch.dispatch_one(config, call, pipeline)
+
+      assert result.output == %{
+               error:
+                 "This call was blocked by policy. Do not retry it; continue without it or tell the user.",
+               denied: true
+             }
+
+      assert [%{content: content, is_error: true}] = BaseIOSchema.to_json(result)
+
+      assert Jason.decode!(content) == %{
+               "error" =>
+                 "This call was blocked by policy. Do not retry it; continue without it or tell the user.",
+               "denied" => true
+             }
+    end
+
+    test "a policy that raises, exits or throws is a denial that does not show the term" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c8", name: "weather", input: %{"city" => "NYC"}}
+      secret = %{api_key: "sk-policy-secret"}
+
+      for {policy, rationale} <- [
+            # The KeyError carries the secret map as its term, as Map.fetch!/2 would.
+            {fn _, _, _ -> raise KeyError, key: :missing, term: secret end, "KeyError"},
+            {fn _, _, _ -> exit({:timeout, secret}) end, "{:timeout, ...}"},
+            {fn _, _, _ -> throw(secret) end, "a map"}
+          ] do
+        pipeline = %{Dispatch.default_pipeline() | policy_fn: policy}
+
+        assert %ToolResult{is_error: true, output: %{denied: true} = output} =
+                 Dispatch.dispatch_one(config, call, pipeline)
+
+        refute inspect(output) =~ "sk-policy-secret"
+        assert output.rationale =~ rationale
+      end
+    end
+
+    test "needs_approval → a denial saying approval is not available, no pending_approval" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c7", name: "weather", input: %{"city" => "NYC"}}
 
@@ -186,11 +215,15 @@ defmodule Normandy.Agents.DispatchTest do
 
       result = Dispatch.dispatch_one(config, call, pipeline)
 
-      assert %ToolResult{
-               tool_call_id: "c7",
-               is_error: true,
-               output: %{denied: true, pending_approval: true, rationale: "high-cost op"}
-             } = result
+      assert %ToolResult{tool_call_id: "c7", is_error: true, output: output} = result
+
+      assert output == %{
+               error:
+                 "This action needs human approval, which is not available in this run. " <>
+                   "Do not retry it; tell the user it requires approval.",
+               rationale: "high-cost op",
+               denied: true
+             }
     end
   end
 
@@ -229,6 +262,30 @@ defmodule Normandy.Agents.DispatchTest do
       assert result.output == "weather in Boston"
     end
 
+    test "a hook cannot change which call a result answers" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c12", name: "weather", input: %{"city" => "NYC"}}
+
+      for pipeline <- [
+            %{
+              Dispatch.default_pipeline()
+              | before_hooks: [fn _c, c -> {:cont, %{c | id: "rewritten"}} end]
+            },
+            %{
+              Dispatch.default_pipeline()
+              | before_hooks: [
+                  fn _c, _call -> {:halt, %ToolResult{tool_call_id: "other", output: "no"}} end
+                ]
+            },
+            %{
+              Dispatch.default_pipeline()
+              | after_hooks: [fn _c, _call, r -> %{r | tool_call_id: "other"} end]
+            }
+          ] do
+        assert %ToolResult{tool_call_id: "c12"} = Dispatch.dispatch_one(config, call, pipeline)
+      end
+    end
+
     test "after-hook transforms the result" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c11", name: "weather", input: %{"city" => "NYC"}}
@@ -254,8 +311,26 @@ defmodule Normandy.Agents.DispatchTest do
 
       result = Dispatch.dispatch_one(config, call, pipeline)
 
-      assert %ToolResult{tool_call_id: "c12", is_error: true, output: %{denied: true}} = result
-      assert result.output.error =~ "budget check failed"
+      assert %ToolResult{tool_call_id: "c12", is_error: true} = result
+
+      assert result.output == %{
+               error:
+                 "The tool budget is used up; the tool was not run. Answer with what you have.",
+               denied: true
+             }
+
+      refute inspect(result.output) =~ "cap_exceeded"
+    end
+
+    test "a budget reason that is text is shown; any other term is not" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c12b", name: "weather", input: %{"city" => "NYC"}}
+      over = fn _config, _call -> {:error, "daily cap of 50 calls reached"} end
+      pipeline = %{Dispatch.default_pipeline() | budget_check_fn: over}
+
+      assert Dispatch.dispatch_one(config, call, pipeline).output.error ==
+               "The tool budget is used up (daily cap of 50 calls reached); " <>
+                 "the tool was not run. Answer with what you have."
     end
 
     test "budget_record_fn is called with the success result" do

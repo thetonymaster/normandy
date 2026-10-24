@@ -1,12 +1,13 @@
 defmodule NormandyTest.BaseAgentsTest do
-  alias Normandy.Agents.BaseAgentOutputSchema
-  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
-  alias NormandyTest.Support.ContextProvider
+  alias Normandy.Agents.BaseAgentInputSchema
+  alias Normandy.Agents.BaseAgentOutputSchema
+  alias Normandy.Components.AgentMemory
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.Message
   alias Normandy.Components.PromptSpecification
-  alias Normandy.Components.AgentMemory
-  alias Normandy.Agents.BaseAgent
+  alias NormandyTest.Support.ContextProvider
   use ExUnit.Case, async: true
 
   setup do
@@ -29,7 +30,7 @@ defmodule NormandyTest.BaseAgentsTest do
     assert Map.get(agent, :client) == %NormandyTest.Support.ModelMockup{}
     assert Map.get(agent, :model) == "claude-haiku-4-5-20251001"
     assert Map.get(agent, :temperature) == 0.9
-    assert Map.get(agent, :max_tokens) == nil
+    assert Map.get(agent, :max_tokens) == 16_000
   end
 
   test "reset memory", %{agent: agent} do
@@ -48,28 +49,20 @@ defmodule NormandyTest.BaseAgentsTest do
 
     response = BaseAgent.get_response(agent)
 
-    assert response == %Normandy.Agents.BaseAgentOutputSchema{}
+    assert response == %Normandy.Agents.BaseAgentOutputSchema{chat_message: "stub answer"}
   end
 
-  test "get context provider", %{agent: agent = %BaseAgentConfig{prompt_specification: prompt}} do
-    mock_provider = %ContextProvider{}
+  test "fetch_context_provider/2 and fetch_context_provider!/2", %{agent: agent} do
+    provider = %ContextProvider{}
+    agent = BaseAgent.register_context_provider(agent, :ctx, provider)
 
-    context_providers =
-      prompt
-      |> Map.get(:context_providers)
-      |> Map.put(:ctx, mock_provider)
+    assert {:ok, ^provider} = BaseAgent.fetch_context_provider(agent, :ctx)
+    assert :error = BaseAgent.fetch_context_provider(agent, :not_exists)
+    assert BaseAgent.fetch_context_provider!(agent, :ctx) == provider
 
-    prompt = Map.put(prompt, :context_providers, context_providers)
-    agent = Map.put(agent, :prompt_specification, prompt)
-
-    ctx = BaseAgent.get_context_provider(agent, :ctx)
-    assert ctx == mock_provider
-
-    assert_raise Normandy.NonExistentContextProvider,
-                 "context provider :not_exists does not exist",
-                 fn ->
-                   BaseAgent.get_context_provider(agent, :not_exists)
-                 end
+    assert_raise Normandy.ContextProviderNotFoundError,
+                 "no context provider :not_exists; registered: [:ctx]",
+                 fn -> BaseAgent.fetch_context_provider!(agent, :not_exists) end
   end
 
   test "register context provider", %{agent: agent} do
@@ -107,51 +100,53 @@ defmodule NormandyTest.BaseAgentsTest do
 
   test "run", %{agent: agent} do
     mock_input = %BaseAgentInputSchema{chat_message: "hello"}
-    mock_output = %BaseAgentOutputSchema{}
+    mock_output = %BaseAgentOutputSchema{chat_message: "stub answer"}
 
-    {agent, response} = BaseAgent.run(agent, mock_input)
+    {agent, response} = BaseAgent.run!(agent, mock_input)
     assert response == mock_output
     assert Map.get(agent, :current_user_input) == mock_input
   end
 
-  test "rich base agent io str and rich" do
+  test "an io_schema struct encodes to its JSON" do
     test_io = %Normandy.Agents.BaseAgentInputSchema{chat_message: "chat message"}
 
-    assert Normandy.Components.BaseIOSchema.__str__(test_io) ==
-             "{\"chat_message\":\"chat message\"}"
-
-    assert Normandy.Components.BaseIOSchema.__rich__(test_io) != nil
+    assert BaseIOSchema.to_json(test_io) == ~s({"chat_message":"chat message"})
   end
 
   describe "unwrap_llm_content/1" do
     test "unwraps JSON with chat_message key" do
       content = "{\"chat_message\": \"actual text\"}"
-      assert BaseAgent.unwrap_llm_content(content) == "actual text"
+      assert AgentMemory.unwrap_llm_content(content) == "actual text"
     end
 
     test "returns original content if not JSON" do
       content = "just some text"
-      assert BaseAgent.unwrap_llm_content(content) == "just some text"
+      assert AgentMemory.unwrap_llm_content(content) == "just some text"
     end
 
     test "returns original content if JSON doesn't have chat_message" do
       content = "{\"other\": \"stuff\"}"
-      assert BaseAgent.unwrap_llm_content(content) == "{\"other\": \"stuff\"}"
+      assert AgentMemory.unwrap_llm_content(content) == "{\"other\": \"stuff\"}"
     end
 
     test "returns original if not a string" do
-      assert BaseAgent.unwrap_llm_content(%{not: "a string"}) == %{not: "a string"}
+      assert AgentMemory.unwrap_llm_content(%{not: "a string"}) == %{not: "a string"}
     end
+  end
+
+  def handle_event(event, measurements, metadata, {parent, ref, name}) do
+    if metadata[:agent_name] == name, do: send(parent, {ref, event, measurements, metadata})
   end
 
   describe "telemetry" do
     test "emits telemetry events during run", %{agent: agent} do
       parent = self()
       ref = make_ref()
-
-      handler = fn event, measurements, metadata, _config ->
-        send(parent, {ref, event, measurements, metadata})
-      end
+      # Telemetry is global and async tests run agents at the same time: the
+      # handler keeps only this agent's events, by a name no other test uses.
+      name = "telemetry-test-#{System.unique_integer([:positive])}"
+      agent = %{agent | name: name}
+      handler_id = "base-agent-telemetry-#{inspect(ref)}"
 
       events = [
         [:normandy, :agent, :run, :start],
@@ -160,24 +155,47 @@ defmodule NormandyTest.BaseAgentsTest do
         [:normandy, :agent, :llm_call, :stop]
       ]
 
-      :telemetry.attach_many("test-handler", events, handler, nil)
+      :telemetry.attach_many(handler_id, events, &__MODULE__.handle_event/4, {parent, ref, name})
 
       try do
-        BaseAgent.run(agent, "hello")
+        BaseAgent.run!(agent, "hello")
 
         # Check for run events
-        assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{model: _}}
-        assert_receive {^ref, [:normandy, :agent, :run, :stop], %{duration: _}, %{model: _}}
+        assert_receive {^ref, [:normandy, :agent, :run, :start], _ms, %{agent_name: ^name}}
+
+        assert_receive {^ref, [:normandy, :agent, :run, :stop], %{duration: _},
+                        %{agent_name: ^name}}
 
         # Check for LLM call events
         assert_receive {^ref, [:normandy, :agent, :llm_call, :start], _ms,
-                        %{model: _, iteration: 1}}
+                        %{agent_name: ^name, iteration: 1}}
 
         assert_receive {^ref, [:normandy, :agent, :llm_call, :stop], %{duration: _},
-                        %{model: _, iteration: 1, has_tool_calls: false, tool_call_count: 0}}
+                        %{
+                          agent_name: ^name,
+                          iteration: 1,
+                          has_tool_calls: false,
+                          tool_call_count: 0
+                        }}
       after
-        :telemetry.detach("test-handler")
+        :telemetry.detach(handler_id)
       end
+    end
+  end
+
+  describe "temperature (Opus 4.7+ reject sampling parameters)" do
+    test "init/1 without :temperature leaves it nil" do
+      agent =
+        BaseAgent.init(%{
+          client: %NormandyTest.Support.ModelMockup{},
+          model: "claude-opus-5-5"
+        })
+
+      assert agent.temperature == nil
+    end
+
+    test "BaseAgentConfig defaults temperature to nil" do
+      assert %BaseAgentConfig{}.temperature == nil
     end
   end
 end

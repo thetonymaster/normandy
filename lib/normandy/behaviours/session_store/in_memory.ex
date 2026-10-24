@@ -2,8 +2,7 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @moduledoc """
   Process-backed in-memory `SessionStore` — the reference impl and default
   selection. Holds one `AgentMemory` per `session_id` plus an opaque turn-state
-  map, in an `Agent`. Used for tests and library/single-node runs; not consumed by
-  the turn loop in Phase 3.
+  map, in an `Agent`. Used for tests and library/single-node runs.
   """
 
   @behaviour Normandy.Behaviours.SessionStore
@@ -12,16 +11,37 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
+  alias Normandy.Options
 
+  @no_opts_schema NimbleOptions.new!([])
+
+  @doc """
+  Starts a store.
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec start_link(keyword()) :: Agent.on_start()
-  def start_link(_opts \\ []) do
-    Agent.start_link(fn -> %{sessions: %{}, turn_states: %{}, config_templates: %{}} end)
+  def start_link(opts \\ []) do
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :start_link, 1})
+
+    Agent.start_link(fn ->
+      %{sessions: %{}, turn_states: %{}, config_templates: %{}, inflight: MapSet.new()}
+    end)
   end
 
-  @doc "Start a fresh store and return its handle (pid)."
+  @doc """
+  Starts a fresh store and returns its handle (a pid).
+
+  ## Options
+
+  None; any key raises `ArgumentError`.
+  """
   @spec new(keyword()) :: pid()
   def new(opts \\ []) do
-    {:ok, pid} = start_link(opts)
+    [] = Options.validate!(opts, @no_opts_schema, {__MODULE__, :new, 1})
+    {:ok, pid} = start_link()
     pid
   end
 
@@ -47,26 +67,31 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   @impl true
   def fork(pid, session_id, from_entry_id) do
     Agent.get_and_update(pid, fn state ->
-      case Map.get(state.sessions, session_id) do
-        nil ->
-          {{:error, :no_such_session}, state}
-
-        %AgentMemory{} = memory ->
-          case AgentMemory.fork(memory, from_entry_id) do
-            {:error, reason} ->
-              {{:error, reason}, state}
-
-            {:ok, forked} ->
-              new_id = UUID.uuid4()
-              {{:ok, new_id}, put_in(state.sessions[new_id], forked)}
-          end
+      with %AgentMemory{} = memory <- Map.get(state.sessions, session_id, :no_such_session),
+           {:ok, forked} <- AgentMemory.fork(memory, from_entry_id) do
+        new_id = UUID.uuid4()
+        # Only the chain the fork's head reaches: the parent's later entries stay
+        # the parent's, so deleting it removes them.
+        chain = AgentMemory.entry_chain(forked)
+        forked = %{forked | entries: Map.new(chain, &{&1.id, &1})}
+        {{:ok, new_id}, put_in(state.sessions[new_id], forked)}
+      else
+        :no_such_session -> {{:error, :no_such_session}, state}
+        {:error, reason} -> {{:error, reason}, state}
       end
     end)
   end
 
   @impl true
-  def save_turn_state(pid, session_id, term) do
-    Agent.update(pid, fn state -> put_in(state.turn_states[session_id], term) end)
+  def save_turn_state(pid, session_id, term, inflight?) when is_boolean(inflight?) do
+    Agent.update(pid, fn state ->
+      inflight =
+        if inflight?,
+          do: MapSet.put(state.inflight, session_id),
+          else: MapSet.delete(state.inflight, session_id)
+
+      %{state | turn_states: Map.put(state.turn_states, session_id, term), inflight: inflight}
+    end)
   end
 
   @impl true
@@ -96,14 +121,19 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
 
   @impl true
   def list_resumable(pid) do
-    Agent.get(pid, fn state ->
-      ids =
-        for {sid, tmpl} <- state.config_templates,
-            is_map(tmpl),
-            Map.get(tmpl, :resume_policy) == :eager,
-            do: sid
+    Agent.get(pid, fn state -> {:ok, MapSet.to_list(state.inflight)} end)
+  end
 
-      {:ok, ids}
+  @impl true
+  def delete_session(pid, session_id) do
+    Agent.update(pid, fn state ->
+      %{
+        state
+        | sessions: Map.delete(state.sessions, session_id),
+          turn_states: Map.delete(state.turn_states, session_id),
+          config_templates: Map.delete(state.config_templates, session_id),
+          inflight: MapSet.delete(state.inflight, session_id)
+      }
     end)
   end
 

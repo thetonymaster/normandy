@@ -6,17 +6,20 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
   use ExUnit.Case, async: true
   @moduletag :postgres
 
+  alias Ecto.Adapters.SQL.Sandbox
+  import Ecto.Query, only: [from: 2]
   alias Normandy.Behaviours.SessionStore.Postgres
+  alias Normandy.Behaviours.SessionStore.Postgres.Schemas.Entry, as: PgEntry
+  alias Normandy.Behaviours.SessionStore.Postgres.Schemas.Session, as: PgSession
   alias Normandy.Components.AgentMemory.Entry
 
   defp entry(role, content), do: %Entry{turn_id: "t", role: role, content: content}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Normandy.TestRepo)
+    :ok = Sandbox.checkout(Normandy.TestRepo)
   end
 
-  test "new/0 returns the configured repo handle and the behaviour is implemented" do
-    assert Postgres.new() == Normandy.TestRepo
+  test "the behaviour is implemented" do
     behaviours = Postgres.module_info(:attributes)[:behaviour] || []
     assert Normandy.Behaviours.SessionStore in behaviours
   end
@@ -67,16 +70,39 @@ defmodule Normandy.Behaviours.SessionStore.PostgresTest do
 
   test "turn state round-trips an opaque term; missing is :error" do
     term = {:turn, %{step: 3, calls: [:a, :b]}, "opaque"}
-    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", term)
+    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", term, false)
     assert {:ok, ^term} = Postgres.load_turn_state(Normandy.TestRepo, "s1")
     assert :error = Postgres.load_turn_state(Normandy.TestRepo, "never")
   end
 
   test "save_turn_state on a session created by appends keeps both" do
     {:ok, _} = Postgres.append_entry(Normandy.TestRepo, "s1", entry("user", "a"))
-    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", %{x: 1})
+    assert :ok = Postgres.save_turn_state(Normandy.TestRepo, "s1", %{x: 1}, false)
     assert {:ok, %{x: 1}} = Postgres.load_turn_state(Normandy.TestRepo, "s1")
     assert {:ok, [e]} = Postgres.history(Normandy.TestRepo, "s1")
     assert e.content == "a"
+  end
+
+  test "fork checks ancestry by ids, without decoding any entry's content" do
+    {:ok, root} = Postgres.append_entry(Normandy.TestRepo, "s-ids", entry("user", "a"))
+    {:ok, at} = Postgres.append_entry(Normandy.TestRepo, "s-ids", entry("assistant", "b"))
+
+    # A blob binary_to_term rejects: a fork that decoded contents would raise.
+    {1, _} =
+      Normandy.TestRepo.update_all(from(e in PgEntry, where: e.id == ^root),
+        set: [content: <<131, 255>>]
+      )
+
+    assert {:ok, forked} = Postgres.fork(Normandy.TestRepo, "s-ids", at)
+    assert %PgSession{head_id: ^at} = Normandy.TestRepo.get(PgSession, forked)
+  end
+
+  test "the in-flight index is a partial index over inflight" do
+    %{rows: [[indexdef]]} =
+      Normandy.TestRepo.query!(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'normandy_sessions_inflight_index'"
+      )
+
+    assert indexdef =~ ~r/WHERE \(?inflight/
   end
 end
