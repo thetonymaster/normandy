@@ -14,6 +14,8 @@ defmodule Normandy.Tools.Memory.Commands do
   alias Normandy.Tools.Memory
   alias Normandy.Tools.Memory.{Paths, Render}
 
+  @root Paths.root()
+
   @doc false
   # The namespace `run/3` uses for the command: the mount's for a path inside a
   # mount, else the session's. A path that fails validation resolves nowhere, so the
@@ -78,7 +80,7 @@ defmodule Normandy.Tools.Memory.Commands do
   defp view_directory(tool, loc) do
     case store(tool, :list, [loc.namespace, loc.path]) do
       {:ok, []} ->
-        empty_directory(loc)
+        empty_directory(tool, loc)
 
       {:ok, entries} ->
         docs = Enum.map(entries, &%{path: Paths.to_model(&1.path, loc.mount), size: &1.size})
@@ -90,7 +92,7 @@ defmodule Normandy.Tools.Memory.Commands do
             do: "\n(listing stopped at #{limit} files; view a subdirectory to see the rest)",
             else: ""
 
-        {:ok, Render.directory(loc.model_path, docs) <> note, %{}}
+        {:ok, Render.directory(loc.model_path, docs) <> note <> mounts_note(tool, loc), %{}}
 
       {:error, reason} ->
         backend(reason)
@@ -192,14 +194,22 @@ defmodule Normandy.Tools.Memory.Commands do
   end
 
   # /memories always "exists"; any other empty listing is no such path.
-  defp empty_directory(%{path: path} = loc) do
+  defp empty_directory(tool, %{path: path} = loc) do
     if path == Paths.root() do
-      {:ok, Render.directory(loc.model_path, []), %{}}
+      {:ok, Render.directory(loc.model_path, []) <> mounts_note(tool, loc), %{}}
     else
       {:error, :not_found,
        "The path #{loc.model_path} does not exist. Please provide a valid path."}
     end
   end
+
+  # A view of /memories names the mounts: the native memory tool carries no description
+  # (AX-33), and its instructions tell the model to view /memories first. A mount's own
+  # root is also its store's root path, so the location must be outside every mount.
+  defp mounts_note(%{mounts: mounts}, %{path: @root, mount: nil}) when map_size(mounts) > 0,
+    do: "\n" <> Render.shared_directories(mounts)
+
+  defp mounts_note(_tool, _loc), do: ""
 
   # Read-modify-write with compare-and-set. A lost race re-reads and re-applies, up to
   # max_cas_retries extra attempts. The store checks the namespace caps on every attempt.

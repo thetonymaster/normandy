@@ -287,7 +287,8 @@ defmodule Normandy.Tools.Toolset do
   @doc """
   Generates a list of tool schemas for LLM consumption.
 
-  Returns a list of maps containing tool metadata (name, description, schema).
+  Returns a list of maps containing tool metadata (name, description, schema), and
+  `:native` for a tool with a provider-defined type (`Normandy.Tool.native_definition/1`).
 
   ## Examples
 
@@ -305,11 +306,16 @@ defmodule Normandy.Tools.Toolset do
   @spec to_tool_schemas(t()) :: [map()]
   def to_tool_schemas(%__MODULE__{tools: tools}) do
     Enum.map(tools, fn {_name, %Entry{tool: tool}} ->
-      %{
+      schema = %{
         name: Tool.name(tool),
         description: Tool.description(tool),
         input_schema: Wire.encodable(Tool.input_schema(tool))
       }
+
+      case Tool.native_definition(tool) do
+        nil -> schema
+        native -> Map.put(schema, :native, native)
+      end
     end)
   end
 

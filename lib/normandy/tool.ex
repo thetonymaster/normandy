@@ -17,6 +17,9 @@ defmodule Normandy.Tool do
       `{:ok, result}` or `{:error, reason}`; either reaches the model as the tool result.
     * `c:check_context!/2` (optional): checks the agent's `tool_context` when the agent is
       built or the tool is registered.
+    * `c:native_definition/1` (optional): the provider-defined tool type the tool
+      implements, which an adapter that supports it sends instead of the description and
+      input schema.
 
   ## `use Normandy.Tool`
 
@@ -93,8 +96,19 @@ defmodule Normandy.Tool do
   `Normandy.A2A.Server` does) is not checked here; `c:run/2` still sees it.
   """
   @callback check_context!(tool :: struct(), values :: map()) :: :ok
+  @doc """
+  Optional. Returns the fields of a provider-defined tool the tool implements, such as
+  `%{type: "memory_20250818"}` for Anthropic's memory tool, or `nil` for none.
 
-  @optional_callbacks check_context!: 2
+  `Normandy.LLM.ClaudioAdapter` sends these fields and the tool's name in place of its
+  description and input schema; the model then calls the tool in the provider's shape,
+  which `c:input_schema/1` must still describe (the dispatcher validates against it). An
+  adapter that does not know provider-defined tools must send the tool's name, description
+  and input schema instead.
+  """
+  @callback native_definition(tool :: struct()) :: map() | nil
+
+  @optional_callbacks check_context!: 2, native_definition: 1
 
   @use_options [:name, :description, :input]
 
@@ -220,6 +234,17 @@ defmodule Normandy.Tool do
     if function_exported?(module, :check_context!, 2),
       do: :ok = module.check_context!(tool, values),
       else: :ok
+  end
+
+  @doc """
+  The tool's provider-defined fields, from its module's `c:native_definition/1`; `nil` when
+  the module defines none.
+  """
+  @spec native_definition(struct()) :: map() | nil
+  def native_definition(%module{} = tool) do
+    if function_exported?(module, :native_definition, 1),
+      do: module.native_definition(tool),
+      else: nil
   end
 
   @doc "Runs the tool through its module's `c:run/2`."

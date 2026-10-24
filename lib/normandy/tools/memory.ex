@@ -3,7 +3,10 @@ defmodule Normandy.Tools.Memory do
   Persistent agent memory: the `memory` tool. The model reads and writes text files under
   `/memories` with Anthropic's memory-tool commands (`view`, `create`, `str_replace`,
   `insert`, `delete`, `rename`); this tool executes them against a
-  `Normandy.Behaviours.MemoryStore`.
+  `Normandy.Behaviours.MemoryStore`. `Normandy.LLM.ClaudioAdapter` sends it as Anthropic's
+  native memory tool (`memory_20250818`, `native_definition/1`), so the model gets the API's
+  own instructions for it; `description/1` is what other consumers see (an A2A agent card).
+  A view of `/memories` names the mounts and their access.
 
   The namespace comes from the session's `tool_context` (`namespace_key`, default
   `:memory_namespace`), never from the tool struct, so it survives `Turn.Server`
@@ -47,7 +50,7 @@ defmodule Normandy.Tools.Memory do
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Telemetry.Span
   alias Normandy.Tools.Context
-  alias Normandy.Tools.Memory.{Commands, Paths}
+  alias Normandy.Tools.Memory.{Commands, Paths, Render}
 
   @enforce_keys [:store]
   defstruct store: nil,
@@ -222,6 +225,11 @@ defmodule Normandy.Tools.Memory do
     }
   end
 
+  # Anthropic's memory tool (AX-33): its built-in instructions replace description/1 on
+  # ClaudioAdapter, and a view of /memories names the mounts (Commands).
+  @impl Normandy.Tool
+  def native_definition(_tool), do: %{type: "memory_20250818"}
+
   @impl Normandy.Tool
   def description(%__MODULE__{mounts: mounts}) do
     base = """
@@ -231,19 +239,8 @@ defmodule Normandy.Tools.Memory do
     Commands: view (a directory listing or a file with line numbers), create (create or overwrite a file), str_replace, insert, delete (a file or a directory), rename (a file or a directory).\
     """
 
-    case Enum.sort(mounts) do
-      [] ->
-        base
-
-      list ->
-        base <>
-          "\nShared directories: " <>
-          Enum.map_join(list, ", ", fn {m, {_, a}} -> "#{m} (#{access_label(a)})" end) <> "."
-    end
+    if mounts == %{}, do: base, else: base <> "\n" <> Render.shared_directories(mounts)
   end
-
-  defp access_label(:read_only), do: "read-only"
-  defp access_label(:read_write), do: "read-write"
 
   defp namespace!(tool, ctx) do
     case Map.get(ctx.values, tool.namespace_key) do

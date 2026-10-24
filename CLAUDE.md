@@ -134,7 +134,9 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   `new/1` takes a keyword list or map, validated through `Normandy.Options`
 - **`Normandy.Tool`** - The one tool contract: `name/1`, `description/1`, `input_schema/1`,
   `run(tool, %Normandy.Tools.Context{})`; `use Normandy.Tool, name:, description:, input: Schema`
-  generates the first three. The struct holds configuration only; the model's input is
+  generates the first three. Optional `check_context!/2` and `native_definition/1` (a provider-defined
+  type: `ClaudioAdapter` sends `%{type:, name:}` instead; `Memory` is `memory_20250818`, and
+  its root `view` lists the mounts, since the native tool carries no description). The struct holds configuration only; the model's input is
   validated (`Normandy.Tools.Input`: unknown keys refused, except under a hand-written schema with no `properties`) and arrives as `context.input`
 - **`Normandy.Tools.Toolset`** - Tools by name (`BaseAgentConfig.toolset`); `register/3`
   options `:timeout` (the call's timeout; a struct field is never read), `:max_result_chars`

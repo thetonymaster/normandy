@@ -797,6 +797,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
+    # A provider-defined tool (Normandy.Tool.native_definition/1) is sent as its type and
+    # name only; the API supplies its description and input schema (AX-33).
+    defp convert_tool_schema(%{name: name, native: native}), do: Map.put(native, :name, name)
+
     defp convert_tool_schema(%{name: name, description: description, input_schema: schema}) do
       %{
         name: name,

@@ -4,6 +4,17 @@ defmodule Normandy.Tools.Memory.Render do
 
   @max_lines 999_999
 
+  # The mounts and their access: in Memory.description/1, and in a view of /memories,
+  # which is where the native tool's model learns them (AX-33).
+  def shared_directories(mounts) do
+    "Shared directories: " <>
+      Enum.map_join(Enum.sort(mounts), ", ", fn {m, {_, a}} -> "#{m} (#{access_label(a)})" end) <>
+      "."
+  end
+
+  defp access_label(:read_only), do: "read-only"
+  defp access_label(:read_write), do: "read-write"
+
   def directory(dir, docs) do
     visible = Enum.reject(docs, &hidden?(rel(&1.path, dir)))
 
