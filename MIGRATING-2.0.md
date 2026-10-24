@@ -2297,9 +2297,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   provider whose text changes keeps the rest of the system prompt cached; the conversation
   after it is still re-read, and thinking replayed from before the change is left out (the
   prefix key covers the whole system prompt).
-- **The memory tool is a custom tool** (AX-33). `Normandy.Tools.Memory` matches the
-  Anthropic memory-tool commands but is sent as a custom tool, not the native
-  `memory_20250818` type.
 - **Stored templates are not signed** (SEC-8). `Turn.Server` checks a stored template before
   use and against the supplement's `:pinned` settings, but nothing proves the store's bytes
   came from you. The session store is inside your trust boundary: anyone who can write it
@@ -2338,6 +2335,13 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 
 ## New, non-breaking
 
+- `Normandy.Tools.Memory` is sent as Anthropic's native memory tool (AX-33):
+  `ClaudioAdapter` sends `%{type: "memory_20250818", name: "memory"}` in place of its
+  description and input schema, so the model gets the API's own memory-tool instructions
+  and the tool definitions (and their cache prefix) change once. A view of `/memories`
+  ends with the mounts and their access (`Shared directories: /memories/org (read-only).`).
+  `Normandy.Tool` has an optional `native_definition/1` callback for any provider-defined
+  tool type; `Toolset.to_tool_schemas/1` puts it under `:native`.
 - The output schema is sent once (AX-19). `Normandy.LLM.Request` carries it apart, in
   `:output_schema_prompt` (the `# OUTPUT SCHEMA` section), and the context providers' section
   in `:context_prompt`; `:system` holds neither. `Request.system_prompt/1` joins the three, in

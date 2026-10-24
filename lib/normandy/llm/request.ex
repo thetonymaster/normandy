@@ -23,7 +23,9 @@ defmodule Normandy.LLM.Request do
     `output_config.format`); others ignore it. Never set for the chat schema.
   - `:temperature` - `nil` leaves it unset (Opus 4.7+ reject sampling parameters)
   - `:max_tokens` - required by the Messages API
-  - `:tools` - tool schemas, `%{name:, description:, input_schema:}` maps
+  - `:tools` - tool schemas, `%{name:, description:, input_schema:}` maps; a tool with a
+    provider-defined type also has `:native` (`Normandy.Tool.native_definition/1`), which an
+    adapter that supports it sends instead; any other adapter sends the three keys
   - `:mcp_servers` - MCP server configs for server-side MCP, or `nil`
   - `:task_budget_remaining` - the remaining task budget after in-turn compaction, or `nil`
   - `:tool_choice` - `nil` (the provider's default) or `:none`: tools stay listed, but the

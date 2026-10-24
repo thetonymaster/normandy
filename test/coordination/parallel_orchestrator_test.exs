@@ -80,16 +80,18 @@ defmodule Normandy.Coordination.ParallelOrchestratorTest do
     end
 
     test "an agent past :timeout fails with a :task_down TurnError; the others still finish" do
+      # The margin is wide on both sides: under a loaded full suite the fast agent missed a
+      # 100 ms timeout.
       specs = [
         %{id: "fast", agent: tagging("fast")},
-        %{id: "slow", agent: tagging("slow", sleep_ms: 500)}
+        %{id: "slow", agent: tagging("slow", sleep_ms: 3_000)}
       ]
 
       assert {:error,
               %OrchestrationError{
                 results: %{"fast" => _},
                 errors: %{"slow" => %TurnError{type: :task_down, reason: :timeout}}
-              }} = ParallelOrchestrator.execute(specs, "x", timeout: 100)
+              }} = ParallelOrchestrator.execute(specs, "x", timeout: 1_000)
     end
 
     test "agents run concurrently" do
