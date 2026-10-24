@@ -172,9 +172,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     """
 
     alias Normandy.Components.ContentBlock.Describe
-    alias Normandy.Components.ContentBlock.Document, as: DocumentBlock
-    alias Normandy.Components.ContentBlock.Image, as: ImageBlock
-    alias Normandy.Components.ContentBlock.Text, as: TextBlock
+    alias Normandy.Components.ContentBlock.Protocol, as: ContentBlock
     alias Normandy.Components.Message
     alias Normandy.LLMError
 
@@ -561,10 +559,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # so the wire shape is symmetric with `content: [block]`. Without this,
     # a caller who sets `content: %Image{...}` ships a raw struct to
     # Claudio and the request is malformed at JSON-encode time.
-    defp message_entry(%Message{role: role, content: %block_mod{} = block})
-         when role in ["user", "assistant"] and
-                block_mod in [TextBlock, ImageBlock, DocumentBlock] do
-      {String.to_existing_atom(role), [block_to_claudio(block)]}
+    defp message_entry(%Message{role: role, content: %{__struct__: _} = block})
+         when role in ["user", "assistant"] do
+      content = if ContentBlock.impl_for(block), do: [block_to_claudio(block)], else: block
+      {String.to_existing_atom(role), content}
     end
 
     defp message_entry(%Message{role: role, content: content})
@@ -637,9 +635,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
     defp ensure_non_empty_content!(list) when is_list(list), do: list
 
-    defp block_to_claudio(%TextBlock{} = b), do: TextBlock.to_claudio(b)
-    defp block_to_claudio(%ImageBlock{} = b), do: ImageBlock.to_claudio(b)
-    defp block_to_claudio(%DocumentBlock{} = b), do: DocumentBlock.to_claudio(b)
+    defp block_to_claudio(%{__struct__: _} = b) do
+      if ContentBlock.impl_for(b), do: ContentBlock.to_claudio(b), else: unsupported_block!(b)
+    end
+
     # Pass through any caller-provided pre-shaped block map (e.g. when a
     # caller hand-builds an Anthropic block for a feature Normandy doesn't
     # model yet, like `cache_control`). Plain maps only — structs (which
@@ -648,7 +647,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # wire data to Anthropic.
     defp block_to_claudio(%{} = raw) when not is_struct(raw), do: raw
 
-    defp block_to_claudio(other) do
+    defp block_to_claudio(other), do: unsupported_block!(other)
+
+    @spec unsupported_block!(term()) :: no_return()
+    defp unsupported_block!(other) do
       raise ArgumentError,
             "Normandy.LLM.ClaudioAdapter: unsupported content block, got " <>
               "#{Describe.type_of(other)}. " <>

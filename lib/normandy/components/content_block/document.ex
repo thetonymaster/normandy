@@ -87,4 +87,21 @@ defmodule Normandy.Components.ContentBlock.Document do
             "source must be :file_id and file_id a non-empty string. Got source: " <>
             "#{Describe.type_of(source)}, file_id: #{Describe.type_of(file_id)}"
   end
+
+  defimpl Normandy.Components.ContentBlock.Protocol do
+    # A conservative guess: the document's full file content counts at Claude's
+    # side, so real costs vary wildly.
+    @tokens 3000
+
+    def to_claudio(block), do: @for.to_claudio(block)
+    def estimate_tokens(_block), do: @tokens
+    def label(_block), do: "[document]"
+  end
+
+  # A single content block is sent as a one-block list, the same shape as
+  # multimodal list content, which the adapter turns into wire blocks.
+  defimpl Normandy.Components.BaseIOSchema do
+    def to_json(block), do: [block]
+    def get_schema(_block), do: %{}
+  end
 end

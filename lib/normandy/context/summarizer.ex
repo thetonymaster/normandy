@@ -282,11 +282,16 @@ defmodule Normandy.Context.Summarizer do
 
   defp content_lines(nil, _role, _names), do: []
 
-  defp block_lines(%ContentBlock.Text{text: text}, role, _names), do: [label(role, text)]
-  defp block_lines(%ContentBlock.Image{}, role, _names), do: [label(role, "[image]")]
-  defp block_lines(%ContentBlock.Document{}, role, _names), do: [label(role, "[document]")]
+  defp block_lines(%{__struct__: _} = block, role, names) do
+    if ContentBlock.Protocol.impl_for(block),
+      do: [label(role, ContentBlock.Protocol.label(block))],
+      else: raw_block_lines(block, role, names)
+  end
 
-  defp block_lines(block, role, names) when is_map(block) do
+  defp block_lines(block, role, names) when is_map(block),
+    do: raw_block_lines(block, role, names)
+
+  defp raw_block_lines(block, role, names) do
     case field(block, :type) do
       "text" ->
         [label(role, field(block, :text))]

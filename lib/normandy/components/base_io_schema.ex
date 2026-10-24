@@ -32,15 +32,3 @@ defimpl Normandy.Components.BaseIOSchema, for: List do
   def to_json(list), do: list
   def get_schema(_list), do: %{}
 end
-
-# A single content block is sent as a one-block list, the same shape as
-# multimodal list content, which the adapter turns into wire blocks.
-defimpl Normandy.Components.BaseIOSchema,
-  for: [
-    Normandy.Components.ContentBlock.Text,
-    Normandy.Components.ContentBlock.Image,
-    Normandy.Components.ContentBlock.Document
-  ] do
-  def to_json(block), do: [block]
-  def get_schema(_block), do: %{}
-end
