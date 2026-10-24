@@ -282,6 +282,7 @@ end
 - Schema structs carry no `__meta__` (`Normandy.Metadata` is gone); loading stored data ignores a legacy `"__meta__"` key (`Normandy.Schema.LegacyMeta`)
 - Before running tests run `mix format`
 - If tests fail, they must be fixed, even if were items we were not working on.
+
 ## Agent skills
 
 ### Issue tracker
