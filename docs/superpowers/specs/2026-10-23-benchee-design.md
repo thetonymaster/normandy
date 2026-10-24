@@ -30,7 +30,8 @@ number, and compare two versions of the code on their own machine.
 - No committed baselines or result files. Everything a run writes stays local (Q).
 - No fixes. Whatever the numbers show (keeping or deleting the inline directive, for example) is a separate decision
   for Q afterwards.
-- No benchmarks of the live HTTP path, Postgres, Redis or distributed code.
+- No benchmarks of the live HTTP path or distributed code. (Postgres, Redis and Mnesia stores were added by
+  Q mid-build; see "Amendment: store backends".)
 - No benchmark helper library or DSL. Scripts call `Benchee.run/2` directly.
 
 ## Anti-goals
@@ -110,3 +111,24 @@ The builder picks the exact payloads, as long as each script prints them.
 - `git status` is clean after any bench run.
 - `mix precommit` exits 0. `bench/README.md` says how to run, compare and read the output. `CLAUDE.md` gets one
   line under Common Commands. `mix.lock` carries the new `benchee` (and its `deep_merge`/`statistex`) entries.
+
+## Amendment: store backends (Q, 2026-10-23, approved mid-build)
+
+Q asked to also measure Redis, Postgres and Mnesia. Scope as approved:
+
+- **Scripts:** `bench/session_store.exs` and `bench/memory_store.exs`. Backends: Mnesia, Redis, Postgres, with
+  InMemory and ETS as in-process baselines.
+- **SessionStore operations:** `append_entry/3`, `history/2` at 10, 100 and 1k entries, and
+  `save_turn_state/4` + `load_turn_state/2`.
+- **MemoryStore operations:** `put/6` with limits, `get/3`, and `list/3` over a namespace of 100 documents.
+- **Services:** the local containers (Redis `redis://localhost:6379`, Postgres `localhost:55432`), overridable
+  with `REDIS_URL` and `POSTGRES_URL`. A backend that cannot be reached fails the run, naming it.
+  `BENCH_STORES=<comma list>` (backend names `in_memory,ets,mnesia,redis,postgres`) selects a subset. No backend
+  is ever skipped silently, because a missing one would skew a comparison.
+- **Isolation:**
+  - Postgres: a script-local Repo on its own `normandy_bench` database, created if missing and migrated on start.
+  - Redis: a random `normandy_bench:<id>` namespace.
+  - Mnesia: a temp dir.
+  - Everything is deleted at the end of the run, and `git status` stays clean.
+- The same rules as the other scripts apply: a banner, one path assertion per backend before measuring, and fixed
+  scenario names (`"<backend> <operation>"`).
