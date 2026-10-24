@@ -2,6 +2,7 @@ defmodule Normandy.Tools.MemoryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Behaviours.MemoryStore.InMemory
+  alias Normandy.Test.OwnLog
   alias Normandy.Tool
   alias Normandy.Tools.{Context, Input, Memory, Toolset}
 
@@ -972,7 +973,7 @@ defmodule Normandy.Tools.MemoryTest do
       t = Memory.new(store: {RawErrorStore, reason})
 
       log =
-        capture_log(fn ->
+        OwnLog.capture(fn ->
           assert {:error, :backend, "Error: memory store unavailable: RuntimeError"} =
                    typed(t, %{"command" => "view", "path" => "/memories/a"})
         end)
@@ -994,7 +995,7 @@ defmodule Normandy.Tools.MemoryTest do
       t = Memory.new(store: {RawErrorStore, reason})
 
       log =
-        capture_log(fn ->
+        OwnLog.capture(fn ->
           assert {:error, :backend,
                   "Error: memory store unavailable: Postgrex.Error (:unique_violation)"} =
                    typed(t, %{"command" => "view", "path" => "/memories/a"})
