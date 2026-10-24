@@ -296,6 +296,8 @@ defmodule Normandy.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      # `mix bench` (bench/README.md): hand-run, never in CI or the package.
+      {:benchee, "~> 1.5", only: :dev},
       {:opentelemetry, "~> 1.5", only: :test},
       {:opentelemetry_api, "~> 1.4", only: :test},
       # OTLP export for `NORMANDY_E2E_OTLP=1 mix e2e` (e2e/otel_bridge.exs).
@@ -308,7 +310,15 @@ defmodule Normandy.MixProject do
 
   # Run the `test.postgres` alias in the :test env (it invokes `test`).
   def cli do
-    [preferred_envs: [precommit: :test, "test.postgres": :test, "test.redis": :test, e2e: :test]]
+    [
+      preferred_envs: [
+        precommit: :test,
+        "test.postgres": :test,
+        "test.redis": :test,
+        e2e: :test,
+        bench: :dev
+      ]
+    ]
   end
 
   defp aliases do
@@ -331,8 +341,23 @@ defmodule Normandy.MixProject do
       ],
       "test.postgres": &run_postgres_tests/1,
       "test.redis": &run_redis_tests/1,
-      e2e: ["run e2e/run.exs"]
+      e2e: ["run e2e/run.exs"],
+      bench: &run_bench/1
     ]
+  end
+
+  # `mix bench [paths]`: every bench/*.exs script (bench/support.exs is their shared
+  # helper, not a script), or the given paths, in one started VM.
+  defp run_bench(args) do
+    paths =
+      if args == [],
+        do: Enum.sort(Path.wildcard("bench/*.exs") -- ["bench/support.exs"]),
+        else: args
+
+    for path <- paths, not File.regular?(path), do: Mix.raise("mix bench: no such file #{path}")
+
+    Mix.Task.run("app.start")
+    Enum.each(paths, &Code.require_file/1)
   end
 
   defp run_postgres_tests(args) do

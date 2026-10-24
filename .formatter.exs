@@ -40,6 +40,6 @@ locals_without_parens = [
 ]
 
 [
-  inputs: ["{mix,.formatter}.exs", "{config,lib,test,tools}/**/*.{ex,exs}"],
+  inputs: ["{mix,.formatter}.exs", "{config,lib,test,tools}/**/*.{ex,exs}", "bench/**/*.exs"],
   export: [locals_without_parens: locals_without_parens]
 ]
