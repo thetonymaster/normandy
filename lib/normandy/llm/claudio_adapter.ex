@@ -142,6 +142,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   alias Normandy.LLM.StructuredOutputs
   alias Normandy.LLMError
   alias Normandy.Telemetry.Request, as: TelemetryRequest
+  alias Normandy.Telemetry.Usage
 
   @type t :: %__MODULE__{
           api_key: String.t(),
@@ -983,67 +984,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   # The first call's usage plus each JSON retry's.
   @doc false
   def add_retry_usages(usage, retry_usages),
-    do: Enum.reduce(retry_usages, usage, &add_usage(&2, &1))
-
-  defp add_usage(nil, usage), do: usage
-  defp add_usage(usage, nil), do: usage
-
-  defp add_usage(%{} = a, %{} = b) do
-    a = to_usage_map(a)
-    b = to_usage_map(b)
-
-    merged =
-      Map.merge(a, b, fn
-        _key, x, y when is_integer(x) and is_integer(y) -> x + y
-        _key, _x, y -> y
-      end)
-
-    # The top-level counts above are summed, but `iterations` must not be
-    # overwritten: Normandy.Telemetry.Usage bills the sum over iterations when
-    # they are present. Each side contributes its iterations, or one synthetic
-    # iteration built from its top-level counts.
-    if iterations_of(a) == [] and iterations_of(b) == [] do
-      merged
-    else
-      Map.put(merged, :iterations, side_iterations(a) ++ side_iterations(b))
-    end
-  end
-
-  defp iterations_of(usage) do
-    case Map.get(usage, :iterations) do
-      [_ | _] = iterations -> iterations
-      _ -> []
-    end
-  end
-
-  # Claudio's usage keys its counts with atoms; an iteration entry is the raw
-  # API map, string-keyed.
-  @iteration_count_keys [
-    :input_tokens,
-    :output_tokens,
-    :cache_read_input_tokens,
-    :cache_creation_input_tokens
-  ]
-
-  defp side_iterations(usage) do
-    case iterations_of(usage) do
-      [] ->
-        counts =
-          for key <- @iteration_count_keys,
-              n = Map.get(usage, key),
-              is_integer(n),
-              into: %{},
-              do: {Atom.to_string(key), n}
-
-        [counts]
-
-      iterations ->
-        iterations
-    end
-  end
-
-  defp to_usage_map(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__)
-  defp to_usage_map(usage), do: usage
+    do: Enum.reduce(retry_usages, usage, &Usage.sum(&2, &1))
 
   @doc false
   def extract_usage(response) when is_map(response),
@@ -1318,7 +1259,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
 
   def __to_llm_error__(%module{} = e)
       when module in [Req.TransportError, Mint.TransportError, Mint.HTTPError] do
-    LLMError.new(type: :transport, retryable?: true, detail: Exception.message(e), reason: e)
+    LLMError.transport(e)
   end
 
   def __to_llm_error__(other), do: LLMError.wrap(other)
@@ -1329,18 +1270,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
   defp classify_api_error(:permission_error, _status), do: {:permission, false}
   defp classify_api_error(:not_found_error, _status), do: {:not_found, false}
   defp classify_api_error(:invalid_request_error, _status), do: {:invalid_request, false}
-  defp classify_api_error(_type, status), do: classify_status(status)
-
-  defp classify_status(nil), do: {:server, true}
-  defp classify_status(429), do: {:rate_limit, true}
-  defp classify_status(529), do: {:overloaded, true}
-  defp classify_status(408), do: {:server, true}
-  defp classify_status(status) when status >= 500, do: {:server, true}
-  defp classify_status(401), do: {:authentication, false}
-  defp classify_status(403), do: {:permission, false}
-  defp classify_status(404), do: {:not_found, false}
-  defp classify_status(status) when status >= 400, do: {:invalid_request, false}
-  defp classify_status(_status), do: {:unknown, false}
+  defp classify_api_error(_type, status), do: LLMError.classify_status(status)
 
   @doc false
   # Decides what to do when the structured-outputs call errors. The API refusing the

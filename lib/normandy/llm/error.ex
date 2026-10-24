@@ -141,6 +141,33 @@ defmodule Normandy.LLMError do
   def wrap(%__MODULE__{} = error), do: error
   def wrap(reason), do: new(type: :unknown, retryable?: false, reason: reason)
 
+  @doc false
+  # The one HTTP-status rule of every adapter: {type, retryable?}. No status is a retryable
+  # :server error; 529 is :overloaded.
+  @spec classify_status(integer() | nil) :: {atom(), boolean()}
+  def classify_status(nil), do: {:server, true}
+  def classify_status(429), do: {:rate_limit, true}
+  def classify_status(529), do: {:overloaded, true}
+  def classify_status(408), do: {:server, true}
+  def classify_status(status) when status >= 500, do: {:server, true}
+  def classify_status(401), do: {:authentication, false}
+  def classify_status(403), do: {:permission, false}
+  def classify_status(404), do: {:not_found, false}
+  def classify_status(status) when status >= 400, do: {:invalid_request, false}
+  def classify_status(_status), do: {:unknown, false}
+
+  @doc false
+  # A transport failure (Req/Mint exception): retryable, the exception kept as the reason.
+  @spec transport(Exception.t()) :: t()
+  def transport(exception),
+    do:
+      new(
+        type: :transport,
+        retryable?: true,
+        detail: Exception.message(exception),
+        reason: exception
+      )
+
   defp build_message(type, status, detail) do
     status_part = if is_integer(status), do: " (#{status})", else: ""
     detail_part = if is_binary(detail) and detail != "", do: ": " <> detail, else: ""

@@ -89,6 +89,81 @@ defmodule Normandy.Telemetry.Usage do
 
   def put_raw(metadata, _usage), do: metadata
 
+  @doc """
+  Adds two raw provider usage maps (or structs), the one rule for combining the usage of
+  several calls. A `nil` side returns the other. Integer counts are summed and any other
+  value is the later side's. When either side carries `iterations`, the result's
+  `iterations` are both sides' entries in order (a side without them contributes one entry
+  built from its top-level counts), so `normalize/1` bills their sum and not the top-level
+  counts.
+
+  ## Examples
+
+      iex> Normandy.Telemetry.Usage.sum(%{input_tokens: 3}, %{input_tokens: 4})
+      %{input_tokens: 7}
+
+      iex> Normandy.Telemetry.Usage.sum(nil, %{input_tokens: 4})
+      %{input_tokens: 4}
+  """
+  @spec sum(map() | struct() | nil, map() | struct() | nil) :: map() | struct() | nil
+  def sum(nil, usage), do: usage
+  def sum(usage, nil), do: usage
+
+  def sum(%{} = a, %{} = b) do
+    a = plain(a)
+    b = plain(b)
+
+    merged =
+      Map.merge(a, b, fn
+        _key, x, y when is_integer(x) and is_integer(y) -> x + y
+        _key, _x, y -> y
+      end)
+
+    # The top-level counts are summed, but `iterations` must not be overwritten:
+    # normalize/1 bills the sum over iterations when they are present.
+    if iterations_of(a) == [] and iterations_of(b) == [] do
+      merged
+    else
+      Map.put(merged, :iterations, side_iterations(a) ++ side_iterations(b))
+    end
+  end
+
+  defp plain(%_{} = usage), do: usage |> Map.from_struct() |> Map.delete(:__meta__)
+  defp plain(usage), do: usage
+
+  defp iterations_of(usage) do
+    case Map.get(usage, :iterations) do
+      [_ | _] = iterations -> iterations
+      _ -> []
+    end
+  end
+
+  # Claudio's usage keys its counts with atoms; an iteration entry is the raw API map,
+  # string-keyed.
+  @iteration_count_keys [
+    :input_tokens,
+    :output_tokens,
+    :cache_read_input_tokens,
+    :cache_creation_input_tokens
+  ]
+
+  defp side_iterations(usage) do
+    case iterations_of(usage) do
+      [] ->
+        counts =
+          for key <- @iteration_count_keys,
+              n = Map.get(usage, key),
+              is_integer(n),
+              into: %{},
+              do: {Atom.to_string(key), n}
+
+        [counts]
+
+      iterations ->
+        iterations
+    end
+  end
+
   defp sources(usage) do
     usage = to_map(usage)
 

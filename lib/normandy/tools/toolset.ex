@@ -115,6 +115,21 @@ defmodule Normandy.Tools.Toolset do
     %{toolset | tools: Map.put(tools, tool_name, entry)}
   end
 
+  @doc false
+  # `register/3` for discovered tools: a name the API would refuse or one already taken is
+  # an error tuple, where `register/3` raises.
+  @spec register_new(t(), struct(), keyword()) ::
+          {:ok, t()} | {:error, {:invalid_tool_name | :tool_name_taken, term()}}
+  def register_new(%__MODULE__{} = toolset, tool, opts \\ []) do
+    name = Tool.name(tool)
+
+    cond do
+      not valid_name?(name) -> {:error, {:invalid_tool_name, name}}
+      has_tool?(toolset, name) -> {:error, {:tool_name_taken, name}}
+      true -> {:ok, register(toolset, tool, opts)}
+    end
+  end
+
   @migration "see MIGRATING-2.0.md §25 (Tools: one Normandy.Tool behaviour)"
 
   @doc false
