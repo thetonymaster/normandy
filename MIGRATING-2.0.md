@@ -1201,6 +1201,9 @@ In 1.x most of these keys were ignored, so a typo silently kept the default. Eac
   carries the loop's `response_model` (for example `%ToolCallResponse{}`), not the output
   schema, and the core then emits `{:convert_output, response, output_schema}`. A `call_llm`
   that answered the output schema on `final: true` answers the loop's response model now.
+  A `final: true` request may also carry `reask: %{response:, error:}` (a rejected answer
+  asked again, AX-18): a custom `call_llm` adds the error as feedback, or its turn is built
+  with `Turn.new/1` `max_constraint_reasks: 0`.
 - A custom `Normandy.Agents.Model` may honour `request.tool_choice`; one that ignores it may
   return tool calls on the final call, and they are not run.
 - A final call that stops at `pause_turn` is sent back as the final call (`tool_choice: none`,
@@ -2288,12 +2291,13 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   unscaled, so near the window an API "prompt is too long" error is still possible; leave
   headroom with a larger `:reserved_tokens`. `Normandy.Context.WindowManager` used on its own
   (`within_limit?/2`, `ensure_within_limit/2`) counts the history only, unscaled.
-- **Only a direct answer is re-asked when it breaks a constraint** (AX-18). An answer that
+- **A streamed answer is not re-asked when it breaks a constraint** (AX-18). An answer that
   parses but breaks a constraint the API does not enforce (`pattern`, lengths, ranges, item
-  counts) is re-asked with the errors when the call's answer is the output schema itself (an
-  agent without tools), on the structured and the legacy path. A tool-using turn's final
-  answer and a streamed answer are validated but not re-asked; they fail with
-  `ValidationError`.
+  counts) is re-asked with the errors on `run/3` and `Turn.Server`, for a direct answer and for
+  a tool-using turn's final answer. `stream/3` has already delivered the answer's text to the
+  callback, so it validates but does not re-ask; it fails with `ValidationError`. A re-ask
+  request carries the conversation and the feedback, not the rejected response itself: server-
+  tool results that response carried (a web search) are neither sent again nor stored.
 - **A changing context provider still drops replayed thinking** (AX-20). The context
   providers' section is sent last, in a system block of its own after the cached one, so a
   provider whose text changes keeps the rest of the system prompt cached; the conversation
@@ -2324,6 +2328,17 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 
 ## New, non-breaking
 
+- A tool-using turn's final answer that breaks a constraint the API does not enforce is
+  re-asked (AX-18) on `run/3` and `Turn.Server`: one more call with `tool_choice: :none`
+  whose request adds a user message with the validation errors, the rejected answer and the
+  schema (the direct re-ask's feedback), up to `json_retry_max_attempts` times (none with
+  `enable_json_retry: false`), then `{:error, %ValidationError{}}` as before. The rejected
+  answers and the feedback go only in those requests; memory and the session store keep
+  the answer that passed. A re-ask spends no `max_tool_iterations`; its `llm_call` span
+  carries `reask: true`, and `before_llm`'s info has a new `reask` key (`false` on other
+  calls). `Turn.new/1` takes
+  `:max_constraint_reasks`; the shells hand a rejected answer to the core as
+  `{:output_invalid, error}`.
 - `Compactor.WindowManager` calibrates its estimate against the size the provider reported
   for the last tool-loop request (AX-12). `%ToolCallResponse{}` has two new fields, never
   sent to the API: `input_tokens` (the request as the provider counted it: input, cache

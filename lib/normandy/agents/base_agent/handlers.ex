@@ -146,7 +146,10 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       system: prompt.system,
       output_schema_prompt: prompt.output_schema_prompt,
       context_prompt: prompt.context_prompt,
-      messages: AgentMemory.request_messages_for(config.memory, prefix_key.(config.model)),
+      messages:
+        config.memory
+        |> AgentMemory.request_messages_for(prefix_key.(config.model))
+        |> with_reask_feedback(config, Keyword.get(extra_opts, :reask)),
       response_model: response_model,
       output_format: Prompt.output_format(response_model, config),
       temperature: config.temperature,
@@ -195,8 +198,11 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     with true <- constrained_answer?(response, request, config),
          {:error, errors} <- ValidationMiddleware.validate_output(config, response) do
       content = BaseIOSchema.to_json(response)
-      feedback = RetryFeedback.build({:output_constraints, errors, content}, content, response)
-      retry = %{request | messages: RetryFeedback.augment_messages(request.messages, feedback)}
+
+      retry = %{
+        request
+        | messages: constraint_feedback(request.messages, errors, content, response)
+      }
 
       {response2, usage2, meta2} =
         call_llm_with_resilience(config, retry, Keyword.put(opts, :json_retries, 0))
@@ -211,6 +217,48 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     else
       _valid_or_unchecked -> result
     end
+  end
+
+  # AX-18: a tool-loop answer the turn rejected is asked again with the validation errors,
+  # as a user message after the conversation (RetryFeedback, the direct re-ask's text),
+  # in this request only: memory never holds the rejected answer or the feedback.
+  defp with_reask_feedback(messages, _config, nil), do: messages
+
+  defp with_reask_feedback(messages, config, %{response: response, error: error}),
+    do: constraint_feedback(messages, error.errors, rejected_text(response), config.output_schema)
+
+  # The constraint errors, the rejected answer and the schema, as a user message after
+  # `messages`: the one feedback both re-asks send.
+  defp constraint_feedback(messages, errors, content, schema) do
+    feedback = RetryFeedback.build({:output_constraints, errors, content}, content, schema)
+    RetryFeedback.augment_messages(messages, feedback)
+  end
+
+  defp rejected_text(%ToolCallResponse{content: text}) when is_binary(text), do: text
+  defp rejected_text(response), do: BaseIOSchema.to_json(response)
+
+  @doc false
+  # The Turn a run/3 or Turn.Server turn starts from: the loop's response model, the
+  # output schema and the re-ask budget (stream/3 builds its own, without re-asks).
+  @spec new_turn(BaseAgentConfig.t()) :: Turn.State.t()
+  def new_turn(%BaseAgentConfig{} = config) do
+    Turn.new(
+      max_iterations: config.max_tool_iterations,
+      response_model: turn_response_model(config),
+      output_schema: config.output_schema,
+      max_constraint_reasks: constraint_reasks(config)
+    )
+  end
+
+  @doc false
+  # The core's re-ask budget for a turn (Turn.new/1 :max_constraint_reasks, AX-18): the
+  # JSON retry budget, for a tool-loop turn only. A call made for the output schema itself
+  # is re-asked inside the call (reask_broken_constraints/5), so its turn gets none.
+  @spec constraint_reasks(BaseAgentConfig.t()) :: non_neg_integer()
+  def constraint_reasks(%BaseAgentConfig{} = config) do
+    if config.enable_json_retry and match?(%ToolCallResponse{}, turn_response_model(config)),
+      do: config.json_retry_max_attempts,
+      else: 0
   end
 
   # A call made for the output schema itself (not a tool-loop call, even one whose client
@@ -394,12 +442,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   defp run_turn(config, user_input, run_usage) do
     config = config |> with_default_output_schema() |> admit_turn_input(user_input)
 
-    state =
-      Turn.new(
-        max_iterations: config.max_tool_iterations,
-        response_model: turn_response_model(config),
-        output_schema: config.output_schema
-      )
+    state = new_turn(config)
 
     {config, final_state} = drive_turn(config, state, run_usage)
     {{config, final_state.final_response}, final_state}
@@ -574,11 +617,15 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   defp final_call_opts(_request), do: []
 
+  defp reask_call_opts(%{reask: reask}), do: [reask: reask]
+  defp reask_call_opts(_request), do: []
+
   defp call_turn_llm(config, state, %{response_model: response_model} = request) do
     iteration = config.max_tool_iterations - state.iterations_left + 1
 
     llm_metadata =
       %{model: config.model, iteration: iteration, agent_name: config.name}
+      |> Map.merge(if(Map.has_key?(request, :reask), do: %{reask: true}, else: %{}))
       |> Map.merge(Metadata.ids(config))
       |> Map.merge(
         Provider.request_metadata(config,
@@ -597,7 +644,8 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
           config,
           response_model,
           [request_tracker: tracker] ++
-            task_budget_call_opts(config, state) ++ final_call_opts(request)
+            task_budget_call_opts(config, state) ++
+            final_call_opts(request) ++ reask_call_opts(request)
         )
 
       # When this agent has no tools, strip any tool_calls the LLM may have

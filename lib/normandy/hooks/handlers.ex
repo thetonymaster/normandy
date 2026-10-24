@@ -56,7 +56,11 @@ defmodule Normandy.Hooks.Handlers do
   # decision, not a failed call, so it is neither retried nor recorded as an LLM exception.
   @spec before_llm!(map(), Normandy.Agents.Turn.State.t(), map()) :: :ok
   def before_llm!(config, state, request) do
-    info = %{final: request.final, iterations_left: state.iterations_left}
+    info = %{
+      final: request.final,
+      reask: Map.has_key?(request, :reask),
+      iterations_left: state.iterations_left
+    }
 
     case Runner.before_llm(config, info) do
       :cont -> :ok

@@ -119,8 +119,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
       default: true,
       doc:
         "Asks the model again when its JSON does not parse (`Normandy.LLM.ClaudioAdapter`; " <>
-          "`Normandy.LLM.OpenAICompatibleAdapter` does not) or, on any client, when a direct " <>
-          "answer breaks a schema constraint."
+          "`Normandy.LLM.OpenAICompatibleAdapter` does not) or, on any client, when an " <>
+          "answer breaks a schema constraint: a direct answer within its call, a tool-using " <>
+          "turn's final answer (`run/3`, `Turn.Server`) as one more call with " <>
+          "`tool_choice: :none`. `stream/3` does not re-ask."
     ],
     json_retry_max_attempts: [
       type: :pos_integer,
@@ -130,7 +132,9 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
           "parse (`Normandy.LLM.ClaudioAdapter`'s legacy path only), then for a direct answer " <>
           "that breaks a schema constraint. A constraint re-ask makes no parse re-asks of its " <>
           "own, so a call makes at most `2 * n + 1` model calls (`n + 1` on the structured " <>
-          "path and with `Normandy.LLM.OpenAICompatibleAdapter`)."
+          "path and with `Normandy.LLM.OpenAICompatibleAdapter`). A tool-using turn's final " <>
+          "answer is re-asked up to `n` times; the rejected answers and their feedback go " <>
+          "only in those requests, never into memory."
     ],
     guardrails: [
       type: :keyword_list,

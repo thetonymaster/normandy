@@ -255,15 +255,15 @@ defmodule Normandy.Agents.ToolLoopOutputFormatTest do
 
     # :off has structured outputs switched off; :rejected has the schema refused by a
     # 400, then the same request re-sent without it.
+    # The answer three times: a rejected one is re-asked json_retry_max_attempts (2) times
+    # by the turn (AX-18); a parsed or undecodable one leaves the extra replies unused.
+    defp answers(answer), do: List.duplicate({:json, [text(answer)], "end_turn"}, 3)
+
     defp sync_client(:off, answer),
-      do: WireScript.client([{:json, [text(answer)], "end_turn"}], %{structured_outputs: false})
+      do: WireScript.client(answers(answer), %{structured_outputs: false})
 
     defp sync_client(:rejected, answer),
-      do:
-        WireScript.client([
-          {:status, 400, @rejection},
-          {:json, [text(answer)], "end_turn"}
-        ])
+      do: WireScript.client([{:status, 400, @rejection} | answers(answer)])
 
     defp stream_client(:off, answer),
       do: WireScript.client([{:sse, streamed_text(answer)}], %{structured_outputs: false})

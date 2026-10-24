@@ -63,7 +63,7 @@ Use a function hook only for a closure over a runtime value on one node.
 |---|---|---|
 | `on_session_start(ctx, opts)` | `Turn.Server`, once per start of a session whose store is empty | `{:inject, [text]}` or anything (ignored) |
 | `on_prompt(input, ctx, opts)` | before a turn, after input validation, before input guardrails | `{:cont, input}` or `{:halt, reason}` |
-| `before_llm(info, ctx, opts)` | before each LLM call; `info` is `%{final: boolean, iterations_left: n}` | `:cont` or `{:halt, reason}` |
+| `before_llm(info, ctx, opts)` | before each LLM call; `info` is `%{final: boolean, reask: boolean, iterations_left: n}` (`final`: answer only; `reask`: a constraint re-ask) | `:cont` or `{:halt, reason}` |
 | `before_tool(call, ctx, opts)` | before each tool call | `{:cont, call}`, `{:halt, reason}` or `{:halt, %ToolResult{}}` |
 | `after_tool(call, result, ctx, opts)` | on every tool result the model will see, once | `{:cont, result}` |
 | `after_compact(dropped, meta, ctx, opts)` | after a compaction that removed messages | `{:inject, [text]}` or anything (ignored) |

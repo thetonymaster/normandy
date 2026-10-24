@@ -100,8 +100,14 @@ defmodule Normandy.Agents.Turn.Inline do
         advance(state, {:output_converted, converted}, deps)
 
       {:validate_output, value} ->
-        validated = deps.validate.(value)
-        advance(state, {:output_validated, validated}, deps)
+        event =
+          try do
+            {:output_validated, deps.validate.(value)}
+          rescue
+            e in Normandy.Schema.ValidationError -> {:output_invalid, e}
+          end
+
+        advance(state, event, deps)
 
       {:guard_output, value} ->
         deps.guard.(value)

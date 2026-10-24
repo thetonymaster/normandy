@@ -29,6 +29,12 @@ defmodule Normandy.Agents.Turn.Driver do
     The shell (`BaseAgent.run/3`, `stream/3`, `Turn.Server`) marks the run `:stop`
     `answer_source: :tool_round` around any `validate`, a custom one included, whenever
     it turns a blank `chat_message` into a non-blank one.
+
+    A `validate` that raises `Normandy.Schema.ValidationError` rejects the answer: the core
+    may re-ask it (`Turn.new/1` `:max_constraint_reasks`) with a `final: true` request
+    carrying `reask: %{response:, error:}`. `BaseAgent`'s `call_llm` adds the errors to that
+    request as feedback; a custom `call_llm` that ignores `:reask` sends the same request
+    again, so a custom set should do the same or run with no re-asks (AX-18).
     """
 
     alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
@@ -94,8 +100,16 @@ defmodule Normandy.Agents.Turn.Driver do
           handlers
         )
 
+      # A rejected answer goes back to the core, which re-asks it or fails the turn (AX-18).
       {:validate_output, value} ->
-        advance(acc, state, {:output_validated, handlers.validate.(acc, value)}, handlers)
+        event =
+          try do
+            {:output_validated, handlers.validate.(acc, value)}
+          rescue
+            e in Normandy.Schema.ValidationError -> {:output_invalid, e}
+          end
+
+        advance(acc, state, event, handlers)
 
       {:guard_output, value} ->
         handlers.guard.(acc, value)
@@ -111,6 +125,10 @@ defmodule Normandy.Agents.Turn.Driver do
       # A turn the core fails with a Normandy error (a final call that keeps pausing,
       # a :pause_turn LLMError) raises it; run/3 and stream/3 return it.
       {:fail, %Normandy.LLMError{} = error} ->
+        raise error
+
+      # A final answer still rejected once the core's re-asks are spent.
+      {:fail, {:rejected, %Normandy.Schema.ValidationError{} = error}} ->
         raise error
 
       {:fail, reason} ->
