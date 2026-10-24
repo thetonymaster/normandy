@@ -10,6 +10,7 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
   require Logger
 
   alias Normandy.Agents.Turn
+  alias Normandy.Behaviours.SessionStore
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
@@ -104,7 +105,7 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
         agent: agent,
         agent_id: sid
       }) do
-    case mod.history(handle, sid) do
+    case SessionStore.restore_history(mod, handle, sid) do
       {:ok, entries} ->
         rebuild_memory(agent, sid, entries)
 

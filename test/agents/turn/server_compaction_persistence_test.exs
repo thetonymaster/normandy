@@ -87,6 +87,8 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
     live = memory_of(srv)
     {:ok, stored} = InMemory.history(store, sid)
     assert Enum.count(stored, &(&1.role == "compaction")) == 2
+    # Each snapshot records the rounds its turn had made: none here, the turns call no tool.
+    assert for(%{role: "compaction", content: c} <- stored, do: c.turn_rounds) == [0, 0]
     assert length(chain(live)) < Enum.count(stored, &(&1.role != "compaction"))
 
     :ok = :gen_statem.stop(srv)

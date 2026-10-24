@@ -59,6 +59,18 @@ defmodule Normandy.Agents.Turn.ResumeTest do
       assert {^s, [{:maybe_compact, %{iterations_left: 1}}]} = Turn.resume(s, history(1))
       assert {^s, _} = Turn.resume(s, [])
     end
+
+    # The rounds a compaction removed, from the stored history (AgentMemory.stored_turn_rounds/1).
+    test "a stored count for this turn counts when larger; another turn's never does" do
+      s = %State{status: :steering, iterations_left: 3, max_iterations: 5}
+
+      assert {%State{iterations_left: 1}, [{:maybe_compact, %{iterations_left: 1}}]} =
+               Turn.resume(s, history(1), {"live", 4})
+
+      assert {^s, _} = Turn.resume(s, history(1), {"live", 1})
+      assert {^s, _} = Turn.resume(s, history(1), {"earlier", 4})
+      assert {^s, _} = Turn.resume(s, history(1), nil)
+    end
   end
 
   test "resume from a terminal state is a no-op" do

@@ -28,6 +28,22 @@ defmodule Normandy.Behaviours.SessionStore.RedisStoreExtraTest do
     assert Enum.map(fe2, & &1.content) == ["a", "b", "d"]
   end
 
+  # history_since_compaction/2 reads 200 entries per XREVRANGE page.
+  test "history_since_compaction reads back across pages to a snapshot, or to the start",
+       %{handle: h} do
+    snapshot = %{e("compaction", nil) | content: %{version: 1, entries: []}}
+
+    for i <- 1..450, do: {:ok, _} = Redis.append_entry(h, "nosnap", e("user", "n#{i}"))
+    assert Redis.history_since_compaction(h, "nosnap") == Redis.history(h, "nosnap")
+
+    for i <- 1..10, do: {:ok, _} = Redis.append_entry(h, "deep", e("user", "old#{i}"))
+    {:ok, _} = Redis.append_entry(h, "deep", snapshot)
+    for i <- 1..450, do: {:ok, _} = Redis.append_entry(h, "deep", e("user", "new#{i}"))
+
+    assert {:ok, [%{role: "compaction"} | later]} = Redis.history_since_compaction(h, "deep")
+    assert Enum.map(later, & &1.content) == Enum.map(1..450, &"new#{&1}")
+  end
+
   test "WAIT with numreplicas: 0 is a no-op and save succeeds", %{handle: h} do
     # Default wait config {0,0} → no-op; boundary write returns :ok against single Redis.
     assert :ok = Redis.save_turn_state(h, "s1", %{step: 1}, false)

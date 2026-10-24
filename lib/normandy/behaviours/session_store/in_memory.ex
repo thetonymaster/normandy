@@ -65,6 +65,19 @@ defmodule Normandy.Behaviours.SessionStore.InMemory do
   end
 
   @impl true
+  def history_since_compaction(pid, session_id) do
+    Agent.get(pid, fn state ->
+      case Map.get(state.sessions, session_id) do
+        nil ->
+          {:ok, []}
+
+        %AgentMemory{} = memory ->
+          {:ok, memory |> AgentMemory.entry_chain() |> AgentMemory.since_last_compaction()}
+      end
+    end)
+  end
+
+  @impl true
   def fork(pid, session_id, from_entry_id) do
     Agent.get_and_update(pid, fn state ->
       with %AgentMemory{} = memory <- Map.get(state.sessions, session_id, :no_such_session),

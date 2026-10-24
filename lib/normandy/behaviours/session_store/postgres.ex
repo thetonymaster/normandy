@@ -73,9 +73,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     @impl true
     def history(repo, session_id),
-      do: backend(fn -> do_history(repo, session_id) end)
+      do: backend(fn -> do_history(repo, session_id, :all) end)
 
-    defp do_history(repo, session_id) do
+    @impl true
+    def history_since_compaction(repo, session_id),
+      do: backend(fn -> do_history(repo, session_id, :since_compaction) end)
+
+    defp do_history(repo, session_id, until) do
       case repo.get(Session, session_id) do
         nil ->
           {:ok, []}
@@ -84,7 +88,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
           {:ok, []}
 
         %Session{head_id: head_id} ->
-          {:ok, chain(repo, head_id)}
+          {:ok, chain(repo, head_id, until)}
       end
     end
 
@@ -219,7 +223,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
             :ok
 
           %Session{head_id: head_id} ->
-            _ = delete_unshared_chain(repo, session_id, head_id)
+            _ = delete_unreached(repo, session_id, head_id)
             {_count, _} = repo.delete_all(where(Session, [s], s.session_id == ^session_id))
             :ok
         end
@@ -230,53 +234,40 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       end
     end
 
-    defp delete_unshared_chain(_repo, _session_id, nil), do: :ok
+    defp delete_unreached(_repo, _session_id, nil), do: :ok
 
-    defp delete_unshared_chain(repo, session_id, head_id) do
-      chain = chain_ids(repo, head_id)
-      ids = Enum.map(chain, fn {id, _parent} -> id end)
+    # Deletes every entry of the head's tree that no other session's head reaches: the
+    # session's chain and any branch it left with an explicit parent_id. Sessions sharing
+    # entries share the tree's root, so a lock on the root serialises their deletes: under
+    # READ COMMITTED, two deletes that each saw the other's head would both keep the
+    # entries only the two of them reached. Taken before the query, so it sees the other
+    # delete's commit.
+    defp delete_unreached(repo, session_id, head_id) do
+      {root, _parent} = repo |> chain_ids(head_id) |> List.last()
 
-      %{rows: head_rows} =
-        SQL.query!(
-          repo,
-          "SELECT head_id FROM normandy_sessions WHERE head_id = ANY($1::uuid[]) AND session_id <> $2",
-          [ids, session_id]
-        )
+      _ =
+        SQL.query!(repo, "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))", [
+          root
+        ])
 
-      %{rows: child_rows} =
-        SQL.query!(
-          repo,
-          "SELECT parent_id, id FROM normandy_session_entries WHERE parent_id = ANY($1::uuid[])",
-          [ids]
-        )
+      sql = """
+      WITH RECURSIVE tree(id) AS (
+        SELECT id FROM normandy_session_entries WHERE id = $1
+        UNION ALL
+        SELECT e.id FROM normandy_session_entries e JOIN tree t ON e.parent_id = t.id
+      ),
+      reached(id, parent_id) AS (
+        SELECT e.id, e.parent_id
+        FROM normandy_sessions s JOIN normandy_session_entries e ON e.id = s.head_id
+        WHERE s.session_id <> $2 AND e.id IN (SELECT id FROM tree)
+        UNION
+        SELECT e.id, e.parent_id FROM normandy_session_entries e JOIN reached r ON e.id = r.parent_id
+      )
+      DELETE FROM normandy_session_entries
+      WHERE id IN (SELECT id FROM tree) AND id NOT IN (SELECT id FROM reached)
+      """
 
-      other_heads = MapSet.new(head_rows, fn [id] -> id end)
-      children = Enum.group_by(child_rows, fn [parent, _id] -> parent end, fn [_p, id] -> id end)
-
-      case unshared_prefix(chain, other_heads, children) do
-        [] ->
-          :ok
-
-        doomed ->
-          SQL.query!(repo, "DELETE FROM normandy_session_entries WHERE id = ANY($1::uuid[])", [
-            doomed
-          ])
-      end
-    end
-
-    # The ids from the head down to the first entry another session reaches: another
-    # session's head, or an entry with a child off this chain. Every ancestor of a reached
-    # entry is reached too.
-    defp unshared_prefix(chain, other_heads, children) do
-      chain
-      |> Enum.reduce_while({nil, []}, fn {id, _parent}, {child, acc} ->
-        shared? =
-          MapSet.member?(other_heads, id) or
-            Enum.any?(Map.get(children, id, []), &(&1 != child))
-
-        if shared?, do: {:halt, {child, acc}}, else: {:cont, {id, [id | acc]}}
-      end)
-      |> elem(1)
+      SQL.query!(repo, sql, [root, session_id])
     end
 
     # --- Private helpers ---
@@ -313,8 +304,13 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
       |> repo.one()
     end
 
-    # Walk parent_id from head -> root via a recursive CTE; return chronological.
-    defp chain(repo, head_id) do
+    # Walk parent_id from head -> root via a recursive CTE; return chronological. With
+    # :since_compaction the walk stops after the first "compaction" row: the rows before
+    # it are neither read nor decoded.
+    defp chain(repo, head_id, until) do
+      stop =
+        if until == :since_compaction, do: "WHERE b.role IS DISTINCT FROM 'compaction'", else: ""
+
       sql = """
       WITH RECURSIVE branch(id, parent_id, turn_id, role, content, depth) AS (
         SELECT id, parent_id, turn_id, role, content, 0
@@ -323,6 +319,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
         SELECT e.id, e.parent_id, e.turn_id, e.role, e.content, b.depth + 1
         FROM normandy_session_entries e
         JOIN branch b ON e.id = b.parent_id
+        #{stop}
       )
       SELECT id, parent_id, turn_id, role, content FROM branch ORDER BY depth DESC
       """

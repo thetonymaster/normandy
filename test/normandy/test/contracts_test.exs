@@ -25,7 +25,7 @@ defmodule Normandy.Test.ContractsTest do
     names = Enum.map(DefaultsOnly.__ex_unit__().tests, & &1.name)
 
     # Pinned to today's count so a dropped test is noticed; adding a contract test means updating it.
-    assert length(names) == 16
+    assert length(names) == 19
     assert :"test deleting a fork keeps its parent's history" in names
   end
 
