@@ -1,10 +1,15 @@
-defmodule Normandy.Agents.Turn.InlineTest do
+defmodule Normandy.Agents.Turn.ShellTest do
+  @moduledoc """
+  The core over `Turn.Driver` from plain functions (`Normandy.Test.TurnShell`), with tools
+  dispatched through the real `Dispatch` chokepoint. A batch a dispatch leaves part
+  unanswered is covered in `turn_driver_test.exs`.
+  """
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Agents.Turn.Inline
+  alias Normandy.Test.TurnShell
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Tools.Toolset
@@ -39,7 +44,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
       }
 
       state = Turn.new(max_iterations: 5, response_model: :rm)
-      assert {:ok, final} = Inline.run(state, deps)
+      assert {:ok, final} = TurnShell.run(state, deps)
 
       assert final.status == :stopped
       assert final.stop_reason == :completed
@@ -78,7 +83,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
       }
 
       state = Turn.new(max_iterations: 5, response_model: :rm)
-      assert {:ok, final} = Inline.run(state, deps)
+      assert {:ok, final} = TurnShell.run(state, deps)
 
       assert final.status == :stopped
       assert final.stop_reason == :completed
@@ -92,33 +97,6 @@ defmodule Normandy.Agents.Turn.InlineTest do
                        %ToolResult{tool_call_id: "c1", output: "weather in NYC", is_error: false}}
 
       assert_received {:appended, "assistant", ^second}
-    end
-  end
-
-  describe "run/2 with a dispatch that answers part of the batch" do
-    test "returns the incomplete-batch failure before the next LLM call" do
-      test_pid = self()
-      calls = [%ToolCall{id: "c1", name: "weather"}, %ToolCall{id: "c2", name: "weather"}]
-      answered = %ToolResult{tool_call_id: "c1", output: "ok", is_error: false}
-
-      deps = %{
-        call_llm: fn req ->
-          send(test_pid, {:called_llm, req})
-          {:ok, %ToolCallResponse{content: nil, tool_calls: calls}}
-        end,
-        dispatch: fn _calls -> [answered] end,
-        append: fn role, content -> send(test_pid, {:appended, role, content}) end,
-        emit: fn _name, _meta -> :ok end
-      }
-
-      reason = {:unexpected_event, :tool_dispatch, {:incomplete_batch, ["c2"]}}
-
-      assert {:error, ^reason, %Turn.State{status: :failed}} =
-               Inline.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
-
-      assert_received {:appended, "tool", ^answered}
-      assert_received {:called_llm, _}
-      refute_received {:called_llm, _}
     end
   end
 
@@ -147,7 +125,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
       }
 
       state = Turn.new(max_iterations: 3, response_model: :rm, output_schema: :os)
-      assert {:ok, final} = Inline.run(state, deps)
+      assert {:ok, final} = TurnShell.run(state, deps)
 
       assert final.status == :stopped
       assert final.stop_reason == :max_iterations
@@ -181,7 +159,7 @@ defmodule Normandy.Agents.Turn.InlineTest do
 
       # response_model (:rm) != output_schema (:os) => convert runs.
       state = Turn.new(max_iterations: 5, response_model: :rm, output_schema: :os)
-      assert {:ok, final} = Inline.run(state, deps)
+      assert {:ok, final} = TurnShell.run(state, deps)
 
       assert final.status == :stopped
       assert final.stop_reason == :completed

@@ -11,7 +11,7 @@ defmodule Normandy.Agents.Turn.Driver do
   # `acc` is opaque to the driver — the production shells pass the running
   # `%BaseAgentConfig{}` (the memory accumulator). This lets one driver serve the
   # non-streaming and streaming production paths with different handler sets.
-  # `Turn.Inline` is the test shell over the same core; `Turn.Server` the durable one.
+  # `Turn.Server` is the durable shell over the same core.
   #
   # By design, `step/2` always places the single blocking/terminal effect last in
   # its effect list, so the driver performs the leading `:emit_event` /
@@ -133,7 +133,7 @@ defmodule Normandy.Agents.Turn.Driver do
         advance(acc, state, event, handlers)
 
       {:persist, _turn_state} ->
-        # Inline driver has no SessionStore/passivation; persistence is a no-op.
+        # This driver has no SessionStore/passivation; persistence is a no-op.
         run(acc, state, rest, handlers)
 
       {:finalize, _value} ->

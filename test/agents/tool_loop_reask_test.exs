@@ -9,7 +9,8 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.{BaseAgent, ToolCallResponse, Turn}
-  alias Normandy.Agents.Turn.{Inline, Server}
+  alias Normandy.Agents.Turn.Server
+  alias Normandy.Test.TurnShell
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -160,7 +161,7 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
     end
   end
 
-  describe "Turn.Inline" do
+  describe "Turn.Driver from plain functions (TurnShell)" do
     # Each call answers; validate rejects "bad" and passes anything else.
     defp inline_deps(answers) do
       {:ok, script} = Agent.start_link(fn -> answers end)
@@ -183,17 +184,16 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
     test "re-asks a rejected answer while it has re-asks" do
       state = Turn.new(max_constraint_reasks: 1, response_model: %ToolCallResponse{})
 
-      assert {:ok, final} = Inline.run(state, inline_deps([answer("bad"), answer("good")]))
+      assert {:ok, final} = TurnShell.run(state, inline_deps([answer("bad"), answer("good")]))
       assert %ToolCallResponse{content: "good"} = final.final_response
       assert_received {:request, %{final: false}}
       assert_received {:request, %{final: true, reask: %{response: %{content: "bad"}}}}
     end
 
-    test "returns {:rejected, error} once re-asks are spent" do
+    test "raises the ValidationError once re-asks are spent" do
       state = Turn.new(max_constraint_reasks: 0, response_model: %ToolCallResponse{})
 
-      assert {:error, {:rejected, %ValidationError{}}, _state} =
-               Inline.run(state, inline_deps([answer("bad")]))
+      assert_raise ValidationError, fn -> TurnShell.run(state, inline_deps([answer("bad")])) end
     end
   end
 

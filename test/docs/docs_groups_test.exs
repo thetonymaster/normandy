@@ -8,7 +8,6 @@ defmodule Normandy.Docs.DocsGroupsTest do
   # Implementation details: `@moduledoc false` (decision 27 C1).
   @hidden [
     Normandy.Agents.Turn.Driver,
-    Normandy.Agents.Turn.Inline,
     Normandy.Agents.ValidationMiddleware,
     Normandy.Behaviours.SessionRegistry.Horde.Via,
     Normandy.Behaviours.SessionRegistry.Redis.Via,
