@@ -320,30 +320,37 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # Walk the balanced regions in prose, returning the first that decodes AND
-  # binds. A region is skipped when it fails to decode (e.g. a balanced but
-  # non-JSON `{note}`) or decodes as valid JSON but fails schema binding (valid
-  # JSON of the wrong shape) — so a later valid object is still found. If a
-  # region produced a validation error and nothing later binds, that error is
-  # preserved rather than masked as a generic json_parse_error.
+  # Walk the balanced regions in prose, returning the first object that decodes AND
+  # binds. A region that fails to decode (e.g. a balanced but non-JSON `{note}`) is
+  # skipped; one that decodes has each object in it tried in text order, itself first,
+  # so valid JSON of the wrong shape around a valid object still finds it, and the
+  # regions inside it are not decoded again. If an object produced a validation error
+  # and nothing later binds, that error is preserved rather than masked as a generic
+  # json_parse_error.
   #
-  # Regions nest, so their sizes add up to more than the content's (`[[[...]]]`
-  # has one region per level): the regions together may cost at most `8 * size + 1024`
-  # bytes of decoding (a failed decode costs the bytes read up to its error), then
-  # the walk stops with the reason so far.
+  # Regions nest, but a decoded region's inner regions are skipped, so the regions
+  # decoded overlap only when a decode fails: together they may cost at most
+  # `8 * size + 1024` bytes of decoding (a failed decode costs the bytes read up to its
+  # error), then the walk stops with the reason so far. An object written inside a
+  # JSON string of a decoded region is not tried (only `{}` could decode there).
   defp try_extracted_regions(cleaned_content, opts, schema, content, reason) do
     budget = 8 * byte_size(cleaned_content) + 1024
 
-    {result, _budget} =
+    {result, _budget, _skip_to} =
       cleaned_content
       |> ContentCleaner.balanced_regions()
-      |> Enum.reduce_while({reason, budget}, fn {extracted, _start}, {reason, budget} ->
-        {tag, reason, cost} = bind_region(extracted, opts, schema, content, reason)
+      |> Enum.reduce_while({reason, budget, 0}, fn
+        {_extracted, start}, {_reason, _budget, skip_to} = acc when start < skip_to ->
+          {:cont, acc}
 
-        case budget - cost do
-          left when left < 0 -> {:halt, {reason, left}}
-          left -> {tag, {reason, left}}
-        end
+        {extracted, start}, {reason, budget, skip_to} ->
+          {tag, reason, cost, decoded?} = bind_region(extracted, opts, schema, content, reason)
+          skip_to = if decoded?, do: start + byte_size(extracted), else: skip_to
+
+          case budget - cost do
+            left when left < 0 -> {:halt, {reason, left, skip_to}}
+            left -> {tag, {reason, left, skip_to}}
+          end
       end)
 
     case result do
@@ -353,25 +360,30 @@ defmodule Normandy.LLM.JsonDeserializer do
     end
   end
 
-  # {:cont | :halt, reason_or_result, bytes read}. A decode that fails costs the
-  # bytes it read before the failure, not the region's size.
+  # {:cont | :halt, reason_or_result, bytes read, decoded?}. A decode that fails costs
+  # the bytes it read before the failure, not the region's size.
   defp bind_region(extracted, opts, schema, content, reason) do
-    case Decoder.decode(extracted, opts) do
-      {:ok, parsed} when is_map(parsed) ->
-        case SchemaBinder.bind(parsed, schema, content) do
-          {:ok, _populated} = ok -> {:halt, ok, 0}
-          {:error, bind_reason} -> {:cont, bind_reason, byte_size(extracted)}
-        end
-
-      {:ok, _not_a_map} ->
-        {:cont, reason, byte_size(extracted)}
+    case Decoder.decode_maps(extracted, opts) do
+      {:ok, maps} ->
+        {tag, reason} = bind_first(maps, schema, content, reason)
+        {tag, reason, byte_size(extracted), true}
 
       {:error, %{position: position}} when is_integer(position) ->
-        {:cont, reason, position + 1}
+        {:cont, reason, position + 1, false}
 
       _ ->
-        {:cont, reason, byte_size(extracted)}
+        {:cont, reason, byte_size(extracted), false}
     end
+  end
+
+  # The first map that binds, else the last bind error (or `reason` with no maps).
+  defp bind_first(maps, schema, content, reason) do
+    Enum.reduce_while(maps, {:cont, reason}, fn map, {:cont, _reason} ->
+      case SchemaBinder.bind(map, schema, content) do
+        {:ok, _populated} = ok -> {:halt, {:halt, ok}}
+        {:error, bind_reason} -> {:cont, {:cont, bind_reason}}
+      end
+    end)
   end
 
   # Extract content from response struct. Any Model client may have built it, not only
