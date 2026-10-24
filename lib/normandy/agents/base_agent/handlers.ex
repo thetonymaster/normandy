@@ -176,7 +176,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
     {response
      |> stamp_prefix(prefix_key.(produced_by))
-     |> stamp_estimate(prompt, tool_schemas, config.memory), usage, meta}
+     |> stamp_estimate(prompt, tool_schemas, config.memory, usage), usage, meta}
   end
 
   # AX-18: an answer that parses but breaks a constraint the API does not enforce (a
@@ -228,13 +228,18 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   defp stamp_prefix(response, _prefix_key), do: response
 
   # AX-12: the estimate of the request sent beside the size the client reported for it.
-  defp stamp_estimate(%ToolCallResponse{} = response, prompt, tool_schemas, memory),
-    do: %{
+  # A client that does not set input_tokens on its response (any Model but ClaudioAdapter)
+  # reports it in the call's usage: a tool-loop call makes no parse or constraint re-asks,
+  # so that usage is the returned call's.
+  defp stamp_estimate(%ToolCallResponse{} = response, prompt, tool_schemas, memory, usage) do
+    %{
       response
-      | estimated_input_tokens: Prompt.estimate_request(prompt, tool_schemas, memory)
+      | estimated_input_tokens: Prompt.estimate_request(prompt, tool_schemas, memory),
+        input_tokens: response.input_tokens || Usage.request_input_tokens(usage)
     }
+  end
 
-  defp stamp_estimate(response, _prompt, _tool_schemas, _memory), do: response
+  defp stamp_estimate(response, _prompt, _tool_schemas, _memory, _usage), do: response
 
   # Private helper to call LLM with retry and circuit breaker protection.
   # The call returns {:ok, %Response{}} | {:error, %LLMError{}} (Normandy.LLM.Call),

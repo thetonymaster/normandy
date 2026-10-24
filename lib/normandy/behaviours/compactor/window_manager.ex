@@ -19,8 +19,8 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
 
   The estimate is calibrated (AX-12): the newest response in memory that records both the
   size the provider counted for its request and the estimate of that request
-  (`ToolCallResponse.input_tokens` and `estimated_input_tokens`, set by the tool loop on
-  `ClaudioAdapter`) gives a ratio, at least `1.0`, and the window less the reserve is
+  (`ToolCallResponse.input_tokens` and `estimated_input_tokens`, set by the tool loop from
+  what the client reports) gives a ratio, at least `1.0`, and the window less the reserve is
   divided by it before the prompt and the history are fitted in. A ratio below 1 is
   taken as 1: the calibration only compacts earlier. The meta reports it as `:token_ratio`
   (`1.0` without such a response).

@@ -16,7 +16,7 @@ defmodule Normandy.Agents.TokenCalibrationTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
-  alias Normandy.Test.{FakeTool, TelemetryCapture, WireScript}
+  alias Normandy.Test.{FakeClient, FakeTool, TelemetryCapture, WireScript}
   alias Normandy.Tools.Toolset
 
   @use %{"type" => "tool_use", "id" => "toolu_1", "name" => "weather", "input" => %{}}
@@ -64,6 +64,21 @@ defmodule Normandy.Agents.TokenCalibrationTest do
 
     round = tool_round(AgentMemory.messages(config.memory))
     assert round.input_tokens == 1_000
+    assert round.estimated_input_tokens == compactor_view(config)
+  end
+
+  test "a custom client's reported usage fills input_tokens when its response has none" do
+    client =
+      FakeClient.new([
+        {:tool_calls, [{"weather", %{}}],
+         usage: %{input_tokens: 700, cache_read_input_tokens: 50}},
+        {:text, "Sunny."}
+      ])
+
+    assert {:ok, config, _} = BaseAgent.run(agent(client), "weather?")
+
+    round = tool_round(AgentMemory.messages(config.memory))
+    assert round.input_tokens == 750
     assert round.estimated_input_tokens == compactor_view(config)
   end
 
