@@ -25,3 +25,10 @@ config :normandy, :redis_url, System.get_env("REDIS_URL", "redis://localhost:637
 config :opentelemetry,
   traces_exporter: :none,
   processors: [{:otel_simple_processor, %{}}]
+
+# No console logger in tests. Under Elixir 1.17 / OTP 27, ExUnit's capture_log removed and
+# re-added the :default handler at every capture boundary; a log event arriving mid-swap
+# made OTP remove it as a failing handler, and Logger.flush/0 then raised
+# {:not_found, :default} in every later capture_log (694 failures on PR #59's CI).
+# capture_log works through its own handler, so tests still see their logs.
+config :logger, :default_handler, false
