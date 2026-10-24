@@ -28,4 +28,23 @@ defmodule Normandy.LLM.Json.DecoderTest do
   test "uses a generous default limit that does not trip normal payloads" do
     assert {:ok, %{"a" => 1}} = Decoder.decode(~s({"a": 1}), [])
   end
+
+  describe "decode_maps/2" do
+    test "lists every object in text order, a parent before the objects inside it" do
+      assert {:ok, [outer, %{"a" => 1}, empty]} =
+               Decoder.decode_maps(~s({"z": {"a": 1}, "b": {}}), [])
+
+      assert outer == %{"z" => %{"a" => 1}, "b" => %{}}
+      assert empty == %{}
+    end
+
+    test "an array is no object; the objects in it are listed" do
+      assert {:ok, [%{"x" => 1}]} = Decoder.decode_maps(~s([1, {"x": 1}]), [])
+    end
+
+    test "keeps the size guard" do
+      assert {:error, {:input_too_large, _size, 1}} =
+               Decoder.decode_maps(~s({"a": 1}), max_input_bytes: 1)
+    end
+  end
 end

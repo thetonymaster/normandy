@@ -410,6 +410,30 @@ defmodule Normandy.LLM.JsonDeserializerTest do
                JsonDeserializer.parse_and_validate(content, %RequiredField{})
     end
 
+    test "an object nested deep in one large region still binds" do
+      # Each level decoded and failed binding, costing its whole size: past 8 levels of
+      # one 20 KB payload the budget ran out before the object that binds.
+      inner = ~s({"chat_message": "deep", "note": "#{String.duplicate("x", 20_000)}"})
+      doc = Enum.reduce(1..12, inner, fn i, acc -> ~s({"level#{i}": #{acc}}) end)
+
+      assert {:ok, %RequiredField{chat_message: "deep"}} =
+               JsonDeserializer.parse_and_validate("Here: " <> doc, %RequiredField{})
+    end
+
+    test "inside a region, the first object in the text that binds wins" do
+      content = ~s(Result: {"z": {"chat_message": "first"}, "a": {"chat_message": "second"}})
+
+      assert {:ok, %RequiredField{chat_message: "first"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
+
+    test "an object inside an array region binds" do
+      content = ~s(Items: [1, {"count": 2}, {"chat_message": "in a list"}])
+
+      assert {:ok, %RequiredField{chat_message: "in a list"}} =
+               JsonDeserializer.parse_and_validate(content, %RequiredField{})
+    end
+
     test "preserves the validation error when no extracted region binds" do
       content = ~s(Only: {"count": 1} here)
 

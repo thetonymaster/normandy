@@ -2322,8 +2322,11 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   `history_since_compaction/2` still loads every snapshot.
 - **Pathological model output can hide a later answer.** `JsonDeserializer` finds JSON regions in
   prose with a work budget of `8n + 1024` bytes for an `n`-byte answer (it was quadratic on unclosed
-  braces: 30 s on 240 KB). A reply that spends the budget before its real answer, such as deeply nested
-  JSON at nine or more levels spanning the content, is a `json_parse_error`; the retry path re-asks.
+  braces: 30 s on 240 KB). A region that decodes is decoded once, its objects tried in text order and
+  its inner regions skipped, so a valid answer nested at any depth is found. A region that fails to
+  decode still costs the bytes read up to its error, and its inner regions are tried: an answer under
+  many levels of broken JSON spanning the content can spend the budget first and is a
+  `json_parse_error`; the retry path re-asks.
 
 ## New, non-breaking
 

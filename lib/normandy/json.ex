@@ -55,6 +55,12 @@ defmodule Normandy.JSON do
   @spec decode(String.t()) :: {:ok, term()} | {:error, Exception.t()}
   def decode(json) when is_binary(json), do: Jason.decode(json)
 
+  @doc false
+  # decode/1 with objects as `Jason.OrderedObject`, keys in text order
+  # (Normandy.LLM.Json.Decoder.decode_maps/2).
+  @spec decode_ordered(String.t()) :: {:ok, term()} | {:error, Exception.t()}
+  def decode_ordered(json) when is_binary(json), do: Jason.decode(json, objects: :ordered_objects)
+
   @doc "Decodes a JSON string; raises Jason's exception when it is not JSON."
   @spec decode!(String.t()) :: term()
   def decode!(json) when is_binary(json) do
