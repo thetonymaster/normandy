@@ -39,16 +39,24 @@ defmodule Bench.StoreBackends do
 
   Also traps exits in the calling script: a Benchee job that raises, or a Redis connect
   that fails, then exits the script through its `after` (cleanup!/0 runs) instead of
-  killing it through the link.
+  killing it through the link. cleanup!/0 restores the flag, so later scripts in the
+  same `mix bench` VM run as before.
   """
   @spec selected() :: [atom()]
   def selected do
-    Process.flag(:trap_exit, true)
+    backends =
+      case System.get_env("BENCH_STORES") do
+        nil -> @backends
+        list -> list |> String.split(",", trim: true) |> Enum.map(&backend!/1)
+      end
 
-    case System.get_env("BENCH_STORES") do
-      nil -> @backends
-      list -> list |> String.split(",", trim: true) |> Enum.map(&backend!/1)
+    if backends == [] do
+      raise ArgumentError,
+            "BENCH_STORES is empty; name at least one of #{Enum.join(@backends, ",")} or unset it"
     end
+
+    Process.put(:bench_trap_exit, Process.flag(:trap_exit, true))
+    backends
   end
 
   @doc "`{store module, handle}` for a SessionStore on `backend`."
@@ -109,9 +117,18 @@ defmodule Bench.StoreBackends do
 
     Process.delete(:bench_tracked)
 
-    with dir when is_binary(dir) <- Process.delete(:bench_mnesia_dir) do
+    with {dir, previous} <- Process.delete(:bench_mnesia_dir) do
       :stopped = :mnesia.stop()
       File.rm_rf!(dir)
+
+      case previous do
+        {:ok, value} -> Application.put_env(:mnesia, :dir, value)
+        :error -> Application.delete_env(:mnesia, :dir)
+      end
+    end
+
+    with flag when is_boolean(flag) <- Process.delete(:bench_trap_exit) do
+      Process.flag(:trap_exit, flag)
     end
 
     :ok
@@ -142,8 +159,9 @@ defmodule Bench.StoreBackends do
           "normandy_bench_mnesia_#{System.unique_integer([:positive])}"
         )
 
+      # The earlier :dir is put back by cleanup!/0.
+      Process.put(:bench_mnesia_dir, {dir, Application.fetch_env(:mnesia, :dir)})
       Application.put_env(:mnesia, :dir, String.to_charlist(dir))
-      Process.put(:bench_mnesia_dir, dir)
     end
   end
 

@@ -20,7 +20,7 @@ measurement.
 | `json_regions.exs` | `JsonDeserializer.parse_and_validate/3` region extraction, balanced and adversarial, 1–240 KB |
 | `output_guards.exs` | `BaseAgent.stream/3` with output guards, `:incremental` vs `:accumulate` vs none, 16–256 KB |
 | `request_messages.exs` | `AgentMemory.request_messages_for/2` on 10 to 5k messages |
-| `session_store.exs` | SessionStore `append_entry`, `history` (10/100/1k entries), `save_turn_state` + `load_turn_state` per backend |
+| `session_store.exs` | SessionStore `history` (10/100/1k entries), then `append_entry` and `save_turn_state` + `load_turn_state`, per backend. Two runs, saved as `session_store_history` and `session_store_writes` |
 | `memory_store.exs` | MemoryStore `put` (one document, overwritten), `get`, `list` over 100 documents per backend |
 
 ### Store backends

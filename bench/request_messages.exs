@@ -10,6 +10,9 @@ alias Normandy.Components.AgentMemory
 alias Normandy.Components.ToolCall
 alias Normandy.Components.ToolResult
 
+# Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
+opts = Support.run_opts("request_messages")
+
 # The request's prefix key differs from the one the responses were stamped with, so
 # their thinking is stale and the drop path runs too.
 prefix_key = 0
@@ -86,5 +89,5 @@ Benchee.run(
       AgentMemory.request_messages_for(input.rich, prefix_key)
     end
   },
-  Support.run_opts("request_messages", inputs: inputs)
+  Keyword.put(opts, :inputs, inputs)
 )

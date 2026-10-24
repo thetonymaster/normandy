@@ -8,6 +8,9 @@ Code.require_file("support/store_backends.exs", __DIR__)
 alias Bench.StoreBackends
 alias Bench.Support
 
+# Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
+opts = Support.run_opts("memory_store")
+
 documents = 100
 content = String.duplicate("m", 1_024)
 # High enough that the overwritten document never fills the namespace.
@@ -60,7 +63,7 @@ try do
         })
     end
 
-  Benchee.run(jobs, Support.run_opts("memory_store"))
+  Benchee.run(jobs, opts)
 after
   StoreBackends.cleanup!()
 end

@@ -22,6 +22,9 @@ alias Normandy.Agents.BaseAgent
 alias Normandy.Guardrails.Builtins.RegexGuard
 alias Normandy.Test.FakeClient
 
+# Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
+opts = Support.run_opts("output_guards")
+
 chunk_size = 200
 regex_guard = {RegexGuard, patterns: [~r/\b\d{3}-\d{2}-\d{4}\b/, ~r/\b(?:\d[ -]?){13,16}\b/]}
 sentence = "The quick brown fox jumps over the lazy dog and keeps on running. "
@@ -94,5 +97,5 @@ Benchee.run(
       scenario.(output: [regex_guard], streaming_mode: :accumulate, chunk_size: chunk_size),
     "no guards" => scenario.([])
   },
-  Support.run_opts("output_guards", inputs: inputs)
+  Keyword.put(opts, :inputs, inputs)
 )

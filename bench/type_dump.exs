@@ -7,6 +7,9 @@ Code.require_file("support.exs", __DIR__)
 alias Bench.Support
 alias Normandy.Type
 
+# Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
+opts = Support.run_opts("type_dump")
+
 array = Enum.to_list(1..1_000)
 
 values = [
@@ -58,4 +61,4 @@ jobs =
     "cast {:array, :integer} 1k" => fn -> Type.cast({:array, :integer}, array) end
   })
 
-Benchee.run(jobs, Support.run_opts("type_dump"))
+Benchee.run(jobs, opts)

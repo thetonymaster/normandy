@@ -8,6 +8,9 @@ alias Bench.Support
 alias Normandy.Agents.BaseAgentOutputSchema
 alias Normandy.LLM.JsonDeserializer
 
+# Before any setup, so a bad BENCH_SAVE/BENCH_COMPARE fails at once.
+opts = Support.run_opts("json_regions")
+
 schema = %BaseAgentOutputSchema{}
 
 prose = "Here is what I found while looking into the request. "
@@ -69,5 +72,5 @@ Benchee.run(
       JsonDeserializer.parse_and_validate(input.adversarial, schema)
     end
   },
-  Support.run_opts("json_regions", inputs: inputs)
+  Keyword.put(opts, :inputs, inputs)
 )

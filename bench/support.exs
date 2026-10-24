@@ -63,7 +63,7 @@ defmodule Bench.Support do
     unless File.regular?(path) do
       raise ArgumentError,
             "BENCH_COMPARE=#{tag}: no saved run at #{path}; " <>
-              "run BENCH_SAVE=#{tag} mix bench bench/#{script}.exs first"
+              "run the same script with BENCH_SAVE=#{tag} first"
     end
 
     [load: path]
