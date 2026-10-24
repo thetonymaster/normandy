@@ -73,10 +73,13 @@ defmodule Normandy.Behaviours.ModelCatalogTest do
     assert ModelsAPI.context_window("claude-opus-5-5", []) == {:error, :no_client}
   end
 
-  test "implements the ModelCatalog behaviour, whose only callback is context_window/2" do
+  test "implements the ModelCatalog behaviour, whose only required callback is context_window/2" do
     behaviours = ModelsAPI.module_info(:attributes)[:behaviour] || []
     assert Normandy.Behaviours.ModelCatalog in behaviours
-    assert ModelCatalog.behaviour_info(:callbacks) == [context_window: 2]
+
+    assert ModelCatalog.behaviour_info(:callbacks) --
+             ModelCatalog.behaviour_info(:optional_callbacks) ==
+             [context_window: 2]
   end
 
   describe "deprecated Static stub" do

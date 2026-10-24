@@ -114,4 +114,35 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
       assert %{} = init(%OtherClient{}, nil)
     end
   end
+
+  defmodule HostCompactor do
+    @behaviour Normandy.Behaviours.Compactor
+    @impl true
+    def maybe_compact(acc, _ctx, _opts), do: {acc, %{compacted: false}}
+    @impl true
+    def validate_opts!(opts, _entry) do
+      if Keyword.has_key?(opts, :typo), do: raise(ArgumentError, "HostCompactor: no :typo")
+      opts
+    end
+
+    @impl true
+    def needs_window?(opts), do: Keyword.get(opts, :windowed, false)
+  end
+
+  test "a host compactor whose validate_opts!/2 raises fails at init" do
+    behaviours = %Config{compactor: {HostCompactor, [typo: 1]}}
+
+    assert_raise ArgumentError, "HostCompactor: no :typo", fn ->
+      init(%OtherClient{}, behaviours)
+    end
+  end
+
+  test "a host compactor's needs_window?/1 decides whether the catalog needs a Claudio client" do
+    assert %Normandy.Agents.BaseAgentConfig{} =
+             init(%OtherClient{}, %Config{compactor: {HostCompactor, []}})
+
+    assert_raise ArgumentError, ~r/needs the model's context window/, fn ->
+      init(%OtherClient{}, %Config{compactor: {HostCompactor, [windowed: true]}})
+    end
+  end
 end

@@ -61,12 +61,28 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
                  ]
                )
 
-  @doc false
-  # Called by BaseAgent.InitOptions.validate_compaction_config!/2, i.e. at BaseAgent.init/1 and at
-  # template rebuild, so a typo surfaces where the config is made, not mid-turn. `entry`
-  # is that public entry point (init/1 or ConfigTemplate.rebuild/3); it prefixes the message.
+  @doc """
+  Checks the options (`Normandy.Behaviours.Compactor` callback). `BaseAgent.init/1` and
+  `ConfigTemplate.rebuild/3` call it, so a typo surfaces where the config is made, not
+  mid-turn. The 1.x `:max_tokens` pin raises with a pointer to `:context_window`.
+  """
+  @impl Normandy.Behaviours.Compactor
   @spec validate_opts!(keyword(), {module(), atom(), arity()}) :: keyword()
-  def validate_opts!(opts, entry), do: Options.validate!(opts, @opts_schema, entry)
+  def validate_opts!(opts, {mod, fun, arity} = entry) do
+    if Keyword.keyword?(opts) and Keyword.has_key?(opts, :max_tokens) do
+      raise ArgumentError,
+            "#{inspect(mod)}.#{fun}/#{arity}: the :max_tokens option " <>
+              "of #{inspect(__MODULE__)} was renamed to :context_window " <>
+              "in 2.0; see MIGRATING-2.0.md §22"
+    end
+
+    Options.validate!(opts, @opts_schema, entry)
+  end
+
+  @doc "Always `true`: the strategies size against the model's context window."
+  @impl Normandy.Behaviours.Compactor
+  @spec needs_window?(keyword()) :: true
+  def needs_window?(_opts), do: true
 
   @impl true
   def maybe_compact(acc, %{window: window}, opts) do

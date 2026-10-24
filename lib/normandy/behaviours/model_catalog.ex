@@ -22,6 +22,16 @@ defmodule Normandy.Behaviours.ModelCatalog do
   @callback context_window(model :: String.t(), opts :: keyword()) ::
               {:ok, pos_integer()} | {:error, term()}
 
+  @doc """
+  Optional. Whether `context_window/2` needs the agent's client to be a
+  `Normandy.LLM.ClaudioAdapter` (the Anthropic Models API lookup). `BaseAgent.init/1`
+  refuses the combination of such a catalog, a compactor that needs a window and another
+  client. A module without the callback is taken not to.
+  """
+  @callback needs_claudio_client?(opts :: keyword()) :: boolean()
+
+  @optional_callbacks needs_claudio_client?: 1
+
   defmodule ModelsAPI do
     @moduledoc """
     Default ModelCatalog: `GET /v1/models/{model}` through `Claudio.Models.get/2`;
@@ -42,6 +52,9 @@ defmodule Normandy.Behaviours.ModelCatalog do
         end
       end
     end
+
+    @impl true
+    def needs_claudio_client?(_opts), do: true
 
     defp fetch_client(opts) do
       case Keyword.fetch(opts, :client) do
@@ -71,6 +84,9 @@ defmodule Normandy.Behaviours.ModelCatalog do
 
     @impl true
     defdelegate context_window(model, opts), to: Normandy.Behaviours.ModelCatalog.ModelsAPI
+
+    @impl true
+    def needs_claudio_client?(_opts), do: true
 
     @doc false
     # Logs the deprecation once per VM (a :persistent_term flag); `BaseAgent.init/1` and

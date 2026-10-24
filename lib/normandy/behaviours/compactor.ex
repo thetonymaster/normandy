@@ -64,11 +64,34 @@ defmodule Normandy.Behaviours.Compactor do
   """
   @callback maybe_compact(acc :: term(), ctx(), opts :: keyword()) :: {term(), map()}
 
+  @doc """
+  Optional. Checks and normalises the compactor's `opts`; `BaseAgent.init/1` and
+  `ConfigTemplate.rebuild/3` call it when the module exports it, so a bad option raises
+  `ArgumentError` where the config is made, not mid-turn. Return the validated opts.
+  `entry` is that public function's `{module, function, arity}`; pass it to
+  `Normandy.Options.validate!/3` so the message names the entry point.
+  """
+  @callback validate_opts!(opts :: keyword(), entry :: {module(), atom(), arity()}) ::
+              keyword()
+
+  @doc """
+  Optional. Whether this compactor, given `opts`, sizes against the model's context
+  window. When it does and `opts` pin no `:context_window`, the turn resolves the window
+  through the configured `ModelCatalog`. A module without the callback is taken to need
+  one; `NoOp` does not.
+  """
+  @callback needs_window?(opts :: keyword()) :: boolean()
+
+  @optional_callbacks validate_opts!: 2, needs_window?: 1
+
   defmodule NoOp do
     @moduledoc "Default Compactor: never compacts (back-compat, zero cost)."
     @behaviour Normandy.Behaviours.Compactor
 
     @impl true
     def maybe_compact(acc, _ctx, _opts), do: {acc, %{compacted: false}}
+
+    @impl true
+    def needs_window?(_opts), do: false
   end
 end
