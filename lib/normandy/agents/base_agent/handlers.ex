@@ -176,7 +176,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
     {response
      |> stamp_prefix(prefix_key.(produced_by))
-     |> stamp_estimate(prompt, tool_schemas, config.memory, usage), usage, meta}
+     |> stamp_estimate(prompt, tool_schemas, config.memory), usage, meta}
   end
 
   # AX-18: an answer that parses but breaks a constraint the API does not enforce (a
@@ -228,18 +228,31 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   defp stamp_prefix(response, _prefix_key), do: response
 
   # AX-12: the estimate of the request sent beside the size the client reported for it.
-  # A client that does not set input_tokens on its response (any Model but ClaudioAdapter)
-  # reports it in the call's usage: a tool-loop call makes no parse or constraint re-asks,
-  # so that usage is the returned call's.
-  defp stamp_estimate(%ToolCallResponse{} = response, prompt, tool_schemas, memory, usage) do
-    %{
+  defp stamp_estimate(%ToolCallResponse{} = response, prompt, tool_schemas, memory),
+    do: %{
       response
-      | estimated_input_tokens: Prompt.estimate_request(prompt, tool_schemas, memory),
-        input_tokens: response.input_tokens || Usage.request_input_tokens(usage)
+      | estimated_input_tokens: Prompt.estimate_request(prompt, tool_schemas, memory)
     }
-  end
 
-  defp stamp_estimate(response, _prompt, _tool_schemas, _memory, _usage), do: response
+  defp stamp_estimate(response, _prompt, _tool_schemas, _memory), do: response
+
+  # AX-12: the size of the request one attempt sent, from that attempt's own usage, taken
+  # before retry_billed/2 adds failed attempts' billed usage to the outcome. A client that
+  # sets input_tokens itself (ClaudioAdapter) keeps its own; a custom Model reports only
+  # Response.usage.
+  defp with_request_size(
+         {:ok,
+          %Normandy.LLM.Response{content: %ToolCallResponse{input_tokens: nil} = content} =
+            response}
+       ),
+       do:
+         {:ok,
+          %{
+            response
+            | content: %{content | input_tokens: Usage.request_input_tokens(response.usage)}
+          }}
+
+  defp with_request_size(result), do: result
 
   # Private helper to call LLM with retry and circuit breaker protection.
   # The call returns {:ok, %Response{}} | {:error, %LLMError{}} (Normandy.LLM.Call),
@@ -252,7 +265,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
     llm_call = fn ->
       Request.note_call(tracker)
-      Call.converse(config.client, request, opts)
+      config.client |> Call.converse(request, opts) |> with_request_size()
     end
 
     case with_resilience(config, llm_call) do
@@ -1191,7 +1204,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       prefix_key: Map.get(response, :prefix_key),
       content_blocks: ToolCallResponse.api_blocks(content),
       stop_reason: stream_stop_reason(Map.get(response, :stop_reason)),
-      input_tokens: Usage.request_input_tokens(Map.get(response, :usage)),
+      input_tokens: Map.get(response, :input_tokens),
       estimated_input_tokens: Map.get(response, :estimated_input_tokens)
     }
   end
@@ -1262,7 +1275,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         tracker,
         nil,
         request_metadata,
-        fn -> stream_attempt(config, request, callback) end,
+        fn -> config |> stream_attempt(request, callback) |> with_stream_request_size() end,
         &stream_request_outcome/1
       )
     end
@@ -1281,6 +1294,18 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         stream_error(reason)
     end
   end
+
+  # with_request_size/1 for a streamed attempt: its final message's own usage.
+  defp with_stream_request_size({:ok, %{} = final_message}),
+    do:
+      {:ok,
+       Map.put(
+         final_message,
+         :input_tokens,
+         Usage.request_input_tokens(Map.get(final_message, :usage))
+       )}
+
+  defp with_stream_request_size(result), do: result
 
   defp stream_request_outcome({:ok, final_message}) do
     {:ok,

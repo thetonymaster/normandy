@@ -16,6 +16,7 @@ defmodule Normandy.Agents.TokenCalibrationTest do
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
+  alias Normandy.LLMError
   alias Normandy.Test.{FakeClient, FakeTool, TelemetryCapture, WireScript}
   alias Normandy.Tools.Toolset
 
@@ -80,6 +81,27 @@ defmodule Normandy.Agents.TokenCalibrationTest do
     round = tool_round(AgentMemory.messages(config.memory))
     assert round.input_tokens == 750
     assert round.estimated_input_tokens == compactor_view(config)
+  end
+
+  test "a failed attempt's billed usage is not counted as the returned request's size" do
+    billed =
+      LLMError.new(type: :overloaded, retryable?: true, detail: "busy")
+      |> LLMError.with_usage(%{input_tokens: 9_000, output_tokens: 1})
+
+    client =
+      FakeClient.new([
+        {:error, billed},
+        {:tool_calls, [{"weather", %{}}], usage: %{input_tokens: 700}},
+        {:text, "Sunny."}
+      ])
+
+    config =
+      client
+      |> agent()
+      |> Map.put(:retry, max_attempts: 2, base_delay: 1, max_delay: 1, jitter: false)
+
+    assert {:ok, config, _} = BaseAgent.run(config, "weather?")
+    assert tool_round(AgentMemory.messages(config.memory)).input_tokens == 700
   end
 
   test "with fallback iterations only the returned call counts" do
