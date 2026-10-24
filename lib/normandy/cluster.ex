@@ -39,6 +39,10 @@ defmodule Normandy.Cluster do
   alias Normandy.Behaviours.SessionStore.Mnesia, as: MnesiaStore
   alias Normandy.Behaviours.SessionStore.Redis, as: RedisStore
   alias Normandy.Components.ContentBlock.Describe
+
+  # The Redis modules compile only with the optional :redix; their calls here run only on
+  # the :redis plan, which needs it (`mix compile --no-optional-deps` must stay clean).
+  @compile {:no_warn_undefined, [RedisReg, RedisStore]}
   alias Normandy.Options
 
   # :store and :template_provider go to Turn.ResumeReaper, which takes them with the types
