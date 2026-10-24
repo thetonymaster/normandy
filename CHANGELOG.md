@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.2.0](https://github.com/thetonymaster/normandy/compare/a97c30d13e2697087fef8157ba5ca98d0d636646..v2.2.0) - 2026-10-24
+#### Features
+- delete sessions by reachability; restore from the last compaction (#57) - ([342bec6](https://github.com/thetonymaster/normandy/commit/342bec65aa306622e86d123a31063c134bb2d903)) - Antonio Cabrera
+#### Miscellaneous Chores
+- bench minors from the #50 review (#56) - ([a97c30d](https://github.com/thetonymaster/normandy/commit/a97c30d13e2697087fef8157ba5ca98d0d636646)) - Antonio Cabrera
+
+- - -
+
 ## [v2.1.0](https://github.com/thetonymaster/normandy/compare/c15da39d93036430599f99243e790429995acdf2..v2.1.0) - 2026-10-24
 #### Features
 - send the memory tool as Anthropic's native memory_20250818 (AX-33) (#55) - ([4798893](https://github.com/thetonymaster/normandy/commit/4798893bfae0157adf5eb740ab51a31b8ae8cea2)) - Antonio Cabrera
