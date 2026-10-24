@@ -6,7 +6,6 @@ defmodule Normandy.Agents.Turn.Session.Options do
   # source for a session key's type); reading them from Turn.Session itself put all of
   # them in one compile-connected cycle.
 
-  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Components.ContentBlock.Describe
 
   # Modules this schema names, as literal atoms: an alias in the module body is a
@@ -14,6 +13,10 @@ defmodule Normandy.Agents.Turn.Session.Options do
   # compile time.
   @default_supervisor_mod :"Elixir.Normandy.Agents.Turn.Supervisor"
   @handlers :"Elixir.Normandy.Agents.Turn.Driver.Handlers"
+  # A %BaseAgentConfig{} pattern would wait for that struct's module (and through it the
+  # Schema compile cycle) while every reader of this schema waits here: on a 4-core
+  # runner Elixir 1.20 then reported this module missing to engine/server.ex.
+  @base_agent_config :"Elixir.Normandy.Agents.BaseAgentConfig"
 
   @schema NimbleOptions.new!(
             session_id: [
@@ -154,7 +157,7 @@ defmodule Normandy.Agents.Turn.Session.Options do
     do: {:error, "expected a module, got: " <> Describe.type_of(other)}
 
   @doc false
-  def validate_config(%BaseAgentConfig{} = config), do: {:ok, config}
+  def validate_config(%{__struct__: @base_agent_config} = config), do: {:ok, config}
 
   def validate_config(other),
     do:
