@@ -301,7 +301,7 @@ defmodule Normandy.Telemetry.RunTotalsTest do
 
     defp assert_hook_info_only do
       assert_received {:hook, :p, :before_llm, [info, _ctx]}
-      assert Map.keys(info) |> Enum.sort() == [:final, :iterations_left]
+      assert Map.keys(info) |> Enum.sort() == [:final, :iterations_left, :reask]
     end
 
     test "run/3" do

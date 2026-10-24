@@ -106,7 +106,9 @@ defmodule Normandy.Telemetry do
 
     * Start metadata: `model`, `iteration` (1-based; absent on a summary call and on
       `get_response/2`),
-      `purpose` (`:summary`, only on a summary call), `agent_name`, the ids, `stream`
+      `purpose` (`:summary`, only on a summary call), `reask` (`true`, only on a call that
+      re-asks a tool-loop answer that broke a constraint; it has the `iteration` of the
+      call it re-asks, AX-18), `agent_name`, the ids, `stream`
       (boolean, always present), `structured_output` (boolean, always present),
       `provider`, `max_tokens`, `temperature` (only when set; Opus 4.7+ rejects it),
       `effort`, `server_address` (host of the client's base URL; absent when the

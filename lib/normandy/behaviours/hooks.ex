@@ -87,13 +87,20 @@ defmodule Normandy.Behaviours.Hooks do
   @callback on_prompt(input :: term(), Context.t(), opts()) ::
               {:cont, term()} | {:halt, reason :: String.t()}
   @doc """
-  Runs before each model call, with `%{final: boolean, iterations_left: integer}`.
+  Runs before each model call, with `%{final: boolean, reask: boolean, iterations_left:
+  integer}`. `final` is an answer-only call (`tool_choice: :none`): the one after
+  `max_tool_iterations`, or a re-ask; `reask` is a call that asks again for a tool-loop
+  answer that broke a schema constraint (AX-18).
 
   Return `:cont` to make the call, or `{:halt, reason}` to end the turn with a
   `Normandy.HookHaltError` without making it. A halt is not retried. Any other return value
   raises `ArgumentError`.
   """
-  @callback before_llm(%{final: boolean(), iterations_left: integer()}, Context.t(), opts()) ::
+  @callback before_llm(
+              %{final: boolean(), reask: boolean(), iterations_left: integer()},
+              Context.t(),
+              opts()
+            ) ::
               :cont | {:halt, reason :: String.t()}
   @doc """
   Runs before each tool call, with the model's `Normandy.Components.ToolCall`.

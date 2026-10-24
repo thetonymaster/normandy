@@ -26,6 +26,10 @@ defmodule Normandy.Agents.Turn do
   is, with no user message after it, for the model to continue; it spends one
   iteration, like a tool batch. A paused final call (after the iteration cap) is continued the same way as the final call, at most three times; a fourth pause fails the turn with `{:error, %Normandy.LLMError{type: :pause_turn}}`.
 
+  A final answer the shell rejects (`{:output_invalid, error}`, a broken schema
+  constraint) is asked again while `:max_constraint_reasks` lasts: a `final: true` call whose
+  request carries `reask: %{response:, error:}`; then the turn fails with `{:rejected, error}`.
+
   A final response that carries server-tool results (a paused turn's continuation with
   its `mcp_tool_result`, a web search) is appended right before the answer, so later
   turns send what the tools returned.
@@ -67,6 +71,8 @@ defmodule Normandy.Agents.Turn do
             iterations_left: non_neg_integer(),
             awaiting_final: boolean(),
             final_pauses: non_neg_integer(),
+            reasks_left: non_neg_integer(),
+            reasking: boolean(),
             response_model: term(),
             output_schema: term(),
             pending_calls: [term()],
@@ -85,6 +91,8 @@ defmodule Normandy.Agents.Turn do
               iterations_left: 20,
               awaiting_final: false,
               final_pauses: 0,
+              reasks_left: 0,
+              reasking: false,
               response_model: nil,
               output_schema: nil,
               pending_calls: [],
@@ -116,6 +124,14 @@ defmodule Normandy.Agents.Turn do
                        type: :any,
                        doc:
                          "The schema the final answer is converted into (`{:convert_output, resp, output_schema}`) when it differs from `:response_model`."
+                     ],
+                     max_constraint_reasks: [
+                       type: :non_neg_integer,
+                       default: 0,
+                       doc:
+                         "How many times a final answer the shell rejects (`{:output_invalid, error}`) " <>
+                           "is asked again (AX-18): a `final: true` call whose request carries " <>
+                           "`reask: %{response:, error:}`. `0` fails on the first rejection."
                      ]
                    )
 
@@ -136,7 +152,8 @@ defmodule Normandy.Agents.Turn do
       max_iterations: max,
       iterations_left: max,
       response_model: Keyword.get(opts, :response_model),
-      output_schema: Keyword.get(opts, :output_schema)
+      output_schema: Keyword.get(opts, :output_schema),
+      reasks_left: Keyword.fetch!(opts, :max_constraint_reasks)
     }
   end
 
@@ -150,6 +167,24 @@ defmodule Normandy.Agents.Turn do
   def step(%State{status: :provisioning} = s, :start) do
     {%{s | status: :steering},
      [{:maybe_compact, %{iterations_left: s.iterations_left, mid_round: false}}]}
+  end
+
+  # The re-asked answer replaces the rejected one: converted and validated the same way,
+  # its tool calls never dispatched (it was asked with tool_choice :none), the turn's
+  # stop_reason kept. A paused re-ask answer is not continued (continuing appends it,
+  # and the feedback it answers is in no memory) and never accepted, even when its text
+  # parses: the turn fails with :pause_turn, as a final call still paused does.
+  def step(%State{status: :assistant_streaming, reasking: true} = s, {:llm_response, resp}) do
+    if paused?(resp) do
+      fail_paused_final(
+        %{s | reasking: false},
+        resp,
+        "the re-asked final answer was paused (stop_reason pause_turn)"
+      )
+    else
+      s = %{s | status: :finalizing, reasking: false, last_response: resp}
+      {s, [finish_effect(s, resp)]}
+    end
   end
 
   # The final call ran with tool_choice :none, so tool calls in its response are not
@@ -171,7 +206,12 @@ defmodule Normandy.Agents.Turn do
         |> continue_paused(resp)
 
       true ->
-        fail_paused_final(s, resp)
+        fail_paused_final(
+          s,
+          resp,
+          "the final call after max_tool_iterations was still paused (stop_reason " <>
+            "pause_turn) after #{@max_final_continuations} continuations"
+        )
     end
   end
 
@@ -192,6 +232,30 @@ defmodule Normandy.Agents.Turn do
 
   def step(%State{status: :finalizing} = s, {:output_validated, validated}) do
     {s, [{:guard_output, validated}]}
+  end
+
+  # AX-18: the shell rejected the converted answer (a constraint the API does not
+  # enforce). With re-asks left it is asked again, answer only (`final: true`: the shell
+  # sends tool_choice :none); the request carries the rejected response and the error,
+  # which the shell turns into feedback for that call only. Without, the turn fails.
+  # Map.get: a Turn.State persisted before reasks_left existed decodes without it.
+  def step(%State{status: :finalizing} = s, {:output_invalid, error}) do
+    case Map.get(s, :reasks_left, 0) do
+      left when left > 0 ->
+        {%{s | status: :assistant_streaming, reasks_left: left - 1, reasking: true},
+         [
+           {:call_llm,
+            %{
+              response_model: s.response_model,
+              final: true,
+              reask: %{response: s.last_response, error: error}
+            }}
+         ]}
+
+      _none ->
+        reason = {:rejected, error}
+        {%{s | status: :failed, error: reason}, [{:fail, reason}]}
+    end
   end
 
   # A final response that carries server-tool results (an MCP connector's
@@ -598,18 +662,16 @@ defmodule Normandy.Agents.Turn do
     {s, [finish_effect(s, resp)]}
   end
 
-  # A final call still paused after @max_final_continuations continuations: an
-  # incomplete answer is never a success (decision 23). The reason is the stop reason,
-  # never model text; usage is the response's own, when it carries any.
-  defp fail_paused_final(s, resp) do
+  # A final call still paused after @max_final_continuations continuations, or a paused
+  # re-ask: an incomplete answer is never a success (decision 23). The reason is the stop
+  # reason, never model text; usage is the response's own, when it carries any.
+  defp fail_paused_final(s, resp, detail) do
     error =
       [
         type: :pause_turn,
         retryable?: false,
         reason: {:stop_reason, :pause_turn},
-        detail:
-          "the final call after max_tool_iterations was still paused (stop_reason " <>
-            "pause_turn) after #{@max_final_continuations} continuations"
+        detail: detail
       ]
       |> LLMError.new()
       |> LLMError.with_usage(Map.get(resp, :usage))

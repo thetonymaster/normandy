@@ -1231,12 +1231,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp paused_steering_state(data, msg) do
     config = AgentHandlers.with_default_output_schema(data.config)
 
-    state =
-      Turn.new(
-        max_iterations: config.max_tool_iterations,
-        response_model: AgentHandlers.turn_response_model(config),
-        output_schema: config.output_schema
-      )
+    state = AgentHandlers.new_turn(config)
 
     state = %{state | status: :steering, trace_carrier: OtelCtx.inject(turn_caller_ctx(msg))}
     %{data | config: config, turn_state: state}
@@ -1271,12 +1266,7 @@ defmodule Normandy.Agents.Turn.Server do
 
     with {:ok, repaired} <- persist_interrupted(data, repairs),
          :ok <- persist_user_message(data, config, user_input, repaired) do
-      state =
-        Turn.new(
-          max_iterations: config.max_tool_iterations,
-          response_model: AgentHandlers.turn_response_model(config),
-          output_schema: config.output_schema
-        )
+      state = AgentHandlers.new_turn(config)
 
       # The caller's context, persisted with every save of the turn state, so a
       # restarted server can resume the turn in the caller's trace.
@@ -1660,7 +1650,8 @@ defmodule Normandy.Agents.Turn.Server do
           fn -> validate_output(data, value) end,
           fn
             {:output_unparsed, e} -> fail(data, e)
-            {:output_invalid, e} -> fail(data, {:rejected, e})
+            # The core re-asks a rejected answer or fails the turn with {:rejected, e}.
+            {:output_invalid, e} -> advance(rest, data, {:output_invalid, e})
             validated -> advance(rest, data, {:output_validated, validated})
           end
         )

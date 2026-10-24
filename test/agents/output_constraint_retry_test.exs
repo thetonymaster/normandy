@@ -90,7 +90,7 @@ defmodule Normandy.Agents.OutputConstraintRetryTest do
     refute_receive {:wire_body, 2, _}
   end
 
-  test "a tool-loop call is validated, not re-asked, even when it answers the output schema" do
+  test "a tool-loop answer is re-asked by the turn, answer only, then rejected" do
     client = %Normandy.Test.StubClient{
       notify: self(),
       reply: fn _response_model -> %Code3{code: "abcd"} end
@@ -101,8 +101,12 @@ defmodule Normandy.Agents.OutputConstraintRetryTest do
       |> BaseAgent.init()
       |> BaseAgent.register_tool(%Normandy.Test.FakeTool{})
 
+    # The first call, then json_retry_max_attempts (default 2) re-asks with
+    # tool_choice :none (AX-18), then the ValidationError.
     assert {:error, %ValidationError{}} = BaseAgent.run(config, "go")
     assert_receive {:converse, %{response_model: %Normandy.Agents.ToolCallResponse{}}, _}
+    assert_receive {:converse, %{tool_choice: :none}, _}
+    assert_receive {:converse, %{tool_choice: :none}, _}
     refute_receive {:converse, _, _}
   end
 
