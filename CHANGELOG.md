@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.5.0](https://github.com/thetonymaster/normandy/compare/bb7c9f64b81a078f7d8dd6bcdebd0801c2c48e90..v2.5.0) - 2026-10-24
+#### Features
+- re-ask a tool-loop final answer that breaks a constraint (AX-18) (#62) - ([8796d2d](https://github.com/thetonymaster/normandy/commit/8796d2d95b933fe1f5799b6128dcb18b109abc83)) - Antonio Cabrera
+#### Continuous Integration
+- test the three latest Elixir minors (1.18, 1.19, 1.20) (#61) - ([bb7c9f6](https://github.com/thetonymaster/normandy/commit/bb7c9f64b81a078f7d8dd6bcdebd0801c2c48e90)) - Antonio Cabrera
+
+- - -
+
 ## [v2.4.0](https://github.com/thetonymaster/normandy/compare/5f42f2280dc89be10c84afb0c76c50f4092a6415..v2.4.0) - 2026-10-24
 #### Features
 - calibrate the compaction budget from the reported request size (AX-12) (#59) - ([5f42f22](https://github.com/thetonymaster/normandy/commit/5f42f2280dc89be10c84afb0c76c50f4092a6415)) - Antonio Cabrera
