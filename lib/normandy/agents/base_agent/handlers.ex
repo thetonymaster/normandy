@@ -182,12 +182,14 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   # validation fails it. Only a call whose answer is the output schema itself: a chat
   # answer (its blank-answer rules) and a tool-loop answer are the turn's to check. Each
   # retry augments the original request and its usage is added to the call's. A re-ask
-  # makes no JSON parse retries of its own, so json_retry_max_attempts bounds the calls
-  # (N + 1 at most), not their product.
-  defp reask_broken_constraints(result, _config, _request, _opts, 0), do: result
+  # makes no JSON parse retries of its own: with json_retry_max_attempts N, a call makes
+  # at most N parse re-asks (the first answer, ClaudioAdapter's legacy path), then N
+  # constraint re-asks, 2N + 1 calls, never their product.
+  defp reask_broken_constraints(result, _config, _request, _opts, retries) when retries <= 0,
+    do: result
 
   defp reask_broken_constraints({response, usage, _meta} = result, config, request, opts, retries) do
-    with true <- constrained_answer?(response, config),
+    with true <- constrained_answer?(response, request, config),
          {:error, errors} <- ValidationMiddleware.validate_output(config, response) do
       content = BaseIOSchema.to_json(response)
       feedback = RetryFeedback.build({:output_constraints, errors, content}, content, response)
@@ -208,9 +210,14 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     end
   end
 
-  defp constrained_answer?(%{chat_message: _}, _config), do: false
-  defp constrained_answer?(%mod{}, %{output_schema: %mod{}}), do: true
-  defp constrained_answer?(_response, _config), do: false
+  # A call made for the output schema itself (not a tool-loop call, even one whose client
+  # answers with the output schema's struct) that returned it.
+  defp constrained_answer?(%{chat_message: _}, _request, _config), do: false
+
+  defp constrained_answer?(%mod{}, %{response_model: %mod{}}, %{output_schema: %mod{}}),
+    do: true
+
+  defp constrained_answer?(_response, _request, _config), do: false
 
   defp stamp_prefix(%ToolCallResponse{} = response, prefix_key),
     do: %{response | prefix_key: prefix_key}

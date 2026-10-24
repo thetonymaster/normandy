@@ -90,6 +90,49 @@ defmodule Normandy.Agents.OutputConstraintRetryTest do
     refute_receive {:wire_body, 2, _}
   end
 
+  test "a tool-loop call is validated, not re-asked, even when it answers the output schema" do
+    client = %Normandy.Test.StubClient{
+      notify: self(),
+      reply: fn _response_model -> %Code3{code: "abcd"} end
+    }
+
+    config =
+      %{client: client, model: "m", output_schema: %Code3{}}
+      |> BaseAgent.init()
+      |> BaseAgent.register_tool(%Normandy.Test.FakeTool{})
+
+    assert {:error, %ValidationError{}} = BaseAgent.run(config, "go")
+    assert_receive {:converse, %{response_model: %Normandy.Agents.ToolCallResponse{}}, _}
+    refute_receive {:converse, _, _}
+  end
+
+  test "an OpenAI-compatible client's answer is re-asked too" do
+    alias Normandy.LLM.OpenAICompatibleAdapter
+
+    {:ok, answers} = Agent.start_link(fn -> [~s({"code": "abcd"}), ~s({"code": "ABC"})] end)
+    name = {__MODULE__, make_ref()}
+
+    Req.Test.stub(name, fn conn ->
+      content = Agent.get_and_update(answers, fn [next | rest] -> {next, rest} end)
+
+      Req.Test.json(conn, %{
+        "id" => "chatcmpl-1",
+        "choices" => [%{"message" => %{"content" => content}, "finish_reason" => "stop"}]
+      })
+    end)
+
+    client = %OpenAICompatibleAdapter{
+      api_key: "test-key",
+      base_url: "https://example.test/v1",
+      options: %{req_options: [plug: {Req.Test, name}]}
+    }
+
+    config = BaseAgent.init(%{client: client, model: "gpt-4o", output_schema: %Code3{}})
+
+    assert {:ok, _config, %Code3{code: "ABC"}} = BaseAgent.run(config, "go")
+    assert Agent.get(answers, & &1) == []
+  end
+
   test "enable_json_retry: false asks once" do
     {client, config} = agent([{:text, ~s({"code": "abcd"})}], true, %{enable_json_retry: false})
 
