@@ -6,8 +6,9 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   Text-completion only (v1): tool/function calling is not supported and a
   non-empty `request.tools` raises. An answer is parsed once with
   `Normandy.LLM.JsonDeserializer.parse_and_validate/3` and the `:on_parse_failure` policy
-  applies; there is no JSON re-ask, so `enable_json_retry` and `json_retry_max_attempts`
-  have no effect on this client (`Normandy.LLM.ClaudioAdapter` re-asks).
+  applies; an answer that does not parse is not re-asked (`Normandy.LLM.ClaudioAdapter`
+  re-asks). An answer that parses but breaks a schema constraint is re-asked by BaseAgent
+  on any client, under `enable_json_retry` and `json_retry_max_attempts`.
 
       client = %Normandy.LLM.OpenAICompatibleAdapter{
         api_key: System.get_env("OPENAI_API_KEY"),

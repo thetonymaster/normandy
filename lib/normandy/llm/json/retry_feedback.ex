@@ -13,9 +13,6 @@ defmodule Normandy.LLM.Json.RetryFeedback do
         _failed_content,
         schema
       ) do
-    schema_json =
-      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
-
     # Extract detailed field-level errors using traverse_errors
     error_details =
       Validate.traverse_errors(changeset, fn {msg, opts} ->
@@ -36,16 +33,46 @@ defmodule Normandy.LLM.Json.RetryFeedback do
 
     ## Your Previous Response
     ```json
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
+    #{previous_response(content)}
     ```
 
     ## Required Schema
     ```json
-    #{schema_json}
+    #{required_schema(schema)}
     ```
 
     Respond with a corrected JSON object that fixes the errors above: include
     every required field, with types and values that satisfy the schema.
+    """
+  end
+
+  # Output validation errors (ValidationMiddleware: %{path:, message:}), for an answer that
+  # parsed but breaks a constraint the API does not enforce.
+  def build({:output_constraints, errors, content}, _failed_content, schema) do
+    details =
+      Enum.map_join(errors, "\n", fn error ->
+        "• `#{Enum.join(Map.get(error, :path, []), ".")}`: #{error.message}"
+      end)
+
+    """
+    # JSON VALIDATION ERROR
+
+    Your previous response was valid JSON, but breaks the schema's constraints.
+
+    ## Validation Errors
+    #{details}
+
+    ## Your Previous Response
+    ```json
+    #{previous_response(content)}
+    ```
+
+    ## Required Schema
+    ```json
+    #{required_schema(schema)}
+    ```
+
+    Respond with a corrected JSON object whose values satisfy every constraint above.
     """
   end
 
@@ -77,9 +104,6 @@ defmodule Normandy.LLM.Json.RetryFeedback do
   end
 
   defp parse_feedback(heading, summary, details, content, schema) do
-    schema_json =
-      Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
-
     """
     # #{heading}
 
@@ -90,12 +114,12 @@ defmodule Normandy.LLM.Json.RetryFeedback do
 
     ## Your Previous Response
     ```
-    #{String.slice(content, 0, 500)}#{if String.length(content) > 500, do: "...", else: ""}
+    #{previous_response(content)}
     ```
 
     ## Required Schema
     ```json
-    #{schema_json}
+    #{required_schema(schema)}
     ```
 
     Respond with a single JSON object whose field names match the schema exactly,
@@ -111,6 +135,13 @@ defmodule Normandy.LLM.Json.RetryFeedback do
     do: "The response is valid JSON, but not a JSON object."
 
   defp describe_failure(_reason), do: "The response does not match the required format."
+
+  # The model's failed answer, cut at 500 characters.
+  defp previous_response(content),
+    do: String.slice(content, 0, 500) <> if(String.length(content) > 500, do: "...", else: "")
+
+  defp required_schema(schema),
+    do: Normandy.JSON.encode!(Wire.encodable(Normandy.Schema.json_schema(schema)), pretty: true)
 
   @spec augment_messages([Message.t()], String.t()) :: [Message.t()]
   # The feedback quotes the model's own failed output, so it goes in a user

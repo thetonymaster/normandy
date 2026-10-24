@@ -130,8 +130,11 @@ defmodule Normandy.Agents.WireIdentityTest do
           %FakeTool{name: "weather"},
           %ReturnTool{name: "facts", output: %{"population" => 2_100_000, "tags" => ["capital"]}}
         ]),
+      # The window compacts once, before the fifth request: 1_430 to 1_460 does. The
+      # compactor counts the system prompt and tools against it (AX-12), which is why it
+      # is not the 1_270 the fixtures were recorded with; the requests are unchanged.
       behaviours: %Normandy.Behaviours.Config{
-        compactor: {Compactor.WindowManager, context_window: 1_270, reserved_tokens: 1_000}
+        compactor: {Compactor.WindowManager, context_window: 1_445, reserved_tokens: 1_000}
       }
     })
   end

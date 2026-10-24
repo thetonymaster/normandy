@@ -35,6 +35,23 @@ defmodule Normandy.Components.SystemPromptGenerator do
   end
 
   def generate_prompt(%PromptSpecification{} = prompt_specification) do
+    case generate_parts(prompt_specification) do
+      {static, nil} -> static
+      {static, context} -> static <> "\n" <> context
+    end
+  end
+
+  @doc """
+  `generate_prompt/1` in two parts, `{static, context}`: the Role, How to work and Output
+  sections, and the Context section of the specification's context providers (`nil`
+  without one). A provider's text can change from call to call; BaseAgent sends it after
+  everything else in the system prompt, so the rest stays cached (AX-20).
+  """
+  @spec generate_parts(PromptSpecification.t()) :: {String.t(), String.t() | nil}
+  def generate_parts(%PromptSpecification{background: []} = prompt_specification),
+    do: generate_parts(%{prompt_specification | background: ["You are a helpful assistant."]})
+
+  def generate_parts(%PromptSpecification{} = prompt_specification) do
     %PromptSpecification{
       background: background,
       steps: steps,
@@ -42,9 +59,12 @@ defmodule Normandy.Components.SystemPromptGenerator do
       context_providers: context_providers
     } = prompt_specification
 
-    build_prompt(background, steps, output)
-    |> build_context(context_providers)
-    |> Enum.join("\n")
+    static = background |> build_prompt(steps, output) |> Enum.join("\n")
+
+    case build_context([], context_providers) do
+      [] -> {static, nil}
+      context -> {static, Enum.join(context, "\n")}
+    end
   end
 
   defp build_prompt(background, steps, output) do

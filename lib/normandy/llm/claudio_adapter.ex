@@ -251,9 +251,11 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp converse_structured(client, request, opts, json_schema) do
       claudio_client = build_claudio_client(client)
 
+      # The format constrains the answer, so the system prompt leaves out the schema it
+      # would repeat (AX-19); a fallback to the legacy path sends it again.
       claudio_request =
         client
-        |> build_request(request)
+        |> build_request(constrained(request))
         |> Claudio.Messages.Request.set_output_format(json_schema)
 
       case create(claudio_client, claudio_request, request.model, opts, nil) do
@@ -346,25 +348,27 @@ defmodule Normandy.LLM.ClaudioAdapter do
     def stream(client, %Request{} = request, _opts) do
       claudio_client = build_claudio_client(client)
 
-      claudio_request =
-        client
-        |> build_request(request, stream: true)
-        |> Claudio.Messages.Request.enable_streaming()
+      stream_request =
+        &(client
+          |> build_request(&1, stream: true)
+          |> Claudio.Messages.Request.enable_streaming())
 
       # request.output_format constrains the streamed text as it does a tool-loop
-      # call's. A 400 naming the output format or its schema re-sends the request
-      # without it (the system prompt already shows the schema); any other error
-      # is returned.
+      # call's, and the system prompt then leaves out the schema (AX-19). A 400 naming
+      # the output format or its schema re-sends the request without the format and
+      # with the schema in the system prompt; any other error is returned.
       result =
         case ClaudioAdapter.__structured_schema_for__(client, request) do
           {:ok, json_schema} ->
-            claudio_request
+            request
+            |> constrained()
+            |> stream_request.()
             |> Claudio.Messages.Request.set_output_format(json_schema)
             |> open_stream(claudio_client)
-            |> retry_stream_without_format(claudio_request, claudio_client)
+            |> retry_stream_without_format(stream_request.(request), claudio_client)
 
           :skip ->
-            open_stream(claudio_request, claudio_client)
+            open_stream(stream_request.(request), claudio_client)
         end
 
       case result do
@@ -706,6 +710,10 @@ defmodule Normandy.LLM.ClaudioAdapter do
       end
     end
 
+    # A request whose output the format constrains: its system prompt without the
+    # output-schema section.
+    defp constrained(%Request{} = request), do: %{request | output_schema_prompt: nil}
+
     # The one request builder for every call path (legacy, structured, raw
     # retry, streaming), so a setting cannot reach one path and miss another.
     #
@@ -720,12 +728,32 @@ defmodule Normandy.LLM.ClaudioAdapter do
       Claudio.Messages.Request.new(request.model)
       |> add_temperature(request.temperature)
       |> Claudio.Messages.Request.set_max_tokens(request.max_tokens)
-      |> add_messages(Request.messages_with_system(request), enable_caching)
+      |> add_messages(
+        Request.messages_with_system(%{request | context_prompt: nil}),
+        enable_caching
+      )
+      |> add_context_prompt(request.context_prompt)
       |> add_tools(request.tools, enable_caching)
       |> add_mcp_servers(request.mcp_servers)
       |> add_tool_choice(request.tool_choice)
       |> add_client_options(client.options, call_opts ++ task_budget_opts(request))
     end
+
+    # The context providers' text can change from call to call (a date, user data), so it
+    # is a system block of its own after the cached one, with no breakpoint: a change
+    # leaves the rest of the system prompt cached (AX-20).
+    defp add_context_prompt(claudio_request, nil), do: claudio_request
+
+    defp add_context_prompt(%Claudio.Messages.Request{system: system} = claudio_request, context),
+      do:
+        Claudio.Messages.Request.set_system(
+          claudio_request,
+          system_blocks(system) ++ [%{"type" => "text", "text" => context}]
+        )
+
+    defp system_blocks(nil), do: []
+    defp system_blocks(text) when is_binary(text), do: [%{"type" => "text", "text" => text}]
+    defp system_blocks(blocks) when is_list(blocks), do: blocks
 
     # tool_choice is valid only next to tools (the agent's, or an MCP server's
     # mcp_toolset), so a request with none leaves it unset.

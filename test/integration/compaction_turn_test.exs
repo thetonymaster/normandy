@@ -7,6 +7,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
   alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.Config
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.PromptSpecification
 
   defp big_memory do
     Enum.reduce(1..60, AgentMemory.new_memory(nil), fn i, m ->
@@ -16,6 +17,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
   test "default (NoOp) compactor leaves memory untouched at the steering boundary" do
     config = %BaseAgentConfig{
+      prompt_specification: %PromptSpecification{},
       model: "claude-3-5-sonnet-20241022",
       memory: big_memory(),
       behaviours: %Config{}
@@ -33,6 +35,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
   test "opt-in WindowManager compactor with a tiny window truncates at the boundary" do
     config = %BaseAgentConfig{
+      prompt_specification: %PromptSpecification{},
       model: "claude-3-5-sonnet-20241022",
       memory: big_memory(),
       behaviours: %Config{
@@ -53,6 +56,35 @@ defmodule Normandy.Integration.CompactionTurnTest do
              length(AgentMemory.history(config.memory))
   end
 
+  test "a long system prompt counts against the window (AX-12)" do
+    memory = big_memory()
+    history = Normandy.Context.WindowManager.estimate_conversation_tokens(memory)
+    window = history + 16 + 50
+
+    config = fn background ->
+      %BaseAgentConfig{
+        prompt_specification: %PromptSpecification{background: [background]},
+        model: "claude-3-5-sonnet-20241022",
+        memory: memory,
+        behaviours: %Config{
+          compactor: {Compactor.WindowManager, [context_window: window, reserved_tokens: 16]}
+        }
+      }
+    end
+
+    boundary = %{iterations_left: 3, mid_round: false}
+
+    assert {_, %{compacted: false}} =
+             AgentHandlers.compact_turn_memory(config.("Short."), %Turn.State{}, boundary)
+
+    assert {_, %{compacted: true}} =
+             AgentHandlers.compact_turn_memory(
+               config.(String.duplicate("A long role description. ", 40)),
+               %Turn.State{},
+               boundary
+             )
+  end
+
   defmodule StubCatalog do
     @behaviour Normandy.Behaviours.ModelCatalog
 
@@ -65,6 +97,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
   defp catalog_config(model, reply, client \\ nil) do
     %BaseAgentConfig{
+      prompt_specification: %PromptSpecification{},
       model: model,
       client: client,
       memory: big_memory(),
@@ -77,6 +110,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
   test "a pinned :context_window never consults the catalog" do
     config = %BaseAgentConfig{
+      prompt_specification: %PromptSpecification{},
       model: "claude-opus-5-5",
       memory: big_memory(),
       behaviours: %Config{
@@ -202,6 +236,7 @@ defmodule Normandy.Integration.CompactionTurnTest do
 
   test "a non-Claudio client with an unpinned compactor gets a clear error from the default catalog" do
     config = %BaseAgentConfig{
+      prompt_specification: %PromptSpecification{},
       model: "gpt-x",
       client: nil,
       memory: big_memory(),

@@ -72,6 +72,73 @@ defmodule Normandy.Agents.ToolLoopOutputFormatTest do
 
   defp format(body), do: get_in(body, ["output_config", "format"])
 
+  describe "the output schema is sent once (AX-19)" do
+    defp system_text(body), do: body["system"] |> Enum.map_join(& &1["text"])
+
+    defp no_tools(client),
+      do: BaseAgent.init(%{client: client, model: "claude-opus-5-5", output_schema: %Decision{}})
+
+    for {label, run} <- [
+          {"run/3", quote(do: BaseAgent.run(var!(config), %{chat_message: "x"}))},
+          {"stream/3",
+           quote(do: BaseAgent.stream(var!(config), %{chat_message: "x"}, fn _ -> :ok end))}
+        ] do
+      test "a constrained #{label} call leaves the schema to output_config.format" do
+        answer = ~s({"action": "deny"})
+
+        client =
+          if unquote(label) == "run/3",
+            do: WireScript.client([{:json, [text(answer)], "end_turn"}]),
+            else: WireScript.client([{:sse, streamed_text(answer)}])
+
+        config = agent(client)
+        assert {:ok, _config, %Decision{action: "deny"}} = unquote(run)
+
+        assert_receive {:wire_body, 0, body}
+        assert %{"type" => "json_schema"} = format(body)
+        refute system_text(body) =~ "# OUTPUT SCHEMA"
+      end
+    end
+
+    test "a direct answer with structured outputs off carries the schema in its system prompt" do
+      client =
+        WireScript.client([{:json, [text(~s({"action": "deny"}))], "end_turn"}], %{
+          structured_outputs: false
+        })
+
+      assert {:ok, _config, %Decision{}} = BaseAgent.run(no_tools(client), %{chat_message: "x"})
+      assert_receive {:wire_body, 0, body}
+      assert format(body) == nil
+      assert system_text(body) =~ "# OUTPUT SCHEMA"
+    end
+
+    test "a constrained direct answer does not" do
+      client = WireScript.client([{:json, [text(~s({"action": "deny"}))], "end_turn"}])
+
+      assert {:ok, _config, %Decision{}} = BaseAgent.run(no_tools(client), %{chat_message: "x"})
+      assert_receive {:wire_body, 0, body}
+      assert %{"type" => "json_schema"} = format(body)
+      refute system_text(body) =~ "# OUTPUT SCHEMA"
+    end
+
+    test "a stream the API refused the format for is re-sent with the schema" do
+      client =
+        WireScript.client([
+          {:status, 400, @rejection},
+          {:sse, streamed_text(~s({"action": "deny"}))}
+        ])
+
+      assert {:ok, _config, %Decision{}} =
+               BaseAgent.stream(agent(client), %{chat_message: "x"}, fn _ -> :ok end)
+
+      assert_receive {:wire_body, 0, first}
+      assert_receive {:wire_body, 1, second}
+      refute system_text(first) =~ "# OUTPUT SCHEMA"
+      assert system_text(second) =~ "# OUTPUT SCHEMA"
+      assert format(second) == nil
+    end
+  end
+
   describe "the request" do
     defp stub_agent(output_schema) do
       %StubClient{notify: self(), reply: fn rm -> %{rm | content: ~s({"action": "deny"})} end}
@@ -259,7 +326,7 @@ defmodule Normandy.Agents.ToolLoopOutputFormatTest do
       end
     end
 
-    test "the rejected request carried the format; the re-sent one does not" do
+    test "the rejected request carried the format; the re-sent one has the schema in its system prompt instead" do
       client = sync_client(:rejected, ~s({"action": "deny"}))
       assert {:ok, _config, %Decision{}} = BaseAgent.run(agent(client), %{chat_message: "x"})
 
@@ -267,7 +334,15 @@ defmodule Normandy.Agents.ToolLoopOutputFormatTest do
       assert_receive {:wire_body, 1, second}
       assert %{"type" => "json_schema"} = format(first)
       assert format(second) == nil
-      assert Map.delete(first, "output_config") == Map.delete(second, "output_config")
+
+      # AX-19: the constrained request leaves the schema to output_config.format.
+      [%{"text" => constrained_system}] = first["system"]
+      [%{"text" => fallback_system}] = second["system"]
+      refute constrained_system =~ "# OUTPUT SCHEMA"
+      assert fallback_system =~ ~r/\A#{Regex.escape(constrained_system)}\n\n# OUTPUT SCHEMA\n/
+
+      assert Map.drop(first, ["output_config", "system"]) ==
+               Map.drop(second, ["output_config", "system"])
     end
   end
 end

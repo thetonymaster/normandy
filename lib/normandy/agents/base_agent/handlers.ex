@@ -11,25 +11,27 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgent.InitOptions
+  alias Normandy.Agents.BaseAgent.Prompt
   alias Normandy.Agents.BaseAgentConfig
-  alias Normandy.Agents.BaseAgentInputSchema
   alias Normandy.Agents.BaseAgentOutputSchema
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.ValidationMiddleware
   alias Normandy.Behaviours.Config
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.BaseIOSchema
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.Message
   alias Normandy.Components.StreamEvent
   alias Normandy.Components.StreamProcessor
-  alias Normandy.Components.SystemPromptGenerator
   alias Normandy.Components.ToolCall
   alias Normandy.Guardrails.ViolationError
   alias Normandy.Hooks.BaseAgentGlue
   alias Normandy.Hooks.Handlers, as: HookHandlers
   alias Normandy.LLM.Call
   alias Normandy.LLM.ClaudioAdapter
+  alias Normandy.LLM.Json.RetryFeedback
   alias Normandy.LLM.ParseFailure
+  alias Normandy.LLM.Request, as: LLMRequest
   alias Normandy.LLM.Response
   alias Normandy.LLMError
   alias Normandy.Resilience.CircuitBreaker
@@ -38,7 +40,6 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
-  alias Normandy.Schema.Wire
   alias Normandy.Telemetry.Metadata
   alias Normandy.Telemetry.Provider
   alias Normandy.Telemetry.Request
@@ -46,7 +47,6 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   alias Normandy.Telemetry.Span
   alias Normandy.Telemetry.Usage
   alias Normandy.Tools.Executor
-  alias Normandy.Tools.Toolset
 
   @doc false
   # BaseAgent.run!/3's turn inside its run span; returns {config, output}.
@@ -86,8 +86,8 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       |> Map.merge(
         Provider.request_metadata(config,
           stream: false,
-          response_model: response_model || Map.get(config, :output_schema),
-          output_format: request_output_format(response_model, config),
+          response_model: Prompt.call_model(response_model, config),
+          output_format: Prompt.output_format(response_model, config),
           tools?: BaseAgent.has_tools?(config)
         )
       )
@@ -130,30 +130,25 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
          response_model,
          extra_opts
        ) do
-    response_model =
-      if response_model != nil do
-        response_model
-      else
-        Map.get(config, :output_schema)
-      end
-
-    system_prompt_with_schema = system_prompt(config, response_model)
-
-    tool_schemas =
-      if BaseAgent.has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
+    response_model = Prompt.call_model(response_model, config)
+    prompt = Prompt.parts(config, response_model)
+    tool_schemas = Prompt.tool_schemas(config)
 
     # Thinking is valid only under the system prompt, tools and model that produced
     # it (a context provider, a tool change or a
     # model change can change them), so stale thinking is left out and this call's
     # response is stamped.
-    prefix_key = &ToolCallResponse.prefix_key(system_prompt_with_schema, tool_schemas, &1)
+    prefix_key =
+      &ToolCallResponse.prefix_key(LLMRequest.system_prompt(prompt), tool_schemas, &1)
 
     request = %Normandy.LLM.Request{
       model: config.model,
-      system: system_prompt_with_schema,
+      system: prompt.system,
+      output_schema_prompt: prompt.output_schema_prompt,
+      context_prompt: prompt.context_prompt,
       messages: AgentMemory.request_messages_for(config.memory, prefix_key.(config.model)),
       response_model: response_model,
-      output_format: request_output_format(response_model, config),
+      output_format: Prompt.output_format(response_model, config),
       temperature: config.temperature,
       max_tokens: config.max_tokens,
       tools: tool_schemas,
@@ -169,16 +164,60 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     # its llm_call span.
     tracker = Keyword.fetch!(extra_opts, :request_tracker)
 
+    call_opts = [json_retries: json_retries, request_tracker: tracker]
+
     {response, usage, meta} =
-      call_llm_with_resilience(config, request,
-        json_retries: json_retries,
-        request_tracker: tracker
-      )
+      config
+      |> call_llm_with_resilience(request, call_opts)
+      |> reask_broken_constraints(config, request, call_opts, json_retries)
 
     # After a server-side fallback the thinking kept is the fallback model's.
     produced_by = Map.get(meta, :fallback_model) || config.model
     {stamp_prefix(response, prefix_key.(produced_by)), usage, meta}
   end
+
+  # AX-18: an answer that parses but breaks a constraint the API does not enforce (a
+  # pattern, a length, a range) is re-asked with the validation errors, like a parse
+  # failure, `retries` times at most; the last answer then goes to the turn, whose
+  # validation fails it. Only a call whose answer is the output schema itself: a chat
+  # answer (its blank-answer rules) and a tool-loop answer are the turn's to check. Each
+  # retry augments the original request and its usage is added to the call's. A re-ask
+  # makes no JSON parse retries of its own: with json_retry_max_attempts N, a call makes
+  # at most N parse re-asks (the first answer, ClaudioAdapter's legacy path), then N
+  # constraint re-asks, 2N + 1 calls, never their product.
+  defp reask_broken_constraints(result, _config, _request, _opts, retries) when retries <= 0,
+    do: result
+
+  defp reask_broken_constraints({response, usage, _meta} = result, config, request, opts, retries) do
+    with true <- constrained_answer?(response, request, config),
+         {:error, errors} <- ValidationMiddleware.validate_output(config, response) do
+      content = BaseIOSchema.to_json(response)
+      feedback = RetryFeedback.build({:output_constraints, errors, content}, content, response)
+      retry = %{request | messages: RetryFeedback.augment_messages(request.messages, feedback)}
+
+      {response2, usage2, meta2} =
+        call_llm_with_resilience(config, retry, Keyword.put(opts, :json_retries, 0))
+
+      reask_broken_constraints(
+        {response2, Usage.sum(usage, usage2), meta2},
+        config,
+        request,
+        opts,
+        retries - 1
+      )
+    else
+      _valid_or_unchecked -> result
+    end
+  end
+
+  # A call made for the output schema itself (not a tool-loop call, even one whose client
+  # answers with the output schema's struct) that returned it.
+  defp constrained_answer?(%{chat_message: _}, _request, _config), do: false
+
+  defp constrained_answer?(%mod{}, %{response_model: %mod{}}, %{output_schema: %mod{}}),
+    do: true
+
+  defp constrained_answer?(_response, _request, _config), do: false
 
   defp stamp_prefix(%ToolCallResponse{} = response, prefix_key),
     do: %{response | prefix_key: prefix_key}
@@ -514,8 +553,8 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       |> Map.merge(
         Provider.request_metadata(config,
           stream: false,
-          response_model: response_model || Map.get(config, :output_schema),
-          output_format: request_output_format(response_model, config),
+          response_model: Prompt.call_model(response_model, config),
+          output_format: Prompt.output_format(response_model, config),
           tools?: BaseAgent.has_tools?(config)
         )
       )
@@ -769,11 +808,18 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   # The default config selects Compactor.NoOp, so this is observably a no-op
   # unless an agent opts into a real compactor.
   @doc false
-  def compact_turn_memory(%BaseAgentConfig{} = config, %Turn.State{} = _state, info) do
+  def compact_turn_memory(%BaseAgentConfig{} = config, %Turn.State{} = state, info) do
     {mod, opts} = InitOptions.compactor_ref(config)
     {config, window} = resolve_context_window(config, mod, opts)
     mid_round = Map.fetch!(info, :mid_round)
-    ctx = %{model: config.model, window: window, mid_round: mid_round}
+
+    ctx = %{
+      model: config.model,
+      window: window,
+      mid_round: mid_round,
+      prompt_tokens: prompt_tokens(config, state, window)
+    }
+
     {config2, meta} = mod.maybe_compact(config, ctx, opts)
 
     :telemetry.execute(
@@ -928,7 +974,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         Provider.request_metadata(config,
           stream: true,
           response_model: nil,
-          output_format: request_output_format(%ToolCallResponse{}, config),
+          output_format: Prompt.output_format(%ToolCallResponse{}, config),
           tools?: BaseAgent.has_tools?(config)
         )
       )
@@ -1132,69 +1178,12 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   defp stream_stop_reason(reason), do: Response.stop_reason(reason)
 
-  # The schema the system prompt shows. ToolCallResponse is the adapter's internal
-  # shape for a tool-loop reply; tool calls travel through the API's `tools` parameter.
-  # Showing its schema made models write that shape as their text answer, which then
-  # landed verbatim in chat_message. A tool loop's final text is parsed into a custom
-  # output schema (convert_turn_output/3), so the model is told that schema instead; a
-  # chat_message schema takes the text as is and shows none.
-  defp prompt_output_schema(%ToolCallResponse{}, %{output_schema: %{chat_message: _}}), do: nil
+  # The part of the next request that is not history (AX-12): its system prompt and tool
+  # definitions, estimated like the history. Nothing to size against without a window.
+  defp prompt_tokens(_config, _state, nil), do: 0
 
-  defp prompt_output_schema(%ToolCallResponse{}, %{output_schema: schema}), do: schema
-
-  defp prompt_output_schema(response_model, _config), do: response_model
-
-  # The output schema the final answer's text must match, for an adapter that can
-  # constrain it (Request.output_format): the schema the system prompt shows on a
-  # tool-loop call or a stream, never the chat schema (its answer is plain text). A
-  # call whose response model is the output schema itself needs none.
-  defp request_output_format(%ToolCallResponse{} = loop, config),
-    do: prompt_output_schema(loop, config)
-
-  defp request_output_format(_response_model, _config), do: nil
-
-  # The system prompt every call sends: the prompt specification's sections, then the
-  # input schema and the output schema `response_model` shows (prompt_output_schema/2).
-  defp system_prompt(config, response_model) do
-    config.prompt_specification
-    |> SystemPromptGenerator.generate_prompt()
-    |> with_input_schema(config.input_schema)
-    |> with_schema_section(
-      "OUTPUT SCHEMA",
-      "Respond with a JSON object that matches this schema, using exactly these field names and no others:",
-      prompt_output_schema(response_model, config)
-    )
-  end
-
-  # A custom input schema reaches the model as the user message's JSON, so the system
-  # prompt describes its fields (AX-29). The default schema's one chat_message is sent
-  # as plain text and needs none.
-  defp with_input_schema(system_prompt, %BaseAgentInputSchema{}), do: system_prompt
-
-  defp with_input_schema(system_prompt, input_schema),
-    do:
-      with_schema_section(
-        system_prompt,
-        "INPUT SCHEMA",
-        "Each new user input is a JSON object that matches this schema (tool results are not):",
-        input_schema
-      )
-
-  # Appends a schema struct's JSON Schema under `heading`. A struct with no schema (or
-  # nil) adds nothing; an encoding failure raises rather than silently sending the
-  # prompt without its schema.
-  defp with_schema_section(system_prompt, _heading, _intro, nil), do: system_prompt
-
-  defp with_schema_section(system_prompt, heading, intro, schema_struct) do
-    case Normandy.Schema.json_schema(schema_struct) do
-      nil ->
-        system_prompt
-
-      schema ->
-        schema_json = Normandy.JSON.encode!(Wire.encodable(schema), pretty: true)
-        system_prompt <> "\n\n# #{heading}\n#{intro}\n```json\n#{schema_json}\n```"
-    end
-  end
+  defp prompt_tokens(config, %Turn.State{response_model: response_model}, _window),
+    do: Prompt.estimate(config, Prompt.call_model(response_model, config))
 
   # The request for a streaming LLM call, with thinking left out where the system
   # prompt or tools changed since it was produced (see get_response_with_usage/3),
@@ -1203,19 +1192,20 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   # (prompt_output_schema/2): the streamed text is parsed into it. A chat schema
   # streams plain text, so it shows none.
   defp build_stream_request(config) do
-    system_prompt = system_prompt(config, %ToolCallResponse{})
-
-    tool_schemas =
-      if BaseAgent.has_tools?(config), do: Toolset.to_tool_schemas(config.toolset), else: []
+    prompt = Prompt.parts(config, %ToolCallResponse{})
+    tool_schemas = Prompt.tool_schemas(config)
 
     # Streaming calls cannot use :fallbacks, so the requested model produces it.
-    prefix_key = ToolCallResponse.prefix_key(system_prompt, tool_schemas, config.model)
+    prefix_key =
+      ToolCallResponse.prefix_key(LLMRequest.system_prompt(prompt), tool_schemas, config.model)
 
     request = %Normandy.LLM.Request{
       model: config.model,
-      system: system_prompt,
+      system: prompt.system,
+      output_schema_prompt: prompt.output_schema_prompt,
+      context_prompt: prompt.context_prompt,
       messages: AgentMemory.request_messages_for(config.memory, prefix_key),
-      output_format: request_output_format(%ToolCallResponse{}, config),
+      output_format: Prompt.output_format(%ToolCallResponse{}, config),
       temperature: config.temperature,
       max_tokens: config.max_tokens,
       tools: tool_schemas,
