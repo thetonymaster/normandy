@@ -138,13 +138,10 @@ defmodule Normandy.Components.ContentBlock.Image do
   end
 
   defimpl Normandy.Components.ContentBlock.Protocol do
-    # Anthropic documents ~1568 tokens for a 1.15-megapixel image
-    # (https://docs.anthropic.com/); rounded up so we overcount rather than
-    # silently overflow.
-    @tokens 1600
+    alias Normandy.Components.ContentBlock
 
     def to_claudio(block), do: @for.to_claudio(block)
-    def estimate_tokens(_block), do: @tokens
+    def estimate_tokens(_block), do: ContentBlock.image_tokens()
     def label(_block), do: "[image]"
   end
 

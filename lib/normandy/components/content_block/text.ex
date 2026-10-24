@@ -67,15 +67,15 @@ defmodule Normandy.Components.ContentBlock.Text do
   end
 
   defimpl Normandy.Components.ContentBlock.Protocol do
-    alias Normandy.Context.TokenEstimate
+    alias Normandy.Components.ContentBlock
 
     def to_claudio(block), do: @for.to_claudio(block)
 
     def estimate_tokens(%{text: text}) when is_binary(text),
-      do: TokenEstimate.estimate_tokens(text)
+      do: ContentBlock.text_tokens(text)
 
     def estimate_tokens(block),
-      do: block |> Normandy.JSON.encode!() |> TokenEstimate.estimate_tokens()
+      do: block |> Normandy.JSON.encode!() |> ContentBlock.text_tokens()
 
     def label(%{text: text}), do: text
   end

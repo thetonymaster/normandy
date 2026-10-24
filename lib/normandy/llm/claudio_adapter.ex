@@ -171,8 +171,9 @@ defmodule Normandy.LLM.ClaudioAdapter do
     Converts Normandy requests to Claudio format and vice versa.
     """
 
+    alias Normandy.Components.ContentBlock
     alias Normandy.Components.ContentBlock.Describe
-    alias Normandy.Components.ContentBlock.Protocol, as: ContentBlock
+    alias Normandy.Components.ContentBlock.Protocol
     alias Normandy.Components.Message
     alias Normandy.LLMError
 
@@ -561,7 +562,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     # Claudio and the request is malformed at JSON-encode time.
     defp message_entry(%Message{role: role, content: %{__struct__: _} = block})
          when role in ["user", "assistant"] do
-      content = if ContentBlock.impl_for(block), do: [block_to_claudio(block)], else: block
+      content = if ContentBlock.block?(block), do: [block_to_claudio(block)], else: block
       {String.to_existing_atom(role), content}
     end
 
@@ -636,7 +637,7 @@ defmodule Normandy.LLM.ClaudioAdapter do
     defp ensure_non_empty_content!(list) when is_list(list), do: list
 
     defp block_to_claudio(%{__struct__: _} = b) do
-      if ContentBlock.impl_for(b), do: ContentBlock.to_claudio(b), else: unsupported_block!(b)
+      if ContentBlock.block?(b), do: Protocol.to_claudio(b), else: unsupported_block!(b)
     end
 
     # Pass through any caller-provided pre-shaped block map (e.g. when a

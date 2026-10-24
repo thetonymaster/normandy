@@ -89,12 +89,10 @@ defmodule Normandy.Components.ContentBlock.Document do
   end
 
   defimpl Normandy.Components.ContentBlock.Protocol do
-    # A conservative guess: the document's full file content counts at Claude's
-    # side, so real costs vary wildly.
-    @tokens 3000
+    alias Normandy.Components.ContentBlock
 
     def to_claudio(block), do: @for.to_claudio(block)
-    def estimate_tokens(_block), do: @tokens
+    def estimate_tokens(_block), do: ContentBlock.document_tokens()
     def label(_block), do: "[document]"
   end
 

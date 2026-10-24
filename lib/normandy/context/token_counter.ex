@@ -20,6 +20,7 @@ defmodule Normandy.Context.TokenCounter do
   alias Claudio.Messages.Request
   alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Components.ContentBlock.Protocol
   alias Normandy.Context.WindowManager
@@ -217,7 +218,7 @@ defmodule Normandy.Context.TokenCounter do
   end
 
   defp block_to_claudio_map(%{} = block) do
-    if Protocol.impl_for(block), do: Protocol.to_claudio(block), else: block
+    if ContentBlock.block?(block), do: Protocol.to_claudio(block), else: block
   end
 
   defp get_system_prompt(agent) do
@@ -276,7 +277,7 @@ defmodule Normandy.Context.TokenCounter do
   defp get_content_preview(_), do: ""
 
   defp block_preview(block) do
-    if Protocol.impl_for(block), do: truncate(Protocol.label(block), 40), else: "[block]"
+    if ContentBlock.block?(block), do: truncate(Protocol.label(block), 40), else: "[block]"
   end
 
   defp truncate(s, n) when is_binary(s) do

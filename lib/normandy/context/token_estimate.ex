@@ -5,6 +5,7 @@ defmodule Normandy.Context.TokenEstimate do
   # memory data structure out of a runtime cycle with the turn machinery.
   # WindowManager delegates to them.
 
+  alias Normandy.Components.ContentBlock
   alias Normandy.Components.ContentBlock.Protocol
 
   @doc false
@@ -12,7 +13,7 @@ defmodule Normandy.Context.TokenEstimate do
   def estimate_tokens(text) when is_binary(text) do
     # Rough estimate: ~4 characters per token
     # More accurate for English text
-    max(1, div(String.length(text), 4))
+    ContentBlock.text_tokens(text)
   end
 
   def estimate_tokens(_), do: 0
@@ -25,18 +26,10 @@ defmodule Normandy.Context.TokenEstimate do
 
   # Token estimates for the opaque raw-map blocks below; the block structs answer
   # through `ContentBlock.Protocol`. Same figures as the structs' implementations.
-  @image_token_estimate 1600
-  @document_token_estimate 3000
-
   # A single ContentBlock struct. Must come before the generic `is_map` clause,
   # since structs are maps in Elixir and would otherwise hit the JSON-size
   # fallback and undercount.
-  def estimate_message_content_tokens(content) when is_struct(content) do
-    case Protocol.impl_for(content) do
-      nil -> content |> Normandy.JSON.encode!() |> estimate_tokens()
-      impl -> impl.estimate_tokens(content)
-    end
-  end
+  def estimate_message_content_tokens(content) when is_struct(content), do: struct_tokens(content)
 
   def estimate_message_content_tokens(content) when is_list(content) do
     Enum.reduce(content, 0, fn block, acc -> acc + estimate_block_tokens(block) end)
@@ -51,18 +44,13 @@ defmodule Normandy.Context.TokenEstimate do
 
   def estimate_message_content_tokens(_), do: 0
 
-  defp estimate_block_tokens(block) when is_struct(block) do
-    case Protocol.impl_for(block) do
-      nil -> block |> Normandy.JSON.encode!() |> estimate_tokens()
-      impl -> impl.estimate_tokens(block)
-    end
-  end
+  defp estimate_block_tokens(block) when is_struct(block), do: struct_tokens(block)
 
   defp estimate_block_tokens(%{"type" => "text", "text" => text}) when is_binary(text),
     do: estimate_tokens(text)
 
-  defp estimate_block_tokens(%{"type" => "image"}), do: @image_token_estimate
-  defp estimate_block_tokens(%{"type" => "document"}), do: @document_token_estimate
+  defp estimate_block_tokens(%{"type" => "image"}), do: ContentBlock.image_tokens()
+  defp estimate_block_tokens(%{"type" => "document"}), do: ContentBlock.document_tokens()
 
   # Unknown / caller-provided shape — estimate from JSON size so we
   # never silently count zero.
@@ -71,4 +59,10 @@ defmodule Normandy.Context.TokenEstimate do
   end
 
   defp estimate_block_tokens(_), do: 0
+
+  defp struct_tokens(struct) do
+    if ContentBlock.block?(struct),
+      do: Protocol.estimate_tokens(struct),
+      else: struct |> Normandy.JSON.encode!() |> estimate_tokens()
+  end
 end

@@ -283,7 +283,7 @@ defmodule Normandy.Context.Summarizer do
   defp content_lines(nil, _role, _names), do: []
 
   defp block_lines(%{__struct__: _} = block, role, names) do
-    if ContentBlock.Protocol.impl_for(block),
+    if ContentBlock.block?(block),
       do: [label(role, ContentBlock.Protocol.label(block))],
       else: raw_block_lines(block, role, names)
   end
