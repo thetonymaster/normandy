@@ -78,7 +78,8 @@ defmodule Normandy.Integration.BasicAgentTest do
         Enum.any?(history, fn msg ->
           if msg.role == "assistant" and is_list(msg.content) do
             Enum.any?(msg.content, fn item ->
-              Map.get(item, :type) == "tool_use"
+              # A real client's turn is replayed from its string-keyed content_blocks.
+              (Map.get(item, :type) || Map.get(item, "type")) == "tool_use"
             end)
           else
             false
