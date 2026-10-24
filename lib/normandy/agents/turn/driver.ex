@@ -98,28 +98,39 @@ defmodule Normandy.Agents.Turn.Driver do
         {acc2, meta} = handlers.compact.(acc, state, info)
         advance(acc2, state, {:compaction_done, meta}, handlers)
 
+      # A failed or blocked answer goes back to the core, which decides: a broken
+      # constraint is re-asked (AX-18), the rest fail the turn.
       {:convert_output, raw, output_schema} ->
-        advance(
-          acc,
-          state,
-          {:output_converted, handlers.convert.(acc, raw, output_schema)},
-          handlers
-        )
+        event =
+          try do
+            {:output_converted, handlers.convert.(acc, raw, output_schema)}
+          rescue
+            e in Normandy.LLMError -> {:output_failed, e}
+          end
 
-      # A rejected answer goes back to the core, which re-asks it or fails the turn (AX-18).
+        advance(acc, state, event, handlers)
+
       {:validate_output, value} ->
         event =
           try do
             {:output_validated, handlers.validate.(acc, value)}
           rescue
             e in Normandy.Schema.ValidationError -> {:output_invalid, e}
+            e in Normandy.LLMError -> {:output_failed, e}
           end
 
         advance(acc, state, event, handlers)
 
       {:guard_output, value} ->
-        handlers.guard.(acc, value)
-        advance(acc, state, {:output_guarded, value}, handlers)
+        event =
+          try do
+            handlers.guard.(acc, value)
+            {:output_guarded, value}
+          rescue
+            e in Normandy.Guardrails.ViolationError -> {:output_rejected, e}
+          end
+
+        advance(acc, state, event, handlers)
 
       {:persist, _turn_state} ->
         # Inline driver has no SessionStore/passivation; persistence is a no-op.
@@ -133,8 +144,9 @@ defmodule Normandy.Agents.Turn.Driver do
       {:fail, %Normandy.LLMError{} = error} ->
         raise error
 
-      # A final answer still rejected once the core's re-asks are spent.
-      {:fail, {:rejected, %Normandy.Schema.ValidationError{} = error}} ->
+      # A rejected answer: a broken constraint once the core's re-asks are spent, or an
+      # output guardrail block.
+      {:fail, {:rejected, error}} when is_exception(error) ->
         raise error
 
       {:fail, reason} ->
