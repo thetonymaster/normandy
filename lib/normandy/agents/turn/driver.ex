@@ -31,6 +31,8 @@ defmodule Normandy.Agents.Turn.Driver do
     it turns a blank `chat_message` into a non-blank one.
     """
 
+    alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+
     @type acc :: term()
     @type t :: %__MODULE__{
             call_llm: (acc(), Turn.State.t(), map() -> term()),
@@ -43,6 +45,15 @@ defmodule Normandy.Agents.Turn.Driver do
             emit: (acc(), atom(), map() -> any())
           }
     defstruct [:call_llm, :dispatch_tools, :convert, :validate, :guard, :append, :compact, :emit]
+
+    @doc """
+    `Normandy.Agents.BaseAgent`'s set: the one `Turn.Server` (and `Turn.Session`) uses when
+    `:handlers` is `nil`. Build a custom set from it, replacing only what you need:
+
+        %{Normandy.Agents.Turn.Driver.Handlers.default() | validate: my_validate}
+    """
+    @spec default() :: t()
+    def default, do: AgentHandlers.non_streaming_handlers()
   end
 
   @spec drive(Turn.State.t(), Handlers.t(), term()) :: {term(), Turn.State.t()}

@@ -2154,8 +2154,9 @@ code you wrote against 1.x must follow the changes below.
     `validate_marking_answer/4`, `check_init!/1`, `normalize_max_tool_concurrency/1`,
     `validate_client_options!/1`, `validate_compaction_config!/2`, `warn_deprecated_catalog/1` and
     `unwrap_llm_content/1`) moved to the internal `BaseAgent.Handlers` and `BaseAgent.InitOptions`;
-    `BaseAgent` is the public facade only. A custom `Turn.Server` `:handlers` set built from
-    `BaseAgent.non_streaming_handlers()` has no public replacement yet; omit `:handlers` to get the
+    `BaseAgent` is the public facade only. Build a custom `Turn.Server` `:handlers` set from
+    `Turn.Driver.Handlers.default/0` instead of `BaseAgent.non_streaming_handlers()`
+    (`%{Turn.Driver.Handlers.default() | validate: my_validate}`); omit `:handlers` to get the
     default set.
 - To test a hook under the library's rules (ordering, `:on_error`, return contracts), run
   it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The

@@ -40,6 +40,8 @@ upgrading**; its "Who is affected" table at the top sends you to the sections th
 
 ### Added
 
+- `Normandy.Agents.Turn.Driver.Handlers.default/0`: the handler set `Turn.Server` uses when `:handlers`
+  is `nil`; build a custom set from it (`%{Handlers.default() | validate: f}`).
 - **Telemetry catalogue.** `Normandy.Telemetry` documents every event with its measurements, metadata,
   the OpenTelemetry GenAI attribute mapping and the known limits. `test/telemetry/catalogue_test.exs`
   fails when an event is emitted but not listed there, or the reverse.
