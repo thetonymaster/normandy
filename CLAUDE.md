@@ -43,7 +43,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Type`** - Type system with casting, dumping, and loading
   - Base types: `:integer`, `:float`, `:boolean`, `:string`, `:map`, `:date`, `:time`, `:binary`, `:any`, `:struct`
   - Composite types: `{:array, type}`, `{:map, type}`
-  - Custom types via `Normandy.Type` behaviour (requires `type/0`, `cast/1`, `dump/1`, `load/1` callbacks)
+  - Custom types via `Normandy.Type` behaviour (requires `type/0`, `cast/1`, `dump/1`; `equal?/2` optional; `dump/1` also checks a field `:default` at schema compile time)
   - Parameterized types via `Normandy.ParameterizedType`
 
 - **`Normandy.Validate`** - Changeset-like validation for schemas
@@ -54,6 +54,9 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 ### Agent System
 
 - **`Normandy.Agents.BaseAgent`** - Core agent implementation
+  - `BaseAgent` is the public facade only (no `@doc false` functions); the turn engine the shells share is `BaseAgent.Handlers` (`@moduledoc false`: handler sets, admission, `base_agent_pipeline/1`, `compact_turn_memory/3`, `validate_marking_answer/4`) and the checks `init/1` makes are in `BaseAgent.InitOptions`
+  - `Dispatch.run_batch/3` (`@doc false`) is the one concurrent tool-batch runner for `run/3`, `stream/3` and `Turn.Server`: caller's OTel context, `max_tool_concurrency`, tasks get the config without memory entries; classification (and a denied or `:needs_approval` call's after-hooks) runs in the caller with the full config
+  - `Behaviours.Compactor` has optional `validate_opts!/2` (opts, entry; unlike Hooks/PolicyEngine `/1`, a `/1`-only compactor is refused at init) and `needs_window?/1`; `ModelCatalog` optional `needs_claudio_client?/1`; BaseAgent never branches on module names
   - `init/1` - Build a `BaseAgentConfig` from a keyword list or map (requires `:client` and `:model`; `:temperature` is optional and omitted from the request when `nil`, since Opus 4.7+ reject sampling parameters). `:max_tool_iterations` defaults to 20; after the last round the turn stores a notice and makes one more call with `Request.tool_choice: :none`. `max_tool_result_chars` (default 100_000 graphemes, `nil` = off): `Dispatch.finish/3` cuts longer tool results (error results too) after every hook and appends `\n[truncated: N of M chars shown]`; emits `[:normandy, :tool, :result_truncated]`. The schema is `BaseAgent.InitOptions` (NimbleOptions, docs generated into `init/1`); every option is checked through `Normandy.Options.validate!/3` before any process starts, and an unknown one raises `ArgumentError` naming it
   - `run/3` - Execute agent turn; returns `{:ok, config, response}` or `{:error, exception}` (Normandy errors only; bugs raise); `run!/3` returns `{config, response}` and raises; neither takes options yet (any raises `ArgumentError`); an answer cut off at `max_tokens` (or the context window) or refused is `{:error, %LLMError{type: :max_tokens | :refusal}}` on every path (`Normandy.LLM.Call.check_stop_reason/1`), and no tool from it runs; a final call still paused after 3 continuations is `:pause_turn`; a blank final answer is `{:error, %LLMError{type: :invalid_output}}` on every path, except for a `:chat_message` agent whose last tool-calling response in the turn carried text: that text is the answer (`chat_answer/2`)
   - `stream/3` - like `run/3`, streaming `%Normandy.Components.StreamEvent{}` to a 1-arity callback; returns the output schema like `run/3`
@@ -67,6 +70,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Options`** - `validate!(opts, schema, {mod, fun, arity})` for every public entry point: NimbleOptions schema, map or keyword input, `ArgumentError` prefixed `Mod.fun/arity:`; values of `sensitive_keys/0` (`:client`, `:api_key`, ...) never appear in a message
 
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
+  - `JsonDeserializer` options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:max_input_bytes`) are validated (unknown keys raise); region extraction and decoding share an 8n+1024 byte budget. `LLMError.classify_status/1` and `transport/1` are the one HTTP status rule for both adapters
   - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}` (`request.output_format`: the non-chat output schema on a tool-loop call or stream; `%ToolCallResponse{}` carries `content_blocks`, replayed verbatim, and `stop_reason`, `:pause_turn` continues the turn); `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`
   - Clients must implement this protocol (see Claudio integration in dependencies)
 
@@ -79,16 +83,19 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - A stored template is checked before use (`ConfigTemplate.check_loaded!/1`: plain data, behaviour modules declare their behaviour) and against the supplement's `:pinned` (`[policy:, guardrails:, credential:, ...]`); a refusal is `{:invalid_template, message}` in a `:session_unavailable` `TurnError`
 
 - **`Normandy.Agents.Turn.Session`** - Session handle, options validated once
-  - `new/1` builds the handle (`:session_id`, `:store`, `:registry`, `:supervisor`, and `:config` or `:template_provider`)
+  - `new/1` builds the handle (`:session_id`, `:store`, `:registry`, `:supervisor`, and `:config` or `:template_provider`); a session with `:template_provider` and `:config` needs the config's behaviours `credential` slot (no default, `FromClient` is gone; refused naming `:credential`); `:supervisor_mod` must implement `Normandy.Agents.Turn.ServerSupervisor` (`start_server/2`, `stop_server/2`), checked by export; `AgentProcess.start_link/1` in `:server` mode makes the same credential refusal in its caller (`Turn.Session.check_credential!/3`), and `update_agent/3` raises it in the caller too
+  - Its option schema and validators live in `Turn.Session.Options` (`@moduledoc false` leaf: `types/0`, `server_types/0`, `schema/0`); `Turn.Server`, `AgentProcess`, `ResumeReaper` and `Cluster` read them there at compile time, never from `Session` (that put 13 files in one compile-connected cycle). Keep the leaf free of aliases into the turn/agent machinery (name modules as literal atoms); check with `mix xref graph --format cycles --label compile-connected` (only exceptions/schema/type/validate remains)
   - `run/2` → `{:ok, output} | {:error, exception}`; a call that reaches a passivated server is routed again (three servers, then `:session_unavailable` `:passivated`); `approve/2` (`%{tool_call_id => :approve | :reject}`); `put_config/2` replaces the config; `delete/1` stops the live server (`supervisor_mod.stop_server/2`) then `SessionStore.delete_session/2`
 
 - **`Normandy.Behaviours.SessionStore`** - `save_turn_state/4` takes `inflight?` (eager and unfinished, computed by `Turn.Server.persist_turn_state/2`) written with the state; `list_resumable/1` returns only in-flight sessions; `delete_session/2` is idempotent and keeps fork-shared entries (Postgres, Mnesia share ancestors; InMemory, ETS, Redis copy). Postgres needs `MigrationAddInflight`. Contract: `Normandy.Test.SessionStoreContract` (`lib/normandy/test/`, shipped; `use` with `impl:`, optional `new: {m, f, a}` and `stored_entry_ids: {m, f, a}`)
 
 - **`Normandy.Behaviours.SessionRegistry.Redis`** - Handle `%SessionRegistry.Redis.Handle{owner:, conn:, namespace:}` (`handle/1`, `fetch_handle/1`; the combo's from `Normandy.Cluster.redis_handles/1`); `whereis` runs in the caller (a remote pid's liveness checked on its node); the refresh stops a process whose key another holds (`{:shutdown, :registration_lost}`, `[:normandy, :session_registry, :ownership_lost]`). `SessionStore.Redis` runs a session's waited writes and their `WAIT` on one of the handle's `wait_conns` (`new/1` `:wait_connections`; the combo's pool, or `:store_redix`)
+- Redis store, memory-store and registry `new/1` require `:url` and `:namespace` (`:prefix` for the memory store): no app-env read, no random default. Postgres handles are the Repo module (no `new/0`). Tests build handles with `Normandy.TestHandles` (`test/support`); the contracts take `new: {m, f, a}`
 
-- **Orchestrators** (`SequentialOrchestrator`, `ParallelOrchestrator`) - `execute(agents, input, opts \\ [])` → `{:ok, %{agent_id => output}}` | `{:error, %Normandy.OrchestrationError{results:, errors:}}`; each agent runs unlinked under a per-call `Task.Supervisor`, so a raise, exit or throw fails only that agent (`:task_down` `TurnError`)
+- **Orchestrators** (`SequentialOrchestrator`, `ParallelOrchestrator`) - `execute(agents, input, opts \\ [])` → `{:ok, %{agent_id => output}}` | `{:error, %Normandy.OrchestrationError{results:, errors:}}`; each agent runs unlinked under a per-call `Task.Supervisor`, so a raise, exit or throw fails only that agent: a raise returns the exception bare (logged), an exit or throw a `:task_down` `TurnError`. `Orchestration.run_agent/3` (who, config-or-pid, input) and `classify/2` are the one place that happens; `Batch.Processor` and `AgentProcess` (inline) use them too. `prepare_input/1` wraps only a binary (a map reaches the agent whole)
 
-- **`Normandy.Coordination.AgentProcess`** - Agent as a process; `:inline` (default) runs turns one at a time from a FIFO queue (runs, casts, `update_agent/3`, whose `:timeout` defaults to `:infinity`) in a `Normandy.WatchedWorker` that dies with the process and carries `$callers` (Mox/`Req.Test` allowances on the agent pid reach the LLM call), so reads answer during a turn; `run/3` waits `:infinity`; `:max_pending_runs` (default 100) bounds runs and casts in both engines, refused with a `:queue_full` `TurnError`; `:server` without `:registry` uses a scope in the app-level `AgentProcess.ScopedRegistry`; `format_status` shows no config, memory or queued input
+- **`Normandy.Coordination.AgentProcess`** - Agent as a process; `:inline` (default) runs turns one at a time from a FIFO queue (runs, casts, `update_agent/3`, whose `:timeout` defaults to `:infinity`) in a `Normandy.WatchedWorker` that dies with the process and carries `$callers` (Mox/`Req.Test` allowances on the agent pid reach the LLM call), so reads answer during a turn; `run/3` waits `:infinity`; `:max_pending_runs` (default 100) bounds runs and casts in both engines, refused with a `:queue_full` `TurnError`; `:server` without `:registry` uses a scope in the app-level `AgentProcess.ScopedRegistry`; `format_status` shows no config, memory or queued input; the turn engines are `AgentProcess.Engine.Inline` / `Engine.Server` (behaviour `AgentProcess.Engine`): the process keeps the agent, counters and the pending bound, `state.engine_state` is the engine's
+- **`Normandy.Coordination.StatefulContext`** - `update/4` runs its fun in the caller and commits by compare-and-set (after 10 conflicts it runs in the context process; a fun that calls the same context then crashes it); caller-node only
 
 ### Memory & Messages
 
@@ -106,6 +113,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 
 - **`Normandy.Components.Message`** - Message struct with `:turn_id`, `:role`, `:content`
 
+- **`Normandy.Components.ContentBlock.Protocol`** - `to_claudio/1`, `estimate_tokens/1`, `label/1`: the one place a block type is described; consumers call it (`ContentBlock.block?/1`), never switch on Text/Image/Document
+
 ### Long-term Memory & Tool Context
 
 - **`Normandy.Behaviours.MemoryStore`** - Namespaced, path-addressed document store with
@@ -119,7 +128,8 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   hold command logic, path rules and model-facing text; limits `max_document_bytes`,
   `max_namespace_bytes` (default 1_000_000) and `max_namespace_documents` (default 1000), each
   namespace cap `nil` = off and enforced by the store, `max_view_chars`, `max_cas_retries`;
-  a session namespace equal to a mount's raises; mounts sharing a namespace must share its access
+  a session namespace equal to a mount's raises; mounts sharing a namespace must share its access;
+  `new/1` takes a keyword list or map, validated through `Normandy.Options`
 - **`Normandy.Tool`** - The one tool contract: `name/1`, `description/1`, `input_schema/1`,
   `run(tool, %Normandy.Tools.Context{})`; `use Normandy.Tool, name:, description:, input: Schema`
   generates the first three. The struct holds configuration only; the model's input is
@@ -127,7 +137,9 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Tools.Toolset`** - Tools by name (`BaseAgentConfig.toolset`); `register/3`
   options `:timeout` (the call's timeout; a struct field is never read), `:max_result_chars`
   (this tool's result cap; `nil` = none) and `:replace`;
-  `fetch/2`, `fetch!/2`. A struct whose module is not a `Normandy.Tool` raises at
+  `fetch/2`, `fetch!/2`; one `Toolset.Entry` (tool, timeout, max_result_chars) per name, read
+  through `fetch/2`, `timeout/2`, `max_result_chars/2`, `list/1`; `register_new/3` (`@doc false`) is the one
+  registration rule for MCP and A2A. A struct whose module is not a `Normandy.Tool` raises at
   registration and in `ConfigTemplate.rebuild/3` (1.x tools)
 - **`Normandy.Tools.Context`** - Per-call context: `input`, plus `values` from
   `BaseAgentConfig.tool_context` (plain data, persisted in the config template), built by
@@ -142,10 +154,10 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Hooks.Runner`** - The only caller of hook modules: order, rewrites, halts,
   `:on_error`, return contracts, the `[:normandy, :hook, *]` span; call sites in
   `Normandy.Hooks.BaseAgentGlue`, `Normandy.Hooks.ServerGlue`, `Normandy.Hooks.Handlers`
-  (wraps any handler set with `before_llm`/`after_compact`) and `Config.to_pipeline/1`
+  (wraps BaseAgent's handler sets; `ServerGlue` calls its `before_llm!/3` and `after_compact/2` directly) and `Config.to_pipeline/1`
   (tool hooks; `after_tool` sees every tool result once). No hook outcome terminates
   `Turn.Server`; no hook timeouts
-- **`Normandy.Guardrails`** - `:on_error` (`:reraise | :open | :closed`) covers raises, exits and throws; host code a builtin calls fails as `Normandy.Guardrails.GuardError`; `on_violation: :warn` logs the guards, paths and count only (the messages are in the `ViolationError`)
+- **`Normandy.Guardrails`** - `:on_error` (`:reraise | :open | :closed`) covers raises, exits and throws; host code a builtin calls fails as `Normandy.Guardrails.GuardError`; `on_violation: :warn` logs the guards, paths and count only (the messages are in the `ViolationError`); built-ins are the explicit `@builtins` list in `Normandy.Guardrails` (add a new built-in guard there)
 
 ### Prompt System
 
@@ -167,17 +179,18 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Components.BaseIOSchema`** - Protocol for agent I/O serialization
   - Auto-implemented for `io_schema` definitions
   - Methods: `to_json/1`, `get_schema/1`
-  - Encodes through `Normandy.JSON` (adapter from `config :normandy, :adapter`, default Jason)
+  - Encodes through `Normandy.JSON` (Jason)
 
 ### Resilience & Error Handling
 
 - **`Normandy.Resilience.Retry`** - Exponential backoff retry with jitter
   - Integrated into `BaseAgent` for automatic retries on LLM call failures
-  - Configured per agent with `init/1`'s `retry:` (max attempts, backoff factor, delay)
+  - Configured per agent with `init/1`'s `retry:` (max attempts, backoff factor, delay); options validated through `Normandy.Options` (keyword or map)
 
 - **`Normandy.Resilience.CircuitBreaker`** - Three-state circuit breaker (Closed, Open, Half-Open)
   - Prevents cascading failures by failing fast when thresholds are reached
   - Configured per agent with `init/1`'s `circuit_breaker:` (thresholds, timeout)
+  - `Normandy.Application` starts the breaker Registry + DynamicSupervisor under their own `rest_for_one` supervisor; `start_registry/1` waits out a killed Registry's leftover partitions
 
 ### Declarative DSLs
 
@@ -196,7 +209,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
   - Events: `[:normandy, :agent, :run, :start | :stop | :exception]`, etc.
   - Automatic duration tracking and metadata enrichment (agent name, model, tools)
   - OpenTelemetry-compatible span context correlation
-- **`Normandy.Telemetry`** - The catalogue of every emitted event (measurements, metadata, OTel GenAI mapping, known limits). `test/telemetry/catalogue_test.exs` fails when an emitted event is missing from its moduledoc, so document any new event there. Run `:stop` carries the run's totals (`llm_calls`, token sums, `iterations`, `stop_reason`, `finish_reason`); it also carries `answer_source` (`:tool_round` when a chat agent's blank final answer was replaced by the turn's last tool-round text, else `:final`; marked on the `RunUsage` ref by `BaseAgent.validate_marking_answer/4`, the only place the substitution happens), summed by `Normandy.Telemetry.RunUsage`, a `:counters` ref every shell puts on its call requests as `request[:run_usage]` (`with_llm_call_span` adds each finished call; summary calls are not counted). `Turn.Server` keeps the caller's OTel context current from admission to `on_turn_end` (`turn_ctx_token`, released by `release_turn_ctx/1` on every turn exit)
+- **`Normandy.Telemetry`** - The catalogue of every emitted event (measurements, metadata, OTel GenAI mapping, known limits). `test/telemetry/catalogue_test.exs` fails when an emitted event is missing from its moduledoc, so document any new event there. Run `:stop` carries the run's totals (`llm_calls`, token sums, `iterations`, `stop_reason`, `finish_reason`); it also carries `answer_source` (`:tool_round` when a chat agent's blank final answer was replaced by the turn's last tool-round text, else `:final`; marked on the `RunUsage` ref by `BaseAgent.Handlers.validate_marking_answer/4`, the only place the substitution happens), summed by `Normandy.Telemetry.RunUsage`, a `:counters` ref every shell puts on its call requests as `request[:run_usage]` (`with_llm_call_span` adds each finished call; summary calls are not counted). `Turn.Server` keeps the caller's OTel context current from admission to `on_turn_end` (`turn_ctx_token`, released by `release_turn_ctx/1` on every turn exit) `Telemetry.Span.span/4` takes an outcome fun (`{:ok, stop_metadata} | {:error, %LLMError{}}`); `Telemetry.Usage.sum/2` adds usage maps; `Context.TokenEstimate` holds the pure estimators
 
 ### Protocol Support
 
@@ -236,7 +249,6 @@ end
 
 - `config/config.exs` - Imports environment-specific config
 - `config/dev.exs` and `config/test.exs` - Environment configs
-- `:adapter` (optional, default `Jason`) - the JSON library `Normandy.JSON` calls; any module with `encode!/2` and `decode/1` (see the `Normandy.JSON` moduledoc)
 - `:structured_outputs` (default `true`) toggles Anthropic native structured outputs; set to `false` globally or via `client.options[:structured_outputs]` to force the legacy parse-retry path — a tool-loop call or stream sends a non-chat output schema as `output_config.format` beside its tools (`Normandy.LLM.Request.output_format`); automatic fallback also applies for incompatible schemas and a 400 that names the output format or schema (on `stream/3` too; other 400s are returned without a second request); a response that stops at `max_tokens`, `model_context_window_exceeded` or `refusal` is never parsed or re-asked
 - `client.options` request settings (`:thinking`, `:effort`, `:speed`, `:inference_geo`, `:fallbacks`, `:task_budget`, `:thinking_budget`, `:thinking_block_binding`, `:enable_caching`, `:req_options`) are documented on `Normandy.LLM.ClaudioAdapter`; nothing is sent unless set, except prompt caching, on by default (`enable_caching: false` opts out)
 - `consolidate_protocols: false` in test environment for faster compilation
@@ -244,7 +256,7 @@ end
 ## Dependencies
 
 - **Claudio** - LLM client library (Hex package `~> 0.7.1`; requests are built with `Request.add_messages/2`)
-- **Jason** - JSON encoding/decoding (the default `:adapter`)
+- **Jason** - JSON encoding/decoding (`Normandy.JSON` calls it directly)
 - **NimbleOptions** - option schemas for every public entry point (through `Normandy.Options`)
 - **elixir_uuid** - UUID generation for conversation turns
 
@@ -259,7 +271,10 @@ end
 - `Normandy.Test.OwnLog.capture/2` - `capture_log/2` that keeps only the caller's own log events; use it for an async test's log refute when the code under test logs in the caller's process. A test that starts a supervisor or Horde member uses `start_supervised!` (never `on_exit` + `Process.exit(..., :kill)`), so its shutdown logs cannot reach a later test
 - `Normandy.Test.FakeClient` (shipped in `lib/normandy/test/`) is the scripted model client for tests: `new([{:text, t | [chunks]} | {:structured, map} | {:tool_calls, [{name, input} | %ToolCall{}]} | {:error, %LLMError{}} | fun], options: %{})`, item options `:stop_reason`, `:usage`, `:stream_error_after`; `requests/1`, `remaining/1`; a request past the script raises `ScriptExhaustedError`. Use it instead of a new inline `defimpl Normandy.Agents.Model`. The store/registry contracts ship beside it (`SessionStoreContract`, `MemoryStoreContract`, `SessionRegistryContract`). `test/support` never defines a module name `lib/` ships (`test/normandy/test/shipped_names_test.exs`); a new contract test updates the counts (16 session store, 33 memory store) in `test/normandy/test/contracts_test.exs`
 - `Normandy.Test.opaque/1` (`test/support/opaque.ex`) hides a deliberately wrong argument from the compiler's type checker; wrap it so `mix test --warnings-as-errors` (Elixir 1.20) stays clean
+- `Normandy.TestHandles` (`test/support`) builds Redis/Postgres store, memory-store and registry handles for tests
+- An atom or module 2.0 stops using that stored data can hold stays named in lib (Postgres/Redis decode with `binary_to_term(_, [:safe])`): `ConfigTemplate` translates `:max_tokens`, `:sliding_window` (→ `:oldest_first`) and refuses `FromClient` by name; `LegacyMeta` names `Normandy.Metadata` and its states `:built`/`:loaded`/`:deleted`. Test a removal in a fresh VM without Ecto (`test/behaviours/session_store/codec_removed_atoms_test.exs`)
+- Gates include a clean build (`MIX_BUILD_PATH=$(mktemp -d) mix compile --force`): incremental builds hide compile-time deadlocks
 - Docs tests in `test/docs/`: `docs_groups_test.exs` (every `lib/` module with docs is in exactly one `mix.exs` `groups_for_modules` group; internals are `@moduledoc false`), `doc_coverage_test.exs` (every function, macro and callback of a visible module has `@doc`), `devex_docs_test.exs` (`iex>` only in doctested files; one model id, `claude-opus-5-5`, in README and guides). A new public module needs a group; a new internal one needs `@moduledoc false`. `docs/guides/testing.md` and `docs/guides/hooks.md` are guide-tested (`test/docs/testing_guide_test.exs`, `test/hooks/guide_examples_test.exs`): changing an example module means updating that test's counts
-- Metadata tracking via `Normandy.Metadata` struct in schemas
+- Schema structs carry no `__meta__` (`Normandy.Metadata` is gone); loading stored data ignores a legacy `"__meta__"` key (`Normandy.Schema.LegacyMeta`)
 - Before running tests run `mix format`
 - If tests fail, they must be fixed, even if were items we were not working on.
