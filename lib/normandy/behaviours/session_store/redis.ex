@@ -178,16 +178,17 @@ if Code.ensure_loaded?(Redix) do
     def history_since_compaction(handle, session_id) do
       {conn, ns} = conn_ns(handle)
 
-      case since_compaction(conn, stream_key(ns, session_id), "+", []) do
+      case since_compaction(conn, stream_key(ns, session_id), :newest, []) do
         {:ok, raw} -> {:ok, decode_stream(raw)}
         {:error, reason} -> {:error, reason}
       end
     end
 
-    # `acc` holds the entries already read, chronological. `from` is "+" or an exclusive
-    # "(id" below the last page.
+    # `acc` holds the entries already read, chronological. `from` is :newest, or
+    # {:before, id} for the page below the one that ended at `id`: read from `id` itself
+    # (an inclusive bound; the exclusive "(id" needs Redis 6.2) and drop it.
     defp since_compaction(conn, key, from, acc) do
-      case Redix.command(conn, ["XREVRANGE", key, from, "-", "COUNT", @since_page]) do
+      case read_page(conn, key, from) do
         {:ok, page} ->
           case Enum.split_while(page, &(not compaction_raw?(&1))) do
             {newer, [snapshot | _]} ->
@@ -198,11 +199,21 @@ if Code.ensure_loaded?(Redix) do
 
             {newer, []} ->
               [oldest_id, _kv] = List.last(page)
-              since_compaction(conn, key, "(" <> oldest_id, Enum.reverse(newer, acc))
+              since_compaction(conn, key, {:before, oldest_id}, Enum.reverse(newer, acc))
           end
 
         {:error, reason} ->
           {:error, reason}
+      end
+    end
+
+    defp read_page(conn, key, :newest),
+      do: Redix.command(conn, ["XREVRANGE", key, "+", "-", "COUNT", @since_page])
+
+    defp read_page(conn, key, {:before, id}) do
+      case Redix.command(conn, ["XREVRANGE", key, id, "-", "COUNT", @since_page + 1]) do
+        {:ok, [[^id, _kv] | older]} -> {:ok, older}
+        other -> other
       end
     end
 
