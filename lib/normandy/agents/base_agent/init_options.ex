@@ -520,11 +520,24 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     config
   end
 
-  # The compactor checks its own opts (optional Compactor.validate_opts!/1).
+  # The compactor checks its own opts (optional Compactor.validate_opts!/2); the result is
+  # not used. A /1 (the Hooks and PolicyEngine arity) would be silently ignored, so refuse it.
   defp validate_compactor_opts!(mod, opts, entry) do
-    if Code.ensure_loaded?(mod) and function_exported?(mod, :validate_opts!, 2),
-      do: mod.validate_opts!(opts, entry),
-      else: opts
+    cond do
+      not Code.ensure_loaded?(mod) ->
+        :ok
+
+      function_exported?(mod, :validate_opts!, 2) ->
+        mod.validate_opts!(opts, entry)
+
+      function_exported?(mod, :validate_opts!, 1) ->
+        raise ArgumentError,
+              "compactor #{inspect(mod)} defines validate_opts!/1, which is never called: " <>
+                "the Normandy.Behaviours.Compactor callback is validate_opts!(opts, entry)"
+
+      true ->
+        :ok
+    end
   end
 
   @doc false

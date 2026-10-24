@@ -774,8 +774,8 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     {config2, meta}
   end
 
-  # The window the compactor sizes against. A compactor whose needs_window?/1 is false needs none; a pinned
-  # :context_window wins without a lookup (offline use, non-Claude clients);
+  # The window the compactor sizes against. A compactor whose needs_window?/1 is false
+  # needs none; a pinned :context_window wins without a lookup (offline use, non-Claude clients);
   # otherwise the catalog, memoised per model on the config. A failed lookup
   # fails the turn: the agent asked for compaction and can't size it.
   defp resolve_context_window(config, compactor, opts) do
