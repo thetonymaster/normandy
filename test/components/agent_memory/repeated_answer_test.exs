@@ -299,6 +299,72 @@ defmodule Normandy.Components.AgentMemory.RepeatedAnswerTest do
     end
   end
 
+  # The final response Turn stores before the answer when it carries server-tool
+  # results: the continuation of a paused turn, or a response with a search in it.
+  describe "a final response with server-tool results" do
+    @use %{"type" => "server_tool_use", "id" => "s1", "name" => "web_search", "input" => %{}}
+    @result %{"type" => "web_search_tool_result", "tool_use_id" => "s1", "content" => []}
+
+    defp results_response(text_block) do
+      %ToolCallResponse{
+        content: "Paris.",
+        tool_calls: [],
+        stop_reason: :end_turn,
+        content_blocks: [@result, text_block]
+      }
+    end
+
+    defp paused(thinking) do
+      %ToolCallResponse{
+        content: nil,
+        tool_calls: [],
+        thinking: thinking,
+        stop_reason: :pause_turn,
+        prefix_key: 1,
+        content_blocks: thinking ++ [@use]
+      }
+    end
+
+    defp continued(paused, response) do
+      memory([
+        :new_turn,
+        {"user", "Capital of France?"},
+        {"assistant", paused},
+        {"assistant", response},
+        {"assistant", answer("Paris.")},
+        :new_turn,
+        {"user", "Thanks"}
+      ])
+    end
+
+    @paris %{"type" => "text", "text" => "Paris."}
+
+    test "loses its text when the answer repeats it; the results stay" do
+      messages = request(continued(paused([]), results_response(@paris)))
+
+      assert count(messages, "Paris.") == 1
+      assert %Message{role: "assistant", content: [@result]} = Enum.at(messages, 2)
+    end
+
+    test "kept whole when the paused response before it sends thinking" do
+      messages = request(continued(paused([@thinking]), results_response(@paris)))
+
+      assert count(messages, "Paris.") == 2
+      assert %Message{content: [@result, @paris]} = Enum.at(messages, 2)
+    end
+
+    test "kept whole when its text carries citations" do
+      cited =
+        Map.put(@paris, "citations", [
+          %{"type" => "web_search_result_location", "url" => "https://x"}
+        ])
+
+      messages = request(continued(paused([]), results_response(cited)))
+
+      assert %Message{content: [@result, ^cited]} = Enum.at(messages, 2)
+    end
+  end
+
   describe "round trips give the same request" do
     setup do
       memory = chain(tool_round("Paris."))

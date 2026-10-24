@@ -199,6 +199,20 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
       refute Turn.answered?([@user, tool_use, %Message{role: "tool", content: "ok"}])
       refute Turn.answered?([@user, @answer, @user])
     end
+
+    test "is true for a final response with server-tool results whose answer was not appended" do
+      results = %ToolCallResponse{
+        content: "done",
+        tool_calls: [],
+        stop_reason: :end_turn,
+        content_blocks: [
+          %{"type" => "mcp_tool_result", "tool_use_id" => "m1", "content" => []},
+          %{"type" => "text", "text" => "done"}
+        ]
+      }
+
+      assert Turn.answered?([@user, %Message{role: "assistant", content: results}])
+    end
   end
 end
 

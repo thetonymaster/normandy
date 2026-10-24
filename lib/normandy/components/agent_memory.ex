@@ -335,7 +335,9 @@ defmodule Normandy.Components.AgentMemory do
   # the tool-calling response and as the answer. For each final chat answer (an assistant
   # entry whose content is a struct with a binary :chat_message), the response
   # last_tool_round/2 finds before it in its turn loses its "text" blocks when its text
-  # equals the answer; its tool_use and server-tool blocks stay. Left whole:
+  # equals the answer; its tool_use and server-tool blocks stay. So does the response
+  # Turn stores right before an answer when it carries server-tool results
+  # (mark_results_response/4). Left whole:
   #   * a round when it, or any message after it up to the answer (a paused response),
   #     holds thinking the request sends ("thinking" or "redacted_thinking" in its
   #     encoding): editing the history that signed thinking was produced after may
@@ -379,6 +381,8 @@ defmodule Normandy.Components.AgentMemory do
          ids
        )
        when is_binary(answer) do
+    ids = mark_results_response(before, turn_id, answer, ids)
+
     case tool_round_span(before, turn_id, &elem(&1, 0)) do
       {{%Entry{id: id}, _wire} = round, ^answer, later} ->
         if keep_whole?(round, later), do: ids, else: MapSet.put(ids, id)
@@ -389,6 +393,43 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   defp mark_repeated(_pair, _before, ids), do: ids
+
+  # The final response Turn stores right before its answer when it carries server-tool
+  # results (ToolCallResponse.server_results?/1; no tool calls, not paused): its text is
+  # the answer.
+  # Left whole when it, or a paused response of its turn right before it (one assistant
+  # turn on the wire), sends thinking, or its text carries citations.
+  defp mark_results_response(
+         [
+           {%Entry{
+              role: "assistant",
+              turn_id: turn_id,
+              content: %ToolCallResponse{tool_calls: []}
+            } = entry, _wire} = response
+           | earlier
+         ],
+         turn_id,
+         answer,
+         ids
+       ) do
+    paused_before = Enum.take_while(earlier, &paused_entry?(elem(&1, 0), turn_id))
+
+    if ToolCallResponse.server_results?(entry.content) and
+         not ToolCallResponse.paused?(entry.content) and round_text(entry) == answer and
+         not keep_whole?(response, paused_before),
+       do: MapSet.put(ids, entry.id),
+       else: ids
+  end
+
+  defp mark_results_response(_before, _turn_id, _answer, ids), do: ids
+
+  defp paused_entry?(
+         %Entry{role: "assistant", turn_id: turn_id, content: %ToolCallResponse{} = resp},
+         turn_id
+       ),
+       do: ToolCallResponse.paused?(resp)
+
+  defp paused_entry?(_entry, _turn_id), do: false
 
   defp keep_whole?({_entry, wire} = round, later),
     do: cited?(wire) or Enum.any?([round | later], &sends_thinking?/1)

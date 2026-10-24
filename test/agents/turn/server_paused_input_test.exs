@@ -113,10 +113,15 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
              body["messages"]
   end
 
-  # Request n runs "q2": the continuation's answer, then q2, last.
+  # Request n runs "q2": the continuation's tool result and answer, then q2, last.
   defp assert_q2_request(n) do
     assert_received {:wire_body, ^n, body}
     messages = body["messages"]
+
+    assert %{
+             "role" => "assistant",
+             "content" => [%{"type" => "mcp_tool_result", "tool_use_id" => "mcptoolu_1"}]
+           } = Enum.at(messages, -3)
 
     assert %{"role" => "user", "content" => q2} = List.last(messages)
     assert inspect(q2) =~ "q2"
@@ -137,6 +142,14 @@ defmodule Normandy.Agents.Turn.ServerPausedInputTest do
     assert [
              {"user", %BaseAgentInputSchema{chat_message: "q1"}},
              {"assistant", %ToolCallResponse{stop_reason: :pause_turn}},
+             {"assistant",
+              %ToolCallResponse{
+                tool_calls: [],
+                content_blocks: [
+                  %{"type" => "mcp_tool_result", "tool_use_id" => "mcptoolu_1"},
+                  @found
+                ]
+              }},
              {"assistant", %BaseAgentOutputSchema{chat_message: "Found it."}},
              {"user", %BaseAgentInputSchema{chat_message: "q2"}},
              {"assistant", %BaseAgentOutputSchema{chat_message: "Answer two."}}

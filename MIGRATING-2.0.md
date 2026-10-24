@@ -339,9 +339,9 @@ later input with a 400 (`mcp_tool_use ... without a corresponding mcp_tool_resul
 next `run/2` first continues the paused turn, as a resumed run (`resumed: true` on its run
 `:start`), then runs its input. Nothing to change: expect one extra model call and one
 extra run before such an input. If that continuation fails, the `run/2` returns its error
-and stores nothing of its input; the next `run/2` tries again. Every later request leaves
-out the paused turn's last server-tool call, whose result is never stored (the API rejects an
-unanswered call anywhere but in the last message); what is stored does not change.
+and stores nothing of its input; the next `run/2` tries again. The continuation's response,
+with the server-tool result it carries, is stored before its answer, so later requests send
+the paused call and its result.
 
 ## 13. Rolling deploys
 
@@ -2304,19 +2304,17 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 - **A failed turn can run again after a store outage** (H10). `Turn.Server` retries a
   terminal turn-state save the store refused (§43), but if the server process dies first (a
   node crash, a supervisor shutdown) the session stays in the in-flight index and the next
-  eager start resumes the turn: a turn whose answer was stored is only marked finished, a
-  turn that failed calls the model again, with no caller waiting.
+  eager start resumes the turn. A turn whose answer was stored is only marked finished. A
+  turn that failed runs again from its last saved step, with no caller waiting: the model
+  is called again, so a tool it calls after that step can run a second time, and a `run/2`
+  that reaches the session meanwhile waits behind the resumed turn. Recording the failure
+  would take a store write during the same outage.
 - **Every compaction stores the whole compacted conversation.** `Turn.Server` appends one
   `"compaction"` entry per compaction holding the conversation it left (up to a context
   window), so a session's storage grows with the number of compactions, not only with its
   last window. A restore reads from the last snapshot on (`SessionStore.restore_history/3`)
   on the ETS, Mnesia, Postgres and Redis stores; a custom store without
   `history_since_compaction/2` still loads every snapshot.
-- **A paused turn's continuation keeps only its answer.** When `Turn.Server` continues a paused
-  MCP or server-tool turn, it stores the continuation as its answer only; the tool result (the
-  `mcp_tool_result` of the call the pause left open) is not stored, so it does not reach later
-  turns. Later requests leave that open call out, so the model sees its own summarised answer,
-  not what the tool returned.
 - **Pathological model output can hide a later answer.** `JsonDeserializer` finds JSON regions in
   prose with a work budget of `8n + 1024` bytes for an `n`-byte answer (it was quadratic on unclosed
   braces: 30 s on 240 KB). A reply that spends the budget before its real answer, such as deeply nested
@@ -2324,6 +2322,12 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 
 ## New, non-breaking
 
+- A turn's final response that carries server-tool results (the `mcp_tool_result` of a
+  paused MCP turn's continuation, a `web_search_tool_result`) is stored before the answer,
+  as a `%ToolCallResponse{}` with no tool calls, on `run/3`, `stream/3` and `Turn.Server`;
+  later turns see what the tool returned, not only the answer. Its text is sent once (as
+  the answer), unless it carries citations or a paused response before it sends thinking.
+  `AgentMemory.messages/1` shows one more assistant entry for such a turn.
 - `SessionStore.delete_session/2` on Postgres and Mnesia deletes every entry of the
   session's tree that no other session's head reaches, including a branch its head left
   (an append with an explicit `parent_id`); two concurrent Postgres deletes of sessions that

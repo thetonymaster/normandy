@@ -19,6 +19,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
   alias Normandy.Test.FakeTool
+  alias Normandy.Test.OwnLog
   alias Normandy.Test.TelemetryCapture
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
@@ -1827,8 +1828,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, _store} =
         start_server("s-exit-secret", base_config(), handlers: final_handlers(%{append: append}))
 
+      # The server's own events: another async test may log a :timeout meanwhile.
       log =
-        capture_log(fn ->
+        OwnLog.capture([pid: srv], fn ->
           assert {:error,
                   %TurnError{type: :handler_crashed, handler: :append, reason: {:timeout, _}}} =
                    Turn.Server.run(srv, "hi")
