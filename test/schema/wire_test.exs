@@ -109,6 +109,31 @@ defmodule Normandy.Schema.WireTest do
     assert Wire.encodable(nil) == nil
   end
 
+  test "title is removed inside every schema-valued keyword, atom or string keyed" do
+    for k <- [& &1, &String.to_atom/1] do
+      leaf = %{k.("type") => "string", k.("title") => "Leaf"}
+      stripped = %{k.("type") => "string"}
+
+      keywords = %{
+        k.("$defs") => {%{"a" => leaf}, %{"a" => stripped}},
+        k.("definitions") => {%{"b" => leaf}, %{"b" => stripped}},
+        k.("patternProperties") => {%{"^x_" => leaf}, %{"^x_" => stripped}},
+        k.("dependentSchemas") =>
+          {%{"c" => %{k.("properties") => %{"d" => leaf}}},
+           %{"c" => %{k.("properties") => %{"d" => stripped}}}},
+        k.("contains") => {leaf, stripped},
+        k.("propertyNames") => {leaf, stripped},
+        k.("unevaluatedProperties") => {leaf, stripped},
+        k.("unevaluatedItems") => {leaf, stripped}
+      }
+
+      spec = Map.new(keywords, fn {key, {sent, _}} -> {key, sent} end)
+      expected = Map.new(keywords, fn {key, {_, out}} -> {key, out} end)
+
+      assert Wire.encodable(Map.put(spec, k.("title"), "Root")) == expected
+    end
+  end
+
   test "a :property_order that does not name the properties raises, naming both" do
     spec = %{type: :object, properties: %{a: %{type: :string}}, property_order: [:a, :b]}
 

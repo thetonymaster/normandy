@@ -11,8 +11,8 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     transaction that first locks the namespace's row in `normandy_memory_namespaces`,
     which tracks the namespace's content bytes and document count for `put/6`'s limits.
     So the writers of one namespace run one at a time, and compare-and-set, the limits
-    check and the counters change atomically with the document. `rename/4` also locks the
-    moving rows `FOR UPDATE`. Prefixes match with `starts_with/2` (nothing to escape);
+    check and the counters change atomically with the document. The row goes with the
+    namespace's last document. `rename/4` also locks the moving rows `FOR UPDATE`. Prefixes match with `starts_with/2` (nothing to escape);
     listing orders by `path COLLATE "C"` (byte order).
 
     The counters are kept by these functions only: a row written to
@@ -93,7 +93,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
                [ns, path]
              ) do
           %{rows: [[size]]} -> release(repo, ns, totals, [size])
-          %{rows: []} -> :not_found
+          %{rows: []} -> not_found(repo, ns, totals)
         end
       end)
     end
@@ -111,7 +111,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
         case repo.query!(sql, [ns, path, version]) do
           %{rows: [[nil, 1]]} -> {:error, :conflict}
-          %{rows: [[nil, 0]]} -> :not_found
+          %{rows: [[nil, 0]]} -> not_found(repo, ns, totals)
           %{rows: [[size, _]]} -> release(repo, ns, totals, [size])
         end
       end)
@@ -126,7 +126,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
         totals = lock_totals(repo, ns)
         %{rows: rows} = repo.query!(sql, [ns, prefix, prefix <> "/"])
         sizes = List.flatten(rows)
-        if sizes != [], do: release(repo, ns, totals, sizes)
+        if sizes == [], do: not_found(repo, ns, totals), else: release(repo, ns, totals, sizes)
         {:ok, length(sizes)}
       end)
     end
@@ -156,12 +156,12 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
     defp rename_in_transaction(repo, ns, from, to) do
       # Moves documents within the namespace: bytes and count stay, but the counter row
       # lock keeps rename and the other writers in one order.
-      _totals = lock_totals(repo, ns)
+      totals = lock_totals(repo, ns)
       moving = lock_moving(repo, ns, from)
 
       cond do
         moving == [] ->
-          :not_found
+          not_found(repo, ns, totals)
 
         destination_taken?(repo, ns, to) ->
           {:error, :exists}
@@ -227,7 +227,26 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL) do
 
     # Takes the deleted documents' sizes off the totals; the reply of a delete.
     defp release(repo, ns, {bytes, documents}, sizes) do
-      set_totals(repo, ns, {bytes - Enum.sum(sizes), documents - length(sizes)})
+      settle(repo, ns, {bytes - Enum.sum(sizes), documents - length(sizes)})
+    end
+
+    # A miss changes no totals, but in an empty namespace lock_totals/2 just created the row.
+    defp not_found(repo, ns, {_bytes, 0}) do
+      :ok = settle(repo, ns, {0, 0})
+      :not_found
+    end
+
+    defp not_found(_repo, _ns, _totals), do: :not_found
+
+    # A namespace left with no documents loses its counter row, as in delete_namespace/2;
+    # a writer waiting on the row's lock then creates it again (ON CONFLICT finds no row).
+    defp settle(repo, ns, {_bytes, 0}) do
+      repo.query!("DELETE FROM #{@namespaces} WHERE namespace = $1", [ns])
+      :ok
+    end
+
+    defp settle(repo, ns, totals) do
+      set_totals(repo, ns, totals)
       :ok
     end
 

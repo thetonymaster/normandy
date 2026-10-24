@@ -2342,15 +2342,6 @@ These are known and not fixed in this release. Each is a candidate for a later 2
   prose with a work budget of `8n + 1024` bytes for an `n`-byte answer (it was quadratic on unclosed
   braces: 30 s on 240 KB). A reply that spends the budget before its real answer, such as deeply nested
   JSON at nine or more levels spanning the content, is a `json_parse_error`; the retry path re-asks.
-- **Memory-store bookkeeping.** `MemoryStore.InMemory` totals a namespace from all its documents on every
-  limited write, so a write's cost grows with the namespace. `MemoryStore.Postgres` keeps a namespace's
-  counter row, at zero, after its last document is deleted, until `delete_namespace/2`.
-- **`Schema.Wire` skips some schema keywords.** It removes `title` and `$schema` and orders properties in every
-  node it recurses into (`properties`, `items`, `additionalProperties`, `not`, `if`/`then`/`else`,
-  `anyOf`/`oneOf`/`allOf`, `prefixItems`), but `title` keys inside `$defs`, `definitions`,
-  `patternProperties`, `dependentSchemas` and `contains` reach the model as written.
-- **A policy reason that is not a string is not shown to the model.** A `PolicyEngine` that denies with
-  a non-binary reason gets the generic "blocked by policy" text in the tool result.
 - **A schema struct inside a plain-map field is not validated.** Validation descends into fields that
   are schema structs or lists of them, not into plain maps.
 - **The memory tool checks its mounts on its first call.** A session namespace that equals a mount's
