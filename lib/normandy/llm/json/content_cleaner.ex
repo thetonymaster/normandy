@@ -40,9 +40,9 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   The guarantee: the scans together read at most `8 * byte_size(content) + 1024` bytes,
   whatever the input, so the time is linear in the size. Scans share work: a scan that
   starts at an opener settles every same-kind opener it passes outside a string, and
-  stops at a lexer state an earlier scan of that kind already crossed, when the outcome
-  there is known (that scan closed its first opener with the same number pending, or
-  never closed it with no more pending). Prose, nested code and repeated escaped-quote
+  stops at a marked lexer state (where the state or depth changed) that an earlier scan
+  of that kind recorded, when the outcome there is known (that scan closed its first
+  opener with the same number pending, or never closed it with no more pending). Prose, nested code and repeated escaped-quote
   shapes (`{ word `, `{ \\"`, `printf("{\\"id\\": %d}")` lines) stay far under the budget.
   Some inputs still need more than it allows; then the stream ends early, and the
   regions yielded are always a prefix of the full list in start order: a later region
@@ -55,8 +55,9 @@ defmodule Normandy.LLM.Json.ContentCleaner do
 
   # `memo`: offset of an opener already settled by a scan => `{:closed, stop}` or
   # `:unclosed`. `seen`: `{opener, pos, in_string?, escape?}` => the fewest openers pending
-  # when a scan that never closed its first opener crossed that state. `work`: bytes
-  # the scans may still read.
+  # when a scan that never closed its first opener recorded that (marked) state. `done`:
+  # `{state, depth}` => where the opener of the scan that recorded it closed. `work`:
+  # bytes the scans may still read.
   defp new_state(content),
     do: %{memo: %{}, seen: %{}, done: %{}, work: 8 * byte_size(content) + 1024}
 
@@ -102,15 +103,16 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   # `open_stack` holds the offsets of the openers still unclosed, innermost first, and
   # `depth` its length. Each closer settles the innermost one; the scan stops when the
   # opener it began at closes, or reaches end of input (everything pending is unclosed).
-  # `trail` is the `{state, depth}` pairs crossed, kept for `seen` if the scan fails.
+  # `trail` is the marked `{state, depth}` pairs crossed, kept for `done` or `seen`.
   #
   # Only marked states are looked up in `done`/`seen` and kept in `trail`: a scan's first
-  # byte and every byte its lexer state or depth changed at. Between marks the state only
-  # moves forward over plain bytes, and two scans on one path change state at the same
-  # bytes, so a scan joining an earlier one still meets a mark that scan recorded (at most
-  # one run of plain bytes later). Recording every byte instead made one stray opener in
-  # prose cost a map entry per byte to the end of the input
-  # (investigations/json-region-240kb.md).
+  # byte and every byte its lexer state or depth changed at. Every entry recorded is one
+  # recording every byte would also make, so skipping the rest only drops shortcuts: the
+  # regions are unchanged. The cost: between marks the state only moves forward over
+  # plain bytes, and two scans on one path change state at the same bytes, so a scan
+  # joining an earlier one reads at most one run of plain bytes to the next mark (or to
+  # where that scan ended). Recording every byte instead made one stray opener in prose
+  # cost a map entry per byte to the end of the input (investigations/json-region-240kb.md).
   defp scan(content, pos, _kind, stack, _depth, _lex, trail, st) when pos >= byte_size(content),
     do: {:ok, unclosed(stack, trail, st)}
 

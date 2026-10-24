@@ -77,8 +77,8 @@ Support.banner(
   "JsonDeserializer.parse_and_validate/3 region extraction",
   Enum.map(sizes, &elem(&1, 0)),
   "linear in size for all three (region budget 8 * size + 1024); one stray opener " <>
-    "should cost little over balanced. Before Wave 8 the adversarial case was " <>
-    "quadratic: 30 KB 451 ms ... 240 KB 30 s"
+    "about 2-2.5x balanced (one extra pass to the end; ~10x before #54). Before Wave 8 " <>
+    "the adversarial case was quadratic: 30 KB 451 ms ... 240 KB 30 s"
 )
 
 Benchee.run(
