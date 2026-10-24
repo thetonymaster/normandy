@@ -31,6 +31,8 @@ defmodule Normandy.Agents.TurnPropertyTest do
       constant({:output_converted, :c}),
       constant({:output_validated, :v}),
       constant({:output_guarded, :g}),
+      constant({:output_failed, Normandy.LLMError.new(type: :invalid_output, retryable?: false)}),
+      constant({:output_rejected, %Normandy.Guardrails.ViolationError{message: "no"}}),
       constant({:llm_error, :boom}),
       constant({:tool_error, :crash}),
       constant(
@@ -60,6 +62,29 @@ defmodule Normandy.Agents.TurnPropertyTest do
       assert %State{} = s2
       assert s2.status in @statuses
       assert is_list(effects)
+    end
+  end
+
+  # The shells perform the leading effects in order and act on the last one: every effect
+  # that waits for an event (or ends the turn) comes last, and there is at most one.
+  @in_order [:emit_event, :append_message, :persist]
+
+  property "step/2 puts at most one effect that waits for an event, and puts it last" do
+    check all(
+            max <- integer(1..6),
+            left <- integer(0..6),
+            status <- member_of(@statuses),
+            event <- event_gen()
+          ) do
+      s = %State{status: status, max_iterations: max, iterations_left: left}
+      {_s2, effects} = Turn.step(s, event)
+
+      waiting = Enum.reject(effects, &(elem(&1, 0) in @in_order))
+      assert length(waiting) <= 1
+
+      if waiting != [] do
+        assert List.last(effects) == hd(waiting)
+      end
     end
   end
 

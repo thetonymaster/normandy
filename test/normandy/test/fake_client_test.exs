@@ -1,7 +1,7 @@
 defmodule Normandy.Test.FakeClientTest do
   @moduledoc """
   Task 7.3b (DX-8): the shipped `Normandy.Test.FakeClient` answers scripted replies on
-  every turn path (`run/3` over `Turn.Driver`, `stream/3`, `Turn.Inline`, `Turn.Server`
+  every turn path (`run/3` over `Turn.Driver`, `stream/3`, `Turn.Driver` from plain functions, `Turn.Server`
   through `Turn.Session`, an `AgentProcess` worker), records every request, and refuses a
   bad script by name.
   """
@@ -15,7 +15,6 @@ defmodule Normandy.Test.FakeClientTest do
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
-  alias Normandy.Agents.Turn.Inline
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -27,6 +26,7 @@ defmodule Normandy.Test.FakeClientTest do
   alias Normandy.LLMError
   alias Normandy.Test.FakeClient
   alias Normandy.Test.FakeClient.ScriptExhaustedError
+  alias Normandy.Test.TurnShell
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 
@@ -228,7 +228,7 @@ defmodule Normandy.Test.FakeClientTest do
     end
   end
 
-  describe "Turn.Inline" do
+  describe "Turn.Driver from plain functions (TurnShell)" do
     test "the client answers the inline shell's calls through Normandy.LLM.Call" do
       client = FakeClient.new([weather_round(), {:text, "Inline."}])
       config = tool_agent(client)
@@ -257,7 +257,7 @@ defmodule Normandy.Test.FakeClientTest do
       }
 
       assert {:ok, %Turn.State{stop_reason: :completed, final_response: final}} =
-               Inline.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
+               TurnShell.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
 
       assert %ToolCallResponse{content: "Inline.", stop_reason: :end_turn} = final
       assert FakeClient.remaining(client) == 0

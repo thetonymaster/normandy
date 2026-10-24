@@ -11,7 +11,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
   Counted: `BaseIOSchema.to_json/1` of `Normandy.Test.CountingContent` (memory content)
   and `Jason.Encoder.encode/2` of `CountingOutput` (a tool's output: Dispatch renders it
   once and reuses the text for its encodability checks and the result cap, Task 7.0a, and
-  memory encodes it once, when the result is appended). `Turn.Inline` over
+  memory encodes it once, when the result is appended). `Turn.Driver` (the TurnShell test helper) over
   `Dispatch.dispatch_one/3` costs the same.
   """
   use ExUnit.Case, async: true
@@ -24,7 +24,6 @@ defmodule Normandy.Agents.LinearHistoryTest do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Agents.Turn.Inline
   alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -33,6 +32,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Test.CountingContent
   alias Normandy.Test.ReturnTool
+  alias Normandy.Test.TurnShell
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 
@@ -227,7 +227,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
     assert CountingContent.count(out) == @per_result * 3
   end
 
-  test "Turn.Inline over dispatch_one/3: each tool result is encoded twice" do
+  test "Turn.Driver over dispatch_one/3: each tool result is encoded twice" do
     {seeded, out} = counters()
     config = agent(WireScript.client([]), out, seeded_memory(seeded), {Compactor.NoOp, []})
     {:ok, memory} = Agent.start_link(fn -> config.memory end)
@@ -253,7 +253,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
     }
 
     assert {:ok, %Turn.State{status: :stopped}} =
-             Inline.run(Turn.new(response_model: %ToolCallResponse{}), deps)
+             TurnShell.run(Turn.new(response_model: %ToolCallResponse{}), deps)
 
     assert CountingContent.count(out) == @per_result
   end

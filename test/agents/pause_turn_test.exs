@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.PauseTurnTest do
   @moduledoc """
   Task 5.3c: a `pause_turn` response is sent back as it is, with no user message after
-  it, and the model continues the turn; on the pure core, `Turn.Inline`, `run/3`,
+  it, and the model continues the turn; on the pure core, `Turn.Driver` from plain functions, `run/3`,
   `stream/3` and `Turn.Server`. An agent with MCP servers and no tools of its own runs
   the tool-loop response model, so its connector turns reach the loop.
   """
@@ -13,7 +13,6 @@ defmodule Normandy.Agents.PauseTurnTest do
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Agents.Turn.Inline
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -22,6 +21,7 @@ defmodule Normandy.Agents.PauseTurnTest do
   alias Normandy.MCP.ServerConfig
   alias Normandy.Test.FakeTool
   alias Normandy.Test.StubClient
+  alias Normandy.Test.TurnShell
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 
@@ -144,7 +144,7 @@ defmodule Normandy.Agents.PauseTurnTest do
                Turn.step(s, {:compaction_done, %{compacted: false}})
     end
 
-    test "Turn.Inline continues a paused turn" do
+    test "Turn.Driver from plain functions continues a paused turn" do
       test_pid = self()
       {:ok, calls} = Agent.start_link(fn -> 0 end)
 
@@ -160,7 +160,7 @@ defmodule Normandy.Agents.PauseTurnTest do
       }
 
       state = Turn.new(max_iterations: 3, response_model: :rm, output_schema: :os)
-      assert {:ok, final} = Inline.run(state, deps)
+      assert {:ok, final} = TurnShell.run(state, deps)
       assert %ToolCallResponse{content: "Sunny."} = final.final_response
       assert_received {:appended, "assistant", %ToolCallResponse{stop_reason: :pause_turn}}
     end

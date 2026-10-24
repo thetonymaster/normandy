@@ -1637,8 +1637,8 @@ defmodule Normandy.Agents.Turn.Server do
           :convert,
           fn -> convert_output(data, raw, schema) end,
           fn
-            {:output_unparsed, e} -> fail(data, e)
-            converted -> advance(rest, data, {:output_converted, converted})
+            {:output_failed, e} -> advance(data, {:output_failed, e})
+            converted -> advance(data, {:output_converted, converted})
           end
         )
 
@@ -1649,10 +1649,10 @@ defmodule Normandy.Agents.Turn.Server do
           :validate,
           fn -> validate_output(data, value) end,
           fn
-            {:output_unparsed, e} -> fail(data, e)
+            {:output_failed, e} -> advance(data, {:output_failed, e})
             # The core re-asks a rejected answer or fails the turn with {:rejected, e}.
-            {:output_invalid, e} -> advance(rest, data, {:output_invalid, e})
-            validated -> advance(rest, data, {:output_validated, validated})
+            {:output_invalid, e} -> advance(data, {:output_invalid, e})
+            validated -> advance(data, {:output_validated, validated})
           end
         )
 
@@ -1663,8 +1663,8 @@ defmodule Normandy.Agents.Turn.Server do
           :guard,
           fn -> guard_output(data, value) end,
           fn
-            {:output_rejected, e} -> fail(data, {:rejected, e})
-            _ -> advance(rest, data, {:output_guarded, value})
+            {:output_rejected, e} -> advance(data, {:output_rejected, e})
+            _ -> advance(data, {:output_guarded, value})
           end
         )
 
@@ -1712,10 +1712,12 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # `advance` feeds an in-line (non-blocking) result back into the core and keeps
-  # interpreting — convert/validate/guard never leave the current handler.
-  defp advance(rest, data, event) do
+  # interpreting — convert/validate/guard never leave the current handler. Nothing follows
+  # the effect that produced `event`: step/2 puts the one waiting effect last
+  # (test/agents/turn_property_test.exs).
+  defp advance(data, event) do
     {state, effects} = Turn.step(data.turn_state, event)
-    interpret(effects ++ rest, %{data | turn_state: state})
+    interpret(effects, %{data | turn_state: state})
   end
 
   # The worker's event for a :call_llm effect. before_llm runs first, apart from the
@@ -1887,7 +1889,7 @@ defmodule Normandy.Agents.Turn.Server do
   defp convert_output(data, raw, schema) do
     data.handlers.convert.(data.config, raw, schema)
   rescue
-    e in Normandy.LLMError -> {:output_unparsed, e}
+    e in Normandy.LLMError -> {:output_failed, e}
   end
 
   # A blank chat answer is the :invalid_output LLMError run/2 returns (decision 22),
@@ -1903,7 +1905,7 @@ defmodule Normandy.Agents.Turn.Server do
     )
   rescue
     e in Normandy.Schema.ValidationError -> {:output_invalid, e}
-    e in Normandy.LLMError -> {:output_unparsed, e}
+    e in Normandy.LLMError -> {:output_failed, e}
   end
 
   defp guarded(data, name, fun, continue) do

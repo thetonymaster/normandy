@@ -3,9 +3,8 @@ defmodule Normandy.Agents.ToolContextTest do
 
   alias Normandy.Agents.{BaseAgent, Dispatch, ToolCallResponse, Turn}
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
-  alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.{ToolCall, ToolResult}
-  alias Normandy.Test.{ContextProbe, FakeClient}
+  alias Normandy.Test.{ContextProbe, FakeClient, TurnShell}
   alias Normandy.Tools.{Context, Toolset}
 
   defp probe_call, do: %ToolCall{id: "call_1", name: "probe", input: %{}}
@@ -60,7 +59,7 @@ defmodule Normandy.Agents.ToolContextTest do
                     %Context{tool_call_id: "call_1", values: %{memory_namespace: "acme/stream"}}}
   end
 
-  test "Turn.Inline over base_agent_pipeline/1 hands the contextual tool the context" do
+  test "Turn.Driver over base_agent_pipeline/1 hands the contextual tool the context" do
     config = agent(%{tool_context: %{memory_namespace: "acme/inline"}})
     {:ok, counter} = Agent.start_link(fn -> 0 end)
     first = %ToolCallResponse{content: nil, tool_calls: [probe_call()]}
@@ -82,7 +81,7 @@ defmodule Normandy.Agents.ToolContextTest do
     }
 
     assert {:ok, %{stop_reason: :completed}} =
-             Inline.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
+             TurnShell.run(Turn.new(max_iterations: 5, response_model: :rm), deps)
 
     assert_receive {:probe_ctx, %Context{values: %{memory_namespace: "acme/inline"}}}
   end

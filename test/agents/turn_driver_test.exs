@@ -33,6 +33,38 @@ defmodule Normandy.Agents.Turn.DriverTest do
     assert_received {:emit, :iteration}
   end
 
+  # The core decides a failed or blocked answer; drive/3 raises the verdict it hands back.
+  # The raise comes from Driver's {:fail, _} clause, not from the handler: the exception
+  # went to the core as an event and came back as the turn's failure.
+  defp raised_from(fun) do
+    fun.()
+    flunk("expected a raise")
+  rescue
+    e ->
+      [{module, _fun, _arity, _location} | _] = __STACKTRACE__
+      {e, module}
+  end
+
+  test "drive/3 raises the LLMError a validate raised, through the core" do
+    error = Normandy.LLMError.new(type: :invalid_output, retryable?: false, detail: "blank")
+    handlers = %{recording_handlers(self()) | validate: fn _acc, _value -> raise error end}
+    state = Turn.new(response_model: :rm, output_schema: :rm, max_constraint_reasks: 2)
+
+    assert {^error, Driver} = raised_from(fn -> Driver.drive(state, handlers, []) end)
+    assert_received {:call_llm, []}
+    refute_received {:call_llm, _}
+  end
+
+  test "drive/3 raises the ViolationError a guard raised, with no re-ask" do
+    error = %Normandy.Guardrails.ViolationError{message: "blocked"}
+    handlers = %{recording_handlers(self()) | guard: fn _acc, _value -> raise error end}
+    state = Turn.new(response_model: :rm, output_schema: :rm, max_constraint_reasks: 2)
+
+    assert {^error, Driver} = raised_from(fn -> Driver.drive(state, handlers, []) end)
+    assert_received {:call_llm, []}
+    refute_received {:call_llm, _}
+  end
+
   test "drive/3 raises on an unexpected :fail effect" do
     # Feed a state whose next event triggers the FSM's unexpected-event guard.
     state = %Turn.State{status: :tool_dispatch, max_iterations: 5, iterations_left: 5}

@@ -137,6 +137,40 @@ defmodule Normandy.Agents.TurnTest do
       assert effects == [{:validate_output, :converted}]
     end
 
+    test ":output_failed fails the turn with the LLMError, with no re-ask" do
+      error = LLMError.new(type: :invalid_output, retryable?: false, detail: "blank")
+
+      s = %State{
+        status: :finalizing,
+        iterations_left: 4,
+        max_iterations: 5,
+        reasks_left: 2
+      }
+
+      {s2, effects} = Turn.step(s, {:output_failed, error})
+
+      assert s2.status == :failed
+      assert s2.error == error
+      assert effects == [{:fail, error}]
+    end
+
+    test ":output_rejected fails the turn with {:rejected, e}, with no re-ask" do
+      error = %Normandy.Guardrails.ViolationError{message: "blocked"}
+
+      s = %State{
+        status: :finalizing,
+        iterations_left: 4,
+        max_iterations: 5,
+        reasks_left: 2
+      }
+
+      {s2, effects} = Turn.step(s, {:output_rejected, error})
+
+      assert s2.status == :failed
+      assert s2.error == {:rejected, error}
+      assert effects == [{:fail, {:rejected, error}}]
+    end
+
     test ":output_validated advances to :guard_output" do
       s = %State{
         status: :finalizing,
