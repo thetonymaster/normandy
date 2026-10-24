@@ -56,7 +56,7 @@ scalar_jobs =
 
 jobs =
   Map.merge(scalar_jobs, %{
-    "loop x1000 baseline" => fn -> Enum.each(1..1_000, fn _ -> {:ok, array} end) end,
+    "loop x1000 baseline" => fn -> Enum.each(1..1_000, fn _ -> :ok end) end,
     "dump {:array, :integer} 1k" => fn -> Type.dump({:array, :integer}, array) end,
     "cast :integer x1000" => fn -> Enum.each(1..1_000, fn _ -> Type.cast(:integer, 42) end) end,
     "cast {:array, :integer} 1k" => fn -> Type.cast({:array, :integer}, array) end
