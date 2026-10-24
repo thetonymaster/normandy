@@ -82,7 +82,7 @@ defmodule Normandy.Agents.Turn.Session.Options do
               doc: "`fn event_name, meta -> any end`, passed to `Turn.Server`."
             ],
             handlers: [
-              type: {:or, [{:struct, @handlers}, nil]},
+              type: {:or, [{:custom, __MODULE__, :validate_handlers, []}, nil]},
               type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
               doc: "A `Turn.Driver.Handlers` set, passed to `Turn.Server`; `nil` is its default."
             ],
@@ -155,6 +155,25 @@ defmodule Normandy.Agents.Turn.Session.Options do
 
   def validate_supervisor_mod(other),
     do: {:error, "expected a module, got: " <> Describe.type_of(other)}
+
+  @doc false
+  # No shell runs a set's dispatch_tools: Turn.Server sends tool calls through
+  # Normandy.Agents.Dispatch (policy, approval, budget, hooks), so a custom one would be
+  # ignored. nil or the default's own function pass; the field goes in 3.0.
+  @spec validate_handlers(term()) :: {:ok, struct()} | {:error, String.t()}
+  def validate_handlers(%{__struct__: @handlers, dispatch_tools: dispatch} = handlers) do
+    if dispatch == nil or dispatch == @handlers.default().dispatch_tools do
+      {:ok, handlers}
+    else
+      {:error,
+       "a custom dispatch_tools is not supported: tool calls run through " <>
+         "Normandy.Agents.Dispatch; change tool behaviour with Normandy.Behaviours " <>
+         "(policy, budget, hooks) or the tools in the Toolset"}
+    end
+  end
+
+  def validate_handlers(other),
+    do: {:error, "expected #{inspect(@handlers)}, got: " <> Describe.type_of(other)}
 
   @doc false
   def validate_config(%{__struct__: @base_agent_config} = config), do: {:ok, config}
