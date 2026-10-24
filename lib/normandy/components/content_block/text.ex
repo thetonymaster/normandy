@@ -65,4 +65,25 @@ defmodule Normandy.Components.ContentBlock.Text do
     base = %{"type" => "text", "text" => text}
     CacheControl.maybe_attach(base, cache_control)
   end
+
+  defimpl Normandy.Components.ContentBlock.Protocol do
+    alias Normandy.Components.ContentBlock
+
+    def to_claudio(block), do: @for.to_claudio(block)
+
+    def estimate_tokens(%{text: text}) when is_binary(text),
+      do: ContentBlock.text_tokens(text)
+
+    def estimate_tokens(block),
+      do: block |> Normandy.JSON.encode!() |> ContentBlock.text_tokens()
+
+    def label(%{text: text}), do: text
+  end
+
+  # A single content block is sent as a one-block list, the same shape as
+  # multimodal list content, which the adapter turns into wire blocks.
+  defimpl Normandy.Components.BaseIOSchema do
+    def to_json(block), do: [block]
+    def get_schema(_block), do: %{}
+  end
 end

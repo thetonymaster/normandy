@@ -20,10 +20,9 @@ defmodule Normandy.Context.TokenCounter do
   alias Claudio.Messages.Request
   alias Normandy.Agents.Model.Normandy.LLM.ClaudioAdapter, as: ClaudioModel
   alias Normandy.Components.AgentMemory
+  alias Normandy.Components.ContentBlock
   alias Normandy.Components.ContentBlock.Describe
-  alias Normandy.Components.ContentBlock.Document
-  alias Normandy.Components.ContentBlock.Image
-  alias Normandy.Components.ContentBlock.Text
+  alias Normandy.Components.ContentBlock.Protocol
   alias Normandy.Context.WindowManager
   alias Normandy.LLM.ClaudioAdapter
 
@@ -218,16 +217,9 @@ defmodule Normandy.Context.TokenCounter do
             Describe.type_of(other)
   end
 
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Text{} = b),
-    do: Text.to_claudio(b)
-
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Image{} = b),
-    do: Image.to_claudio(b)
-
-  defp block_to_claudio_map(%Normandy.Components.ContentBlock.Document{} = b),
-    do: Document.to_claudio(b)
-
-  defp block_to_claudio_map(%{} = raw), do: raw
+  defp block_to_claudio_map(%{} = block) do
+    if ContentBlock.block?(block), do: Protocol.to_claudio(block), else: block
+  end
 
   defp get_system_prompt(agent) do
     # Try to extract system prompt from agent's prompt_specification or memory
@@ -273,9 +265,7 @@ defmodule Normandy.Context.TokenCounter do
     # view in `count_detailed/2` doesn't silently blank out.
     parts =
       Enum.map(content, fn
-        %Normandy.Components.ContentBlock.Text{text: t} -> truncate(t, 40)
-        %Normandy.Components.ContentBlock.Image{} -> "[image]"
-        %Normandy.Components.ContentBlock.Document{} -> "[document]"
+        %{__struct__: _} = block -> block_preview(block)
         %{"type" => "text", "text" => t} when is_binary(t) -> truncate(t, 40)
         %{"type" => type} -> "[#{type}]"
         _ -> "[block]"
@@ -285,6 +275,10 @@ defmodule Normandy.Context.TokenCounter do
   end
 
   defp get_content_preview(_), do: ""
+
+  defp block_preview(block) do
+    if ContentBlock.block?(block), do: truncate(Protocol.label(block), 40), else: "[block]"
+  end
 
   defp truncate(s, n) when is_binary(s) do
     if String.length(s) > n, do: String.slice(s, 0, n - 3) <> "...", else: s

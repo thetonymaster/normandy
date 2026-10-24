@@ -168,6 +168,7 @@ defmodule Normandy.MixProject do
             Normandy.Components.ContentBlock.Text,
             Normandy.Components.ContentBlock.Image,
             Normandy.Components.ContentBlock.Document,
+            Normandy.Components.ContentBlock.Protocol,
             Normandy.Components.PromptSpecification,
             Normandy.Components.SystemPromptGenerator,
             Normandy.Components.BaseIOSchema,

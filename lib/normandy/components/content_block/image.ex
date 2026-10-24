@@ -136,4 +136,19 @@ defmodule Normandy.Components.ContentBlock.Image do
           "Normandy.Components.ContentBlock.Image: unsupported image source #{inspect(source)}. " <>
             "Expected :base64 or :url."
   end
+
+  defimpl Normandy.Components.ContentBlock.Protocol do
+    alias Normandy.Components.ContentBlock
+
+    def to_claudio(block), do: @for.to_claudio(block)
+    def estimate_tokens(_block), do: ContentBlock.image_tokens()
+    def label(_block), do: "[image]"
+  end
+
+  # A single content block is sent as a one-block list, the same shape as
+  # multimodal list content, which the adapter turns into wire blocks.
+  defimpl Normandy.Components.BaseIOSchema do
+    def to_json(block), do: [block]
+    def get_schema(_block), do: %{}
+  end
 end
