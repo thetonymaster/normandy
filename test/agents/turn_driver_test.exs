@@ -34,12 +34,21 @@ defmodule Normandy.Agents.Turn.DriverTest do
   end
 
   # The core decides a failed or blocked answer; drive/3 raises the verdict it hands back.
+  # The raise comes from Driver's {:fail, _} clause, not from the handler: the exception
+  # went to the core as an event and came back as the turn's failure.
+  defp raised_from(fun) do
+    fun.()
+    flunk("expected a raise")
+  rescue
+    e -> {e, __STACKTRACE__ |> hd() |> elem(0)}
+  end
+
   test "drive/3 raises the LLMError a validate raised, through the core" do
     error = Normandy.LLMError.new(type: :invalid_output, retryable?: false, detail: "blank")
     handlers = %{recording_handlers(self()) | validate: fn _acc, _value -> raise error end}
     state = Turn.new(response_model: :rm, output_schema: :rm, max_constraint_reasks: 2)
 
-    assert_raise Normandy.LLMError, fn -> Driver.drive(state, handlers, []) end
+    assert {^error, Driver} = raised_from(fn -> Driver.drive(state, handlers, []) end)
     assert_received {:call_llm, []}
     refute_received {:call_llm, _}
   end
@@ -49,10 +58,7 @@ defmodule Normandy.Agents.Turn.DriverTest do
     handlers = %{recording_handlers(self()) | guard: fn _acc, _value -> raise error end}
     state = Turn.new(response_model: :rm, output_schema: :rm, max_constraint_reasks: 2)
 
-    assert_raise Normandy.Guardrails.ViolationError, "blocked", fn ->
-      Driver.drive(state, handlers, [])
-    end
-
+    assert {^error, Driver} = raised_from(fn -> Driver.drive(state, handlers, []) end)
     assert_received {:call_llm, []}
     refute_received {:call_llm, _}
   end
