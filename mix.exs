@@ -340,6 +340,8 @@ defmodule Normandy.MixProject do
       "ecto.setup": ["ecto.create --quiet", "ecto.migrate --quiet"],
       precommit: [
         "compile --warnings-as-errors",
+        # No compile-connected cycle above 4 files (one once deadlocked a clean build).
+        "xref graph --format cycles --label compile-connected --min-cycle-size 5 --fail-above 0",
         "deps.unlock --check-unused",
         "format",
         "credo --strict",

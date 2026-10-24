@@ -67,6 +67,10 @@ jobs:
       - name: Compile project (warnings as errors)
         run: mix compile --warnings-as-errors
 
+      # A compile-connected cycle above 4 files once deadlocked a clean build.
+      - name: No large compile-time dependency cycle
+        run: mix xref graph --format cycles --label compile-connected --min-cycle-size 5 --fail-above 0
+
       # Test files compile here, so their warnings (unused variables, clauses that
       # cannot match) fail the build like lib's do.
       - name: Run unit tests
