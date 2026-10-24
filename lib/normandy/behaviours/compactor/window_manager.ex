@@ -17,6 +17,14 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   The budget for the history is the window minus `:reserved_tokens` minus `ctx.prompt_tokens`
   (the estimated system prompt and tool definitions of the next call).
 
+  The estimate is calibrated (AX-12): the newest response in memory that records both the
+  size the provider counted for its request and the estimate of that request
+  (`ToolCallResponse.input_tokens` and `estimated_input_tokens`, set by the tool loop from
+  what the client reports) gives a ratio, at least `1.0`, and the window less the reserve is
+  divided by it before the prompt and the history are fitted in. A ratio below 1 is
+  taken as 1: the calibration only compacts earlier. The meta reports it as `:token_ratio`
+  (`1.0` without such a response).
+
   Options: `:context_window` pins the window (and skips the model catalog lookup);
   `:reserved_tokens` is the answer's room, by default the agent's `max_tokens`; a reserve
   at or above the window raises `ArgumentError`; `:strategy` goes to
@@ -31,6 +39,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
   """
   @behaviour Normandy.Behaviours.Compactor
 
+  alias Normandy.Agents.ToolCallResponse
   alias Normandy.Components.AgentMemory
   alias Normandy.Context.WindowManager, as: WM
   alias Normandy.Options
@@ -89,28 +98,48 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
 
   @impl true
   def maybe_compact(acc, %{window: window} = ctx, opts) do
-    case build_manager(window, opts, acc, Map.get(ctx, :prompt_tokens, 0)) do
+    ratio = token_ratio(acc.memory)
+
+    case build_manager(window, opts, acc, Map.get(ctx, :prompt_tokens, 0), ratio) do
       nil ->
         {acc, %{compacted: false, reason: :no_window}}
 
       %WM{} = manager ->
-        run(acc, manager)
+        {acc2, meta} = run(acc, manager)
+        {acc2, Map.put(meta, :token_ratio, ratio)}
     end
+  end
+
+  # AX-12: how far the estimate fell short on the last request the provider counted, from
+  # the newest response that carries both counts (ToolCallResponse.input_tokens and
+  # estimated_input_tokens). Never below 1.0: it only makes the budget smaller.
+  defp token_ratio(memory) do
+    memory
+    |> AgentMemory.entry_chain()
+    |> Enum.reverse()
+    |> Enum.find_value(1.0, fn
+      %{content: %ToolCallResponse{input_tokens: measured, estimated_input_tokens: estimated}}
+      when is_integer(measured) and is_integer(estimated) and estimated > 0 ->
+        max(1.0, measured / estimated)
+
+      _entry ->
+        nil
+    end)
   end
 
   # A pinned :context_window wins; otherwise the model's window from ctx; with neither
   # there is nothing to size against, so the compactor skips. The answer's room is the
   # agent's max_tokens unless opts pins :reserved_tokens; it is read only when a manager
   # is actually built.
-  defp build_manager(window, opts, acc, prompt_tokens) do
+  defp build_manager(window, opts, acc, prompt_tokens, ratio) do
     :ok = reject_max_tokens!(opts)
 
     case Keyword.fetch(opts, :context_window) do
       {:ok, pinned} ->
-        checked_manager(pinned, Keyword.delete(opts, :context_window), acc, prompt_tokens)
+        checked_manager(pinned, Keyword.delete(opts, :context_window), acc, prompt_tokens, ratio)
 
       :error when is_integer(window) ->
-        checked_manager(window, opts, acc, prompt_tokens)
+        checked_manager(window, opts, acc, prompt_tokens, ratio)
 
       :error ->
         nil
@@ -129,7 +158,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     :ok
   end
 
-  defp checked_manager(window, opts, acc, prompt_tokens) do
+  defp checked_manager(window, opts, acc, prompt_tokens, ratio) do
     unless is_integer(window) and window > 0 do
       raise ArgumentError,
             "Compactor.WindowManager: :context_window must be a positive integer (the " <>
@@ -152,10 +181,16 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
     end
 
     # The system prompt and tool definitions the next call sends share the window with
-    # the history (ctx.prompt_tokens, AX-12). A prompt that leaves no room keeps the
-    # budget at one token, so the strategy keeps only what it must.
+    # the history (ctx.prompt_tokens, AX-12). The room left for the request, in estimated
+    # tokens, is the window less the answer's reserve over the token ratio. A prompt that
+    # leaves no room keeps the budget at one token, so the strategy keeps only what it must.
+    request_room = floor((window - reserved) / ratio)
+
     WM.new(
-      [max_tokens: window, reserved_tokens: min(reserved + prompt_tokens, window - 1)] ++
+      [
+        max_tokens: window,
+        reserved_tokens: min(window - request_room + prompt_tokens, window - 1)
+      ] ++
         Keyword.take(opts, [:strategy, :summary_max_tokens])
     )
   end

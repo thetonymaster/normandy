@@ -2282,10 +2282,12 @@ code you wrote against 1.x must follow the changes below.
 These are known and not fixed in this release. Each is a candidate for a later 2.x release.
 
 - **The context budget is an estimate** (AX-12). `Compactor.WindowManager` counts the history,
-  the system prompt and the tool definitions at about four characters per token, so near the
-  window an API "prompt is too long" error is still possible; leave headroom with a larger
-  `:reserved_tokens`. `Normandy.Context.WindowManager` used on its own (`within_limit?/2`,
-  `ensure_within_limit/2`) counts the history only.
+  the system prompt and the tool definitions at about four characters per token, scaled up by
+  the last tool-loop call's reported size over its estimate. Before an agent's first tool-loop
+  response (and for a client that reports no usage, or an agent without tools) the estimate is
+  unscaled, so near the window an API "prompt is too long" error is still possible; leave
+  headroom with a larger `:reserved_tokens`. `Normandy.Context.WindowManager` used on its own
+  (`within_limit?/2`, `ensure_within_limit/2`) counts the history only, unscaled.
 - **Only a direct answer is re-asked when it breaks a constraint** (AX-18). An answer that
   parses but breaks a constraint the API does not enforce (`pattern`, lengths, ranges, item
   counts) is re-asked with the errors when the call's answer is the output schema itself (an
@@ -2322,6 +2324,16 @@ These are known and not fixed in this release. Each is a candidate for a later 2
 
 ## New, non-breaking
 
+- `Compactor.WindowManager` calibrates its estimate against the size the provider reported
+  for the last tool-loop request (AX-12). `%ToolCallResponse{}` has two new fields, never
+  sent to the API: `input_tokens` (the request as the provider counted it: input, cache
+  reads and cache writes of the returned call, fallback attempts left out) and
+  `estimated_input_tokens` (Normandy's estimate of that request when it was sent). The
+  ratio of the newest pair, at least `1.0`, shrinks the budget, so the compactor compacts
+  earlier when the estimate runs short and never later than before. The compaction meta
+  and `[:normandy, :agent, :compaction]` carry it as `token_ratio`.
+  `Normandy.Telemetry.Usage.request_input_tokens/1` is new. Entries stored before this
+  release have neither field and leave the estimate unscaled.
 - A turn's final response that carries server-tool results (the `mcp_tool_result` of a
   paused MCP turn's continuation, a `web_search_tool_result`) is stored before the answer,
   as a `%ToolCallResponse{}` with no tool calls, on `run/3`, `stream/3` and `Turn.Server`;

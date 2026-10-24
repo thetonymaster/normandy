@@ -281,7 +281,9 @@ defmodule Normandy.Telemetry do
   `tokens_before`, `tokens_after`, `tokens_removed` the compactor reported. Metadata:
   `agent_name`, `model`, `strategy`, `compacted` (boolean), `mid_round` (boolean: `false`
   at the start of a turn, `true` after a tool batch, while the tool round is open),
-  `error`, `reason`.
+  `error`, `reason`, `token_ratio` (`Compactor.WindowManager`'s calibration, AX-12: the
+  last reported request size over its estimate, at least `1.0`; `nil` from a compactor
+  that reports none). The token measurements are estimates, before that ratio.
 
   ### `[:normandy, :agent, :guardrail, :violation]`
 

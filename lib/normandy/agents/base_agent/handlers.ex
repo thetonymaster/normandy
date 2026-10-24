@@ -173,7 +173,10 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
     # After a server-side fallback the thinking kept is the fallback model's.
     produced_by = Map.get(meta, :fallback_model) || config.model
-    {stamp_prefix(response, prefix_key.(produced_by)), usage, meta}
+
+    {response
+     |> stamp_prefix(prefix_key.(produced_by))
+     |> stamp_estimate(prompt, tool_schemas, config.memory), usage, meta}
   end
 
   # AX-18: an answer that parses but breaks a constraint the API does not enforce (a
@@ -224,6 +227,33 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   defp stamp_prefix(response, _prefix_key), do: response
 
+  # AX-12: the estimate of the request sent beside the size the client reported for it.
+  defp stamp_estimate(%ToolCallResponse{} = response, prompt, tool_schemas, memory),
+    do: %{
+      response
+      | estimated_input_tokens: Prompt.estimate_request(prompt, tool_schemas, memory)
+    }
+
+  defp stamp_estimate(response, _prompt, _tool_schemas, _memory), do: response
+
+  # AX-12: the size of the request one attempt sent, from that attempt's own usage, taken
+  # before retry_billed/2 adds failed attempts' billed usage to the outcome. A client that
+  # sets input_tokens itself (ClaudioAdapter) keeps its own; a custom Model reports only
+  # Response.usage.
+  defp with_request_size(
+         {:ok,
+          %Normandy.LLM.Response{content: %ToolCallResponse{input_tokens: nil} = content} =
+            response}
+       ),
+       do:
+         {:ok,
+          %{
+            response
+            | content: %{content | input_tokens: Usage.request_input_tokens(response.usage)}
+          }}
+
+  defp with_request_size(result), do: result
+
   # Private helper to call LLM with retry and circuit breaker protection.
   # The call returns {:ok, %Response{}} | {:error, %LLMError{}} (Normandy.LLM.Call),
   # which is Retry's and CircuitBreaker's contract, so returned API errors are retried
@@ -235,7 +265,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
     llm_call = fn ->
       Request.note_call(tracker)
-      Call.converse(config.client, request, opts)
+      config.client |> Call.converse(request, opts) |> with_request_size()
     end
 
     case with_resilience(config, llm_call) do
@@ -832,7 +862,8 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         compacted: Map.get(meta, :compacted) == true,
         mid_round: mid_round,
         error: Map.get(meta, :error),
-        reason: Map.get(meta, :reason)
+        reason: Map.get(meta, :reason),
+        token_ratio: Map.get(meta, :token_ratio)
       }
     )
 
@@ -993,7 +1024,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   # Runs inside the llm_call span: a failed stream raises here so the span emits
   # :exception rather than :stop.
   defp stream_llm_attempt(config, state, callback, llm_metadata, turn_request) do
-    {request, prefix_key} = build_stream_request(config)
+    {request, prefix_key, estimate} = build_stream_request(config)
 
     request = %{
       request
@@ -1018,8 +1049,12 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
           {:error, error} -> raise error
         end
 
-        # The prefix this response was produced under, stamped when it is appended.
-        final_message = Map.put(final_message, :prefix_key, prefix_key)
+        # The prefix this response was produced under and the estimate of its request
+        # (AX-12), stamped when it is appended.
+        final_message =
+          final_message
+          |> Map.put(:prefix_key, prefix_key)
+          |> Map.put(:estimated_input_tokens, estimate)
 
         tcs =
           if BaseAgent.has_tools?(config), do: extract_tool_calls(final_message) || [], else: []
@@ -1168,7 +1203,9 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       thinking: ToolCallResponse.thinking_blocks(content),
       prefix_key: Map.get(response, :prefix_key),
       content_blocks: ToolCallResponse.api_blocks(content),
-      stop_reason: stream_stop_reason(Map.get(response, :stop_reason))
+      stop_reason: stream_stop_reason(Map.get(response, :stop_reason)),
+      input_tokens: Map.get(response, :input_tokens),
+      estimated_input_tokens: Map.get(response, :estimated_input_tokens)
     }
   end
 
@@ -1187,7 +1224,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   # The request for a streaming LLM call, with thinking left out where the system
   # prompt or tools changed since it was produced (see get_response_with_usage/3),
-  # and the prefix key this request runs under.
+  # the prefix key this request runs under and its estimate (AX-12).
   # A non-chat output schema goes in the system prompt, as on the tool-loop path
   # (prompt_output_schema/2): the streamed text is parsed into it. A chat schema
   # streams plain text, so it shows none.
@@ -1212,7 +1249,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       mcp_servers: config.mcp_servers
     }
 
-    {request, prefix_key}
+    {request, prefix_key, Prompt.estimate_request(prompt, tool_schemas, config.memory)}
   end
 
   # Retry and the circuit breaker cover a stream like a non-streaming call, but
@@ -1238,7 +1275,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         tracker,
         nil,
         request_metadata,
-        fn -> stream_attempt(config, request, callback) end,
+        fn -> config |> stream_attempt(request, callback) |> with_stream_request_size() end,
         &stream_request_outcome/1
       )
     end
@@ -1257,6 +1294,18 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
         stream_error(reason)
     end
   end
+
+  # with_request_size/1 for a streamed attempt: its final message's own usage.
+  defp with_stream_request_size({:ok, %{} = final_message}),
+    do:
+      {:ok,
+       Map.put(
+         final_message,
+         :input_tokens,
+         Usage.request_input_tokens(Map.get(final_message, :usage))
+       )}
+
+  defp with_stream_request_size(result), do: result
 
   defp stream_request_outcome({:ok, final_message}) do
     {:ok,
