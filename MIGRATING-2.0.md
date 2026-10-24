@@ -843,8 +843,9 @@ session = Turn.Session.new(session_id: sid, config: config, store: store, regist
   return `{:error, :no_api_key}`. A template stored by 1.x names `FromClient` and is refused at load
   (`{:invalid_template, ...}`, "removed in 2.0") until it is saved again from a config with a
   provider; it never rebuilt under 1.x either. A `:config` alone (no `:template_provider`) needs
-  nothing. `AgentProcess.update_agent/3` in `:server` mode raises the same `ArgumentError` in the
-  caller and keeps its old config.
+  nothing. In `:server` mode `AgentProcess.start_link/1` raises the same `ArgumentError` in the
+  caller before any process starts, and `AgentProcess.update_agent/3` raises it in the caller and
+  keeps its old config.
 - `:supervisor_mod` must export `start_server/2` and `stop_server/2`; implement
   `Normandy.Agents.Turn.ServerSupervisor`. `Turn.Session.new/1`, `AgentProcess` and `ResumeReaper`
   raise `ArgumentError` naming `:supervisor_mod` otherwise (a missing `stop_server/2` used to raise at

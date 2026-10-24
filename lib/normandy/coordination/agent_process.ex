@@ -86,8 +86,10 @@ defmodule Normandy.Coordination.AgentProcess do
   @agent_id_key :"$normandy_agent_id"
 
   # The :server-mode keys go to Turn.Session.new/1 (Engine.Server.init/3); its schema is the
-  # single source of their types (ruling P4), so a value accepted here cannot fail there and
-  # crash init/1. Types only: Session's required/default flags do not apply.
+  # single source of their types (ruling P4). Types only: Session's required/default flags
+  # do not apply. Session.new/1's other refusals (the agent id as a session id, a
+  # template-backed config without a credential provider) are checked in start_link/1, so
+  # a value accepted there cannot fail in init/1.
   @session_types Map.new(Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
                    {key, Keyword.fetch!(spec, :type)}
                  end)
@@ -255,6 +257,7 @@ defmodule Normandy.Coordination.AgentProcess do
   def start_link(opts) do
     opts = Options.validate!(opts, @start_link_opts_schema, {__MODULE__, :start_link, 1})
     check_session_agent_id!(opts)
+    check_session_credential!(opts)
 
     case Keyword.get(opts, :name) do
       nil -> GenServer.start_link(__MODULE__, opts)
@@ -274,6 +277,21 @@ defmodule Normandy.Coordination.AgentProcess do
     else
       _ok_or_not_applicable -> :ok
     end
+  end
+
+  # In :server mode init/1 builds a Turn.Session, which refuses a template-backed config
+  # without a credential provider. Checked here so it raises in the caller, not as an EXIT
+  # from init/1.
+  defp check_session_credential!(opts) do
+    if Keyword.fetch!(opts, :turn_engine) == :server do
+      Turn.Session.check_credential!(
+        Keyword.fetch!(opts, :agent),
+        Keyword.get(opts, :template_provider),
+        {__MODULE__, :start_link, 1}
+      )
+    end
+
+    :ok
   end
 
   @doc """

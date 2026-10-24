@@ -209,7 +209,7 @@ defmodule Normandy.Agents.Turn.Session do
               "({module, handle}), got neither"
     end
 
-    :ok = check_credential!(opts[:config], opts[:template_provider], :new, 1)
+    :ok = check_credential!(opts[:config], opts[:template_provider], {__MODULE__, :new, 1})
 
     struct!(
       __MODULE__,
@@ -364,7 +364,7 @@ defmodule Normandy.Agents.Turn.Session do
   """
   @spec put_config(t(), BaseAgentConfig.t()) :: t()
   def put_config(%__MODULE__{} = session, %BaseAgentConfig{} = config) do
-    :ok = check_credential!(config, session.template_provider, :put_config, 2)
+    :ok = check_credential!(config, session.template_provider, {__MODULE__, :put_config, 2})
     %{session | config: config}
   end
 
@@ -421,22 +421,27 @@ defmodule Normandy.Agents.Turn.Session do
     do:
       {:error, "expected a %Normandy.Agents.BaseAgentConfig{}, got: " <> Describe.type_of(other)}
 
+  @doc false
   # A session with a template provider and a config saves the config as its template, and
   # every server start rebuilds the config from it, asking the template's credential
   # provider for the client's token. With no provider the server could only wait
   # :unavailable, so the session is refused here. A config alone runs as given (its client
   # is used); a template provider alone starts from a stored template, checked on load.
-  defp check_credential!(nil, _template_provider, _fun, _arity), do: :ok
-  defp check_credential!(_config, nil, _fun, _arity), do: :ok
+  # AgentProcess.start_link/1 calls it too, so the refusal raises in its caller.
+  @spec check_credential!(BaseAgentConfig.t() | nil, term(), {module(), atom(), arity()}) :: :ok
+  def check_credential!(nil, _template_provider, _caller), do: :ok
+  def check_credential!(_config, nil, _caller), do: :ok
 
-  defp check_credential!(%BaseAgentConfig{behaviours: behaviours}, _template_provider, fun, arity) do
+  def check_credential!(%BaseAgentConfig{behaviours: behaviours}, _template_provider, caller) do
+    {mod, fun, arity} = caller
+
     case behaviours || %Normandy.Behaviours.Config{} do
-      %{credential: {mod, opts}} when is_atom(mod) and is_list(opts) ->
+      %{credential: {cred_mod, opts}} when is_atom(cred_mod) and is_list(opts) ->
         :ok
 
       %{credential: other} ->
         raise ArgumentError,
-              "Normandy.Agents.Turn.Session.#{fun}/#{arity}: a session with a " <>
+              "#{inspect(mod)}.#{fun}/#{arity}: a session with a " <>
                 ":template_provider rebuilds its config from the stored template, which " <>
                 "needs the config's behaviours :credential slot set to a " <>
                 "Normandy.Behaviours.CredentialProvider ({module, opts}), got: " <>

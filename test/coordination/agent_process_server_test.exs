@@ -513,6 +513,22 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert Process.alive?(pid)
       assert %{agent: %{behaviours: ^creds}} = :sys.get_state(pid)
     end
+
+    # The same refusal at start: start_link/1 raises it in the caller before any process
+    # starts, never as an EXIT from init/1.
+    test "start_link/1 refuses a template-backed config without a credential provider" do
+      {:ok, catalog} = Catalog.start_link([])
+
+      assert_raise ArgumentError, ~r/start_link\/1.*:credential/s, fn ->
+        AgentProcess.start_link(
+          [
+            agent: server_config(%{behaviours: nil}),
+            turn_engine: :server,
+            template_provider: {Catalog, catalog}
+          ] ++ supplied_infra()
+        )
+      end
+    end
   end
 
   # Final review M-d: a stored history from_entries/1 refuses (here a snapshot version a
