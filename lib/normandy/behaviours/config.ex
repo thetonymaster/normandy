@@ -9,7 +9,10 @@ defmodule Normandy.Behaviours.Config do
 
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
   `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`)
-  into a `%Normandy.Agents.Dispatch.Pipeline{}`.
+  into a `%Normandy.Agents.Dispatch.Pipeline{}`. Classification (`policy`, `before_hooks`)
+  gets the agent's whole config; execution (`budget`, the tool, `after_tool`, `after_hooks`)
+  runs in a tool task whose config has the memory without its entries (the turn id stays),
+  on every shell.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
   the dependency points Phase 2 → Phase 1. The `credential`, `compactor` and
   `model_catalog` slots are not dispatch-path concerns and are not placed on the
