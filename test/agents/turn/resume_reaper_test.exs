@@ -47,6 +47,30 @@ defmodule Normandy.Agents.Turn.ResumeReaperTest do
     pid
   end
 
+  defmodule StartOnlySup do
+    @moduledoc false
+    def start_server(_sup, _opts), do: {:error, :unused}
+  end
+
+  test "a :supervisor_mod without the ServerSupervisor callbacks is refused, as Session.new/1 does" do
+    {:ok, cat} = Catalog.start_link([])
+
+    error =
+      assert_raise ArgumentError, fn ->
+        ResumeReaper.start_link(
+          store: {InMemory, InMemory.new()},
+          registry: {Native, Native.new()},
+          supervisor: self(),
+          supervisor_mod: StartOnlySup,
+          template_provider: {Catalog, cat}
+        )
+      end
+
+    assert error.message =~ "Normandy.Agents.Turn.ResumeReaper.start_link/1: "
+    assert error.message =~ ":supervisor_mod"
+    assert error.message =~ "Normandy.Agents.Turn.ServerSupervisor"
+  end
+
   test "on :nodedown reaps only eager + unregistered + non-terminal sessions" do
     store = InMemory.new()
     reg = Native.new()
