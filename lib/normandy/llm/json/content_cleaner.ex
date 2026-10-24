@@ -94,14 +94,23 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   defp settle(content, start, st) do
     opener = :binary.at(content, start)
     closer = if opener == ?{, do: ?}, else: ?]
-    scan(content, start + 1, {opener, closer, start}, [start], 1, {false, false}, [], st)
+    scan(content, start + 1, {opener, closer, start}, [start], 1, {false, false, true}, [], st)
   end
 
-  # scan(content, pos, {opener, closer}, open_stack, depth, {in_string?, escape?}, trail, st)
+  # scan(content, pos, {opener, closer}, open_stack, depth, {in_string?, escape?, mark?},
+  #      trail, st)
   # `open_stack` holds the offsets of the openers still unclosed, innermost first, and
   # `depth` its length. Each closer settles the innermost one; the scan stops when the
   # opener it began at closes, or reaches end of input (everything pending is unclosed).
   # `trail` is the `{state, depth}` pairs crossed, kept for `seen` if the scan fails.
+  #
+  # Only marked states are looked up in `done`/`seen` and kept in `trail`: a scan's first
+  # byte and every byte its lexer state or depth changed at. Between marks the state only
+  # moves forward over plain bytes, and two scans on one path change state at the same
+  # bytes, so a scan joining an earlier one still meets a mark that scan recorded (at most
+  # one run of plain bytes later). Recording every byte instead made one stray opener in
+  # prose cost a map entry per byte to the end of the input
+  # (investigations/json-region-240kb.md).
   defp scan(content, pos, _kind, stack, _depth, _lex, trail, st) when pos >= byte_size(content),
     do: {:ok, unclosed(stack, trail, st)}
 
@@ -109,7 +118,19 @@ defmodule Normandy.LLM.Json.ContentCleaner do
        when work <= 0,
        do: :exhausted
 
-  defp scan(content, pos, {opener, _, start} = kind, stack, depth, {in_str, esc} = lex, trail, st) do
+  defp scan(content, pos, kind, stack, depth, {_, _, false} = lex, trail, st),
+    do: step(content, pos, kind, stack, depth, lex, trail, %{st | work: st.work - 1})
+
+  defp scan(
+         content,
+         pos,
+         {opener, _, start} = kind,
+         stack,
+         depth,
+         {in_str, esc, _} = lex,
+         trail,
+         st
+       ) do
     key = {opener, pos, in_str, esc}
 
     case st do
@@ -123,7 +144,7 @@ defmodule Normandy.LLM.Json.ContentCleaner do
     end
   end
 
-  defp scan_seen(content, pos, kind, stack, depth, {in_str, esc} = lex, trail, st) do
+  defp scan_seen(content, pos, kind, stack, depth, {in_str, esc, _} = lex, trail, st) do
     key = {elem(kind, 0), pos, in_str, esc}
 
     case Map.get(st.seen, key) do
@@ -139,28 +160,37 @@ defmodule Normandy.LLM.Json.ContentCleaner do
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-  defp step(content, pos, {opener, closer, start} = kind, stack, depth, {in_str, esc}, trail, st) do
+  defp step(
+         content,
+         pos,
+         {opener, closer, start} = kind,
+         stack,
+         depth,
+         {in_str, esc, _},
+         trail,
+         st
+       ) do
     byte = :binary.at(content, pos)
     next = pos + 1
 
     cond do
       in_str and esc ->
-        scan(content, next, kind, stack, depth, {true, false}, trail, st)
+        scan(content, next, kind, stack, depth, {true, false, true}, trail, st)
 
       in_str and byte == ?\\ ->
-        scan(content, next, kind, stack, depth, {true, true}, trail, st)
+        scan(content, next, kind, stack, depth, {true, true, true}, trail, st)
 
       in_str and byte == ?" ->
-        scan(content, next, kind, stack, depth, {false, false}, trail, st)
+        scan(content, next, kind, stack, depth, {false, false, true}, trail, st)
 
       in_str ->
-        scan(content, next, kind, stack, depth, {true, false}, trail, st)
+        scan(content, next, kind, stack, depth, {true, false, false}, trail, st)
 
       byte == ?" ->
-        scan(content, next, kind, stack, depth, {true, false}, trail, st)
+        scan(content, next, kind, stack, depth, {true, false, true}, trail, st)
 
       byte == opener ->
-        scan(content, next, kind, [pos | stack], depth + 1, {false, false}, trail, st)
+        scan(content, next, kind, [pos | stack], depth + 1, {false, false, true}, trail, st)
 
       byte == closer ->
         [open | outer] = stack
@@ -168,10 +198,10 @@ defmodule Normandy.LLM.Json.ContentCleaner do
 
         if outer == [],
           do: {:ok, closed(start, next, trail, st)},
-          else: scan(content, next, kind, outer, depth - 1, {false, false}, trail, st)
+          else: scan(content, next, kind, outer, depth - 1, {false, false, true}, trail, st)
 
       true ->
-        scan(content, next, kind, stack, depth, {false, false}, trail, st)
+        scan(content, next, kind, stack, depth, {false, false, false}, trail, st)
     end
   end
 
