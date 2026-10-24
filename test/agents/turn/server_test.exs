@@ -649,6 +649,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       [
         :stray,
         {make_ref(), :late_result},
+        # A result keyed by a watcher that is not the running worker's: dropped, never
+        # taken as the turn's (it would end the :running turn with "forged").
+        {:turn_task, spawn(fn -> :ok end), {:llm_response, %Resp{content: "forged"}}},
         {:DOWN, make_ref(), :process, self(), :boom},
         {:EXIT, spawn(fn -> :ok end), :boom}
       ]
