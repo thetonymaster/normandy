@@ -7,7 +7,8 @@ defmodule Normandy.Agents.Turn.ServerToolTaskConfigTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
-  alias Normandy.Agents.{BaseAgent, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Agents.Turn
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -89,7 +90,7 @@ defmodule Normandy.Agents.Turn.ServerToolTaskConfigTest do
         config: config,
         store: {InMemory, InMemory.new()},
         registry: {Native, Native.new()},
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
       )
 
     srv

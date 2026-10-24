@@ -13,7 +13,7 @@ defmodule Normandy.Telemetry.RunUsage do
   #
   # One more slot records where a successful run's answer came from (answer_source/1):
   # set by mark_tool_round_answer/1 when the validate step replaced a blank chat answer
-  # with this turn's last tool-round text (BaseAgent.validate_marking_answer/4).
+  # with this turn's last tool-round text (BaseAgent.Handlers.validate_marking_answer/4).
 
   @token_keys [:input_tokens, :output_tokens, :cache_read_input_tokens, :cache_write_input_tokens]
   @token_count length(@token_keys)

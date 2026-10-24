@@ -62,7 +62,7 @@ defmodule Normandy.Behaviours.Compactor.WindowManager do
                )
 
   @doc false
-  # Called by BaseAgent.validate_compaction_config!/2, i.e. at BaseAgent.init/1 and at
+  # Called by BaseAgent.InitOptions.validate_compaction_config!/2, i.e. at BaseAgent.init/1 and at
   # template rebuild, so a typo surfaces where the config is made, not mid-turn. `entry`
   # is that public entry point (init/1 or ConfigTemplate.rebuild/3); it prefixes the message.
   @spec validate_opts!(keyword(), {module(), atom(), arity()}) :: keyword()

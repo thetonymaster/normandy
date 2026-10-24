@@ -2,6 +2,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Behaviours.Config
 
   defmodule StubCompactor do
@@ -85,7 +86,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
       strategy: :summarize
     }
 
-    BaseAgent.compact_turn_memory(agent(meta), %Normandy.Agents.Turn.State{}, %{
+    AgentHandlers.compact_turn_memory(agent(meta), %Normandy.Agents.Turn.State{}, %{
       iterations_left: 3,
       mid_round: false
     })
@@ -105,7 +106,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
   end
 
   test "a compactor that failed or had no window says why in the event" do
-    BaseAgent.compact_turn_memory(
+    AgentHandlers.compact_turn_memory(
       agent(%{compacted: false, error: {:summarize_failed, :timeout}}),
       %Normandy.Agents.Turn.State{},
       %{iterations_left: 3, mid_round: false}
@@ -113,7 +114,7 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
 
     assert_receive {:compaction, _, %{error: {:summarize_failed, :timeout}}}
 
-    BaseAgent.compact_turn_memory(
+    AgentHandlers.compact_turn_memory(
       agent(%{compacted: false, reason: :no_window}),
       %Normandy.Agents.Turn.State{},
       %{iterations_left: 3, mid_round: false}
@@ -139,10 +140,14 @@ defmodule Normandy.Agents.BaseAgentCompactionTelemetryTest do
   end
 
   test "a compactor run that did not compact is still observable" do
-    BaseAgent.compact_turn_memory(agent(%{compacted: false}), %Normandy.Agents.Turn.State{}, %{
-      iterations_left: 3,
-      mid_round: false
-    })
+    AgentHandlers.compact_turn_memory(
+      agent(%{compacted: false}),
+      %Normandy.Agents.Turn.State{},
+      %{
+        iterations_left: 3,
+        mid_round: false
+      }
+    )
 
     assert_receive {:compaction, measurements, metadata}
     assert measurements == %{}

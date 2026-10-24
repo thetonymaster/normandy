@@ -22,7 +22,7 @@ defmodule Normandy.Behaviours.ConfigTest do
       assert b.budget == {Normandy.Behaviours.BudgetTracker.NoOp, []}
       assert b.before_hooks == []
       assert b.after_hooks == []
-      assert b.credential == {Normandy.Behaviours.CredentialProvider.FromClient, []}
+      assert b.credential == nil
       assert b.model_catalog == {Normandy.Behaviours.ModelCatalog.ModelsAPI, []}
     end
 

@@ -230,3 +230,6 @@ Lane file ownership (a lane edits only its own files, plus tests and guides that
 - [ ] `mix precommit` 0, `mix docs --warnings-as-errors` 0, `mix test.redis` 0, `MIX_TEST_PARTITION=_w54probe POSTGRES_PORT=55432 mix test.postgres` 0, distributed suite twice, `mix hex.build --unpack` clean.
 
 ### P3.3: final whole-branch review (opus) on `BASE..HEAD`; one fix dispatch; re-review. Then decisions.md Wave 8 bullet, memory update, report to Q. Q does push/PR (7.7).
+
+### P2-T4: drop `__meta__` and `Normandy.Metadata` (A10 · components#5 rest)
+- [ ] After L7 nothing reads `__meta__`. Remove the struct field from `schema`/`io_schema` structs, the `Normandy.Metadata` module, the `@type` reference in `coordination/agent_message.ex:26`, and every `Map.delete(:__meta__)` / `"__meta__"` handling in lib and tests (json, agent_memory, validation_middleware). Test: an `io_schema` struct has no `:__meta__` key and its JSON has no `"__meta__"`. Report MIGRATING text. Commit `feat!: schema structs drop __meta__ and Normandy.Metadata`.

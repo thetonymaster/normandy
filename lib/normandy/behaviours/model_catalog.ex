@@ -2,7 +2,7 @@ defmodule Normandy.Behaviours.ModelCatalog do
   @moduledoc """
   Contract for model capability/limit lookup.
 
-  `BaseAgent.compact_turn_memory/3` reads `context_window/2` to size the
+  `BaseAgent.Handlers.compact_turn_memory/3` reads `context_window/2` to size the
   `:steering`-boundary compaction. The default impl, `ModelsAPI`, asks the
   Anthropic Models API at runtime, so new models need no Normandy release.
 

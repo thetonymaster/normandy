@@ -7,6 +7,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
   import ExUnit.CaptureLog
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ConfigTemplate
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.AgentTemplate.Catalog
@@ -124,7 +125,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     # Inject a fake LLM via the :handlers override (test seam, see Step 3).
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
     }
 
@@ -200,7 +201,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     test_pid = self()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | compact: fn config, _state, _info ->
           send(test_pid, :compacted)
           {config, %{compacted: false}}
@@ -228,7 +229,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     store = InMemory.new()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> %Resp{content: "noted", tool_calls: nil} end
     }
 
@@ -254,7 +255,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Native.new()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> %Resp{content: "done", tool_calls: nil} end
     }
 
@@ -276,7 +277,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Native.new()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _config, _state, _req -> raise "boom" end
     }
 
@@ -307,7 +308,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Native.new()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           %Resp{content: "", tool_calls: [%ToolCall{id: "c1", name: "weather", input: %{}}]}
         end
@@ -343,7 +344,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     }
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _c, _s, _r -> %Resp{content: "your SSN is 123", tool_calls: nil} end
     }
 
@@ -416,7 +417,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     # First LLM response asks for two tool calls; classify parks one of them.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           %Resp{
             content: "",
@@ -489,7 +490,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         config: config,
         store: {InMemory, store},
         registry: {Native, Native.new()},
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
       )
 
     assert {:ok, _} = Turn.Server.run(srv, "go")
@@ -514,7 +515,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         store: {InMemory, store},
         registry: {Native, Native.new()},
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end
         }
       )
@@ -542,7 +543,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         config: base_config(),
         store: {InMemory, InMemory.new()},
         registry: {Native, Native.new()},
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
       )
 
     Process.unlink(srv)
@@ -585,7 +586,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           config: base_config(),
           store: {InMemory, InMemory.new()},
           registry: {Native, Native.new()},
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       srv
@@ -648,6 +649,9 @@ defmodule Normandy.Agents.Turn.ServerTest do
       [
         :stray,
         {make_ref(), :late_result},
+        # A result keyed by a watcher that is not the running worker's: dropped, never
+        # taken as the turn's (it would end the :running turn with "forged").
+        {:turn_task, spawn(fn -> :ok end), {:llm_response, %Resp{content: "forged"}}},
         {:DOWN, make_ref(), :process, self(), :boom},
         {:EXIT, spawn(fn -> :ok end), :boom}
       ]
@@ -783,7 +787,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
     end
 
-    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
 
     # Use notify-instrumented tools so we can assert billing DID execute after approval.
     config = %{
@@ -829,7 +833,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         store: {InMemory, store},
         registry: {Normandy.Behaviours.SessionRegistry.Native, reg},
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %Resp{content: "x"} end
         },
         idle_timeout_ms: 50
@@ -848,7 +852,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     # call_llm reports that it started, then holds the server :running until the
     # test releases it, so the second turn request is sure to arrive meanwhile.
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _c, _s, _r ->
           send(parent, {:llm_started, self()})
 
@@ -911,7 +915,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
     end
 
-    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
 
     config = %{
       base_config_with_tools()
@@ -976,7 +980,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     reg = Native.new()
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: fn _c, _s, _r -> %Resp{content: "unreachable", tool_calls: nil} end
     }
 
@@ -1018,7 +1022,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
     end
 
-    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+    handlers = %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
 
     # Use notify-instrumented tools so we can assert billing was NOT executed on timeout.
     config = %{
@@ -1231,7 +1235,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: call_llm,
         compact: compact
     }
@@ -1460,7 +1464,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     end
 
     handlers = %{
-      BaseAgent.non_streaming_handlers()
+      AgentHandlers.non_streaming_handlers()
       | call_llm: call_llm,
         compact: compact
     }
@@ -1525,16 +1529,16 @@ defmodule Normandy.Agents.Turn.ServerTest do
     defp drive_once(config) do
       alias Normandy.Agents.BaseAgent
 
-      config = BaseAgent.admit_turn_input(config, "go")
+      config = AgentHandlers.admit_turn_input(config, "go")
 
       state =
         Turn.new(
           max_iterations: config.max_tool_iterations,
-          response_model: BaseAgent.turn_response_model(config),
+          response_model: AgentHandlers.turn_response_model(config),
           output_schema: config.output_schema
         )
 
-      handlers = %{BaseAgent.non_streaming_handlers() | call_llm: three_tool_rounds()}
+      handlers = %{AgentHandlers.non_streaming_handlers() | call_llm: three_tool_rounds()}
       {config2, _state} = Turn.Driver.drive(state, handlers, config)
       config2
     end
@@ -1554,7 +1558,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       reg = Native.new()
 
       handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: three_tool_rounds()
       }
 
@@ -1606,7 +1610,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
     defp final_handlers(overrides \\ %{}) do
       Map.merge(
         %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %Resp{content: "ok", tool_calls: nil} end
         },
         overrides
@@ -1877,7 +1881,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
         config: %{config_with_notify(test_pid) | behaviours: billing_approval_policy()},
         store: {InMemory, store},
         registry: {Native, Native.new()},
-        handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm},
+        handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm},
         approval_timeout_ms: 50,
         subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
       ]
@@ -2141,7 +2145,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, _store} =
         start_approval_server("s-amix",
           approval_timeout_ms: 5_000,
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       run_async(srv, "go")
@@ -2172,7 +2176,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       {srv, _store} =
         start_approval_server("s-atwice",
           approval_timeout_ms: 5_000,
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       run_async(srv, "go")
@@ -2281,7 +2285,10 @@ defmodule Normandy.Agents.Turn.ServerTest do
       end
 
       handlers =
-        Map.merge(%{BaseAgent.non_streaming_handlers() | call_llm: call_llm}, handler_overrides)
+        Map.merge(
+          %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm},
+          handler_overrides
+        )
 
       {:ok, srv} =
         [
@@ -2458,7 +2465,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           config: base_config_with_tools(),
           store: {FlakyAppendStore, {store, counter, 3}},
           registry: {Native, Native.new()},
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: call_llm}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: call_llm}
         )
 
       capture_log(fn ->
@@ -2569,7 +2576,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
 
     defp flaky_server(store, sid, extra \\ []) do
       handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
       }
 
@@ -2681,7 +2688,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
       store = InMemory.new()
 
       handlers = %{
-        BaseAgent.non_streaming_handlers()
+        AgentHandlers.non_streaming_handlers()
         | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
       }
 
@@ -2714,7 +2721,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           store: {InMemory, store},
           registry: {Native, Native.new()},
           handlers: %{
-            BaseAgent.non_streaming_handlers()
+            AgentHandlers.non_streaming_handlers()
             | call_llm: fn _config, _state, _req -> %Resp{content: "hi", tool_calls: nil} end
           }
         )
@@ -2813,7 +2820,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           config: config,
           store: {InMemory, InMemory.new()},
           registry: {Native, Native.new()},
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: parking_llm(calls)},
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: parking_llm(calls)},
           subscriber: fn name, meta -> send(test_pid, {:event, name, meta}) end
         ] ++ server_opts
       )

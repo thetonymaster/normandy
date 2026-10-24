@@ -5,7 +5,8 @@ defmodule Normandy.Hooks.ServerHooksTest do
 
   import ExUnit.CaptureLog
 
-  alias Normandy.Agents.{BaseAgent, BaseAgentConfig, ConfigTemplate, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Agents.{BaseAgentConfig, ConfigTemplate, Turn}
   alias Normandy.Behaviours.AgentTemplate.Catalog
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
@@ -123,7 +124,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
     {store, opts} = Keyword.pop_lazy(opts, :store, fn -> {InMemory, InMemory.new()} end)
 
     handlers =
-      Map.merge(%{BaseAgent.non_streaming_handlers() | call_llm: llm()}, handler_overrides)
+      Map.merge(%{AgentHandlers.non_streaming_handlers() | call_llm: llm()}, handler_overrides)
 
     Turn.Server.start_link(
       [
@@ -281,7 +282,7 @@ defmodule Normandy.Hooks.ServerHooksTest do
           store: {InMemory, store},
           registry: {Native, Native.new()},
           template_provider: {Catalog, catalog},
-          handlers: %{BaseAgent.non_streaming_handlers() | call_llm: llm()}
+          handlers: %{AgentHandlers.non_streaming_handlers() | call_llm: llm()}
         )
 
       assert {:ok, %Resp{content: "hi"}} = Turn.Server.run(srv, "hello")

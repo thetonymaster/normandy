@@ -10,10 +10,14 @@ defmodule Normandy.Agents.Turn.RedisComboTest do
 
   # Stub supervisor: records which sessions the reaper tried to start.
   defmodule StubSup do
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(test_pid, opts) do
       send(test_pid, {:started, Keyword.fetch!(opts, :session_id)})
       {:ok, spawn(fn -> :ok end)}
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   test "reaper starts only eager, unregistered, non-terminal sessions over Redis backends" do

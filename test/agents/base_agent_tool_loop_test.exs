@@ -25,7 +25,7 @@ end
 defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
   use ExUnit.Case, async: true
 
-  alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, ToolCallResponse}
+  alias Normandy.Agents.{BaseAgent, BaseAgentOutputSchema, Dispatch, ToolCallResponse}
   alias Normandy.Components.AgentMemory
   alias Normandy.Components.{AgentMemory, ToolCall}
   alias Normandy.Tools.Examples.Calculator
@@ -276,7 +276,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
     test "passes through {:ok, result} unchanged" do
       result = %{some: "value"}
-      assert BaseAgent.unwrap_tool_task_result!({:ok, result}) == result
+      assert Dispatch.unwrap_tool_task_result!({:ok, result}) == result
     end
 
     test "re-raises {:exit, {exception, stacktrace}} with original stack" do
@@ -286,9 +286,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       err =
         assert_raise RuntimeError, "boom", fn ->
-          BaseAgent.unwrap_tool_task_result!(
-            {:exit, {%RuntimeError{message: "boom"}, stacktrace}}
-          )
+          Dispatch.unwrap_tool_task_result!({:exit, {%RuntimeError{message: "boom"}, stacktrace}})
         end
 
       assert err.message == "boom"
@@ -299,7 +297,7 @@ defmodule NormandyTest.Agents.BaseAgentToolLoopTest do
 
       pid =
         spawn_link(fn ->
-          BaseAgent.unwrap_tool_task_result!({:exit, :timeout})
+          Dispatch.unwrap_tool_task_result!({:exit, :timeout})
         end)
 
       assert_receive {:EXIT, ^pid, :timeout}, 500

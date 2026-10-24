@@ -7,7 +7,7 @@ defmodule Normandy.Agents.Turn.ServerAppendEncodingTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -22,7 +22,7 @@ defmodule Normandy.Agents.Turn.ServerAppendEncodingTest do
   defp start(answer, config \\ TurnConfig.build()) do
     sid = "enc-#{System.unique_integer([:positive])}"
     store = InMemory.new()
-    handlers = %{BaseAgent.non_streaming_handlers() | call_llm: fn _c, _s, _r -> answer end}
+    handlers = %{AgentHandlers.non_streaming_handlers() | call_llm: fn _c, _s, _r -> answer end}
 
     {:ok, srv} =
       Turn.Server.start_link(

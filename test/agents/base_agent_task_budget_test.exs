@@ -4,6 +4,7 @@ defmodule Normandy.Agents.BaseAgentTaskBudgetTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn
 
   defmodule OptsClient do
@@ -36,7 +37,7 @@ defmodule Normandy.Agents.BaseAgentTaskBudgetTest do
     do: %Turn.State{status: :assistant_streaming, tokens_compacted: compacted}
 
   defp non_streaming_call(config, state) do
-    BaseAgent.non_streaming_handlers().call_llm.(config, state, %{
+    AgentHandlers.non_streaming_handlers().call_llm.(config, state, %{
       response_model: config.output_schema
     })
 
@@ -45,7 +46,7 @@ defmodule Normandy.Agents.BaseAgentTaskBudgetTest do
   end
 
   defp streaming_call(config, state) do
-    handlers = BaseAgent.streaming_handlers(fn _event -> :ok end)
+    handlers = AgentHandlers.streaming_handlers(fn _event -> :ok end)
 
     error =
       assert_raise Normandy.LLMError, fn ->

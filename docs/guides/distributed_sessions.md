@@ -117,10 +117,10 @@ template (model, behaviour refs, prompt spec, `resume_policy`)
 is stored. On any node, a session reconstructs its full config from that template +
 the node-local `AgentTemplate` supplement + a **node-local `CredentialProvider`**.
 
-For Tier 2 you must therefore use an env/vault-backed `CredentialProvider` (NOT
-`CredentialProvider.FromClient`, which assumes the secret is already on an
-in-memory client) and register your tools by name on every node (true by default —
-same code per node).
+For Tier 2 you must therefore set the config's `behaviours` `credential` slot to an
+env/vault-backed `CredentialProvider` (the slot has no default, and `Turn.Session.new/1`
+refuses a session with a `:template_provider` whose config leaves it unset) and register
+your tools by name on every node (true by default — same code per node).
 
 ## The session store is a trust boundary
 

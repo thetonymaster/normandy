@@ -7,7 +7,8 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
-  alias Normandy.Agents.{BaseAgent, BaseAgentConfig, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Agents.{BaseAgentConfig, Turn}
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -57,7 +58,7 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
         store: store,
         registry: {Native, Native.new()},
         handlers: %{
-          BaseAgent.non_streaming_handlers()
+          AgentHandlers.non_streaming_handlers()
           | call_llm: fn _config, _state, _request -> %Resp{content: "answer"} end
         }
       )

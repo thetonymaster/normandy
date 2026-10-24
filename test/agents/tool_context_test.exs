@@ -2,6 +2,7 @@ defmodule Normandy.Agents.ToolContextTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.{BaseAgent, Dispatch, ToolCallResponse, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.Turn.Inline
   alias Normandy.Components.{ToolCall, ToolResult}
   alias Normandy.Test.{ContextProbe, FakeClient}
@@ -71,7 +72,10 @@ defmodule Normandy.Agents.ToolContextTest do
         {:ok, if(n == 0, do: first, else: second)}
       end,
       dispatch: fn calls ->
-        Enum.map(calls, &Dispatch.dispatch_one(config, &1, BaseAgent.base_agent_pipeline(config)))
+        Enum.map(
+          calls,
+          &Dispatch.dispatch_one(config, &1, AgentHandlers.base_agent_pipeline(config))
+        )
       end,
       append: fn _role, _content -> :ok end,
       emit: fn _name, _meta -> :ok end
@@ -87,7 +91,11 @@ defmodule Normandy.Agents.ToolContextTest do
     config = agent(%{tool_context: %{memory_namespace: "acme/u-2"}})
 
     assert %ToolResult{is_error: false, output: ~s(ns="acme/u-2")} =
-             Dispatch.dispatch_one(config, probe_call(), BaseAgent.base_agent_pipeline(config))
+             Dispatch.dispatch_one(
+               config,
+               probe_call(),
+               AgentHandlers.base_agent_pipeline(config)
+             )
   end
 
   test "default_pipeline/0 passes the context" do

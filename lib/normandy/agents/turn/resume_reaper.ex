@@ -59,6 +59,12 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
                   {key, Keyword.fetch!(spec, :type)}
                 end)
 
+  # Turn.Session.new/1's :supervisor_mod check (exports start_server/2 and stop_server/2).
+  @supervisor_mod_type Keyword.fetch!(
+                         Turn.Session.__opts_schema__(:new).schema[:supervisor_mod],
+                         :type
+                       )
+
   @start_link_opts_schema NimbleOptions.new!(
                             name: [type: :any, doc: "A `t:GenServer.name/0` for the reaper."],
                             store: [
@@ -79,9 +85,13 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
                               doc: "The supervisor sessions restart under (its name, for Horde)."
                             ],
                             supervisor_mod: [
-                              type: :atom,
+                              type: @supervisor_mod_type,
+                              type_doc: "`t:module/0`",
                               default: Normandy.Agents.Turn.Supervisor.Horde,
-                              doc: "The module whose `start_server/2` restarts a session."
+                              doc:
+                                "A `Normandy.Agents.Turn.ServerSupervisor` whose " <>
+                                  "`start_server/2` restarts a session; checked as " <>
+                                  "`Turn.Session.new/1` checks its `:supervisor_mod`."
                             ],
                             template_provider: [
                               type: @server_types.template_provider,

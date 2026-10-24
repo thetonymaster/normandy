@@ -1,12 +1,12 @@
 defmodule Normandy.Hooks.Handlers do
   @moduledoc false
   # Wraps a `Normandy.Agents.Turn.Driver.Handlers` set so `before_llm` and `after_compact`
-  # hooks run whatever handlers a shell was given: BaseAgent's own sets, or the `:handlers`
-  # a caller passes to `Turn.Server`. BaseAgent wraps its set once per drive; Turn.Server
-  # keeps its set unwrapped and, in its internal hook glue, wraps a copy whose
-  # `call_llm` or `compact` is a stub, so it can tell a hook's crash from the client's or
-  # the compactor's. The default sets hold no hook calls, so no hook runs twice. A config
-  # with no entry exporting a callback gets its handler back unwrapped.
+  # hooks run whatever handlers a shell was given: BaseAgent wraps its own sets once per
+  # drive. Turn.Server keeps its set unwrapped and calls `before_llm!/3` and
+  # `after_compact/2` itself (Normandy.Hooks.ServerGlue), apart from the client and the
+  # compactor, so it can tell a hook's crash from theirs. The default sets hold no hook
+  # calls, so no hook runs twice. A config with no entry exporting a callback gets its
+  # handler back unwrapped.
   #
   # `wrap/2` is not idempotent: wrapping a set twice runs each hook twice. A handler set is
   # a `Driver.Handlers` struct with no room for a "wrapped" marker, so never wrap a set
@@ -50,10 +50,12 @@ defmodule Normandy.Hooks.Handlers do
     }
   end
 
-  # Outside the llm_call span and the retry loop (both live in the wrapped handler): a
-  # halt is a decision, not a failed call, so it is neither retried nor recorded as an
-  # LLM exception.
-  defp before_llm!(config, state, request) do
+  @doc false
+  # Runs `before_llm` for one LLM call; a halt raises Normandy.HookHaltError. Outside the
+  # llm_call span and the retry loop (both live in the wrapped handler): a halt is a
+  # decision, not a failed call, so it is neither retried nor recorded as an LLM exception.
+  @spec before_llm!(map(), Normandy.Agents.Turn.State.t(), map()) :: :ok
+  def before_llm!(config, state, request) do
     info = %{final: request.final, iterations_left: state.iterations_left}
 
     case Runner.before_llm(config, info) do
@@ -62,12 +64,15 @@ defmodule Normandy.Hooks.Handlers do
     end
   end
 
-  # Only a compaction that reports what it removed (meta.dropped, see
+  @doc false
+  # Runs `after_compact` on a compaction's result; returns the compacted config with any
+  # injected texts in its memory. Only a compaction that reports what it removed (meta.dropped, see
   # Normandy.Behaviours.Compactor) has anything to tell. Injected texts are appended to
   # the compacted memory, before the next LLM call. They are not stored as messages of
   # their own; Turn.Server stores them inside the "compaction" snapshot it writes after
   # the compaction (AgentMemory.compaction_content/1), so a restored session keeps them.
-  defp after_compact(config, %{dropped: [_ | _] = dropped} = meta) do
+  @spec after_compact(map(), map()) :: map()
+  def after_compact(config, %{dropped: [_ | _] = dropped} = meta) do
     case Runner.after_compact(config, dropped, Map.delete(meta, :dropped)) do
       [] ->
         config
@@ -78,5 +83,5 @@ defmodule Normandy.Hooks.Handlers do
     end
   end
 
-  defp after_compact(config, _meta), do: config
+  def after_compact(config, _meta), do: config
 end

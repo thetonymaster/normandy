@@ -10,6 +10,7 @@ defmodule Normandy.Agents.PauseTurnTest do
 
   alias Claudio.Messages.Response, as: ClaudioResponse
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Inline
@@ -231,10 +232,12 @@ defmodule Normandy.Agents.PauseTurnTest do
     end
 
     test "runs the tool-loop response model" do
-      assert %ToolCallResponse{} = BaseAgent.turn_response_model(mcp_agent(%StubClient{}))
+      assert %ToolCallResponse{} = AgentHandlers.turn_response_model(mcp_agent(%StubClient{}))
 
       assert %Normandy.Agents.BaseAgentOutputSchema{} =
-               BaseAgent.turn_response_model(BaseAgent.init(%{client: %StubClient{}, model: "m"}))
+               AgentHandlers.turn_response_model(
+                 BaseAgent.init(%{client: %StubClient{}, model: "m"})
+               )
     end
 
     test "run/3 asks for a ToolCallResponse; a chat agent's prompt shows no output schema" do

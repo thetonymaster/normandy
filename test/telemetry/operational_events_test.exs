@@ -65,6 +65,8 @@ defmodule Normandy.Telemetry.OperationalEventsTest do
 
     defmodule SweepSup do
       @moduledoc false
+      @behaviour Normandy.Agents.Turn.ServerSupervisor
+
       def start_server(_handle, opts) do
         case Keyword.fetch!(opts, :session_id) do
           "s-refused" -> {:error, :refused}
@@ -72,6 +74,8 @@ defmodule Normandy.Telemetry.OperationalEventsTest do
           _sid -> {:ok, spawn(fn -> :ok end)}
         end
       end
+
+      def stop_server(_sup, _pid), do: {:error, :not_found}
     end
 
     defp sweep_state(store_handle) do

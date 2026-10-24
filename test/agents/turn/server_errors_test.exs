@@ -3,6 +3,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   @moduletag :capture_log
 
   alias Normandy.Agents.{BaseAgent, ConfigTemplate, ToolCallResponse, Turn}
+  alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.ToolCall
@@ -16,6 +17,8 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
   # DynamicSupervisor's {:error, {exception, stacktrace}}.
   defmodule UncheckedSupervisor do
     @moduledoc false
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     def start_server(sup, server_opts) do
       DynamicSupervisor.start_child(sup, %{
         id: Normandy.Agents.Turn.Server,
@@ -24,6 +27,8 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
         type: :worker
       })
     end
+
+    def stop_server(_sup, _pid), do: {:error, :not_found}
   end
 
   # A store whose history read fails: the server starts :unavailable.
@@ -113,7 +118,7 @@ defmodule Normandy.Agents.Turn.ServerErrorsTest do
         config: BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"}),
         store: {InMemory, store},
         registry: {Native, Native.new()},
-        handlers: %{BaseAgent.non_streaming_handlers() | append: append}
+        handlers: %{AgentHandlers.non_streaming_handlers() | append: append}
       )
 
     assert {:error, %TurnError{type: :handler_crashed, handler: :append, reason: reason}} =

@@ -92,7 +92,7 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Inline do
   defp start_op({:cast, _reply_to, input, otel_ctx} = op, state),
     do: start_turn(op, input, otel_ctx, state)
 
-  defp put_agent(updated, state), do: %{state | agent: updated}
+  defp put_agent(updated, state), do: {:ok, %{state | agent: updated}}
 
   # The worker gets the committed config, the input and the caller's OTel context, not
   # the process state.

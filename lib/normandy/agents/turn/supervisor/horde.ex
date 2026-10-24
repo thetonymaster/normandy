@@ -15,6 +15,8 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
     returns: that pid is Horde's outer `Supervisor`, which would accept the session
     as a plain local child outside Horde's placement and supervision.
     """
+    @behaviour Normandy.Agents.Turn.ServerSupervisor
+
     alias Normandy.Agents.Turn.Server
     alias Normandy.Options
 
@@ -70,6 +72,7 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
 
     The options of `Normandy.Agents.Turn.Server.start_link/1`.
     """
+    @impl Normandy.Agents.Turn.ServerSupervisor
     @spec start_server(term(), keyword()) :: {:ok, pid()} | {:error, term()}
     def start_server(sup, server_opts) do
       server_opts =
@@ -95,6 +98,7 @@ if Code.ensure_loaded?(Horde.DynamicSupervisor) do
     `{:error, :not_found}` when the Horde supervisor `sup` (its name) has no such child.
     Used by `Normandy.Agents.Turn.Session.delete/1`.
     """
+    @impl Normandy.Agents.Turn.ServerSupervisor
     @spec stop_server(term(), pid()) :: :ok | {:error, :not_found}
     def stop_server(sup, pid) when is_pid(pid),
       do: Horde.DynamicSupervisor.terminate_child(sup, pid)

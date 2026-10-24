@@ -98,7 +98,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       behaviours_refs: %{
         policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
-        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        credential: {Normandy.Test.StubCreds, []},
         compactor: {Normandy.Behaviours.Compactor.NoOp, []},
         model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
@@ -133,7 +133,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       behaviours_refs: %{
         policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
-        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        credential: {Normandy.Test.StubCreds, []},
         compactor: {Normandy.Behaviours.Compactor.NoOp, []},
         model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
@@ -201,7 +201,11 @@ defmodule Normandy.Agents.ConfigTemplateTest do
         tool_context: %{memory_namespace: "acme/u-1"},
         client: supp.client_builder.("TOKEN"),
         toolset: supp.toolset,
-        behaviours: %Config{before_hooks: supp.before_hooks, after_hooks: supp.after_hooks}
+        behaviours: %Config{
+          before_hooks: supp.before_hooks,
+          after_hooks: supp.after_hooks,
+          credential: {Normandy.Test.StubCreds, []}
+        }
       }
     end
 
@@ -494,7 +498,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       behaviours_refs: %{
         policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
-        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        credential: {Normandy.Test.StubCreds, []},
         compactor: {Normandy.Behaviours.Compactor.WindowManager, [reserved_tokens: 16]},
         model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},
@@ -537,7 +541,7 @@ defmodule Normandy.Agents.ConfigTemplateTest do
       behaviours_refs: %{
         policy: {Normandy.Behaviours.PolicyEngine.AllowAll, []},
         budget: {Normandy.Behaviours.BudgetTracker.NoOp, []},
-        credential: {Normandy.Behaviours.CredentialProvider.FromClient, []},
+        credential: {Normandy.Test.StubCreds, []},
         compactor: {Normandy.Behaviours.Compactor.NoOp, []},
         model_catalog: {Normandy.Behaviours.ModelCatalog.ModelsAPI, []},
         session_store: {Normandy.Behaviours.SessionStore.InMemory, []},

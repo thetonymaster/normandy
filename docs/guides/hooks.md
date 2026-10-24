@@ -52,6 +52,7 @@ loaded, an unknown `:on_error`, opts that are not plain data, or opts the module
 | Signature | `before_tool(call, ctx, opts)`, `after_tool(call, result, ctx, opts)` | `fn config, call -> … end`, `fn config, call, result -> result end` |
 | Persisted | yes, in the session's config template | no, node-local (template supplement) |
 | `after_tool` sees | every tool result the model sees | results of tools that ran |
+| The config a hook gets | none (`ctx` carries ids and `tool_context`) | `before_hooks`: the whole config; `after_hooks`: the config without the conversation's memory entries (they run in the tool task, on `run/3`, `stream/3` and `Turn.Server` alike; the turn id stays) |
 | Order | first | after the modules; a module halt skips them |
 
 Use a function hook only for a closure over a runtime value on one node.

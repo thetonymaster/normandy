@@ -9,11 +9,16 @@ defmodule Normandy.Behaviours.Config do
 
   `to_pipeline/1` adapts the **dispatch-path** slots (`policy`, `budget`,
   `before_hooks`, `after_hooks`, and the `before_tool`/`after_tool` callbacks of `hooks`)
-  into a `%Normandy.Agents.Dispatch.Pipeline{}`.
+  into a `%Normandy.Agents.Dispatch.Pipeline{}`. Classification (`policy`, `before_hooks`)
+  gets the agent's whole config; execution (`budget`, the tool, `after_tool`, `after_hooks`)
+  runs in a tool task whose config has the memory without its entries (the turn id stays),
+  on every shell.
   Building it here (not on `Dispatch`) keeps the Phase 1 chokepoint untouched —
   the dependency points Phase 2 → Phase 1. The `credential`, `compactor` and
   `model_catalog` slots are not dispatch-path concerns and are not placed on the
-  pipeline. `compactor` selects the `:steering`-boundary compaction strategy. Where
+  pipeline. `credential` has no default: a `Normandy.Behaviours.CredentialProvider` ref is
+  needed only by a `Turn.Session` with a `:template_provider`, which refuses a config
+  without one. `compactor` selects the `:steering`-boundary compaction strategy. Where
   sessions persist is not chosen here: `Normandy.Agents.Turn.Server` takes `:store` and
   `:registry` (the 1.x `session_store`/`session_registry` slots were never read and are
   gone).
@@ -24,7 +29,6 @@ defmodule Normandy.Behaviours.Config do
   alias Normandy.Agents.Dispatch.Pipeline
   alias Normandy.Behaviours.BudgetTracker
   alias Normandy.Behaviours.Compactor
-  alias Normandy.Behaviours.CredentialProvider
   alias Normandy.Behaviours.ModelCatalog
   alias Normandy.Behaviours.PolicyEngine
   alias Normandy.Hooks.Runner
@@ -38,7 +42,7 @@ defmodule Normandy.Behaviours.Config do
           before_hooks: [hook()],
           after_hooks: [hook()],
           hooks: [Normandy.Behaviours.Hooks.entry()],
-          credential: ref(),
+          credential: ref() | nil,
           compactor: ref(),
           model_catalog: ref()
         }
@@ -48,7 +52,7 @@ defmodule Normandy.Behaviours.Config do
             before_hooks: [],
             after_hooks: [],
             hooks: [],
-            credential: {CredentialProvider.FromClient, []},
+            credential: nil,
             compactor: {Compactor.NoOp, []},
             model_catalog: {ModelCatalog.ModelsAPI, []}
 

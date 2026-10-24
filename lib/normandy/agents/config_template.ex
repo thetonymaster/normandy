@@ -68,7 +68,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   `:model_catalog`, `:hooks` and `:guardrails`; `tool_context`, `template_id`, turn
   state and history cannot be pinned. Templates are not signed (a known limit).
   """
-  alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.Config
@@ -259,9 +259,9 @@ defmodule Normandy.Agents.ConfigTemplate do
     |> struct(Map.take(tmpl, @data_fields))
     |> Map.update!(:initial_memory, &memory_cache(&1, :fill))
     |> struct(node_local_fields!(tmpl, supplement))
-    |> BaseAgent.validate_compaction_config!({__MODULE__, :rebuild, 3})
+    |> InitOptions.validate_compaction_config!({__MODULE__, :rebuild, 3})
     |> validate_client_options!()
-    |> tap(&BaseAgent.warn_deprecated_catalog(&1.behaviours))
+    |> tap(&InitOptions.warn_deprecated_catalog(&1.behaviours))
   end
 
   @refs_behaviours [
@@ -315,6 +315,17 @@ defmodule Normandy.Agents.ConfigTemplate do
 
   # Not a map: translate!/1 names it.
   defp check_refs!(_refs, _id), do: :ok
+
+  # 1.x's default credential provider, removed in 2.0: a template saved by 1.x names it.
+  defp check_ref!(:credential, {Normandy.Behaviours.CredentialProvider.FromClient, _opts}, _b, id) do
+    refused!(
+      id,
+      "behaviours_refs :credential names Normandy.Behaviours.CredentialProvider.FromClient, " <>
+        "which was removed in 2.0; set the config's behaviours :credential to a " <>
+        "Normandy.Behaviours.CredentialProvider module ({module, opts}) and save the " <>
+        "template again"
+    )
+  end
 
   defp check_ref!(slot, {mod, opts}, behaviour, id) when is_atom(mod) and is_list(opts) do
     unless Keyword.keyword?(opts),
@@ -577,7 +588,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   end
 
   defp validate_client_options!(%BaseAgentConfig{client: client} = config) do
-    _ = BaseAgent.validate_client_options!(client)
+    _ = InitOptions.validate_client_options!(client)
     config
   end
 end
