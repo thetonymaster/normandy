@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.5.1](https://github.com/thetonymaster/normandy/compare/3904b06bd3d9fa55db20b70e21bc413f9a463862..v2.5.1) - 2026-10-24
+#### Bug Fixes
+- find a JSON answer nested at any depth in prose (#63) - ([3904b06](https://github.com/thetonymaster/normandy/commit/3904b06bd3d9fa55db20b70e21bc413f9a463862)) - Antonio Cabrera
+
+- - -
+
 ## [v2.5.0](https://github.com/thetonymaster/normandy/compare/bb7c9f64b81a078f7d8dd6bcdebd0801c2c48e90..v2.5.0) - 2026-10-24
 #### Features
 - re-ask a tool-loop final answer that breaks a constraint (AX-18) (#62) - ([8796d2d](https://github.com/thetonymaster/normandy/commit/8796d2d95b933fe1f5799b6128dcb18b109abc83)) - Antonio Cabrera
