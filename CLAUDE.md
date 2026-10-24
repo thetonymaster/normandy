@@ -282,3 +282,17 @@ end
 - Schema structs carry no `__meta__` (`Normandy.Metadata` is gone); loading stored data ignores a legacy `"__meta__"` key (`Normandy.Schema.LegacyMeta`)
 - Before running tests run `mix format`
 - If tests fail, they must be fixed, even if were items we were not working on.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for thetonymaster/normandy (`gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

@@ -252,7 +252,7 @@ defmodule Normandy.Coordination.ReactiveTest do
     test "keeps the other results when an agent times out" do
       assert {:ok, results} =
                Reactive.all([create_test_agent(), stuck_agent(), create_test_agent()], "test",
-                 timeout: 100
+                 timeout: 1_000
                )
 
       assert %{

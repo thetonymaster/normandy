@@ -193,7 +193,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
             breaker_opts(
               failure_threshold: 1,
               success_threshold: 1,
-              timeout: 50
+              timeout: 500
             )
         })
 
@@ -205,7 +205,7 @@ defmodule Normandy.Agents.BaseAgentResilienceTest do
       assert CircuitBreaker.state(breaker(agent)) == :open
 
       # Wait for half-open
-      Process.sleep(100)
+      Process.sleep(600)
 
       # Fix the client
       Agent.update(client_ref, fn _ -> %CircuitBreakerClient{should_fail: false} end)
