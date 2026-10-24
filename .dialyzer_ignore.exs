@@ -1,7 +1,4 @@
 [
-  # Dialyzer false positive - compress_conversation can return early or continue
-  {"lib/normandy/context/summarizer.ex", :pattern_match},
-
   # Supertype warnings - these are overly strict type specs that are intentionally broader
   ~r"is a supertype of the success typing",
 
@@ -39,13 +36,4 @@
   # Pinned to supported/1 by its message (not file-wide), so other dead code in options.ex
   # is still reported.
   {"lib/normandy/options.ex", "Function supported/1 will never be called."},
-
-  # --- CI-toolchain-specific ---
-
-  # llm/json_deserializer.ex (cast_map/resolve_inner region): a redundant `_` clause the CI
-  # Dialyzer (Elixir 1.19 / OTP 28 as resolved by setup-beam on Ubuntu) reports as covered by
-  # earlier clauses, but local OTP 28.4 does not emit it. pattern_match_cov flags an *unreachable*
-  # clause, so it is behavior-safe; suppressed to keep the gate stable across toolchain drift.
-  # (Appears as an unnecessary skip on toolchains that don't emit it — harmless, non-fatal.)
-  {"lib/normandy/llm/json_deserializer.ex", :pattern_match_cov}
 ]
