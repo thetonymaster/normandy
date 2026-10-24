@@ -11,7 +11,7 @@ One user input taken through the model and tools to its answer or its failure. I
 _Avoid_: Run, exchange, step
 
 **Run**:
-One execution of a turn by an agent, from the call that starts or resumes it to the answer or failure it returns. A turn interrupted by a crash or a wait for approval takes more than one run.
+One execution of a turn by an agent, from the call that starts or resumes it until the turn answers, fails, stops to wait for approval, or is cut off by a crash. A turn that waits or crashes takes more than one run.
 _Avoid_: Turn, execution, attempt
 
 **Tool round**:
