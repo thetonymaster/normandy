@@ -175,6 +175,22 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
     end
   end
 
+  # 1.0 and pre-Wave-8 2.0 builds took :sliding_window as an alias of :oldest_first; 2.0
+  # refuses it in WindowManager.new/1, but a stored template still names it.
+  test "a stored :sliding_window strategy rebuilds as :oldest_first" do
+    for opts <- [
+          [max_tokens: 1_000, strategy: :sliding_window],
+          [context_window: 1_000, strategy: :sliding_window]
+        ] do
+      tmpl = put_in(v1_template().behaviours_refs.compactor, {Compactor.WindowManager, opts})
+
+      assert {Compactor.WindowManager, rebuilt} = rebuild(tmpl).behaviours.compactor
+      assert Keyword.fetch!(rebuilt, :strategy) == :oldest_first
+      assert Keyword.fetch!(rebuilt, :context_window) == 1_000
+      refute Keyword.has_key?(rebuilt, :max_tokens)
+    end
+  end
+
   test "a 2.0 template round-trips through the same checks" do
     config = rebuild(v1_template())
     tmpl = ConfigTemplate.from_config(config, "tmpl-v2", :eager)

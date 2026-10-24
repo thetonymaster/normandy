@@ -9,6 +9,15 @@ defmodule Normandy.Schema.LegacyMeta do
 
   @legacy_module Normandy.Metadata
 
+  # `Normandy.Metadata`'s states, named in code for the same reason: without Ecto (a
+  # Redis-only deployment) nothing else names :built, and every stored `__meta__` holds
+  # one of these.
+  @legacy_states [:built, :loaded, :deleted]
+
+  @doc false
+  @spec legacy_states() :: [atom()]
+  def legacy_states, do: @legacy_states
+
   @spec strip(term()) :: term()
   def strip(%mod{__meta__: %{__struct__: @legacy_module}} = struct) when is_atom(mod) do
     struct |> Map.delete(:__meta__) |> strip_fields()

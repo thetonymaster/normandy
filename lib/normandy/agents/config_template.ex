@@ -509,7 +509,7 @@ defmodule Normandy.Agents.ConfigTemplate do
   defp compactor_ref!({Compactor.WindowManager, opts}, id) when is_list(opts) do
     case {Keyword.fetch(opts, :max_tokens), Keyword.has_key?(opts, :context_window)} do
       {:error, _pinned?} ->
-        {Compactor.WindowManager, opts}
+        {Compactor.WindowManager, strategy!(opts)}
 
       {{:ok, _window}, true} ->
         untranslatable!(
@@ -519,11 +519,24 @@ defmodule Normandy.Agents.ConfigTemplate do
 
       {{:ok, window}, false} ->
         {Compactor.WindowManager,
-         opts |> Keyword.delete(:max_tokens) |> Keyword.put(:context_window, window)}
+         opts
+         |> Keyword.delete(:max_tokens)
+         |> Keyword.put(:context_window, window)
+         |> strategy!()}
     end
   end
 
   defp compactor_ref!(ref, _id), do: ref
+
+  # 1.0 and 2.0 builds before :sliding_window was removed took it as an alias of
+  # :oldest_first. The atom stays named here: Postgres and Redis decode a stored template
+  # with binary_to_term(_, [:safe]), which refuses an atom nothing in the code names.
+  defp strategy!(opts) do
+    case Keyword.fetch(opts, :strategy) do
+      {:ok, :sliding_window} -> Keyword.put(opts, :strategy, :oldest_first)
+      _other -> opts
+    end
+  end
 
   @spec untranslatable!(term(), String.t()) :: no_return()
   defp untranslatable!(id, what) do

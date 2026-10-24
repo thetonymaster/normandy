@@ -163,7 +163,8 @@ WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
 ```
 
 - The `:sliding_window` strategy is removed: it was `:oldest_first` under another name. `WindowManager.new/1`
-  raises `ArgumentError` for it; use `:oldest_first`.
+  raises `ArgumentError` for it; use `:oldest_first`. A stored session template whose
+  `Compactor.WindowManager` names it still loads: `ConfigTemplate.rebuild/3` reads it as `:oldest_first`.
 - `WindowManager.truncate_conversation/2` and `ensure_within_limit/2` with `strategy: :summarize` raise
   `ArgumentError` naming `:client` when the agent has none; 1.x ran `:oldest_first` silently. A
   `%BaseAgentConfig{}` always has a client; only a hand-built agent map is affected.
@@ -667,7 +668,8 @@ anything. In 1.x it took only a map and ignored any key it did not know.
 - **Session templates saved by Normandy 1.0.0 rebuild under 2.0.** `ConfigTemplate.rebuild/3`
   gives `max_tokens: nil` the 2.0 default (16_000), drops the two session slots, and renames a
   `Compactor.WindowManager` window pin from `:max_tokens` to `:context_window` (a custom
-  compactor's opts are left alone). Fields 2.0 added (`retry`, `circuit_breaker`, `guardrails`,
+  compactor's opts are left alone), and reads its `strategy: :sliding_window` as `:oldest_first`
+  (§6). Fields 2.0 added (`retry`, `circuit_breaker`, `guardrails`,
   `tool_context`, hooks, ...) get their defaults, as a 1.0 agent behaved.
 - `rebuild/3` raises `ArgumentError` naming the field for anything else it cannot read: a field
   neither 1.0 nor 2.0 writes (templates saved by unreleased 2.0 builds, which have
