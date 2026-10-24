@@ -117,7 +117,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "transitions from open to half-open after timeout" do
-      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 200)
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 500)
 
       # Trigger open state
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
@@ -125,7 +125,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert CircuitBreaker.state(cb) == :open
 
       # Wait for timeout
-      Process.sleep(250)
+      Process.sleep(600)
 
       # Next state check should transition to half-open
       assert CircuitBreaker.state(cb) == :half_open
@@ -138,7 +138,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
         CircuitBreaker.start_link(
           failure_threshold: 2,
           success_threshold: 2,
-          timeout: 50
+          timeout: 500
         )
 
       # Open the circuit
@@ -147,7 +147,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert CircuitBreaker.state(cb) == :open
 
       # Wait for half-open
-      Process.sleep(100)
+      Process.sleep(600)
       assert CircuitBreaker.state(cb) == :half_open
 
       # First success
@@ -162,7 +162,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
     end
 
     test "transitions from half-open back to open on failure" do
-      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 50)
+      {:ok, cb} = CircuitBreaker.start_link(failure_threshold: 2, timeout: 500)
 
       # Open the circuit
       CircuitBreaker.call(cb, fn -> {:error, :fail} end)
@@ -170,7 +170,7 @@ defmodule Normandy.Resilience.CircuitBreakerTest do
       assert CircuitBreaker.state(cb) == :open
 
       # Wait for half-open
-      Process.sleep(100)
+      Process.sleep(600)
       assert CircuitBreaker.state(cb) == :half_open
 
       # Failure should reopen

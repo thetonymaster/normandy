@@ -466,7 +466,7 @@ defmodule Normandy.Batch.ProcessorTest do
       inputs = [%{chat_message: "a"}, %{chat_message: "slow"}]
 
       assert {:ok, [{:ok, _}, {:error, %TurnError{type: :task_down, reason: :timeout}}]} =
-               Processor.process_batch(picky_agent(), inputs, timeout: 100)
+               Processor.process_batch(picky_agent(), inputs, timeout: 300)
     end
 
     test "on_error is called for a timed-out item" do

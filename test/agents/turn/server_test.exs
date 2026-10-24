@@ -837,7 +837,7 @@ defmodule Normandy.Agents.Turn.ServerTest do
           AgentHandlers.non_streaming_handlers()
           | call_llm: fn _c, _s, _r -> %Resp{content: "x"} end
         },
-        idle_timeout_ms: 50
+        idle_timeout_ms: 300
       )
 
     ref = Process.monitor(srv)

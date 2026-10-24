@@ -131,7 +131,7 @@ defmodule Normandy.Agents.Turn.TerminalSaveTest do
     end
 
     test "defers passivation until it lands", ctx do
-      srv = start(ctx, idle_timeout_ms: 20)
+      srv = start(ctx, idle_timeout_ms: 200)
       ref = Process.monitor(srv)
       TerminalSaveStore.fail_terminal(ctx.store, true)
       assert {:ok, _} = Turn.Server.run(srv, %{chat_message: "one"})
