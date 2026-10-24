@@ -27,10 +27,11 @@ defmodule Normandy.Behaviours.MemoryStore.InMemory do
   end
 
   @impl true
-  def list(pid, ns, prefix), do: {:ok, Agent.get(pid, &Docs.list(Map.get(&1, ns, %{}), prefix))}
+  def list(pid, ns, prefix),
+    do: {:ok, Agent.get(pid, &Docs.list(Map.get(&1, ns, Docs.new()), prefix))}
 
   @impl true
-  def get(pid, ns, path), do: Agent.get(pid, &Docs.get(Map.get(&1, ns, %{}), path))
+  def get(pid, ns, path), do: Agent.get(pid, &Docs.get(Map.get(&1, ns, Docs.new()), path))
 
   @impl true
   def put(pid, ns, path, content, expected, limits \\ []) do
@@ -52,8 +53,8 @@ defmodule Normandy.Behaviours.MemoryStore.InMemory do
 
   defp update(pid, ns, fun) do
     Agent.get_and_update(pid, fn state ->
-      {reply, docs} = fun.(Map.get(state, ns, %{}))
-      {reply, if(docs == %{}, do: Map.delete(state, ns), else: Map.put(state, ns, docs))}
+      {reply, docs} = fun.(Map.get(state, ns, Docs.new()))
+      {reply, if(Docs.empty?(docs), do: Map.delete(state, ns), else: Map.put(state, ns, docs))}
     end)
   end
 end

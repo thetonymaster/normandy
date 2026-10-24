@@ -109,6 +109,29 @@ defmodule Normandy.Schema.WireTest do
     assert Wire.encodable(nil) == nil
   end
 
+  test "title is removed inside $defs, definitions, patternProperties, dependentSchemas and contains" do
+    leaf = %{"type" => "string", "title" => "Leaf"}
+
+    spec = %{
+      "title" => "Root",
+      "$defs" => %{"a" => leaf},
+      "definitions" => %{"b" => leaf},
+      "patternProperties" => %{"^x_" => leaf},
+      "dependentSchemas" => %{"c" => %{"properties" => %{"d" => leaf}}},
+      "contains" => leaf
+    }
+
+    stripped = %{"type" => "string"}
+
+    assert Wire.encodable(spec) == %{
+             "$defs" => %{"a" => stripped},
+             "definitions" => %{"b" => stripped},
+             "patternProperties" => %{"^x_" => stripped},
+             "dependentSchemas" => %{"c" => %{"properties" => %{"d" => stripped}}},
+             "contains" => stripped
+           }
+  end
+
   test "a :property_order that does not name the properties raises, naming both" do
     spec = %{type: :object, properties: %{a: %{type: :string}}, property_order: [:a, :b]}
 

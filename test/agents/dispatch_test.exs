@@ -182,6 +182,27 @@ defmodule Normandy.Agents.DispatchTest do
              }
     end
 
+    test "a deny with an atom reason shows it; any other term is not shown" do
+      config = config_with_tools([%FakeTool{}])
+      call = %ToolCall{id: "c6c", name: "weather", input: %{"city" => "NYC"}}
+
+      for {reason, expected} <- [
+            {:forbidden,
+             "This call was blocked by policy (forbidden). " <>
+               "Do not retry it; continue without it or tell the user."},
+            {%{api_key: "sk-policy-secret"},
+             "This call was blocked by policy. Do not retry it; continue without it or tell the user."},
+            {true,
+             "This call was blocked by policy. Do not retry it; continue without it or tell the user."}
+          ] do
+        deny = fn _config, _call, _inv -> {:deny, %{reason: reason}} end
+        pipeline = %{Dispatch.default_pipeline() | policy_fn: deny}
+
+        assert %ToolResult{output: %{error: ^expected}} =
+                 Dispatch.dispatch_one(config, call, pipeline)
+      end
+    end
+
     test "a policy that raises, exits or throws is a denial that does not show the term" do
       config = config_with_tools([%FakeTool{}])
       call = %ToolCall{id: "c8", name: "weather", input: %{"city" => "NYC"}}

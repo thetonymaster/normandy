@@ -36,24 +36,24 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
     alias MemoryStore.Docs
 
     test "put/get/delete thread the docs map and versions" do
-      {{:ok, 1}, d} = Docs.put(%{}, "/memories/a", "x", :new)
+      {{:ok, 1}, d} = Docs.put(Docs.new(), "/memories/a", "x", :new)
       assert {{:error, :conflict}, ^d} = Docs.put(d, "/memories/a", "y", :new)
       {{:ok, 2}, d} = Docs.put(d, "/memories/a", "y", 1)
       assert {:ok, %{content: "y", version: 2}} = Docs.get(d, "/memories/a")
       assert {{:error, :conflict}, ^d} = Docs.delete(d, "/memories/a", 1)
       # compare whole values: a `%{}` pattern would match any map
-      assert Docs.delete(d, "/memories/a", 2) == {:ok, %{}}
-      assert Docs.delete(%{}, "/memories/a", :any) == {:not_found, %{}}
+      assert Docs.delete(d, "/memories/a", 2) == {:ok, Docs.new()}
+      assert Docs.delete(Docs.new(), "/memories/a", :any) == {:not_found, Docs.new()}
     end
 
     test "list is prefix-bounded, sorted and sized" do
-      {_, d} = Docs.put(%{}, "/memories/b/1", "22", :new)
+      {_, d} = Docs.put(Docs.new(), "/memories/b/1", "22", :new)
       {_, d} = Docs.put(d, "/memories/bb", "x", :new)
       assert [%{path: "/memories/b/1", size: 2}] = Docs.list(d, "/memories/b")
     end
 
     test "rename keeps versions and refuses an occupied target" do
-      {_, d} = Docs.put(%{}, "/memories/d/1", "1", :new)
+      {_, d} = Docs.put(Docs.new(), "/memories/d/1", "1", :new)
       {_, d} = Docs.put(d, "/memories/d/1", "1b", 1)
       {_, d} = Docs.put(d, "/memories/x", "x", :new)
       assert {{:error, :exists}, ^d} = Docs.rename(d, "/memories/d", "/memories/x")
@@ -63,7 +63,7 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
     end
 
     test "put/5 checks the namespace's totals and writes nothing when full" do
-      {{:ok, 1}, d} = Docs.put(%{}, "/memories/a", "12345", :new, max_bytes: 10)
+      {{:ok, 1}, d} = Docs.put(Docs.new(), "/memories/a", "12345", :new, max_bytes: 10)
 
       assert {{:error, {:namespace_full, :bytes, 11}}, ^d} =
                Docs.put(d, "/memories/b", "123456", :new, max_bytes: 10)
@@ -74,11 +74,32 @@ defmodule Normandy.Behaviours.MemoryStore.DocsTest do
       assert {{:ok, 2}, _d} = Docs.put(d, "/memories/a", "1234567890", :any, max_bytes: 10)
     end
 
+    test "bytes follows every write without a recount" do
+      recount = fn d ->
+        d.docs |> Map.values() |> Enum.map(&byte_size(&1.content)) |> Enum.sum()
+      end
+
+      {_, d} = Docs.put(Docs.new(), "/memories/a", "12345", :new)
+      {_, d} = Docs.put(d, "/memories/b/c", "日本", :new)
+      assert d.bytes == 11
+      {_, d} = Docs.put(d, "/memories/a", "1", :any)
+      assert d.bytes == 7
+      {_, d} = Docs.put(d, "/memories/x", "toolarge", :new, max_bytes: 8)
+      assert d.bytes == 7
+      {_, d} = Docs.rename(d, "/memories/b", "/memories/z")
+      assert d.bytes == 7
+      {_, d} = Docs.delete(d, "/memories/a", :any)
+      assert d.bytes == 6 and d.bytes == recount.(d)
+      {_, d} = Docs.delete_tree(d, "/memories/z")
+      assert d == Docs.new()
+    end
+
     test "delete_tree counts and keeps siblings" do
-      {_, d} = Docs.put(%{}, "/memories/d/1", "1", :new)
+      {_, d} = Docs.put(Docs.new(), "/memories/d/1", "1", :new)
       {_, d} = Docs.put(d, "/memories/dd", "1", :new)
       assert {{:ok, 1}, kept} = Docs.delete_tree(d, "/memories/d")
-      assert Map.keys(kept) == ["/memories/dd"]
+      assert Map.keys(kept.docs) == ["/memories/dd"]
+      assert kept.bytes == 1
     end
   end
 end

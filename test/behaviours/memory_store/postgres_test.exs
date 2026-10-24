@@ -118,11 +118,29 @@ defmodule Normandy.Behaviours.MemoryStore.PostgresTest do
     assert totals(ns) == [[6, 1]]
 
     {:ok, 1} = Postgres.delete_tree(repo, ns, "/memories/d")
-    assert totals(ns) == [[0, 0]]
+    assert totals(ns) == []
 
     {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "x", :new)
     :ok = Postgres.delete_namespace(repo, ns)
     assert totals(ns) == []
+  end
+
+  test "a write that leaves a namespace empty, or misses in an empty one, leaves no counter row" do
+    repo = Normandy.TestRepo
+    ns = "empty-#{System.unique_integer([:positive])}"
+
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "x", :new)
+    :ok = Postgres.delete(repo, ns, "/memories/a", :any)
+    assert totals(ns) == []
+
+    assert :not_found = Postgres.delete(repo, ns, "/memories/a", :any)
+    assert :not_found = Postgres.delete(repo, ns, "/memories/a", 1)
+    assert {:ok, 0} = Postgres.delete_tree(repo, ns, "/memories")
+    assert :not_found = Postgres.rename(repo, ns, "/memories/a", "/memories/b")
+    assert totals(ns) == []
+
+    {:ok, 1} = Postgres.put(repo, ns, "/memories/a", "xy", :new)
+    assert totals(ns) == [[2, 1]]
   end
 
   test "a refused put rolls back: no document and no counter change" do

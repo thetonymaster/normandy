@@ -16,7 +16,8 @@ defmodule Normandy.Schema.Wire do
     * `"$schema"` and `"title"` (atom or string keys) are removed from every schema node;
       a property *named* `title` is kept;
     * it recurses into `properties`, `items`, `additionalProperties`, `not`, `if`,
-      `then`, `else`, `anyOf`, `oneOf`, `allOf` and `prefixItems`.
+      `then`, `else`, `contains`, `anyOf`, `oneOf`, `allOf`, `prefixItems`, and the
+      schemas of `$defs`, `definitions`, `patternProperties` and `dependentSchemas`.
 
   A node without `:property_order` (a hand-written or MCP schema) keeps its `properties`
   as a map. Normandy calls it where a schema leaves for the model: tool `input_schema`
@@ -29,9 +30,13 @@ defmodule Normandy.Schema.Wire do
 
   @dropped [:"$schema", "$schema", :title, "title"]
   @schema_keys [:items, "items", :additionalProperties, "additionalProperties", :not, "not"] ++
-                 [:if, "if", :then, "then", :else, "else"]
+                 [:if, "if", :then, "then", :else, "else", :contains, "contains"]
   @schema_list_keys [:anyOf, "anyOf", :oneOf, "oneOf", :allOf, "allOf"] ++
                       [:prefixItems, "prefixItems"]
+  # Maps of name (or pattern) to schema; unlike `properties`, never reordered.
+  @schema_map_keys [:"$defs", "$defs", :definitions, "definitions"] ++
+                     [:patternProperties, "patternProperties"] ++
+                     [:dependentSchemas, "dependentSchemas"]
 
   @doc "The schema with ordered properties and without `$schema` and `title`."
   @spec encodable(term()) :: term()
@@ -72,6 +77,9 @@ defmodule Normandy.Schema.Wire do
 
   defp child(key, schemas, _order) when key in @schema_list_keys and is_list(schemas),
     do: Enum.map(schemas, &encodable/1)
+
+  defp child(key, %{} = schemas, _order) when key in @schema_map_keys and not is_struct(schemas),
+    do: Map.new(schemas, fn {name, schema} -> {name, encodable(schema)} end)
 
   defp child(_key, value, _order), do: value
 end

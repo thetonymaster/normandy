@@ -683,7 +683,10 @@ defmodule Normandy.Agents.Dispatch do
   defp denial_result(call, info, :deny) do
     message =
       case Map.get(info, :reason) do
-        reason when is_binary(reason) and reason != "" ->
+        # An atom (:forbidden) is a name, safe to show; any other term could carry data.
+        reason
+        when (is_binary(reason) and reason != "") or
+               (is_atom(reason) and reason not in [nil, true, false]) ->
           "This call was blocked by policy (#{reason}). " <>
             "Do not retry it; continue without it or tell the user."
 
