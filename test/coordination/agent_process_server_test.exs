@@ -6,6 +6,8 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
 
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
+  alias Normandy.Behaviours.AgentTemplate.Catalog
+  alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -482,6 +484,30 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
       assert agent.temperature == 0.42
       # Memory mutation discarded (still the empty template, not the injected one):
       assert AgentMemory.entry_chain(agent.memory) == []
+    end
+
+    # A template-backed session refuses a config without a credential provider
+    # (Turn.Session.put_config/2 raises); the AgentProcess raises it in the caller and
+    # keeps running with its config.
+    test "a config without a credential provider is refused; the process lives" do
+      creds = %Config{credential: {Normandy.Test.StubCreds, []}}
+      {:ok, catalog} = Catalog.start_link([])
+
+      {:ok, pid} =
+        AgentProcess.start_link(
+          [
+            agent: server_config(%{behaviours: creds}),
+            turn_engine: :server,
+            template_provider: {Catalog, catalog}
+          ] ++ supplied_infra()
+        )
+
+      assert_raise ArgumentError, ~r/:credential/, fn ->
+        AgentProcess.update_agent(pid, fn a -> %{a | behaviours: nil} end)
+      end
+
+      assert Process.alive?(pid)
+      assert %{agent: %{behaviours: ^creds}} = :sys.get_state(pid)
     end
   end
 

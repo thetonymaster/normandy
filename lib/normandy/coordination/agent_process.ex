@@ -409,8 +409,10 @@ defmodule Normandy.Coordination.AgentProcess do
   Updates the agent config: `update_fn` gets the current
   `%Normandy.Agents.BaseAgentConfig{}` and returns the new one.
 
-  Raises `ArgumentError` when `update_fn` returns anything else; the process keeps its
-  config.
+  Raises `ArgumentError` when `update_fn` returns anything else, and in `:server` mode
+  when the session refuses the new config (`Normandy.Agents.Turn.Session.put_config/2`:
+  a session with a `:template_provider` needs a `credential` provider); the process keeps
+  its config.
 
   In `:inline` mode the update is queued behind the turn in flight and any runs before it
   (see "Inline turns"), so it sees their memory; the call waits for it.
@@ -443,6 +445,10 @@ defmodule Normandy.Coordination.AgentProcess do
         raise ArgumentError,
               "Normandy.Coordination.AgentProcess.update_agent/3: the function must " <>
                 "return a %Normandy.Agents.BaseAgentConfig{}, got: #{type}"
+
+      # The :server session refused the new config (Turn.Session.put_config/2).
+      {:error, %ArgumentError{} = exception} ->
+        raise exception
     end
   end
 
@@ -682,9 +688,12 @@ defmodule Normandy.Coordination.AgentProcess do
 
   # update_agent/2's new config. In :server mode the SessionStore owns the memory, so
   # a changed memory is ignored; the session's next server start uses the new config.
+  # A config the session refuses (Turn.Session.put_config/2 raises ArgumentError, e.g. a
+  # template-backed session whose new config has no credential provider) is replied as
+  # {:error, exception}; the process keeps its config.
   defp update_agent_now(update_fn, state) do
     case update_fn.(state.agent) do
-      %BaseAgentConfig{} = updated -> {:ok, put_agent(updated, state)}
+      %BaseAgentConfig{} = updated -> put_agent(updated, state)
       other -> {{:not_a_config, Describe.type_of(other)}, state}
     end
   end
@@ -702,10 +711,19 @@ defmodule Normandy.Coordination.AgentProcess do
         updated
       end
 
-    %{state | agent: new_agent, session: Turn.Session.put_config(state.session, new_agent)}
+    case put_session_config(state.session, new_agent) do
+      {:ok, session} -> {:ok, %{state | agent: new_agent, session: session}}
+      {:error, _exception} = error -> {error, state}
+    end
   end
 
-  defp put_agent(updated, state), do: %{state | agent: updated}
+  defp put_agent(updated, state), do: {:ok, %{state | agent: updated}}
+
+  defp put_session_config(session, config) do
+    {:ok, Turn.Session.put_config(session, config)}
+  rescue
+    e in ArgumentError -> {:error, e}
+  end
 
   @impl true
   def handle_cast({:run_async, input, reply_to}, state),

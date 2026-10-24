@@ -151,6 +151,21 @@ defmodule Normandy.Agents.Turn.SessionTest do
                Turn.Session.new(new_opts(supervisor_mod: Turn.Supervisor.Horde))
     end
 
+    test "put_config/2 refuses a config without a credential provider on a template-backed session" do
+      session =
+        Turn.Session.new(Keyword.delete(new_opts(template_provider: {Catalog, :cat}), :config))
+
+      error =
+        assert_raise ArgumentError, ~r/:credential/, fn ->
+          Turn.Session.put_config(session, session_config())
+        end
+
+      assert error.message =~ "Normandy.Agents.Turn.Session.put_config/2: "
+
+      assert %Turn.Session{} =
+               Turn.Session.put_config(Turn.Session.new(new_opts()), session_config())
+    end
+
     test "keeps only the server options it was given" do
       assert %Turn.Session{server_options: [on_approval_timeout: :fail]} =
                Turn.Session.new(new_opts(on_approval_timeout: :fail))
