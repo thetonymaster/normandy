@@ -1,4 +1,5 @@
 defmodule Normandy.JSONTest do
+  alias Normandy.Components.ToolResult
   # The default adapter (Jason): config/test.exs sets no :adapter.
   use ExUnit.Case, async: true
 
@@ -11,6 +12,18 @@ defmodule Normandy.JSONTest do
     @moduledoc false
     @derive {Jason.Encoder, only: [:shown]}
     defstruct [:shown, :hidden]
+  end
+
+  defmodule Boom do
+    defstruct []
+
+    defimpl Jason.Encoder do
+      def encode(_, _), do: raise("cannot encode metadata")
+    end
+  end
+
+  defmodule Foreign do
+    defstruct [:id, __meta__: %Boom{}]
   end
 
   defmodule WithMeta do
@@ -34,6 +47,18 @@ defmodule Normandy.JSONTest do
     test "a schema struct has no :__meta__ key" do
       refute Map.has_key?(%WithMeta{}, :__meta__)
       assert Jason.decode!(Normandy.JSON.encode!(%WithMeta{name: "x"})) == %{"name" => "x"}
+    end
+
+    test "a foreign struct's __meta__ (whose encoder raises) is left out" do
+      assert Normandy.JSON.encode!(%Foreign{id: 1}) == ~s({"id":1})
+
+      assert {:ok, rendered} =
+               ToolResult.render(%ToolResult{
+                 tool_call_id: "t",
+                 output: %Foreign{id: 1}
+               })
+
+      assert rendered =~ ~s("output":{"id":1})
     end
 
     test "a struct with its own encoder is encoded by it" do
