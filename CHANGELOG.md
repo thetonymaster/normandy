@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.0.0](https://github.com/thetonymaster/normandy/compare/cf8fd089cc4a393f852db77571de2a21ed07ada0..v2.0.0) - 2026-10-24
+#### Features
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) Normandy 2.0 - ([95bd480](https://github.com/thetonymaster/normandy/commit/95bd480f0d124c3df18e115a16d8db04c61a90d7)) - Antonio Cabrera
+#### Documentation
+- performance and race-condition audit report - ([12b3440](https://github.com/thetonymaster/normandy/commit/12b344077d1f90667fcbcb25c43de8dde689f704)) - Antonio Cabrera
+- W2-A implementation plan (schema artifact + coordination one-liners) - ([ffbd389](https://github.com/thetonymaster/normandy/commit/ffbd389dcaf4eeca1aef570ada3c45ee512500f2)) - Antonio Cabrera
+- coordination-layer reliability design spec (audit wave 2) - ([1b7336e](https://github.com/thetonymaster/normandy/commit/1b7336e476acffd2a5ec03f67d156616033db508)) - Antonio Cabrera
+- implementation plans for critical-fixes 1-6 - ([922c35c](https://github.com/thetonymaster/normandy/commit/922c35c3b3a4e11850eb69a6eb2761c49a9b03dd)) - Antonio Cabrera
+- framework workflow assessment and critical-fixes design spec - ([3a2d65b](https://github.com/thetonymaster/normandy/commit/3a2d65b7c9262cde69f2ff6cd5e10d05e33ab75c)) - Antonio Cabrera
+#### Tests
+- integration tool_use check accepts replayed content blocks (#48) - ([dd95de0](https://github.com/thetonymaster/normandy/commit/dd95de0566536a3e8fb277ac5929d3d639a94ad6)) - Antonio Cabrera
+#### Continuous Integration
+- re-enable Dialyzer type-checking gate (#45) - ([cf8fd08](https://github.com/thetonymaster/normandy/commit/cf8fd089cc4a393f852db77571de2a21ed07ada0)) - Antonio Cabrera
+
+- - -
+
 ## Normandy 2.0 release notes
 
 Normandy 2.0 moves to Claudio 0.7.1 and works with the current Claude models (Opus 4.7 and later reject
