@@ -9,13 +9,12 @@ The main CI workflow runs on every push and pull request to `main` and `develop`
 ### Jobs
 
 #### 1. **Test** (matrix)
-Elixir/OTP 1.15/26, 1.16/26, 1.17/26, 1.17/27, 1.18/27 and 1.19/28 — the declared floor
-(`elixir: "~> 1.15"`) through the newest. Each leg compiles with warnings as errors and runs
-`mix test --warnings-as-errors`; the 1.17/27 leg also checks formatting and coverage (threshold in
-`mix.exs`).
+Elixir/OTP 1.18/27, 1.19/28 and 1.20/29: the three latest Elixir minors. Each leg compiles with
+warnings as errors and runs `mix test --warnings-as-errors`; the 1.20/29 leg also checks
+formatting and coverage (threshold in `mix.exs`).
 
 #### 2. **Integration Tests**
-Pushes to `main` only, Elixir 1.15/OTP 26, after the test matrix passes:
+Pushes to `main` only, Elixir 1.20/OTP 29, after the test matrix passes:
 `mix test --only integration --only normandy_integration` against the live API when the
 `ANTHROPIC_API_KEY` secret is set (skipped otherwise).
 
@@ -172,8 +171,13 @@ Edit the matrix in `.github/workflows/ci.yml`:
 ```yaml
 strategy:
   matrix:
-    elixir: ['1.15', '1.16', '1.17', '1.18']  # Add versions here
-    otp: ['26', '27']
+    include:  # the three latest Elixir minors, each with an OTP it supports
+      - elixir: '1.18'
+        otp: '27'
+      - elixir: '1.19'
+        otp: '28'
+      - elixir: '1.20'
+        otp: '29'
 ```
 
 ### Changing Test Commands
