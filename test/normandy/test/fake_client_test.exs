@@ -15,7 +15,6 @@ defmodule Normandy.Test.FakeClientTest do
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
   alias Normandy.Agents.Turn.Driver
-  alias Normandy.Test.TurnShell
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
@@ -27,6 +26,7 @@ defmodule Normandy.Test.FakeClientTest do
   alias Normandy.LLMError
   alias Normandy.Test.FakeClient
   alias Normandy.Test.FakeClient.ScriptExhaustedError
+  alias Normandy.Test.TurnShell
   alias Normandy.Tools.Toolset
   alias Normandy.TurnError
 

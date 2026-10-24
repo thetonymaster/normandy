@@ -24,7 +24,6 @@ defmodule Normandy.Agents.LinearHistoryTest do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Test.TurnShell
   alias Normandy.Behaviours.Compactor
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -33,6 +32,7 @@ defmodule Normandy.Agents.LinearHistoryTest do
   alias Normandy.Components.ToolCall
   alias Normandy.Test.CountingContent
   alias Normandy.Test.ReturnTool
+  alias Normandy.Test.TurnShell
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 

@@ -10,13 +10,12 @@ defmodule Normandy.Agents.ToolLoopReaskTest do
 
   alias Normandy.Agents.{BaseAgent, ToolCallResponse, Turn}
   alias Normandy.Agents.Turn.Server
-  alias Normandy.Test.TurnShell
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.AgentMemory
   alias Normandy.LLMError
   alias Normandy.Schema.ValidationError
-  alias Normandy.Test.{FakeClient, FakeTool}
+  alias Normandy.Test.{FakeClient, FakeTool, TurnShell}
   alias Normandy.Tools.Toolset
 
   defmodule Decision do

@@ -13,7 +13,6 @@ defmodule Normandy.Agents.PauseTurnTest do
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Test.TurnShell
   alias Normandy.Agents.Turn.Server
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
@@ -22,6 +21,7 @@ defmodule Normandy.Agents.PauseTurnTest do
   alias Normandy.MCP.ServerConfig
   alias Normandy.Test.FakeTool
   alias Normandy.Test.StubClient
+  alias Normandy.Test.TurnShell
   alias Normandy.Test.WireScript
   alias Normandy.Tools.Toolset
 

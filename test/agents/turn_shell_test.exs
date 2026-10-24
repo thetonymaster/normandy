@@ -9,9 +9,9 @@ defmodule Normandy.Agents.Turn.ShellTest do
   alias Normandy.Agents.Dispatch
   alias Normandy.Agents.ToolCallResponse
   alias Normandy.Agents.Turn
-  alias Normandy.Test.TurnShell
   alias Normandy.Components.ToolCall
   alias Normandy.Components.ToolResult
+  alias Normandy.Test.TurnShell
   alias Normandy.Tools.Toolset
 
   defmodule WeatherTool do

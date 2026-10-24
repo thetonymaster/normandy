@@ -3,9 +3,8 @@ defmodule Normandy.Agents.ToolContextTest do
 
   alias Normandy.Agents.{BaseAgent, Dispatch, ToolCallResponse, Turn}
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
-  alias Normandy.Test.TurnShell
   alias Normandy.Components.{ToolCall, ToolResult}
-  alias Normandy.Test.{ContextProbe, FakeClient}
+  alias Normandy.Test.{ContextProbe, FakeClient, TurnShell}
   alias Normandy.Tools.{Context, Toolset}
 
   defp probe_call, do: %ToolCall{id: "call_1", name: "probe", input: %{}}
