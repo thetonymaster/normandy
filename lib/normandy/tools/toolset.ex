@@ -29,6 +29,11 @@ defmodule Normandy.Tools.Toolset do
           }
   end
 
+  @typedoc """
+  A toolset. `tools` maps each tool's name to its registration: an internal struct holding
+  the tool and the options `register/3` took, not the tool itself. Read the tools with
+  `list/1` and `fetch/2`, not from the map.
+  """
   @type t :: %__MODULE__{tools: %{String.t() => struct()}}
 
   defstruct tools: %{}

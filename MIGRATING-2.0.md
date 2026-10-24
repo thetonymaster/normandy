@@ -166,8 +166,8 @@ WindowManager.new(max_tokens: 200_000, strategy: :oldest_first)
   raises `ArgumentError` for it; use `:oldest_first`. A stored session template whose
   `Compactor.WindowManager` names it still loads: `ConfigTemplate.rebuild/3` reads it as `:oldest_first`.
 - `WindowManager.truncate_conversation/2` and `ensure_within_limit/2` with `strategy: :summarize` raise
-  `ArgumentError` naming `:client` when the agent has none; 1.x ran `:oldest_first` silently. A
-  `%BaseAgentConfig{}` always has a client; only a hand-built agent map is affected.
+  `ArgumentError` naming `:client` when the agent has none (a config or agent map whose `client` is
+  `nil`); 1.x ran `:oldest_first` silently.
 - `TokenCounter.count_message/2` is removed (it counted against a default model that
   went stale): pass the model, `count_message(client, text, model)`.
 
@@ -2082,7 +2082,9 @@ code you wrote against 1.x must follow the changes below.
   slow update no longer blocks reads and the function **may run more than once**: keep it pure. A
   function that raises raises in the caller and the context survives. After 10 lost commits the
   function runs inside the context process so the update always finishes (a raise there crashes the
-  context, and a function that calls its own context exits with `:calling_self`).
+  context, and a function that calls its own context exits with `:calling_self`). It reads the
+  context's ETS table, so it now works only on the context's own node, as reads already did: a
+  caller on another node gets an `ArgumentError` (1.x went through `GenServer.call`).
 
 ## 43. Turn.Server terminal saves and blank answers
 

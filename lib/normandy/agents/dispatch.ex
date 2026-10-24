@@ -78,6 +78,13 @@ defmodule Normandy.Agents.Dispatch do
   hook modules. For a denial it receives the call as the model sent it (input
   normalized); for an executed result, the call the before-hooks produced.
 
+  The config it gets depends on where the result was made. A call answered at
+  classification (a denial, or a `:needs_approval` verdict answered without an approval)
+  is answered in the calling process with the full config. In a batch (`BaseAgent.run/3`,
+  `BaseAgent.stream/3`, `Turn.Server`), an executed call's after-hooks run in a task whose
+  config leaves out the conversation's memory entries, so `config.memory`'s entries are
+  empty there; read the turn id, name, model, toolset and `tool_context`, not the history.
+
   ## `policy_fn` and `execute_fn`
 
   `policy_fn` is called as `(config, tool_call, invocation)`. `execute_fn` is called as
