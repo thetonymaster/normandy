@@ -29,7 +29,7 @@ defmodule Normandy.LLM.ClientInspect do
   @doc false
   # The one URL-redaction rule (here and in Resilience.CircuitBreaker's breaker key):
   # scheme, host, port (unless the scheme's default) and path only, since userinfo, query
-  # and fragment can carry a token. A URL with no scheme or host gives nil, never its text.
+  # and fragment can carry a token; a token in the path is kept. A URL with no scheme or host gives nil, never its text.
   @spec sanitize_url(String.t()) :: String.t() | nil
   def sanitize_url(url) when is_binary(url) do
     case URI.parse(url) do

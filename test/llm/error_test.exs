@@ -73,6 +73,8 @@ defmodule Normandy.LLMErrorTest do
           {404, {:not_found, false}},
           {400, {:invalid_request, false}},
           {422, {:invalid_request, false}},
+          {599, {:server, true}},
+          {600, {:server, true}},
           {302, {:unknown, false}},
           {200, {:unknown, false}}
         ] do
