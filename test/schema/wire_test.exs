@@ -109,7 +109,7 @@ defmodule Normandy.Schema.WireTest do
     assert Wire.encodable(nil) == nil
   end
 
-  test "title is removed inside $defs, definitions, patternProperties, dependentSchemas and contains" do
+  test "title is removed inside every schema-valued keyword" do
     leaf = %{"type" => "string", "title" => "Leaf"}
 
     spec = %{
@@ -118,7 +118,10 @@ defmodule Normandy.Schema.WireTest do
       "definitions" => %{"b" => leaf},
       "patternProperties" => %{"^x_" => leaf},
       "dependentSchemas" => %{"c" => %{"properties" => %{"d" => leaf}}},
-      "contains" => leaf
+      "contains" => leaf,
+      "propertyNames" => leaf,
+      "unevaluatedProperties" => leaf,
+      "unevaluatedItems" => leaf
     }
 
     stripped = %{"type" => "string"}
@@ -128,7 +131,10 @@ defmodule Normandy.Schema.WireTest do
              "definitions" => %{"b" => stripped},
              "patternProperties" => %{"^x_" => stripped},
              "dependentSchemas" => %{"c" => %{"properties" => %{"d" => stripped}}},
-             "contains" => stripped
+             "contains" => stripped,
+             "propertyNames" => stripped,
+             "unevaluatedProperties" => stripped,
+             "unevaluatedItems" => stripped
            }
   end
 

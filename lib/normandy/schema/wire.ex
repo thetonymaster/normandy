@@ -16,7 +16,8 @@ defmodule Normandy.Schema.Wire do
     * `"$schema"` and `"title"` (atom or string keys) are removed from every schema node;
       a property *named* `title` is kept;
     * it recurses into `properties`, `items`, `additionalProperties`, `not`, `if`,
-      `then`, `else`, `contains`, `anyOf`, `oneOf`, `allOf`, `prefixItems`, and the
+      `then`, `else`, `contains`, `propertyNames`, `unevaluatedProperties`,
+      `unevaluatedItems`, `anyOf`, `oneOf`, `allOf`, `prefixItems`, and the
       schemas of `$defs`, `definitions`, `patternProperties` and `dependentSchemas`.
 
   A node without `:property_order` (a hand-written or MCP schema) keeps its `properties`
@@ -30,7 +31,9 @@ defmodule Normandy.Schema.Wire do
 
   @dropped [:"$schema", "$schema", :title, "title"]
   @schema_keys [:items, "items", :additionalProperties, "additionalProperties", :not, "not"] ++
-                 [:if, "if", :then, "then", :else, "else", :contains, "contains"]
+                 [:if, "if", :then, "then", :else, "else", :contains, "contains"] ++
+                 [:propertyNames, "propertyNames", :unevaluatedProperties] ++
+                 ["unevaluatedProperties", :unevaluatedItems, "unevaluatedItems"]
   @schema_list_keys [:anyOf, "anyOf", :oneOf, "oneOf", :allOf, "allOf"] ++
                       [:prefixItems, "prefixItems"]
   # Maps of name (or pattern) to schema; unlike `properties`, never reordered.

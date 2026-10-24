@@ -27,7 +27,8 @@ defmodule Normandy.Behaviours.PolicyEngine do
   `{:needs_approval, info}`; the moduledoc says what `ctx` holds and what each does.
 
   A denial becomes an error result for the model, with the `info` `:reason` in its text
-  when it is a string or an atom (any other term is not shown). A
+  when it is a non-empty string or an atom other than `nil`, `true` and `false` (any other
+  term is not shown). A
   `:needs_approval` call is parked for `Turn.Session.approve/2` under `Turn.Server`, and
   denied in a shell that cannot ask. A raise, exit or throw is a denial: the call never runs
   un-vetted.
