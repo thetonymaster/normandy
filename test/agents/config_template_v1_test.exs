@@ -52,7 +52,7 @@ defmodule Normandy.Agents.ConfigTemplateV1Test do
              stored_v1_template().behaviours_refs.credential
 
     assert_raise ArgumentError,
-                 ~r/behaviours_refs :credential must be \{module, keyword\} whose module is loaded/,
+                 ~r/CredentialProvider.FromClient, which was removed in 2.0; set the config's behaviours :credential to a Normandy.Behaviours.CredentialProvider module/,
                  fn -> rebuild(stored_v1_template()) end
   end
 
