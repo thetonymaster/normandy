@@ -261,9 +261,7 @@ defmodule Normandy.Agents.Turn.Server do
 
   # Turn.Session.new/1's schema is the single source of the types of the keys a session
   # passes on (ruling P4): a value one accepts, the other accepts too.
-  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
-                   {key, Keyword.fetch!(spec, :type)}
-                 end)
+  @session_types Normandy.Agents.Turn.Session.Options.server_types()
 
   @start_link_opts_schema NimbleOptions.new!(
                             session_id: [
@@ -307,7 +305,7 @@ defmodule Normandy.Agents.Turn.Server do
                                   "template's value wins over this option."
                             ],
                             subscriber: [
-                              type: {:or, [{:fun, 2}, nil]},
+                              type: @session_types.subscriber,
                               doc:
                                 "`fn event_name, meta -> any end`, called in the server process " <>
                                   "for every event. A crash in it is logged, reported as " <>

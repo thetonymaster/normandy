@@ -1,7 +1,7 @@
 defmodule Normandy.Agents.Turn.Session do
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.ConfigTemplate
-  alias Normandy.Agents.Turn.{Server, Start, Supervisor}
+  alias Normandy.Agents.Turn.{Server, Start}
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.TurnError
 
@@ -13,92 +13,9 @@ defmodule Normandy.Agents.Turn.Session do
   # How many servers run/2 tries when the one it found passivated under its call.
   @passivation_attempts 3
 
-  @schema NimbleOptions.new!(
-            session_id: [
-              type: {:custom, __MODULE__, :validate_session_id, []},
-              type_doc: "`t:String.t/0`",
-              required: true,
-              doc:
-                "The session's id: its key in the registry and in the store. A non-empty " <>
-                  "string without `{` or `}` (the Redis stores put it inside a cluster hash tag)."
-            ],
-            registry: [
-              type: {:custom, __MODULE__, :validate_module_handle, []},
-              required: true,
-              doc: "The `Normandy.Behaviours.SessionRegistry`, as `{module, handle}`."
-            ],
-            supervisor: [
-              type: {:or, [:pid, :atom, {:tuple, [:atom, :any]}, {:tuple, [:atom, :atom, :any]}]},
-              required: true,
-              doc: "The supervisor that starts the session's `Turn.Server`: a pid or a name."
-            ],
-            supervisor_mod: [
-              type: {:custom, __MODULE__, :validate_supervisor_mod, []},
-              type_doc: "`t:module/0`",
-              default: Supervisor,
-              doc:
-                "A `Normandy.Agents.Turn.ServerSupervisor`: the module whose " <>
-                  "`start_server/2` starts the server and whose `stop_server/2` stops it " <>
-                  "(`Normandy.Agents.Turn.Supervisor.Horde` in a cluster)."
-            ],
-            store: [
-              type: {:custom, __MODULE__, :validate_module_handle, []},
-              required: true,
-              doc: "The `Normandy.Behaviours.SessionStore`, as `{module, handle}`."
-            ],
-            config: [
-              type: {:custom, __MODULE__, :validate_config, []},
-              type_doc: "a `%Normandy.Agents.BaseAgentConfig{}`",
-              doc:
-                "The `%Normandy.Agents.BaseAgentConfig{}` a server starts with. With " <>
-                  "`:template_provider` too, it is saved as the session's template on first start."
-            ],
-            template_provider: [
-              type: {:custom, __MODULE__, :validate_module_handle, []},
-              doc:
-                "A `Normandy.Behaviours.AgentTemplate`, as `{module, handle}`: the server " <>
-                  "rebuilds its config from the stored template and this node's supplement."
-            ],
-            template_id: [
-              type: :string,
-              doc:
-                "The supplement's id in the template provider. Default: the config's " <>
-                  "`:name`, else `\"default\"`."
-            ],
-            resume_policy: [
-              type: {:in, [:lazy, :eager]},
-              default: :lazy,
-              doc:
-                "`:eager` resumes an unfinished turn when the server restarts, and a Tier-2 " <>
-                  "start saves it so `ResumeReaper` restarts the session after a node loss."
-            ],
-            subscriber: [
-              type: {:fun, 2},
-              doc: "`fn event_name, meta -> any end`, passed to `Turn.Server`."
-            ],
-            handlers: [
-              type: {:or, [{:struct, Normandy.Agents.Turn.Driver.Handlers}, nil]},
-              type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
-              doc: "A `Turn.Driver.Handlers` set, passed to `Turn.Server`; `nil` is its default."
-            ],
-            approval_timeout_ms: [
-              type: :timeout,
-              doc: "Passed to `Turn.Server`, in ms or `:infinity`; saved with a Tier-2 template."
-            ],
-            on_approval_timeout: [
-              type: {:in, [:continue, :fail]},
-              doc: "Passed to `Turn.Server`; saved with a Tier-2 template."
-            ],
-            idle_timeout_ms: [
-              type: :timeout,
-              doc: "Passed to `Turn.Server`, in ms or `:infinity`; saved with a Tier-2 template."
-            ]
-          )
-
-  @doc false
-  # The session keys' types; Turn.Server and AgentProcess reuse them (ruling P4).
-  @spec __opts_schema__(:new) :: NimbleOptions.t()
-  def __opts_schema__(:new), do: @schema
+  # The schema lives in Session.Options (a leaf module), so the modules that reuse its
+  # types at compile time (ruling P4) do not depend on Session at compile time.
+  @schema Normandy.Agents.Turn.Session.Options.schema()
 
   @moduledoc """
   A handle on one durable session. `new/1` checks the options once; `run/2` routes a turn
@@ -187,7 +104,9 @@ defmodule Normandy.Agents.Turn.Session do
     :template_id,
     :subscriber,
     :handlers,
-    supervisor_mod: Supervisor,
+    # The schema's default, not the alias: a compile-time reference to Turn.Supervisor
+    # (which reaches Turn.Server) closed a compile-connected cycle.
+    supervisor_mod: Keyword.fetch!(@schema.schema[:supervisor_mod], :default),
     resume_policy: :lazy,
     server_options: []
   ]
@@ -373,53 +292,6 @@ defmodule Normandy.Agents.Turn.Session do
           "Normandy.Agents.Turn.Session.put_config/2: expected a " <>
             "%Normandy.Agents.BaseAgentConfig{}, got: " <> Describe.type_of(other)
   end
-
-  @doc false
-  # NimbleOptions :custom types. The error never echoes the value: a config holds the
-  # client and its credentials, a handle may hold a connection.
-  def validate_module_handle({module, _handle} = value) when is_atom(module) and module != nil,
-    do: {:ok, value}
-
-  def validate_module_handle(other),
-    do: {:error, "expected a {module, handle} tuple, got: " <> Describe.type_of(other)}
-
-  @doc false
-  # Redis keys put the id inside a cluster hash tag ("ns:{id}:stream"): a brace in it, or
-  # an empty id, would change which part of the key Redis hashes.
-  @spec validate_session_id(term()) :: {:ok, String.t()} | {:error, String.t()}
-  def validate_session_id(id) when is_binary(id) and id != "" do
-    if String.contains?(id, ["{", "}"]),
-      do: {:error, "expected a session id without { or }, got: " <> Describe.type_of(id)},
-      else: {:ok, id}
-  end
-
-  def validate_session_id(other),
-    do: {:error, "expected a non-empty string, got: " <> Describe.type_of(other)}
-
-  @doc false
-  # The ServerSupervisor callbacks, checked by export (a host's module need not declare
-  # the behaviour).
-  @spec validate_supervisor_mod(term()) :: {:ok, module()} | {:error, String.t()}
-  def validate_supervisor_mod(mod) when is_atom(mod) and mod != nil do
-    if Code.ensure_loaded?(mod) and function_exported?(mod, :start_server, 2) and
-         function_exported?(mod, :stop_server, 2) do
-      {:ok, mod}
-    else
-      {:error,
-       "expected a module that implements Normandy.Agents.Turn.ServerSupervisor " <>
-         "(exports start_server/2 and stop_server/2), got: #{inspect(mod)}"}
-    end
-  end
-
-  def validate_supervisor_mod(other),
-    do: {:error, "expected a module, got: " <> Describe.type_of(other)}
-
-  @doc false
-  def validate_config(%BaseAgentConfig{} = config), do: {:ok, config}
-
-  def validate_config(other),
-    do:
-      {:error, "expected a %Normandy.Agents.BaseAgentConfig{}, got: " <> Describe.type_of(other)}
 
   @doc false
   # A session with a template provider and a config saves the config as its template, and

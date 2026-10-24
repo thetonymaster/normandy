@@ -90,9 +90,7 @@ defmodule Normandy.Coordination.AgentProcess do
   # do not apply. Session.new/1's other refusals (the agent id as a session id, a
   # template-backed config without a credential provider) are checked in start_link/1, so
   # a value accepted there cannot fail in init/1.
-  @session_types Map.new(Turn.Session.__opts_schema__(:new).schema, fn {key, spec} ->
-                   {key, Keyword.fetch!(spec, :type)}
-                 end)
+  @session_types Turn.Session.Options.types()
 
   @type agent_id :: String.t()
   @type run_opts :: [timeout: timeout()]
@@ -270,7 +268,7 @@ defmodule Normandy.Coordination.AgentProcess do
   defp check_session_agent_id!(opts) do
     with :server <- Keyword.fetch!(opts, :turn_engine),
          {:ok, id} <- Keyword.fetch(opts, :agent_id),
-         {:error, message} <- Turn.Session.validate_session_id(id) do
+         {:error, message} <- Turn.Session.Options.validate_session_id(id) do
       raise ArgumentError,
             "#{inspect(__MODULE__)}.start_link/1: invalid value for :agent_id option " <>
               "(the session id under turn_engine: :server): " <> message

@@ -55,15 +55,10 @@ defmodule Normandy.Agents.Turn.ResumeReaper do
   # Turn.Server.start_link/1 on every reap, so it takes the types the server takes (which
   # are Turn.Session.new/1's, ruling P4): a value the server would reject raises here, not
   # later in the reaper process.
-  @server_types Map.new(Turn.Server.__opts_schema__(:start_link).schema, fn {key, spec} ->
-                  {key, Keyword.fetch!(spec, :type)}
-                end)
+  @server_types Turn.Session.Options.server_types()
 
   # Turn.Session.new/1's :supervisor_mod check (exports start_server/2 and stop_server/2).
-  @supervisor_mod_type Keyword.fetch!(
-                         Turn.Session.__opts_schema__(:new).schema[:supervisor_mod],
-                         :type
-                       )
+  @supervisor_mod_type @server_types.supervisor_mod
 
   @start_link_opts_schema NimbleOptions.new!(
                             name: [type: :any, doc: "A `t:GenServer.name/0` for the reaper."],

@@ -43,9 +43,7 @@ defmodule Normandy.Cluster do
 
   # :store and :template_provider go to Turn.ResumeReaper, which takes them with the types
   # Turn.Session.new/1 gives them (ruling P4), so a bad value raises here, in the caller.
-  @session_types Map.new(Normandy.Agents.Turn.Session.__opts_schema__(:new).schema, fn
-                   {key, spec} -> {key, Keyword.fetch!(spec, :type)}
-                 end)
+  @session_types Normandy.Agents.Turn.Session.Options.types()
 
   @child_specs_opts_schema NimbleOptions.new!(
                              registry: [

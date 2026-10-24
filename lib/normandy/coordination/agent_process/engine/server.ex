@@ -21,13 +21,10 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
   alias Normandy.WatchedWorker
 
   # The session keys init/3 passes on untouched: all of Session's but the ones it builds
-  # itself (the id, the config and the infra it may start and own). Read at runtime: a
-  # compile-time call to Turn.Session here closes a compile cycle through Batch.Processor.
-  defp session_options do
-    Turn.Session.__opts_schema__(:new).schema
-    |> Keyword.keys()
-    |> Kernel.--([:session_id, :config, :store, :registry, :supervisor])
-  end
+  # itself (the id, the config and the infra it may start and own).
+  @session_options Turn.Session.Options.types()
+                   |> Map.keys()
+                   |> Kernel.--([:session_id, :config, :store, :registry, :supervisor])
 
   @impl true
   def init(opts, agent, agent_id) do
@@ -41,7 +38,7 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
               store: store,
               registry: registry,
               supervisor: supervisor
-            ] ++ Keyword.take(opts, session_options())
+            ] ++ Keyword.take(opts, @session_options)
           )
 
         {:ok, %{session: session, pending_runs: %{}}, owned}

@@ -6,7 +6,6 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   # `Normandy.DSL.Agent`'s generated `new/1` uses the same definition (without
   # defaults), so both entry points accept the same options.
 
-  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Model
   alias Normandy.Behaviours.Config
@@ -206,7 +205,10 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
                   |> Enum.map(fn {key, spec} -> {key, Keyword.delete(spec, :default)} end)
                   |> NimbleOptions.new!()
 
-  @init {BaseAgent, :init, 1}
+  # The caller init/1's errors name. A literal atom, not the alias: a reference to
+  # BaseAgent here (a runtime edge) puts BaseAgent's compile-time read of this module's
+  # schema in a compile-connected cycle with everything BaseAgent reaches.
+  @init {:"Elixir.Normandy.Agents.BaseAgent", :init, 1}
 
   @doc false
   @spec definition() :: keyword()
@@ -410,7 +412,7 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     _ =
       validate_compaction_config!(
         %BaseAgentConfig{client: client, behaviours: behaviours},
-        {BaseAgent, :init, 1}
+        @init
       )
 
     _ = validate_client_options!(client)
