@@ -179,7 +179,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   # Classifies a non-2xx chat-completions response (spec §2).
   @spec __to_llm_error__(integer(), term()) :: LLMError.t()
   def __to_llm_error__(status, body) when is_integer(status) do
-    {type, retryable?} = classify_status(status)
+    {type, retryable?} = LLMError.classify_status(status)
 
     LLMError.new(
       type: type,
@@ -194,7 +194,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
   @spec __to_llm_error__(term()) :: LLMError.t()
   def __to_llm_error__(%module{} = e)
       when module in [Req.TransportError, Mint.TransportError, Mint.HTTPError] do
-    LLMError.new(type: :transport, retryable?: true, detail: Exception.message(e), reason: e)
+    LLMError.transport(e)
   end
 
   def __to_llm_error__(other), do: LLMError.wrap(other)
@@ -219,15 +219,6 @@ defmodule Normandy.LLM.OpenAICompatibleAdapter do
     do: {:error, __to_llm_error__(status, body)}
 
   def __request_outcome__({:error, error}), do: {:error, __to_llm_error__(error)}
-
-  defp classify_status(429), do: {:rate_limit, true}
-  defp classify_status(408), do: {:server, true}
-  defp classify_status(status) when status in 500..599, do: {:server, true}
-  defp classify_status(401), do: {:authentication, false}
-  defp classify_status(403), do: {:permission, false}
-  defp classify_status(404), do: {:not_found, false}
-  defp classify_status(status) when status in 400..499, do: {:invalid_request, false}
-  defp classify_status(_status), do: {:unknown, false}
 
   defp error_detail(%{"error" => %{"message" => message}}, _status) when is_binary(message),
     do: message

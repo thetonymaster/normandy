@@ -59,4 +59,37 @@ defmodule Normandy.LLMErrorTest do
       assert e.message == "LLM call failed: unknown"
     end
   end
+
+  describe "classify_status/1" do
+    for {status, expected} <- [
+          {nil, {:server, true}},
+          {429, {:rate_limit, true}},
+          {529, {:overloaded, true}},
+          {408, {:server, true}},
+          {500, {:server, true}},
+          {503, {:server, true}},
+          {401, {:authentication, false}},
+          {403, {:permission, false}},
+          {404, {:not_found, false}},
+          {400, {:invalid_request, false}},
+          {422, {:invalid_request, false}},
+          {599, {:server, true}},
+          {600, {:server, true}},
+          {302, {:unknown, false}},
+          {200, {:unknown, false}}
+        ] do
+      test "#{inspect(status)} is #{inspect(expected)}" do
+        assert LLMError.classify_status(unquote(status)) == unquote(Macro.escape(expected))
+      end
+    end
+  end
+
+  describe "transport/1" do
+    test "is a retryable :transport error carrying the exception" do
+      e = %Req.TransportError{reason: :econnrefused}
+
+      assert %LLMError{type: :transport, retryable?: true, reason: ^e} = LLMError.transport(e)
+      assert LLMError.transport(e).message =~ Exception.message(e)
+    end
+  end
 end

@@ -72,6 +72,7 @@ defmodule Normandy.Resilience.CircuitBreaker do
   use GenServer
   require Logger
 
+  alias Normandy.LLM.ClientInspect
   alias Normandy.Options
 
   @type state :: :closed | :open | :half_open
@@ -350,27 +351,13 @@ defmodule Normandy.Resilience.CircuitBreaker do
 
   defp endpoint(client) do
     case Map.get(client, :base_url) || options_base_url(client) do
-      url when is_binary(url) -> sanitize_url(url)
+      url when is_binary(url) -> ClientInspect.sanitize_url(url)
       _none -> nil
     end
   end
 
   defp options_base_url(%{options: %{base_url: url}}), do: url
   defp options_base_url(_client), do: nil
-
-  # Scheme, host, port and path only: userinfo, query and fragment can carry a token. A
-  # base_url with no scheme or host (a misconfiguration) gives nil rather than its text.
-  defp sanitize_url(url) do
-    case URI.parse(url) do
-      %URI{scheme: scheme, host: host, port: port, path: path}
-      when is_binary(scheme) and is_binary(host) and host != "" ->
-        port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
-        "#{scheme}://#{host}#{port}#{path}"
-
-      _no_scheme_or_host ->
-        nil
-    end
-  end
 
   @doc """
   Get the current state of the circuit breaker.

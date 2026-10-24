@@ -13,6 +13,39 @@ defmodule NormandyTest.Tools.ToolsetTest do
     end
   end
 
+  describe "Toolset.register_new/3" do
+    defmodule BadName do
+      @behaviour Normandy.Tool
+      defstruct []
+
+      @impl true
+      def name(_tool), do: "bad name"
+      @impl true
+      def description(_tool), do: "d"
+      @impl true
+      def input_schema(_tool), do: nil
+      @impl true
+      def run(_tool, _context), do: {:ok, "x"}
+    end
+
+    test "registers a new valid name" do
+      assert {:ok, registry} = Toolset.register_new(Toolset.new(), %Calculator{}, timeout: 5_000)
+      assert Toolset.timeout(registry, "calculator") == 5_000
+    end
+
+    test "a taken name is an error, not a replace" do
+      registry = Toolset.new([%Calculator{}])
+
+      assert {:error, {:tool_name_taken, "calculator"}} =
+               Toolset.register_new(registry, %Calculator{})
+    end
+
+    test "a name the API would refuse is an error" do
+      assert {:error, {:invalid_tool_name, "bad name"}} =
+               Toolset.register_new(Toolset.new(), struct(BadName))
+    end
+  end
+
   describe "Toolset.new/1" do
     test "creates a toolset with tools" do
       tools = [

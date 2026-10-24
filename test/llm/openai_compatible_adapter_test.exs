@@ -3,6 +3,7 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.Model
   alias Normandy.Components.Message
+  alias Normandy.LLM.ClaudioAdapter
   alias Normandy.LLM.OpenAICompatibleAdapter, as: Adapter
   alias Normandy.LLM.{Request, Response}
 
@@ -457,6 +458,25 @@ defmodule Normandy.LLM.OpenAICompatibleAdapterTest do
 
       assert {:error, %Normandy.LLMError{type: :transport, retryable?: true, status: nil}} =
                call(failing_client(plug))
+    end
+  end
+
+  describe "HTTP status above 599" do
+    test "is a retryable :server error on both adapters (the shared rule is >= 500)" do
+      assert %Normandy.LLMError{type: :server, retryable?: true, status: 600} =
+               Adapter.__to_llm_error__(600, %{})
+
+      assert %Normandy.LLMError{type: :server, retryable?: true, status: 600} =
+               ClaudioAdapter.__to_llm_error__(%Claudio.APIError{
+                 type: :api_error,
+                 status_code: 600,
+                 message: "m"
+               })
+    end
+
+    test "529 is :overloaded on the OpenAI-compatible adapter" do
+      assert %Normandy.LLMError{type: :overloaded, retryable?: true} =
+               Adapter.__to_llm_error__(529, %{})
     end
   end
 end

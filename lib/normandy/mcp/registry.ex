@@ -23,7 +23,6 @@ defmodule Normandy.MCP.Registry do
 
   alias Normandy.MCP.ToolWrapper
   alias Normandy.Options
-  alias Normandy.Tool
   alias Normandy.Tools.Toolset
 
   # The same options as ToolWrapper.new/4, which receives them (one source).
@@ -77,12 +76,9 @@ defmodule Normandy.MCP.Registry do
   # raise in Toolset.register/3; report it as this function's error instead.
   defp register_all(tools, registry) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
-      name = Tool.name(tool)
-
-      cond do
-        not Toolset.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
-        Toolset.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
-        true -> {:cont, {:ok, Toolset.register(reg, tool)}}
+      case Toolset.register_new(reg, tool) do
+        {:ok, reg} -> {:cont, {:ok, reg}}
+        {:error, _reason} = error -> {:halt, error}
       end
     end)
   end

@@ -26,6 +26,23 @@ defmodule Normandy.LLM.ClientInspect do
     )
   end
 
+  @doc false
+  # The one URL-redaction rule (here and in Resilience.CircuitBreaker's breaker key):
+  # scheme, host, port (unless the scheme's default) and path only, since userinfo, query
+  # and fragment can carry a token; a token in the path is kept. A URL with no scheme or host gives nil, never its text.
+  @spec sanitize_url(String.t()) :: String.t() | nil
+  def sanitize_url(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port, path: path}
+      when is_binary(scheme) and is_binary(host) and host != "" ->
+        port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
+        "#{scheme}://#{host}#{port}#{path}"
+
+      _no_scheme_or_host ->
+        nil
+    end
+  end
+
   defp field({key, value}, opts), do: concat([Atom.to_string(key), ": ", to_doc(value, opts)])
 
   defp redact(options) when is_map(options) do
@@ -38,19 +55,7 @@ defmodule Normandy.LLM.ClientInspect do
 
   defp redact(options), do: options
 
-  # CircuitBreaker's sanitize_url/1 rule (scheme, host, port, path). A URL with no scheme
-  # or host is not shown at all.
-  defp url(url) when is_binary(url) do
-    case URI.parse(url) do
-      %URI{scheme: scheme, host: host, port: port, path: path}
-      when is_binary(scheme) and is_binary(host) and host != "" ->
-        port = if port in [nil, URI.default_port(scheme)], do: "", else: ":#{port}"
-        "#{scheme}://#{host}#{port}#{path}"
-
-      _no_scheme_or_host ->
-        "**redacted**"
-    end
-  end
+  defp url(url) when is_binary(url), do: sanitize_url(url) || "**redacted**"
 
   defp url(other), do: other
 end

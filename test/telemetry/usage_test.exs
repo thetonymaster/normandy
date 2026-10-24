@@ -130,4 +130,38 @@ defmodule Normandy.Telemetry.UsageTest do
       assert Usage.normalize(%{input_tokens: 5, prompt_tokens: 99}) == %{input_tokens: 5}
     end
   end
+
+  describe "sum/2" do
+    test "a missing side returns the other" do
+      assert Usage.sum(nil, %{input_tokens: 1}) == %{input_tokens: 1}
+      assert Usage.sum(%{input_tokens: 1}, nil) == %{input_tokens: 1}
+      assert Usage.sum(nil, nil) == nil
+    end
+
+    test "sums integer counts and lets the later side win for other values" do
+      assert Usage.sum(%{input_tokens: 3, service_tier: "a"}, %{
+               input_tokens: 4,
+               service_tier: "b"
+             }) ==
+               %{input_tokens: 7, service_tier: "b"}
+    end
+
+    test "accepts a struct side" do
+      sum = Usage.sum(struct(UsageStruct, input_tokens: 2), %{input_tokens: 5})
+      assert sum.input_tokens == 7
+    end
+
+    test "iterations of both sides are concatenated, a side without one contributes its counts" do
+      sum =
+        Usage.sum(
+          %{input_tokens: 1, output_tokens: 1, iterations: [%{"input_tokens" => 1}]},
+          %{input_tokens: 4, output_tokens: 2}
+        )
+
+      assert sum.iterations == [
+               %{"input_tokens" => 1},
+               %{"input_tokens" => 4, "output_tokens" => 2}
+             ]
+    end
+  end
 end

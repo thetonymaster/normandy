@@ -22,7 +22,6 @@ defmodule Normandy.A2A.Registry do
   alias Claudio.A2A.Client
   alias Normandy.A2A.AgentTool
   alias Normandy.Options
-  alias Normandy.Tool
   alias Normandy.Tools.Toolset
 
   # AgentTool.new/3's options except :skill_id, which from_agent_card/3 sets per skill.
@@ -117,12 +116,9 @@ defmodule Normandy.A2A.Registry do
   # raise in Toolset.register/3; report it as this function's error instead.
   defp register_all(tools, registry, register_opts) do
     Enum.reduce_while(tools, {:ok, registry}, fn tool, {:ok, reg} ->
-      name = Tool.name(tool)
-
-      cond do
-        not Toolset.valid_name?(name) -> {:halt, {:error, {:invalid_tool_name, name}}}
-        Toolset.has_tool?(reg, name) -> {:halt, {:error, {:tool_name_taken, name}}}
-        true -> {:cont, {:ok, Toolset.register(reg, tool, register_opts)}}
+      case Toolset.register_new(reg, tool, register_opts) do
+        {:ok, reg} -> {:cont, {:ok, reg}}
+        {:error, _reason} = error -> {:halt, error}
       end
     end)
   end
