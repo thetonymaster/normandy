@@ -3,6 +3,10 @@ defmodule Bench.Support do
   # BENCH_* env vars, the banner each script prints, and the path assertion it makes
   # before measuring.
 
+  # Dev logs every agent run and LLM call at :debug; at bench rates that is console I/O
+  # being measured, not Normandy. The bench VM exits after the run.
+  Logger.configure(level: :warning)
+
   @results_dir "bench/results"
   @tag_format ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/
 
