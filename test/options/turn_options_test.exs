@@ -3,7 +3,9 @@ defmodule Normandy.Options.TurnOptionsTest do
 
   import Normandy.Test.OptionsAssertions
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Turn
+  alias Normandy.Agents.Turn.Driver.Handlers
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
 
@@ -125,7 +127,7 @@ defmodule Normandy.Options.TurnOptionsTest do
     # No shell runs a handler set's dispatch_tools (tools go through Dispatch); a custom one
     # is refused rather than ignored.
     test "Turn.Server.start_link/1 rejects a :handlers set with a custom dispatch_tools" do
-      handlers = %{Turn.Driver.Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
+      handlers = %{Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
 
       error =
         assert_raise ArgumentError, fn ->
@@ -143,7 +145,7 @@ defmodule Normandy.Options.TurnOptionsTest do
     end
 
     test "Turn.Session.new/1 rejects a :handlers set with a custom dispatch_tools" do
-      handlers = %{Turn.Driver.Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
+      handlers = %{Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
 
       error =
         assert_raise ArgumentError, fn ->
@@ -152,7 +154,7 @@ defmodule Normandy.Options.TurnOptionsTest do
             registry: {Native, nil},
             supervisor: self(),
             store: {InMemory, nil},
-            config: %Normandy.Agents.BaseAgentConfig{},
+            config: %BaseAgentConfig{},
             handlers: handlers
           )
         end
@@ -163,8 +165,8 @@ defmodule Normandy.Options.TurnOptionsTest do
 
     test "the default set and a set with a nil dispatch_tools are accepted" do
       for handlers <- [
-            Turn.Driver.Handlers.default(),
-            %{Turn.Driver.Handlers.default() | dispatch_tools: nil}
+            Handlers.default(),
+            %{Handlers.default() | dispatch_tools: nil}
           ] do
         assert %Turn.Session{handlers: ^handlers} =
                  Turn.Session.new(
@@ -172,7 +174,7 @@ defmodule Normandy.Options.TurnOptionsTest do
                    registry: {Native, nil},
                    supervisor: self(),
                    store: {InMemory, nil},
-                   config: %Normandy.Agents.BaseAgentConfig{},
+                   config: %BaseAgentConfig{},
                    handlers: handlers
                  )
       end

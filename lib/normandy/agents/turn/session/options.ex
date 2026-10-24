@@ -13,6 +13,7 @@ defmodule Normandy.Agents.Turn.Session.Options do
   # compile time.
   @default_supervisor_mod :"Elixir.Normandy.Agents.Turn.Supervisor"
   @handlers :"Elixir.Normandy.Agents.Turn.Driver.Handlers"
+  @agent_handlers :"Elixir.Normandy.Agents.BaseAgent.Handlers"
   # A %BaseAgentConfig{} pattern would wait for that struct's module (and through it the
   # Schema compile cycle) while every reader of this schema waits here: on a 4-core
   # runner Elixir 1.20 then reported this module missing to engine/server.ex.
@@ -159,10 +160,13 @@ defmodule Normandy.Agents.Turn.Session.Options do
   @doc false
   # No shell runs a set's dispatch_tools: Turn.Server sends tool calls through
   # Normandy.Agents.Dispatch (policy, approval, budget, hooks), so a custom one would be
-  # ignored. nil or the default's own function pass; the field goes in 3.0.
+  # ignored. nil or one of BaseAgent's own (a function of @agent_handlers) passes; the field
+  # goes in 3.0. Calling Handlers.default/0 here would put this leaf back in the
+  # compile-connected cycle, so the default is recognised by the module its function is in.
   @spec validate_handlers(term()) :: {:ok, struct()} | {:error, String.t()}
   def validate_handlers(%{__struct__: @handlers, dispatch_tools: dispatch} = handlers) do
-    if dispatch == nil or dispatch == @handlers.default().dispatch_tools do
+    if dispatch == nil or
+         (is_function(dispatch) and Function.info(dispatch, :module) == {:module, @agent_handlers}) do
       {:ok, handlers}
     else
       {:error,
