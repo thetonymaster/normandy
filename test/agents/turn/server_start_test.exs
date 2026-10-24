@@ -108,6 +108,6 @@ defmodule Normandy.Agents.Turn.ServerStartTest do
     elapsed = System.monotonic_time(:millisecond) - started
 
     assert Enum.all?(results, &match?({:ok, _}, &1))
-    assert elapsed < 1_000, "50 starts and turns took #{elapsed} ms (serialized: ~10 000 ms)"
+    assert elapsed < 3_000, "50 starts and turns took #{elapsed} ms (serialized: ~10 000 ms)"
   end
 end

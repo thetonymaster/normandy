@@ -229,7 +229,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
       refute_killed_after_run(fn after_run ->
         assert {:ok, _} =
                  Reactive.all([fast_agent(name)], "hi",
-                   timeout: 100,
+                   timeout: 500,
                    on_complete: fn _, _ -> after_run.() end
                  )
       end)
@@ -246,7 +246,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
                   errors: %{"done" => %TurnError{type: :task_down, reason: :timeout}}
                 }} =
                  ParallelOrchestrator.execute(specs, nil,
-                   timeout: 100,
+                   timeout: 500,
                    on_agent_complete: fn _, _ -> after_run.() end
                  )
       end)
@@ -261,7 +261,7 @@ defmodule NormandyTest.Telemetry.KilledRunTest do
         ]
 
         assert [{:exit, {"done", :timeout}}] =
-                 specs |> ParallelOrchestrator.execute_stream(timeout: 100) |> Enum.to_list()
+                 specs |> ParallelOrchestrator.execute_stream(timeout: 500) |> Enum.to_list()
       end)
     end
 

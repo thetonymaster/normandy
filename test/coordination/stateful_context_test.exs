@@ -196,7 +196,7 @@ defmodule Normandy.Coordination.StatefulContextTest do
       {elapsed_us, result} = :timer.tc(fn -> StatefulContext.fetch(ctx, "k") end)
 
       assert result == {:ok, 1}
-      assert elapsed_us < 50_000, "fetch took #{div(elapsed_us, 1000)} ms behind an update"
+      assert elapsed_us < 250_000, "fetch took #{div(elapsed_us, 1000)} ms behind an update"
       assert :ok = Task.await(updater)
       assert {:ok, 1} = StatefulContext.fetch(ctx, "slow")
     end

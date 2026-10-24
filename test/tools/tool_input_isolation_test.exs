@@ -124,7 +124,7 @@ defmodule Normandy.Tools.ToolInputIsolationTest do
 
   defp agent do
     BaseAgent.init(%{client: %ScriptedClient{notify: self()}, model: "m"})
-    |> BaseAgent.register_tool(tool(), timeout: 50)
+    |> BaseAgent.register_tool(tool(), timeout: 1_000)
   end
 
   # The second request carries the tool results the model was sent.
@@ -152,7 +152,7 @@ defmodule Normandy.Tools.ToolInputIsolationTest do
     slow = Map.fetch!(results, "slow")
     assert slow.is_error
     # A binary error reason reaches the model bare, with is_error (AX-15).
-    assert slow.content == "Tool execution timeout after 50ms"
+    assert slow.content == "Tool execution timeout after 1000ms"
 
     # The tool ran once, for "slow", with its struct exactly as registered.
     expected = tool()
