@@ -9,7 +9,6 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
   alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Model
-  alias Normandy.Behaviours.Compactor.WindowManager, as: WindowCompactor
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.Hooks
   alias Normandy.Behaviours.ModelCatalog
@@ -502,25 +501,12 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
               Describe.type_of(compactor_opts)
     end
 
-    if compactor == Normandy.Behaviours.Compactor.WindowManager and
-         Keyword.has_key?(compactor_opts, :max_tokens) do
-      raise ArgumentError,
-            "#{prefix} the :max_tokens option " <>
-              "of Normandy.Behaviours.Compactor.WindowManager was renamed to :context_window " <>
-              "in 2.0; see MIGRATING-2.0.md §22"
-    end
-
-    _ =
-      if compactor == WindowCompactor,
-        do: WindowCompactor.validate_opts!(compactor_opts, entry)
+    _ = validate_compactor_opts!(compactor, compactor_opts, entry)
 
     needs_api_lookup? =
-      compactor != Normandy.Behaviours.Compactor.NoOp and
+      compactor_needs_window?(compactor, compactor_opts) and
         not Keyword.has_key?(compactor_opts, :context_window) and
-        catalog in [
-          Normandy.Behaviours.ModelCatalog.ModelsAPI,
-          Normandy.Behaviours.ModelCatalog.Static
-        ]
+        catalog_needs_claudio_client?(config)
 
     if needs_api_lookup? and not match?(%Normandy.LLM.ClaudioAdapter{}, config.client) do
       raise ArgumentError,
@@ -532,6 +518,43 @@ defmodule Normandy.Agents.BaseAgent.InitOptions do
     end
 
     config
+  end
+
+  # The compactor checks its own opts (optional Compactor.validate_opts!/2); the result is
+  # not used. A /1 (the Hooks and PolicyEngine arity) would be silently ignored, so refuse it.
+  defp validate_compactor_opts!(mod, opts, entry) do
+    cond do
+      not Code.ensure_loaded?(mod) ->
+        :ok
+
+      function_exported?(mod, :validate_opts!, 2) ->
+        mod.validate_opts!(opts, entry)
+
+      function_exported?(mod, :validate_opts!, 1) ->
+        raise ArgumentError,
+              "compactor #{inspect(mod)} defines validate_opts!/1, which is never called: " <>
+                "the Normandy.Behaviours.Compactor callback is validate_opts!(opts, entry)"
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc false
+  # Optional Compactor.needs_window?/1; a compactor that does not say needs one.
+  @spec compactor_needs_window?(module(), keyword()) :: boolean()
+  def compactor_needs_window?(mod, opts) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :needs_window?, 1),
+      do: mod.needs_window?(opts),
+      else: true
+  end
+
+  # Optional ModelCatalog.needs_claudio_client?/1; a catalog that does not say does not.
+  defp catalog_needs_claudio_client?(config) do
+    {mod, opts} = catalog_ref(config)
+
+    Code.ensure_loaded?(mod) and function_exported?(mod, :needs_claudio_client?, 1) and
+      mod.needs_claudio_client?(opts)
   end
 
   defp client_kind(%{__struct__: mod}), do: "a #{inspect(mod)}"

@@ -2,6 +2,7 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
   use ExUnit.Case, async: true
 
   alias Normandy.Agents.BaseAgent
+  alias Normandy.Agents.BaseAgent.InitOptions
   alias Normandy.Behaviours.{Compactor, Config}
 
   defmodule OtherClient do
@@ -113,5 +114,75 @@ defmodule Normandy.Agents.BaseAgentCompactionConfigTest do
       assert %{} = init(%ClaudioAdapter{api_key: "k", options: %{effort: :high}}, @pinned)
       assert %{} = init(%OtherClient{}, nil)
     end
+  end
+
+  defmodule HostCompactor do
+    @behaviour Normandy.Behaviours.Compactor
+    @impl true
+    def maybe_compact(acc, _ctx, _opts), do: {acc, %{compacted: false}}
+    @impl true
+    def validate_opts!(opts, _entry) do
+      if Keyword.has_key?(opts, :typo), do: raise(ArgumentError, "HostCompactor: no :typo")
+      opts
+    end
+
+    @impl true
+    def needs_window?(opts), do: Keyword.get(opts, :windowed, false)
+  end
+
+  test "a host compactor whose validate_opts!/2 raises fails at init" do
+    behaviours = %Config{compactor: {HostCompactor, [typo: 1]}}
+
+    assert_raise ArgumentError, "HostCompactor: no :typo", fn ->
+      init(%OtherClient{}, behaviours)
+    end
+  end
+
+  test "a host compactor's needs_window?/1 decides whether the catalog needs a Claudio client" do
+    assert %Normandy.Agents.BaseAgentConfig{} =
+             init(%OtherClient{}, %Config{compactor: {HostCompactor, []}})
+
+    assert_raise ArgumentError, ~r/needs the model's context window/, fn ->
+      init(%OtherClient{}, %Config{compactor: {HostCompactor, [windowed: true]}})
+    end
+  end
+
+  defmodule ArityOneCompactor do
+    @behaviour Normandy.Behaviours.Compactor
+    @impl true
+    def maybe_compact(acc, _ctx, _opts), do: {acc, %{compacted: false}}
+    def validate_opts!(opts), do: opts
+  end
+
+  defmodule BareCompactor do
+    @behaviour Normandy.Behaviours.Compactor
+    @impl true
+    def maybe_compact(acc, _ctx, _opts), do: {acc, %{compacted: false}}
+  end
+
+  test "a compactor with validate_opts!/1 but not /2 is refused at init" do
+    error =
+      assert_raise ArgumentError, fn ->
+        init(%OtherClient{}, %Config{compactor: {ArityOneCompactor, []}})
+      end
+
+    assert error.message =~ inspect(ArityOneCompactor)
+    assert error.message =~ "validate_opts!(opts, entry)"
+  end
+
+  test "a compactor and a catalog with no optional callbacks: window needed, no Claudio client" do
+    # compactor needs a window, the catalog (no needs_claudio_client?/1) does not need Claudio
+    assert %Normandy.Agents.BaseAgentConfig{} =
+             init(%OtherClient{}, %Config{
+               compactor: {BareCompactor, []},
+               model_catalog: {CustomCatalog, []}
+             })
+
+    # the default catalog needs Claudio, so a bare compactor (needs a window) is refused
+    assert_raise ArgumentError, ~r/needs the model's context window/, fn ->
+      init(%OtherClient{}, %Config{compactor: {BareCompactor, []}})
+    end
+
+    assert InitOptions.compactor_needs_window?(BareCompactor, [])
   end
 end
