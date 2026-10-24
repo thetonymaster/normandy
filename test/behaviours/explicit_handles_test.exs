@@ -27,6 +27,8 @@ defmodule Normandy.Behaviours.ExplicitHandlesTest do
   end
 
   test "the Postgres stores have no default-handle constructor" do
+    Code.ensure_loaded!(SessionStore.Postgres)
+    Code.ensure_loaded!(MemoryStore.Postgres)
     refute function_exported?(SessionStore.Postgres, :new, 0)
     refute function_exported?(MemoryStore.Postgres, :new, 0)
   end

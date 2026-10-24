@@ -42,6 +42,8 @@ defmodule Normandy.Context.TokenCounterTest do
 
   describe "count_message/3" do
     test "has no default model: count_message/2 is gone" do
+      # function_exported?/3 is false for a module not loaded yet.
+      Code.ensure_loaded!(TokenCounter)
       refute function_exported?(TokenCounter, :count_message, 2)
       assert function_exported?(TokenCounter, :count_message, 3)
     end

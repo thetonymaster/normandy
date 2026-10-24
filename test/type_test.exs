@@ -73,6 +73,7 @@ defmodule Normandy.TypeTest do
             load: 2,
             load: 3
           ] do
+        Code.ensure_loaded!(Normandy.Type)
         refute function_exported?(Normandy.Type, fun, arity), "#{fun}/#{arity} is back"
       end
     end

@@ -31,6 +31,7 @@ defmodule Normandy.Context.WindowManagerTest do
 
     test "has no model_limits field and no for_model/2" do
       refute Map.has_key?(WindowManager.new(max_tokens: 10), :model_limits)
+      Code.ensure_loaded!(WindowManager)
       refute function_exported?(WindowManager, :for_model, 2)
     end
 
