@@ -40,7 +40,9 @@ defmodule Normandy.Agents.Turn.DriverTest do
     fun.()
     flunk("expected a raise")
   rescue
-    e -> {e, __STACKTRACE__ |> hd() |> elem(0)}
+    e ->
+      [{module, _fun, _arity, _location} | _] = __STACKTRACE__
+      {e, module}
   end
 
   test "drive/3 raises the LLMError a validate raised, through the core" do
