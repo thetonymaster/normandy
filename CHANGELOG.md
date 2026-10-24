@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - - -
+## [v2.5.2](https://github.com/thetonymaster/normandy/compare/5641ce49aa37d0e6312d39629e512fdb4491e2d3..v2.5.2) - 2026-10-24
+#### Bug Fixes
+- refuse a :handlers set with a custom dispatch_tools (#65) - ([1840892](https://github.com/thetonymaster/normandy/commit/184089242e1aaa652c1bc2c4d7bb34511dbba173)) - Antonio Cabrera
+#### Miscellaneous Chores
+- configure agent skills (issue tracker, triage labels, domain docs) (#64) - ([5641ce4](https://github.com/thetonymaster/normandy/commit/5641ce49aa37d0e6312d39629e512fdb4491e2d3)) - Antonio Cabrera
+
+- - -
+
 ## [v2.5.1](https://github.com/thetonymaster/normandy/compare/3904b06bd3d9fa55db20b70e21bc413f9a463862..v2.5.1) - 2026-10-24
 #### Bug Fixes
 - find a JSON answer nested at any depth in prose (#63) - ([3904b06](https://github.com/thetonymaster/normandy/commit/3904b06bd3d9fa55db20b70e21bc413f9a463862)) - Antonio Cabrera
