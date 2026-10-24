@@ -17,7 +17,7 @@
         "cache_control": {
           "type": "ephemeral"
         },
-        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach user message is a JSON object that matches this schema:\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
+        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
         "type": "text"
       }
     ],
@@ -110,7 +110,7 @@
         "cache_control": {
           "type": "ephemeral"
         },
-        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach user message is a JSON object that matches this schema:\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
+        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase one\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
         "type": "text"
       }
     ],
@@ -206,7 +206,7 @@
         "cache_control": {
           "type": "ephemeral"
         },
-        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach user message is a JSON object that matches this schema:\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
+        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
         "type": "text"
       }
     ],
@@ -331,7 +331,7 @@
         "cache_control": {
           "type": "ephemeral"
         },
-        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach user message is a JSON object that matches this schema:\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
+        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
         "type": "text"
       }
     ],
@@ -411,7 +411,7 @@
         "cache_control": {
           "type": "ephemeral"
         },
-        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach user message is a JSON object that matches this schema:\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
+        "text": "# Role\n- You answer questions about cities.\n# Context\nUse this information where it is relevant to the request.\n## Phase\nphase two\n\n# INPUT SCHEMA\nEach new user input is a JSON object that matches this schema (tool results are not):\n```json\n{\n  \"type\": \"object\",\n  \"description\": \"A question about a city\",\n  \"required\": [\n    \"text\"\n  ],\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\"\n    },\n    \"lang\": {\n      \"default\": \"en\",\n      \"type\": \"string\"\n    }\n  }\n}\n```",
         "type": "text"
       }
     ],

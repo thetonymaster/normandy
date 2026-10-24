@@ -1176,7 +1176,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
       with_schema_section(
         system_prompt,
         "INPUT SCHEMA",
-        "Each user message is a JSON object that matches this schema:",
+        "Each new user input is a JSON object that matches this schema (tool results are not):",
         input_schema
       )
 

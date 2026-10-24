@@ -170,6 +170,9 @@ defmodule Normandy.Agents.ValidationMiddlewareTest do
         assert {:ok, ^output} = ValidationMiddleware.validate_output(cfg, output)
       end
 
+      assert {:ok, %Entries{}} =
+               ValidationMiddleware.validate_output(cfg, %{by_key: %{"k" => entry}})
+
       for output <- [%Entries{listed: [%Entry{}]}, %Entries{by_key: %{"k" => %Entry{}}}] do
         assert {:error, [_ | _]} = ValidationMiddleware.validate_output(cfg, output)
       end

@@ -91,7 +91,7 @@ defmodule Normandy.Telemetry.Usage do
 
   @doc """
   Adds two raw provider usage maps (or structs), the one rule for combining the usage of
-  several calls. A `nil` side returns the other. Keys are atoms in the result, so a
+  several calls. A `nil` side returns the other (as a map). Keys are atoms in the result, so a
   string-keyed (wire) side adds to an atom-keyed one. Integer counts are summed and any other
   value is the later side's. When either side carries `iterations`, the result's
   `iterations` are both sides' entries in order (a side without them contributes one entry
@@ -107,8 +107,9 @@ defmodule Normandy.Telemetry.Usage do
       %{input_tokens: 4}
   """
   @spec sum(map() | struct() | nil, map() | struct() | nil) :: map() | struct() | nil
-  def sum(nil, usage), do: usage
-  def sum(usage, nil), do: usage
+  def sum(nil, nil), do: nil
+  def sum(nil, usage), do: plain(usage)
+  def sum(usage, nil), do: plain(usage)
 
   def sum(%{} = a, %{} = b) do
     a = plain(a)

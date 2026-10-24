@@ -136,6 +136,8 @@ defmodule Normandy.Telemetry.UsageTest do
       assert Usage.sum(nil, %{input_tokens: 1}) == %{input_tokens: 1}
       assert Usage.sum(%{input_tokens: 1}, nil) == %{input_tokens: 1}
       assert Usage.sum(nil, nil) == nil
+      assert Usage.sum(nil, %{"input_tokens" => 4}) == %{input_tokens: 4}
+      assert Usage.sum(%{"input_tokens" => 4}, nil) == %{input_tokens: 4}
     end
 
     test "sums integer counts and lets the later side win for other values" do

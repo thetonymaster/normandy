@@ -207,7 +207,7 @@ defmodule Normandy.Agents.ValidationMiddleware do
 
   def validate_output(%BaseAgentConfig{output_schema: output_schema}, output)
       when is_map(output) do
-    validate_output_map(output_schema, output)
+    validate_output_map(output_schema, present_fields(output))
   end
 
   defp validate_output_map(output_schema, output_map) do
