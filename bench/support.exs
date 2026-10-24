@@ -83,7 +83,7 @@ defmodule Bench.Support do
         else
           raise ArgumentError,
                 "#{var}=#{inspect(tag)}: tags may only use letters, digits, . _ - " <>
-                  "(and start with a letter or digit)"
+                  "(start with a letter or digit, no \"..\")"
         end
     end
   end

@@ -79,13 +79,14 @@ Support.assert!(
 Support.banner(
   "AgentMemory.request_messages_for/2",
   Enum.map(sizes, &elem(&1, 0)),
-  "linear in message count (runs on every LLM call)"
+  "linear in message count (runs on every LLM call). The thinking in the rich variant " <>
+    "is stale (prefix key 0 against 1), so it times the drop path, not kept thinking"
 )
 
 Benchee.run(
   %{
     "plain" => fn input -> AgentMemory.request_messages_for(input.plain, prefix_key) end,
-    "tool rounds + thinking" => fn input ->
+    "tool rounds + stale thinking" => fn input ->
       AgentMemory.request_messages_for(input.rich, prefix_key)
     end
   },
