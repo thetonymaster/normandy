@@ -18,6 +18,7 @@ Normandy is an Elixir library for building AI agents with structured schemas, va
 - `mix test test/path/to/test.exs:42` - Run a specific test at line 42
 - `mix credo --strict` - Lint; stock `.credo.exs`. Complexity/nesting findings get an inline `# credo:disable-for-next-line`, never a global threshold change
 - `mix dialyzer` - Type analysis; PLTs live in `_build/plts`, accepted warnings in `.dialyzer_ignore.exs` (each with a reason)
+- `mix bench [bench/x.exs]` - Benchee scripts in `bench/` (dev only, run by hand, no CI); `BENCH_QUICK=1`, and `BENCH_SAVE=tag` / `BENCH_COMPARE=tag` compare commits locally (`bench/README.md`)
 - `tools/api_diff/run.sh main` - Public API removed or changed since `main` that MIGRATING-2.0.md does not name (exit 1 lists them); reviewed exceptions in `tools/api_diff/reviewed.txt`
 
 ### Dependencies
