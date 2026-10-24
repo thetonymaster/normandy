@@ -2162,7 +2162,11 @@ code you wrote against 1.x must follow the changes below.
     `BaseAgent` is the public facade only. Build a custom `Turn.Server` `:handlers` set from
     `Turn.Driver.Handlers.default/0` instead of `BaseAgent.non_streaming_handlers()`
     (`%{Turn.Driver.Handlers.default() | validate: my_validate}`); omit `:handlers` to get the
-    default set.
+    default set. A set's `dispatch_tools` is deprecated (removed in 3.0): no shell ran a
+    custom one, since tool calls go through `Normandy.Agents.Dispatch`, and `Turn.Server`,
+    `Turn.Session`, `AgentProcess` and `ResumeReaper` now refuse a set whose `dispatch_tools`
+    is neither `nil` nor the default's. Change tool behaviour with `Normandy.Behaviours`
+    (policy, budget, hooks) or the tools you register.
 - To test a hook under the library's rules (ordering, `:on_error`, return contracts), run
   it through an agent: `BaseAgent.run/3` on a config whose `behaviours` lists the hook. The
   hooks guide's "Testing a hook" section shows it. Calling the hook runner directly is no

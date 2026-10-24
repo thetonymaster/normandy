@@ -3,7 +3,9 @@ defmodule Normandy.Options.TurnOptionsTest do
 
   import Normandy.Test.OptionsAssertions
 
+  alias Normandy.Agents.BaseAgentConfig
   alias Normandy.Agents.Turn
+  alias Normandy.Agents.Turn.Driver.Handlers
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
 
@@ -120,6 +122,83 @@ defmodule Normandy.Options.TurnOptionsTest do
         end
 
       assert error.message =~ ":handlers"
+    end
+
+    # No shell runs a handler set's dispatch_tools (tools go through Dispatch); a custom one
+    # is refused rather than ignored.
+    test "Turn.Server.start_link/1 rejects a :handlers set with a custom dispatch_tools" do
+      handlers = %{Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Server.start_link(
+            session_id: "s-custom-dispatch",
+            store: {InMemory, InMemory.new()},
+            registry: {Native, Native.new()},
+            handlers: handlers
+          )
+        end
+
+      assert error.message =~ ~r/^Normandy\.Agents\.Turn\.Server\.start_link\/1: /
+      assert error.message =~ "dispatch_tools"
+      assert error.message =~ "Normandy.Behaviours"
+    end
+
+    test "Turn.Session.new/1 rejects a :handlers set with a custom dispatch_tools" do
+      handlers = %{Handlers.default() | dispatch_tools: fn _acc, _calls -> [] end}
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(
+            session_id: "s-custom-dispatch",
+            registry: {Native, nil},
+            supervisor: self(),
+            store: {InMemory, nil},
+            config: %BaseAgentConfig{},
+            handlers: handlers
+          )
+        end
+
+      assert error.message =~ ~r/^Normandy\.Agents\.Turn\.Session\.new\/1: /
+      assert error.message =~ "dispatch_tools"
+    end
+
+    test "another BaseAgent.Handlers function as dispatch_tools is refused too" do
+      handlers = %{
+        Handlers.default()
+        | dispatch_tools: &Normandy.Agents.BaseAgent.Handlers.admit_turn_input/2
+      }
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Turn.Session.new(
+            session_id: "s-other-agent-fun",
+            registry: {Native, nil},
+            supervisor: self(),
+            store: {InMemory, nil},
+            config: %BaseAgentConfig{},
+            handlers: handlers
+          )
+        end
+
+      assert error.message =~ "dispatch_tools"
+    end
+
+    test "the default set and a set with a nil dispatch_tools are accepted" do
+      for handlers <- [
+            Handlers.default(),
+            %{Handlers.default() | dispatch_tools: nil}
+          ] do
+        assert %Turn.Session{handlers: ^handlers} =
+                 Turn.Session.new(
+                   session_id: "s-default-dispatch",
+                   registry: {Native, nil},
+                   supervisor: self(),
+                   store: {InMemory, nil},
+                   config: %BaseAgentConfig{},
+                   handlers: handlers
+                 )
+      end
     end
 
     # Ruling P4: the session keys' types come from Turn.Session.new/1's schema, whose

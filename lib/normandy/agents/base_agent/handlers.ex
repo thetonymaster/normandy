@@ -581,7 +581,7 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   def non_streaming_handlers do
     %Driver.Handlers{
       call_llm: &call_turn_llm/3,
-      dispatch_tools: &dispatch_turn_tools/2,
+      dispatch_tools: &__MODULE__.dispatch_turn_tools/2,
       convert: &convert_turn_output/3,
       validate: &validate_turn_output/2,
       guard: &run_output_guardrails/2,
@@ -691,7 +691,10 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
     |> Request.new()
   end
 
-  defp dispatch_turn_tools(config, calls),
+  @doc false
+  # A remote capture in non_streaming_handlers/0, so Turn.Session.Options can recognise the
+  # default dispatch_tools by name (Function.info/1) without calling into this module.
+  def dispatch_turn_tools(config, calls),
     do: Dispatch.dispatch_batch(config, calls, base_agent_pipeline(config), fn _ -> :ok end)
 
   # Called only when convert_needed? is true (the tool-loop case). The FSM passes

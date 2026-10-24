@@ -35,6 +35,12 @@ defmodule Normandy.Agents.Turn.Driver do
     carrying `reask: %{response:, error:}`. `BaseAgent`'s `call_llm` adds the errors to that
     request as feedback; a custom `call_llm` that ignores `:reask` sends the same request
     again, so a custom set should do the same or run with no re-asks (AX-18).
+
+    `dispatch_tools` is deprecated and goes in 3.0. Tool calls run through
+    `Normandy.Agents.Dispatch` in every shell, so `Turn.Server`, `Turn.Session`,
+    `AgentProcess` and `ResumeReaper` refuse a set whose `dispatch_tools` is not `nil` or
+    the default's. Change tool behaviour with `Normandy.Behaviours` (policy, budget, hooks)
+    or the tools you register.
     """
 
     alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers

@@ -13,6 +13,7 @@ defmodule Normandy.Agents.Turn.Session.Options do
   # compile time.
   @default_supervisor_mod :"Elixir.Normandy.Agents.Turn.Supervisor"
   @handlers :"Elixir.Normandy.Agents.Turn.Driver.Handlers"
+  @agent_handlers :"Elixir.Normandy.Agents.BaseAgent.Handlers"
   # A %BaseAgentConfig{} pattern would wait for that struct's module (and through it the
   # Schema compile cycle) while every reader of this schema waits here: on a 4-core
   # runner Elixir 1.20 then reported this module missing to engine/server.ex.
@@ -82,7 +83,7 @@ defmodule Normandy.Agents.Turn.Session.Options do
               doc: "`fn event_name, meta -> any end`, passed to `Turn.Server`."
             ],
             handlers: [
-              type: {:or, [{:struct, @handlers}, nil]},
+              type: {:or, [{:custom, __MODULE__, :validate_handlers, []}, nil]},
               type_doc: "a `Normandy.Agents.Turn.Driver.Handlers` or `nil`",
               doc: "A `Turn.Driver.Handlers` set, passed to `Turn.Server`; `nil` is its default."
             ],
@@ -155,6 +156,36 @@ defmodule Normandy.Agents.Turn.Session.Options do
 
   def validate_supervisor_mod(other),
     do: {:error, "expected a module, got: " <> Describe.type_of(other)}
+
+  @doc false
+  # No shell runs a set's dispatch_tools: Turn.Server sends tool calls through
+  # Normandy.Agents.Dispatch (policy, approval, budget, hooks), so a custom one would be
+  # ignored. nil or the default's (BaseAgent.Handlers.dispatch_turn_tools/2) passes; the
+  # field goes in 3.0. Calling Handlers.default/0 or capturing that function here would put
+  # this leaf back in the compile-connected cycle, so the default is recognised by name.
+  @spec validate_handlers(term()) :: {:ok, struct()} | {:error, String.t()}
+  def validate_handlers(%{__struct__: @handlers, dispatch_tools: dispatch} = handlers) do
+    if dispatch == nil or default_dispatch?(dispatch) do
+      {:ok, handlers}
+    else
+      {:error,
+       "a custom dispatch_tools is not supported: tool calls run through " <>
+         "Normandy.Agents.Dispatch; change tool behaviour with Normandy.Behaviours " <>
+         "(policy, budget, hooks) or the tools in the Toolset"}
+    end
+  end
+
+  def validate_handlers(other),
+    do: {:error, "expected #{inspect(@handlers)}, got: " <> Describe.type_of(other)}
+
+  defp default_dispatch?(fun) when is_function(fun, 2) do
+    info = Function.info(fun)
+
+    info[:type] == :external and info[:module] == @agent_handlers and
+      info[:name] == :dispatch_turn_tools
+  end
+
+  defp default_dispatch?(_other), do: false
 
   @doc false
   def validate_config(%{__struct__: @base_agent_config} = config), do: {:ok, config}
