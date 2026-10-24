@@ -484,6 +484,33 @@ defmodule Normandy.LLM.JsonDeserializerTest do
       assert t < @linear_budget_us
     end
 
+    test "one stray opener before 200 KB of prose parses in a bounded heap" do
+      # The stray's scan reads to the end. A map entry per byte it read took a 6-12M-word
+      # heap here; marked states only take under 1.5M (investigations/json-region-240kb.md).
+      unit = "Here is what I found. ```elixir\nfn x -> %{a: x, b: [x, x]} end\n```\n"
+
+      text =
+        "Use { to open a block. " <>
+          String.duplicate(unit, 1_600) <>
+          ~s({"chat_message": "42"}) <> String.duplicate(unit, 1_600)
+
+      parent = self()
+
+      {_pid, ref} =
+        :erlang.spawn_opt(
+          fn ->
+            send(
+              parent,
+              {:parsed, JsonDeserializer.parse_and_validate(text, %BaseAgentOutputSchema{})}
+            )
+          end,
+          [:monitor, max_heap_size: %{size: 3_000_000, kill: true, error_logger: false}]
+        )
+
+      assert_receive {:DOWN, ^ref, :process, _, :normal}, 5_000
+      assert_received {:parsed, {:ok, %BaseAgentOutputSchema{chat_message: "42"}}}
+    end
+
     test "unclosed brackets and braces mixed still find the later balanced region" do
       text = String.duplicate("[ {", 5_000) <> ~s( {"chat_message": "hi"})
 
