@@ -732,8 +732,8 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # Rebuild the conversation from the store's history, keeping the configured
-  # memory cap (from_entries/1 builds an uncapped memory). Also returns the tool rounds
-  # the stored history records for its last turn, compacted rounds included
+  # memory cap (from_entries/1 builds an uncapped memory). Also returns the iterations
+  # the stored history records for its last turn, compacted ones included
   # (AgentMemory.stored_turn_rounds/1), for a resume of that turn.
   defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil, nil}
 
@@ -2117,8 +2117,9 @@ defmodule Normandy.Agents.Turn.Server do
 
   defp persist_compaction(_data, _config, _meta), do: :ok
 
-  # The tool rounds the turn has made, which the snapshot records: a resume cannot count
-  # the ones the compaction removed from the history.
+  # The iterations the turn has spent (tool rounds and pause continuations), which the
+  # snapshot records as `turn_rounds`: a resume cannot count the ones the compaction
+  # removed from the history.
   defp turn_rounds(%Turn.State{max_iterations: max, iterations_left: left})
        when is_integer(max) and is_integer(left),
        do: max(max - left, 0)

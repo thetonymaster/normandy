@@ -493,6 +493,13 @@ defmodule Normandy.Components.AgentMemory do
 
   defp tool_round?(_entry), do: false
 
+  # An entry that spent an iteration of the tool budget: a tool round, or a paused
+  # response the turn sent back to continue.
+  defp iteration?(%{role: "assistant", content: content} = entry),
+    do: tool_round?(entry) or ToolCallResponse.paused?(content)
+
+  defp iteration?(_entry), do: false
+
   defp round_text(%Entry{content: %ToolCallResponse{content: text}}) do
     case unwrap_llm_content(text) do
       text when is_binary(text) -> if String.trim(text) == "", do: nil, else: text
@@ -791,8 +798,9 @@ defmodule Normandy.Components.AgentMemory do
 
   @doc false
   # The content of the "compaction" entry Turn.Server stores after a compaction (see
-  # from_entries/1): the active branch as plain maps, and with `turn_rounds` the tool
-  # rounds the turn had made (stored_turn_rounds/1). A reader of version 1 ignores keys it
+  # from_entries/1): the active branch as plain maps, and with `turn_rounds` the
+  # iterations the turn had spent (tool rounds and pause continuations, see
+  # stored_turn_rounds/1; the key predates the name). A reader of version 1 ignores keys it
   # does not know, so the count needs no new version.
   @spec compaction_content(t(), non_neg_integer() | nil) :: %{
           required(:version) => 1,
@@ -809,16 +817,18 @@ defmodule Normandy.Components.AgentMemory do
   end
 
   @doc false
-  # `{turn_id, rounds}`: the tool rounds the turn the stored `entries` end in has made,
-  # when its last snapshot belongs to that turn and records them, counting the ones that
-  # snapshot's compaction removed; nil otherwise. Turn.Server resumes a turn with it
-  # (Turn.resume/3): the compacted memory no longer shows the removed rounds.
+  # `{turn_id, iterations}`: the iterations the turn the stored `entries` end in has spent,
+  # when its last snapshot belongs to that turn and records them (`turn_rounds`), counting
+  # the ones that snapshot's compaction removed; nil otherwise. An iteration is a tool
+  # round or a paused response sent back to continue (Turn.continue_paused/2). Turn.Server
+  # resumes a turn with it (Turn.resume/3): the compacted memory no longer shows the
+  # removed iterations.
   @spec stored_turn_rounds([Entry.t()]) :: {String.t() | nil, non_neg_integer()} | nil
   def stored_turn_rounds(entries) when is_list(entries) do
     with %Entry{turn_id: turn_id} <- List.last(entries),
          {%Entry{turn_id: ^turn_id, content: %{turn_rounds: n}}, later} when is_integer(n) <-
            split_at_last_compaction(entries) do
-      {turn_id, n + Enum.count(later, &tool_round?/1)}
+      {turn_id, n + Enum.count(later, &iteration?/1)}
     else
       _no_count -> nil
     end

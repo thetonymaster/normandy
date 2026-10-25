@@ -7,13 +7,14 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
   use ExUnit.Case, async: true
   @moduletag :capture_log
 
+  alias Normandy.Agents.BaseAgent
   alias Normandy.Agents.BaseAgent.Handlers, as: AgentHandlers
   alias Normandy.Agents.{BaseAgentConfig, Turn}
   alias Normandy.Behaviours.Config
   alias Normandy.Behaviours.SessionRegistry.Native
   alias Normandy.Behaviours.SessionStore.InMemory
   alias Normandy.Components.{AgentMemory, PromptSpecification}
-  alias Normandy.Test.KeepLastCompactor
+  alias Normandy.Test.{FakeClient, KeepLastCompactor, ReturnTool}
 
   defmodule Resp do
     defstruct content: "", tool_calls: nil
@@ -123,5 +124,36 @@ defmodule Normandy.Agents.Turn.ServerCompactionPersistenceTest do
     :ok = :gen_statem.stop(srv)
     restored = memory_of(start(sid, {NoSnapshotStore, store}))
     assert length(chain(restored)) == length(stored)
+  end
+
+  # The snapshot's turn_rounds is what a resume counts compacted iterations by
+  # (AgentMemory.stored_turn_rounds/1); the turn above calls no tool, so it stores 0.
+  test "a compaction inside a tool-using turn stores the iterations spent so far" do
+    store = InMemory.new()
+    sid = "compaction-rounds-#{System.unique_integer([:positive])}"
+    call = {:tool_calls, [{"record_city", %{}}]}
+
+    config =
+      %{
+        client: FakeClient.new([call, call, {:text, "Paris."}]),
+        model: "m",
+        max_tokens: 64,
+        behaviours: %Config{compactor: {KeepLastCompactor, keep: 2, context_window: 200_000}}
+      }
+      |> BaseAgent.init()
+      |> BaseAgent.register_tool(%ReturnTool{name: "record_city", output: "recorded"})
+
+    {:ok, srv} =
+      Turn.Server.start_link(
+        session_id: sid,
+        config: config,
+        store: {InMemory, store},
+        registry: {Native, Native.new()}
+      )
+
+    assert {:ok, _} = Turn.Server.run(srv, "Capital of France?")
+    {:ok, stored} = InMemory.history(store, sid)
+    # Before the second call one round was spent, before the third two.
+    assert for(%{role: "compaction", content: c} <- stored, do: c.turn_rounds) == [1, 2]
   end
 end
