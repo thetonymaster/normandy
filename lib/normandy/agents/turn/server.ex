@@ -1291,8 +1291,10 @@ defmodule Normandy.Agents.Turn.Server do
   end
 
   # The [:normandy, :agent, :run, *] events BaseAgent.run/2 emits. A turn spans
-  # several gen_statem events, so :start and :stop/:exception are emitted by
-  # hand. A turn resumed by a restarted server gets its own :start (resumed: true).
+  # several gen_statem events (and approval waits), so :start and :stop/:exception are
+  # emitted by hand: Telemetry.Span.span/4 wraps one function call. The metadata is
+  # BaseAgent's (Metadata.run/2, Metadata.run_stop/2) plus session_id and approval_wait.
+  # A turn resumed by a restarted server gets its own :start (resumed: true).
   #
   # The turn's context (the caller's, attached by the :turn clause or by
   # start_resumed_run_span/1) is current at :start, so a bridged run span nests under
