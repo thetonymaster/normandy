@@ -531,6 +531,67 @@ defmodule Normandy.Coordination.AgentProcessServerTest do
     end
   end
 
+  # An InMemory store whose history/2 exits or raises on demand (mode 1 or 2), like a
+  # backend whose client call times out or whose connection errors.
+  defmodule FaultyHistoryStore do
+    @moduledoc false
+    def new, do: {InMemory.new(), :atomics.new(1, [])}
+    def fault({_mem, mode}, :exit), do: :atomics.put(mode, 1, 1)
+    def fault({_mem, mode}, :raise), do: :atomics.put(mode, 1, 2)
+    def fault({_mem, mode}, :none), do: :atomics.put(mode, 1, 0)
+
+    def history({mem, mode}, sid) do
+      case :atomics.get(mode, 1) do
+        0 -> InMemory.history(mem, sid)
+        1 -> exit(:timeout)
+        2 -> raise RuntimeError, "connection refused"
+      end
+    end
+
+    def append_entry({mem, _}, sid, entry), do: InMemory.append_entry(mem, sid, entry)
+    def fork({mem, _}, sid, from), do: InMemory.fork(mem, sid, from)
+
+    def save_turn_state({mem, _}, sid, s, inflight?),
+      do: InMemory.save_turn_state(mem, sid, s, inflight?)
+
+    def load_turn_state({mem, _}, sid), do: InMemory.load_turn_state(mem, sid)
+    def save_config_template({mem, _}, sid, t), do: InMemory.save_config_template(mem, sid, t)
+    def load_config_template({mem, _}, sid), do: InMemory.load_config_template(mem, sid)
+    def list_resumable({mem, _}), do: InMemory.list_resumable(mem)
+    def delete_session({mem, _}, sid), do: InMemory.delete_session(mem, sid)
+  end
+
+  describe ":server get_agent/1 when the store's history call exits or raises" do
+    for fault <- [:exit, :raise] do
+      test "#{fault}: logs, returns the template and keeps the process" do
+        {:ok, sup} = Normandy.Agents.Turn.Supervisor.start_link([])
+        store = FaultyHistoryStore.new()
+
+        {:ok, pid} =
+          AgentProcess.start_link(
+            agent: server_config(),
+            agent_id: "faulty-#{unquote(fault)}",
+            turn_engine: :server,
+            handlers: final_handlers(),
+            store: {FaultyHistoryStore, store},
+            registry: {Native, Native.new()},
+            supervisor: sup
+          )
+
+        FaultyHistoryStore.fault(store, unquote(fault))
+
+        log =
+          capture_log(fn -> assert %{memory: %AgentMemory{}} = AgentProcess.get_agent(pid) end)
+
+        assert log =~ "AgentProcess faulty-#{unquote(fault)}: get_agent could not read store"
+
+        assert Process.alive?(pid)
+        FaultyHistoryStore.fault(store, :none)
+        assert %{memory: %AgentMemory{}} = AgentProcess.get_agent(pid)
+      end
+    end
+  end
+
   # Final review M-d: a stored history from_entries/1 refuses (here a snapshot version a
   # newer node wrote during a rolling deploy) must not crash the AgentProcess.
   describe ":server get_agent/1 on a history it cannot rebuild" do
