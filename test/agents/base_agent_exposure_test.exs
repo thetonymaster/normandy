@@ -13,6 +13,24 @@ defmodule Normandy.Agents.BaseAgentExposureTest do
     assert {:turn_response_model, 1} in exported
   end
 
+  # Every shell builds its turn through new_turn/1 or new_stream_turn/1, so none can start
+  # one without the default output schema a nil one stands for.
+  test "new_turn/1 and new_stream_turn/1 apply the default output schema" do
+    config = %{
+      BaseAgent.init(%{client: %Normandy.Test.StubClient{}, model: "m"})
+      | output_schema: nil
+    }
+
+    for new <- [&AgentHandlers.new_turn/1, &AgentHandlers.new_stream_turn/1] do
+      assert {%{output_schema: %Normandy.Agents.BaseAgentOutputSchema{}} = config2,
+              %Turn.State{output_schema: %Normandy.Agents.BaseAgentOutputSchema{}}} = new.(config)
+
+      assert config2.memory == config.memory
+    end
+
+    refute {:with_default_output_schema, 1} in AgentHandlers.__info__(:functions)
+  end
+
   # principles-audit agents#3: the facade holds the public API only; the engine the
   # shells share lives in BaseAgent.Handlers and the init checks in BaseAgent.InitOptions.
   test "BaseAgent has no hidden functions" do

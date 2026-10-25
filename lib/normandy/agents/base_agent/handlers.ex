@@ -238,16 +238,39 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   defp rejected_text(response), do: BaseIOSchema.to_json(response)
 
   @doc false
-  # The Turn a run/3 or Turn.Server turn starts from: the loop's response model, the
-  # output schema and the re-ask budget (stream/3 builds its own, without re-asks).
-  @spec new_turn(BaseAgentConfig.t()) :: Turn.State.t()
+  # The Turn a run/3 or Turn.Server turn starts from (the loop's response model, the
+  # output schema and the re-ask budget), with the config it runs with: a nil output
+  # schema becomes the default chat schema first, so no shell builds a turn without it.
+  @spec new_turn(BaseAgentConfig.t()) :: {BaseAgentConfig.t(), Turn.State.t()}
   def new_turn(%BaseAgentConfig{} = config) do
-    Turn.new(
-      max_iterations: config.max_tool_iterations,
-      response_model: turn_response_model(config),
-      output_schema: config.output_schema,
-      max_constraint_reasks: constraint_reasks(config)
-    )
+    config = with_default_output_schema(config)
+
+    {config,
+     Turn.new(
+       max_iterations: config.max_tool_iterations,
+       response_model: turn_response_model(config),
+       output_schema: config.output_schema,
+       max_constraint_reasks: constraint_reasks(config)
+     )}
+  end
+
+  # A streamed answer is the accumulated message map, never the output schema, so the
+  # core always converts it (Turn.convert_needed?/1).
+  @streamed_message :streamed_message
+
+  @doc false
+  # stream/3's Turn: the streamed message as response model and no re-asks, with the
+  # default output schema applied as new_turn/1 applies it.
+  @spec new_stream_turn(BaseAgentConfig.t()) :: {BaseAgentConfig.t(), Turn.State.t()}
+  def new_stream_turn(%BaseAgentConfig{} = config) do
+    config = with_default_output_schema(config)
+
+    {config,
+     Turn.new(
+       max_iterations: config.max_tool_iterations,
+       response_model: @streamed_message,
+       output_schema: config.output_schema
+     )}
   end
 
   @doc false
@@ -440,23 +463,19 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
   @spec run_turn(BaseAgentConfig.t(), struct() | map() | nil, RunUsage.t()) ::
           {{BaseAgentConfig.t(), struct()}, Turn.State.t()}
   defp run_turn(config, user_input, run_usage) do
-    config = config |> with_default_output_schema() |> admit_turn_input(user_input)
-
-    state = new_turn(config)
+    {config, state} = config |> admit_turn_input(user_input) |> new_turn()
 
     {config, final_state} = drive_turn(config, state, run_usage)
     {{config, final_state.final_response}, final_state}
   end
 
-  @doc false
   # The config a turn runs with. An output schema left nil (set after init/1, or from a
-  # hand-built config template) is the default chat schema, as init/1 makes it: every
-  # turn shell (run_turn/2, run_stream_turn/3, Turn.Server) applies it before Turn.new/1.
-  @spec with_default_output_schema(BaseAgentConfig.t()) :: BaseAgentConfig.t()
-  def with_default_output_schema(%BaseAgentConfig{output_schema: nil} = config),
+  # hand-built config template) is the default chat schema, as init/1 makes it; applied
+  # by new_turn/1 and new_stream_turn/1, the only places a shell builds a turn.
+  defp with_default_output_schema(%BaseAgentConfig{output_schema: nil} = config),
     do: %{config | output_schema: %BaseAgentOutputSchema{}}
 
-  def with_default_output_schema(%BaseAgentConfig{} = config), do: config
+  defp with_default_output_schema(%BaseAgentConfig{} = config), do: config
 
   @doc false
   # The tool-loop response model for an agent with tools or MCP servers: an MCP
@@ -981,23 +1000,12 @@ defmodule Normandy.Agents.BaseAgent.Handlers do
 
   # ── End Turn FSM production interpreter ──────────────────────────────────────
 
-  # A streamed answer is the accumulated message map, never the output schema, so the
-  # core always converts it (Turn.convert_needed?/1).
-  @streamed_message :streamed_message
-
   # Streaming analog of run_turn/2: the same admission, then the FSM driven with the
   # streaming handler set. Returns {config, output}, the output converted to the output
   # schema (streaming_handlers/2). A failed stream raises its Normandy.LLMError from
   # inside the llm_call span (stream_llm_attempt/5); stream/3 returns it.
   defp run_stream_turn(config, user_input, callback, run_usage) when is_function(callback, 1) do
-    config = config |> with_default_output_schema() |> admit_turn_input(user_input)
-
-    state =
-      Turn.new(
-        max_iterations: config.max_tool_iterations,
-        response_model: @streamed_message,
-        output_schema: config.output_schema
-      )
+    {config, state} = config |> admit_turn_input(user_input) |> new_stream_turn()
 
     handlers =
       callback |> streaming_handlers() |> with_run_usage(run_usage) |> HookHandlers.wrap(config)

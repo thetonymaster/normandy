@@ -9,13 +9,16 @@ defmodule Normandy.Agents.Turn.HordeInitLogTest do
   supervisor (`:one_for_all`, no restarts) goes down. `test/test_helper.exs` sets the
   impl's module level to `:warning`, so no handler runs in its `init/1`.
   """
-  use ExUnit.Case, async: true
+  # async: false: the test adds and removes a global :logger handler, and a concurrent
+  # test's capture_log (Logger.flush/0 -> :logger.get_handler_config/0) crashes with a
+  # MatchError if the handler goes between listing the ids and reading its config (OTP 27).
+  use ExUnit.Case, async: false
 
   alias Normandy.Agents.Turn.Supervisor.Horde, as: HSup
 
   # Links a process to the process that logs, as ExUnit.CaptureServer.log/2's
   # Task.async does, and keeps it alive, so it is still linked when init/1 returns.
-  # Acts only in the impl registered under this test's name (async: true).
+  # Acts only in the impl registered under this test's name.
   defmodule LinkingHandler do
     @moduledoc false
     def log(_event, %{config: %{sup: sup, to: to}}) do
