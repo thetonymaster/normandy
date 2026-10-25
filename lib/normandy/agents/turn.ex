@@ -474,21 +474,22 @@ defmodule Normandy.Agents.Turn do
   `resume/1` for a shell that holds the turn's stored history (`messages`, oldest
   first). A `:steering` state is saved after its batch's results are appended, so a shell
   that stopped between the two restarts from the state saved one round earlier. The
-  turn's tool rounds in `messages` (assistant tool calls with the last message's
-  `turn_id`) count too: `iterations_left` never exceeds `max_iterations` minus them, and a
-  turn they bring to the cap appends the iteration-cap notice (unless it is already the
-  last message) before its final call. Rounds removed by in-turn compaction are not in
-  `messages`: `stored_rounds`, `{turn_id, rounds}` from the stored history
-  (`AgentMemory.stored_turn_rounds/1`, which reads the last compaction snapshot), counts
-  them when `turn_id` is the turn `messages` end in, and the larger count stands. Pure.
+  iterations the turn spent in `messages` (with the last message's `turn_id`: assistant
+  tool calls, and paused responses sent back to continue) count too: `iterations_left`
+  never exceeds `max_iterations` minus them, and a turn they bring to the cap appends the
+  iteration-cap notice (unless it is already the last message) before its final call.
+  Iterations removed by in-turn compaction are not in `messages`: `stored_rounds`,
+  `{turn_id, iterations}` from the stored history (`AgentMemory.stored_turn_rounds/1`,
+  which reads the last compaction snapshot), counts them when `turn_id` is the turn
+  `messages` end in, and the larger count stands. Pure.
   """
   @spec resume(State.t(), [Message.t()], {String.t() | nil, non_neg_integer()} | nil) ::
           {State.t(), [tuple()]}
   def resume(state, messages, stored_rounds \\ nil)
 
   def resume(%State{status: :steering} = s, messages, stored_rounds) when is_list(messages) do
-    rounds = max(turn_rounds(messages), stored_rounds(stored_rounds, messages))
-    left = max(s.max_iterations - rounds, 0)
+    spent = max(iterations_spent(messages), stored_rounds(stored_rounds, messages))
+    left = max(s.max_iterations - spent, 0)
 
     if left < s.iterations_left do
       {s, effects} = resume(%{s | iterations_left: left})
@@ -501,25 +502,28 @@ defmodule Normandy.Agents.Turn do
   def resume(%State{} = s, messages, _stored_rounds) when is_list(messages), do: resume(s)
 
   # A stored count holds only for the turn `messages` still end in.
-  defp stored_rounds({turn_id, rounds}, messages) do
+  defp stored_rounds({turn_id, spent}, messages) do
     case List.last(messages) do
-      %Message{turn_id: ^turn_id} -> rounds
+      %Message{turn_id: ^turn_id} -> spent
       _other -> 0
     end
   end
 
   defp stored_rounds(nil, _messages), do: 0
 
-  # The tool rounds of the turn `messages` end in.
-  defp turn_rounds([]), do: 0
+  # The iterations the turn `messages` end in has spent: its tool rounds and its paused
+  # responses sent back to continue (continue_paused/2).
+  defp iterations_spent([]), do: 0
 
-  defp turn_rounds(messages) do
+  defp iterations_spent(messages) do
     %Message{turn_id: turn_id} = List.last(messages)
 
     messages
     |> Enum.reverse()
     |> Enum.take_while(&(&1.turn_id == turn_id))
-    |> Enum.count(&(&1.role == "assistant" and tool_calls(&1.content) != []))
+    |> Enum.count(
+      &(&1.role == "assistant" and (tool_calls(&1.content) != [] or paused?(&1.content)))
+    )
   end
 
   defp missing_cap_notice(0, messages) do
