@@ -477,7 +477,8 @@ defmodule Normandy.Agents.Turn do
   iterations the turn spent in `messages` (with the last message's `turn_id`: assistant
   tool calls, and paused responses sent back to continue) count too: `iterations_left`
   never exceeds `max_iterations` minus them, and a turn they bring to the cap appends the
-  iteration-cap notice (unless it is already the last message) before its final call.
+  iteration-cap notice (unless it is already the last message, or the last message is a
+  paused response, which takes no user message) before its final call.
   Iterations removed by in-turn compaction are not in `messages`: `stored_rounds`,
   `{turn_id, iterations}` from the stored history (`AgentMemory.stored_turn_rounds/1`,
   which reads the last compaction snapshot), counts them when `turn_id` is the turn
@@ -526,10 +527,13 @@ defmodule Normandy.Agents.Turn do
     )
   end
 
+  # None after a paused response: the API takes no user message between it and its
+  # continuation, so the final call follows it directly (tool_choice :none still holds).
   defp missing_cap_notice(0, messages) do
-    case List.last(messages) do
-      %Message{role: "user", content: @cap_notice} -> []
-      _other -> [{:append_message, "user", @cap_notice}]
+    cond do
+      paused_last?(messages) -> []
+      match?(%Message{role: "user", content: @cap_notice}, List.last(messages)) -> []
+      true -> [{:append_message, "user", @cap_notice}]
     end
   end
 

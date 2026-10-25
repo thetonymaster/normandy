@@ -188,6 +188,21 @@ defmodule Normandy.Agents.Turn.ServerResumeCapTest do
              InMemory.load_turn_state(store, sid)
   end
 
+  # The API rejects a user message after a paused response (Turn.Server's paused-input
+  # rule), so the final call follows the pause with no cap notice.
+  test "a pause that brings the turn to the cap is followed by the final call, no notice" do
+    stored = [{"user", "Capital of France?"}] ++ tool_round("t1") ++ [@paused]
+    {client, store, sid} = resume_stored(stored, 1, 2)
+
+    assert [request] = FakeClient.requests(client)
+    assert request.tool_choice == :none
+    refute Enum.any?(texts(request), &String.starts_with?(&1, @cap_notice))
+    assert %{role: "assistant"} = List.last(request.messages)
+
+    assert {:ok, %Turn.State{status: :stopped, stop_reason: :max_iterations}} =
+             InMemory.load_turn_state(store, sid)
+  end
+
   test "a state that counts every stored round resumes as it was saved" do
     {client, _store, _sid} = resume(1, 1, 2)
 
