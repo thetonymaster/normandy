@@ -30,6 +30,7 @@ defmodule Normandy.Behaviours.SessionStore do
   overwrite it.
   """
 
+  alias Normandy.Components.AgentMemory
   alias Normandy.Components.AgentMemory.Entry
 
   @type handle :: term()
@@ -151,7 +152,7 @@ defmodule Normandy.Behaviours.SessionStore do
   @doc """
   The entries a restore rebuilds a session's memory from (`AgentMemory.from_entries/1`):
   `store`'s `c:history_since_compaction/2` when it exports one, else `c:history/2`. Both
-  rebuild the same memory. `Turn.Server` and `Normandy.Coordination.AgentProcess` call it.
+  rebuild the same memory. `restore_memory/4` builds on it.
   """
   @spec restore_history(module(), handle(), session_id()) ::
           {:ok, [Entry.t()]} | {:error, term()}
@@ -159,5 +160,48 @@ defmodule Normandy.Behaviours.SessionStore do
     if Code.ensure_loaded?(store) and function_exported?(store, :history_since_compaction, 2),
       do: store.history_since_compaction(handle, session_id),
       else: store.history(handle, session_id)
+  end
+
+  @doc """
+  A session's memory rebuilt from `store`: `restore_history/3`'s entries through
+  `AgentMemory.from_entries/1`, capped at `max_messages` (the rebuilt memory is
+  otherwise uncapped), with the tool-loop count the stored history records for its last
+  turn (`{turn_id, n}` or `nil`), for a resume. `Turn.Server` and
+  `Normandy.Coordination.AgentProcess` call it.
+
+  Never raises, exits or throws. A store call that exits is
+  `{:error, {:store_exit, reason}}`, one that raises or throws
+  `{:error, {:store_raised, exception}}`, and a history `from_entries/1` refuses (a
+  snapshot version a newer node wrote) `{:error, {:invalid_history, %ArgumentError{}}}`,
+  whose message names entry ids and types, never content. A store's own
+  `{:error, reason}` is returned as it is.
+  """
+  @spec restore_memory(module(), handle(), session_id(), pos_integer() | nil) ::
+          {:ok, AgentMemory.t(), {String.t() | nil, non_neg_integer()} | nil}
+          | {:error, term()}
+  def restore_memory(store, handle, session_id, max_messages) when is_atom(store) do
+    with {:ok, entries} <- call_store(fn -> restore_history(store, handle, session_id) end),
+         {:ok, memory} <- rebuild(entries) do
+      {:ok, %{memory | max_messages: max_messages}, AgentMemory.stored_turn_rounds(entries)}
+    end
+  end
+
+  defp call_store(fun) do
+    fun.()
+  catch
+    :exit, reason ->
+      {:error, {:store_exit, reason}}
+
+    :throw, value ->
+      {:error, {:store_raised, %ErlangError{original: {:nocatch, value}}}}
+
+    :error, reason ->
+      {:error, {:store_raised, Exception.normalize(:error, reason, __STACKTRACE__)}}
+  end
+
+  defp rebuild(entries) do
+    {:ok, AgentMemory.from_entries(entries)}
+  rescue
+    e in ArgumentError -> {:error, {:invalid_history, e}}
   end
 end

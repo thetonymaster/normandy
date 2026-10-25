@@ -738,12 +738,20 @@ defmodule Normandy.Agents.Turn.Server do
   defp with_stored_memory(nil, _store, _session_id), do: {:ok, nil, nil}
 
   defp with_stored_memory(config, {mod, handle}, session_id) do
-    case store_call(fn -> SessionStore.restore_history(mod, handle, session_id) end) do
-      {:ok, entries} ->
-        max_messages = config.memory && config.memory.max_messages
+    max_messages = config.memory && config.memory.max_messages
 
-        memory = %{AgentMemory.from_entries(entries) | max_messages: max_messages}
-        {:ok, %{config | memory: memory}, AgentMemory.stored_turn_rounds(entries)}
+    case SessionStore.restore_memory(mod, handle, session_id, max_messages) do
+      {:ok, memory, stored_rounds} ->
+        {:ok, %{config | memory: memory}, stored_rounds}
+
+      {:error, {:store_exit, reason}} ->
+        {:error,
+         store_reason({:store_exit, reason |> TurnError.drop_stacktraces() |> TurnError.redact()})}
+
+      # A store that raised and a history from_entries/1 refuses fail the load as any
+      # other raise in it does (safe_load/1): {:load_crashed, exception}.
+      {:error, {tag, exception}} when tag in [:store_raised, :invalid_history] ->
+        {:error, {:load_crashed, TurnError.drop_stacktraces(exception)}}
 
       {:error, reason} ->
         {:error, store_reason(reason)}

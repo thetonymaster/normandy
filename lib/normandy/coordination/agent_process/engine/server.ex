@@ -12,7 +12,6 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
   alias Normandy.Agents.Turn
   alias Normandy.Behaviours.SessionStore
   alias Normandy.Behaviours.SessionStore.InMemory
-  alias Normandy.Components.AgentMemory
   alias Normandy.Components.ContentBlock.Describe
   alias Normandy.Coordination.AgentProcess.Engine
   alias Normandy.Coordination.AgentProcess.ScopedRegistry
@@ -96,18 +95,28 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
   end
 
   # Store-authoritative read: rebuild config.memory from the SessionStore so callers
-  # see durable truth. On a store fault, or a history from_entries/1 refuses (a snapshot
-  # version a newer node wrote, content that cannot be encoded), log and return the
-  # template unchanged: a stored history must not crash this process and its queue.
+  # see durable truth. On a store fault (an error, exit or raise), or a history
+  # from_entries/1 refuses (a snapshot version a newer node wrote), log and return the
+  # template unchanged: a stored history must not crash this process and its queue
+  # (SessionStore.restore_memory/4 never raises).
   @impl true
   def get_agent(%{
         engine_state: %{session: %Turn.Session{store: {mod, handle}}},
         agent: agent,
         agent_id: sid
       }) do
-    case SessionStore.restore_history(mod, handle, sid) do
-      {:ok, entries} ->
-        rebuild_memory(agent, sid, entries)
+    case SessionStore.restore_memory(mod, handle, sid, agent.memory.max_messages) do
+      {:ok, memory, _stored_rounds} ->
+        %{agent | memory: memory}
+
+      # The message names entry ids and types only (from_entries/1), never content.
+      {:error, {:invalid_history, e}} ->
+        Logger.warning(
+          "AgentProcess #{sid}: get_agent could not rebuild the stored history: " <>
+            Exception.message(e)
+        )
+
+        agent
 
       {:error, reason} ->
         Logger.warning(
@@ -116,20 +125,6 @@ defmodule Normandy.Coordination.AgentProcess.Engine.Server do
 
         agent
     end
-  end
-
-  defp rebuild_memory(agent, sid, entries) do
-    rebuilt = %{AgentMemory.from_entries(entries) | max_messages: agent.memory.max_messages}
-    %{agent | memory: rebuilt}
-  rescue
-    # The message names entry ids and types only (from_entries/1), never content.
-    e in ArgumentError ->
-      Logger.warning(
-        "AgentProcess #{sid}: get_agent could not rebuild the stored history: " <>
-          Exception.message(e)
-      )
-
-      agent
   end
 
   @impl true
