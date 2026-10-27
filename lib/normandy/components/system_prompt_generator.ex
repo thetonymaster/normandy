@@ -101,6 +101,10 @@ defmodule Normandy.Components.SystemPromptGenerator do
   defp process_sections([{_title, []} | tail], prompt_parts),
     do: process_sections(tail, prompt_parts)
 
+  # The role is prose; the other sections are lists.
+  defp process_sections([{@background, content} | tail], prompt_parts),
+    do: process_sections(tail, prompt_parts ++ ["# #{@background}" | content])
+
   defp process_sections([{title, content} | tail], prompt_parts) do
     prompt_parts = prompt_parts ++ ["# #{title}"] ++ Enum.map(content, fn x -> "- #{x}" end)
     process_sections(tail, prompt_parts)

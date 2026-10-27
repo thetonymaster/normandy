@@ -35,7 +35,7 @@ defmodule Normandy.Agents.ContextPromptCacheTest do
 
   test "generate_parts/1 splits the static sections from the Context section" do
     assert {static, context} = SystemPromptGenerator.generate_parts(spec("09:00"))
-    assert static == "# Role\n- You plan meetings.\n# How to work\n- Check the calendar."
+    assert static == "# Role\nYou plan meetings.\n# How to work\n- Check the calendar."
     assert context =~ ~r/\A# Context\n.*\n## Now\n09:00\z/s
     assert SystemPromptGenerator.generate_prompt(spec("09:00")) == static <> "\n" <> context
 

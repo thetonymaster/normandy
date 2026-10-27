@@ -55,7 +55,8 @@ defmodule Normandy.LLM.ClaudioAdapter do
   - `:thinking_budget` - Fixed thinking budget in tokens, for models that still accept
     `budget_tokens` (4.6 and earlier, such as Haiku 4.5; Opus 4.7+, 5.x, Sonnet 5 and
     Fable return 400); mutually exclusive with `:thinking`. `thinking: :disabled` also
-    returns 400 on Opus 5.5, which always thinks
+    returns 400 on Opus 5.5, which always thinks, and on Sonnet 5.5, whose off switch is
+    `between_tools` (not an accepted `:thinking` value yet)
   - `:thinking_block_binding` - `:error | :drop_block`: what the API does with a replayed
     thinking block whose history changed since it was produced (sends the
     `thinking-binding-controls-2026-08-01` beta). `:drop_block` drops that block and every
