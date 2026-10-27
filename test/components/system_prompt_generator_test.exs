@@ -9,7 +9,7 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
   test "with empty specification" do
     prompt = """
     # Role
-    - You are a helpful assistant.
+    You are a helpful assistant.
     """
 
     spec = %PromptSpecification{}
@@ -28,8 +28,8 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
 
     prompt = """
     # Role
-    - you are a helpful assistant
-    - you assist me in assisting
+    you are a helpful assistant
+    you assist me in assisting
     # How to work
     - step 1
     - step 2
@@ -59,8 +59,8 @@ defmodule NormandyTest.Components.SystemPromptGeneratorTest do
 
     prompt = """
     # Role
-    - you are a helpful assistant
-    - you assist me in assisting
+    you are a helpful assistant
+    you assist me in assisting
     # How to work
     - step 1
     - step 2

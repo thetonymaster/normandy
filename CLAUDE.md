@@ -9,7 +9,7 @@ Normandy is an Elixir library for building AI agents with structured schemas, va
 ## Common Commands
 
 ### Development
-- `mix precommit` - Run before committing: `compile --warnings-as-errors`, `deps.unlock --check-unused`, `format`, `credo --strict`, `dialyzer`, `test --warnings-as-errors` (runs in MIX_ENV=test)
+- `mix precommit` - Run before committing: `compile --warnings-as-errors`, `xref graph --format cycles --label compile-connected` (no cycle above 4 files), `deps.unlock --check-unused`, `format`, `credo --strict`, `dialyzer`, `test --warnings-as-errors` (runs in MIX_ENV=test)
 - `mix compile` - Compile the project
 - `mix format` - Format code according to .formatter.exs
 - `mix test` - Run all tests
@@ -73,7 +73,7 @@ The schema system is Normandy's foundation, heavily inspired by Ecto but adapted
 - **`Normandy.Agents.Model`** - Protocol for LLM client implementations
   - `JsonDeserializer` options (`:max_retries`, `:on_retry_usage`, `:request_tracker`, `:max_input_bytes`) are validated (unknown keys raise); region extraction and decoding share an 8n+1024 byte budget. `LLMError.classify_status/1` and `transport/1` are the one HTTP status rule for both adapters
   - Requires: `converse/3` and `stream/3` over `%Normandy.LLM.Request{}` (`request.output_format`: the non-chat output schema on a tool-loop call or stream; `%ToolCallResponse{}` carries `content_blocks`, replayed verbatim, `stop_reason`, `:pause_turn` continues the turn, and `input_tokens`/`estimated_input_tokens`, the request's reported size and its estimate at send, AX-12); `converse/3` returns `{:ok, %Normandy.LLM.Response{}}` or `{:error, %Normandy.LLMError{}}`; a non-streaming client's `stream/3` returns `{:error, %LLMError{type: :unsupported}}`
-  - Clients must implement this protocol (see Claudio integration in dependencies)
+  - Clients must implement this protocol: `Normandy.LLM.ClaudioAdapter` (Anthropic, through Claudio) and `Normandy.LLM.OpenAICompatibleAdapter` (Chat Completions, text only: tools raise, an unparsable answer is not re-asked)
 
 - **`Normandy.Agents.Turn.Server`** - Durable `:gen_statem` turn shell
   - `run/2` replies `{:error, exception}` instead of crashing: Normandy's own exceptions bare (`LLMError`, `ValidationError`, `ViolationError`, `HookHaltError`, `ModelCatalogError`), anything else a `Normandy.TurnError` (`:handler_crashed`, `:task_down`, `:persist_failed`, `:approval_timeout`, `:session_unavailable`, ...); never a tagged tuple or a stacktrace. `TurnError.from_reason/1` is the one mapping

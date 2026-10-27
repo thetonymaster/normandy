@@ -431,7 +431,7 @@ defmodule Normandy.Coordination.AgentProcess do
   ## Example
 
       :ok = AgentProcess.update_agent(pid, fn agent ->
-        %{agent | temperature: 0.2}
+        %{agent | max_tokens: 4_096}
       end)
   """
   @spec update_agent(
